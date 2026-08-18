@@ -389,6 +389,14 @@ The child-1 receipt fixes the comparison authority. Every later stage records:
   counts; and
 - exact semantic and output identities.
 
+The current-core structural fields come from the profiling-only
+`HOT_CORE_CENSUS` report documented in
+[`profiling.md`](profiling.md#main-control-hot-core-structural-census). Its
+owner, stop-reason, command-family, and phase vocabularies are fixed-width and
+exhaustive, and its episode histogram preserves every length from zero through
+the canonical 256-operation bound. The production feature resolution contains
+none of its counters, scopes, allocator wrapper, fields, or calls.
+
 The same optimized profile, CPU affinity policy, source, format, distribution,
 offline cache, environment, and guards are used for before/after measurements.
 Synthetic benchmarks are retained for focused asymptotic controls only.

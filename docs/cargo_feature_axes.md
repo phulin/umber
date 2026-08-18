@@ -45,9 +45,12 @@ Same sentence, different price; two axes.
 ### `profiling` -- owner `tex-state`
 
 Enables the compile-time counters dedicated profiling builds read. These are
-ephemeral process-wide counters that never participate in engine state. This
-was `profiling-stats`. The similar-looking `profiling-runner` is not part of
-this axis and is not an axis: it is `required-features` on the
+ephemeral process-wide counters that never participate in engine state. The
+axis also selects the isolated `tex-state/profiling-allocator` shim; profiling
+executables install it as their global allocator so named hot-core scopes can
+count real allocation requests without allowing unsafe code in an engine
+crate. This was `profiling-stats`. The similar-looking `profiling-runner` is
+not part of this axis and is not an axis: it is `required-features` on the
 `gentle-profile` binary (see §3).
 
 Pass-throughs: `tex-exec`, `umber`.

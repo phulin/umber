@@ -191,6 +191,67 @@ target/profiling/umber run --profiling-stats \
   --expansion-fuel 6000000 <the unchanged pinned run arguments>
 ```
 
+## Main-control hot-core structural census
+
+A `profiling` build of the `umber` CLI also emits one `HOT_CORE_CENSUS`
+record when `run --profiling-stats` is requested. The text after that prefix is
+a compact schema-1 JSON object, so a census consumer parses the JSON rather
+than scraping field positions. The report is owned by the same run-scope guard
+as `MAIN_MEMORY_PROJECTION`; normal completion, typed failure, and exact fuel
+exhaustion all publish the delta, while a run without `--profiling-stats`
+publishes neither line.
+
+All underlying counters are process-local, relaxed-atomic, and monotonic. A
+run captures their values at scope entry and publishes a saturating delta at
+scope exit. There is no mutable global reset: concurrent or nested diagnostic
+code cannot erase another measurement, and counters never enter semantic
+state, snapshots, rollback, formats, hashes, checkpoints, fuel, or output.
+
+The JSON fields have these semantics:
+
+- `allocations` always names `command_state_clone`, `step_snapshot_clone`,
+  `delivery_and_scan`, `semantic_apply`, `weak_value_store`,
+  `provenance_materialization`, and `evidence_publication`, including owners
+  whose count is zero. `calls` counts `alloc`, `alloc_zeroed`, and `realloc`;
+  `requested_bytes` adds the requested allocation size, using the new size for
+  `realloc`. Deallocation is not a request and is not counted. A thread-local
+  nested scope assigns each request to exactly its innermost owner. Allocations
+  outside the named current-core regions, including general startup, resource,
+  and final output work, are deliberately unowned rather than guessed into a
+  bucket.
+- `episode_lengths` is a sparse JSON object over the exact inclusive
+  `0..=256` operation domain. It records committed and rolled-back attempted
+  episodes. `stop_reasons` is exhaustive and includes slice, every semantic
+  barrier, named checkpoint, terminal, both internal lineage stops, and typed
+  resource, diagnostic, and fuel rollback.
+- `clones.command_state` and `clones.step_snapshot` record calls, elapsed
+  nanoseconds, and the fixed logical Rust value bytes presented at each clone
+  boundary. Their owner-scoped allocator fields separately report the dynamic
+  allocations caused by those clones.
+- `weak_graph` counts strong `Arc` retains, weak retains, and weak-upgrade
+  calls/hits in the reachability-owned token, macro, and glue value substrate.
+  `weak_index` counts exact-index calls, candidate entries, exact comparisons,
+  and weak-candidate content hashes. The existing `PROVENANCE_LIFECYCLE`
+  record remains the more detailed owner-specific provenance graph census.
+- `provenance_materialization` counts attempts and successes converting a
+  compact `OriginId` into a structurally owned `OriginRef`.
+- `command_families` classifies every meaning reaching the canonical
+  main-control reswitch loop. Prefixes and commands fetched by `ignore_spaces`
+  are each counted when they actually reach that loop; expanded-away macros
+  remain visible through the separate command-work vector rather than being
+  fabricated as dispatches.
+- `phase_boundaries` counts entry to step snapshot, delivery/scanning,
+  semantic apply, evidence publication, and barrier decision. Nested command
+  operations can enter phases without taking another aggregate step snapshot,
+  which is an intended structural signal rather than a balance defect.
+
+The allocator forwarding implementation is isolated in
+`crates/tex-state/profiling-allocator`; it is selected only by the existing
+`profiling` axis. All call sites, scopes, counters, and the allocator selection
+are `#[cfg(feature = "profiling")]`, so the production feature resolution
+contains no additional hot-path field, branch, call, allocation hook, or
+reference-count operation.
+
 ## Checkpoint and incremental modes
 
 Pass `--checkpoints` to exercise named-boundary capture. The runner consumes
