@@ -228,7 +228,14 @@ fn multi_token_payload_constructors_select_packed_storage() {
     assert!(matches!(
         backed_up,
         TokenPayload::Packed(chunk)
-            if (0..2).map(|index| chunk.backed_up_token(index).unwrap().spelling).collect::<Vec<_>>()
+            if (0..2)
+                .map(|index| {
+                    chunk
+                        .backed_up_token(index)
+                        .expect("the constructor must retain each backed-up token")
+                        .spelling
+                })
+                .collect::<Vec<_>>()
                 == [traced('a'), traced('b')]
     ));
 }

@@ -167,6 +167,10 @@ impl TokenCursor {
 
 /// Storage owning the tokens delivered by a token-list level.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+// Boxing the packed chunk would add a separate allocation and owner to the
+// canonical live representation this cutover is specifically designed to
+// avoid. Compact coordinate-only variants are intentionally smaller.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum TokenPayload {
     /// Chunk-owned packed words used by canonical source-adjacent replay,
     /// hooks, templates, insertions, and backup. The sparse roots are owned
