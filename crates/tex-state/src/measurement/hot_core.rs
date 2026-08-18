@@ -16,10 +16,13 @@ pub enum HotCoreAllocationOwner {
     WeakValueStore,
     ProvenanceMaterialization,
     EvidencePublication,
+    InterpreterConstruction,
+    InterpreterBorrow,
+    ApplyStepClone,
 }
 
 impl HotCoreAllocationOwner {
-    pub const COUNT: usize = 7;
+    pub const COUNT: usize = 10;
 
     const fn index(self) -> usize {
         self as usize
@@ -33,6 +36,9 @@ impl HotCoreAllocationOwner {
         "weak_value_store",
         "provenance_materialization",
         "evidence_publication",
+        "interpreter_construction",
+        "interpreter_borrow",
+        "apply_step_clone",
     ];
 }
 

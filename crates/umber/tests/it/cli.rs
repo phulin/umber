@@ -1489,6 +1489,9 @@ fn profiling_stats_are_reported_only_when_requested() {
             .as_u64()
             .is_some_and(|calls| calls > 0)
     );
+    assert!(census["allocations"]["interpreter_construction"]["calls"].is_u64());
+    assert!(census["allocations"]["interpreter_borrow"]["calls"].is_u64());
+    assert!(census["allocations"]["apply_step_clone"]["calls"].is_u64());
     assert!(
         census["interpreter"]["constructions"]
             .as_u64()

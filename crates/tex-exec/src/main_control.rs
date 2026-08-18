@@ -6150,8 +6150,17 @@ impl MainControl {
         tex_state::measurement::record_hot_core_materialization(
             tex_state::measurement::HotCoreMaterialization::ApplyStepClone,
         );
+        #[cfg(feature = "profiling")]
+        let scanned_for_apply = {
+            let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+                tex_state::measurement::HotCoreAllocationOwner::ApplyStepClone,
+            );
+            scanned.clone()
+        };
+        #[cfg(not(feature = "profiling"))]
+        let scanned_for_apply = scanned.clone();
         let mut result = apply_scanned_step(
-            scanned.clone(),
+            scanned_for_apply,
             stores,
             &mut self.modes,
             &mut self.next_alignment_identity,

@@ -212,7 +212,11 @@ The JSON fields have these semantics:
 - `allocations` always names `command_state_clone`, `step_snapshot_clone`,
   `delivery_and_scan`, `semantic_apply`, `weak_value_store`,
   `provenance_materialization`, and `evidence_publication`, including owners
-  whose count is zero. `calls` counts `alloc`, `alloc_zeroed`, and `realloc`;
+  whose count is zero. Schema 2 additionally names
+  `interpreter_construction`, `interpreter_borrow`, and `apply_step_clone`;
+  these nested scopes remove their requests from the broader phase owner so
+  every request still has exactly one owner. `calls` counts `alloc`,
+  `alloc_zeroed`, and `realloc`;
   `requested_bytes` adds the requested allocation size, using the new size for
   `realloc`. Deallocation is not a request and is not counted. A thread-local
   nested scope assigns each request to exactly its innermost owner. Allocations

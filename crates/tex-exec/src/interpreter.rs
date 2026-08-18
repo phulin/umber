@@ -50,6 +50,10 @@ impl PersistentInterpreter {
     pub(crate) fn new(profile: CommandProfile) -> Self {
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_interpreter_construction();
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::InterpreterConstruction,
+        );
         Self {
             state: CommandState::new(profile),
             lifecycle: InterpreterLifecycle::default(),
@@ -79,6 +83,10 @@ impl PersistentInterpreter {
     ) -> InterpreterProcessor<'a> {
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_interpreter_operation_entry();
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::InterpreterBorrow,
+        );
         let Self {
             state: command,
             lifecycle,
