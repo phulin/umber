@@ -133,6 +133,43 @@ pub enum HotCoreCommandFamily {
     Unknown,
 }
 
+/// Profiling-only materialization boundaries in the pre-fusion command path.
+///
+/// These are structural construction events rather than semantic work. The
+/// fused interpreter is expected to remove the ordinary `ScannedStep` and
+/// apply-clone counts while retaining the same command-work ledger.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum HotCoreMaterialization {
+    ExpansionCommand,
+    ScannedStep,
+    PreparedOperation,
+    ApplyStepClone,
+}
+
+impl HotCoreMaterialization {
+    pub const COUNT: usize = 4;
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+
+    pub const NAMES: [&'static str; Self::COUNT] = [
+        "expansion_command",
+        "scanned_step",
+        "prepared_operation",
+        "apply_step_clone",
+    ];
+}
+
+/// The stable operand domains of the canonical primitive enums.
+///
+/// The profiling caller supplies the public, serialized operand rather than a
+/// Rust discriminant. Bounds assertions therefore also catch a primitive
+/// catalogue extension whose census vocabulary was not advanced.
+pub const HOT_CORE_EXPANDABLE_OPCODE_COUNT: usize = 86;
+pub const HOT_CORE_UNEXPANDABLE_OPCODE_COUNT: usize = 266;
+
 impl HotCoreCommandFamily {
     pub const COUNT: usize = 11;
 
@@ -197,6 +234,12 @@ pub struct HotCoreCensus {
     pub provenance_materialization_calls: u64,
     pub provenance_materialization_hits: u64,
     pub command_families: [u64; HotCoreCommandFamily::COUNT],
+    pub expandable_opcodes: [u64; HOT_CORE_EXPANDABLE_OPCODE_COUNT],
+    pub macro_expansions: u64,
+    pub unexpandable_opcodes: [u64; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT],
+    pub materializations: [u64; HotCoreMaterialization::COUNT],
+    pub interpreter_constructions: u64,
+    pub interpreter_operation_entries: u64,
     pub phase_boundaries: [u64; HotCorePhase::COUNT],
 }
 
@@ -213,6 +256,12 @@ impl Default for HotCoreCensus {
             provenance_materialization_calls: 0,
             provenance_materialization_hits: 0,
             command_families: [0; HotCoreCommandFamily::COUNT],
+            expandable_opcodes: [0; HOT_CORE_EXPANDABLE_OPCODE_COUNT],
+            macro_expansions: 0,
+            unexpandable_opcodes: [0; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT],
+            materializations: [0; HotCoreMaterialization::COUNT],
+            interpreter_constructions: 0,
+            interpreter_operation_entries: 0,
             phase_boundaries: [0; HotCorePhase::COUNT],
         }
     }
@@ -289,6 +338,25 @@ impl HotCoreCensus {
             command_families: core::array::from_fn(|index| {
                 self.command_families[index].saturating_sub(baseline.command_families[index])
             }),
+            expandable_opcodes: core::array::from_fn(|index| {
+                self.expandable_opcodes[index].saturating_sub(baseline.expandable_opcodes[index])
+            }),
+            macro_expansions: self
+                .macro_expansions
+                .saturating_sub(baseline.macro_expansions),
+            unexpandable_opcodes: core::array::from_fn(|index| {
+                self.unexpandable_opcodes[index]
+                    .saturating_sub(baseline.unexpandable_opcodes[index])
+            }),
+            materializations: core::array::from_fn(|index| {
+                self.materializations[index].saturating_sub(baseline.materializations[index])
+            }),
+            interpreter_constructions: self
+                .interpreter_constructions
+                .saturating_sub(baseline.interpreter_constructions),
+            interpreter_operation_entries: self
+                .interpreter_operation_entries
+                .saturating_sub(baseline.interpreter_operation_entries),
             phase_boundaries: core::array::from_fn(|index| {
                 self.phase_boundaries[index].saturating_sub(baseline.phase_boundaries[index])
             }),
@@ -326,6 +394,15 @@ static PROVENANCE_MATERIALIZATION_CALLS: AtomicU64 = AtomicU64::new(0);
 static PROVENANCE_MATERIALIZATION_HITS: AtomicU64 = AtomicU64::new(0);
 static COMMAND_FAMILIES: [AtomicU64; HotCoreCommandFamily::COUNT] =
     [const { AtomicU64::new(0) }; HotCoreCommandFamily::COUNT];
+static EXPANDABLE_OPCODES: [AtomicU64; HOT_CORE_EXPANDABLE_OPCODE_COUNT] =
+    [const { AtomicU64::new(0) }; HOT_CORE_EXPANDABLE_OPCODE_COUNT];
+static MACRO_EXPANSIONS: AtomicU64 = AtomicU64::new(0);
+static UNEXPANDABLE_OPCODES: [AtomicU64; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT] =
+    [const { AtomicU64::new(0) }; HOT_CORE_UNEXPANDABLE_OPCODE_COUNT];
+static MATERIALIZATIONS: [AtomicU64; HotCoreMaterialization::COUNT] =
+    [const { AtomicU64::new(0) }; HotCoreMaterialization::COUNT];
+static INTERPRETER_CONSTRUCTIONS: AtomicU64 = AtomicU64::new(0);
+static INTERPRETER_OPERATION_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static PHASE_BOUNDARIES: [AtomicU64; HotCorePhase::COUNT] =
     [const { AtomicU64::new(0) }; HotCorePhase::COUNT];
 
@@ -405,6 +482,38 @@ pub fn record_hot_core_command_family(family: HotCoreCommandFamily) {
     COMMAND_FAMILIES[family.index()].fetch_add(1, Ordering::Relaxed);
 }
 
+pub fn record_hot_core_expandable_opcode(operand: usize) {
+    assert!(
+        operand < HOT_CORE_EXPANDABLE_OPCODE_COUNT,
+        "expandable primitive operand exceeds profiling census"
+    );
+    EXPANDABLE_OPCODES[operand].fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_hot_core_macro_expansion() {
+    MACRO_EXPANSIONS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_hot_core_unexpandable_opcode(operand: usize) {
+    assert!(
+        operand < HOT_CORE_UNEXPANDABLE_OPCODE_COUNT,
+        "unexpandable primitive operand exceeds profiling census"
+    );
+    UNEXPANDABLE_OPCODES[operand].fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_hot_core_materialization(materialization: HotCoreMaterialization) {
+    MATERIALIZATIONS[materialization.index()].fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_hot_core_interpreter_construction() {
+    INTERPRETER_CONSTRUCTIONS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn record_hot_core_interpreter_operation_entry() {
+    INTERPRETER_OPERATION_ENTRIES.fetch_add(1, Ordering::Relaxed);
+}
+
 #[must_use]
 pub fn hot_core_census() -> HotCoreCensus {
     let clone_measurement = |counters: &[AtomicU64; 3]| HotCoreCloneMeasurement {
@@ -443,6 +552,18 @@ pub fn hot_core_census() -> HotCoreCensus {
         command_families: core::array::from_fn(|index| {
             COMMAND_FAMILIES[index].load(Ordering::Relaxed)
         }),
+        expandable_opcodes: core::array::from_fn(|index| {
+            EXPANDABLE_OPCODES[index].load(Ordering::Relaxed)
+        }),
+        macro_expansions: MACRO_EXPANSIONS.load(Ordering::Relaxed),
+        unexpandable_opcodes: core::array::from_fn(|index| {
+            UNEXPANDABLE_OPCODES[index].load(Ordering::Relaxed)
+        }),
+        materializations: core::array::from_fn(|index| {
+            MATERIALIZATIONS[index].load(Ordering::Relaxed)
+        }),
+        interpreter_constructions: INTERPRETER_CONSTRUCTIONS.load(Ordering::Relaxed),
+        interpreter_operation_entries: INTERPRETER_OPERATION_ENTRIES.load(Ordering::Relaxed),
         phase_boundaries: core::array::from_fn(|index| {
             PHASE_BOUNDARIES[index].load(Ordering::Relaxed)
         }),
@@ -501,6 +622,12 @@ mod tests {
         record_hot_core_weak_index(3, 2);
         record_hot_core_provenance_materialization(false);
         record_hot_core_command_family(HotCoreCommandFamily::Character);
+        record_hot_core_expandable_opcode(3);
+        record_hot_core_macro_expansion();
+        record_hot_core_unexpandable_opcode(7);
+        record_hot_core_materialization(HotCoreMaterialization::ScannedStep);
+        record_hot_core_interpreter_construction();
+        record_hot_core_interpreter_operation_entry();
         record_hot_core_phase(HotCorePhase::DeliveryAndScan);
         let delta = hot_core_census().saturating_sub(before);
 
@@ -522,6 +649,15 @@ mod tests {
             delta.command_families[HotCoreCommandFamily::Character.index()],
             1
         );
+        assert_eq!(delta.expandable_opcodes[3], 1);
+        assert_eq!(delta.macro_expansions, 1);
+        assert_eq!(delta.unexpandable_opcodes[7], 1);
+        assert_eq!(
+            delta.materializations[HotCoreMaterialization::ScannedStep.index()],
+            1
+        );
+        assert_eq!(delta.interpreter_constructions, 1);
+        assert_eq!(delta.interpreter_operation_entries, 1);
         assert_eq!(
             delta.phase_boundaries[HotCorePhase::DeliveryAndScan.index()],
             1

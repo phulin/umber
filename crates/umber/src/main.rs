@@ -262,7 +262,7 @@ fn hot_core_census_json(census: &tex_state::measurement::HotCoreCensus) -> Strin
         }
     }
 
-    let mut output = String::from("{\"schema\":1,\"allocations\":{");
+    let mut output = String::from("{\"schema\":2,\"allocations\":{");
     let mut first = true;
     for (name, measurement) in tex_state::measurement::HotCoreAllocationOwner::NAMES
         .into_iter()
@@ -329,7 +329,51 @@ fn hot_core_census_json(census: &tex_state::measurement::HotCoreCensus) -> Strin
         separator(&mut output, &mut first);
         write!(output, "\"{name}\":{count}").expect("writing to a String cannot fail");
     }
-    output.push_str("},\"phase_boundaries\":{");
+    write!(
+        output,
+        "}},\"expansion_opcodes\":{{\"macro\":{},\"primitives\":{{",
+        census.macro_expansions,
+    )
+    .expect("writing to a String cannot fail");
+    first = true;
+    for (operand, count) in census.expandable_opcodes.into_iter().enumerate() {
+        if count == 0 {
+            continue;
+        }
+        let primitive = tex_state::meaning::ExpandablePrimitive::from_operand(operand as u64)
+            .expect("census operand names an expandable primitive");
+        separator(&mut output, &mut first);
+        write!(output, "\"{operand}:{primitive:?}\":{count}")
+            .expect("writing to a String cannot fail");
+    }
+    output.push_str("}},\"dispatch_opcodes\":{\"unexpandable_primitives\":{");
+    first = true;
+    for (operand, count) in census.unexpandable_opcodes.into_iter().enumerate() {
+        if count == 0 {
+            continue;
+        }
+        let primitive = tex_state::meaning::UnexpandablePrimitive::from_operand(operand as u64)
+            .expect("census operand names an unexpandable primitive");
+        separator(&mut output, &mut first);
+        write!(output, "\"{operand}:{primitive:?}\":{count}")
+            .expect("writing to a String cannot fail");
+    }
+    output.push_str("}},\"materializations\":{");
+    first = true;
+    for (name, count) in tex_state::measurement::HotCoreMaterialization::NAMES
+        .into_iter()
+        .zip(census.materializations)
+    {
+        separator(&mut output, &mut first);
+        write!(output, "\"{name}\":{count}").expect("writing to a String cannot fail");
+    }
+    write!(
+        output,
+        "}},\"interpreter\":{{\"constructions\":{},\"operation_entries\":{}}},\"phase_boundaries\":{{",
+        census.interpreter_constructions,
+        census.interpreter_operation_entries,
+    )
+    .expect("writing to a String cannot fail");
     first = true;
     for (name, count) in tex_state::measurement::HotCorePhase::NAMES
         .into_iter()

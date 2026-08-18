@@ -953,6 +953,25 @@ impl CommandProcessor<'_> {
     /// TeX.web's scalar `expand`: each case changes the active input/state
     /// directly, then returns to [`Self::get_x_token_scalar`].
     pub(crate) fn expand(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+        #[cfg(feature = "profiling")]
+        {
+            tex_state::measurement::record_hot_core_materialization(
+                tex_state::measurement::HotCoreMaterialization::ExpansionCommand,
+            );
+            match command.meaning() {
+                Meaning::ExpandablePrimitive(primitive) => {
+                    tex_state::measurement::record_hot_core_expandable_opcode(
+                        usize::try_from(primitive.operand())
+                            .expect("expandable primitive operand fits usize"),
+                    );
+                }
+                Meaning::Macro { .. } => {
+                    tex_state::measurement::record_hot_core_macro_expansion();
+                }
+                Meaning::Undefined => {}
+                _ => unreachable!("expand receives only expandable meanings"),
+            }
+        }
         if self.write_expansion_depth != 0 {
             self.record_write_expansion();
         }

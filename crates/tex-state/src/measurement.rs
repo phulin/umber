@@ -12,13 +12,17 @@ use crate::state_hash::StateHashComponent;
 mod hot_core;
 
 pub use hot_core::{
+    HOT_CORE_EXPANDABLE_OPCODE_COUNT, HOT_CORE_UNEXPANDABLE_OPCODE_COUNT,
     HotCoreAllocationMeasurement, HotCoreAllocationOwner, HotCoreAllocator, HotCoreCensus,
-    HotCoreCloneMeasurement, HotCoreCommandFamily, HotCorePhase, HotCoreStopReason,
-    HotCoreWeakGraphMeasurement, HotCoreWeakIndexMeasurement, hot_core_allocation_scope,
-    hot_core_census, record_hot_core_allocation, record_hot_core_arc_retain,
-    record_hot_core_command_family, record_hot_core_content_hash, record_hot_core_episode,
-    record_hot_core_phase, record_hot_core_provenance_materialization,
-    record_hot_core_snapshot_clone, record_hot_core_weak_index, record_hot_core_weak_retain,
+    HotCoreCloneMeasurement, HotCoreCommandFamily, HotCoreMaterialization, HotCorePhase,
+    HotCoreStopReason, HotCoreWeakGraphMeasurement, HotCoreWeakIndexMeasurement,
+    hot_core_allocation_scope, hot_core_census, record_hot_core_allocation,
+    record_hot_core_arc_retain, record_hot_core_command_family, record_hot_core_content_hash,
+    record_hot_core_episode, record_hot_core_expandable_opcode,
+    record_hot_core_interpreter_construction, record_hot_core_interpreter_operation_entry,
+    record_hot_core_macro_expansion, record_hot_core_materialization, record_hot_core_phase,
+    record_hot_core_provenance_materialization, record_hot_core_snapshot_clone,
+    record_hot_core_unexpandable_opcode, record_hot_core_weak_index, record_hot_core_weak_retain,
     record_hot_core_weak_upgrade,
 };
 

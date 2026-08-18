@@ -3,6 +3,9 @@ name = "tex-command"
 version.workspace = true
 edition.workspace = true
 
+[features]
+profiling = ["tex-state/profiling"]
+
 [dependencies]
 md-5.workspace = true
 posix-regex.workspace = true

@@ -53,7 +53,7 @@ crate. This was `profiling-stats`. The similar-looking `profiling-runner` is
 not part of this axis and is not an axis: it is `required-features` on the
 `gentle-profile` binary (see §3).
 
-Pass-throughs: `tex-exec`, `umber`.
+Pass-throughs: `tex-command`, `tex-exec`, `umber`.
 
 The `umber run --profiling-stats` CLI flag keeps its name. It is a command
 line surface, not a feature, and renaming it would break invocations in

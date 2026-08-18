@@ -5981,6 +5981,10 @@ impl MainControl {
             let cursor = processor.delivery_cursor();
             let scanned =
                 scanned.map_err(|error| PrepareOperationError::with_cursor(error, cursor))?;
+            #[cfg(feature = "profiling")]
+            tex_state::measurement::record_hot_core_materialization(
+                tex_state::measurement::HotCoreMaterialization::ScannedStep,
+            );
             diagnostics.extend(
                 processor
                     .take_semantic_diagnostics()
@@ -6013,6 +6017,10 @@ impl MainControl {
         let scanned = self.resolve_font_resource(scanned, stores)?;
         let scanned = self.resolve_input_stream_resource(scanned, stores)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_materialization(
+            tex_state::measurement::HotCoreMaterialization::PreparedOperation,
+        );
         Ok(PreparedOperation {
             scanned,
             outer_paragraph_was_active,
@@ -6131,6 +6139,10 @@ impl MainControl {
             _ => None,
         };
         let fires_afterassignment = scanned.fires_afterassignment();
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_materialization(
+            tex_state::measurement::HotCoreMaterialization::ApplyStepClone,
+        );
         let mut result = apply_scanned_step(
             scanned.clone(),
             stores,
@@ -8586,9 +8598,17 @@ fn dispatch_main_control_command_inner(
         let mut flags = MeaningFlags::EMPTY;
         loop {
             #[cfg(feature = "profiling")]
-            tex_state::measurement::record_hot_core_command_family(hot_core_command_family(
-                command.meaning(),
-            ));
+            {
+                tex_state::measurement::record_hot_core_command_family(hot_core_command_family(
+                    command.meaning(),
+                ));
+                if let Meaning::UnexpandablePrimitive(primitive) = command.meaning() {
+                    tex_state::measurement::record_hot_core_unexpandable_opcode(
+                        usize::try_from(primitive.operand())
+                            .expect("unexpandable primitive operand fits usize"),
+                    );
+                }
+            }
             match command.meaning() {
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global) => global = true,
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Long) => {

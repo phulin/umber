@@ -1439,7 +1439,7 @@ fn pdf_lowering_omits_dvi_special_and_publishes_all_driver_output() {
 fn profiling_stats_are_reported_only_when_requested() {
     let temp_dir = tempfile::tempdir().expect("create profiling stats temp dir");
     let source = temp_dir.path().join("stats.tex");
-    fs::write(&source, "\\end\n").expect("write profiling stats fixture");
+    fs::write(&source, "\\def\\hot{A}\\hot\\end\n").expect("write profiling stats fixture");
 
     let quiet = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
@@ -1468,7 +1468,7 @@ fn profiling_stats_are_reported_only_when_requested() {
         .find_map(|line| line.strip_prefix("HOT_CORE_CENSUS "))
         .expect("profiling report has hot-core census");
     let census: serde_json::Value = serde_json::from_str(census).expect("census is valid JSON");
-    assert_eq!(census["schema"], 1);
+    assert_eq!(census["schema"], 2);
     assert!(
         census["clones"]["step_snapshot"]["calls"]
             .as_u64()
@@ -1481,6 +1481,21 @@ fn profiling_stats_are_reported_only_when_requested() {
     );
     assert!(
         census["phase_boundaries"]["delivery_and_scan"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+    assert!(
+        census["expansion_opcodes"]["macro"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+    assert!(
+        census["materializations"]["scanned_step"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+    assert!(
+        census["interpreter"]["constructions"]
             .as_u64()
             .is_some_and(|calls| calls > 0)
     );
@@ -1517,7 +1532,7 @@ fn hot_core_census_is_machine_readable_and_request_scoped() {
         .find_map(|line| line.strip_prefix("HOT_CORE_CENSUS "))
         .expect("profiling report has hot-core census");
     let census: serde_json::Value = serde_json::from_str(census).expect("census is valid JSON");
-    assert_eq!(census["schema"], 1);
+    assert_eq!(census["schema"], 2);
     assert!(
         census["allocations"]["command_state_clone"]["calls"]
             .as_u64()
@@ -1537,6 +1552,22 @@ fn hot_core_census_is_machine_readable_and_request_scoped() {
         census["phase_boundaries"]["barrier_decision"]
             .as_u64()
             .is_some_and(|calls| calls > 0)
+    );
+    assert!(
+        census["dispatch_opcodes"]["unexpandable_primitives"]["54:End"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+    assert!(
+        census["materializations"]["apply_step_clone"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+    assert!(
+        census["interpreter"]["operation_entries"]
+            .as_u64()
+            .zip(census["materializations"]["prepared_operation"].as_u64())
+            .is_some_and(|(borrows, operations)| borrows >= operations && operations > 0)
     );
 }
 
