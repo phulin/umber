@@ -296,7 +296,8 @@ impl Stores {
             Meaning::Macro { definition, flags } => Meaning::Macro {
                 definition: self
                     .macros
-                    .resolve_stored(definition)
+                    .resolve_packed_stored(definition)
+                    .or_else(|| self.macros.resolve_stored(definition))
                     .expect("stored macro-definition slot is not live"),
                 flags,
             },

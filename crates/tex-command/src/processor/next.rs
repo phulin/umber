@@ -1046,10 +1046,7 @@ impl CommandProcessor<'_> {
         let output = TracedTokenList::synthetic(self.state.token_list_ref(output_id));
         self.report_named_token_list("output", output.token_list());
         let level = self.command.push_token_level(
-            TokenPayload::Stored {
-                tokens: output.token_ref().clone(),
-                origins: output.origin_ref().clone(),
-            },
+            TokenPayload::stored(output.token_ref().clone(), output.origin_ref().clone()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),
@@ -2055,41 +2052,11 @@ impl CommandProcessor<'_> {
                 .admitted_macro(*admitted)
                 .replacement_word(*definition, index)
                 .map(|spelling| (spelling, None)),
-            TokenPayload::Transient(buffer) => {
-                buffer.get_rooted(index).map(|spelling| (spelling, None))
-            }
-            TokenPayload::InlineTransient(spelling) => {
-                (index == 0).then(|| (spelling.clone(), None))
-            }
-            TokenPayload::BackedUp(buffer) => buffer.get_rooted(index).map(|rooted| {
-                let (token, root) = rooted.into_parts();
-                (
-                    tex_state::token::RootedTracedTokenWord::from_word(token.spelling, root),
-                    token.source_provenance,
-                )
-            }),
-            TokenPayload::InlineBackedUp(token) => (index == 0).then(|| {
-                let (token, root) = token.clone().into_parts();
-                (
-                    tex_state::token::RootedTracedTokenWord::from_word(token.spelling, root),
-                    token.source_provenance,
-                )
-            }),
             TokenPayload::ArgumentRange { arguments, range } => (index
                 < range.end().saturating_sub(range.start()))
             .then(|| parameters.argument_word(*arguments, range.start() + index))
             .flatten()
             .map(|spelling| (spelling, None)),
-            TokenPayload::Stored { tokens, origins } => {
-                let token = *tokens.tokens().get(index)?;
-                let origin = origins
-                    .root(index)
-                    .unwrap_or_else(tex_state::provenance::OriginRef::unknown);
-                Some((
-                    tex_state::token::RootedTracedTokenWord::new(token, origin),
-                    None,
-                ))
-            }
         }?;
         Some((spelling.0, position, cursor.behavior.clone(), spelling.1))
     }
@@ -3775,10 +3742,7 @@ mod tests {
             OriginId::UNKNOWN,
         )]);
         command.push_token_level(
-            TokenPayload::Stored {
-                tokens: stored.token_ref().clone(),
-                origins: stored.origin_ref().clone(),
-            },
+            TokenPayload::stored(stored.token_ref().clone(), stored.origin_ref().clone()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::MacroReplacement,

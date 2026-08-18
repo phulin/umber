@@ -1068,6 +1068,11 @@ impl MacroStore {
             .observation_operand
     }
 
+    #[must_use]
+    pub(crate) fn packed_observation_operand(&self, id: MacroDefinitionId) -> Option<i64> {
+        Some(self.packed_record(id)?.observation_operand)
+    }
+
     #[cfg(test)]
     #[must_use]
     pub(crate) fn contains(&self, id: MacroDefinitionId) -> bool {
@@ -1078,6 +1083,26 @@ impl MacroStore {
     pub(crate) fn resolve_stored(&self, id: MacroDefinitionId) -> Option<MacroDefinitionId> {
         self.resolved_value(id)
             .map(|value| MacroDefinitionId::from_identity(value.identity()))
+    }
+
+    #[must_use]
+    pub(crate) fn resolve_packed_stored(&self, id: MacroDefinitionId) -> Option<MacroDefinitionId> {
+        if id.is_stored() {
+            if let Some(definition) = self
+                .packed_chunks
+                .get(id.raw() as usize / PACKED_MACRO_CHUNK_RECORDS)
+                .and_then(|chunk| {
+                    chunk.records[id.raw() as usize % PACKED_MACRO_CHUNK_RECORDS]
+                        .as_ref()
+                        .map(|record| record.definition)
+                })
+            {
+                return Some(definition);
+            }
+        } else if self.packed_record(id).is_some() {
+            return Some(id);
+        }
+        None
     }
 
     #[must_use]

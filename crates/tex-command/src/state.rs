@@ -533,10 +533,7 @@ impl CommandState {
         reason: StoredReplayReason,
     ) -> CommandReplayEpisode {
         let identity = self.push_token_level(
-            TokenPayload::Stored {
-                tokens: tokens.token_ref().clone(),
-                origins: tokens.origin_ref().clone(),
-            },
+            TokenPayload::stored(tokens.token_ref().clone(), tokens.origin_ref().clone()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -667,10 +664,7 @@ impl CommandState {
     fn push_named_token_list(&mut self, tokens: TracedTokenList, reason: StoredReplayReason) {
         let token_root = tokens.token_ref().clone();
         let level = self.push_token_level(
-            TokenPayload::Stored {
-                tokens: token_root.clone(),
-                origins: tokens.origin_ref().clone(),
-            },
+            TokenPayload::stored(token_root.clone(), tokens.origin_ref().clone()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -1563,10 +1557,10 @@ impl CommandState {
             level.cursor.install_scantokens_eof_context_line();
         }
         Some(self.push_token_level(
-            TokenPayload::Stored {
-                tokens: every_eof.token_ref().clone(),
-                origins: every_eof.origin_ref().clone(),
-            },
+            TokenPayload::stored(
+                every_eof.token_ref().clone(),
+                every_eof.origin_ref().clone(),
+            ),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::EveryEof),
@@ -1697,10 +1691,7 @@ impl CommandState {
         trace: ReplayTrace,
     ) -> InputLevelId {
         self.push_token_level(
-            TokenPayload::Stored {
-                tokens: template.token_ref().clone(),
-                origins: template.origin_ref().clone(),
-            },
+            TokenPayload::stored(template.token_ref().clone(), template.origin_ref().clone()),
             behavior,
             retirement,
             trace,

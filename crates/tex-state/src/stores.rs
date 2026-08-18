@@ -1624,6 +1624,10 @@ impl Stores {
         self.macros.observation_operand(id)
     }
 
+    pub(crate) fn packed_macro_observation_operand(&self, id: MacroDefinitionId) -> Option<i64> {
+        self.macros.packed_observation_operand(id)
+    }
+
     /// Reads the pre-parsed parameter structure for a live macro definition.
     #[must_use]
     pub fn macro_definition_parameter_pattern(
@@ -2389,14 +2393,15 @@ impl Stores {
         self.assert_live_origin(invocation);
         self.assert_live_origin(definition_origin);
         self.assert_live_origin(parent_invocation);
-        self.provenance.allocate(OriginRecord::MacroInvocation(
-            MacroInvocationOrigin::from_nonowning_operand(
-                definition_operand,
-                invocation,
-                definition_origin,
-                parent_invocation,
-            ),
-        ))
+        self.provenance
+            .allocate_unique(OriginRecord::MacroInvocation(
+                MacroInvocationOrigin::from_nonowning_operand(
+                    definition_operand,
+                    invocation,
+                    definition_origin,
+                    parent_invocation,
+                ),
+            ))
     }
 
     pub fn macro_invocation_frame_from_nonowning_operand(

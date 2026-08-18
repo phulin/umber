@@ -93,10 +93,7 @@ fn durable_continuation_materializes_canonical_stored_content_into_new_roots() {
     let source_root = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
     let mut state = CommandState::default();
     state.push_token_level(
-        TokenPayload::Stored {
-            tokens: source_root,
-            origins: tex_state::provenance::OriginListRef::empty(),
-        },
+        TokenPayload::stored(source_root, tex_state::provenance::OriginListRef::empty()),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Inserted,
@@ -207,10 +204,7 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
     state.parameters.next_activation_identity = 11;
     let stored_origins = universe.allocate_origin_list_ref(&[inserted]);
     state.push_token_level(
-        TokenPayload::Stored {
-            tokens: replacement_tokens,
-            origins: stored_origins,
-        },
+        TokenPayload::stored(replacement_tokens, stored_origins),
         TokenBehavior::MacroBody(MacroActivationId(7)),
         RetirementBehavior::Pop,
         ReplayTrace::MacroReplacement,
@@ -230,7 +224,7 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
 
     let mut destination = tex_state::Universe::new();
     let foreign_symbol = destination.intern("foreign").symbol();
-    let foreign_tokens = destination.intern_token_list_ref(&[Token::Cs(foreign_symbol)]);
+    let _foreign_tokens = destination.intern_token_list_ref(&[Token::Cs(foreign_symbol)]);
     let restored = owned
         .materialize(&mut destination)
         .expect("complete recipes materialize");
@@ -282,20 +276,20 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
         .expect("frame resolves through its invocation recipe");
     assert_eq!(resolved.path, "/job/main.tex");
     assert_eq!((resolved.start, resolved.end), (0, 1));
-    assert_ne!(
+    assert_eq!(
         restored
             .input
             .levels
             .iter()
             .find_map(|level| match level {
                 InputLevel::Tokens(cursor) => match &cursor.payload {
-                    TokenPayload::Stored { tokens, .. } => Some(tokens.id()),
+                    TokenPayload::Packed(chunk) => chunk.word(0)?.token(),
                     _ => None,
                 },
                 InputLevel::Source(_) => None,
             })
-            .expect("stored level"),
-        foreign_tokens.id()
+            .expect("packed level"),
+        Token::Cs(restored_activation.name)
     );
 
     let mut restored_state = CommandState::default();
@@ -320,10 +314,7 @@ fn invalid_continuation_recipe_rejects_before_publishing_roots() {
     let tokens = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
     let mut state = CommandState::default();
     state.push_token_level(
-        TokenPayload::Stored {
-            tokens,
-            origins: tex_state::provenance::OriginListRef::empty(),
-        },
+        TokenPayload::stored(tokens, tex_state::provenance::OriginListRef::empty()),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Inserted,

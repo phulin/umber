@@ -5,8 +5,8 @@ use tex_state::token::{Catcode, OriginId, RootedTracedTokenBuffer, Token, Traced
 
 use super::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
-    RootedBackedUpToken, SharedBackedUpBuffer, SharedTokenBuffer, StoredReplayReason,
-    TokenBehavior, TokenCursor, TokenPayload, packed_token_frame,
+    RootedBackedUpToken, StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
+    packed_token_frame,
 };
 use crate::macro_call::MacroArgumentRange;
 
@@ -21,7 +21,7 @@ fn traced(ch: char) -> TracedTokenWord {
 }
 
 #[test]
-fn shared_transient_buffers_own_only_distinct_structural_origins() {
+fn packed_transient_chunks_own_only_distinct_structural_origins() {
     let mut universe = Universe::new();
     let root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
     let first = tex_state::token::RootedTracedTokenWord::new(
@@ -38,21 +38,28 @@ fn shared_transient_buffers_own_only_distinct_structural_origins() {
         },
         root,
     );
-    let rooted = SharedTokenBuffer::new_rooted([first, second]);
-    let direct = SharedTokenBuffer::new([traced('c'), traced('d')]);
+    let rooted = TokenPayload::transient_rooted([first, second]);
+    let direct = TokenPayload::transient([traced('c'), traced('d')]);
 
-    assert_eq!(rooted.0.buffer.roots().len(), 1);
-    assert!(direct.0.buffer.roots().is_empty());
+    let TokenPayload::Packed(rooted) = rooted else {
+        panic!("transient payload is packed");
+    };
+    let TokenPayload::Packed(direct) = direct else {
+        panic!("transient payload is packed");
+    };
+    assert_eq!(rooted.words.roots().len(), 1);
+    assert!(direct.words.roots().is_empty());
     drop(universe);
     assert!(
         rooted
+            .words
             .rooted_words()
             .all(|word| word.origin_ref().record().is_some())
     );
 }
 
 #[test]
-fn transferred_rooted_buffer_preserves_words_and_structural_owners() {
+fn packed_rooted_buffer_preserves_words_and_structural_owners() {
     let mut universe = Universe::new();
     let root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
     let token = tex_state::token::RootedTracedTokenWord::new(
@@ -65,13 +72,17 @@ fn transferred_rooted_buffer_preserves_words_and_structural_owners() {
     let mut source = RootedTracedTokenBuffer::new([token]);
     source.push_unowned(traced('b'));
 
-    let shared = SharedTokenBuffer::from_rooted_buffer(source);
+    let payload = TokenPayload::transient_rooted(source.rooted_words());
+    let TokenPayload::Packed(chunk) = payload else {
+        panic!("transient payload is packed");
+    };
 
-    assert_eq!(shared.words().len(), 2);
-    assert_eq!(shared.0.buffer.roots().len(), 1);
+    assert_eq!(chunk.words.words().len(), 2);
+    assert_eq!(chunk.words.roots().len(), 1);
     drop(universe);
     assert!(
-        shared
+        chunk
+            .words
             .get_rooted(0)
             .expect("first word")
             .origin_ref()
@@ -79,7 +90,8 @@ fn transferred_rooted_buffer_preserves_words_and_structural_owners() {
             .is_some()
     );
     assert!(
-        shared
+        chunk
+            .words
             .get_rooted(1)
             .expect("second word")
             .origin_ref()
@@ -106,10 +118,10 @@ fn token_cursor_classifies_orthogonal_ownership_domains() {
         let _ = frame.advance();
     }
     let cursor = TokenCursor {
-        payload: TokenPayload::Stored {
-            tokens: universe.token_list_ref(TokenListId::EMPTY),
-            origins: tex_state::provenance::OriginListRef::empty(),
-        },
+        payload: TokenPayload::stored(
+            universe.token_list_ref(TokenListId::EMPTY),
+            tex_state::provenance::OriginListRef::empty(),
+        ),
         behavior,
         retirement,
         trace,
@@ -123,7 +135,7 @@ fn token_cursor_classifies_orthogonal_ownership_domains() {
         trace,
         frame,
     } = cursor;
-    assert!(matches!(payload, TokenPayload::Stored { .. }));
+    assert!(matches!(payload, TokenPayload::Packed(_)));
     assert!(matches!(
         behavior,
         TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
@@ -155,8 +167,8 @@ fn macro_argument_ranges_share_one_contiguous_allocation() {
 }
 
 #[test]
-fn backed_up_buffer_prepends_without_reversing_existing_tokens() {
-    let mut buffer = SharedBackedUpBuffer::new(vec![
+fn packed_backup_prepends_without_reversing_existing_tokens() {
+    let mut payload = TokenPayload::backed_up([
         BackedUpToken {
             spelling: traced('b'),
             source_provenance: None,
@@ -167,20 +179,22 @@ fn backed_up_buffer_prepends_without_reversing_existing_tokens() {
         },
     ]);
 
-    buffer.prepend([rooted_backup('a')]);
+    payload
+        .prepend_backed_up([rooted_backup('a')])
+        .expect("backup prepends");
 
     assert_eq!(
         (0..3)
-            .map(|index| buffer.get(index).expect("token exists").spelling)
+            .map(|index| payload.backed_up_get(index).expect("token exists").spelling)
             .collect::<Vec<_>>(),
         [traced('a'), traced('b'), traced('c')]
     );
 }
 
 #[test]
-fn single_token_payload_constructors_select_inline_storage() {
+fn single_token_payload_constructors_select_packed_storage() {
     let transient = TokenPayload::transient([traced('a')]);
-    assert!(matches!(transient, TokenPayload::InlineTransient(word) if word.word() == traced('a')));
+    assert!(matches!(transient, TokenPayload::Packed(chunk) if chunk.word(0) == Some(traced('a'))));
 
     let backed_up = TokenPayload::backed_up([BackedUpToken {
         spelling: traced('b'),
@@ -188,16 +202,17 @@ fn single_token_payload_constructors_select_inline_storage() {
     }]);
     assert!(matches!(
         backed_up,
-        TokenPayload::InlineBackedUp(word) if word.token().spelling == traced('b')
+        TokenPayload::Packed(chunk)
+            if chunk.backed_up_token(0).map(|word| word.spelling) == Some(traced('b'))
     ));
 }
 
 #[test]
-fn multi_token_payload_constructors_select_shared_storage() {
+fn multi_token_payload_constructors_select_packed_storage() {
     let transient = TokenPayload::transient([traced('a'), traced('b')]);
     assert!(matches!(
         transient,
-        TokenPayload::Transient(words) if words.words() == [traced('a'), traced('b')]
+        TokenPayload::Packed(chunk) if chunk.words.words() == [traced('a'), traced('b')]
     ));
 
     let backed_up = TokenPayload::backed_up([
@@ -212,14 +227,14 @@ fn multi_token_payload_constructors_select_shared_storage() {
     ]);
     assert!(matches!(
         backed_up,
-        TokenPayload::BackedUp(words)
-            if words.words().iter().map(|word| word.spelling).collect::<Vec<_>>()
+        TokenPayload::Packed(chunk)
+            if (0..2).map(|index| chunk.backed_up_token(index).unwrap().spelling).collect::<Vec<_>>()
                 == [traced('a'), traced('b')]
     ));
 }
 
 #[test]
-fn prepend_promotes_inline_backup_without_reordering() {
+fn prepend_extends_packed_backup_without_reordering() {
     let mut payload = TokenPayload::backed_up([BackedUpToken {
         spelling: traced('c'),
         source_provenance: None,
@@ -228,20 +243,20 @@ fn prepend_promotes_inline_backup_without_reordering() {
         .prepend_backed_up([rooted_backup('a'), rooted_backup('b')])
         .expect("backed-up payload promotes");
 
-    assert!(matches!(payload, TokenPayload::BackedUp(_)));
+    assert!(matches!(payload, TokenPayload::Packed(_)));
     assert_eq!(
-        payload
-            .backed_up_words()
-            .expect("backed-up words")
-            .iter()
-            .map(|word| word.spelling)
+        (0..3)
+            .map(|index| payload
+                .backed_up_get(index)
+                .expect("backed-up word")
+                .spelling)
             .collect::<Vec<_>>(),
         [traced('a'), traced('b'), traced('c')]
     );
 }
 
 #[test]
-fn inline_payload_origin_adoption_matches_shared_semantics() {
+fn packed_payload_origin_adoption_preserves_semantics() {
     let mut universe = tex_state::Universe::new();
     let recorded_origin = universe.synthetic_origin_ref(SyntheticOriginKind::Engine);
     let live_origin = universe.synthetic_origin_ref(SyntheticOriginKind::Primitive);
@@ -264,15 +279,15 @@ fn inline_payload_origin_adoption_matches_shared_semantics() {
         .expect("matching inline token adopts live origin");
     assert_eq!(
         match recorded {
-            TokenPayload::InlineTransient(word) => word.word().origin(),
-            _ => panic!("singleton remains inline"),
+            TokenPayload::Packed(chunk) => chunk.word(0).expect("singleton word").origin(),
+            _ => panic!("singleton remains packed"),
         },
         live_origin.id()
     );
 }
 
 #[test]
-fn inline_backup_rehomes_source_provenance_in_place() {
+fn packed_backup_rehomes_source_provenance_in_place() {
     let old_source = tex_state::SourceId::new(3);
     let new_source = tex_state::SourceId::new(7);
     let provenance =
@@ -285,11 +300,9 @@ fn inline_backup_rehomes_source_provenance_in_place() {
     payload
         .rehome_backed_up_source(new_source, 5)
         .expect("inline source provenance rehomes");
-    let TokenPayload::InlineBackedUp(word) = payload else {
-        panic!("singleton remains inline");
-    };
-    let rehomed = word
-        .token()
+    let rehomed = payload
+        .backed_up_get(0)
+        .expect("singleton remains packed")
         .source_provenance
         .expect("source provenance remains present");
     assert_eq!(rehomed.range(), crate::SourceRange::new(new_source, 15, 17));
@@ -309,7 +322,7 @@ fn the_dense_level_enum_has_only_source_and_token_variants() {
     }
 
     let level = InputLevel::Tokens(TokenCursor {
-        payload: TokenPayload::Transient(SharedTokenBuffer::new(Vec::<TracedTokenWord>::new())),
+        payload: TokenPayload::transient(Vec::<TracedTokenWord>::new()),
         behavior: TokenBehavior::Ordinary,
         retirement: RetirementBehavior::Pop,
         trace: ReplayTrace::Inserted,

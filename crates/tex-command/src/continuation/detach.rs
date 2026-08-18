@@ -476,10 +476,6 @@ impl<'a> Detacher<'a> {
             TokenPayload::Packed(chunk) => OwnedTokenPayload::Transient(
                 chunk.rooted_words().map(|word| self.word(word)).collect(),
             ),
-            TokenPayload::Stored { tokens, origins } => OwnedTokenPayload::Stored {
-                tokens: self.token_list(tokens),
-                origins: self.origin_list(origins),
-            },
             TokenPayload::MacroReplacement {
                 admitted,
                 definition,
@@ -494,26 +490,6 @@ impl<'a> Detacher<'a> {
                     .map(|word| self.word(word))
                     .collect(),
             ),
-            TokenPayload::Transient(words) => OwnedTokenPayload::Transient(
-                words.rooted_words().map(|word| self.word(word)).collect(),
-            ),
-            TokenPayload::InlineTransient(word) => {
-                OwnedTokenPayload::InlineTransient(self.word(word.clone()))
-            }
-            TokenPayload::BackedUp(words) => OwnedTokenPayload::BackedUp(
-                (0..words.words().len())
-                    .map(|index| {
-                        self.backed_up(
-                            words
-                                .get_rooted(index)
-                                .expect("index from exact backed-up-buffer length"),
-                        )
-                    })
-                    .collect(),
-            ),
-            TokenPayload::InlineBackedUp(word) => {
-                OwnedTokenPayload::InlineBackedUp(self.backed_up(word.clone()))
-            }
             TokenPayload::ArgumentRange { arguments, range } => OwnedTokenPayload::ArgumentRange {
                 buffer: parameters
                     .argument_rooted_words(*arguments)

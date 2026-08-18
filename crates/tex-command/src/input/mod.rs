@@ -15,11 +15,12 @@ mod tokenizer;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use levels::SharedTokenBuffer;
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, PackedInputFrame, ReplayTrace,
-    RetirementBehavior, RootedBackedUpToken, SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel,
-    SourceOpenDepths, SourceRetirement, StoredReplayReason, TokenBehavior, TokenCursor,
-    TokenPayload, packed_token_frame,
+    RetirementBehavior, RootedBackedUpToken, SourceLevel, SourceOpenDepths, SourceRetirement,
+    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload, packed_token_frame,
 };
 pub(crate) use lines::{ReducedSourceSpelling, SourceLineState};
 pub(crate) use source::{
@@ -392,25 +393,6 @@ fn project_token_cursor(
             for index in 0..chunk.len() {
                 project_token(hash, chunk.word(index)?.token()?, state)?;
             }
-        }
-        TokenPayload::Stored { tokens, .. } => {
-            for &token in tokens.tokens() {
-                project_token(hash, token, state)?;
-            }
-        }
-        TokenPayload::Transient(words) => {
-            for word in words.words() {
-                project_token(hash, word.token()?, state)?;
-            }
-        }
-        TokenPayload::InlineTransient(word) => project_token(hash, word.word().token()?, state)?,
-        TokenPayload::BackedUp(words) => {
-            for word in words.words() {
-                project_token(hash, word.spelling.token()?, state)?;
-            }
-        }
-        TokenPayload::InlineBackedUp(word) => {
-            project_token(hash, word.token().spelling.token()?, state)?;
         }
         TokenPayload::MacroReplacement { .. } | TokenPayload::ArgumentRange { .. } => {
             unreachable!("packed macro payloads fail closed above")
@@ -870,11 +852,7 @@ impl InputState {
         ) -> usize {
             match &tokens.payload {
                 TokenPayload::Packed(chunk) => chunk.len(),
-                TokenPayload::Stored { tokens, .. } => tokens.tokens().len(),
                 TokenPayload::MacroReplacement { len, .. } => *len as usize,
-                TokenPayload::Transient(words) => words.len(),
-                TokenPayload::InlineTransient(_) | TokenPayload::InlineBackedUp(_) => 1,
-                TokenPayload::BackedUp(words) => words.words().len(),
                 TokenPayload::ArgumentRange { range, .. } => {
                     range.end().saturating_sub(range.start())
                 }
@@ -889,7 +867,6 @@ impl InputState {
         ) -> Option<tex_state::token::Token> {
             match &tokens.payload {
                 TokenPayload::Packed(chunk) => chunk.word(index).map(|word| word.semantic_token()),
-                TokenPayload::Stored { tokens, .. } => tokens.tokens().get(index).copied(),
                 TokenPayload::MacroReplacement {
                     admitted,
                     definition,
@@ -898,18 +875,6 @@ impl InputState {
                     .admitted_macro(*admitted)
                     .replacement_word(*definition, index)
                     .map(|word| word.word().semantic_token()),
-                TokenPayload::Transient(words) => {
-                    words.get(index).map(|word| word.semantic_token())
-                }
-                TokenPayload::InlineTransient(word) => {
-                    (index == 0).then(|| word.word().semantic_token())
-                }
-                TokenPayload::BackedUp(words) => {
-                    words.get(index).map(|word| word.spelling.semantic_token())
-                }
-                TokenPayload::InlineBackedUp(word) => {
-                    (index == 0).then(|| word.token().spelling.semantic_token())
-                }
                 TokenPayload::ArgumentRange { arguments, range } => parameters
                     .argument_word(*arguments, range.start().saturating_add(index))
                     .map(|word| word.word().semantic_token()),

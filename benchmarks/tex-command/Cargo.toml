@@ -10,11 +10,15 @@ publish = false
 criterion = "0.5"
 stats_alloc = "0.1"
 tex-command = { path = "../../crates/tex-command" }
-tex-state = { path = "../../crates/tex-state" }
+tex-state = { path = "../../crates/tex-state", features = ["profiling"] }
 
 [[bin]]
 name = "command_allocations"
 path = "src/bin/command_allocations.rs"
+
+[[bin]]
+name = "packed_cutover_gate"
+path = "src/bin/packed_cutover_gate.rs"
 
 [[bench]]
 name = "source_descriptor"

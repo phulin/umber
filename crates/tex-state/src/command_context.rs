@@ -1275,6 +1275,13 @@ impl CommandContext<'_> {
             .macro_definition_observation_operand(definition)
     }
 
+    /// Reads the observation coordinate already admitted beside a live macro
+    /// meaning without resolving its reachability owner again.
+    #[must_use]
+    pub fn packed_macro_observation_operand(&self, definition: MacroDefinitionId) -> Option<i64> {
+        self.universe.packed_macro_observation_operand(definition)
+    }
+
     /// Reads the prevalidated parameter-marker layout for one macro definition.
     #[must_use]
     pub fn macro_definition_parameter_pattern(
@@ -1303,6 +1310,24 @@ impl CommandContext<'_> {
             definition_origin,
             parent_invocation,
         )
+    }
+
+    /// Allocates invocation provenance from the observation coordinate held
+    /// by an already admitted macro chunk.
+    pub fn macro_invocation_origin_from_nonowning_operand(
+        &mut self,
+        definition_operand: u64,
+        invocation: OriginId,
+        definition_origin: OriginId,
+        parent_invocation: OriginId,
+    ) -> OriginId {
+        self.universe
+            .macro_invocation_origin_from_nonowning_operand(
+                definition_operand,
+                invocation,
+                definition_origin,
+                parent_invocation,
+            )
     }
 
     /// Creates one structurally rooted macro expansion frame. Its parent,

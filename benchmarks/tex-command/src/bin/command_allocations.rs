@@ -306,9 +306,7 @@ fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, p
                     black_box(
                         processor
                             .expand_output_replay(
-                                case.replay
-                                    .clone()
-                                    .expect("replay fixture is present"),
+                                case.replay.clone().expect("replay fixture is present"),
                             )
                             .expect("output replay expands"),
                     );

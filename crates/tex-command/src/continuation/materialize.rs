@@ -378,21 +378,11 @@ impl<'a> Materializer<'a> {
 
     fn payload(&mut self, payload: &OwnedTokenPayload) -> TokenPayload {
         match payload {
-            OwnedTokenPayload::Stored { tokens, origins } => TokenPayload::Stored {
-                tokens: self.token_list(*tokens),
-                origins: self.origin_list(*origins),
-            },
-            OwnedTokenPayload::Transient(words) => TokenPayload::Transient(
-                SharedTokenBuffer::new_rooted(words.iter().map(|word| self.word(word))),
-            ),
-            OwnedTokenPayload::InlineTransient(word) => {
-                TokenPayload::InlineTransient(self.word(word))
+            OwnedTokenPayload::Transient(words) => {
+                TokenPayload::transient_rooted(words.iter().map(|word| self.word(word)))
             }
-            OwnedTokenPayload::BackedUp(words) => TokenPayload::BackedUp(
-                SharedBackedUpBuffer::new_rooted(words.iter().map(|word| self.backed_up(word))),
-            ),
-            OwnedTokenPayload::InlineBackedUp(word) => {
-                TokenPayload::InlineBackedUp(self.backed_up(word))
+            OwnedTokenPayload::BackedUp(words) => {
+                TokenPayload::backed_up_rooted(words.iter().map(|word| self.backed_up(word)))
             }
             OwnedTokenPayload::ArgumentRange { buffer, range } => TokenPayload::transient_rooted(
                 buffer[range.start()..range.end()]
@@ -468,7 +458,7 @@ impl<'a> Materializer<'a> {
             }
             OwnedInputLevel::Tokens(cursor) => {
                 let behavior = cursor.behavior.clone();
-                let payload = self.payload(&cursor.payload).packed_for_frame(&behavior);
+                let payload = self.payload(&cursor.payload);
                 let mut frame = crate::input::packed_token_frame(
                     cursor.identity,
                     payload.frame_len(),

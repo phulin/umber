@@ -13,8 +13,8 @@ use super::{
     ParameterReplayError, input_level_identity,
 };
 use crate::input::levels::{
-    BackupTreatment, InputLevel, ReplayTrace, RetirementBehavior, SharedBackedUpBuffer,
-    SharedTokenBuffer, StoredReplayReason, TokenBehavior, TokenPayload, TransientReplayReason,
+    BackupTreatment, InputLevel, ReplayTrace, RetirementBehavior, StoredReplayReason,
+    TokenBehavior, TokenPayload, TransientReplayReason,
 };
 
 fn traced(ch: char) -> TracedTokenWord {
@@ -28,7 +28,7 @@ fn traced(ch: char) -> TracedTokenWord {
 }
 
 fn transient_payload(tokens: &[TracedTokenWord]) -> TokenPayload {
-    TokenPayload::Transient(SharedTokenBuffer::new(tokens))
+    TokenPayload::transient(tokens.iter().copied())
 }
 
 fn push_activation(
@@ -98,10 +98,10 @@ fn transient_dynamic_words_count_owned_buffers_once() {
         ReplayTrace::Inserted,
     );
     state.push_token_level(
-        TokenPayload::Stored {
-            tokens: universe.token_list_ref(TokenListId::EMPTY),
-            origins: tex_state::provenance::OriginListRef::empty(),
-        },
+        TokenPayload::stored(
+            universe.token_list_ref(TokenListId::EMPTY),
+            tex_state::provenance::OriginListRef::empty(),
+        ),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Stored(StoredReplayReason::EveryJob),
@@ -118,10 +118,10 @@ fn each_popped_level_retires_exactly_once_with_its_trace() {
     let mut state = CommandState::default();
     let universe = Universe::new();
     let identity = state.push_token_level(
-        TokenPayload::Stored {
-            tokens: universe.token_list_ref(TokenListId::EMPTY),
-            origins: tex_state::provenance::OriginListRef::empty(),
-        },
+        TokenPayload::stored(
+            universe.token_list_ref(TokenListId::EMPTY),
+            tex_state::provenance::OriginListRef::empty(),
+        ),
         TokenBehavior::Ordinary,
         RetirementBehavior::StopAtEnd,
         ReplayTrace::Stored(StoredReplayReason::EveryJob),
@@ -265,55 +265,44 @@ fn exhausted_v_template_reports_its_boundary_before_the_next_fetch_pops_it() {
 }
 
 #[test]
-fn transient_payload_drops_with_its_last_input_owner() {
-    let allocation: Arc<[TracedTokenWord]> = vec![traced('x')].into();
-    let shared = SharedTokenBuffer::new(Arc::clone(&allocation));
-    let weak = shared.downgrade();
+fn transient_payload_is_packed_at_construction() {
     let mut state = CommandState::default();
     let identity = state.push_token_level(
-        TokenPayload::Transient(shared),
+        TokenPayload::transient([traced('x')]),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Inserted,
     );
-    drop(allocation);
-    assert!(
-        !weak.is_live(),
-        "packed input drops the superseded Arc owner at admission"
-    );
+    assert!(matches!(
+        state.input.levels.last(),
+        Some(InputLevel::Tokens(cursor)) if matches!(cursor.payload, TokenPayload::Packed(_))
+    ));
 
     state
         .retire_exhausted_input(identity)
         .expect("transient insertion retires");
-    assert!(!weak.is_live());
 }
 
 #[test]
-fn snapshot_ownership_keeps_transient_payload_live_past_stack_retirement() {
-    let allocation: Arc<[TracedTokenWord]> = vec![traced('x')].into();
-    let shared = SharedTokenBuffer::new(Arc::clone(&allocation));
-    let weak = shared.downgrade();
+fn snapshot_ownership_restores_packed_payload_after_stack_retirement() {
     let mut state = CommandState::default();
     let identity = state.push_token_level(
-        TokenPayload::Transient(shared),
+        TokenPayload::transient([traced('x')]),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Inserted,
     );
     let snapshot = state.snapshot();
-    drop(allocation);
-
-    assert!(
-        !weak.is_live(),
-        "snapshot retains the packed chunk, not its former Arc payload"
-    );
 
     state
         .retire_exhausted_input(identity)
         .expect("live cursor retires");
-    assert!(!weak.is_live());
-    drop(snapshot);
-    assert!(!weak.is_live());
+    state.rollback(snapshot).expect("snapshot restores");
+    assert!(matches!(
+        state.input.levels.last(),
+        Some(InputLevel::Tokens(cursor))
+            if matches!(&cursor.payload, TokenPayload::Packed(chunk) if chunk.word(0) == Some(traced('x')))
+    ));
 }
 
 #[test]
@@ -632,10 +621,7 @@ fn stored_token_reference_lifetime_survives_redefinition_and_replay() {
     let list = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
     let mut state = CommandState::default();
     let level = state.push_token_level(
-        TokenPayload::Stored {
-            tokens: list,
-            origins: tex_state::provenance::OriginListRef::empty(),
-        },
+        TokenPayload::stored(list, tex_state::provenance::OriginListRef::empty()),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Stored(StoredReplayReason::Mark),
@@ -677,10 +663,7 @@ fn snapshot_restores_strong_stored_root_after_live_cursor_retires() {
     }]);
     let mut state = CommandState::default();
     let level = state.push_token_level(
-        TokenPayload::Stored {
-            tokens: root,
-            origins: tex_state::provenance::OriginListRef::empty(),
-        },
+        TokenPayload::stored(root, tex_state::provenance::OriginListRef::empty()),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Stored(StoredReplayReason::Mark),
@@ -863,10 +846,10 @@ fn token_list_kind_reference_and_parameter_stack_lifecycle_matrix() {
     ] {
         let mut state = CommandState::default();
         let identity = state.push_token_level(
-            TokenPayload::Stored {
-                tokens: universe.token_list_ref(TokenListId::EMPTY),
-                origins: tex_state::provenance::OriginListRef::empty(),
-            },
+            TokenPayload::stored(
+                universe.token_list_ref(TokenListId::EMPTY),
+                tex_state::provenance::OriginListRef::empty(),
+            ),
             behavior,
             RetirementBehavior::Pop,
             trace,
@@ -902,7 +885,7 @@ fn backup_inserted_and_macro_levels_retire_in_canonical_order() {
         ReplayTrace::Inserted,
     );
     let backup = state.push_token_level(
-        TokenPayload::BackedUp(SharedBackedUpBuffer::default()),
+        TokenPayload::backed_up([]),
         TokenBehavior::BackedUp(BackupTreatment::Ordinary),
         RetirementBehavior::Pop,
         ReplayTrace::BackedUp,

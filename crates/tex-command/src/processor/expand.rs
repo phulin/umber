@@ -1351,10 +1351,10 @@ impl CommandProcessor<'_> {
         let replacement = scanned.replacement_text;
         let first = replacement.token_ref().tokens().first().copied();
         self.insert_expansion_list(
-            TokenPayload::Stored {
-                tokens: replacement.token_ref().clone(),
-                origins: replacement.origin_ref().clone(),
-            },
+            TokenPayload::stored(
+                replacement.token_ref().clone(),
+                replacement.origin_ref().clone(),
+            ),
             first,
         );
         Ok(())
@@ -1667,10 +1667,7 @@ impl CommandProcessor<'_> {
                 crate::InternalValue::Tokens { tokens } => {
                     let first = tokens.tokens().first().copied();
                     self.insert_expansion_list(
-                        TokenPayload::Stored {
-                            tokens,
-                            origins: tex_state::provenance::OriginListRef::empty(),
-                        },
+                        TokenPayload::stored(tokens, tex_state::provenance::OriginListRef::empty()),
                         first,
                     );
                 }
@@ -2080,10 +2077,10 @@ impl CommandProcessor<'_> {
 
     fn push_mark_text(&mut self, tokens: TokenListId) {
         let level = self.command.push_token_level(
-            TokenPayload::Stored {
-                tokens: self.state.token_list_ref(tokens),
-                origins: tex_state::provenance::OriginListRef::empty(),
-            },
+            TokenPayload::stored(
+                self.state.token_list_ref(tokens),
+                tex_state::provenance::OriginListRef::empty(),
+            ),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::Mark),
@@ -2241,9 +2238,19 @@ impl CommandProcessor<'_> {
                 provenance.definition_ref().id()
             });
         let parent = self.command.parameters.parent_invocation();
-        let invocation =
-            self.state
-                .macro_invocation_origin(definition, call_site, definition_origin, parent);
+        let definition_operand = self
+            .command
+            .parameters
+            .macro_owner(definition)
+            .observation_operand(definition)
+            .expect("active macro definition has an admitted observation operand")
+            as u64;
+        let invocation = self.state.macro_invocation_origin_from_nonowning_operand(
+            definition_operand,
+            call_site,
+            definition_origin,
+            parent,
+        );
         self.command
             .push_macro_activation(name, definition, arguments, invocation, admitted)
     }

@@ -5551,6 +5551,12 @@ impl Universe {
         self.stores.macro_definition_observation_operand(id)
     }
 
+    #[doc(hidden)]
+    #[must_use]
+    pub fn packed_macro_observation_operand(&self, id: MacroDefinitionId) -> Option<i64> {
+        self.stores.packed_macro_observation_operand(id)
+    }
+
     #[must_use]
     pub fn macro_definition_parameter_pattern(
         &self,

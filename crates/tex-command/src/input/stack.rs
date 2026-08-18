@@ -205,7 +205,6 @@ impl CommandState {
         // TeX82 §321 checks `input_ptr` before `push_input` increments it.
         self.usage.record_input_push(self.input.levels.len());
         let identity = self.allocate_input_level_identity();
-        let payload = payload.packed_for_frame(&behavior);
         let frame =
             super::packed_token_frame(identity, payload.frame_len(), &behavior, retirement, &trace);
         self.input.levels.push(InputLevel::Tokens(TokenCursor {

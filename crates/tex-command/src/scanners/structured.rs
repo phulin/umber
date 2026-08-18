@@ -2581,10 +2581,7 @@ impl CommandProcessor<'_> {
         // above it exactly as TeX82's three `ins_list` calls do.
         let stopper_level = self.push_write_recovery([right_brace, endwrite], right_brace);
         let write_level = self.command.push_token_level(
-            TokenPayload::Stored {
-                tokens: tokens.token_ref().clone(),
-                origins: tokens.origin_ref().clone(),
-            },
+            TokenPayload::stored(tokens.token_ref().clone(), tokens.origin_ref().clone()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::Write),

@@ -1,8 +1,6 @@
 //! Dense source and token-list input-level ownership.
 #![allow(dead_code)] // consumed by the ordered raw-delivery implementation issues
 
-use std::sync::Arc;
-
 use smallvec::SmallVec;
 use tex_state::ids::MacroDefinitionId;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
@@ -174,26 +172,12 @@ pub(crate) enum TokenPayload {
     /// hooks, templates, insertions, and backup. The sparse roots are owned
     /// once by the chunk rather than by each input frame or delivered word.
     Packed(PackedTokenChunk),
-    /// Immutable semantic tokens and their parallel immutable origins.
-    Stored {
-        tokens: TokenListRef,
-        origins: OriginListRef,
-    },
     /// Replacement replay borrowed from one command-admitted macro chunk.
     MacroReplacement {
         admitted: u32,
         definition: MacroDefinitionId,
         len: u32,
     },
-    /// Tokens materialized for a bounded insertion or scanner operation.
-    Transient(SharedTokenBuffer),
-    /// One transient token stored directly in its input level.
-    InlineTransient(RootedTracedTokenWord),
-    /// One command restored by TeX's `back_input`, retaining the committed
-    /// physical spelling range if it originally came from registered source.
-    BackedUp(SharedBackedUpBuffer),
-    /// One backed-up command stored directly in its input level.
-    InlineBackedUp(RootedBackedUpToken),
     /// One already materialized macro argument, replayed literally by range.
     ArgumentRange {
         arguments: crate::macro_call::MacroArguments,
@@ -212,56 +196,6 @@ pub(crate) struct PackedTokenChunk {
 }
 
 impl PackedTokenChunk {
-    fn from_payload(payload: TokenPayload) -> TokenPayload {
-        match payload {
-            TokenPayload::Packed(chunk) => TokenPayload::Packed(chunk),
-            TokenPayload::Transient(buffer) => TokenPayload::Packed(Self {
-                words: RootedTracedTokenBuffer::new(buffer.rooted_words()),
-                source_provenance: smallvec::smallvec![None; buffer.len()],
-                backed_up: false,
-            }),
-            TokenPayload::InlineTransient(word) => TokenPayload::Packed(Self {
-                words: RootedTracedTokenBuffer::new([word]),
-                source_provenance: smallvec::smallvec![None],
-                backed_up: false,
-            }),
-            TokenPayload::BackedUp(buffer) => {
-                let len = buffer.words().len();
-                let rooted = (0..len).map(|index| {
-                    let token = buffer
-                        .get_rooted(index)
-                        .expect("index from packed backup length");
-                    let (token, root) = token.into_parts();
-                    RootedTracedTokenWord::from_word(token.spelling, root)
-                });
-                let source_provenance = buffer
-                    .words()
-                    .iter()
-                    .map(|token| token.source_provenance)
-                    .collect();
-                TokenPayload::Packed(Self {
-                    words: RootedTracedTokenBuffer::new(rooted),
-                    source_provenance,
-                    backed_up: true,
-                })
-            }
-            TokenPayload::InlineBackedUp(token) => {
-                let (token, root) = token.into_parts();
-                TokenPayload::Packed(Self {
-                    words: RootedTracedTokenBuffer::new([RootedTracedTokenWord::from_word(
-                        token.spelling,
-                        root,
-                    )]),
-                    source_provenance: smallvec::smallvec![token.source_provenance],
-                    backed_up: true,
-                })
-            }
-            payload @ (TokenPayload::Stored { .. }
-            | TokenPayload::MacroReplacement { .. }
-            | TokenPayload::ArgumentRange { .. }) => payload,
-        }
-    }
-
     fn from_stored(tokens: TokenListRef, origins: OriginListRef) -> Self {
         let words = tokens
             .tokens()
@@ -324,103 +258,66 @@ impl PackedTokenChunk {
 }
 
 impl TokenPayload {
-    pub(crate) fn packed_for_frame(self, behavior: &TokenBehavior) -> Self {
-        match self {
-            Self::Stored { tokens, origins }
-                if !matches!(behavior, TokenBehavior::MacroBody(_)) =>
-            {
-                Self::Packed(PackedTokenChunk::from_stored(tokens, origins))
-            }
-            payload => PackedTokenChunk::from_payload(payload),
-        }
+    #[cfg(test)]
+    #[allow(non_snake_case)]
+    pub(crate) fn Transient(buffer: SharedTokenBuffer) -> Self {
+        Self::transient_rooted(buffer.rooted_words())
+    }
+
+    pub(crate) fn stored(tokens: TokenListRef, origins: OriginListRef) -> Self {
+        Self::Packed(PackedTokenChunk::from_stored(tokens, origins))
     }
 
     pub(crate) fn frame_len(&self) -> usize {
         match self {
             Self::Packed(chunk) => chunk.len(),
-            Self::Stored { tokens, .. } => tokens.tokens().len(),
             Self::MacroReplacement { len, .. } => *len as usize,
-            Self::Transient(words) => words.len(),
-            Self::InlineTransient(_) | Self::InlineBackedUp(_) => 1,
-            Self::BackedUp(words) => words.words().len(),
             Self::ArgumentRange { range, .. } => range.end().saturating_sub(range.start()),
         }
     }
 
-    /// Selects inline storage for one transient token and shared storage for
-    /// empty or multi-token payloads. The fixed two-token case constructs its
-    /// shared slice directly from an array; longer iterators materialize the
-    /// unbounded owned buffer once.
+    /// Packs one bounded insertion or scanner result directly into its sole
+    /// live chunk representation.
     pub(crate) fn transient(tokens: impl IntoIterator<Item = TracedTokenWord>) -> Self {
-        let mut tokens = tokens.into_iter();
-        let Some(first) = tokens.next() else {
-            return Self::Transient(SharedTokenBuffer::default());
-        };
-        let Some(second) = tokens.next() else {
-            return Self::InlineTransient(RootedTracedTokenWord::unowned(first));
-        };
-        let Some(third) = tokens.next() else {
-            return Self::Transient(SharedTokenBuffer::new([first, second]));
-        };
-        let (lower, _) = tokens.size_hint();
-        let mut shared = Vec::with_capacity(lower.saturating_add(3));
-        shared.extend([first, second, third]);
-        shared.extend(tokens);
-        Self::Transient(SharedTokenBuffer::new(shared))
+        Self::transient_rooted(tokens.into_iter().map(RootedTracedTokenWord::unowned))
     }
 
-    /// Selects shared structural storage for rooted transient positions.
-    /// Rooted singletons deliberately do not use the raw inline form.
+    /// Packs rooted transient positions without an intermediate shared owner.
     pub(crate) fn transient_rooted(
         tokens: impl IntoIterator<Item = RootedTracedTokenWord>,
     ) -> Self {
-        let mut tokens = tokens.into_iter();
-        let Some(first) = tokens.next() else {
-            return Self::Transient(SharedTokenBuffer::default());
-        };
-        let Some(second) = tokens.next() else {
-            return Self::InlineTransient(first);
-        };
-        Self::Transient(SharedTokenBuffer::new_rooted(
-            [first, second].into_iter().chain(tokens),
-        ))
+        let words = RootedTracedTokenBuffer::new(tokens);
+        let len = words.len();
+        Self::Packed(PackedTokenChunk {
+            words,
+            source_provenance: smallvec::smallvec![None; len],
+            backed_up: false,
+        })
     }
 
-    /// Selects inline storage for one backed-up command and shared storage for
-    /// empty or multi-token payloads.
+    /// Packs commands restored by `back_input` into the canonical chunk.
     pub(crate) fn backed_up(tokens: impl IntoIterator<Item = BackedUpToken>) -> Self {
-        let mut tokens = tokens.into_iter();
-        let Some(first) = tokens.next() else {
-            return Self::BackedUp(SharedBackedUpBuffer::default());
-        };
-        let Some(second) = tokens.next() else {
-            return Self::InlineBackedUp(RootedBackedUpToken::unowned(first));
-        };
-        let (lower, _) = tokens.size_hint();
-        let mut shared = Vec::with_capacity(lower.saturating_add(2));
-        shared.extend([first, second]);
-        shared.extend(tokens);
-        Self::BackedUp(SharedBackedUpBuffer::new(shared))
+        Self::backed_up_rooted(tokens.into_iter().map(RootedBackedUpToken::unowned))
     }
 
     pub(crate) fn backed_up_rooted(tokens: impl IntoIterator<Item = RootedBackedUpToken>) -> Self {
-        let mut tokens = tokens.into_iter();
-        let Some(first) = tokens.next() else {
-            return Self::BackedUp(SharedBackedUpBuffer::default());
-        };
-        let Some(second) = tokens.next() else {
-            return Self::InlineBackedUp(first);
-        };
-        Self::BackedUp(SharedBackedUpBuffer::new_rooted(
-            [first, second].into_iter().chain(tokens),
-        ))
+        let mut words = RootedTracedTokenBuffer::default();
+        let mut source_provenance = SmallVec::new();
+        for token in tokens {
+            let (token, root) = token.into_parts();
+            words.push(RootedTracedTokenWord::from_word(token.spelling, root));
+            source_provenance.push(token.source_provenance);
+        }
+        Self::Packed(PackedTokenChunk {
+            words,
+            source_provenance,
+            backed_up: true,
+        })
     }
 
     pub(crate) fn transient_words(&self) -> Option<&[TracedTokenWord]> {
         match self {
             Self::Packed(chunk) if !chunk.backed_up => Some(chunk.words.words()),
-            Self::Transient(words) => Some(words.words()),
-            Self::InlineTransient(_) => None,
             _ => None,
         }
     }
@@ -428,17 +325,6 @@ impl TokenPayload {
     pub(crate) fn transient_len(&self) -> Option<usize> {
         match self {
             Self::Packed(chunk) if !chunk.backed_up => Some(chunk.len()),
-            Self::Transient(words) => Some(words.len()),
-            Self::InlineTransient(_) => Some(1),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn backed_up_words(&self) -> Option<&[BackedUpToken]> {
-        match self {
-            Self::Packed(_) => None,
-            Self::BackedUp(words) => Some(words.words()),
-            Self::InlineBackedUp(_) => None,
             _ => None,
         }
     }
@@ -446,8 +332,6 @@ impl TokenPayload {
     pub(crate) fn backed_up_len(&self) -> Option<usize> {
         match self {
             Self::Packed(chunk) if chunk.backed_up => Some(chunk.len()),
-            Self::BackedUp(words) => Some(words.words().len()),
-            Self::InlineBackedUp(_) => Some(1),
             _ => None,
         }
     }
@@ -455,15 +339,12 @@ impl TokenPayload {
     pub(crate) fn backed_up_get(&self, index: usize) -> Option<BackedUpToken> {
         match self {
             Self::Packed(chunk) => chunk.backed_up_token(index),
-            Self::BackedUp(words) => words.get(index),
-            Self::InlineBackedUp(word) => (index == 0).then(|| word.token()),
             _ => None,
         }
     }
 
     pub(crate) fn is_backed_up(&self) -> bool {
         matches!(self, Self::Packed(chunk) if chunk.backed_up)
-            || matches!(self, Self::BackedUp(_) | Self::InlineBackedUp(_))
     }
 
     /// Prepends e-TeX aftergroup tokens, promoting inline storage when the
@@ -487,12 +368,6 @@ impl TokenPayload {
                 chunk.words = words;
                 chunk.source_provenance = provenance;
             }
-            Self::Packed(_) => return None,
-            Self::BackedUp(words) => words.prepend(prefix),
-            Self::InlineBackedUp(word) => {
-                prefix.push(word.clone());
-                *self = Self::backed_up_rooted(prefix);
-            }
             _ => return None,
         }
         Some(())
@@ -506,13 +381,6 @@ impl TokenPayload {
         match self {
             Self::Packed(chunk) if chunk.backed_up => {
                 for provenance in chunk.source_provenance.iter_mut().flatten() {
-                    provenance.rehome(source, byte_delta)?;
-                }
-                Some(())
-            }
-            Self::BackedUp(words) => words.rehome_source(source, byte_delta),
-            Self::InlineBackedUp(word) => {
-                if let Some(provenance) = &mut word.token.source_provenance {
                     provenance.rehome(source, byte_delta)?;
                 }
                 Some(())
@@ -538,283 +406,43 @@ impl TokenPayload {
             *self = Self::Packed(live.clone());
             return Some(());
         }
-        if let (Self::InlineTransient(recorded), Self::InlineTransient(live)) = (&*self, live) {
-            if recorded.word().token() != live.word().token() {
-                return None;
-            }
-            *self = Self::InlineTransient(live.clone());
-            return Some(());
-        }
-        if let (Self::InlineBackedUp(recorded), Self::InlineBackedUp(live)) = (&*self, live) {
-            if recorded.token().spelling.token() != live.token().spelling.token()
-                || recorded.token().source_provenance != live.token().source_provenance
-            {
-                return None;
-            }
-            *self = Self::InlineBackedUp(live.clone());
-            return Some(());
-        }
-        if let (Some(recorded), Some(live_words)) = (self.transient_words(), live.transient_words())
-        {
-            if recorded.len() != live_words.len()
-                || recorded
-                    .iter()
-                    .zip(live_words)
-                    .any(|(recorded, live)| recorded.token() != live.token())
-            {
-                return None;
-            }
-            *self = live.clone();
-            return Some(());
-        }
-        let (Some(recorded), Some(live_words)) = (self.backed_up_words(), live.backed_up_words())
-        else {
-            return None;
-        };
-        if recorded.len() != live_words.len()
-            || recorded.iter().zip(live_words).any(|(recorded, live)| {
-                recorded.spelling.token() != live.spelling.token()
-                    || recorded.source_provenance != live.source_provenance
-            })
-        {
-            return None;
-        }
-        *self = live.clone();
-        Some(())
+        None
     }
 }
 
-/// Shared ownership of a contiguous traced-token allocation.
-///
-/// Cloning a cursor or snapshot retains the allocation rather than copying its
-/// tokens. A macro activation and its parameter cursors may share this value.
-#[derive(Debug, Eq, Hash, PartialEq)]
-struct SharedTokenBufferValue {
-    /// Inline-small scanner storage retained directly by the shared owner.
-    /// Its roots remain sorted and distinct; direct, fallback, and unknown
-    /// positions are represented by their packed words alone.
-    buffer: tex_state::token::RootedTracedTokenBuffer,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct SharedTokenBuffer(Arc<SharedTokenBufferValue>);
+/// Test-fixture staging for callers that deliberately exercise the private
+/// input boundary. It owns no shared runtime authority and is converted to a
+/// packed chunk before a level exists.
+#[cfg(test)]
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub(crate) struct SharedTokenBuffer(RootedTracedTokenBuffer);
 
 #[cfg(test)]
-pub(crate) struct SharedTokenBufferWeak(std::sync::Weak<SharedTokenBufferValue>);
-
-#[cfg(test)]
-impl SharedTokenBufferWeak {
-    pub(crate) fn is_live(&self) -> bool {
-        self.0.upgrade().is_some()
-    }
-}
-
-impl Default for SharedTokenBuffer {
-    fn default() -> Self {
-        Self::new([])
-    }
-}
-
 impl SharedTokenBuffer {
-    #[cfg(test)]
-    pub(crate) fn downgrade(&self) -> SharedTokenBufferWeak {
-        SharedTokenBufferWeak(Arc::downgrade(&self.0))
-    }
-
-    /// Builds a rootless buffer. Arena-backed words are rejected because a
-    /// raw id cannot confer ownership on its provenance atom.
     pub(crate) fn new(tokens: impl AsRef<[TracedTokenWord]>) -> Self {
-        Self::new_rooted(
+        Self(RootedTracedTokenBuffer::new(
             tokens
                 .as_ref()
                 .iter()
                 .copied()
                 .map(RootedTracedTokenWord::unowned),
-        )
+        ))
     }
 
     pub(crate) fn new_rooted(tokens: impl IntoIterator<Item = RootedTracedTokenWord>) -> Self {
-        Self(Arc::new(SharedTokenBufferValue {
-            buffer: tex_state::token::RootedTracedTokenBuffer::new(tokens),
-        }))
+        Self(RootedTracedTokenBuffer::new(tokens))
     }
 
-    /// Freezes a scanner-owned buffer by transferring its paired word and
-    /// provenance-root allocations. Macro matching is the hot caller: it has
-    /// already established the same sorted-root invariant while collecting
-    /// arguments, so replay need not iterate, clone roots, and rebuild words.
-    pub(crate) fn from_rooted_buffer(buffer: tex_state::token::RootedTracedTokenBuffer) -> Self {
-        Self(Arc::new(SharedTokenBufferValue { buffer }))
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.0.buffer.len()
-    }
-
-    pub(crate) fn get(&self, index: usize) -> Option<TracedTokenWord> {
-        self.0.buffer.get(index)
-    }
-
-    pub(crate) fn get_rooted(&self, index: usize) -> Option<RootedTracedTokenWord> {
-        self.0.buffer.get_rooted(index)
+    pub(crate) fn from_rooted_buffer(buffer: RootedTracedTokenBuffer) -> Self {
+        Self(buffer)
     }
 
     pub(crate) fn words(&self) -> &[TracedTokenWord] {
-        self.0.buffer.words()
+        self.0.words()
     }
 
     pub(crate) fn rooted_words(&self) -> impl ExactSizeIterator<Item = RootedTracedTokenWord> + '_ {
-        (0..self.len()).map(|index| {
-            self.get_rooted(index)
-                .expect("index from the exact shared-buffer length")
-        })
-    }
-
-    pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
-        if self.0.buffer.len() != live.0.buffer.len()
-            || self
-                .0
-                .buffer
-                .words()
-                .iter()
-                .zip(live.0.buffer.words().iter())
-                .any(|(recorded, live)| recorded.token() != live.token())
-        {
-            return None;
-        }
-        self.0 = Arc::clone(&live.0);
-        Some(())
-    }
-}
-
-/// Shared ownership of commands restored by `back_input` or scanner replay.
-///
-/// The range is delivery metadata, separate from the token's semantic and
-/// opaque-origin identity, so reusing it cannot affect fixture identities.
-#[derive(Debug, Eq, Hash, PartialEq)]
-struct SharedBackedUpBufferValue {
-    tokens: Box<[BackedUpToken]>,
-    roots: Box<[OriginRef]>,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct SharedBackedUpBuffer(Arc<SharedBackedUpBufferValue>);
-
-impl Default for SharedBackedUpBuffer {
-    fn default() -> Self {
-        Self::new([])
-    }
-}
-
-impl SharedBackedUpBuffer {
-    pub(crate) fn new(tokens: impl AsRef<[BackedUpToken]>) -> Self {
-        Self::new_rooted(
-            tokens
-                .as_ref()
-                .iter()
-                .copied()
-                .map(RootedBackedUpToken::unowned),
-        )
-    }
-
-    pub(crate) fn new_rooted(tokens: impl IntoIterator<Item = RootedBackedUpToken>) -> Self {
-        let mut words = Vec::new();
-        let mut roots = Vec::new();
-        for rooted in tokens {
-            let (token, root) = rooted.into_parts();
-            words.push(token);
-            if root.record().is_some() {
-                match roots.binary_search_by_key(&root.id(), OriginRef::id) {
-                    Ok(_) => {}
-                    Err(index) => roots.insert(index, root),
-                }
-            }
-        }
-        Self(Arc::new(SharedBackedUpBufferValue {
-            tokens: words.into_boxed_slice(),
-            roots: roots.into_boxed_slice(),
-        }))
-    }
-
-    pub(crate) fn get(&self, index: usize) -> Option<BackedUpToken> {
-        self.0.tokens.get(index).copied()
-    }
-
-    pub(crate) fn get_rooted(&self, index: usize) -> Option<RootedBackedUpToken> {
-        let token = self.get(index)?;
-        let root = self
-            .0
-            .roots
-            .binary_search_by_key(&token.spelling.origin(), OriginRef::id)
-            .map_or_else(
-                |_| OriginRef::direct(token.spelling.origin()),
-                |index| self.0.roots[index].clone(),
-            );
-        Some(RootedBackedUpToken { token, root })
-    }
-
-    pub(crate) fn words(&self) -> &[BackedUpToken] {
-        &self.0.tokens
-    }
-
-    /// Prepends tokens to e-TeX's active optimized `backed_up` list.
-    pub(crate) fn prepend(&mut self, prefix: impl IntoIterator<Item = RootedBackedUpToken>) {
-        let mut tokens = prefix.into_iter().collect::<Vec<_>>();
-        tokens.extend((0..self.0.tokens.len()).map(|index| {
-            self.get_rooted(index)
-                .expect("index from exact backed-up-buffer length")
-        }));
-        *self = Self::new_rooted(tokens);
-    }
-
-    pub(crate) fn rehome_source(
-        &mut self,
-        source: tex_state::SourceId,
-        byte_delta: i64,
-    ) -> Option<()> {
-        let mut tokens = self.0.tokens.to_vec();
-        for token in &mut tokens {
-            if let Some(provenance) = &mut token.source_provenance {
-                provenance.rehome(source, byte_delta)?;
-            }
-        }
-        let rooted = tokens.into_iter().enumerate().map(|(index, token)| {
-            let old = self
-                .get_rooted(index)
-                .expect("rehome preserves backed-up-buffer length");
-            RootedBackedUpToken::new(token, old.origin_ref().clone())
-        });
-        *self = Self::new_rooted(rooted);
-        Some(())
-    }
-
-    pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
-        if self.0.tokens.len() != live.0.tokens.len() {
-            return None;
-        }
-        let mut tokens = self.0.tokens.to_vec();
-        for (recorded, live) in tokens.iter_mut().zip(live.0.tokens.iter()) {
-            if recorded.spelling.token() != live.spelling.token()
-                || recorded.source_provenance != live.source_provenance
-            {
-                return None;
-            }
-            recorded.spelling = tex_state::token::TracedTokenWord::pack(
-                live.spelling.token()?,
-                live.spelling.origin(),
-            );
-        }
-        let rooted = tokens.into_iter().enumerate().map(|(index, token)| {
-            RootedBackedUpToken::new(
-                token,
-                live.get_rooted(index)
-                    .expect("matching buffers have equal lengths")
-                    .origin_ref()
-                    .clone(),
-            )
-        });
-        *self = Self::new_rooted(rooted);
-        Some(())
+        self.0.rooted_words()
     }
 }
 

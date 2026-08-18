@@ -21,9 +21,8 @@ use tex_state::token_store::TokenListRef;
 use crate::conditionals::{ConditionFrame, ConditionStack, ConditionalKind, IfLimit};
 use crate::input::{
     BackedUpToken, InputLevel, InputLevelId, InputState, RegisteredSource, RegisteredSourceKind,
-    ReplayTrace, RetirementBehavior, SharedBackedUpBuffer, SharedTokenBuffer, SourceFramingPolicy,
-    SourceLevel, SourceNameClass, SourceOpenDepths, SourceProvenance, SourceRetirement,
-    TokenBehavior, TokenCursor, TokenPayload,
+    ReplayTrace, RetirementBehavior, SourceFramingPolicy, SourceLevel, SourceNameClass,
+    SourceOpenDepths, SourceProvenance, SourceRetirement, TokenBehavior, TokenCursor, TokenPayload,
 };
 use crate::macro_call::{MacroActivationId, MacroArgumentRange, ParameterState};
 use crate::processor::{ConditionId, ExpansionState};
@@ -159,14 +158,8 @@ struct OwnedMacro {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum OwnedTokenPayload {
-    Stored {
-        tokens: TokenListRecipeId,
-        origins: OriginListRecipeId,
-    },
     Transient(Vec<OwnedWord>),
-    InlineTransient(OwnedWord),
     BackedUp(Vec<OwnedBackedUpToken>),
-    InlineBackedUp(OwnedBackedUpToken),
     ArgumentRange {
         buffer: Vec<OwnedWord>,
         range: MacroArgumentRange,
@@ -646,25 +639,11 @@ impl OwnedCommandContinuation {
             }
             OwnedInputLevel::Tokens(cursor) => {
                 let len = match &cursor.payload {
-                    OwnedTokenPayload::Stored { tokens, origins } => {
-                        if tokens.0 >= self.token_lists.len()
-                            || origins.0 >= self.origin_lists.len()
-                        {
-                            return Err(CommandContinuationError::InvalidRecipe(
-                                "stored input references missing content",
-                            ));
-                        }
-                        self.token_lists[tokens.0].len()
-                    }
                     OwnedTokenPayload::Transient(words) => {
                         for word in words {
                             self.validate_word(word)?;
                         }
                         words.len()
-                    }
-                    OwnedTokenPayload::InlineTransient(word) => {
-                        self.validate_word(word)?;
-                        1
                     }
                     OwnedTokenPayload::BackedUp(words) => {
                         for word in words {
@@ -681,10 +660,6 @@ impl OwnedCommandContinuation {
                             }
                         }
                         words.len()
-                    }
-                    OwnedTokenPayload::InlineBackedUp(word) => {
-                        self.validate_word(&word.spelling)?;
-                        1
                     }
                     OwnedTokenPayload::ArgumentRange { buffer, range } => {
                         for word in buffer {

@@ -310,21 +310,11 @@ const _: fn(&OwnedOrigin) = |value| match value {
 
 impl HandleFreeSchema for OwnedTokenPayload {}
 const _: fn(&OwnedTokenPayload) = |value| match value {
-    OwnedTokenPayload::Stored { tokens, origins } => {
-        let _: &TokenListRecipeId = tokens;
-        let _: &OriginListRecipeId = origins;
-    }
     OwnedTokenPayload::Transient(words) => {
         let _: &Vec<OwnedWord> = words;
     }
-    OwnedTokenPayload::InlineTransient(word) => {
-        let _: &OwnedWord = word;
-    }
     OwnedTokenPayload::BackedUp(words) => {
         let _: &Vec<OwnedBackedUpToken> = words;
-    }
-    OwnedTokenPayload::InlineBackedUp(word) => {
-        let _: &OwnedBackedUpToken = word;
     }
     OwnedTokenPayload::ArgumentRange { buffer, range } => {
         let _: &Vec<OwnedWord> = buffer;
