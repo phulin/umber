@@ -114,6 +114,16 @@ const _: () = assert!(core::mem::size_of::<PackedMacroPattern>() == 52);
 const _: () = assert!(core::mem::size_of::<PackedMacroRecord>() == 112);
 
 impl PackedMacroChunkOwner {
+    /// Returns the dense owner-chunk coordinate for one macro definition.
+    ///
+    /// Live command state uses this coordinate to cache the admitted owner.
+    /// The exact definition identity is still checked by [`Self::contains`],
+    /// so a recycled slot cannot alias an older chunk generation.
+    #[must_use]
+    pub const fn chunk_index(definition: MacroDefinitionId) -> u32 {
+        definition.raw() / PACKED_MACRO_CHUNK_RECORDS as u32
+    }
+
     fn record(&self, definition: MacroDefinitionId) -> Option<&PackedMacroRecord> {
         let index = definition.raw() as usize % PACKED_MACRO_CHUNK_RECORDS;
         self.chunk
@@ -136,8 +146,7 @@ impl PackedMacroChunkOwner {
             .flatten()
             .next()
             .is_some_and(|record| {
-                record.definition.raw() / PACKED_MACRO_CHUNK_RECORDS as u32
-                    == definition.raw() / PACKED_MACRO_CHUNK_RECORDS as u32
+                Self::chunk_index(record.definition) == Self::chunk_index(definition)
             })
     }
 

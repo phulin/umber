@@ -95,6 +95,43 @@ fn ten_thousand_macro_argument_and_invocation_cycles_reuse_warmed_chunks() {
 }
 
 #[test]
+fn admitted_macro_owners_are_directly_indexed_by_packed_chunk() {
+    let mut universe = Universe::new();
+    let mut definitions = Vec::new();
+    for _ in 0..130 {
+        definitions.push(universe.intern_macro(MacroMeaning::new(
+            MeaningFlags::EMPTY,
+            TokenListId::EMPTY,
+            TokenListId::EMPTY,
+        )));
+    }
+
+    let mut parameters = ParameterState::default();
+    let mut admitted = Vec::new();
+    for definition in &definitions {
+        admitted.push(parameters.admit_macro(definition.id(), || {
+            universe.packed_macro_owner(definition.id())
+        }));
+    }
+
+    assert_eq!(parameters.admitted_macros.len(), 3);
+    assert_eq!(parameters.admitted_macro_chunks.len(), 3);
+    for (definition, expected) in definitions.iter().zip(admitted).rev() {
+        assert_eq!(
+            parameters.admit_macro(definition.id(), || {
+                panic!("an indexed owner must not be reconstructed")
+            }),
+            expected
+        );
+        assert!(
+            parameters
+                .macro_owner(definition.id())
+                .contains(definition.id())
+        );
+    }
+}
+
+#[test]
 fn arguments_must_complete_in_canonical_definition_order() {
     let mut builder = MacroArgumentBuilder::default();
     assert_eq!(

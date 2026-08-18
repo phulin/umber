@@ -29,6 +29,13 @@ pub(crate) struct ParameterState {
     pub(crate) activations: Vec<MacroActivation>,
     pub(crate) next_activation_identity: u64,
     admitted_macros: Vec<PackedMacroChunkOwner>,
+    /// Latest admitted owner by the definition's dense 64-record chunk.
+    ///
+    /// Entries contain `owner index + 1`; zero is the vacant sentinel.  The
+    /// owner still validates the complete generation-bearing definition id,
+    /// while old owners remain in `admitted_macros` for active replacement
+    /// levels and detached-continuation publication.
+    admitted_macro_chunks: Vec<u32>,
     argument_chunks: Vec<std::sync::Arc<ArgumentChunk>>,
     argument_chunk_cursor: u32,
     argument_scratch: RootedTracedTokenBuffer,
@@ -312,29 +319,65 @@ impl Default for MacroArguments {
 }
 
 impl ParameterState {
+    fn indexed_macro_owner(
+        &self,
+        definition: MacroDefinitionId,
+    ) -> Option<(usize, &PackedMacroChunkOwner)> {
+        let chunk = PackedMacroChunkOwner::chunk_index(definition) as usize;
+        let encoded = *self.admitted_macro_chunks.get(chunk)?;
+        let index = usize::try_from(encoded.checked_sub(1)?).ok()?;
+        let owner = self.admitted_macros.get(index)?;
+        owner.contains(definition).then_some((index, owner))
+    }
+
+    fn index_macro_owner(&mut self, definition: MacroDefinitionId, index: usize) {
+        let chunk = PackedMacroChunkOwner::chunk_index(definition) as usize;
+        if self.admitted_macro_chunks.len() <= chunk {
+            self.admitted_macro_chunks.resize(chunk + 1, 0);
+        }
+        self.admitted_macro_chunks[chunk] =
+            u32::try_from(index + 1).expect("admitted macro chunks exceed u32");
+    }
+
     pub(crate) fn admit_macro(
         &mut self,
         definition: MacroDefinitionId,
         owner: impl FnOnce() -> PackedMacroChunkOwner,
     ) -> u32 {
+        if let Some((index, _)) = self.indexed_macro_owner(definition) {
+            return u32::try_from(index).expect("admitted macro chunks exceed u32");
+        }
+        // A definition generation retained by an active replacement level can
+        // outlive a newer generation in the same dense slot. Recover that old
+        // owner without asking the live store to reconstruct an overwritten
+        // packed record, then make it the next direct hit.
         if let Some(index) = self
             .admitted_macros
             .iter()
             .position(|candidate| candidate.contains(definition))
         {
+            self.index_macro_owner(definition, index);
             return u32::try_from(index).expect("admitted macro chunks exceed u32");
         }
         if self.activations.is_empty()
-            && let Some(index) = self
+            && let Some(encoded) = self
+                .admitted_macro_chunks
+                .get(PackedMacroChunkOwner::chunk_index(definition) as usize)
+                .copied()
+            && let Some(index) = encoded.checked_sub(1).map(|index| index as usize)
+            && self
                 .admitted_macros
-                .iter()
-                .position(|candidate| candidate.owns_definition_slot(definition))
+                .get(index)
+                .is_some_and(|candidate| candidate.owns_definition_slot(definition))
         {
             self.admitted_macros[index] = owner();
+            self.index_macro_owner(definition, index);
             return u32::try_from(index).expect("admitted macro chunks exceed u32");
         }
         self.admitted_macros.push(owner());
-        u32::try_from(self.admitted_macros.len() - 1).expect("admitted macro chunks exceed u32")
+        let index = self.admitted_macros.len() - 1;
+        self.index_macro_owner(definition, index);
+        u32::try_from(index).expect("admitted macro chunks exceed u32")
     }
 
     pub(crate) fn admitted_macro(&self, index: u32) -> &PackedMacroChunkOwner {
@@ -342,6 +385,13 @@ impl ParameterState {
     }
 
     pub(crate) fn macro_owner(&self, definition: MacroDefinitionId) -> &PackedMacroChunkOwner {
+        if let Some((_, owner)) = self.indexed_macro_owner(definition) {
+            return owner;
+        }
+        // A newer generation can occupy the chunk cache while an older macro
+        // body is still active. This cold search is required only for
+        // detachment and diagnostics of that retained generation; ordinary
+        // expansion always resolves through the exact indexed owner above.
         self.admitted_macros
             .iter()
             .find(|owner| owner.contains(definition))
