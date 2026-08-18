@@ -4313,6 +4313,59 @@ fn etex_identical_local_let_is_a_reassignment_but_global_let_is_not() {
 }
 
 #[test]
+fn hot_definition_group_and_catcode_apply_is_observation_neutral() {
+    // TeX82 §§1211--1234: attaching the detached command observer must not
+    // select another semantic implementation. This source exercises every
+    // measured direct-apply family, local restoration, explicit and forced
+    // global scope, expanded definitions, and future-let replay.
+    const SOURCE: &[u8] = br"\def\a#1{A#1}
+        \edef\b{\a B}
+        \long\gdef\c#1{C#1}
+        \xdef\d{D}
+        \begingroup
+          \def\local{inside}
+          \let\alias=\a
+          \futurelet\peek\relax\relax
+          \catcode64=11
+        \endgroup
+        \globaldefs=-1 \global\def\forcedlocal{gone}
+        \globaldefs=1 {\def\forcedglobal{kept}}
+        \globaldefs=0
+        \end";
+
+    let mut unobserved = run_etex(SOURCE);
+
+    let mut observed = Universe::new_with_plain_catcodes();
+    tex_command::install_tex82_expandable_primitives(&mut observed);
+    tex_command::install_etex_expandable_primitives(&mut observed);
+    crate::install_unexpandable_primitives(&mut observed);
+    crate::install_etex_unexpandable_primitives(&mut observed);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(&mut control, SOURCE);
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut observed, &mut observations);
+
+    assert_eq!(
+        observed.snapshot().state_hash(),
+        unobserved.snapshot().state_hash(),
+        "observer demand cannot change direct semantic state or restoration"
+    );
+    assert_eq!(observed.catcode('@'), Catcode::Other);
+    assert!(
+        observed
+            .symbol("local")
+            .is_none_or(|symbol| { observed.meaning(symbol) == Meaning::Undefined })
+    );
+    assert_eq!(macro_character_text(&observed, "forcedglobal"), "kept");
+    assert!(observations.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Mutation(record)
+            if record.target == MutationTarget::Meaning
+                && observation_tokens(&record.value).is_some()
+    )));
+}
+
+#[test]
 fn bare_macro_parameter_reports_illegal_case_and_continues_in_every_mode() {
     // TeX82 §1045: `any_mode(mac_param): report_illegal_case`.
     let mut stores = Universe::new_with_plain_catcodes();

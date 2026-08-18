@@ -103,16 +103,38 @@ impl<'a> AssignmentCommitter<'a> {
         Write: FnOnce(&mut Universe, bool),
         Trace: FnOnce(&mut Universe, bool),
     {
+        if self.direct_scoped_word(current, replacement, global, write, trace) {
+            MutationReceipt::observed(record)
+        } else {
+            MutationReceipt::SILENT
+        }
+    }
+
+    /// Commits one packed scalar without constructing detached observation
+    /// payloads. The boolean says whether the canonical write is observable.
+    ///
+    /// Hot direct handlers use this seam so an unobserved interpreter pays
+    /// only for the dense write and its group journal. Cold callers retain
+    /// [`Self::scoped_word`], which adds the requested detached receipt.
+    pub(crate) fn direct_scoped_word<T, Write, Trace>(
+        &mut self,
+        current: T,
+        replacement: T,
+        global: bool,
+        write: Write,
+        trace: Trace,
+    ) -> bool
+    where
+        T: Eq + Copy,
+        Write: FnOnce(&mut Universe, bool),
+        Trace: FnOnce(&mut Universe, bool),
+    {
         let redundant = !global && self.redundant_word(current, replacement);
         if global || !redundant {
             write(self.stores, global);
         }
         trace(self.stores, !redundant);
-        if redundant {
-            MutationReceipt::SILENT
-        } else {
-            MutationReceipt::observed(record)
-        }
+        !redundant
     }
 
     pub(crate) fn unscoped<Write>(
@@ -399,22 +421,38 @@ impl<'a> AssignmentCommitter<'a> {
     where
         F: FnOnce(&mut Universe),
     {
-        let redundant = !global && self.redundant_word(self.stores.meaning(target), meaning);
-        tracing::trace_meaning_write(self.stores, token, !redundant, global, |stores| {
-            if global || !redundant {
-                write(stores);
-            }
-        });
-        if redundant {
-            MutationReceipt::SILENT
-        } else {
+        if self.direct_meaning(target, token, meaning, global, write) {
             MutationReceipt::observed(MutationRecord {
                 target: MutationTarget::Meaning,
                 key: ObservationValue::Name(self.stores.resolve(target).to_owned()),
                 value: observed,
                 global,
             })
+        } else {
+            MutationReceipt::SILENT
         }
+    }
+
+    /// Commits a meaning directly, preserving e-TeX's redundant-local and
+    /// `\tracingassigns` rules without formatting an observation key/value.
+    pub(crate) fn direct_meaning<F>(
+        &mut self,
+        target: Symbol,
+        token: Token,
+        meaning: Meaning,
+        global: bool,
+        write: F,
+    ) -> bool
+    where
+        F: FnOnce(&mut Universe),
+    {
+        let redundant = !global && self.redundant_word(self.stores.meaning(target), meaning);
+        tracing::trace_meaning_write(self.stores, token, !redundant, global, |stores| {
+            if global || !redundant {
+                write(stores);
+            }
+        });
+        !redundant
     }
 
     pub(crate) fn box_register<F>(

@@ -1505,7 +1505,11 @@ fn profiling_stats_are_reported_only_when_requested() {
 fn hot_core_census_is_machine_readable_and_request_scoped() {
     let temp_dir = tempfile::tempdir().expect("create hot-core census temp dir");
     let source = temp_dir.path().join("hot-core-census.tex");
-    fs::write(&source, "A\\end\n").expect("write hot-core census fixture");
+    fs::write(
+        &source,
+        "\\def\\a#1{#1}\\let\\b=\\a{\\catcode64=11}A\\end\n",
+    )
+    .expect("write hot-core census fixture");
 
     let quiet = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
@@ -1548,10 +1552,15 @@ fn hot_core_census_is_machine_readable_and_request_scoped() {
             .as_u64()
             .is_some_and(|calls| calls > 0)
     );
+    let prepared = census["materializations"]["prepared_operation"]
+        .as_u64()
+        .expect("prepared-operation count");
+    let cloned = census["materializations"]["apply_step_clone"]
+        .as_u64()
+        .expect("apply-clone count");
     assert!(
-        census["materializations"]["apply_step_clone"]
-            .as_u64()
-            .is_some_and(|calls| calls > 0)
+        cloned > 0 && cloned < prepared,
+        "hot definitions, lets, catcodes, and groups bypass apply-step cloning: {census}"
     );
     assert!(
         census["interpreter"]["operation_entries"]

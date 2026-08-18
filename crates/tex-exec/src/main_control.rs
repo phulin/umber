@@ -67,6 +67,8 @@ use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::vertical::is_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
 
+mod hot_apply;
+
 type PreparedDviPages = Arc<Vec<crate::dispatch::PreparedDviPage>>;
 
 /// TeX82 §1176's live `math_shift_group` context as observed by e-TeX
@@ -991,6 +993,13 @@ impl CommandMachine<'_> {
         } else if let Some(observations) = self.observations.as_mut() {
             observations.committed(CommandObservation::Mutation(record));
         }
+    }
+
+    /// Whether this operation has a consumer for detached mutation evidence.
+    /// Hot semantic handlers consult this before resolving names or walking
+    /// macro bodies; live state and `\tracingassigns` remain unconditional.
+    const fn observes_mutations(&self) -> bool {
+        self.assignment_receipts.is_some() || self.observations.is_some()
     }
 }
 
@@ -6146,43 +6155,50 @@ impl MainControl {
             _ => None,
         };
         let fires_afterassignment = scanned.fires_afterassignment();
-        #[cfg(feature = "profiling")]
-        tex_state::measurement::record_hot_core_materialization(
-            tex_state::measurement::HotCoreMaterialization::ApplyStepClone,
-        );
-        #[cfg(feature = "profiling")]
-        let scanned_for_apply = {
-            let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
-                tex_state::measurement::HotCoreAllocationOwner::ApplyStepClone,
-            );
-            scanned.clone()
+        let mut command = CommandMachine {
+            state: &mut self.command,
+            fuel: self.fuel.fuel_mut(),
+            capabilities: &mut self.capabilities,
+            observations: &mut self.operation_observations,
+            assignment_receipts: assignment_receipts.as_mut(),
+            shown_mode: &mut self.shown_mode,
+            initex: self.initex,
+            emit_dvi_override: self.emit_dvi_override,
         };
-        #[cfg(not(feature = "profiling"))]
-        let scanned_for_apply = scanned.clone();
-        let mut result = apply_scanned_step(
-            scanned_for_apply,
-            stores,
-            &mut self.modes,
-            &mut self.next_alignment_identity,
-            &mut self.active_alignment,
-            &mut CommandMachine {
-                state: &mut self.command,
-                fuel: self.fuel.fuel_mut(),
-                capabilities: &mut self.capabilities,
-                observations: &mut self.operation_observations,
-                assignment_receipts: assignment_receipts.as_mut(),
-                shown_mode: &mut self.shown_mode,
-                initex: self.initex,
-                emit_dvi_override: self.emit_dvi_override,
-            },
-            &mut self.boxes,
-            &self.active_discretionaries,
-            &self.active_math_choices,
-            &self.active_math_left_boundaries,
-            &self.active_math_shifts,
-            &mut self.prepared_dvi_pages,
-            &mut self.end_job_ejection_pending,
-        );
+        let mut result = if let Some(applied) =
+            hot_apply::apply(&scanned, stores, &mut self.modes, &mut command)
+        {
+            applied
+        } else {
+            #[cfg(feature = "profiling")]
+            tex_state::measurement::record_hot_core_materialization(
+                tex_state::measurement::HotCoreMaterialization::ApplyStepClone,
+            );
+            #[cfg(feature = "profiling")]
+            let scanned_for_apply = {
+                let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+                    tex_state::measurement::HotCoreAllocationOwner::ApplyStepClone,
+                );
+                scanned.clone()
+            };
+            #[cfg(not(feature = "profiling"))]
+            let scanned_for_apply = scanned.clone();
+            apply_scanned_step(
+                scanned_for_apply,
+                stores,
+                &mut self.modes,
+                &mut self.next_alignment_identity,
+                &mut self.active_alignment,
+                &mut command,
+                &mut self.boxes,
+                &self.active_discretionaries,
+                &self.active_math_choices,
+                &self.active_math_left_boundaries,
+                &self.active_math_shifts,
+                &mut self.prepared_dvi_pages,
+                &mut self.end_job_ejection_pending,
+            )
+        };
         if result.is_ok()
             && !redundant_glue
             && let Some((index, physical, source_identity, pointer_sources)) = match &scanned {
@@ -6329,7 +6345,9 @@ impl MainControl {
                     records.push(CommandObservation::Alignment(resume));
                 }
             }
-            if let Some(protected) = protected_macro_definition_observation(&scanned, stores) {
+            if observing
+                && let Some(protected) = protected_macro_definition_observation(&scanned, stores)
+            {
                 records.push(CommandObservation::TokenList(protected));
             }
             records.extend(
@@ -15142,65 +15160,7 @@ fn apply_scanned_step(
             }
             match primitive {
                 UnexpandablePrimitive::CatCode => {
-                    let value = match value {
-                        0 => Catcode::Escape,
-                        1 => Catcode::BeginGroup,
-                        2 => Catcode::EndGroup,
-                        3 => Catcode::MathShift,
-                        4 => Catcode::AlignmentTab,
-                        5 => Catcode::EndLine,
-                        6 => Catcode::Parameter,
-                        7 => Catcode::Superscript,
-                        8 => Catcode::Subscript,
-                        9 => Catcode::Ignored,
-                        10 => Catcode::Space,
-                        11 => Catcode::Letter,
-                        12 => Catcode::Other,
-                        13 => Catcode::Active,
-                        14 => Catcode::Comment,
-                        15 => Catcode::Invalid,
-                        _ => {
-                            return Err(ExecError::InvalidCode {
-                                context: "\\catcode",
-                                value,
-                            });
-                        }
-                    };
-                    let old = stores.catcode(character);
-                    let record = MutationRecord {
-                        target: MutationTarget::Catcode,
-                        key: ObservationValue::Character(u32::from(character)),
-                        value: ObservationValue::Name(
-                            tex_command::canonical_names::catcode_assignment_name(value as i64)
-                                .expect("validated category code")
-                                .into(),
-                        ),
-                        global,
-                    };
-                    let receipt = AssignmentCommitter::new(stores).scoped_word(
-                        old,
-                        value,
-                        global,
-                        record,
-                        |stores, global| {
-                            if global {
-                                stores.set_catcode_global(character, value)
-                            } else {
-                                stores.set_catcode(character, value)
-                            }
-                        },
-                        |stores, _| {
-                            assignment_tracing::trace_code(
-                                stores,
-                                "catcode",
-                                character,
-                                global,
-                                old as i32,
-                                value as i32,
-                            )
-                        },
-                    );
-                    command.retain_assignment_receipt(receipt);
+                    unreachable!("measured catcode assignments are owned by hot_apply")
                 }
                 UnexpandablePrimitive::LcCode => {
                     let value = u32::try_from(value).map_err(|_| ExecError::InvalidCode {
@@ -16115,62 +16075,8 @@ fn apply_scanned_step(
             report.error().jump_out()?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::MacroDefinition {
-            target,
-            flags,
-            global,
-            parameter_text,
-            replacement_text,
-            definition_origin,
-        } => {
-            let meaning = MacroMeaning::new(
-                flags,
-                parameter_text.token_list(),
-                replacement_text.token_list(),
-            );
-            let provenance = MacroDefinitionProvenance::new(
-                definition_origin,
-                parameter_text.origin_ref().clone(),
-                replacement_text.origin_ref().clone(),
-            );
-            // TeX82 §1211's generic `prefixed_command` global-scope
-            // resolution (the same `\globaldefs` override every other
-            // assignment receives from §1214) applies to
-            // `\def`/`\edef`/`\gdef`/`\xdef` exactly like any other
-            // assignment; `global` here already folds in `\gdef`/`\xdef`'s
-            // own forced-global chr_code (see the scan arm above), and
-            // `global` already is the final effective bit.
-            let observed = ObservationValue::Tokens(observed_stored_macro_body(
-                flags,
-                parameter_text.token_list(),
-                replacement_text.token_list(),
-                stores,
-            ));
-            let record = MutationRecord {
-                target: MutationTarget::Meaning,
-                key: ObservationValue::Name(stores.resolve(target).to_owned()),
-                value: observed,
-                global,
-            };
-            let receipt = AssignmentCommitter::new(stores).unscoped(Some(record), |stores| {
-                assignment_tracing::trace_meaning_write(
-                    stores,
-                    Token::Cs(target),
-                    true,
-                    global,
-                    |stores| {
-                        if global {
-                            stores.set_macro_meaning_global_with_provenance(
-                                target, meaning, provenance,
-                            )
-                        } else {
-                            stores.set_macro_meaning_with_provenance(target, meaning, provenance)
-                        }
-                    },
-                );
-            });
-            command.retain_assignment_receipt(receipt);
-            Ok(ReplayStep::Continue)
+        ScannedStep::MacroDefinition { .. } => {
+            unreachable!("measured macro definitions are owned by hot_apply")
         }
         ScannedStep::CharacterDefinition {
             primitive,
@@ -16318,39 +16224,7 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::Let {
-            target,
-            source,
-            meaning,
-            macro_root,
-            global,
-        } => {
-            // TeX82 `\let`/`\futurelet` are ordinary `prefixed_command`
-            // assignments too (§1221), so `\globaldefs` must override their
-            // scope exactly like every other assignment kind's
-            // effective-scope resolution above -- this was the second (with
-            // `\def`/`\edef`/`\gdef`/`\xdef`) canonical apply arm that used
-            // the raw `\global` prefix bit directly and silently ignored a
-            // nonzero `\globaldefs`.
-            let observed = meaning_mutation_value(meaning, stores);
-            let receipt = AssignmentCommitter::new(stores).meaning(
-                target,
-                Token::Cs(target),
-                meaning,
-                observed,
-                global,
-                |stores| {
-                    if global {
-                        stores.set_meaning_global(target, meaning)
-                    } else {
-                        stores.set_meaning(target, meaning)
-                    }
-                },
-            );
-            drop((source, macro_root));
-            command.retain_assignment_receipt(receipt);
-            Ok(ReplayStep::Continue)
-        }
+        ScannedStep::Let { .. } => unreachable!("measured let assignments are owned by hot_apply"),
         ScannedStep::AfterGroup(token) => {
             stores.push_aftergroup_traced(token);
             Ok(ReplayStep::Continue)
@@ -17031,30 +16905,10 @@ fn apply_scanned_step(
             )?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BeginOrdinaryGroup => {
-            // TeX82 §1038's main-loop lookahead ends the current ligature
-            // run when the next expanded command is not a character. A brace
-            // is therefore a real text boundary on both entry and exit:
-            // `{f}i` must not form `fi` across the closing brace.
-            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
-            enter_group(stores, command.state, GroupKind::Simple);
-            Ok(ReplayStep::Continue)
-        }
-        ScannedStep::BeginSemiSimpleGroup => {
-            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
-            enter_group(stores, command.state, GroupKind::SemiSimple);
-            Ok(ReplayStep::Continue)
-        }
-        ScannedStep::EndSemiSimpleGroup => {
-            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
-            warn_cross_file_group_close(stores, command);
-            let aftergroup = stores
-                .leave_group_with_kind(GroupKind::SemiSimple)
-                .map_err(|_| ExecError::MissingToken {
-                    context: "semi simple group",
-                })?;
-            schedule_aftergroup(command, stores, aftergroup)?;
-            Ok(ReplayStep::Continue)
+        ScannedStep::BeginOrdinaryGroup
+        | ScannedStep::BeginSemiSimpleGroup
+        | ScannedStep::EndSemiSimpleGroup => {
+            unreachable!("measured group transitions are owned by hot_apply")
         }
         ScannedStep::ExtraRightBrace { forgotten: None } => {
             // TeX82 §1068's `bottom_level` arm of `handle_right_brace`.
@@ -17118,15 +16972,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOrdinaryGroup => {
-            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
-            warn_cross_file_group_close(stores, command);
-            let aftergroup = stores
-                .leave_group_with_kind(GroupKind::Simple)
-                .map_err(|_| ExecError::MissingToken {
-                    context: "ordinary simple group",
-                })?;
-            schedule_aftergroup(command, stores, aftergroup)?;
-            Ok(ReplayStep::Continue)
+            unreachable!("measured group transitions are owned by hot_apply")
         }
         ScannedStep::EndMathGroup(kind) => {
             // TeX82 §1186 and §1174's `build_choices` both open with
