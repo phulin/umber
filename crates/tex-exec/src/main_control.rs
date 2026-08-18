@@ -576,8 +576,9 @@ enum OperationDelivery {
         command: tex_command::CurrentCommand,
         cursor: Option<tex_command::CommandDeliveryCursor>,
     },
-    /// Expansion settled during the same borrow as raw preflight delivery,
-    /// including its canonical expanded observation.
+    /// Expansion settled in the processor borrow that produced this command,
+    /// including its canonical expanded observation. This covers both raw
+    /// preflight and an in-place TeX82 `goto reswitch`/§1270 handoff.
     Settled {
         command: tex_command::CurrentCommand,
         cursor: Option<tex_command::CommandDeliveryCursor>,
@@ -4011,15 +4012,15 @@ impl MainControl {
     fn execute_nested_operation(
         &mut self,
         stores: &mut Universe,
-        redispatch: Option<tex_command::CurrentCommand>,
+        settled: Option<tex_command::CurrentCommand>,
     ) -> Result<ReplayStep, ExecError> {
-        match self.execute_operation(
-            stores,
-            OperationDelivery::Replay(redispatch),
-            OperationTransaction::Nested,
-            1,
-            None,
-        )? {
+        let delivery = settled.map_or(OperationDelivery::Replay(None), |command| {
+            OperationDelivery::Settled {
+                command,
+                cursor: None,
+            }
+        });
+        match self.execute_operation(stores, delivery, OperationTransaction::Nested, 1, None)? {
             StepResult::Progress(step) => Ok(step),
             StepResult::Suspended(_) => unreachable!("nested operations do not own rollback"),
         }

@@ -468,6 +468,106 @@ fn forbidden_setbox_reports_before_reading_the_following_command() {
 }
 
 #[test]
+fn accent_assignment_dispatches_backed_up_font_without_redelivery() {
+    // TeX82 §§1123--1124 and 1270: the accent-code scan backs up its
+    // non-space terminator, then `do_assignments` executes that already
+    // expanded current command in place. Its backup level retires before the
+    // following base character is fetched; the assignment must not synthesize
+    // a second expanded delivery for the same command.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        br#"\font\f=cmr10 \font\accentfont=cmr10 \f\accent"7F\accentfont o\end"#,
+    );
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    let deliveries: Vec<_> = observations
+        .0
+        .iter()
+        .enumerate()
+        .filter_map(|(index, observation)| match observation {
+            CommandObservation::Command(record)
+                if record.spelling == ObservedToken::ControlSequence("accentfont".into())
+                    && record.command == "set_font" =>
+            {
+                Some((index, record.boundary))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        deliveries
+            .iter()
+            .map(|(_, boundary)| *boundary)
+            .collect::<Vec<_>>(),
+        [
+            CommandDeliveryBoundary::Raw,
+            CommandDeliveryBoundary::Expanded,
+            CommandDeliveryBoundary::Raw,
+            CommandDeliveryBoundary::Expanded,
+        ]
+    );
+    let backup = observations.0[deliveries[1].0 + 1..deliveries[2].0]
+        .iter()
+        .any(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if record.reason == InputReason::Backup
+                        && record.transition == InputTransition::Backup
+            )
+        });
+    assert!(backup, "the integer terminator is backed up before §1270");
+    let retirement = observations.0[deliveries[3].0 + 1..]
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if record.reason == InputReason::Backup
+                        && record.transition == InputTransition::Retire
+            )
+        });
+    assert_eq!(retirement, Some(0), "the backup retires next");
+}
+
+#[test]
+fn ordinary_font_selection_keeps_its_expanded_delivery() {
+    // Negative control: only §1270's already-settled handoff suppresses a
+    // duplicate observation. An ordinary §1030 `big_switch` font command is
+    // still one raw plus one expanded delivery.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\nullfont\end");
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    let deliveries: Vec<_> = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(record)
+                if record.spelling == ObservedToken::ControlSequence("nullfont".into())
+                    && record.command == "set_font" =>
+            {
+                Some(record.boundary)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        deliveries,
+        [
+            CommandDeliveryBoundary::Raw,
+            CommandDeliveryBoundary::Expanded,
+        ]
+    );
+}
+
+#[test]
 fn tracingcommands_two_traces_nonmacro_expansion_before_big_switch_result() {
     // TeX82 §§299/366--367/1030: non-macro expansion traces inside `expand`,
     // then the settled unexpandable command traces at `reswitch`. The first
