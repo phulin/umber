@@ -63,6 +63,18 @@ The typed status is 1, stdout is empty, no PDF or input-record file is
 published, no acquisition occurs, and cache inventory is byte-identical before
 and after.
 
+The accepted measurement is from commit
+`84e2b23cd008f567cb50030508fd09f4a00b6a8a`. The profiling binary SHA-256 is
+`372c8dcbb2dae619ceb9e26a57f3469a259887908ba05b7cd48951d3b923877c`, its
+build-log SHA-256 is
+`3f5f8c767b16b74e00632e00e3284bdf7e6e8d35bf94da01b775ee2da3fcb80f`, the
+guard script SHA-256 is
+`46de7912f89316c22a4380f1fdfe1f028d444a820aa143a450eb5b4e3425aadc`, and the
+evidence-manifest SHA-256 is
+`29a840fd223d5f0143cb67e07bc88b01f51edd02f841900b88649c716f21f558`.
+The full guarded process took 34.07 wall seconds and reached 707,252 KiB RSS;
+the engine interval took 33.91 wall seconds with zero major faults.
+
 | Counter               | Historical | Direct prefix |    Delta | Contract                           |
 | --------------------- | ---------: | ------------: | -------: | ---------------------------------- |
 | Fuel charges          | 12,000,000 |    12,000,000 |        0 | exact                              |
@@ -82,6 +94,8 @@ total.
 
 ## Validation
 
-The exact guarded receipt, focused accounting control, exhaustive tracer,
-routine native suite, and formatting/lint gate are the acceptance set. Local
-evidence is under `target/umber2-awgc.12`.
+The exact guarded receipt reports `PASS_VERSIONED_DIRECT_PREFIX`. The focused
+accounting control passes. The exhaustive command tracer reports `CLEAN` with
+zero ordered semantic or advisory geometry differences, and
+`cargo test -q --tests` passes. `scripts/check.sh` reports all four gates
+passed. Local evidence is under `target/umber2-awgc.12`.
