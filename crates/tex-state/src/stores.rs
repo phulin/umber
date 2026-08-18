@@ -1603,6 +1603,15 @@ impl Stores {
             .expect("macro definition id is not live")
     }
 
+    pub(crate) fn packed_macro_owner(
+        &self,
+        id: MacroDefinitionId,
+    ) -> crate::macro_store::PackedMacroChunkOwner {
+        self.macros
+            .packed_owner(id)
+            .expect("macro definition has no packed chunk")
+    }
+
     /// Reads a live frozen macro definition.
     #[must_use]
     pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
@@ -2359,14 +2368,15 @@ impl Stores {
         self.assert_live_origin(definition_origin);
         self.assert_live_origin(parent_invocation);
         let definition_operand = self.macros.observation_operand(definition) as u64;
-        self.provenance.allocate(OriginRecord::MacroInvocation(
-            MacroInvocationOrigin::from_nonowning_operand(
-                definition_operand,
-                invocation,
-                definition_origin,
-                parent_invocation,
-            ),
-        ))
+        self.provenance
+            .allocate_unique(OriginRecord::MacroInvocation(
+                MacroInvocationOrigin::from_nonowning_operand(
+                    definition_operand,
+                    invocation,
+                    definition_origin,
+                    parent_invocation,
+                ),
+            ))
     }
 
     pub fn macro_invocation_origin_from_nonowning_operand(
@@ -2498,6 +2508,10 @@ impl Stores {
 
     pub fn origin_ref(&self, id: OriginId) -> Option<OriginRef> {
         self.provenance.origin_ref(id)
+    }
+
+    pub fn materialize_origin_ref(&mut self, id: OriginId) -> Option<OriginRef> {
+        self.provenance.materialize_origin_ref(id)
     }
 
     /// Reads a live origin record.

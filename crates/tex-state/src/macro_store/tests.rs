@@ -207,6 +207,7 @@ fn ten_thousand_bounded_live_redefinitions_plateau_macro_storage() {
     ));
     let (bodies, _, definitions, _) = stores.testing_macro_store().testing_live_totals();
     let (body_shape, definition_shape) = stores.testing_macro_store().testing_pool_shapes();
+    let packed_shape = stores.testing_macro_store().testing_packed_shape();
     assert_eq!((bodies, definitions), (1, 1));
     assert!(
         body_shape.0 <= 2,
@@ -215,6 +216,11 @@ fn ten_thousand_bounded_live_redefinitions_plateau_macro_storage() {
     assert!(
         definition_shape.0 <= 2,
         "dead definition slots must be reusable: {definition_shape:?}"
+    );
+    assert_eq!(
+        packed_shape,
+        (1, 1, 2, 2),
+        "packed macro records must overwrite reclaimed slots: {packed_shape:?}"
     );
 }
 

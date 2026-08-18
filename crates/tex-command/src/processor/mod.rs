@@ -231,8 +231,11 @@ impl CommandProcessor<'_> {
     /// command input level itself retires. Direct source delivery has no
     /// active frame and returns `None`.
     #[must_use]
-    pub fn active_macro_origin(&self) -> Option<tex_state::provenance::OriginRef> {
-        self.command.parameters.active_invocation_origin()
+    pub fn active_macro_origin(&mut self) -> Option<tex_state::provenance::OriginRef> {
+        self.command
+            .parameters
+            .active_invocation_origin()
+            .and_then(|origin| self.state.materialize_origin_ref(origin))
     }
 
     /// Returns the glue node retained by the most recent glue scan when the

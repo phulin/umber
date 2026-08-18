@@ -1340,7 +1340,10 @@ pub(crate) struct ProvenanceStore {
     record_keys: OriginKeyRuns,
     next_record_key: u32,
     record_key_lease_end: u32,
+    next_unique_record_key: u32,
+    unique_record_key_lease_end: u32,
     retry_records: Vec<ArchivedOriginRecord>,
+    unique_candidates: SmallVec<[(OriginRecord, OriginId); 4]>,
     rooted_record_slots: Vec<Option<RootedOriginSlot>>,
     rooted_record_free: Vec<usize>,
     rooted_record_sweep_cursor: usize,
@@ -1371,7 +1374,10 @@ impl Clone for ProvenanceStore {
             record_keys: self.record_keys.clone(),
             next_record_key: 0,
             record_key_lease_end: 0,
+            next_unique_record_key: 0,
+            unique_record_key_lease_end: 0,
             retry_records: Vec::new(),
+            unique_candidates: self.unique_candidates.clone(),
             rooted_record_slots: self
                 .rooted_record_slots
                 .iter()
@@ -1425,7 +1431,10 @@ impl ProvenanceStore {
             record_keys: OriginKeyRuns::default(),
             next_record_key: 0,
             record_key_lease_end: 0,
+            next_unique_record_key: 0,
+            unique_record_key_lease_end: 0,
             retry_records: Vec::new(),
+            unique_candidates: SmallVec::new(),
             rooted_record_slots: Vec::new(),
             rooted_record_free: Vec::new(),
             rooted_record_sweep_cursor: 0,
@@ -1508,6 +1517,56 @@ impl ProvenanceStore {
         self.record_keys.append(key, slot);
         self.index_record_candidate(record, key);
         OriginId::arena(key).expect("global packed provenance key is representable")
+    }
+
+    /// Appends a record whose occurrence identity is semantically unique.
+    ///
+    /// Macro invocation frames use this path: their call-site and parent
+    /// coordinates already distinguish occurrences, so a weak exact-candidate
+    /// entry would add hot allocation and reference-count traffic without a
+    /// possible reuse benefit.
+    pub(crate) fn allocate_unique(&mut self, record: OriginRecord) -> OriginId {
+        if let Some((_, id)) = self.unique_candidates.iter().rev().find(|(candidate, id)| {
+            *candidate == record
+                && matches!(
+                    id.decode(),
+                    OriginEncoding::Arena(key)
+                        if self.record_keys.slot(key).is_some_and(|slot| {
+                            self.records.get_slot(slot as usize) == Some(record)
+                        })
+                )
+        }) {
+            return *id;
+        }
+        if self.records.len() >= self.record_limit {
+            return OriginId::UNKNOWN;
+        }
+        let key = if self
+            .retry_records
+            .last()
+            .is_some_and(|(_, expected)| *expected == record)
+        {
+            self.retry_records
+                .pop()
+                .expect("matching retry record is present")
+                .0
+        } else {
+            self.retry_records.clear();
+            let Some(key) = self.next_unique_packed_arena_origin() else {
+                return OriginId::UNKNOWN;
+            };
+            key
+        };
+        let slot = u32::try_from(self.records.len())
+            .expect("global origin key capacity bounds provenance record slots");
+        self.records.append(key, record);
+        self.record_keys.append(key, slot);
+        let id = OriginId::arena(key).expect("global packed provenance key is representable");
+        if self.unique_candidates.len() == 4 {
+            self.unique_candidates.remove(0);
+        }
+        self.unique_candidates.push((record, id));
+        id
     }
 
     /// Interns one immutable structural origin and returns its sole authority:
@@ -1688,6 +1747,76 @@ impl ProvenanceStore {
         #[cfg(feature = "profiling")]
         crate::measurement::record_hot_core_provenance_materialization(resolved.is_some());
         resolved
+    }
+
+    /// Materializes an archived coordinate as a strong structural root.
+    ///
+    /// Ordinary macro replay carries only the archived coordinate. Cold node,
+    /// diagnostic, and continuation publication call this boundary when the
+    /// record must outlive the command arena.
+    pub(crate) fn materialize_origin_ref(&mut self, id: OriginId) -> Option<OriginRef> {
+        if let Some(root) = self.origin_ref(id) {
+            return Some(root);
+        }
+        let OriginEncoding::Arena(key) = id.decode() else {
+            return Some(OriginRef::direct(id));
+        };
+        let record = self.get(id);
+        let child_ids: SmallVec<[OriginId; 3]> = match record {
+            OriginRecord::MacroInvocation(origin) => smallvec::smallvec![
+                origin.invocation(),
+                origin.definition_origin(),
+                origin.parent_invocation(),
+            ],
+            OriginRecord::Inserted(origin) => smallvec::smallvec![origin.parent()],
+            OriginRecord::Synthesized(origin) => smallvec::smallvec![origin.parent()],
+            _ => SmallVec::new(),
+        };
+        let children = child_ids
+            .into_iter()
+            .map(|child| self.materialize_origin_ref(child))
+            .collect::<Option<SmallVec<[OriginRef; 3]>>>()?;
+        self.reclaim_some_dead_rooted_records(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
+        if self.rooted_record_occupied >= self.record_limit
+            || (self.rooted_record_free.is_empty()
+                && self.rooted_record_slots.len() >= self.weak_record_slot_limit)
+        {
+            self.reclaim_dead_rooted_records();
+        }
+        if self.rooted_record_occupied >= self.record_limit
+            || (self.rooted_record_free.is_empty()
+                && self.rooted_record_slots.len() >= self.weak_record_slot_limit)
+        {
+            return None;
+        }
+        let value = Arc::new(OriginValue {
+            id,
+            record,
+            children,
+            source_registration: None,
+        });
+        let slot = self
+            .rooted_record_free
+            .pop()
+            .unwrap_or(self.rooted_record_slots.len());
+        if slot == self.rooted_record_slots.len() {
+            self.rooted_record_slots.push(None);
+        }
+        self.rooted_record_slots[slot] = Some(RootedOriginSlot {
+            key,
+            value: Arc::downgrade(&value),
+        });
+        self.rooted_record_occupied += 1;
+        self.rooted_record_keys.insert(key, slot);
+        self.rooted_record_candidates
+            .entry(record)
+            .or_default()
+            .push(Arc::downgrade(&value));
+        Some(OriginRef {
+            id,
+            value: Some(value),
+            source_registration: None,
+        })
     }
 
     /// Advances a bounded weak-slot sweep. Dead roots do not require prompt
@@ -2012,6 +2141,17 @@ impl ProvenanceStore {
         Some(key)
     }
 
+    fn next_unique_packed_arena_origin(&mut self) -> Option<u32> {
+        if self.next_unique_record_key == self.unique_record_key_lease_end {
+            let lease = reserve_packed_arena_origins()?;
+            self.next_unique_record_key = lease.start;
+            self.unique_record_key_lease_end = lease.end;
+        }
+        let key = self.next_unique_record_key;
+        self.next_unique_record_key += 1;
+        Some(key)
+    }
+
     /// Reads a live origin record.
     #[must_use]
     pub(crate) fn get(&self, id: OriginId) -> OriginRecord {
@@ -2088,6 +2228,12 @@ impl ProvenanceStore {
             .iter()
             .filter_map(|slot| slot.as_ref()?.value.upgrade())
             .filter(|value| matches!(value.record, OriginRecord::MacroInvocation(_)))
+            .filter(|value| {
+                let OriginEncoding::Arena(key) = value.id.decode() else {
+                    return true;
+                };
+                self.record_keys.slot(key).is_none()
+            })
             .count();
         let invocations = self
             .records

@@ -4488,6 +4488,9 @@ fn macro_activations_allocate_nested_invocation_provenance() {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let empty = universe.intern_token_list(&[]);
     let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
+    let admitted = command.parameters.admit_macro(definition.id(), || {
+        universe.packed_macro_owner(definition.id())
+    });
     let target = universe.intern("nested").symbol();
     let mut capabilities = CommandHostCapabilities::default();
     let outer_invocation;
@@ -4501,10 +4504,9 @@ fn macro_activations_allocate_nested_invocation_provenance() {
         processor.push_macro_activation(
             target,
             definition.id(),
-            tex_state::provenance::OriginRef::unknown(),
+            tex_state::token::OriginId::UNKNOWN,
             MacroArguments::default(),
-            empty,
-            tex_state::provenance::OriginListRef::empty(),
+            admitted,
         );
         outer_invocation = processor
             .command
@@ -4512,15 +4514,13 @@ fn macro_activations_allocate_nested_invocation_provenance() {
             .activations
             .last()
             .expect("outer activation")
-            .invocation
-            .clone();
+            .invocation;
         processor.push_macro_activation(
             target,
             definition.id(),
-            tex_state::provenance::OriginRef::unknown(),
+            tex_state::token::OriginId::UNKNOWN,
             MacroArguments::default(),
-            empty,
-            tex_state::provenance::OriginListRef::empty(),
+            admitted,
         );
         inner_invocation = processor
             .command
@@ -4528,8 +4528,7 @@ fn macro_activations_allocate_nested_invocation_provenance() {
             .activations
             .last()
             .expect("inner activation")
-            .invocation
-            .clone();
+            .invocation;
     }
 
     assert_ne!(outer_invocation, inner_invocation);
@@ -4548,6 +4547,11 @@ fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
     let empty = universe.intern_token_list(&[]);
     let expanded = universe.intern_token_list(&letters("EXPANDED"));
     let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, expanded));
+    let empty_definition =
+        universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
+    let admitted = command.parameters.admit_macro(empty_definition.id(), || {
+        universe.packed_macro_owner(empty_definition.id())
+    });
     let target = universe.intern("getxresult").symbol();
     universe.set_meaning(
         target,
@@ -4567,19 +4571,17 @@ fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
     );
     command.push_macro_activation(
         target,
-        definition.clone(),
+        empty_definition.id(),
         MacroArguments::default(),
-        tex_state::provenance::ExpansionFrameRef::unknown(),
-        universe.token_list_ref(empty),
-        tex_state::provenance::OriginListRef::empty(),
+        tex_state::token::OriginId::UNKNOWN,
+        admitted,
     );
     command.push_macro_activation(
         target,
-        definition,
+        empty_definition.id(),
         MacroArguments::default(),
-        tex_state::provenance::ExpansionFrameRef::unknown(),
-        universe.token_list_ref(empty),
-        tex_state::provenance::OriginListRef::empty(),
+        tex_state::token::OriginId::UNKNOWN,
+        admitted,
     );
 
     let mut capabilities = CommandHostCapabilities::default();

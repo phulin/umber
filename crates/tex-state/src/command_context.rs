@@ -1259,6 +1259,15 @@ impl CommandContext<'_> {
         self.universe.macro_definition_ref(definition)
     }
 
+    /// Admits one immutable macro chunk into command-owned replay state.
+    #[must_use]
+    pub fn packed_macro_owner(
+        &self,
+        definition: MacroDefinitionId,
+    ) -> crate::macro_store::PackedMacroChunkOwner {
+        self.universe.packed_macro_owner(definition)
+    }
+
     /// Returns TeX82's definition-head identity for detached observation.
     #[must_use]
     pub fn macro_definition_observation_operand(&self, definition: MacroDefinitionId) -> i64 {
@@ -1333,6 +1342,10 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn origin_ref(&self, id: OriginId) -> Option<crate::provenance::OriginRef> {
         self.universe.origin_ref(id)
+    }
+
+    pub fn materialize_origin_ref(&mut self, id: OriginId) -> Option<crate::provenance::OriginRef> {
+        self.universe.materialize_origin_ref(id)
     }
 }
 

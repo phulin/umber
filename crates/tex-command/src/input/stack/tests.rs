@@ -5,7 +5,7 @@ use tex_state::ids::TokenListId;
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::macro_call::{MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments};
+use crate::macro_call::{MacroActivationId, MacroArgumentRange};
 use crate::{CommandState, RegisteredSourceKind, SourceNameClass, SourceRegistration};
 
 use super::{
@@ -38,18 +38,25 @@ fn push_activation(
     ranges: [Option<MacroArgumentRange>; 9],
 ) -> MacroActivationId {
     let identity = MacroActivationId(identity);
-    state.parameters.activations.push(MacroActivation {
-        identity,
-        name: tex_state::interner::Symbol::testing_new(1),
-        definition: tex_state::macro_store::MacroDefinitionRef::testing_new(
-            u32::try_from(identity.0 + 100).expect("test definition identity fits"),
+    let arguments = state.parameters.store_arguments(
+        tex_state::token::RootedTracedTokenBuffer::new(
+            tokens
+                .iter()
+                .copied()
+                .map(tex_state::token::RootedTracedTokenWord::unowned),
         ),
-        arguments: MacroArguments {
-            buffer: SharedTokenBuffer::new(tokens),
-            ranges,
-        },
-        invocation: tex_state::provenance::ExpansionFrameRef::unknown(),
-    });
+        ranges,
+    );
+    state.parameters.restore_activation(
+        identity,
+        tex_state::interner::Symbol::testing_new(1),
+        tex_state::macro_store::MacroDefinitionRef::testing_new(
+            u32::try_from(identity.0 + 100).expect("test definition identity fits"),
+        )
+        .id(),
+        arguments,
+        tex_state::token::OriginId::UNKNOWN,
+    );
     identity
 }
 
@@ -74,9 +81,10 @@ fn transient_dynamic_words_count_owned_buffers_once() {
             None,
         ],
     );
+    let activation_arguments = state.parameters.activations[0].arguments;
     state.push_token_level(
         TokenPayload::ArgumentRange {
-            buffer: SharedTokenBuffer::new(arguments),
+            arguments: activation_arguments,
             range: MacroArgumentRange::new(0, 3).expect("valid range"),
         },
         TokenBehavior::Parameter,
@@ -378,10 +386,10 @@ fn parameter_replay_uses_nearest_macro_body_param_start() {
     assert_eq!(cursor.identity(), parameter);
     assert_eq!(cursor.behavior, TokenBehavior::Parameter);
     assert_eq!(cursor.trace, ReplayTrace::MacroParameter { slot: 2 });
-    let TokenPayload::ArgumentRange { buffer, range } = &cursor.payload else {
+    let TokenPayload::ArgumentRange { arguments, range } = &cursor.payload else {
         panic!("parameter replay did not share its activation buffer");
     };
-    assert_eq!(buffer.len(), 2);
+    assert_eq!(state.parameters.argument_words(*arguments).len(), 2);
     assert_eq!((range.start(), range.end()), (1, 2));
 }
 

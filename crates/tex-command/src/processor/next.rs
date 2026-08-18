@@ -298,7 +298,7 @@ impl CommandProcessor<'_> {
             // `loc=null`. A live token either in the v-template itself or in
             // an interposed token-list frame is the canonical interwoven-
             // preamble fatal path, not an internal Rust invariant failure.
-            if Self::next_stored_token(cursor).is_some() {
+            if Self::next_stored_token(cursor, &self.command.parameters).is_some() {
                 break;
             }
             if cursor.identity() == v_level
@@ -1093,7 +1093,9 @@ impl CommandProcessor<'_> {
         };
 
         let output_has_remaining = match &self.command.input.levels[output_index] {
-            InputLevel::Tokens(cursor) => Self::next_stored_token(cursor).is_some(),
+            InputLevel::Tokens(cursor) => {
+                Self::next_stored_token(cursor, &self.command.parameters).is_some()
+            }
             InputLevel::Source(_) => unreachable!("output replay is a token level"),
         };
         let levels_above_are_depleted_backups = self.command.input.levels[output_index + 1..]
@@ -1103,7 +1105,7 @@ impl CommandProcessor<'_> {
                     level,
                     InputLevel::Tokens(cursor)
                         if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                            && Self::next_stored_token(cursor).is_none()
+                            && Self::next_stored_token(cursor, &self.command.parameters).is_none()
                 )
             });
         let unbalanced = output_has_remaining || !levels_above_are_depleted_backups;
@@ -1122,7 +1124,7 @@ impl CommandProcessor<'_> {
                                 InputLevel::Source(_) => unreachable!("output token level"),
                             } =>
                     {
-                        Some(Self::next_stored_token(cursor).is_some())
+                        Some(Self::next_stored_token(cursor, &self.command.parameters).is_some())
                     }
                     InputLevel::Source(_) | InputLevel::Tokens(_) => None,
                 })
@@ -1149,7 +1151,7 @@ impl CommandProcessor<'_> {
             return Ok(());
         };
         if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-            || Self::next_stored_token(cursor).is_some()
+            || Self::next_stored_token(cursor, &self.command.parameters).is_some()
             || !matches!(
                 cursor
                     .payload
@@ -1766,7 +1768,7 @@ impl CommandProcessor<'_> {
                         };
                         debug_assert_eq!(cursor.identity(), identity);
                         debug_assert_eq!(cursor.position(), index);
-                        Self::next_stored_token(cursor)
+                        Self::next_stored_token(cursor, &self.command.parameters)
                     };
                     if let Some((spelling, position, behavior, source_provenance)) = next {
                         let InputLevel::Tokens(cursor) = self
@@ -2034,6 +2036,7 @@ impl CommandProcessor<'_> {
 
     fn next_stored_token(
         cursor: &TokenCursor,
+        parameters: &crate::macro_call::ParameterState,
     ) -> Option<(
         tex_state::token::RootedTracedTokenWord,
         u64,
@@ -2044,6 +2047,14 @@ impl CommandProcessor<'_> {
         let position = u64::try_from(index).ok()?;
         let spelling = match &cursor.payload {
             TokenPayload::Packed(chunk) => chunk.get(index),
+            TokenPayload::MacroReplacement {
+                admitted,
+                definition,
+                ..
+            } => parameters
+                .admitted_macro(*admitted)
+                .replacement_word(*definition, index)
+                .map(|spelling| (spelling, None)),
             TokenPayload::Transient(buffer) => {
                 buffer.get_rooted(index).map(|spelling| (spelling, None))
             }
@@ -2064,9 +2075,9 @@ impl CommandProcessor<'_> {
                     token.source_provenance,
                 )
             }),
-            TokenPayload::ArgumentRange { buffer, range } => (index
+            TokenPayload::ArgumentRange { arguments, range } => (index
                 < range.end().saturating_sub(range.start()))
-            .then(|| buffer.get_rooted(range.start() + index))
+            .then(|| parameters.argument_word(*arguments, range.start() + index))
             .flatten()
             .map(|spelling| (spelling, None)),
             TokenPayload::Stored { tokens, origins } => {
@@ -2111,7 +2122,7 @@ impl CommandProcessor<'_> {
             let depleted = match self.command.input.levels.last() {
                 Some(InputLevel::Tokens(cursor))
                     if drains_for_stack_conservation(&cursor.behavior)
-                        && Self::next_stored_token(cursor).is_none() =>
+                        && Self::next_stored_token(cursor, &self.command.parameters).is_none() =>
                 {
                     Some(cursor.identity())
                 }

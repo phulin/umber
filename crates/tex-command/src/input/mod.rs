@@ -381,6 +381,12 @@ fn project_token_cursor(
             return None;
         }
     });
+    if matches!(
+        cursor.payload,
+        TokenPayload::MacroReplacement { .. } | TokenPayload::ArgumentRange { .. }
+    ) {
+        return None;
+    }
     match &cursor.payload {
         TokenPayload::Packed(chunk) => {
             for index in 0..chunk.len() {
@@ -406,10 +412,8 @@ fn project_token_cursor(
         TokenPayload::InlineBackedUp(word) => {
             project_token(hash, word.token().spelling.token()?, state)?;
         }
-        TokenPayload::ArgumentRange { buffer, .. } => {
-            for word in buffer.words() {
-                project_token(hash, word.token()?, state)?;
-            }
+        TokenPayload::MacroReplacement { .. } | TokenPayload::ArgumentRange { .. } => {
+            unreachable!("packed macro payloads fail closed above")
         }
     }
     Some(())
@@ -859,10 +863,15 @@ impl InputState {
         parameters: &crate::macro_call::ParameterState,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
-        fn payload_len(_stores: &tex_state::CommandContext<'_>, tokens: &TokenCursor) -> usize {
+        fn payload_len(
+            _stores: &tex_state::CommandContext<'_>,
+            tokens: &TokenCursor,
+            _parameters: &crate::macro_call::ParameterState,
+        ) -> usize {
             match &tokens.payload {
                 TokenPayload::Packed(chunk) => chunk.len(),
                 TokenPayload::Stored { tokens, .. } => tokens.tokens().len(),
+                TokenPayload::MacroReplacement { len, .. } => *len as usize,
                 TokenPayload::Transient(words) => words.len(),
                 TokenPayload::InlineTransient(_) | TokenPayload::InlineBackedUp(_) => 1,
                 TokenPayload::BackedUp(words) => words.words().len(),
@@ -876,10 +885,19 @@ impl InputState {
             _stores: &tex_state::CommandContext<'_>,
             tokens: &TokenCursor,
             index: usize,
+            parameters: &crate::macro_call::ParameterState,
         ) -> Option<tex_state::token::Token> {
             match &tokens.payload {
                 TokenPayload::Packed(chunk) => chunk.word(index).map(|word| word.semantic_token()),
                 TokenPayload::Stored { tokens, .. } => tokens.tokens().get(index).copied(),
+                TokenPayload::MacroReplacement {
+                    admitted,
+                    definition,
+                    ..
+                } => parameters
+                    .admitted_macro(*admitted)
+                    .replacement_word(*definition, index)
+                    .map(|word| word.word().semantic_token()),
                 TokenPayload::Transient(words) => {
                     words.get(index).map(|word| word.semantic_token())
                 }
@@ -892,9 +910,9 @@ impl InputState {
                 TokenPayload::InlineBackedUp(word) => {
                     (index == 0).then(|| word.token().spelling.semantic_token())
                 }
-                TokenPayload::ArgumentRange { buffer, range } => buffer
-                    .get(range.start().saturating_add(index))
-                    .map(|word| word.semantic_token()),
+                TokenPayload::ArgumentRange { arguments, range } => parameters
+                    .argument_word(*arguments, range.start().saturating_add(index))
+                    .map(|word| word.word().semantic_token()),
             }
         }
 
@@ -935,13 +953,13 @@ impl InputState {
                     tex_state::token::Token::Cs(activation.name),
                 ),
                 stores
-                    .macro_definition(activation.definition.id())
+                    .macro_definition(activation.definition)
                     .parameter_text(),
             ))
         } else {
             None
         };
-        let count = payload_len(stores, tokens);
+        let count = payload_len(stores, tokens, parameters);
         let split = tokens.position().min(count);
         let noexpand_marker = matches!(
             tokens.behavior,
@@ -973,7 +991,7 @@ impl InputState {
             if before.is_complete() {
                 break;
             }
-            if let Some(token) = payload_token(stores, tokens, index) {
+            if let Some(token) = payload_token(stores, tokens, index, parameters) {
                 render_token(stores, token, &mut raw, &mut rendered);
                 before.prepend_str(&rendered);
             }
@@ -1044,7 +1062,7 @@ impl InputState {
             if after.is_complete() {
                 break;
             }
-            if let Some(token) = payload_token(stores, tokens, index) {
+            if let Some(token) = payload_token(stores, tokens, index, parameters) {
                 render_token(stores, token, &mut raw, &mut rendered);
                 after.push_str(&rendered);
             }

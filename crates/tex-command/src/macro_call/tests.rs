@@ -48,16 +48,49 @@ fn completed_arguments_share_one_buffer_and_preserve_empty_ranges() {
     builder
         .complete(2, std::iter::empty())
         .expect("empty grouped argument still has a range");
-    let arguments = builder.finish();
+    let mut parameters = ParameterState::default();
+    let arguments = builder.finish(&mut parameters);
 
-    assert_eq!(arguments.buffer.len(), 2);
+    assert_eq!(parameters.argument_words(arguments).len(), 2);
     assert_eq!(
-        arguments.ranges[0].map(|range| (range.start(), range.end())),
+        parameters.argument_ranges(arguments)[0].map(|range| (range.start(), range.end())),
         Some((0, 2))
     );
     assert_eq!(
-        arguments.ranges[1].map(|range| (range.start(), range.end())),
+        parameters.argument_ranges(arguments)[1].map(|range| (range.start(), range.end())),
         Some((2, 2))
+    );
+}
+
+#[test]
+fn ten_thousand_macro_argument_and_invocation_cycles_reuse_warmed_chunks() {
+    let mut parameters = ParameterState::default();
+    let definition = tex_state::macro_store::MacroDefinitionRef::testing_new(1);
+    let mut baseline = None;
+    for cycle in 0..10_000 {
+        parameters.prepare_argument_build();
+        let mut builder = parameters.take_argument_builder();
+        builder
+            .complete(
+                1,
+                (0..32).map(|index| rooted(char::from(b'a' + index % 26))),
+            )
+            .expect("bounded argument is accepted");
+        let arguments = builder.finish(&mut parameters);
+        parameters.push_activation(
+            tex_state::interner::Symbol::testing_new(1),
+            definition.id(),
+            arguments,
+            OriginId::UNKNOWN,
+        );
+        parameters.retire_last_activation();
+        if cycle == 0 {
+            baseline = Some(parameters.testing_arena_shape());
+        }
+    }
+    assert_eq!(
+        parameters.testing_arena_shape(),
+        baseline.expect("warm cycle")
     );
 }
 
@@ -112,14 +145,22 @@ fn activation_boundary_owns_arguments_before_exposing_its_body() {
         .complete(1, [rooted('x')])
         .expect("argument completes");
     let mut state = CommandState::default();
-    let universe = tex_state::Universe::new();
+    let mut universe = tex_state::Universe::new();
+    let definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        TokenListId::EMPTY,
+        TokenListId::EMPTY,
+    ));
+    let admitted = state.parameters.admit_macro(definition.id(), || {
+        universe.packed_macro_owner(definition.id())
+    });
+    let arguments = builder.finish(&mut state.parameters);
     let body = state.push_macro_activation(
         tex_state::interner::Symbol::testing_new(1),
-        tex_state::macro_store::MacroDefinitionRef::testing_new(4),
-        builder.finish(),
-        tex_state::provenance::ExpansionFrameRef::unknown(),
-        universe.token_list_ref(TokenListId::EMPTY),
-        tex_state::provenance::OriginListRef::empty(),
+        definition.id(),
+        arguments,
+        OriginId::UNKNOWN,
+        admitted,
     );
 
     let owner = state
@@ -128,7 +169,7 @@ fn activation_boundary_owns_arguments_before_exposing_its_body() {
         .last()
         .expect("activation owner");
     assert_eq!(owner.identity.0, 0);
-    assert_eq!(owner.arguments.buffer.len(), 1);
+    assert_eq!(state.parameters.argument_words(owner.arguments).len(), 1);
     let crate::input::InputLevel::Tokens(cursor) = state.input.levels.last().expect("body level")
     else {
         panic!("macro activation must push a token body level");
@@ -143,21 +184,23 @@ fn activation_boundary_owns_arguments_before_exposing_its_body() {
 #[test]
 fn activation_parent_tracks_the_live_nested_frame() {
     let mut parameters = ParameterState::default();
+    let first_arguments = MacroArgumentBuilder::default().finish(&mut parameters);
     let first = parameters.push_activation(
         tex_state::interner::Symbol::testing_new(1),
-        tex_state::macro_store::MacroDefinitionRef::testing_new(1),
-        MacroArgumentBuilder::default().finish(),
-        tex_state::provenance::ExpansionFrameRef::unknown(),
+        tex_state::macro_store::MacroDefinitionRef::testing_new(1).id(),
+        first_arguments,
+        OriginId::UNKNOWN,
     );
     assert_eq!(first.0, 0);
+    let second_arguments = MacroArgumentBuilder::default().finish(&mut parameters);
     parameters.push_activation(
         tex_state::interner::Symbol::testing_new(2),
-        tex_state::macro_store::MacroDefinitionRef::testing_new(2),
-        MacroArgumentBuilder::default().finish(),
-        tex_state::provenance::ExpansionFrameRef::unknown(),
+        tex_state::macro_store::MacroDefinitionRef::testing_new(2).id(),
+        second_arguments,
+        OriginId::UNKNOWN,
     );
     assert_eq!(parameters.activations.len(), 2);
-    assert_eq!(parameters.parent_invocation().id(), OriginId::UNKNOWN);
+    assert_eq!(parameters.parent_invocation(), OriginId::UNKNOWN);
 }
 
 fn run_macro_call(
@@ -235,8 +278,7 @@ fn run_macro(
             .activations
             .last()
             .ok_or(CommandError::input_invariant())?
-            .arguments
-            .clone();
+            .arguments;
         Ok((command, arguments))
     })
 }
@@ -322,9 +364,11 @@ fn scalar_matcher_consumes_compulsory_prefix_before_undelimited_argument() {
     .expect("prefix and argument match");
     assert_eq!(command.parameters.activations.len(), 1);
     assert_eq!(
-        arguments
-            .buffer
-            .get(0)
+        command
+            .parameters
+            .argument_words(arguments)
+            .first()
+            .copied()
             .expect("argument token")
             .semantic_token(),
         Token::Char {
@@ -734,7 +778,7 @@ fn undelimited_group_strips_only_its_outer_braces() {
     )
     .expect("balanced group matches");
     assert_eq!(command.parameters.activations.len(), 1);
-    let buffer = &arguments.buffer;
+    let buffer = command.parameters.argument_words(arguments);
     assert_eq!(buffer.len(), 4);
     assert!(matches!(
         buffer.get(1).expect("nested begin").semantic_token(),
@@ -874,12 +918,15 @@ fn macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports() {
     assert_eq!(outcome, Ok(MacroCallOutcome::Activated));
     assert!(long.semantic_diagnostics.is_empty());
     let activation = long.parameters.activations.last().expect("macro activates");
-    assert_eq!(activation.arguments.buffer.len(), 1);
+    assert_eq!(
+        long.parameters.argument_words(activation.arguments).len(),
+        1
+    );
     assert!(matches!(
-        activation
-            .arguments
-            .buffer
-            .get(0)
+        long.parameters
+            .argument_words(activation.arguments)
+            .first()
+            .copied()
             .expect("paragraph argument token")
             .semantic_token(),
         Token::Cs(_)
@@ -963,12 +1010,16 @@ fn non_long_argument_rejection_uses_par_token_identity_not_meaning() {
     assert_eq!(
         aliased
             .parameters
-            .activations
-            .last()
-            .expect("alias argument activates")
-            .arguments
-            .buffer
-            .get(0)
+            .argument_words(
+                aliased
+                    .parameters
+                    .activations
+                    .last()
+                    .expect("alias argument activates")
+                    .arguments,
+            )
+            .first()
+            .copied()
             .expect("alias argument token")
             .semantic_token(),
         Token::Cs(alias)
@@ -1266,7 +1317,14 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
             .last()
             .expect("activation")
             .arguments;
-        assert_eq!(arguments.buffer.len(), 1);
+        assert_eq!(
+            processor
+                .command
+                .parameters
+                .argument_words(*arguments)
+                .len(),
+            1
+        );
         assert_eq!(processor.command.parameters.activations.len(), 1);
         assert!(matches!(
             processor.command.input.levels.last(),
@@ -1525,8 +1583,8 @@ fn nested_calls_keep_out_parameter_ownership_and_invocation_provenance() {
     }
     assert_eq!(
         universe.macro_invocation_provenance_stats().invocations(),
-        0,
-        "retiring the final nested activation releases both structural frames"
+        2,
+        "retiring activations leaves only the compact rollback-coupled frame records"
     );
 }
 
@@ -1537,21 +1595,17 @@ fn other(ch: char) -> Token {
     }
 }
 
-fn argument_tokens(arguments: &MacroArguments) -> Vec<Token> {
-    (0..arguments.buffer.len())
-        .map(|index| {
-            arguments
-                .buffer
-                .get(index)
-                .expect("argument token")
-                .semantic_token()
-        })
+fn argument_tokens(state: &ParameterState, arguments: MacroArguments) -> Vec<Token> {
+    state
+        .argument_words(arguments)
+        .iter()
+        .map(|word| word.semantic_token())
         .collect()
 }
 
 #[test]
 fn delimited_argument_stops_at_its_literal_token_sequence() {
-    let (_, arguments) = run_macro(
+    let (command, arguments) = run_macro(
         b"\\m x,",
         MeaningFlags::EMPTY,
         &[Token::param(1), other(',')],
@@ -1559,7 +1613,7 @@ fn delimited_argument_stops_at_its_literal_token_sequence() {
     )
     .expect("delimiter terminates the argument");
     assert_eq!(
-        argument_tokens(&arguments),
+        argument_tokens(&command.parameters, arguments),
         vec![Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
@@ -1569,7 +1623,7 @@ fn delimited_argument_stops_at_its_literal_token_sequence() {
 
 #[test]
 fn delimited_argument_retries_a_mismatch_as_an_overlapping_prefix() {
-    let (_, arguments) = run_macro(
+    let (command, arguments) = run_macro(
         b"\\m aaab",
         MeaningFlags::EMPTY,
         &[
@@ -1591,7 +1645,7 @@ fn delimited_argument_retries_a_mismatch_as_an_overlapping_prefix() {
     )
     .expect("the final two a tokens begin the overlapping delimiter");
     assert_eq!(
-        argument_tokens(&arguments),
+        argument_tokens(&command.parameters, arguments),
         vec![Token::Char {
             ch: 'a',
             cat: Catcode::Letter,
@@ -1601,7 +1655,7 @@ fn delimited_argument_retries_a_mismatch_as_an_overlapping_prefix() {
 
 #[test]
 fn delimited_argument_commits_a_partial_prefix_before_continuing() {
-    let (_, arguments) = run_macro(
+    let (command, arguments) = run_macro(
         b"\\m!x!?",
         MeaningFlags::EMPTY,
         &[Token::param(1), other('!'), other('?')],
@@ -1609,7 +1663,7 @@ fn delimited_argument_commits_a_partial_prefix_before_continuing() {
     )
     .expect("partial prefix is argument material");
     assert_eq!(
-        argument_tokens(&arguments),
+        argument_tokens(&command.parameters, arguments),
         vec![
             Token::Char {
                 ch: '!',
@@ -1625,7 +1679,7 @@ fn delimited_argument_commits_a_partial_prefix_before_continuing() {
 
 #[test]
 fn delimiter_inside_literal_braces_remains_argument_material() {
-    let (_, arguments) = run_macro(
+    let (command, arguments) = run_macro(
         b"\\m{a,b}c,",
         MeaningFlags::EMPTY,
         &[Token::param(1), other(',')],
@@ -1633,7 +1687,7 @@ fn delimiter_inside_literal_braces_remains_argument_material() {
     )
     .expect("nested delimiter does not terminate the argument");
     assert_eq!(
-        argument_tokens(&arguments),
+        argument_tokens(&command.parameters, arguments),
         vec![
             Token::Char {
                 ch: '{',
@@ -1662,7 +1716,7 @@ fn delimiter_inside_literal_braces_remains_argument_material() {
 
 #[test]
 fn delimited_argument_strips_one_complete_outer_group() {
-    let (_, arguments) = run_macro(
+    let (command, arguments) = run_macro(
         b"\\m{{a}},",
         MeaningFlags::EMPTY,
         &[Token::param(1), other(',')],
@@ -1670,7 +1724,7 @@ fn delimited_argument_strips_one_complete_outer_group() {
     )
     .expect("complete outer group is stripped");
     assert_eq!(
-        argument_tokens(&arguments),
+        argument_tokens(&command.parameters, arguments),
         vec![
             Token::Char {
                 ch: '{',
@@ -1693,26 +1747,20 @@ fn non_long_delimited_argument_allows_a_recovered_paragraph_prefix() {
     let mut universe = Universe::new_with_plain_catcodes();
     let par = universe.intern("par").symbol();
     drop(universe);
-    let (_, arguments) = run_macro(
+    let (command, arguments) = run_macro(
         b"\\m\\par?\\par!",
         MeaningFlags::EMPTY,
         &[Token::param(1), Token::Cs(par), other('!')],
         false,
     )
     .expect("failed delimiter prefix is accepted literally");
-    assert_eq!(arguments.buffer.len(), 2);
+    let words = command.parameters.argument_words(arguments);
+    assert_eq!(words.len(), 2);
     assert!(matches!(
-        arguments
-            .buffer
-            .get(0)
-            .expect("recovered prefix")
-            .semantic_token(),
+        words.first().expect("recovered prefix").semantic_token(),
         Token::Cs(_)
     ));
-    assert_eq!(
-        arguments.buffer.get(1).expect("question").semantic_token(),
-        other('?')
-    );
+    assert_eq!(words.get(1).expect("question").semantic_token(), other('?'));
 }
 
 #[test]
@@ -1753,7 +1801,7 @@ fn delimiter_opening_brace_does_not_leave_literal_brace_accounting() {
         false,
     )
     .expect("opening brace may be a parameter delimiter");
-    assert_eq!(arguments.buffer.len(), 0);
+    assert_eq!(command.parameters.argument_words(arguments).len(), 0);
     // The delimiter brace's `get_next` increment and `back_input`
     // decrement cancel, leaving §331's running base untouched.
     assert_eq!(

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use smallvec::SmallVec;
+use tex_state::ids::MacroDefinitionId;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
 use tex_state::provenance::{OriginListRef, OriginRef};
 use tex_state::token::{RootedTracedTokenBuffer, RootedTracedTokenWord, TracedTokenWord};
@@ -178,6 +179,12 @@ pub(crate) enum TokenPayload {
         tokens: TokenListRef,
         origins: OriginListRef,
     },
+    /// Replacement replay borrowed from one command-admitted macro chunk.
+    MacroReplacement {
+        admitted: u32,
+        definition: MacroDefinitionId,
+        len: u32,
+    },
     /// Tokens materialized for a bounded insertion or scanner operation.
     Transient(SharedTokenBuffer),
     /// One transient token stored directly in its input level.
@@ -189,7 +196,7 @@ pub(crate) enum TokenPayload {
     InlineBackedUp(RootedBackedUpToken),
     /// One already materialized macro argument, replayed literally by range.
     ArgumentRange {
-        buffer: SharedTokenBuffer,
+        arguments: crate::macro_call::MacroArguments,
         range: MacroArgumentRange,
     },
 }
@@ -249,7 +256,9 @@ impl PackedTokenChunk {
                     backed_up: true,
                 })
             }
-            payload @ (TokenPayload::Stored { .. } | TokenPayload::ArgumentRange { .. }) => payload,
+            payload @ (TokenPayload::Stored { .. }
+            | TokenPayload::MacroReplacement { .. }
+            | TokenPayload::ArgumentRange { .. }) => payload,
         }
     }
 
@@ -330,6 +339,7 @@ impl TokenPayload {
         match self {
             Self::Packed(chunk) => chunk.len(),
             Self::Stored { tokens, .. } => tokens.tokens().len(),
+            Self::MacroReplacement { len, .. } => *len as usize,
             Self::Transient(words) => words.len(),
             Self::InlineTransient(_) | Self::InlineBackedUp(_) => 1,
             Self::BackedUp(words) => words.words().len(),

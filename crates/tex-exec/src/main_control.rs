@@ -8565,7 +8565,7 @@ fn starts_paragraph_in_vertical_mode(meaning: Meaning) -> bool {
 }
 
 fn material_origin(
-    processor: &CommandProcessor<'_>,
+    processor: &mut CommandProcessor<'_>,
     command: &tex_command::CurrentCommand,
 ) -> tex_state::provenance::OriginRef {
     processor

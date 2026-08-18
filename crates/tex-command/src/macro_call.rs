@@ -3,12 +3,10 @@
 use tex_state::env::banks::IntParam;
 use tex_state::ids::MacroDefinitionId;
 use tex_state::interner::Symbol;
-use tex_state::macro_store::MacroDefinitionRef;
+use tex_state::macro_store::{PackedMacroChunkOwner, PackedMacroPattern};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::provenance::{ExpansionFrameRef, OriginRef};
 use tex_state::token::{Catcode, OriginId, RootedTracedTokenBuffer, Token, TracedTokenWord};
 
-use crate::input::SharedTokenBuffer;
 use crate::processor::status::{
     ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
 };
@@ -30,6 +28,19 @@ pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
 pub(crate) struct ParameterState {
     pub(crate) activations: Vec<MacroActivation>,
     pub(crate) next_activation_identity: u64,
+    admitted_macros: Vec<PackedMacroChunkOwner>,
+    argument_chunks: Vec<std::sync::Arc<ArgumentChunk>>,
+    argument_chunk_cursor: u32,
+    argument_scratch: RootedTracedTokenBuffer,
+}
+
+const ARGUMENT_CHUNK_WORDS: usize = 4096;
+const ARGUMENT_CHUNK_RECORDS: usize = 256;
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+struct ArgumentChunk {
+    words: RootedTracedTokenBuffer,
+    records: Vec<[Option<MacroArgumentRange>; 9]>,
 }
 
 /// Typed identity of one live macro activation.
@@ -43,17 +54,22 @@ pub(crate) struct MacroActivation {
     /// TeX82 §389's `warning_index`: the control sequence being expanded.
     /// §314 prints it as this level's context descriptor.
     pub(crate) name: Symbol,
-    pub(crate) definition: MacroDefinitionRef,
+    pub(crate) definition: MacroDefinitionId,
     pub(crate) arguments: MacroArguments,
-    pub(crate) invocation: ExpansionFrameRef,
+    pub(crate) invocation: OriginId,
 }
 
 /// One contiguous macro-argument allocation and its at-most-nine ranges.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MacroArguments {
-    pub(crate) buffer: SharedTokenBuffer,
-    pub(crate) ranges: [Option<MacroArgumentRange>; 9],
+    chunk: u32,
+    start: u32,
+    len: u32,
+    record: u32,
 }
+
+const _: () = assert!(core::mem::size_of::<MacroArguments>() == 16);
+const _: () = assert!(core::mem::size_of::<MacroActivation>() == 48);
 
 /// Exhaustive result of TeX82's `macro_call`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -92,6 +108,14 @@ pub(crate) enum MacroParameterEscape {
     EscapedParameter,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct MacroDelimiter {
+    admitted: u32,
+    definition: MacroDefinitionId,
+    start: usize,
+    len: usize,
+}
+
 impl MacroParameterEscape {
     pub(crate) const fn classify(token: Token) -> Option<Self> {
         match token {
@@ -108,25 +132,29 @@ impl MacroParameterEscape {
 /// A half-open range within a macro activation's shared argument buffer.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MacroArgumentRange {
-    start: usize,
-    end: usize,
+    start: u32,
+    end: u32,
 }
 
 impl MacroArgumentRange {
     pub(crate) const fn new(start: usize, end: usize) -> Option<Self> {
         if start <= end {
-            Some(Self { start, end })
+            assert!(start <= u32::MAX as usize && end <= u32::MAX as usize);
+            Some(Self {
+                start: start as u32,
+                end: end as u32,
+            })
         } else {
             None
         }
     }
 
     pub(crate) const fn start(self) -> usize {
-        self.start
+        self.start as usize
     }
 
     pub(crate) const fn end(self) -> usize {
-        self.end
+        self.end as usize
     }
 }
 
@@ -150,11 +178,11 @@ impl MacroArgumentBuilder {
     fn complete_buffer(
         &mut self,
         slot: u8,
-        argument: RootedTracedTokenBuffer,
+        argument: crate::state::TracedTokenScratch,
     ) -> Result<(), MacroArgumentBuildError> {
         self.validate_slot(slot)?;
         let start = self.tokens.len();
-        self.tokens.append_buffer(argument);
+        self.tokens.extend(argument.rooted_words());
         self.finish_slot(slot, start);
         Ok(())
     }
@@ -180,11 +208,11 @@ impl MacroArgumentBuilder {
 
     /// Freezes the single shared argument allocation for one activation.
     #[must_use]
-    pub(crate) fn finish(self) -> MacroArguments {
-        MacroArguments {
-            buffer: SharedTokenBuffer::from_rooted_buffer(self.tokens),
-            ranges: self.ranges,
-        }
+    pub(crate) fn finish(mut self, state: &mut ParameterState) -> MacroArguments {
+        let arguments = state.store_argument_words(&self.tokens, self.ranges);
+        self.tokens.clear();
+        state.argument_scratch = self.tokens;
+        arguments
     }
 }
 
@@ -195,12 +223,35 @@ impl ParameterState {
     pub(crate) fn push_activation(
         &mut self,
         name: Symbol,
-        definition: MacroDefinitionRef,
+        definition: MacroDefinitionId,
         arguments: MacroArguments,
-        invocation: ExpansionFrameRef,
+        invocation: OriginId,
     ) -> MacroActivationId {
         let identity = MacroActivationId(self.next_activation_identity);
         self.next_activation_identity = self.next_activation_identity.wrapping_add(1);
+        self.install_activation(identity, name, definition, arguments, invocation);
+        identity
+    }
+
+    pub(crate) fn restore_activation(
+        &mut self,
+        identity: MacroActivationId,
+        name: Symbol,
+        definition: MacroDefinitionId,
+        arguments: MacroArguments,
+        invocation: OriginId,
+    ) {
+        self.install_activation(identity, name, definition, arguments, invocation);
+    }
+
+    fn install_activation(
+        &mut self,
+        identity: MacroActivationId,
+        name: Symbol,
+        definition: MacroDefinitionId,
+        arguments: MacroArguments,
+        invocation: OriginId,
+    ) {
         self.activations.push(MacroActivation {
             identity,
             name,
@@ -208,30 +259,210 @@ impl ParameterState {
             arguments,
             invocation,
         });
-        identity
     }
 
-    pub(crate) fn parent_invocation(&self) -> OriginRef {
+    pub(crate) fn parent_invocation(&self) -> OriginId {
         self.activations
             .last()
-            .map(|activation| activation.invocation.as_origin().clone())
-            .unwrap_or_else(OriginRef::unknown)
+            .map_or(OriginId::UNKNOWN, |activation| activation.invocation)
     }
 
-    pub(crate) fn active_invocation_origin(&self) -> Option<OriginRef> {
+    pub(crate) fn active_invocation_origin(&self) -> Option<OriginId> {
         self.activations
             .last()
-            .map(|activation| activation.invocation.as_origin().clone())
+            .map(|activation| activation.invocation)
     }
-}
 
-pub(crate) fn macro_arguments_semantic_eq(left: &MacroArguments, right: &MacroArguments) -> bool {
-    left.ranges == right.ranges && left.arguments_tokens().eq(right.arguments_tokens())
+    pub(crate) fn retire_last_activation(&mut self) {
+        self.activations.pop();
+    }
+
+    pub(crate) fn prepare_argument_build(&mut self) {
+        if self.activations.is_empty() {
+            for chunk in &mut self.argument_chunks {
+                let chunk = std::sync::Arc::make_mut(chunk);
+                chunk.words.clear();
+                chunk.records.clear();
+            }
+            self.argument_chunk_cursor = 0;
+        }
+    }
 }
 
 impl MacroArguments {
-    fn arguments_tokens(&self) -> impl Iterator<Item = Option<Token>> + '_ {
-        self.buffer.words().iter().map(|word| word.token())
+    const EMPTY_CHUNK: u32 = u32::MAX;
+
+    fn arguments_tokens<'a>(
+        &'a self,
+        state: &'a ParameterState,
+    ) -> impl Iterator<Item = Option<Token>> + 'a {
+        state.argument_words(*self).iter().map(|word| word.token())
+    }
+}
+
+impl Default for MacroArguments {
+    fn default() -> Self {
+        Self {
+            chunk: Self::EMPTY_CHUNK,
+            start: 0,
+            len: 0,
+            record: u32::MAX,
+        }
+    }
+}
+
+impl ParameterState {
+    pub(crate) fn admit_macro(
+        &mut self,
+        definition: MacroDefinitionId,
+        owner: impl FnOnce() -> PackedMacroChunkOwner,
+    ) -> u32 {
+        if let Some(index) = self
+            .admitted_macros
+            .iter()
+            .position(|candidate| candidate.contains(definition))
+        {
+            return u32::try_from(index).expect("admitted macro chunks exceed u32");
+        }
+        if self.activations.is_empty()
+            && let Some(index) = self
+                .admitted_macros
+                .iter()
+                .position(|candidate| candidate.owns_definition_slot(definition))
+        {
+            self.admitted_macros[index] = owner();
+            return u32::try_from(index).expect("admitted macro chunks exceed u32");
+        }
+        self.admitted_macros.push(owner());
+        u32::try_from(self.admitted_macros.len() - 1).expect("admitted macro chunks exceed u32")
+    }
+
+    pub(crate) fn admitted_macro(&self, index: u32) -> &PackedMacroChunkOwner {
+        &self.admitted_macros[index as usize]
+    }
+
+    pub(crate) fn macro_owner(&self, definition: MacroDefinitionId) -> &PackedMacroChunkOwner {
+        self.admitted_macros
+            .iter()
+            .find(|owner| owner.contains(definition))
+            .expect("active macro definition has an admitted chunk owner")
+    }
+
+    fn take_argument_builder(&mut self) -> MacroArgumentBuilder {
+        MacroArgumentBuilder {
+            tokens: core::mem::take(&mut self.argument_scratch),
+            ranges: [None; 9],
+            next_slot: 0,
+        }
+    }
+
+    pub(crate) fn store_arguments(
+        &mut self,
+        words: RootedTracedTokenBuffer,
+        ranges: [Option<MacroArgumentRange>; 9],
+    ) -> MacroArguments {
+        self.store_argument_words(&words, ranges)
+    }
+
+    fn store_argument_words(
+        &mut self,
+        words: &RootedTracedTokenBuffer,
+        ranges: [Option<MacroArgumentRange>; 9],
+    ) -> MacroArguments {
+        let mut chunk_index = self.argument_chunk_cursor as usize;
+        if self.argument_chunks.get(chunk_index).is_some_and(|chunk| {
+            (!chunk.words.is_empty()
+                && chunk.words.len().saturating_add(words.len()) > ARGUMENT_CHUNK_WORDS)
+                || chunk.records.len() == ARGUMENT_CHUNK_RECORDS
+        }) {
+            chunk_index += 1;
+        }
+        if self.argument_chunks.len() <= chunk_index {
+            self.argument_chunks
+                .push(std::sync::Arc::new(ArgumentChunk {
+                    words: RootedTracedTokenBuffer::default(),
+                    records: Vec::with_capacity(ARGUMENT_CHUNK_RECORDS),
+                }));
+        }
+        self.argument_chunk_cursor =
+            u32::try_from(chunk_index).expect("macro argument chunks exceed u32");
+        let chunk = std::sync::Arc::make_mut(&mut self.argument_chunks[chunk_index]);
+        let start = chunk.words.len();
+        let len = words.len();
+        let record = chunk.records.len();
+        chunk.words.extend(words.rooted_words());
+        chunk.records.push(ranges);
+        MacroArguments {
+            chunk: u32::try_from(chunk_index).expect("macro argument chunks exceed u32"),
+            start: u32::try_from(start).expect("macro argument chunk exceeds u32"),
+            len: u32::try_from(len).expect("macro argument span exceeds u32"),
+            record: u32::try_from(record).expect("macro argument record exceeds u32"),
+        }
+    }
+
+    pub(crate) fn argument_words(&self, arguments: MacroArguments) -> &[TracedTokenWord] {
+        if arguments.chunk == MacroArguments::EMPTY_CHUNK {
+            return &[];
+        }
+        let chunk = &self.argument_chunks[arguments.chunk as usize];
+        let start = arguments.start as usize;
+        &chunk.words.words()[start..start + arguments.len as usize]
+    }
+
+    pub(crate) fn argument_word(
+        &self,
+        arguments: MacroArguments,
+        index: usize,
+    ) -> Option<tex_state::token::RootedTracedTokenWord> {
+        if index >= arguments.len as usize || arguments.chunk == MacroArguments::EMPTY_CHUNK {
+            return None;
+        }
+        self.argument_chunks[arguments.chunk as usize]
+            .words
+            .get_rooted(arguments.start as usize + index)
+    }
+
+    pub(crate) fn argument_ranges(
+        &self,
+        arguments: MacroArguments,
+    ) -> [Option<MacroArgumentRange>; 9] {
+        if arguments.chunk == MacroArguments::EMPTY_CHUNK {
+            return [None; 9];
+        }
+        self.argument_chunks[arguments.chunk as usize].records[arguments.record as usize]
+    }
+
+    pub(crate) fn argument_range(
+        &self,
+        arguments: MacroArguments,
+        slot: u8,
+    ) -> Option<MacroArgumentRange> {
+        self.argument_ranges(arguments)[usize::from(slot - 1)]
+    }
+
+    pub(crate) fn argument_rooted_words(
+        &self,
+        arguments: MacroArguments,
+    ) -> impl ExactSizeIterator<Item = tex_state::token::RootedTracedTokenWord> + '_ {
+        (0..arguments.len as usize).map(move |index| {
+            self.argument_word(arguments, index)
+                .expect("index from exact macro argument span")
+        })
+    }
+
+    #[cfg(test)]
+    fn testing_arena_shape(&self) -> (usize, usize, usize) {
+        (
+            self.argument_chunks.len(),
+            self.argument_chunks
+                .iter()
+                .map(|chunk| chunk.words.capacity())
+                .sum(),
+            self.argument_chunks
+                .iter()
+                .map(|chunk| chunk.records.capacity())
+                .sum(),
+        )
     }
 }
 
@@ -273,8 +504,23 @@ impl CommandProcessor<'_> {
         let macro_name = call
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
-        let meaning = self.state.macro_definition(definition);
-        let pattern = self.state.macro_definition_parameter_pattern(definition);
+        self.command.parameters.prepare_argument_build();
+        let admitted = self
+            .command
+            .parameters
+            .admit_macro(definition, || self.state.packed_macro_owner(definition));
+        let meaning = self
+            .command
+            .parameters
+            .admitted_macro(admitted)
+            .meaning(definition)
+            .ok_or(CommandError::input_invariant())?;
+        let pattern = self
+            .command
+            .parameters
+            .admitted_macro(admitted)
+            .pattern(definition)
+            .ok_or(CommandError::input_invariant())?;
         self.trace_macro_invocation(
             macro_name,
             meaning.parameter_text(),
@@ -285,7 +531,7 @@ impl CommandProcessor<'_> {
         // macro therefore feeds its replacement directly, without a transient
         // `matching` scanner episode. Literal leading tokens still need the
         // matcher even when there are no numbered parameters.
-        let needs_matching = !pattern.leading().is_empty() || pattern.parameter_count() != 0;
+        let needs_matching = pattern.leading_end() != 0 || pattern.parameter_count() != 0;
         let episode = if needs_matching {
             let builder = ArgumentBuilderId(self.command.transient.next_builder_identity);
             self.command.transient.next_builder_identity =
@@ -304,7 +550,8 @@ impl CommandProcessor<'_> {
         };
         self.outer_recovered_while_matching = false;
         self.eof_recovered_while_matching = false;
-        let arguments = match self.macro_call_scalar(definition, meaning.flags(), &pattern) {
+        let arguments = match self.macro_call_scalar(admitted, definition, meaning.flags(), pattern)
+        {
             Ok(arguments) => arguments,
             Err(CommandError::MacroPrefixMismatch) => {
                 // TeX82 §391 reports the mismatch through `error` and returns
@@ -336,24 +583,17 @@ impl CommandProcessor<'_> {
         };
 
         // TeX.web §§391--400 freezes the completed ranges before replacing
-        // the input. The activation owns that one shared buffer; its body
-        // replays the canonical immutable replacement list and resolves
-        // compact `OutParameter` tokens through that owner.
+        // the input. The activation names one command-arena argument span;
+        // its body replays the admitted immutable replacement span and
+        // resolves compact `OutParameter` tokens through that coordinate.
         // TeX82 §390's replacement hand-off first drains every depleted token
         // list -- the exhausted macro body or replayed parameter the call
         // token itself came from, any backup or recovery insertion, and any
         // finished stored replay -- before `begin_token_list(..., macro)`.
         // Those retirements must precede this body's input push.
         self.conserve_input_stack()?;
-        let provenance = self.state.macro_definition_provenance(definition);
-        let _level = self.push_macro_activation(
-            macro_name,
-            definition,
-            call.origin_ref().clone(),
-            arguments.clone(),
-            meaning.replacement_text(),
-            provenance.replacement_ref().clone(),
-        );
+        let _level =
+            self.push_macro_activation(macro_name, definition, call.origin(), arguments, admitted);
         observe!(
             self,
             CommandObservation::Input(InputRecord {
@@ -372,7 +612,7 @@ impl CommandProcessor<'_> {
                 definition: self.state.macro_definition_observation_operand(definition) as u64,
                 control_sequence: Some(self.state.resolve(macro_name).to_owned()),
                 argument: Some(pattern.parameter_count() as u8),
-                token_count: arguments.buffer.len() as u64,
+                token_count: self.command.parameters.argument_words(arguments).len() as u64,
                 tokens: Vec::new(),
             }),
         );
@@ -384,13 +624,15 @@ impl CommandProcessor<'_> {
 
     fn macro_call_scalar(
         &mut self,
+        admitted: u32,
         definition: MacroDefinitionId,
         flags: MeaningFlags,
-        pattern: &tex_state::macro_store::MacroParameterPattern,
+        pattern: PackedMacroPattern,
     ) -> Result<MacroArguments, CommandError> {
-        for expected in pattern.leading() {
+        for index in 0..pattern.leading_end() {
+            let expected = self.macro_parameter_token(admitted, definition, index)?;
             let actual = self.get_token()?.ok_or(CommandError::MacroPrefixMismatch)?;
-            if actual.spelling().semantic_token() != *expected {
+            if actual.spelling().semantic_token() != expected {
                 // TeX82 §391 tests every compulsory parameter-text token
                 // after raw delivery has completed §336 recovery. An outer
                 // control sequence therefore contributes the inserted
@@ -407,31 +649,50 @@ impl CommandProcessor<'_> {
         // `align_state`. With no numbered parameters the brace lives in the
         // compulsory leading pattern rather than an argument delimiter.
         if pattern.parameter_count() == 0
-            && pattern
-                .leading()
-                .last()
-                .is_some_and(|token| is_begin_group(*token))
+            && pattern.leading_end() != 0
+            && is_begin_group(self.macro_parameter_token(
+                admitted,
+                definition,
+                pattern.leading_end() - 1,
+            )?)
         {
             self.undo_delimiter_begin_group_delivery();
         }
 
-        let mut arguments = MacroArgumentBuilder::default();
+        let mut arguments = self.command.parameters.take_argument_builder();
         for parameter in 0..pattern.parameter_count() {
-            let delimiter = pattern.delimiter(parameter);
-            let argument = if delimiter.is_empty() {
+            let parameter_len = self
+                .command
+                .parameters
+                .admitted_macro(admitted)
+                .parameter_len(definition)
+                .ok_or(CommandError::input_invariant())?;
+            let (start, end) = pattern.delimiter_bounds(parameter, parameter_len);
+            let delimiter = MacroDelimiter {
+                admitted,
+                definition,
+                start,
+                len: end - start,
+            };
+            let argument = if delimiter.len == 0 {
                 self.scan_undelimited_argument(flags)?
             } else {
                 self.scan_delimited_argument(flags, delimiter)?
             };
-            self.trace_macro_argument(pattern.marker(parameter), parameter + 1, argument.words());
+            let marker = pattern.marker_index(parameter).map_or(Ok('#'), |index| {
+                match self.macro_parameter_token(admitted, definition, index)? {
+                    Token::Char { ch, .. } => Ok(ch),
+                    _ => Err(CommandError::input_invariant()),
+                }
+            })?;
+            self.trace_macro_argument(marker, parameter + 1, argument.words());
             observe!(
                 self,
                 CommandObservation::TokenList(TokenListRecord {
                     transition: "splice",
                     purpose: "macro_delimiter_match",
-                    tokens: delimiter
-                        .iter()
-                        .copied()
+                    tokens: (0..delimiter.len)
+                        .filter_map(|index| self.macro_delimiter_token(delimiter, index).ok())
                         .map(|token| {
                             self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN))
                         })
@@ -456,7 +717,35 @@ impl CommandProcessor<'_> {
                 .complete_buffer((parameter + 1) as u8, argument)
                 .map_err(|_| CommandError::input_invariant())?;
         }
-        Ok(arguments.finish())
+        Ok(arguments.finish(&mut self.command.parameters))
+    }
+
+    fn macro_parameter_token(
+        &self,
+        admitted: u32,
+        definition: MacroDefinitionId,
+        index: usize,
+    ) -> Result<Token, CommandError> {
+        self.command
+            .parameters
+            .admitted_macro(admitted)
+            .parameter_token(definition, index)
+            .ok_or(CommandError::input_invariant())
+    }
+
+    fn macro_delimiter_token(
+        &self,
+        delimiter: MacroDelimiter,
+        index: usize,
+    ) -> Result<Token, CommandError> {
+        if index >= delimiter.len {
+            return Err(CommandError::input_invariant());
+        }
+        self.macro_parameter_token(
+            delimiter.admitted,
+            delimiter.definition,
+            delimiter.start + index,
+        )
     }
 
     /// TeX82 §389's invocation trace, including `print_ln` before the macro
@@ -616,7 +905,7 @@ impl CommandProcessor<'_> {
     fn recover_extra_right_brace_argument(
         &mut self,
         command: crate::CurrentCommand,
-    ) -> Result<RootedTracedTokenBuffer, CommandError> {
+    ) -> Result<crate::state::TracedTokenScratch, CommandError> {
         self.back_input(command)?;
         self.insert_macro_argument_recovery_par()?;
         // §395 ends with `ins_error`, so §82 renders the context with
@@ -635,7 +924,7 @@ impl CommandProcessor<'_> {
     fn scan_undelimited_argument(
         &mut self,
         flags: MeaningFlags,
-    ) -> Result<RootedTracedTokenBuffer, CommandError> {
+    ) -> Result<crate::state::TracedTokenScratch, CommandError> {
         let first = loop {
             let command = self
                 .get_token()?
@@ -671,7 +960,9 @@ impl CommandProcessor<'_> {
                 ..
             }
         ) {
-            return Ok(RootedTracedTokenBuffer::new([first.rooted_spelling()]));
+            let mut tokens = self.traced_token_scratch();
+            tokens.push(first.rooted_spelling());
+            return Ok(tokens);
         }
 
         // TeX82 §394 links the opening left brace into the temporary
@@ -679,7 +970,8 @@ impl CommandProcessor<'_> {
         // argument completes.  Keep that ownership here too: §396's
         // runaway pseudoprint must still see an unmatched opening brace.
         let mut depth = 1_u32;
-        let mut tokens = RootedTracedTokenBuffer::new([first.rooted_spelling()]);
+        let mut tokens = self.traced_token_scratch();
+        tokens.push(first.rooted_spelling());
         loop {
             let command = self
                 .get_token()?
@@ -712,7 +1004,8 @@ impl CommandProcessor<'_> {
                     depth -= 1;
                     if depth == 0 {
                         tokens.push(command.rooted_spelling());
-                        return Ok(strip_one_outer_group(tokens));
+                        strip_one_outer_group(&mut tokens);
+                        return Ok(tokens);
                     }
                     tokens.push(command.rooted_spelling());
                 }
@@ -729,11 +1022,11 @@ impl CommandProcessor<'_> {
     fn scan_delimited_argument(
         &mut self,
         flags: MeaningFlags,
-        delimiter: &[Token],
-    ) -> Result<RootedTracedTokenBuffer, CommandError> {
-        debug_assert!(!delimiter.is_empty());
-        let mut tokens = RootedTracedTokenBuffer::default();
-        let mut prefix = RootedTracedTokenBuffer::default();
+        delimiter: MacroDelimiter,
+    ) -> Result<crate::state::TracedTokenScratch, CommandError> {
+        debug_assert_ne!(delimiter.len, 0);
+        let mut tokens = self.traced_token_scratch();
+        let mut prefix = self.traced_token_scratch();
         let mut depth = 0_u32;
         let mut current = None;
 
@@ -755,23 +1048,27 @@ impl CommandProcessor<'_> {
             }
             let token = command.spelling().semantic_token();
 
-            if depth == 0 && token == delimiter[prefix.len()] {
+            if depth == 0 && token == self.macro_delimiter_token(delimiter, prefix.len())? {
                 prefix.push(command.rooted_spelling());
-                if prefix.len() == delimiter.len() {
+                if prefix.len() == delimiter.len {
                     // `#{` consumes the opening brace as parameter text. Raw
                     // delivery has accounted for it, but no replacement-body
                     // replay exists yet to provide the balancing delivery.
                     if is_begin_group(token) {
                         self.undo_delimiter_begin_group_delivery();
                     }
-                    return Ok(strip_one_outer_group(tokens));
+                    strip_one_outer_group(&mut tokens);
+                    return Ok(tokens);
                 }
                 continue;
             }
 
             if !prefix.is_empty() {
-                let retained =
-                    overlapping_delimiter_prefix(&prefix, command.rooted_spelling(), delimiter);
+                let retained = self.overlapping_delimiter_prefix(
+                    &prefix,
+                    command.rooted_spelling(),
+                    delimiter,
+                )?;
                 let committed = if retained == 0 {
                     prefix.len()
                 } else {
@@ -817,6 +1114,33 @@ impl CommandProcessor<'_> {
             self.check_argument_paragraph(&command, flags, tokens.words())?;
             push_delimited_argument_token(&mut tokens, &mut depth, command.rooted_spelling());
         }
+    }
+
+    fn overlapping_delimiter_prefix(
+        &self,
+        prefix: &RootedTracedTokenBuffer,
+        current: tex_state::token::RootedTracedTokenWord,
+        delimiter: MacroDelimiter,
+    ) -> Result<usize, CommandError> {
+        let pending_len = prefix.len() + 1;
+        for candidate_len in (1..pending_len.min(delimiter.len)).rev() {
+            let mut matches = true;
+            for index in 0..candidate_len {
+                let pending = pending_len - candidate_len + index;
+                let token = prefix
+                    .get(pending)
+                    .unwrap_or_else(|| current.word())
+                    .semantic_token();
+                if token != self.macro_delimiter_token(delimiter, index)? {
+                    matches = false;
+                    break;
+                }
+            }
+            if matches {
+                return Ok(candidate_len);
+            }
+        }
+        Ok(0)
     }
 
     fn check_argument_paragraph(
@@ -873,27 +1197,6 @@ fn is_paragraph_command(command: &crate::CurrentCommand) -> bool {
 /// longest proper delimiter prefix after a mismatch. TeX.web §394 compares
 /// these scalar token sequences directly while moving the unmatched leading
 /// tokens into the completed argument.
-fn overlapping_delimiter_prefix(
-    prefix: &RootedTracedTokenBuffer,
-    current: tex_state::token::RootedTracedTokenWord,
-    delimiter: &[Token],
-) -> usize {
-    let pending_len = prefix.len() + 1;
-    (1..pending_len.min(delimiter.len()))
-        .rev()
-        .find(|&candidate_len| {
-            (0..candidate_len).all(|index| {
-                let pending = pending_len - candidate_len + index;
-                let token = prefix
-                    .get(pending)
-                    .unwrap_or_else(|| current.word())
-                    .semantic_token();
-                token == delimiter[index]
-            })
-        })
-        .unwrap_or(0)
-}
-
 fn push_delimited_argument_token(
     tokens: &mut RootedTracedTokenBuffer,
     depth: &mut u32,
@@ -913,12 +1216,12 @@ fn push_delimited_argument_token(
     tokens.push(token);
 }
 
-fn strip_one_outer_group(mut tokens: RootedTracedTokenBuffer) -> RootedTracedTokenBuffer {
+fn strip_one_outer_group(tokens: &mut RootedTracedTokenBuffer) {
     if tokens.len() < 2
         || !is_begin_group(tokens[0].semantic_token())
         || !is_end_group(tokens[tokens.len() - 1].semantic_token())
     {
-        return tokens;
+        return;
     }
 
     let mut depth = 0_u32;
@@ -934,7 +1237,7 @@ fn strip_one_outer_group(mut tokens: RootedTracedTokenBuffer) -> RootedTracedTok
             } if depth > 0 => {
                 depth -= 1;
                 if depth == 0 && index + 1 != tokens.len() {
-                    return tokens;
+                    return;
                 }
             }
             _ => {}
@@ -944,7 +1247,6 @@ fn strip_one_outer_group(mut tokens: RootedTracedTokenBuffer) -> RootedTracedTok
         tokens.pop();
         tokens.remove(0);
     }
-    tokens
 }
 
 fn is_begin_group(token: Token) -> bool {

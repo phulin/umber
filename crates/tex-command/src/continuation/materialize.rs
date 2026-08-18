@@ -211,26 +211,26 @@ impl<'a> Materializer<'a> {
                 let invocation = self.origin(invocation);
                 let definition_origin = self.origin(definition_origin);
                 let parent = self.origin(parent);
-                if let Some(definition) = definition {
+                let id = if let Some(definition) = definition {
                     let definition = self.macro_definition(definition);
-                    self.universe
-                        .macro_invocation_frame(
-                            definition.id(),
-                            invocation,
-                            definition_origin,
-                            parent,
-                        )
-                        .into_origin()
+                    self.universe.macro_invocation_origin(
+                        definition.id(),
+                        invocation.id(),
+                        definition_origin.id(),
+                        parent.id(),
+                    )
                 } else {
                     self.universe
-                        .macro_invocation_frame_from_nonowning_operand(
+                        .macro_invocation_origin_from_nonowning_operand(
                             detached_operand,
-                            invocation,
-                            definition_origin,
-                            parent,
+                            invocation.id(),
+                            definition_origin.id(),
+                            parent.id(),
                         )
-                        .into_origin()
-                }
+                };
+                self.universe
+                    .materialize_origin_ref(id)
+                    .expect("materialized invocation recipe is live")
             }
         };
         self.origins[id.0] = Some(root.clone());
@@ -394,10 +394,11 @@ impl<'a> Materializer<'a> {
             OwnedTokenPayload::InlineBackedUp(word) => {
                 TokenPayload::InlineBackedUp(self.backed_up(word))
             }
-            OwnedTokenPayload::ArgumentRange { buffer, range } => TokenPayload::ArgumentRange {
-                buffer: SharedTokenBuffer::new_rooted(buffer.iter().map(|word| self.word(word))),
-                range: *range,
-            },
+            OwnedTokenPayload::ArgumentRange { buffer, range } => TokenPayload::transient_rooted(
+                buffer[range.start()..range.end()]
+                    .iter()
+                    .map(|word| self.word(word)),
+            ),
         }
     }
 
@@ -493,29 +494,27 @@ impl<'a> Materializer<'a> {
         &mut self,
         parameters: &OwnedParameterState,
     ) -> Result<ParameterState, CommandContinuationError> {
-        Ok(ParameterState {
-            activations: parameters
-                .activations
-                .iter()
-                .map(|activation| {
-                    let definition = self.macro_definition(activation.definition);
-                    let invocation =
-                        ExpansionFrameRef::from_origin(self.origin(activation.invocation));
-                    MacroActivation {
-                        identity: activation.identity,
-                        name: self.symbols[activation.name.0],
-                        definition,
-                        arguments: MacroArguments {
-                            buffer: SharedTokenBuffer::new_rooted(
-                                activation.arguments.iter().map(|word| self.word(word)),
-                            ),
-                            ranges: activation.ranges,
-                        },
-                        invocation,
-                    }
-                })
-                .collect(),
-            next_activation_identity: parameters.next_activation_identity,
-        })
+        let mut state = ParameterState::default();
+        for activation in &parameters.activations {
+            let definition = self.macro_definition(activation.definition).id();
+            let owner = self.universe.packed_macro_owner(definition);
+            state.admit_macro(definition, || owner);
+            let arguments = state.store_arguments(
+                tex_state::token::RootedTracedTokenBuffer::new(
+                    activation.arguments.iter().map(|word| self.word(word)),
+                ),
+                activation.ranges,
+            );
+            let invocation = self.origin(activation.invocation).id();
+            state.restore_activation(
+                activation.identity,
+                self.symbols[activation.name.0],
+                definition,
+                arguments,
+                invocation,
+            );
+        }
+        state.next_activation_identity = parameters.next_activation_identity;
+        Ok(state)
     }
 }

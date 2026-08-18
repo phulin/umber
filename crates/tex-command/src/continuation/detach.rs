@@ -41,7 +41,7 @@ impl<'a> Detacher<'a> {
     }
 
     pub(super) fn finish(mut self, summary: &CommandSummary) -> OwnedCommandContinuation {
-        let input = self.input(&summary.input);
+        let input = self.input(&summary.input, &summary.parameters);
         let parameters = self.parameters(&summary.parameters);
         OwnedCommandContinuation {
             summary: OwnedCommandSummary {
@@ -326,15 +326,21 @@ impl<'a> Detacher<'a> {
         }
     }
 
-    fn macro_definition(&mut self, root: &MacroDefinitionRef) -> MacroRecipeId {
-        if let Some(recipe) = self.macro_ids.get(&root.id()) {
+    fn macro_definition(
+        &mut self,
+        definition: MacroDefinitionId,
+        parameters: &ParameterState,
+    ) -> MacroRecipeId {
+        if let Some(recipe) = self.macro_ids.get(&definition) {
             return *recipe;
         }
         let recipe = MacroRecipeId(self.macros.len());
-        self.macro_ids.insert(root.id(), recipe);
+        self.macro_ids.insert(definition, recipe);
+        let owner = parameters.macro_owner(definition);
         self.macro_operands.insert(
-            self.universe
-                .macro_definition_observation_operand(root.id()) as u64,
+            owner
+                .observation_operand(definition)
+                .expect("admitted macro has an observation operand") as u64,
             recipe,
         );
         self.macros.push(OwnedMacro {
@@ -345,24 +351,24 @@ impl<'a> Detacher<'a> {
             parameter_origins: OriginListRecipeId(0),
             replacement_origins: OriginListRecipeId(0),
         });
-        let meaning = self.universe.macro_definition(root.id());
+        let meaning = owner
+            .meaning(definition)
+            .expect("admitted macro has a packed meaning");
         let parameters = self.token_list(&self.universe.token_list_ref(meaning.parameter_text()));
         let replacement =
             self.token_list(&self.universe.token_list_ref(meaning.replacement_text()));
-        let (definition_origin, parameter_origins, replacement_origins) = self
-            .universe
-            .macro_definition_provenance_roots(root.id())
-            .map_or(
+        let (definition_origin, parameter_origins, replacement_origins) =
+            owner.provenance(definition).map_or(
                 (
                     OriginRecipeId(0),
                     OriginListRecipeId(0),
                     OriginListRecipeId(0),
                 ),
-                |(definition, parameters, replacement)| {
+                |provenance| {
                     (
-                        self.origin_ref(&definition),
-                        self.origin_list(&parameters),
-                        self.origin_list(&replacement),
+                        self.origin_ref(provenance.definition_ref()),
+                        self.origin_list(provenance.parameter_ref()),
+                        self.origin_list(provenance.replacement_ref()),
                     )
                 },
             );
@@ -377,9 +383,13 @@ impl<'a> Detacher<'a> {
         recipe
     }
 
-    fn input(&mut self, input: &InputState) -> OwnedInputState {
+    fn input(&mut self, input: &InputState, parameters: &ParameterState) -> OwnedInputState {
         OwnedInputState {
-            levels: input.levels.iter().map(|level| self.level(level)).collect(),
+            levels: input
+                .levels
+                .iter()
+                .map(|level| self.level(level, parameters))
+                .collect(),
             terminal_context_line: input.terminal_context_line.clone(),
             pending_sources: input
                 .pending_sources
@@ -392,7 +402,7 @@ impl<'a> Detacher<'a> {
         }
     }
 
-    fn level(&mut self, level: &InputLevel) -> OwnedInputLevel {
+    fn level(&mut self, level: &InputLevel, parameters: &ParameterState) -> OwnedInputLevel {
         match level {
             InputLevel::Source(source) => OwnedInputLevel::Source(Box::new(OwnedSourceLevel {
                 identity: source.identity(),
@@ -431,7 +441,7 @@ impl<'a> Detacher<'a> {
                     }),
             })),
             InputLevel::Tokens(cursor) => OwnedInputLevel::Tokens(OwnedTokenCursor {
-                payload: self.payload(&cursor.payload),
+                payload: self.payload(&cursor.payload, parameters),
                 behavior: cursor.behavior.clone(),
                 retirement: cursor.retirement,
                 trace: cursor.trace.clone(),
@@ -441,7 +451,11 @@ impl<'a> Detacher<'a> {
         }
     }
 
-    fn payload(&mut self, payload: &TokenPayload) -> OwnedTokenPayload {
+    fn payload(
+        &mut self,
+        payload: &TokenPayload,
+        parameters: &ParameterState,
+    ) -> OwnedTokenPayload {
         match payload {
             TokenPayload::Packed(chunk) if chunk.is_backed_up() => OwnedTokenPayload::BackedUp(
                 chunk
@@ -466,6 +480,20 @@ impl<'a> Detacher<'a> {
                 tokens: self.token_list(tokens),
                 origins: self.origin_list(origins),
             },
+            TokenPayload::MacroReplacement {
+                admitted,
+                definition,
+                len,
+            } => OwnedTokenPayload::Transient(
+                (0..*len as usize)
+                    .filter_map(|index| {
+                        parameters
+                            .admitted_macro(*admitted)
+                            .replacement_word(*definition, index)
+                    })
+                    .map(|word| self.word(word))
+                    .collect(),
+            ),
             TokenPayload::Transient(words) => OwnedTokenPayload::Transient(
                 words.rooted_words().map(|word| self.word(word)).collect(),
             ),
@@ -486,8 +514,11 @@ impl<'a> Detacher<'a> {
             TokenPayload::InlineBackedUp(word) => {
                 OwnedTokenPayload::InlineBackedUp(self.backed_up(word.clone()))
             }
-            TokenPayload::ArgumentRange { buffer, range } => OwnedTokenPayload::ArgumentRange {
-                buffer: buffer.rooted_words().map(|word| self.word(word)).collect(),
+            TokenPayload::ArgumentRange { arguments, range } => OwnedTokenPayload::ArgumentRange {
+                buffer: parameters
+                    .argument_rooted_words(*arguments)
+                    .map(|word| self.word(word))
+                    .collect(),
                 range: *range,
             },
         }
@@ -514,15 +545,13 @@ impl<'a> Detacher<'a> {
                 .map(|activation| OwnedActivation {
                     identity: activation.identity,
                     name: self.symbol(activation.name),
-                    definition: self.macro_definition(&activation.definition),
-                    arguments: activation
-                        .arguments
-                        .buffer
-                        .rooted_words()
+                    definition: self.macro_definition(activation.definition, parameters),
+                    arguments: parameters
+                        .argument_rooted_words(activation.arguments)
                         .map(|word| self.word(word))
                         .collect(),
-                    ranges: activation.arguments.ranges,
-                    invocation: self.origin_ref(activation.invocation.as_origin()),
+                    ranges: parameters.argument_ranges(activation.arguments),
+                    invocation: self.origin_id(activation.invocation),
                 })
                 .collect(),
             next_activation_identity: parameters.next_activation_identity,

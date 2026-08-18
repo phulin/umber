@@ -8,7 +8,7 @@ use tex_state::ids::{MacroDefinitionId, TokenListId};
 use tex_state::interner::ControlSequenceKind;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
-use tex_state::provenance::{OriginRef, SynthesizedOriginKind};
+use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -2228,28 +2228,24 @@ impl CommandProcessor<'_> {
         &mut self,
         name: tex_state::interner::Symbol,
         definition: MacroDefinitionId,
-        call_site: OriginRef,
+        call_site: OriginId,
         arguments: MacroArguments,
-        replacement_tokens: TokenListId,
-        replacement_origins: tex_state::provenance::OriginListRef,
+        admitted: u32,
     ) -> InputLevelId {
         let definition_origin = self
-            .state
-            .macro_definition_provenance(definition)
-            .definition_ref()
-            .clone();
+            .command
+            .parameters
+            .macro_owner(definition)
+            .provenance(definition)
+            .map_or(OriginId::UNKNOWN, |provenance| {
+                provenance.definition_ref().id()
+            });
         let parent = self.command.parameters.parent_invocation();
         let invocation =
             self.state
-                .macro_invocation_frame(definition, call_site, definition_origin, parent);
-        self.command.push_macro_activation(
-            name,
-            self.state.macro_definition_ref(definition),
-            arguments,
-            invocation,
-            self.state.token_list_ref(replacement_tokens),
-            replacement_origins,
-        )
+                .macro_invocation_origin(definition, call_site, definition_origin, parent);
+        self.command
+            .push_macro_activation(name, definition, arguments, invocation, admitted)
     }
 }
 

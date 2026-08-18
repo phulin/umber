@@ -346,13 +346,14 @@ fn loaded_job_applies_explicit_provenance_demand_after_format_restore() {
     let diagnostics = provider
         .run(&fixture, job(source, &mut diagnostics_observer))
         .expect("diagnostics-only loaded job");
-    assert_eq!(
+    let diagnostics_frames = diagnostics.universe.macro_invocation_origins_for_testing();
+    assert_eq!(diagnostics_frames.len(), 1);
+    assert!(
         diagnostics
             .universe
-            .macro_invocation_provenance_stats()
-            .invocations(),
-        0,
-        "without a rendered-source consumer the completed batch job releases its macro frame"
+            .origin_ref(diagnostics_frames[0])
+            .is_none(),
+        "without a rendered-source consumer only the compact archived frame remains"
     );
 
     let mut rendered_observer = Recorder::default();
@@ -368,6 +369,14 @@ fn loaded_job_applies_explicit_provenance_demand_after_format_restore() {
             .invocations()
             > 0,
         "the explicit rendered-source consumer retains the producing macro frame"
+    );
+    assert!(
+        rendered
+            .universe
+            .macro_invocation_origins_for_testing()
+            .into_iter()
+            .any(|origin| rendered.universe.origin_ref(origin).is_some()),
+        "rendered material owns the cold-materialized structural frame"
     );
     assert_eq!(
         fixture.image(),

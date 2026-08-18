@@ -478,6 +478,24 @@ fn macro_invocation_accounting_tracks_live_parent_chains_and_rollback() {
             parent,
         ))
     );
+    assert_eq!(
+        stores.macro_invocation_origin(
+            definition.id(),
+            invocation_origin,
+            definition_origin,
+            parent,
+        ),
+        child,
+        "the inline recent-frame cache reuses an exact retry without a weak candidate"
+    );
+    assert!(stores.origin_ref(child).is_none());
+    let materialized = stores
+        .materialize_origin_ref(child)
+        .expect("cold publication materializes an archived frame");
+    assert_eq!(materialized.id(), child);
+    assert_eq!(materialized.record(), Some(stores.origin(child)));
+    drop(materialized);
+    assert!(stores.origin_ref(child).is_none());
 
     stores.rollback(&snapshot);
     assert_eq!(stores.macro_invocation_provenance_stats().invocations(), 0);

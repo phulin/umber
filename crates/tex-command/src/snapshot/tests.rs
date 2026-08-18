@@ -4,10 +4,10 @@ use std::hash::{Hash, Hasher};
 use crate::CommandState;
 use crate::conditionals::{ConditionFrame, ConditionalKind, IfLimit};
 use crate::input::{
-    BackedUpToken, BackupTreatment, InputLevel, ReplayTrace, RetirementBehavior, SharedTokenBuffer,
-    TokenBehavior, TokenPayload,
+    BackedUpToken, BackupTreatment, InputLevel, ReplayTrace, RetirementBehavior, TokenBehavior,
+    TokenPayload,
 };
-use crate::macro_call::{MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments};
+use crate::macro_call::{MacroActivationId, MacroArgumentRange};
 use crate::processor::{
     AbsorbingContext, ActiveCellDelivery, AlignmentCellTemplates, AlignmentId, AlignmentIdentity,
     AlignmentScanContext, ArgumentBuilderId, ConditionId, DefinitionContext, MatchingContext,
@@ -178,29 +178,32 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
         Token::Cs(macro_name),
         frame.as_origin().clone(),
     );
-    state.parameters.activations.push(MacroActivation {
-        identity: MacroActivationId(7),
-        name: macro_name,
-        definition: macro_root,
-        arguments: MacroArguments {
-            buffer: SharedTokenBuffer::new_rooted([tex_state::token::RootedTracedTokenWord::new(
-                Token::Cs(macro_name),
-                inserted.clone(),
-            )]),
-            ranges: [
-                MacroArgumentRange::new(0, 1),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ],
-        },
-        invocation: frame,
+    state.parameters.admit_macro(macro_root.id(), || {
+        universe.packed_macro_owner(macro_root.id())
     });
+    let arguments = state.parameters.store_arguments(
+        tex_state::token::RootedTracedTokenBuffer::new([
+            tex_state::token::RootedTracedTokenWord::new(Token::Cs(macro_name), inserted.clone()),
+        ]),
+        [
+            MacroArgumentRange::new(0, 1),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ],
+    );
+    state.parameters.restore_activation(
+        MacroActivationId(7),
+        macro_name,
+        macro_root.id(),
+        arguments,
+        frame.id(),
+    );
     state.parameters.next_activation_identity = 11;
     let stored_origins = universe.allocate_origin_list_ref(&[inserted]);
     state.push_token_level(
@@ -238,36 +241,44 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
     assert_eq!(restored.parameters.next_activation_identity, 11);
     let restored_activation = restored.parameters.activations.last().expect("activation");
     assert_eq!(
-        destination.macro_invocation_provenance_stats(),
-        source_invocations,
-        "detached active frames must preserve exact invocation accounting"
+        destination
+            .macro_invocation_provenance_stats()
+            .invocations(),
+        source_invocations.invocations(),
+        "detached active frames must preserve the exact logical invocation count"
     );
     assert_ne!(
-        restored_activation.definition.id(),
-        summary.parameters.activations[0].definition.id()
+        restored_activation.definition,
+        summary.parameters.activations[0].definition
     );
     assert_eq!(
         destination.resolve(restored_activation.name),
         "detached-macro"
     );
-    let restored_macro = destination.macro_definition(restored_activation.definition.id());
+    let restored_owner = restored
+        .parameters
+        .macro_owner(restored_activation.definition);
+    let restored_macro = restored_owner
+        .meaning(restored_activation.definition)
+        .expect("restored activation has a packed macro record");
     assert_eq!(
         destination.tokens(restored_macro.replacement_text()),
         [Token::Cs(restored_activation.name)]
     );
     let tex_state::provenance::OriginRecord::MacroInvocation(restored_frame) =
-        destination.origin(restored_activation.invocation.id())
+        destination.origin(restored_activation.invocation)
     else {
         panic!("activation did not materialize an expansion frame");
     };
     assert_eq!(
         restored_frame.definition_operand(),
-        destination.macro_definition_observation_operand(restored_activation.definition.id())
-            as u64,
+        restored_owner
+            .observation_operand(restored_activation.definition)
+            .expect("restored activation has an observation operand") as u64,
         "frame definition operand must be destination-local"
     );
     let resolved = tex_state::ProvenanceResolver::new(&destination)
-        .resolve_origin(restored_activation.invocation.id())
+        .resolve_origin(restored_activation.invocation)
         .expect("frame resolves through its invocation recipe");
     assert_eq!(resolved.path, "/job/main.tex");
     assert_eq!((resolved.start, resolved.end), (0, 1));
@@ -294,9 +305,11 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
     assert_eq!(restored_state.parameters.activations.len(), 1);
     assert_eq!(restored_state.conditions.frames.len(), 1);
     assert_eq!(
-        destination.macro_invocation_provenance_stats(),
-        source_invocations,
-        "installing the restored command must keep its typed frame root live"
+        destination
+            .macro_invocation_provenance_stats()
+            .invocations(),
+        source_invocations.invocations(),
+        "installing the restored command must keep its archived frame coordinate live"
     );
 }
 
@@ -478,26 +491,27 @@ fn populated_quiescent_state() -> CommandState {
     state.next_source_character().expect("first scalar");
     state.input.next_level_identity = 11;
     state.input.next_source_identity = 13;
-    state.parameters.activations.push(MacroActivation {
-        identity: MacroActivationId(17),
-        name: tex_state::interner::Symbol::testing_new(23),
-        definition: tex_state::macro_store::MacroDefinitionRef::testing_new(19),
-        arguments: MacroArguments {
-            buffer: SharedTokenBuffer::default(),
-            ranges: [
-                MacroArgumentRange::new(0, 0),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ],
-        },
-        invocation: tex_state::provenance::ExpansionFrameRef::unknown(),
-    });
+    let arguments = state.parameters.store_arguments(
+        tex_state::token::RootedTracedTokenBuffer::default(),
+        [
+            MacroArgumentRange::new(0, 0),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ],
+    );
+    state.parameters.restore_activation(
+        MacroActivationId(17),
+        tex_state::interner::Symbol::testing_new(23),
+        tex_state::macro_store::MacroDefinitionRef::testing_new(19).id(),
+        arguments,
+        tex_state::token::OriginId::UNKNOWN,
+    );
     state.conditions.frames.push(ConditionFrame {
         identity: ConditionId(23),
         kind: ConditionalKind::IfNum,

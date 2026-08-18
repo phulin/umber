@@ -5532,6 +5532,15 @@ impl Universe {
         self.stores.macro_definition_ref(id)
     }
 
+    #[doc(hidden)]
+    #[must_use]
+    pub fn packed_macro_owner(
+        &self,
+        id: MacroDefinitionId,
+    ) -> crate::macro_store::PackedMacroChunkOwner {
+        self.stores.packed_macro_owner(id)
+    }
+
     #[must_use]
     pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
         self.stores.macro_definition(id)
@@ -5915,6 +5924,10 @@ impl Universe {
     #[must_use]
     pub fn origin_ref(&self, id: OriginId) -> Option<OriginRef> {
         self.stores.origin_ref(id)
+    }
+
+    pub fn materialize_origin_ref(&mut self, id: OriginId) -> Option<OriginRef> {
+        self.stores.materialize_origin_ref(id)
     }
 
     /// Reads a live origin record.

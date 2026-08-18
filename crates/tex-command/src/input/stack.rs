@@ -2,9 +2,8 @@
 #![allow(dead_code)] // consumed by the ordered raw-delivery implementation issues
 
 use crate::CommandState;
-use tex_state::macro_store::MacroDefinitionRef;
-use tex_state::provenance::{ExpansionFrameRef, OriginListRef};
-use tex_state::token_store::TokenListRef;
+use tex_state::ids::MacroDefinitionId;
+use tex_state::token::OriginId;
 
 use crate::macro_call::{MacroActivationId, MacroArguments};
 
@@ -124,7 +123,7 @@ impl CommandState {
             .parameters
             .activations
             .iter()
-            .map(|activation| activation.arguments.buffer.words().len())
+            .map(|activation| self.parameters.argument_words(activation.arguments).len())
             .sum::<usize>();
         self.input.levels.iter().fold(arguments, |words, level| {
             let InputLevel::Tokens(cursor) = level else {
@@ -151,14 +150,14 @@ impl CommandState {
     pub(crate) fn push_macro_activation(
         &mut self,
         name: tex_state::interner::Symbol,
-        definition: MacroDefinitionRef,
+        definition: MacroDefinitionId,
         arguments: MacroArguments,
-        invocation: ExpansionFrameRef,
-        replacement_tokens: TokenListRef,
-        replacement_origins: OriginListRef,
+        invocation: OriginId,
+        admitted: u32,
     ) -> InputLevelId {
-        let parameter_count = arguments
-            .ranges
+        let parameter_count = self
+            .parameters
+            .argument_ranges(arguments)
             .iter()
             .filter(|range| range.is_some())
             .count();
@@ -167,9 +166,8 @@ impl CommandState {
             .activations
             .iter()
             .map(|activation| {
-                activation
-                    .arguments
-                    .ranges
+                self.parameters
+                    .argument_ranges(activation.arguments)
                     .iter()
                     .filter(|range| range.is_some())
                     .count()
@@ -180,10 +178,16 @@ impl CommandState {
         let activation = self
             .parameters
             .push_activation(name, definition, arguments, invocation);
+        let len = self
+            .parameters
+            .admitted_macro(admitted)
+            .replacement_len(definition)
+            .expect("admitted macro contains its replacement");
         self.push_token_level(
-            TokenPayload::Stored {
-                tokens: replacement_tokens,
-                origins: replacement_origins,
+            TokenPayload::MacroReplacement {
+                admitted,
+                definition,
+                len: u32::try_from(len).expect("macro replacement exceeds u32"),
             },
             TokenBehavior::MacroBody(activation),
             RetirementBehavior::Pop,
@@ -272,20 +276,21 @@ impl CommandState {
             .iter()
             .find(|activation| activation.identity == owner)
             .ok_or(ParameterReplayError::MissingActivation(owner))?;
-        let range = activation.arguments.ranges[usize::from(slot - 1)].ok_or(
-            ParameterReplayError::MissingArgument {
+        let range = self
+            .parameters
+            .argument_range(activation.arguments, slot)
+            .ok_or(ParameterReplayError::MissingArgument {
                 activation: owner,
                 slot,
-            },
-        )?;
-        if range.end() > activation.arguments.buffer.len() {
+            })?;
+        if range.end() > self.parameters.argument_words(activation.arguments).len() {
             return Err(ParameterReplayError::ArgumentRangeOutsideBuffer {
                 activation: owner,
                 slot,
             });
         }
         let payload = TokenPayload::ArgumentRange {
-            buffer: activation.arguments.buffer.clone(),
+            arguments: activation.arguments,
             range,
         };
         let identity = self.push_token_level(
@@ -519,7 +524,7 @@ impl CommandState {
 
     fn finish_macro_body_retirement(&mut self, behavior: &TokenBehavior) {
         if matches!(behavior, TokenBehavior::MacroBody(_)) {
-            self.parameters.activations.pop();
+            self.parameters.retire_last_activation();
         }
     }
 }

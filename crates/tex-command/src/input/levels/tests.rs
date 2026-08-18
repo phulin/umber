@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use tex_state::Universe;
 use tex_state::ids::TokenListId;
 use tex_state::provenance::SyntheticOriginKind;
@@ -139,19 +137,20 @@ fn token_cursor_classifies_orthogonal_ownership_domains() {
 
 #[test]
 fn macro_argument_ranges_share_one_contiguous_allocation() {
-    let allocation: Arc<[TracedTokenWord]> = vec![traced('a'), traced('b'), traced('c')].into();
-    let buffer = SharedTokenBuffer::new(Arc::clone(&allocation));
+    let arguments = crate::macro_call::MacroArguments::default();
     let payload = TokenPayload::ArgumentRange {
-        buffer: buffer.clone(),
+        arguments,
         range: MacroArgumentRange::new(1, 3).expect("valid argument range"),
     };
 
-    drop(allocation);
-    assert_eq!(buffer.len(), 3);
-    let TokenPayload::ArgumentRange { buffer, range } = payload else {
+    let TokenPayload::ArgumentRange {
+        arguments: retained,
+        range,
+    } = payload
+    else {
         panic!("argument payload changed variant");
     };
-    assert_eq!(buffer.len(), 3);
+    assert_eq!(retained, arguments);
     assert_eq!((range.start(), range.end()), (1, 3));
 }
 

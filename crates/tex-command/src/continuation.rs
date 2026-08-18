@@ -11,8 +11,8 @@ use tex_state::input::SourceId;
 use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::macro_store::{MacroDefinitionRef, MacroMeaning};
 use tex_state::provenance::{
-    ExpansionFrameRef, InsertedOriginKind, OriginListRef, OriginRecord, OriginRef,
-    SynthesizedOriginKind, SyntheticOriginKind,
+    InsertedOriginKind, OriginListRef, OriginRecord, OriginRef, SynthesizedOriginKind,
+    SyntheticOriginKind,
 };
 use tex_state::source_map::{SourceDescriptor, SourceMapError};
 use tex_state::token::{OriginId, Token};
@@ -25,9 +25,7 @@ use crate::input::{
     SourceLevel, SourceNameClass, SourceOpenDepths, SourceProvenance, SourceRetirement,
     TokenBehavior, TokenCursor, TokenPayload,
 };
-use crate::macro_call::{
-    MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments, ParameterState,
-};
+use crate::macro_call::{MacroActivationId, MacroArgumentRange, ParameterState};
 use crate::processor::{ConditionId, ExpansionState};
 use crate::profile::{CharacterMode, CommandProfile};
 use crate::snapshot::CommandSummary;
