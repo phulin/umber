@@ -32,45 +32,6 @@ fn register_source(control: &mut MainControl, bytes: &[u8]) {
 }
 
 #[test]
-fn aggregate_step_marks_commit_private_work_and_truncate_failed_suffixes_exactly() {
-    let mut stores = Universe::new();
-    stores.begin_private_revision();
-    let mut control = MainControl::default();
-
-    let committed_step = control.snapshot_step(&mut stores);
-    assert_eq!(
-        stores.testing_private_revision_domain_stats(),
-        Some((0, 0, 0, true))
-    );
-    stores.testing_allocate_private_revision_bytes(64);
-    control.commit_step(committed_step, &mut stores);
-    let committed = stores
-        .testing_private_revision_domain_stats()
-        .expect("private revision domain remains live");
-    assert_eq!((committed.0, committed.1, committed.3), (1, 64, false));
-
-    for _ in 0..1_024 {
-        let failed_step = control.snapshot_step(&mut stores);
-        stores.testing_allocate_private_revision_bytes(8_192);
-        control.rollback_step(failed_step, &mut stores);
-        assert_eq!(
-            stores.testing_private_revision_domain_stats(),
-            Some(committed),
-            "failed operation retains only the earlier committed suffix"
-        );
-    }
-
-    let failed_partial_commit = control.snapshot_step(&mut stores);
-    stores.testing_allocate_private_revision_bytes(16_384);
-    control.commit_failed_step(failed_partial_commit, &mut stores);
-    assert_eq!(
-        stores.testing_private_revision_domain_stats(),
-        Some(committed),
-        "a canonical partial semantic commit still discards failed allocations"
-    );
-}
-
-#[test]
 fn private_box_construction_retains_only_committed_lists() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
@@ -2576,8 +2537,9 @@ fn align_peek_full_branch_prefix_recovery_and_nesting_matrix() {
             .any(|(transition, nesting, _)| *transition == "resume" && *nesting == Some(1))
     );
     assert_eq!(control.current_mode(), Mode::Vertical);
+    assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
 
-    // The aggregate counters above cannot prove §785's ordering. Isolate an
+    // The direct-operation counters above cannot prove §785's ordering. Isolate an
     // ordinary row opener and project the command-owned reset, backup, and
     // u-template input events in the order they committed.
     let mut ordered_stores = Universe::new_with_plain_catcodes();
@@ -4410,61 +4372,6 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
     assert_eq!(telemetry.resource_replayed_delivered_tokens, 0);
     assert_eq!(telemetry.resource_replayed_dispatches, 0);
     assert_eq!(telemetry.attempts, telemetry.commits + telemetry.rollbacks);
-
-    // Negative control for the superseded transaction boundary. The same
-    // aggregate adapter, widened to the historical 256-operation rollback
-    // root, must redo both the successful assignment and the input filename
-    // scan after the resource miss. These exact deltas prove that direct-prefix
-    // commit and the retained typed resource continuation eliminate real
-    // command work; production must not synthetically recreate it.
-    let mut aggregate_stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut aggregate = MainControl::tex82_initex(&mut aggregate_stores);
-    register_source(&mut aggregate, br"\count0=11 \input child\end");
-    assert!(matches!(
-        aggregate
-            .execute_aggregate_operation(
-                &mut aggregate_stores,
-                OperationDelivery::Replay(None),
-                OperationTransaction::Advance,
-                256,
-                None,
-            )
-            .expect("aggregate batch suspends"),
-        StepResult::Suspended(ResourceNeed::Input { .. })
-    ));
-    aggregate.capabilities_mut().register_input(
-        "child.tex",
-        SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
-    );
-    loop {
-        match aggregate
-            .execute_aggregate_operation(
-                &mut aggregate_stores,
-                OperationDelivery::Replay(None),
-                OperationTransaction::Advance,
-                256,
-                None,
-            )
-            .expect("aggregate retry executes")
-        {
-            StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
-            StepResult::Progress(MainControlStep::Continue) => {}
-            StepResult::Suspended(need) => panic!("unexpected second suspension: {need:?}"),
-        }
-    }
-    assert_eq!(aggregate_stores.count(0), 11);
-    assert_eq!(
-        aggregate.command_work(),
-        tex_command::CommandWorkCounters {
-            fuel_charges: direct_work.fuel_charges + 15,
-            token_frame_steps: direct_work.token_frame_steps + 15,
-            expanded_deliveries: direct_work.expanded_deliveries + 16,
-            meaning_lookups: direct_work.meaning_lookups + 3,
-            scanner_tokens: direct_work.scanner_tokens,
-            write_expansions: direct_work.write_expansions,
-        },
-        "aggregate retry adds only the attributed replay work"
-    );
 }
 
 #[test]
@@ -4742,6 +4649,54 @@ fn observed_resource_retry_moves_the_unpublished_prefix_exactly_once() {
 }
 
 #[test]
+fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
+    let source = br"\setbox0=\vbox{\halign{#\cr \input child\cr}}\end";
+    let child = SourceRegistration::new(
+        RegisteredSourceKind::Generated,
+        Arc::<[u8]>::from(&br"X\endinput"[..]),
+    );
+
+    let mut retried_stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut retried_control = MainControl::tex82_initex(&mut retried_stores);
+    register_source(&mut retried_control, source);
+    let mut retried = ObservationRecorder::default();
+    loop {
+        if matches!(
+            retried_control
+                .advance_with_observer(&mut retried_stores, &mut retried)
+                .expect("alignment advances to its resource"),
+            StepResult::Suspended(ResourceNeed::Input { ref name, .. })
+                if name == "child.tex"
+        ) {
+            break;
+        }
+    }
+    retried_control
+        .capabilities_mut()
+        .register_input("child.tex", child.clone());
+    run_to_end_observed(&mut retried_control, &mut retried_stores, &mut retried);
+
+    let mut direct_stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut direct_control = MainControl::tex82_initex(&mut direct_stores);
+    direct_control
+        .capabilities_mut()
+        .register_input("child.tex", child);
+    register_source(&mut direct_control, source);
+    let mut direct = ObservationRecorder::default();
+    run_to_end_observed(&mut direct_control, &mut direct_stores, &mut direct);
+
+    assert_eq!(retried.0, direct.0);
+    assert_eq!(
+        retried_stores.snapshot().state_hash(),
+        direct_stores.snapshot().state_hash()
+    );
+    assert_eq!(
+        retried_control.advance_telemetry().maximum_live_savepoints,
+        0
+    );
+}
+
+#[test]
 fn ordinary_assignment_opens_no_aggregate_savepoint() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
@@ -4754,6 +4709,41 @@ fn ordinary_assignment_opens_no_aggregate_savepoint() {
     assert_eq!(stores.count(0), 11);
     assert_eq!(control.advance_telemetry().attempts, 1);
     assert_eq!(control.advance_telemetry().commits, 1);
+    assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
+}
+
+#[test]
+fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\font\body=cmr10 X");
+
+    assert!(matches!(
+        control
+            .diagnostic_expand_step(&mut stores)
+            .expect("font request suspends"),
+        DiagnosticStepResult::Suspended(ResourceNeed::Font { .. })
+    ));
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    assert_eq!(
+        control
+            .diagnostic_expand_step(&mut stores)
+            .expect("font assignment resumes"),
+        DiagnosticStepResult::Progress(DiagnosticStep::Assignment)
+    );
+    assert!(matches!(
+        control
+            .diagnostic_expand_step(&mut stores)
+            .expect("following token is delivered once"),
+        DiagnosticStepResult::Progress(DiagnosticStep::Token {
+            spelling,
+            meaning: Meaning::CharToken {
+                ch: 'X',
+                cat: Catcode::Letter,
+            },
+            ..
+        }) if spelling.token() == Some(Token::Char { ch: 'X', cat: Catcode::Letter })
+    ));
     assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
 }
 

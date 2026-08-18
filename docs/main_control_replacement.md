@@ -509,11 +509,16 @@ output-capable box closing, ErrorStop recovery, observed and tracked commands,
 and private revisions use the same path. A private revision opens only a
 fixed-size allocation-suffix mark, never an aggregate state root.
 
-The compatibility aggregate is now confined to the `active_alignment` branch
-of `execute_operation`/`execute_aggregate_operation` and the explicit
-`diagnostic_expand_step` host API. Their separate removal is tracked by P0
-`umber2-awgc.4.5`, which blocks `.4.4` and parent completion; they are not an
-alternate executor for the migrated command families.
+Active-alignment delivery and the explicit `diagnostic_expand_step` host API
+now use the direct operation path too. Alignment retry retains only the typed
+delivery entry point while `CommandState` owns the exact blocked expansion and
+input continuation. Diagnostic assignment retry retains either its settled
+command plus delivery cursor or its fully scanned operation. Both paths use
+the private-revision allocation suffix and the existing mode journal where
+semantic assignment apply can fail; neither constructs `StepSnapshot`,
+`CommandStateSnapshot`, or `LocalRetrySnapshot`. The compatibility aggregate
+executor and its forced negative controls have been deleted. Final profiling
+and pinned-prefix consolidation remains with `umber2-awgc.4.4`.
 
 ### Durable checkpoints
 

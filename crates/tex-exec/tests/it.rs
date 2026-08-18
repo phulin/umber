@@ -291,6 +291,9 @@ fn predecessor_operation_branches_are_absent() {
         "fn step_once(",
         "fn alignment_step_once(",
         "fn step_with_observer_once(",
+        "struct StepSnapshot",
+        "fn execute_aggregate_operation(",
+        "snapshot_for_local_retry(",
     ] {
         assert!(
             !source.contains(predecessor),
@@ -382,44 +385,37 @@ fn receipt_categories_are_append_bounded_consumed_and_closed_before_commit() {
 
     let control = include_str!("../src/main_control.rs");
     let operation = control
-        .split_once("fn execute_operation(")
-        .expect("single operation authority")
+        .split_once("fn execute_direct_episode(")
+        .expect("direct operation authority")
         .1
-        .split_once("fn finish_operation_telemetry")
+        .split_once("fn execute_operation(")
         .expect("operation authority boundary")
         .0;
     assert!(
         operation
             .find("admit_observed_receipt")
             .expect("receipt admission")
-            < operation.find("commit_step").expect("operation commit"),
+            < operation
+                .rfind("commit_direct_operation")
+                .expect("direct operation commit"),
         "world/artifact/geometry/termination receipt closes before commit"
     );
-    for commit in operation.match_indices("commit_step(snapshot)") {
-        let preceding_admission = operation[..commit.0]
-            .rfind("admit_observed_receipt")
-            .expect("every direct operation commit has a preceding receipt admission");
-        assert!(
-            commit.0 - preceding_admission < 800,
-            "operation commit is detached from its receipt admission"
-        );
-    }
     let failed = control
-        .split_once("fn finish_failed_step(")
+        .split_once("fn finish_direct_failure(")
         .expect("failed-operation authority")
         .1
-        .split_once("pub fn pending_resource_site")
+        .split_once("fn execute_direct_episode(")
         .expect("failed-operation authority boundary")
         .0;
-    for commit in failed.match_indices("commit_step(snapshot)") {
-        let preceding_admission = failed[..commit.0]
-            .rfind("admit_observed_receipt")
-            .expect("every irreversible failure commit has a receipt admission");
-        assert!(
-            commit.0 - preceding_admission < 300,
-            "failure commit is detached from its receipt admission"
-        );
-    }
+    assert!(
+        failed
+            .find("admit_observed_receipt")
+            .expect("fatal receipt")
+            < failed
+                .find("commit_direct_operation")
+                .expect("fatal direct commit"),
+        "fatal receipt closes before its direct operation commits"
+    );
     assert!(control.contains("pending.consume_into(publish.then_some(observer))"));
 }
 

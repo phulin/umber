@@ -11,12 +11,12 @@ use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandState,
-    CommandStateSnapshot, FatalError, FontLoadRequest, FontResource, GeneratedFontKind,
-    HyphenationDataKind, ImmediateExtension, InputStreamRequest, MathDelimiterBoundary,
-    MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathRequest, MathScriptKind,
-    MathStyleKind, MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest,
-    PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest,
-    PdfImageRequest, PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfOutlineRequest,
+    FatalError, FontLoadRequest, FontResource, GeneratedFontKind, HyphenationDataKind,
+    ImmediateExtension, InputStreamRequest, MathDelimiterBoundary, MathDelimiterBoundaryKind,
+    MathFieldBody, MathLimitKind, MathRequest, MathScriptKind, MathStyleKind, MathTextFieldKind,
+    PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
+    PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImageRequest,
+    PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfOutlineRequest,
     PdfReferenceObjectRequest, PdfStartLinkRequest, RegisteredSourceKind, RestrictedIntegerClass,
     ScannedAccent, ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
     ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
@@ -205,7 +205,7 @@ pub struct MainControl {
     /// The ordered publication transaction produced by
     /// `fire_pending_page_output` after the contributing step's own records.
     /// It first receives any earlier named-list pushes still owned by that
-    /// aggregate step, then TeX82 §§1025/323's `output_text` push. Every step
+    /// direct step, then TeX82 §§1025/323's `output_text` push. Every step
     /// drains it before the following step can deliver the routine's
     /// scanner-owned opening brace.
     page_output_observations: ObservationBuffer,
@@ -222,7 +222,7 @@ pub struct MainControl {
     /// alternate execution mode.
     operation_observations: ObservationSlot,
     /// Live-store boundaries used to close the typed receipt before the
-    /// operation savepoint commits. Absent for ordinary execution.
+    /// direct operation commits. Absent for ordinary execution.
     operation_receipt_start: Option<OperationReceiptStart>,
     /// Observation evidence moved across a typed resource suspension.
     ///
@@ -230,14 +230,14 @@ pub struct MainControl {
     /// resource continuations is installed, so an observed retry cannot
     /// discard that prefix and reconstruct it by replay. Moving the sole
     /// buffer owner keeps publication atomic without cloning any evidence
-    /// aggregate.
+    /// operation.
     suspended_operation_observation: Option<(ObservationBuffer, OperationReceiptStart)>,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     /// Detached DVI receipts whose artifact commits have survived an entire
-    /// aggregate operation. This is replay state so rollback drops
-    /// it with the corresponding World artifact/effect roots.
+    /// direct operation. This replay state is published only after its
+    /// corresponding World artifact/effect roots commit.
     prepared_dvi_pages: PreparedDviPages,
-    /// Named safe boundaries committed by the last aggregate operation.  The
+    /// Named safe boundaries committed by the last direct operation. The
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
     completed_boundaries: Vec<crate::EngineBoundary>,
@@ -260,6 +260,14 @@ pub struct MainControl {
     /// The command/input cursor is already committed, so retry resolves this
     /// typed operand and never replays delivery or scanning work.
     pending_resource_operation: Option<PendingResourceOperation>,
+    /// Alignment-owned delivery retained across immutable host suspension.
+    /// Command input and expansion continuations remain in `CommandState`;
+    /// this tag names the executor entry point that must resume them.
+    pending_alignment_delivery: Option<PendingAlignmentDelivery>,
+    /// Diagnostic-host assignment retained after expanded delivery has
+    /// committed. Retrying resumes either its exact settled command/cursor or
+    /// its fully scanned operation without fetching another diagnostic token.
+    pending_diagnostic_operation: Option<PendingDiagnosticOperation>,
     /// TeX82 §76's `history=fatal_error_stop`, carrying §93/§94/§95's payload.
     ///
     /// `succumb` ends the job through §81's `jump_out`, which a library engine
@@ -277,7 +285,7 @@ pub struct MainControl {
         Option<crate::FrozenDiagnosticContext>,
     )>,
     /// First recoverable error's bounded stack evidence. Trace-only
-    /// diagnostics do not populate it, and aggregate rollback restores it.
+    /// diagnostics do not populate it.
     first_causal_context: Option<crate::FrozenDiagnosticContext>,
     /// tex.web's job-framing state: see [`crate::job`] and
     /// `docs/job_framing.md`.
@@ -491,16 +499,16 @@ pub enum StepResult {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrackedStepResult {
     pub step: StepResult,
-    /// `None` means the operation suspended or rolled back and the recorder
-    /// was abandoned before aggregate restoration.
+    /// `None` means the operation suspended or failed and the recorder was
+    /// abandoned before direct-operation completion.
     pub region: Option<Result<TrackedRegionRecord, TrackedRegionError>>,
 }
 
-/// Host decision sampled immediately before a aggregate operation.
+/// Host decision sampled immediately before a direct operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdvanceReadiness {
     Ready,
-    /// A host interrupt was observed between aggregate operations. TeX's
+    /// A host interrupt was observed between direct operations. TeX's
     /// instruction dialog runs before the untouched command stream resumes.
     Interrupted,
     Cancelled,
@@ -513,7 +521,8 @@ pub enum AdvanceOutcome {
     Cancelled,
 }
 
-/// Non-semantic accounting for canonical aggregate savepoint ownership.
+/// Non-semantic accounting for canonical operation and legacy-savepoint
+/// profiling fields.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AdvanceTelemetry {
     pub attempts: u64,
@@ -547,157 +556,6 @@ pub enum DiagnosticStepResult {
     Suspended(ResourceNeed),
 }
 
-/// All replay-owned state that must move with a bounded operation.
-/// Host capabilities are intentionally absent: their borrow ends before this
-/// checkpoint can be restored.
-struct StepSnapshot {
-    command: Option<CommandStateSnapshot>,
-    mode_savepoint: crate::mode::ModeSavepoint,
-    next_alignment_identity: u64,
-    active_alignment: Option<ActiveReplayAlignment>,
-    boxes: ReplayBoxes,
-    active_discretionaries: Vec<ActiveDiscretionary>,
-    active_math_choices: Vec<usize>,
-    active_math_left_boundaries: Vec<bool>,
-    active_math_shifts: Vec<MathShiftContext>,
-    main_loop_active: bool,
-    set_box_forbidden_depth: u8,
-    shown_mode: Option<Mode>,
-    completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
-    prepared_dvi_pages: PreparedDviPages,
-    completed_boundaries: Vec<crate::EngineBoundary>,
-    pending_shipout_boundary: bool,
-    end_job_ejection_pending: bool,
-    first_causal_context: Option<crate::FrozenDiagnosticContext>,
-    /// A step's §537/§362 open-paren accounting is engine state outside
-    /// `Universe`, exactly like `next_alignment_identity` and `boxes` above:
-    /// a step that prints `(name` and then rolls back must have
-    /// `open_parens` roll back with it too, or a later `\end` would close a
-    /// paren that was never really opened.
-    job: crate::job::JobFraming,
-    universe: tex_state::LocalRetrySnapshot,
-}
-
-impl StepSnapshot {
-    fn capture(control: &mut MainControl, stores: &mut Universe, captures_command: bool) -> Self {
-        #[cfg(feature = "profiling")]
-        let started = std::time::Instant::now();
-        #[cfg(feature = "profiling")]
-        tex_state::measurement::record_hot_core_phase(
-            tex_state::measurement::HotCorePhase::StepSnapshot,
-        );
-        #[cfg(feature = "profiling")]
-        let _snapshot_allocations = tex_state::measurement::hot_core_allocation_scope(
-            tex_state::measurement::HotCoreAllocationOwner::StepSnapshotClone,
-        );
-        let command = captures_command.then(|| {
-            #[cfg(feature = "profiling")]
-            let command_started = std::time::Instant::now();
-            #[cfg(feature = "profiling")]
-            let _command_allocations = tex_state::measurement::hot_core_allocation_scope(
-                tex_state::measurement::HotCoreAllocationOwner::CommandStateClone,
-            );
-            let command = control.command.snapshot();
-            #[cfg(feature = "profiling")]
-            tex_state::measurement::record_hot_core_snapshot_clone(
-                true,
-                command_started.elapsed(),
-                std::mem::size_of::<CommandStateSnapshot>(),
-            );
-            command
-        });
-        let snapshot = Self {
-            command,
-            mode_savepoint: control.modes.begin_journal(),
-            next_alignment_identity: control.next_alignment_identity,
-            active_alignment: control.active_alignment.clone(),
-            boxes: control.boxes.clone(),
-            active_discretionaries: control.active_discretionaries.clone(),
-            active_math_choices: control.active_math_choices.clone(),
-            active_math_left_boundaries: control.active_math_left_boundaries.clone(),
-            active_math_shifts: control.active_math_shifts.clone(),
-            main_loop_active: control.main_loop_active,
-            set_box_forbidden_depth: control.set_box_forbidden_depth,
-            shown_mode: control.shown_mode,
-            completed_replay_episode: control.completed_replay_episode,
-            prepared_dvi_pages: control.prepared_dvi_pages.clone(),
-            completed_boundaries: control.completed_boundaries.clone(),
-            pending_shipout_boundary: control.pending_shipout_boundary,
-            end_job_ejection_pending: control.end_job_ejection_pending,
-            first_causal_context: control.first_causal_context.clone(),
-            job: control.job.clone(),
-            universe: stores.snapshot_for_local_retry(),
-        };
-        #[cfg(feature = "profiling")]
-        crate::step_snapshot_measurement::record_step_snapshot(
-            started.elapsed(),
-            std::mem::size_of::<Self>(),
-        );
-        #[cfg(feature = "profiling")]
-        tex_state::measurement::record_hot_core_snapshot_clone(
-            false,
-            started.elapsed(),
-            std::mem::size_of::<Self>(),
-        );
-        snapshot
-    }
-
-    fn rollback(self, control: &mut MainControl, stores: &mut Universe) {
-        // Roll the aggregate owner back before reinstalling command roots that
-        // may contain OriginIds allocated from that owner. No intermediate
-        // state with a restored command and a newer provenance timeline is
-        // observable outside this method.
-        stores.rollback_local_retry_snapshot(self.universe);
-        if let Some(command) = self.command {
-            control
-                .command
-                .rollback(command)
-                .expect("step snapshot keeps its command profile");
-        }
-        control
-            .modes
-            .rollback_journal(self.mode_savepoint)
-            .expect("step owns the innermost mode savepoint");
-        control.next_alignment_identity = self.next_alignment_identity;
-        control.active_alignment = self.active_alignment;
-        control.boxes = self.boxes;
-        control.active_discretionaries = self.active_discretionaries;
-        control.active_math_choices = self.active_math_choices;
-        control.active_math_left_boundaries = self.active_math_left_boundaries;
-        control.active_math_shifts = self.active_math_shifts;
-        control.main_loop_active = self.main_loop_active;
-        control.set_box_forbidden_depth = self.set_box_forbidden_depth;
-        control.shown_mode = self.shown_mode;
-        control.completed_replay_episode = self.completed_replay_episode;
-        control.prepared_dvi_pages = self.prepared_dvi_pages;
-        control.completed_boundaries = self.completed_boundaries;
-        control.pending_shipout_boundary = self.pending_shipout_boundary;
-        control.end_job_ejection_pending = self.end_job_ejection_pending;
-        control.first_causal_context = self.first_causal_context;
-        control.job = self.job;
-    }
-
-    fn can_rollback(&self, stores: &Universe) -> bool {
-        stores.can_rollback_to_local_retry(&self.universe)
-    }
-
-    fn commit(self, control: &mut MainControl, stores: &mut Universe) {
-        control
-            .modes
-            .commit_journal(self.mode_savepoint)
-            .expect("step owns the innermost mode savepoint");
-        stores.commit_local_retry_snapshot(self.universe);
-    }
-
-    fn commit_failed(self, control: &mut MainControl, stores: &mut Universe) {
-        control
-            .modes
-            .commit_journal(self.mode_savepoint)
-            .expect("step owns the innermost mode savepoint");
-        stores.discard_local_retry_allocations(self.universe);
-    }
-}
-
 /// Where one command-processor episode publishes its committed records.
 ///
 /// An episode with no observer carries `None`. The slot is still a parameter
@@ -708,7 +566,7 @@ type ObservationSlot = Option<ObservationBuffer>;
 /// The small command-delivery choice at the front of one operation.
 ///
 /// Delivery selects only how the next completed command enters main control;
-/// snapshotting, application, publication, rollback, and evidence are shared.
+/// preparation, application, publication, and evidence are shared.
 enum OperationDelivery {
     Replay(Option<tex_command::CurrentCommand>),
     /// TeX82 §1038's main-loop lookahead delivered this command with bare
@@ -734,6 +592,10 @@ enum OperationDelivery {
     /// directly; rewinding the outer command/input aggregate is unnecessary.
     ImmediatePdfRetry(UnexpandablePrimitive),
     Alignment(AlignmentIdentity),
+    AlignmentRetry {
+        alignment: Option<AlignmentIdentity>,
+        cursor: tex_command::CommandDeliveryCursor,
+    },
     /// Delivery completed during mutation-free capability preflight. The
     /// semantic step still runs through the sole executor below.
     Prepared(Box<ScannedStep>),
@@ -812,6 +674,29 @@ struct PreparedOperation {
 struct PendingResourceOperation {
     scanned: Box<ScannedStep>,
     capabilities: crate::transaction_protocol::CommandCapabilities,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingAlignmentDelivery {
+    alignment: Option<AlignmentIdentity>,
+    cursor: tex_command::CommandDeliveryCursor,
+}
+
+enum PendingDiagnosticOperation {
+    Assignment {
+        command: tex_command::CurrentCommand,
+        cursor: tex_command::CommandDeliveryCursor,
+    },
+    Prepared(Box<ScannedStep>),
+}
+
+impl std::fmt::Debug for PendingDiagnosticOperation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Assignment { .. } => "PendingDiagnosticOperation::Assignment",
+            Self::Prepared(_) => "PendingDiagnosticOperation::Prepared",
+        })
+    }
 }
 
 impl std::fmt::Debug for PendingResourceOperation {
@@ -1154,8 +1039,9 @@ impl MainControl {
         stores.attach_pure_memo_capability(&self.pure_memo);
     }
 
-    /// Reports aggregate-operation/savepoint accounting without exposing the
-    /// mode journal or any rollback capability.
+    /// Reports direct-operation accounting without exposing the mode journal
+    /// or any rollback capability. The savepoint fields remain schema-stable
+    /// profiling counters and stay zero on the canonical path.
     #[must_use]
     pub const fn advance_telemetry(&self) -> AdvanceTelemetry {
         self.advance_telemetry
@@ -1174,8 +1060,8 @@ impl MainControl {
         self.episode_telemetry.record_semantic_barrier(barrier);
     }
 
-    /// Samples host cancellation before creating a savepoint or mutating
-    /// command, mode, or Universe state.
+    /// Samples host cancellation before mutating command, mode, or Universe
+    /// state.
     pub fn advance_when(
         &mut self,
         stores: &mut Universe,
@@ -2084,22 +1970,6 @@ impl MainControl {
         }
     }
 
-    fn snapshot_step(&mut self, stores: &mut Universe) -> StepSnapshot {
-        StepSnapshot::capture(self, stores, true)
-    }
-
-    fn snapshot_prepared_step(&mut self, stores: &mut Universe) -> StepSnapshot {
-        StepSnapshot::capture(self, stores, false)
-    }
-
-    fn commit_step(&mut self, snapshot: StepSnapshot, stores: &mut Universe) {
-        snapshot.commit(self, stores);
-    }
-
-    fn commit_failed_step(&mut self, snapshot: StepSnapshot, stores: &mut Universe) {
-        snapshot.commit_failed(self, stores);
-    }
-
     /// Lends the whole command machine at once, for helpers that build their
     /// own processor rather than being handed one. A caller that must keep
     /// another of main control's fields borrowed at the same time builds the
@@ -2160,117 +2030,6 @@ impl MainControl {
                 .font(stores.current_font())
                 .character_exists(character)
         });
-    }
-
-    fn rollback_step(&mut self, snapshot: StepSnapshot, stores: &mut Universe) {
-        snapshot.rollback(self, stores);
-    }
-
-    /// Restores a failed operation when its savepoint is still owned by the
-    /// live group timeline. TeX's `unsave` (§283) consumes save levels, so an
-    /// error discovered after an enclosing group exits must retain that
-    /// committed state instead of attempting an invalid rollback.
-    fn finish_failed_step(
-        &mut self,
-        snapshot: StepSnapshot,
-        stores: &mut Universe,
-        error: ExecError,
-    ) -> Result<StepResult, ExecError> {
-        let preserve_pdf_xform_reservations = matches!(error, ExecError::PdfXFormVoidBox);
-        let error =
-            error.freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
-        // pdftex.web §1549 reserves both the form object and its resource
-        // object before it fetches the box register. Its ext1 void-box error
-        // leaves those identities consumed even though the command reports
-        // failure. Preserve that canonical ledger mutation; resource
-        // suspensions and all other failed operations retain atomic rollback.
-        if preserve_pdf_xform_reservations {
-            let _ = self.admit_observed_receipt(stores, OperationTermination::Failed);
-            self.commit_failed_step(snapshot, stores);
-            return Err(error);
-        }
-        if !snapshot.can_rollback(stores) {
-            let _ = self.admit_observed_receipt(stores, OperationTermination::Failed);
-            self.commit_failed_step(snapshot, stores);
-            Self::publish_pdf_fatal_error(stores, &error)?;
-            return Err(error);
-        }
-        self.rollback_step(snapshot, stores);
-        Self::publish_pdf_fatal_error(stores, &error)?;
-        match error {
-            ExecError::Captured {
-                error,
-                site,
-                frozen,
-            } => match *error {
-                ExecError::MissingInput {
-                    name,
-                    original_name,
-                } => {
-                    self.pending_resource_site = Some(site);
-                    Ok(StepResult::Suspended(ResourceNeed::Input {
-                        name,
-                        original_name,
-                    }))
-                }
-                ExecError::MissingInputProbe { request } => {
-                    self.pending_resource_site = Some(site);
-                    Ok(StepResult::Suspended(ResourceNeed::InputProbe { request }))
-                }
-                error => Err(ExecError::Captured {
-                    error: Box::new(error),
-                    site,
-                    frozen,
-                }),
-            },
-            ExecError::MissingInput {
-                name,
-                original_name,
-            } => {
-                let need = ResourceNeed::Input {
-                    name,
-                    original_name,
-                };
-                if let Some(pending) = self.operation_observations.as_mut() {
-                    pending.record_resource(need.clone());
-                    pending
-                        .receipt
-                        .set_termination(OperationTermination::Suspended);
-                }
-                Ok(StepResult::Suspended(need))
-            }
-            ExecError::MissingInputProbe { request } => {
-                let need = ResourceNeed::InputProbe { request };
-                if let Some(pending) = self.operation_observations.as_mut() {
-                    pending.record_resource(need.clone());
-                    pending
-                        .receipt
-                        .set_termination(OperationTermination::Suspended);
-                }
-                Ok(StepResult::Suspended(need))
-            }
-            ExecError::MissingFont { request } => {
-                let need = ResourceNeed::Font { request };
-                if let Some(pending) = self.operation_observations.as_mut() {
-                    pending.record_resource(need.clone());
-                    pending
-                        .receipt
-                        .set_termination(OperationTermination::Suspended);
-                }
-                Ok(StepResult::Suspended(need))
-            }
-            ExecError::MissingPdfImage { request } => {
-                let need = ResourceNeed::PdfImage { request };
-                if let Some(pending) = self.operation_observations.as_mut() {
-                    pending.record_resource(need.clone());
-                    pending
-                        .receipt
-                        .set_termination(OperationTermination::Suspended);
-                }
-                Ok(StepResult::Suspended(need))
-            }
-            error => Err(error),
-        }
     }
 
     fn publish_pdf_fatal_error(stores: &mut Universe, error: &ExecError) -> Result<(), ExecError> {
@@ -2381,15 +2140,15 @@ impl MainControl {
     /// Drains committed shipout receipts in artifact order.
     ///
     /// Each plan was prepared during shipout and is retained only after the
-    /// enclosing aggregate operation commits; finalizers must not re-lower
-    /// these pages from artifact bytes.
+    /// enclosing direct operation commits; finalizers must not re-lower these
+    /// pages from artifact bytes.
     #[must_use]
     pub fn take_prepared_dvi_pages(&mut self) -> Vec<crate::dispatch::PreparedDviPage> {
         take_prepared_dvi_pages(&mut self.prepared_dvi_pages)
     }
 
-    /// Drains named boundaries that became safe during committed aggregate
-    /// operations.  This is deliberately an event receipt, not a request for
+    /// Drains named boundaries that became safe during committed direct
+    /// operations. This is deliberately an event receipt, not a request for
     /// the host to inspect modes or dispatch source tokens.
     #[must_use]
     pub fn take_completed_boundaries(&mut self) -> Vec<crate::EngineBoundary> {
@@ -2926,9 +2685,8 @@ impl MainControl {
         Ok(ReplayStep::Continue)
     }
 
-    /// Executes one main-control operation under the selected delivery and
-    /// transaction policy. This is the sole owner of aggregate savepoints,
-    /// commit/rollback, fatal termination, and resource suspension.
+    /// Records TeX's checked save-stack high-water projection after one
+    /// direct main-control operation.
     fn record_save_stack_usage(&mut self, stores: &Universe) {
         // TeX82 §§645/1083 keeps ordinary box specs immediately below their
         // §273 boundaries. Vcenters and insertions deliberately have smaller
@@ -2949,7 +2707,6 @@ impl MainControl {
     fn episode_commit_boundary(
         &self,
         stores: &Universe,
-        retry_root: Option<&StepSnapshot>,
         applied: &Result<ReplayStep, ExecError>,
         operations: usize,
         max_operations: usize,
@@ -3010,11 +2767,6 @@ impl MainControl {
         if tracked {
             return Some(crate::EpisodeCommitBoundary::Semantic(
                 crate::SemanticEpisodeBarrier::StateIdentity,
-            ));
-        }
-        if retry_root.is_some_and(|snapshot| !snapshot.can_rollback(stores)) {
-            return Some(crate::EpisodeCommitBoundary::InternalStop(
-                crate::EpisodeInternalStop::RollbackLineage,
             ));
         }
         (operations >= max_operations).then_some(crate::EpisodeCommitBoundary::SliceLimit)
@@ -3219,6 +2971,7 @@ impl MainControl {
         &mut self,
         stores: &mut Universe,
         max_operations: usize,
+        mut initial_delivery: Option<OperationDelivery>,
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
     ) -> Result<StepResult, ExecError> {
         let initial_boundaries = self.completed_boundaries.len();
@@ -3253,6 +3006,23 @@ impl MainControl {
                 PreflightDelivery {
                     delivery: OperationDelivery::Prepared(pending.scanned),
                     capabilities: pending.capabilities,
+                }
+            } else if let Some(delivery) = initial_delivery.take() {
+                PreflightDelivery {
+                    delivery,
+                    capabilities: crate::transaction_protocol::canonical_command_capabilities(
+                        Meaning::Relax,
+                    ),
+                }
+            } else if let Some(pending) = self.pending_alignment_delivery.take() {
+                PreflightDelivery {
+                    delivery: OperationDelivery::AlignmentRetry {
+                        alignment: pending.alignment,
+                        cursor: pending.cursor,
+                    },
+                    capabilities: crate::transaction_protocol::canonical_command_capabilities(
+                        Meaning::Relax,
+                    ),
                 }
             } else if let Some(command) = self.pending_preflight_command.take() {
                 match command {
@@ -3316,27 +3086,20 @@ impl MainControl {
                         return result;
                     }
                 };
-                let Some(preflight) = preflight else {
-                    stores.discard_direct_operation_allocations(operation_mark);
-                    if operations != 0 {
-                        self.record_direct_episode_commit(
-                            stores,
-                            operations,
-                            crate::EpisodeCommitBoundary::SliceLimit,
-                            initial_artifacts,
-                            initial_boundaries,
-                            initial_effect_pos,
-                        );
-                    }
-                    return self.execute_aggregate_operation(
-                        stores,
-                        OperationDelivery::Replay(None),
-                        OperationTransaction::Advance,
-                        1,
-                        tracked_region.as_deref_mut(),
-                    );
-                };
-                preflight
+                preflight.expect("alignment delivery has a direct preflight")
+            };
+
+            let alignment_delivery = match &preflight.delivery {
+                OperationDelivery::Alignment(alignment) => Some(Some(*alignment)),
+                OperationDelivery::AlignmentRetry { alignment, .. } => Some(*alignment),
+                OperationDelivery::Replay(None)
+                    if self.active_alignment.is_some()
+                        || (self.modes.current_mode() == Mode::DisplayMath
+                            && self.modes.current_list().has_display_alignment()) =>
+                {
+                    Some(None)
+                }
+                _ => None,
             };
 
             if let crate::transaction_protocol::CommandPreflight::Resource(_) =
@@ -3399,6 +3162,7 @@ impl MainControl {
                     }
                     OperationDelivery::Replay(None)
                     | OperationDelivery::Alignment(_)
+                    | OperationDelivery::AlignmentRetry { .. }
                     | OperationDelivery::Prepared(_) => None,
                 };
                 let prepared = match self.prepare_operation(stores, preflight.delivery) {
@@ -3426,6 +3190,12 @@ impl MainControl {
                         }
                         let result = self.finish_resource_preflight_failure(stores, *failure.error);
                         if matches!(result, Ok(StepResult::Suspended(_))) {
+                            self.pending_alignment_delivery = alignment_delivery
+                                .zip(failure.cursor)
+                                .map(|(alignment, cursor)| PendingAlignmentDelivery {
+                                    alignment,
+                                    cursor,
+                                });
                             let retry_expansion = self.command.pending_expansion_command().cloned();
                             self.pending_preflight_command = retry_command.map(|retry| {
                                 let retry = retry.with_retry_expansion(retry_expansion);
@@ -3450,7 +3220,6 @@ impl MainControl {
                 self.record_save_stack_usage(stores);
                 let boundary = self.episode_commit_boundary(
                     stores,
-                    None,
                     &applied,
                     1,
                     1,
@@ -3554,6 +3323,7 @@ impl MainControl {
                     }
                     OperationDelivery::Replay(None)
                     | OperationDelivery::Alignment(_)
+                    | OperationDelivery::AlignmentRetry { .. }
                     | OperationDelivery::Prepared(_) => None,
                 };
                 let prepared = match self.prepare_operation(stores, preflight.delivery) {
@@ -3575,6 +3345,12 @@ impl MainControl {
                         let result = self.finish_resource_preflight_failure(stores, *failure.error);
                         match result {
                             Ok(step @ StepResult::Suspended(_)) => {
+                                self.pending_alignment_delivery = alignment_delivery
+                                    .zip(failure.cursor)
+                                    .map(|(alignment, cursor)| PendingAlignmentDelivery {
+                                        alignment,
+                                        cursor,
+                                    });
                                 let retry_expansion =
                                     self.command.pending_expansion_command().cloned();
                                 self.pending_preflight_command = retry_command.map(|retry| {
@@ -3628,7 +3404,6 @@ impl MainControl {
                 self.record_save_stack_usage(stores);
                 let boundary = self.episode_commit_boundary(
                     stores,
-                    None,
                     &applied,
                     1,
                     1,
@@ -3757,6 +3532,7 @@ impl MainControl {
                 }
                 OperationDelivery::Replay(None)
                 | OperationDelivery::Alignment(_)
+                | OperationDelivery::AlignmentRetry { .. }
                 | OperationDelivery::Prepared(_) => None,
             };
             let prepared = match self.prepare_operation(stores, preflight.delivery) {
@@ -3778,6 +3554,12 @@ impl MainControl {
                     if matches!(result, Ok(StepResult::Suspended(_)))
                         && self.pending_resource_operation.is_none()
                     {
+                        self.pending_alignment_delivery = alignment_delivery
+                            .zip(failure.cursor)
+                            .map(|(alignment, cursor)| PendingAlignmentDelivery {
+                                alignment,
+                                cursor,
+                            });
                         let retry_expansion = self.command.pending_expansion_command().cloned();
                         self.pending_preflight_command = retry_command.map(|retry| {
                             let retry = retry.with_retry_expansion(retry_expansion);
@@ -3809,7 +3591,6 @@ impl MainControl {
             self.record_save_stack_usage(stores);
             let boundary = self.episode_commit_boundary(
                 stores,
-                None,
                 &applied,
                 operations,
                 max_operations,
@@ -3890,32 +3671,6 @@ impl MainControl {
             // of publishing it into some later unrelated observed step.
             self.suspended_operation_observation = None;
         }
-        if matches!(transaction, OperationTransaction::Advance)
-            && matches!(&delivery, OperationDelivery::Replay(None))
-            && !(self.operation_observations.is_some() && self.active_alignment.is_some())
-            && stores.direct_operation_supported()
-        {
-            self.execute_direct_episode(stores, max_operations, tracked_region)
-        } else {
-            self.execute_aggregate_operation(
-                stores,
-                delivery,
-                transaction,
-                max_operations,
-                tracked_region,
-            )
-        }
-    }
-
-    fn execute_aggregate_operation(
-        &mut self,
-        stores: &mut Universe,
-        delivery: OperationDelivery,
-        transaction: OperationTransaction,
-        max_operations: usize,
-        mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
-    ) -> Result<StepResult, ExecError> {
-        self.record_save_stack_usage(stores);
         if matches!(transaction, OperationTransaction::Nested) {
             let result = self.apply_operation(stores, delivery);
             self.record_save_stack_usage(stores);
@@ -3926,350 +3681,10 @@ impl MainControl {
             }
             return result.map(StepResult::Progress);
         }
-
-        let tracks_telemetry = matches!(transaction, OperationTransaction::Advance);
-        self.episode_telemetry.record_attempt();
-        if tracks_telemetry {
-            self.advance_telemetry.attempts += 1;
-            self.advance_telemetry.live_savepoints += 1;
-            self.advance_telemetry.maximum_live_savepoints = self
-                .advance_telemetry
-                .maximum_live_savepoints
-                .max(self.advance_telemetry.live_savepoints);
-        }
-        let snapshot = if matches!(&delivery, OperationDelivery::Prepared(_)) {
-            self.snapshot_prepared_step(stores)
-        } else {
-            self.snapshot_step(stores)
-        };
-        let tracked_mark =
-            if matches!(transaction, OperationTransaction::Advance) && tracked_region.is_some() {
-                match stores.begin_tracked_region() {
-                    Ok(mark) => Some(mark),
-                    Err(error) => {
-                        if let Some(outcome) = tracked_region.as_deref_mut() {
-                            *outcome = Some(Err(error));
-                        }
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-        // This compatibility adapter is reachable only from active observed
-        // alignment delivery and explicit diagnostic expansion. Keep its
-        // bounded loop semantics until umber2-awgc.4.5 replaces those two
-        // callers with typed continuations. Migrated production delivery uses
-        // `execute_direct_episode` and cannot enter this aggregate batch.
-        let batch_enabled = max_operations > 1
-            && matches!(transaction, OperationTransaction::Advance)
-            && tracked_region.is_none()
-            && self.operation_observations.is_none();
-        let initial_boundaries = self.completed_boundaries.len();
-        let initial_effect_pos = stores.world().effect_pos();
-        let initial_artifacts = stores.world().artifact_commits().len();
-        let initial_format_dump = self.dumped_format.is_some();
-        let initial_diagnostic = self.first_causal_context.is_some();
-        let initial_error_count = stores.world().error_channel().error_count();
-        let mut operations = 0_usize;
-        let mut next_delivery = Some(delivery);
-        let (mut applied, commit_boundary) = loop {
-            let applied = self.apply_operation(
-                stores,
-                next_delivery
-                    .take()
-                    .expect("each batched operation has one delivery policy"),
-            );
-            operations += 1;
-            self.record_save_stack_usage(stores);
-            let boundary = self.episode_commit_boundary(
-                stores,
-                Some(&snapshot),
-                &applied,
-                operations,
-                max_operations,
-                initial_boundaries,
-                initial_effect_pos,
-                initial_artifacts,
-                initial_format_dump,
-                initial_diagnostic,
-                initial_error_count,
-                tracked_region.is_some(),
-            );
-            if !batch_enabled || applied.is_err() || boundary.is_some() {
-                break (
-                    applied,
-                    boundary.unwrap_or(crate::EpisodeCommitBoundary::SliceLimit),
-                );
-            }
-            next_delivery = Some(OperationDelivery::Replay(None));
-        };
-        if let Ok(step) = &applied {
-            let termination = self.fatal.map_or_else(
-                || match step {
-                    ReplayStep::Continue => OperationTermination::Continue,
-                    ReplayStep::End => OperationTermination::End,
-                    ReplayStep::EndOfInput => OperationTermination::EndOfInput,
-                },
-                OperationTermination::Fatal,
-            );
-            if let Some(error) = self.admit_observed_receipt(stores, termination) {
-                applied = Err(error);
-            }
-        }
-        match applied {
-            Ok(step) => {
-                if matches!(
-                    commit_boundary,
-                    crate::EpisodeCommitBoundary::NamedCheckpoint(_)
-                        | crate::EpisodeCommitBoundary::Terminal
-                        | crate::EpisodeCommitBoundary::Semantic(
-                            crate::SemanticEpisodeBarrier::Effect
-                                | crate::SemanticEpisodeBarrier::Observer
-                                | crate::SemanticEpisodeBarrier::Diagnostic
-                                | crate::SemanticEpisodeBarrier::Format
-                                | crate::SemanticEpisodeBarrier::Output
-                                | crate::SemanticEpisodeBarrier::StateIdentity
-                        )
-                ) {
-                    self.modes.freeze_node_sidecars(stores);
-                }
-                let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
-                self.commit_step(snapshot, stores);
-                self.episode_telemetry
-                    .record_commit(crate::EpisodeCommit::new(
-                        operations
-                            .try_into()
-                            .expect("bounded episode operation count fits u16"),
-                        commit_boundary,
-                    ));
-                if stores.world().artifact_commits().len() != initial_artifacts
-                    && commit_boundary
-                        != crate::EpisodeCommitBoundary::Semantic(
-                            crate::SemanticEpisodeBarrier::Output,
-                        )
-                {
-                    self.episode_telemetry
-                        .record_semantic_barrier(crate::SemanticEpisodeBarrier::Output);
-                }
-                if self.completed_boundaries.len() != initial_boundaries
-                    && !matches!(
-                        commit_boundary,
-                        crate::EpisodeCommitBoundary::NamedCheckpoint(_)
-                    )
-                {
-                    self.episode_telemetry
-                        .record_semantic_barrier(crate::SemanticEpisodeBarrier::Checkpoint);
-                }
-                if stores.world().effect_pos() != initial_effect_pos
-                    && commit_boundary
-                        != crate::EpisodeCommitBoundary::Semantic(
-                            crate::SemanticEpisodeBarrier::Effect,
-                        )
-                {
-                    self.episode_telemetry
-                        .record_semantic_barrier(crate::SemanticEpisodeBarrier::Effect);
-                }
-                if tracks_telemetry {
-                    self.advance_telemetry.live_savepoints -= 1;
-                    self.advance_telemetry.commits += 1;
-                }
-                if let (Some(outcome), Some(result)) =
-                    (tracked_region.as_deref_mut(), tracked_result)
-                {
-                    *outcome = Some(result);
-                }
-                Ok(StepResult::Progress(step))
-            }
-            Err(error) if matches!(transaction, OperationTransaction::Alignment) => {
-                if let Some(fatal) = error.as_fatal() {
-                    let _ = self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
-                    self.commit_step(snapshot, stores);
-                    self.episode_telemetry
-                        .record_commit(crate::EpisodeCommit::new(
-                            operations
-                                .try_into()
-                                .expect("bounded episode operation count fits u16"),
-                            crate::EpisodeCommitBoundary::Semantic(
-                                crate::SemanticEpisodeBarrier::Diagnostic,
-                            ),
-                        ));
-                } else if !snapshot.can_rollback(stores) {
-                    let _ = self.admit_observed_receipt(stores, OperationTermination::Failed);
-                    self.commit_failed_step(snapshot, stores);
-                    self.episode_telemetry
-                        .record_commit(crate::EpisodeCommit::new(
-                            operations
-                                .try_into()
-                                .expect("bounded episode operation count fits u16"),
-                            crate::EpisodeCommitBoundary::InternalStop(
-                                crate::EpisodeInternalStop::RollbackLineage,
-                            ),
-                        ));
-                } else {
-                    self.rollback_step(snapshot, stores);
-                    let barrier = if execution_error_is_fuel(&error) {
-                        crate::SemanticEpisodeBarrier::Fuel
-                    } else {
-                        crate::SemanticEpisodeBarrier::Diagnostic
-                    };
-                    #[cfg(feature = "profiling")]
-                    self.episode_telemetry.record_rollback(barrier, operations);
-                    #[cfg(not(feature = "profiling"))]
-                    self.episode_telemetry.record_rollback(barrier);
-                }
-                Err(error)
-            }
-            Err(error) => {
-                let error = error
-                    .freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
-                if let Some(fatal) = error.as_fatal() {
-                    // TeX82 §93's `succumb` runs only after §94's
-                    // `overflow` or §95's `confusion` has composed its report.
-                    // Those failures cross the stomach as typed terminal
-                    // errors, so render them here, at the one §81 `jump_out`
-                    // boundary, before latching the terminal state.
-                    let context = self.command.output_open_context(&stores.command_context());
-                    crate::diagnostics::report_irrecoverable_error(stores, fatal, context);
-                    self.captured_fatal_origin = match &error {
-                        ExecError::Captured { site, frozen, .. }
-                            if fatal != FatalError::TooManyErrors =>
-                        {
-                            Some((
-                                site.clone(),
-                                frozen
-                                    .as_deref()
-                                    .and_then(|evidence| evidence.origin.clone()),
-                                self.first_causal_context.clone().or_else(|| {
-                                    frozen
-                                        .as_deref()
-                                        .and_then(|evidence| evidence.context.clone())
-                                }),
-                            ))
-                        }
-                        _ => None,
-                    };
-                    // §81 `jump_out` commits the partial operation. Publish
-                    // its terminal evidence through the same optional sink.
-                    self.observe_committed([
-                        CommandObservation::Diagnostic(fatal.record()),
-                        CommandObservation::Effect(engine_termination_effect()),
-                    ]);
-                    let evidence_error =
-                        self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
-                    let tracked_result = tracked_mark.map(|mark| {
-                        stores.poison_tracked_region(TrackedRegionBarrier::FatalPartialCommit);
-                        stores.finish_tracked_region(mark)
-                    });
-                    self.commit_step(snapshot, stores);
-                    self.episode_telemetry
-                        .record_commit(crate::EpisodeCommit::new(
-                            operations
-                                .try_into()
-                                .expect("bounded episode operation count fits u16"),
-                            crate::EpisodeCommitBoundary::Semantic(
-                                crate::SemanticEpisodeBarrier::Diagnostic,
-                            ),
-                        ));
-                    self.finish_operation_telemetry(false);
-                    let terminal = self.succumb(fatal);
-                    if let (Some(outcome), Some(result)) =
-                        (tracked_region.as_deref_mut(), tracked_result)
-                    {
-                        *outcome = Some(result);
-                    }
-                    return evidence_error.map_or(Ok(StepResult::Progress(terminal)), Err);
-                }
-                let rolled_back =
-                    !matches!(error, ExecError::PdfXFormVoidBox) && snapshot.can_rollback(stores);
-                if let Some(mark) = tracked_mark {
-                    if rolled_back {
-                        let _ = stores.abandon_tracked_region(mark);
-                    } else {
-                        stores
-                            .poison_tracked_region(TrackedRegionBarrier::UnsupportedExecutionState);
-                        let result = stores.finish_tracked_region(mark);
-                        if let Some(outcome) = tracked_region {
-                            *outcome = Some(result);
-                        }
-                    }
-                }
-                let fuel_failure = execution_error_is_fuel(&error);
-                let mut result = self.finish_failed_step(snapshot, stores, error);
-                match &result {
-                    Ok(StepResult::Suspended(_)) => {
-                        #[cfg(feature = "profiling")]
-                        self.episode_telemetry
-                            .record_rollback(crate::SemanticEpisodeBarrier::Resource, operations);
-                        #[cfg(not(feature = "profiling"))]
-                        self.episode_telemetry
-                            .record_rollback(crate::SemanticEpisodeBarrier::Resource);
-                    }
-                    Err(_) if fuel_failure => {
-                        #[cfg(feature = "profiling")]
-                        self.episode_telemetry
-                            .record_rollback(crate::SemanticEpisodeBarrier::Fuel, operations);
-                        #[cfg(not(feature = "profiling"))]
-                        self.episode_telemetry
-                            .record_rollback(crate::SemanticEpisodeBarrier::Fuel);
-                    }
-                    Err(_) if rolled_back => {
-                        #[cfg(feature = "profiling")]
-                        self.episode_telemetry
-                            .record_rollback(crate::SemanticEpisodeBarrier::Diagnostic, operations);
-                        #[cfg(not(feature = "profiling"))]
-                        self.episode_telemetry
-                            .record_rollback(crate::SemanticEpisodeBarrier::Diagnostic);
-                    }
-                    Err(_) | Ok(StepResult::Progress(_)) => {
-                        self.episode_telemetry
-                            .record_commit(crate::EpisodeCommit::new(
-                                operations
-                                    .try_into()
-                                    .expect("bounded episode operation count fits u16"),
-                                crate::EpisodeCommitBoundary::InternalStop(
-                                    crate::EpisodeInternalStop::RollbackLineage,
-                                ),
-                            ))
-                    }
-                }
-                if let Ok(StepResult::Suspended(resource)) = &result
-                    && let Some(pending) = self.operation_observations.as_mut()
-                {
-                    pending.record_resource(resource.clone());
-                    pending
-                        .receipt
-                        .set_termination(OperationTermination::Suspended);
-                } else if let Some(pending) = self.operation_observations.as_mut() {
-                    pending
-                        .receipt
-                        .set_termination(OperationTermination::Failed);
-                }
-                if result.is_ok()
-                    && let Some(limit_error) = self.operation_evidence_limit_error()
-                {
-                    result = Err(limit_error);
-                    if let Some(pending) = self.operation_observations.as_mut() {
-                        pending
-                            .receipt
-                            .set_termination(OperationTermination::Failed);
-                    }
-                }
-                if tracks_telemetry && matches!(result, Ok(StepResult::Suspended(_))) {
-                    let replayed = u64::try_from(operations).unwrap_or(u64::MAX);
-                    self.advance_telemetry.resource_replayed_delivered_tokens = self
-                        .advance_telemetry
-                        .resource_replayed_delivered_tokens
-                        .saturating_add(replayed);
-                    self.advance_telemetry.resource_replayed_dispatches = self
-                        .advance_telemetry
-                        .resource_replayed_dispatches
-                        .saturating_add(replayed);
-                }
-                self.finish_operation_telemetry(rolled_back);
-                result
-            }
-        }
+        debug_assert!(stores.direct_operation_supported());
+        let initial_delivery =
+            matches!(transaction, OperationTransaction::Alignment).then_some(delivery);
+        self.execute_direct_episode(stores, max_operations, initial_delivery, tracked_region)
     }
 
     fn capture_first_causal_context(
@@ -4285,15 +3700,6 @@ impl MainControl {
                 self.command.diagnostic_input_context(8),
                 cause_kind,
             ));
-        }
-    }
-
-    fn finish_operation_telemetry(&mut self, rolled_back: bool) {
-        self.advance_telemetry.live_savepoints -= 1;
-        if rolled_back {
-            self.advance_telemetry.rollbacks += 1;
-        } else {
-            self.advance_telemetry.commits += 1;
         }
     }
 
@@ -4350,10 +3756,10 @@ impl MainControl {
 
     /// Attempts one atomic main-control operation.
     ///
-    /// Missing retained input rolls back the complete aggregate operation and
-    /// is returned as a typed suspension. All other failures are restored and
-    /// remain ordinary diagnostics. In either case the next call creates a
-    /// fresh command processor; no delivered `CurrentCommand` is retained.
+    /// Missing retained input is returned as a typed suspension after the
+    /// exact command/input continuation has been retained. The next call
+    /// creates a fresh processor borrow and resumes that continuation without
+    /// redelivering the command.
     pub fn advance(&mut self, stores: &mut Universe) -> Result<StepResult, ExecError> {
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
@@ -4442,53 +3848,128 @@ impl MainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<DiagnosticStepResult, ExecError> {
-        let snapshot = self.snapshot_step(stores);
-        let operation = (|| {
-            self.refresh_host_capabilities(stores);
-            let command = {
-                let mut processor = command_processor(
-                    &mut self.command,
-                    self.fuel.fuel_mut(),
-                    &mut self.capabilities,
-                    &mut self.operation_observations,
-                    stores,
-                );
-                processor
-                    .get_x_token_preserving_undefined()
-                    .map_err(command_error)?
-            };
-            let Some(command) = command else {
-                return Ok(DiagnosticStep::EndOfInput);
-            };
-            if tex_command::exceeds_max_non_prefixed_command(command.meaning()) {
-                self.execute_operation(
-                    stores,
-                    OperationDelivery::Replay(Some(command)),
-                    OperationTransaction::Nested,
-                    1,
-                    None,
-                )?;
-                Ok(DiagnosticStep::Assignment)
-            } else {
-                Ok(DiagnosticStep::Token {
-                    spelling: command.spelling(),
-                    meaning: command.meaning(),
-                    control_sequence: command.control_sequence(),
-                    source_provenance: command.source_provenance(),
-                })
+        let operation_mark = stores.begin_direct_operation();
+        let continuation = self.pending_diagnostic_operation.take();
+        let assignment = match continuation {
+            Some(PendingDiagnosticOperation::Prepared(scanned)) => {
+                Some((OperationDelivery::Prepared(scanned), None))
             }
-        })();
-        match operation {
-            Ok(step) => {
-                self.commit_step(snapshot, stores);
-                Ok(DiagnosticStepResult::Progress(step))
+            Some(PendingDiagnosticOperation::Assignment { command, cursor }) => {
+                let retry = (command.clone(), cursor);
+                Some((
+                    OperationDelivery::Settled {
+                        command,
+                        cursor: Some(cursor),
+                    },
+                    Some(retry),
+                ))
             }
-            Err(error) => match self.finish_failed_step(snapshot, stores, error)? {
-                StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
-                StepResult::Progress(_) => {
-                    unreachable!("diagnostic failure made progress")
+            None => {
+                self.refresh_host_capabilities(stores);
+                let (command, cursor) = {
+                    let mut processor = command_processor(
+                        &mut self.command,
+                        self.fuel.fuel_mut(),
+                        &mut self.capabilities,
+                        &mut self.operation_observations,
+                        stores,
+                    );
+                    let command = processor
+                        .get_x_token_preserving_undefined()
+                        .map_err(command_error);
+                    (command, processor.delivery_cursor())
+                };
+                let command = match command {
+                    Ok(command) => command,
+                    Err(error) => {
+                        let result = self.finish_resource_preflight_failure(stores, error);
+                        stores.commit_direct_operation(operation_mark);
+                        return match result? {
+                            StepResult::Suspended(need) => {
+                                Ok(DiagnosticStepResult::Suspended(need))
+                            }
+                            StepResult::Progress(_) => {
+                                unreachable!("diagnostic expansion failure made progress")
+                            }
+                        };
+                    }
+                };
+                let Some(command) = command else {
+                    stores.commit_direct_operation(operation_mark);
+                    return Ok(DiagnosticStepResult::Progress(DiagnosticStep::EndOfInput));
+                };
+                if !tex_command::exceeds_max_non_prefixed_command(command.meaning()) {
+                    let step = DiagnosticStep::Token {
+                        spelling: command.spelling(),
+                        meaning: command.meaning(),
+                        control_sequence: command.control_sequence(),
+                        source_provenance: command.source_provenance(),
+                    };
+                    stores.commit_direct_operation(operation_mark);
+                    return Ok(DiagnosticStepResult::Progress(step));
                 }
-            },
+                let retry = (command.clone(), cursor);
+                Some((
+                    OperationDelivery::Settled {
+                        command,
+                        cursor: Some(cursor),
+                    },
+                    Some(retry),
+                ))
+            }
+        };
+        let (delivery, retry) = assignment.expect("diagnostic assignment continuation");
+        let mode_mark = self.modes.begin_journal();
+        let prepared = match self.prepare_operation(stores, delivery) {
+            Ok(prepared) => prepared,
+            Err(failure) => {
+                if let Some(scanned) = failure.unavailable {
+                    self.pending_diagnostic_operation =
+                        Some(PendingDiagnosticOperation::Prepared(scanned));
+                } else if let Some((command, cursor)) = retry {
+                    let command = self
+                        .command
+                        .pending_expansion_command()
+                        .cloned()
+                        .unwrap_or(command);
+                    self.pending_diagnostic_operation =
+                        Some(PendingDiagnosticOperation::Assignment {
+                            command,
+                            cursor: failure.cursor.unwrap_or(cursor),
+                        });
+                }
+                let result = self.finish_resource_preflight_failure(stores, *failure.error);
+                if !matches!(result, Ok(StepResult::Suspended(_))) {
+                    self.pending_diagnostic_operation = None;
+                }
+                self.modes
+                    .rollback_journal(mode_mark)
+                    .expect("diagnostic assignment owns the mode mark");
+                stores.commit_direct_operation(operation_mark);
+                return match result? {
+                    StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
+                    StepResult::Progress(_) => {
+                        unreachable!("diagnostic assignment failure made progress")
+                    }
+                };
+            }
+        };
+        match self.apply_prepared_operation(stores, prepared) {
+            Ok(_) => {
+                self.modes
+                    .commit_journal(mode_mark)
+                    .expect("diagnostic assignment owns the mode mark");
+                stores.commit_direct_operation(operation_mark);
+                Ok(DiagnosticStepResult::Progress(DiagnosticStep::Assignment))
+            }
+            Err(error) => {
+                self.modes
+                    .rollback_journal(mode_mark)
+                    .expect("diagnostic assignment owns the mode mark");
+                stores.discard_direct_operation_allocations(operation_mark);
+                Err(error
+                    .freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8)))
+            }
         }
     }
 
@@ -4520,7 +4001,7 @@ impl MainControl {
         }
     }
 
-    /// Executes one command inside an aggregate host-owned episode.
+    /// Executes one command inside a host-owned direct episode.
     ///
     /// TeX82 §1211's `prefixed_command` remains the assignment dispatcher
     /// when §1228's numeric assignments occur inside a replayed math or
@@ -5906,7 +5387,8 @@ impl MainControl {
         let receipt_start = self.operation_receipt_start.take();
         if matches!(stepped, Ok(StepResult::Suspended(_)))
             && (self.pending_resource_operation.is_some()
-                || self.pending_preflight_command.is_some())
+                || self.pending_preflight_command.is_some()
+                || self.pending_alignment_delivery.is_some())
         {
             let start = receipt_start.expect("observed operation owns a receipt start");
             self.suspended_operation_observation = Some((pending, start));
@@ -6031,18 +5513,23 @@ impl MainControl {
     /// This is deliberately narrower than scanning: expanded delivery and
     /// command tracing mutate only the command/input machine, while operand
     /// scanning and semantic application begin after the returned static
-    /// capability has selected direct execution or the legacy retry adapter.
-    /// Alignment-owned scanner phases retain that adapter until their narrow
-    /// transaction migration in the next child issue.
+    /// capability has selected direct execution or a typed continuation.
+    /// Alignment-owned scanner phases use the same preparation boundary and
+    /// retain only their delivery tag when immutable host input suspends.
     fn preflight_replay_delivery(
         &mut self,
         stores: &mut Universe,
     ) -> Result<Option<PreflightDelivery>, ExecError> {
         let mode = self.modes.current_mode();
-        if alignment_preamble(self.active_alignment.as_mut()).is_some()
+        if self.active_alignment.is_some()
             || (mode == Mode::DisplayMath && self.modes.current_list().has_display_alignment())
         {
-            return Ok(None);
+            return Ok(Some(PreflightDelivery {
+                delivery: OperationDelivery::Replay(None),
+                capabilities: crate::transaction_protocol::canonical_command_capabilities(
+                    Meaning::Relax,
+                ),
+            }));
         }
 
         if self.enter_main_control(stores) {
@@ -6459,6 +5946,34 @@ impl MainControl {
                         &mut self.shown_mode,
                         &mut diagnostics,
                     )?,
+                    OperationDelivery::AlignmentRetry { alignment, cursor } => {
+                        processor.resume_delivery_cursor(cursor);
+                        match alignment {
+                            Some(alignment) => scan_alignment_delivery_step(
+                                &mut processor,
+                                alignment,
+                                &ReplayBoxes::default(),
+                                innermost_group,
+                                mode,
+                                job_is_all_over,
+                                self.main_loop_active,
+                                &mut self.shown_mode,
+                                &mut diagnostics,
+                            )?,
+                            None => scan_replay_step(
+                                &mut processor,
+                                mode,
+                                &self.boxes,
+                                alignment_preamble,
+                                innermost_group,
+                                job_is_all_over,
+                                self.modes.current_list().display_eq_no().is_some(),
+                                self.main_loop_active,
+                                &mut self.shown_mode,
+                                &mut diagnostics,
+                            )?,
+                        }
+                    }
                     OperationDelivery::Prepared(scanned) => *scanned,
                 })
             })();
@@ -18234,8 +17749,8 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        // `apply_operation` consumes the command-owned episodes while its aggregate
-        // snapshot is live. Observed replay is not an alternate production
+        // `apply_operation` consumes the command-owned episodes inside the
+        // direct operation. Observed replay is not an alternate production
         // execution path, so reaching these arms is an invariant.
         ScannedStep::DiscretionaryOpening(_) | ScannedStep::DiscretionaryPartEnd => {
             unreachable!("discretionary is applied by MainControl")

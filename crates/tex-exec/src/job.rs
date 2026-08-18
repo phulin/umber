@@ -125,8 +125,8 @@ pub(crate) struct StartupLineFraming<'a> {
 ///
 /// This is engine state that lives outside `Universe`, alongside
 /// `MainControl`'s other replay-owned fields
-/// (`next_alignment_identity`, `boxes`, ...), so `StepSnapshot`
-/// captures and restores it exactly as it does those.
+/// (`next_alignment_identity`, `boxes`, ...). Direct command preparation does
+/// not mutate it, and committed semantic operations update it in place.
 ///
 /// §54's `open_parens` is deliberately *not* here. It is print-adjacent state
 /// on `World` -- see [`tex_state::file_framing`] -- because §362 prints its
