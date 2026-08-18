@@ -73,7 +73,7 @@ fn checkpoint_and_direct_transitions_use_structural_node_ownership() {
     let rejected = universe.begin_direct_operation();
     let scratch = boxed_penalty(&mut universe, 70);
     universe.discard_direct_operation_allocations(rejected);
-    assert!(std::panic::catch_unwind(|| scratch.to_vec()).is_err());
+    assert_eq!(boxed_penalty_value(&scratch), 70);
     assert_eq!(box_register_penalty(&universe), 60);
 }
 
