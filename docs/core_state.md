@@ -41,6 +41,17 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 Only aggregate APIs on `Universe` and its owned `Stores` facade may coordinate
 changes across these stores.
 
+The private HotCore substrate additionally defines the runtime values that the
+ordered command-input migration will adopt. `TokenWord` is a 4-byte exact
+token-only encoding and composes with the existing 4-byte origin into the
+unchanged 8-byte traced word. A source coordinate is 4 bytes, a generation-
+checked token span is 24 bytes, and a compact input frame is 40 bytes. Frames
+and spans carry only copyable chunk identities; the arena candidate or accepted
+layer owns each allocation once. These values are not yet live input storage,
+derive no serialization, and cannot enter schema-11 formats or detached command
+continuations. Foreign and stale spans reject at arena admission; admitted
+traversal performs no repeated generation lookup.
+
 A private incremental revision additionally owns one disposable allocation
 domain. The domain is absent from templates and accepted generations at rest.
 Each aggregate executor operation opens one owner- and serial-exact mark;

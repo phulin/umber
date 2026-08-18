@@ -119,6 +119,14 @@ structural provenance graph may be created.
 operand. Control-sequence tokens contain a dense symbol index. Source identity
 and provenance are not embedded as owned Rust values.
 
+The definitions-only substrate fixes `TokenWord` at 4 bytes: its high two bits
+select character, control-sequence, parameter, or inaccessible frozen token,
+and its low 30 bits preserve the exact operand. Character operands retain the
+Unicode scalar and all sixteen category codes; control sequences retain the
+complete permanent-symbol domain. The existing 8-byte `TracedTokenWord` is now
+the exact composition of this token-only word and its 4-byte origin coordinate,
+so introducing the packed word does not create a second token meaning.
+
 `CommandWord` is a fixed-width decoded command containing an opcode, operand,
 control-sequence index, and compact origin coordinate. It replaces the rich
 `CurrentCommand` on the ordinary path. A diagnostic or observer can materialize
@@ -136,6 +144,17 @@ state, not format ABI.
 - frame kind and delivery flags;
 - macro/argument or source-specific auxiliary data; and
 - a compact trace coordinate.
+
+The fixed layout is 40 bytes. A 16-byte `ChunkOwner` identity, start/current/
+limit offsets, one auxiliary word, a 4-byte `SourceCoordinate`, and compact
+kind/flag fields are all copy-only. TeX82's token-list frame kinds retain §307's
+exact numeric `token_type` values; e-TeX `every_eof`, source, and Umber replay
+kinds occupy explicitly separate values. A token-only `TokenSpan` is 24 bytes
+and carries one chunk identity plus a half-open 32-bit range. These runtime
+values derive no serialization and remain absent from format and continuation
+DTOs. This stage defines and tests the values only; live source, input, and
+macro delivery remain on their current representation until the ordered
+migration children.
 
 The input stack owns chunk references at frame or stack granularity. Delivering
 a token increments an offset and performs no clone, allocation, weak upgrade,
@@ -223,6 +242,15 @@ within one chunk. A typed coordinate contains a 64-bit namespace, 32-bit chunk
 slot, 32-bit nonzero generation, and 32-bit offset. It is a non-owning runtime
 capability and is never a format or detached-checkpoint identifier. Coordinates
 and spans add no `Arc`, `Weak`, hash, or owner field per stored value.
+
+`ChunkOwner` names the namespace, slot, and generation retained by an accepted
+arena layer or mutable candidate; despite the ownership-oriented name it is a
+copy-only identity, not a strong owner. `TokenSpan` and `InputFrame` carry this
+identity by value. Arena admission validates it once, after which frame
+traversal increments only a 32-bit cursor. Sibling-candidate and retired-slot
+controls prove foreign and stale spans reject, and a 10,000-cycle warmed
+construction/traversal control proves retained payload and registry capacity do
+not grow.
 
 An accepted arena is an immutable chain of sealed chunk layers held by one
 `Arc` per accepted layer. Creating sibling candidates clones only that layer

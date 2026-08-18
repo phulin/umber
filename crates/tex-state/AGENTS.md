@@ -65,6 +65,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/hot_core/journal.rs`: Inline-small first-write inverse records, strictly
   nested marks, exact rollback, and parent-epoch transfer over typed mutable
   targets.
+- `src/hot_core/layout.rs` and `src/hot_core/layout/tests.rs`: Canonical
+  32-bit token words, compact source coordinates, chunk-owned token spans,
+  fixed 40-byte input frames, exact TeX input-kind values, and focused layout,
+  generation-rejection, and warmed traversal controls.
 - `src/hot_core/mod.rs`: Private HotCore storage module boundary; command
   semantics remain outside this substrate.
 - `src/hot_core/snapshot.rs` and `src/hot_core/snapshot/tests.rs`: Storage-only
