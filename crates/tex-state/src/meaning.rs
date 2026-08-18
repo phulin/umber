@@ -71,7 +71,7 @@ impl core::ops::BitOr for MeaningFlags {
 }
 
 /// A decoded meaning word.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Meaning {
     Undefined,
     Relax,
@@ -207,7 +207,7 @@ impl InternalInteger {
 }
 
 /// Expandable primitive opcodes represented directly in meaning words.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ExpandablePrimitive {
     ExpandAfter,
     NoExpand,
@@ -1310,7 +1310,7 @@ impl UnexpandablePrimitive {
 ///
 /// The fields are intentionally private so downstream code can preserve and
 /// re-encode unknown meanings without minting arbitrary meaning words.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct RawMeaning {
     op: u8,
     flags: MeaningFlags,

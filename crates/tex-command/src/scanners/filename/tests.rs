@@ -314,6 +314,12 @@ fn filename_scan_recursion_guard_and_retry_modes_follow_tex82() {
         }
     );
     assert!(!command.name_in_progress());
+    // This case inspects §530's recursive-filename recovery after deliberately
+    // abandoning the host suspension. Production retry retains the exact
+    // expandable command and completed filename instead of exposing these
+    // intermediate recovery levels to a caller.
+    command.pending_expansions.clear();
+    command.pending_input_open = None;
     {
         let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let sentinel = processor

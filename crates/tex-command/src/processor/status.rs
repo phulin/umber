@@ -178,7 +178,7 @@ impl CommandProcessor<'_> {
 }
 
 /// Whether a semantic scanner episode appears in the detached TeX observer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum ScannerStatusVisibility {
     Observed,
     Hidden,
@@ -191,6 +191,7 @@ impl ScannerStatusVisibility {
 }
 
 /// Processor-owned lifetime of one live scanner-status installation.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ScannerEpisode {
     installed: ScannerStatus,
     prior: ScannerState,

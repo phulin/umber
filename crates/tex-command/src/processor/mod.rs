@@ -229,7 +229,17 @@ impl CommandProcessor<'_> {
     pub fn resume_current_command(&mut self, command: &crate::CurrentCommand) {
         let stamp = command.delivery_stamp();
         self.last_delivery = Some(stamp);
-        self.next_delivery_sequence = stamp.sequence().wrapping_add(1);
+        self.next_delivery_sequence = self
+            .next_delivery_sequence
+            .max(stamp.sequence().wrapping_add(1));
+    }
+
+    /// Returns the outermost expandable command retained by a nested resource
+    /// suspension. The executor uses this exact command, rather than the
+    /// command that originally entered settlement, as its typed retry seam.
+    #[must_use]
+    pub fn pending_expansion_command(&self) -> Option<&crate::CurrentCommand> {
+        self.command.pending_expansion_command()
     }
 
     /// Captures TeX82 §82's `show_context` while this processor still owns

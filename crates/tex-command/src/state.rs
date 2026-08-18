@@ -90,6 +90,28 @@ pub struct CommandState {
     /// acquisition. Retrying the opener consumes this value instead of
     /// delivering or scanning its operand again.
     pub(crate) pending_input_open: Option<crate::ScannedFileName>,
+    /// A fully scanned expandable pdfTeX file enquiry waiting for immutable
+    /// host resolution. Corrected dump ranges are retained with the request
+    /// so retry neither rescans operands nor repeats diagnostics.
+    pub(crate) pending_file_enquiry: Option<PendingFileEnquiry>,
+    /// Expanded token collectors suspended at an immutable host boundary.
+    ///
+    /// Nested collectors append their continuation while unwinding, so the
+    /// outermost collector is resumed first and naturally re-enters the
+    /// nested collector beneath it. Each entry owns only its accumulated
+    /// rooted words, scanner scope, and exact failed current command.
+    pub(crate) pending_scan_toks: Vec<crate::scan_toks::PendingScanToks>,
+    /// Expandable current commands whose host-dependent expansion suspended.
+    /// Nested expansion unwinds inner-to-outer and appends at each layer, so
+    /// popping resumes the outermost exact delivery first without redelivery.
+    pub(crate) pending_expansions: Vec<crate::CurrentCommand>,
+    /// TeX82 §368 `\expandafter` operands held while its second command waits
+    /// on an immutable host resource. Nested frames unwind inner-to-outer and
+    /// are popped outermost-first when the retained expandable command resumes.
+    pub(crate) pending_expandafters: Vec<crate::processor::expand::PendingExpandAfter>,
+    /// Accumulated TeX82 §372 `\csname` characters held across immutable host
+    /// suspension. Nested names unwind inner-to-outer and resume in that order.
+    pub(crate) pending_csnames: Vec<String>,
     /// Named token-list levels installed since the executor last drained
     /// them, in push order.
     ///
@@ -144,6 +166,13 @@ pub struct CommandState {
     /// diagnostic high-water marks survive a retried step without becoming
     /// command semantics, checkpoint identity, or format state.
     pub(crate) usage: CommandUsageTracker,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct PendingFileEnquiry {
+    pub(crate) request: crate::FileEnquiryRequest,
+    pub(crate) offset: i32,
+    pub(crate) length: i32,
 }
 
 /// TeX82 §§31/321/374/390 command-owned stack maxima for §1334.
@@ -434,6 +463,61 @@ impl CommandState {
     pub(crate) fn retain_pending_input_open(&mut self, file_name: crate::ScannedFileName) {
         debug_assert!(self.pending_input_open.is_none());
         self.pending_input_open = Some(file_name);
+    }
+
+    pub(crate) fn take_pending_file_enquiry(
+        &mut self,
+        intent: crate::FileEnquiryIntent,
+    ) -> Result<Option<PendingFileEnquiry>, crate::CommandError> {
+        let Some(pending) = self.pending_file_enquiry.take() else {
+            return Ok(None);
+        };
+        if pending.request.intent != intent {
+            self.pending_file_enquiry = Some(pending);
+            return Err(crate::CommandError::input_invariant());
+        }
+        Ok(Some(pending))
+    }
+
+    pub(crate) fn retain_pending_file_enquiry(&mut self, pending: PendingFileEnquiry) {
+        debug_assert!(self.pending_file_enquiry.is_none());
+        self.pending_file_enquiry = Some(pending);
+    }
+
+    pub(crate) fn take_pending_expansion(&mut self) -> Option<crate::CurrentCommand> {
+        self.pending_expansions.pop()
+    }
+
+    pub(crate) fn retain_pending_expansion(&mut self, command: crate::CurrentCommand) {
+        self.pending_expansions.push(command);
+    }
+
+    /// Returns the outermost expandable command retained by resource
+    /// suspension without consuming its command-owned continuation.
+    #[must_use]
+    pub fn pending_expansion_command(&self) -> Option<&crate::CurrentCommand> {
+        self.pending_expansions.last()
+    }
+
+    pub(crate) fn take_pending_expandafter(
+        &mut self,
+    ) -> Option<crate::processor::expand::PendingExpandAfter> {
+        self.pending_expandafters.pop()
+    }
+
+    pub(crate) fn retain_pending_expandafter(
+        &mut self,
+        pending: crate::processor::expand::PendingExpandAfter,
+    ) {
+        self.pending_expandafters.push(pending);
+    }
+
+    pub(crate) fn take_pending_csname(&mut self) -> Option<String> {
+        self.pending_csnames.pop()
+    }
+
+    pub(crate) fn retain_pending_csname(&mut self, name: String) {
+        self.pending_csnames.push(name);
     }
 
     pub(crate) fn begin_file_name(&mut self) -> Result<(), crate::CommandError> {

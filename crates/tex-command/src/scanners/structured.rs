@@ -2070,11 +2070,12 @@ impl CommandProcessor<'_> {
             UnexpandablePrimitive::OpenIn => {
                 let scanned = self.scan_restricted_integer(RestrictedIntegerClass::FourBit)?;
                 let _ = self.scan_optional_equals()?;
+                let file_name = self.scan_file_name()?;
                 Ok(InputStreamRequest::Open {
                     stream: scanned.value,
                     scanned: scanned.scanned,
                     recovered: scanned.recovered,
-                    file_name: self.scan_file_name()?,
+                    file_name,
                 })
             }
             UnexpandablePrimitive::CloseIn => {
@@ -3667,14 +3668,23 @@ impl CommandProcessor<'_> {
         &mut self,
         expanded: bool,
     ) -> Result<ScannedMacroDefinition, CommandError> {
-        let command = self
-            .next_non_space_raw()?
-            .ok_or(CommandError::input_invariant())?;
-        let target = if let Some(target) = command.control_sequence() {
+        let target = if let Some(target) = self
+            .command
+            .pending_scan_toks
+            .last()
+            .and_then(|pending| pending.macro_definition_target(expanded))
+        {
             target
         } else {
-            self.back_input(command)?;
-            self.scan_definition_target()?
+            let command = self
+                .next_non_space_raw()?
+                .ok_or(CommandError::input_invariant())?;
+            if let Some(target) = command.control_sequence() {
+                target
+            } else {
+                self.back_input(command)?;
+                self.scan_definition_target()?
+            }
         };
         let scanned = self.scan_toks(ScanToksMode::MacroDefinitionFor { expanded, target })?;
         let provenance = provenance(&scanned);

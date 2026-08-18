@@ -39,6 +39,14 @@ use crate::observation::{
     TokenListRecord,
 };
 
+/// Operand state held by TeX82 §368 while `\expandafter` expands its second
+/// command across an immutable host suspension.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct PendingExpandAfter {
+    first: CurrentCommand,
+    second: CurrentCommand,
+}
+
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
 /// inserted` recovery. Rendering belongs to the diagnostic milestone.
 pub(crate) const MISSING_ENDCSNAME_DIAGNOSTIC: u64 = 0x6373_6e61_6d65_0001;
@@ -670,6 +678,17 @@ impl CommandProcessor<'_> {
         match policy.mode {
             DeliveryMode::Raw => self.raw_delivery_driver(pending, policy),
             DeliveryMode::Expanded(expanded) => {
+                let mut resumed_pending = false;
+                if pending.is_none() {
+                    pending = self.command.take_pending_expansion();
+                    resumed_pending = pending.is_some();
+                } else if self.command.pending_expansions.last() == pending.as_ref() {
+                    let _ = self.command.take_pending_expansion();
+                    resumed_pending = true;
+                }
+                if resumed_pending && let Some(command) = &pending {
+                    self.resume_current_command(command);
+                }
                 let depth = self.command.transient.active_expansion_depth;
                 self.command.transient.active_expansion_depth = depth
                     .checked_add(1)
@@ -827,6 +846,7 @@ impl CommandProcessor<'_> {
             // bookkeeping, then resumes the enclosing expanded-token loop.
             // A user paragraph has been backed up for that loop; an EOF
             // recovery paragraph was consumed by the failed match instead.
+            let retry = command.clone();
             match self.expand(command) {
                 // TeX82 §394 resumes expanded delivery after both an ordinary
                 // runaway paragraph and §23's outer-validity recovery has
@@ -835,7 +855,12 @@ impl CommandProcessor<'_> {
                 Ok(())
                 | Err(CommandError::ParagraphInMacroArgument)
                 | Err(CommandError::OuterInMacroArgument) => {}
-                Err(error) => return Err(error),
+                Err(error) => {
+                    if error.is_resource_suspension() {
+                        self.command.retain_pending_expansion(retry);
+                    }
+                    return Err(error);
+                }
             }
         }
     }
@@ -1560,14 +1585,31 @@ impl CommandProcessor<'_> {
     /// input. The first delivery is intentionally replayed through an
     /// explicit backed-up level because it is no longer the latest delivery.
     fn expand_expandafter(&mut self) -> Result<(), CommandError> {
-        let first = self.get_token()?.ok_or(CommandError::input_invariant())?;
-        let second = self.get_token()?.ok_or(CommandError::input_invariant())?;
+        let (first, second) = if let Some(pending) = self.command.take_pending_expandafter() {
+            self.resume_current_command(&pending.second);
+            (pending.first, pending.second)
+        } else {
+            (
+                self.get_token()?.ok_or(CommandError::input_invariant())?,
+                self.get_token()?.ok_or(CommandError::input_invariant())?,
+            )
+        };
         if is_expandable_command(&second) {
-            self.expand(second)?;
+            let retry = PendingExpandAfter {
+                first,
+                second: second.clone(),
+            };
+            if let Err(error) = self.expand(second) {
+                if error.is_resource_suspension() {
+                    self.command.retain_pending_expandafter(retry);
+                }
+                return Err(error);
+            }
+            self.replay_expandafter_first(retry.first)?;
         } else {
             self.back_input(second)?;
+            self.replay_expandafter_first(first)?;
         }
-        self.replay_expandafter_first(first)?;
         Ok(())
     }
 
@@ -1597,10 +1639,17 @@ impl CommandProcessor<'_> {
         // scans remain true to ifincsname and unwind to their caller.
         let previous = std::mem::replace(&mut self.is_in_csname, true);
         let result = (|| {
-            let mut name = String::new();
+            let mut name = self.command.take_pending_csname().unwrap_or_default();
             loop {
-                let Some(command) = self.get_x_token()? else {
-                    return Err(CommandError::input_invariant());
+                let command = match self.get_x_token() {
+                    Ok(Some(command)) => command,
+                    Ok(None) => return Err(CommandError::input_invariant()),
+                    Err(error) => {
+                        if error.is_resource_suspension() {
+                            self.command.retain_pending_csname(name);
+                        }
+                        return Err(error);
+                    }
                 };
                 match command.meaning() {
                     Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => break,
@@ -1919,39 +1968,55 @@ impl CommandProcessor<'_> {
     /// pdftex.web §1590's `pdf_file_dump_code` conversion.
     ///
     /// The filename is scanned before the immutable input capability is
-    /// consulted. An absent capability therefore suspends the enclosing
-    /// aggregate operation, whose checkpoint restores both the option and
-    /// filename scans before the host retries it.
+    /// consulted. An absent capability retains the corrected range and typed
+    /// request, so the host retry neither repeats diagnostics nor rescans the
+    /// consumed operands.
     fn expand_pdf_file_dump(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let mut offset = 0_i32;
-        let mut length = 0_i32;
-        if self.scan_keyword("offset")?.value {
-            offset = self.scan_integer()?.value;
-            if offset < 0 {
-                self.pdftex_file_range_diagnostic("offset", offset);
-                offset = 0;
+        let pending = self
+            .command
+            .take_pending_file_enquiry(crate::FileEnquiryIntent::Dump)?;
+        let (request, offset, length) = if let Some(pending) = pending {
+            (pending.request, pending.offset, pending.length)
+        } else {
+            let mut offset = 0_i32;
+            let mut length = 0_i32;
+            if self.scan_keyword("offset")?.value {
+                offset = self.scan_integer()?.value;
+                if offset < 0 {
+                    self.pdftex_file_range_diagnostic("offset", offset);
+                    offset = 0;
+                }
             }
-        }
-        if self.scan_keyword("length")?.value {
-            length = self.scan_integer()?.value;
-            if length < 0 {
-                self.pdftex_file_range_diagnostic("length", length);
-                length = 0;
+            if self.scan_keyword("length")?.value {
+                length = self.scan_integer()?.value;
+                if length < 0 {
+                    self.pdftex_file_range_diagnostic("length", length);
+                    length = 0;
+                }
             }
-        }
-        let name = self.scan_balanced_text(true)?.tokens;
-        let name = pdftex_token_slice_bytes(&mut self.state, name.token_ref().tokens())
-            .into_iter()
-            .map(char::from)
-            .collect::<String>();
+            let name = self.scan_balanced_text(true)?.tokens;
+            let name = pdftex_token_slice_bytes(&mut self.state, name.token_ref().tokens())
+                .into_iter()
+                .map(char::from)
+                .collect::<String>();
+            (
+                crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::Dump),
+                offset,
+                length,
+            )
+        };
         self.state.unsupported_host_capability();
-        let Some(source) = self.host.input_probe(&name) else {
-            return if self.host.input_probe_is_unavailable(&name) {
+        let Some(source) = self.host.input_probe(&request.name) else {
+            return if self.host.input_probe_is_unavailable(&request.name) {
                 Ok(())
             } else {
-                Err(CommandError::MissingInputProbe(
-                    crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::Dump),
-                ))
+                self.command
+                    .retain_pending_file_enquiry(crate::state::PendingFileEnquiry {
+                        request: request.clone(),
+                        offset,
+                        length,
+                    });
+                Err(CommandError::MissingInputProbe(request))
             };
         };
         let start = usize::try_from(offset).expect("recovered file offset is nonnegative");
@@ -1973,19 +2038,31 @@ impl CommandProcessor<'_> {
 
     /// pdftex.web §1590's `pdf_file_size_code` conversion.
     fn expand_pdf_file_size(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
-        let name = self.scan_balanced_text(true)?.tokens;
-        let name = pdftex_token_slice_bytes(&mut self.state, name.token_ref().tokens())
-            .into_iter()
-            .map(char::from)
-            .collect::<String>();
+        let request = if let Some(pending) = self
+            .command
+            .take_pending_file_enquiry(crate::FileEnquiryIntent::Size)?
+        {
+            pending.request
+        } else {
+            let name = self.scan_balanced_text(true)?.tokens;
+            let name = pdftex_token_slice_bytes(&mut self.state, name.token_ref().tokens())
+                .into_iter()
+                .map(char::from)
+                .collect::<String>();
+            crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::Size)
+        };
         self.state.unsupported_host_capability();
-        let Some(source) = self.host.input_probe(&name) else {
-            return if self.host.input_probe_is_unavailable(&name) {
+        let Some(source) = self.host.input_probe(&request.name) else {
+            return if self.host.input_probe_is_unavailable(&request.name) {
                 Ok(())
             } else {
-                Err(CommandError::MissingInputProbe(
-                    crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::Size),
-                ))
+                self.command
+                    .retain_pending_file_enquiry(crate::state::PendingFileEnquiry {
+                        request: request.clone(),
+                        offset: 0,
+                        length: 0,
+                    });
+                Err(CommandError::MissingInputProbe(request))
             };
         };
         self.push_rendered_text(
@@ -2000,18 +2077,29 @@ impl CommandProcessor<'_> {
         &mut self,
         opener: CurrentCommand,
     ) -> Result<(), CommandError> {
-        let name = self.scan_pdf_file_name()?;
+        let request = if let Some(pending) = self
+            .command
+            .take_pending_file_enquiry(crate::FileEnquiryIntent::ModificationDate)?
+        {
+            pending.request
+        } else {
+            crate::FileEnquiryRequest::new(
+                self.scan_pdf_file_name()?,
+                crate::FileEnquiryIntent::ModificationDate,
+            )
+        };
         self.state.unsupported_host_capability();
-        let Some(resource) = self.host.input_probe(&name) else {
-            return if self.host.input_probe_is_unavailable(&name) {
+        let Some(resource) = self.host.input_probe(&request.name) else {
+            return if self.host.input_probe_is_unavailable(&request.name) {
                 Ok(())
             } else {
-                Err(CommandError::MissingInputProbe(
-                    crate::FileEnquiryRequest::new(
-                        name,
-                        crate::FileEnquiryIntent::ModificationDate,
-                    ),
-                ))
+                self.command
+                    .retain_pending_file_enquiry(crate::state::PendingFileEnquiry {
+                        request: request.clone(),
+                        offset: 0,
+                        length: 0,
+                    });
+                Err(CommandError::MissingInputProbe(request))
             };
         };
         if let Some(date) = resource.modification_date() {
@@ -2026,19 +2114,36 @@ impl CommandProcessor<'_> {
     /// pdftex.web §1590's string/file MD5 conversion.
     fn expand_pdf_md_five_sum(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         use md5::{Digest, Md5};
-        let file = self.scan_keyword("file")?.value;
-        let tokens = self.scan_balanced_text(true)?.tokens;
-        let mut bytes = pdftex_token_slice_bytes(&mut self.state, tokens.token_ref().tokens());
+        let pending = self
+            .command
+            .take_pending_file_enquiry(crate::FileEnquiryIntent::MdFiveSum)?;
+        let file = pending.is_some() || self.scan_keyword("file")?.value;
+        let mut bytes = if let Some(pending) = &pending {
+            pending.request.name.as_bytes().to_vec()
+        } else {
+            let tokens = self.scan_balanced_text(true)?.tokens;
+            pdftex_token_slice_bytes(&mut self.state, tokens.token_ref().tokens())
+        };
         if file {
-            let name = bytes.iter().copied().map(char::from).collect::<String>();
+            let request = pending.map_or_else(
+                || {
+                    let name = bytes.iter().copied().map(char::from).collect::<String>();
+                    crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::MdFiveSum)
+                },
+                |pending| pending.request,
+            );
             self.state.unsupported_host_capability();
-            let Some(resource) = self.host.input_probe(&name) else {
-                return if self.host.input_probe_is_unavailable(&name) {
+            let Some(resource) = self.host.input_probe(&request.name) else {
+                return if self.host.input_probe_is_unavailable(&request.name) {
                     Ok(())
                 } else {
-                    Err(CommandError::MissingInputProbe(
-                        crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::MdFiveSum),
-                    ))
+                    self.command
+                        .retain_pending_file_enquiry(crate::state::PendingFileEnquiry {
+                            request: request.clone(),
+                            offset: 0,
+                            length: 0,
+                        });
+                    Err(CommandError::MissingInputProbe(request))
                 };
             };
             bytes = resource.source().bytes().to_vec();
@@ -2916,8 +3021,8 @@ fn append_selector_token_list_text(
 /// Character tokens remain raw (with parameter characters doubled), while
 /// control-sequence spelling and its separator observe the live escape
 /// character and catcode table. The returned value owns no token-list handle,
-/// so it remains stable when an aggregate resource suspension rolls back and
-/// rescans the command.
+/// so it remains stable when a typed resource continuation resumes the
+/// enclosing command.
 pub(crate) fn token_slice_string_text(
     state: &mut tex_state::CommandContext<'_>,
     tokens: &[Token],

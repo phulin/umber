@@ -166,6 +166,10 @@ impl CommandError {
         Self::InputInvariant(InputInvariantOrigin(Location::caller()))
     }
 
+    pub(crate) const fn is_resource_suspension(&self) -> bool {
+        matches!(self, Self::MissingInput { .. } | Self::MissingInputProbe(_))
+    }
+
     pub(crate) fn at_origin_unless_resource(self, origin: OriginId) -> Self {
         if matches!(
             self,

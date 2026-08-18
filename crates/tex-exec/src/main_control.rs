@@ -714,10 +714,16 @@ enum OperationDelivery {
     /// TeX82 §1038's main-loop lookahead delivered this command with bare
     /// `get_next`; it must not acquire an expanded-delivery observation when
     /// the scanner borrow resumes.
-    Raw(tex_command::CurrentCommand),
+    Raw {
+        command: tex_command::CurrentCommand,
+        cursor: Option<tex_command::CommandDeliveryCursor>,
+    },
     /// Expansion settled during the same borrow as raw preflight delivery,
     /// including its canonical expanded observation.
-    Settled(tex_command::CurrentCommand),
+    Settled {
+        command: tex_command::CurrentCommand,
+        cursor: Option<tex_command::CommandDeliveryCursor>,
+    },
     Expanding {
         command: tex_command::CurrentCommand,
         main_loop: bool,
@@ -735,14 +741,59 @@ enum OperationDelivery {
 
 #[derive(Clone, Debug)]
 enum PendingPreflightCommand {
-    Settled(tex_command::CurrentCommand),
-    Raw(tex_command::CurrentCommand),
+    Settled {
+        command: tex_command::CurrentCommand,
+        cursor: Option<tex_command::CommandDeliveryCursor>,
+    },
+    Raw {
+        command: tex_command::CurrentCommand,
+        cursor: Option<tex_command::CommandDeliveryCursor>,
+    },
     Expanding {
         command: tex_command::CurrentCommand,
         main_loop: bool,
         cursor: tex_command::CommandDeliveryCursor,
     },
     ImmediatePdfRetry(UnexpandablePrimitive),
+}
+
+impl PendingPreflightCommand {
+    fn with_retry_expansion(self, retry: Option<tex_command::CurrentCommand>) -> Self {
+        let Some(retry) = retry else {
+            return self;
+        };
+        match self {
+            Self::Expanding {
+                main_loop, cursor, ..
+            } => Self::Expanding {
+                command: retry,
+                main_loop,
+                cursor,
+            },
+            other => other,
+        }
+    }
+
+    fn with_cursor(self, cursor: tex_command::CommandDeliveryCursor) -> Self {
+        match self {
+            Self::Settled { command, .. } => Self::Settled {
+                command,
+                cursor: Some(cursor),
+            },
+            Self::Raw { command, .. } => Self::Raw {
+                command,
+                cursor: Some(cursor),
+            },
+            Self::Expanding {
+                command, main_loop, ..
+            } => Self::Expanding {
+                command,
+                main_loop,
+                cursor,
+            },
+            Self::ImmediatePdfRetry(primitive) => Self::ImmediatePdfRetry(primitive),
+        }
+    }
 }
 
 struct PreflightDelivery {
@@ -780,6 +831,17 @@ struct UnavailablePreparedResource {
 struct PrepareOperationError {
     error: Box<ExecError>,
     unavailable: Option<Box<ScannedStep>>,
+    cursor: Option<tex_command::CommandDeliveryCursor>,
+}
+
+impl PrepareOperationError {
+    fn with_cursor(error: ExecError, cursor: tex_command::CommandDeliveryCursor) -> Self {
+        Self {
+            error: Box::new(error),
+            unavailable: None,
+            cursor: Some(cursor),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -795,6 +857,7 @@ impl From<ExecError> for PrepareOperationError {
         Self {
             error: Box::new(error),
             unavailable: None,
+            cursor: None,
         }
     }
 }
@@ -805,6 +868,7 @@ impl From<Box<UnavailablePreparedResource>> for PrepareOperationError {
         Self {
             error: Box::new(unavailable.error),
             unavailable: Some(unavailable.scanned),
+            cursor: None,
         }
     }
 }
@@ -2997,10 +3061,11 @@ impl MainControl {
         }
         // A right brace normally owns only the save stack and group state,
         // but the brace that packages an active box can also run the page or
-        // explicit-shipout pipeline. That dynamic continuation owns the PDF,
-        // effect, and output capabilities of `\shipout`; .4.3 retains its
-        // late-failure adapter. Braces inside the box remain ordinary because
-        // their innermost save-stack group does not name the box body.
+        // explicit-shipout pipeline. Route that dynamic continuation through
+        // typed preparation so its PDF, effect, and output capabilities are
+        // known before direct semantic apply. Braces inside the box remain
+        // ordinary because their innermost save-stack group does not name the
+        // box body.
         if let OperationDelivery::Replay(Some(command)) = delivery
             && matches!(
                 command.meaning(),
@@ -3179,6 +3244,11 @@ impl MainControl {
         };
 
         loop {
+            // Private revisions require every scanner-time immutable
+            // allocation to belong to one fixed-size operation suffix. The
+            // mark therefore opens before delivery preflight, while semantic
+            // owners still remain untouched until prepared apply.
+            let operation_mark = stores.begin_direct_operation();
             let preflight = if let Some(pending) = self.pending_resource_operation.take() {
                 PreflightDelivery {
                     delivery: OperationDelivery::Prepared(pending.scanned),
@@ -3186,17 +3256,17 @@ impl MainControl {
                 }
             } else if let Some(command) = self.pending_preflight_command.take() {
                 match command {
-                    PendingPreflightCommand::Settled(command) => PreflightDelivery {
+                    PendingPreflightCommand::Settled { command, cursor } => PreflightDelivery {
                         capabilities: crate::transaction_protocol::canonical_command_capabilities(
                             command.meaning(),
                         ),
-                        delivery: OperationDelivery::Replay(Some(command)),
+                        delivery: OperationDelivery::Settled { command, cursor },
                     },
-                    PendingPreflightCommand::Raw(command) => PreflightDelivery {
+                    PendingPreflightCommand::Raw { command, cursor } => PreflightDelivery {
                         capabilities: crate::transaction_protocol::canonical_command_capabilities(
                             command.meaning(),
                         ),
-                        delivery: OperationDelivery::Raw(command),
+                        delivery: OperationDelivery::Raw { command, cursor },
                     },
                     PendingPreflightCommand::Expanding {
                         command,
@@ -3242,10 +3312,12 @@ impl MainControl {
                             self.episode_telemetry
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource);
                         }
+                        stores.commit_direct_operation(operation_mark);
                         return result;
                     }
                 };
                 let Some(preflight) = preflight else {
+                    stores.discard_direct_operation_allocations(operation_mark);
                     if operations != 0 {
                         self.record_direct_episode_commit(
                             stores,
@@ -3296,10 +3368,22 @@ impl MainControl {
                 let tracked_mark = episode_tracked_mark.take();
                 let retry_command = match &preflight.delivery {
                     OperationDelivery::Replay(Some(command)) => {
-                        Some(PendingPreflightCommand::Settled(command.clone()))
+                        Some(PendingPreflightCommand::Settled {
+                            command: command.clone(),
+                            cursor: None,
+                        })
                     }
-                    OperationDelivery::Raw(command) => {
-                        Some(PendingPreflightCommand::Raw(command.clone()))
+                    OperationDelivery::Settled { command, cursor } => {
+                        Some(PendingPreflightCommand::Settled {
+                            command: command.clone(),
+                            cursor: *cursor,
+                        })
+                    }
+                    OperationDelivery::Raw { command, cursor } => {
+                        Some(PendingPreflightCommand::Raw {
+                            command: command.clone(),
+                            cursor: *cursor,
+                        })
                     }
                     OperationDelivery::Expanding {
                         command,
@@ -3314,7 +3398,6 @@ impl MainControl {
                         Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive))
                     }
                     OperationDelivery::Replay(None)
-                    | OperationDelivery::Settled(_)
                     | OperationDelivery::Alignment(_)
                     | OperationDelivery::Prepared(_) => None,
                 };
@@ -3336,11 +3419,21 @@ impl MainControl {
                             #[cfg(not(feature = "profiling"))]
                             self.episode_telemetry
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource);
-                            return self.finish_resource_preflight_failure(stores, *failure.error);
+                            let result =
+                                self.finish_resource_preflight_failure(stores, *failure.error);
+                            stores.commit_direct_operation(operation_mark);
+                            return result;
                         }
                         let result = self.finish_resource_preflight_failure(stores, *failure.error);
                         if matches!(result, Ok(StepResult::Suspended(_))) {
-                            self.pending_preflight_command = retry_command;
+                            let retry_expansion = self.command.pending_expansion_command().cloned();
+                            self.pending_preflight_command = retry_command.map(|retry| {
+                                let retry = retry.with_retry_expansion(retry_expansion);
+                                match failure.cursor {
+                                    Some(cursor) => retry.with_cursor(cursor),
+                                    None => retry,
+                                }
+                            });
                             self.advance_telemetry.rollbacks += 1;
                             #[cfg(feature = "profiling")]
                             self.episode_telemetry
@@ -3349,10 +3442,10 @@ impl MainControl {
                             self.episode_telemetry
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource);
                         }
+                        stores.commit_direct_operation(operation_mark);
                         return result;
                     }
                 };
-                let operation_mark = stores.begin_direct_operation();
                 let applied = self.apply_prepared_operation(stores, prepared);
                 self.record_save_stack_usage(stores);
                 let boundary = self.episode_commit_boundary(
@@ -3430,10 +3523,22 @@ impl MainControl {
                 let tracked_mark = episode_tracked_mark.take();
                 let mut retry_command = match &preflight.delivery {
                     OperationDelivery::Replay(Some(command)) => {
-                        Some(PendingPreflightCommand::Settled(command.clone()))
+                        Some(PendingPreflightCommand::Settled {
+                            command: command.clone(),
+                            cursor: None,
+                        })
                     }
-                    OperationDelivery::Raw(command) => {
-                        Some(PendingPreflightCommand::Raw(command.clone()))
+                    OperationDelivery::Settled { command, cursor } => {
+                        Some(PendingPreflightCommand::Settled {
+                            command: command.clone(),
+                            cursor: *cursor,
+                        })
+                    }
+                    OperationDelivery::Raw { command, cursor } => {
+                        Some(PendingPreflightCommand::Raw {
+                            command: command.clone(),
+                            cursor: *cursor,
+                        })
                     }
                     OperationDelivery::Expanding {
                         command,
@@ -3448,7 +3553,6 @@ impl MainControl {
                         Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive))
                     }
                     OperationDelivery::Replay(None)
-                    | OperationDelivery::Settled(_)
                     | OperationDelivery::Alignment(_)
                     | OperationDelivery::Prepared(_) => None,
                 };
@@ -3463,15 +3567,45 @@ impl MainControl {
                                 scanned,
                                 capabilities: preflight.capabilities,
                             });
-                            return self.finish_resource_preflight_failure(stores, *failure.error);
+                            let result =
+                                self.finish_resource_preflight_failure(stores, *failure.error);
+                            stores.commit_direct_operation(operation_mark);
+                            return result;
                         }
-                        self.pending_preflight_command = retry_command;
-                        let error = (*failure.error).freeze_diagnostic_origin(
-                            stores,
-                            self.command.diagnostic_input_context(8),
-                        );
-                        Self::publish_pdf_fatal_error(stores, &error)?;
-                        return Err(error);
+                        let result = self.finish_resource_preflight_failure(stores, *failure.error);
+                        match result {
+                            Ok(step @ StepResult::Suspended(_)) => {
+                                let retry_expansion =
+                                    self.command.pending_expansion_command().cloned();
+                                self.pending_preflight_command = retry_command.map(|retry| {
+                                    let retry = retry.with_retry_expansion(retry_expansion);
+                                    match failure.cursor {
+                                        Some(cursor) => retry.with_cursor(cursor),
+                                        None => retry,
+                                    }
+                                });
+                                stores.commit_direct_operation(operation_mark);
+                                return Ok(step);
+                            }
+                            Ok(step) => {
+                                stores.commit_direct_operation(operation_mark);
+                                return Ok(step);
+                            }
+                            Err(error) => {
+                                let retry_expansion =
+                                    self.command.pending_expansion_command().cloned();
+                                self.pending_preflight_command = retry_command.map(|retry| {
+                                    let retry = retry.with_retry_expansion(retry_expansion);
+                                    match failure.cursor {
+                                        Some(cursor) => retry.with_cursor(cursor),
+                                        None => retry,
+                                    }
+                                });
+                                stores.commit_direct_operation(operation_mark);
+                                Self::publish_pdf_fatal_error(stores, &error)?;
+                                return Err(error);
+                            }
+                        }
                     }
                 };
                 if let ScannedStep::ImmediateExtension(ImmediateExtension::PdfExtensionInDviMode(
@@ -3490,7 +3624,6 @@ impl MainControl {
                 }
                 self.episode_telemetry.record_attempt();
                 self.advance_telemetry.attempts += 1;
-                let operation_mark = stores.begin_direct_operation();
                 let applied = self.apply_prepared_operation(stores, prepared);
                 self.record_save_stack_usage(stores);
                 let boundary = self.episode_commit_boundary(
@@ -3576,11 +3709,11 @@ impl MainControl {
                 self.advance_telemetry.attempts += 1;
                 direct_attempt_recorded = true;
             }
-            let operation_mark = stores.begin_direct_operation();
             let tracked_mark = episode_tracked_mark.take();
             let preserves_undefined_for_executor_diagnostic = matches!(
                 &preflight.delivery,
-                OperationDelivery::Replay(Some(command)) | OperationDelivery::Settled(command)
+                OperationDelivery::Replay(Some(command))
+                    | OperationDelivery::Settled { command, .. }
                     if matches!(command.meaning(), Meaning::Undefined | Meaning::Unknown(_))
             );
             // Capability preflight preserves an undefined command instead of
@@ -3593,7 +3726,82 @@ impl MainControl {
             if saved_interaction.is_some() {
                 stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
             }
-            let applied = self.apply_operation(stores, preflight.delivery);
+            let retry_command = match &preflight.delivery {
+                OperationDelivery::Replay(Some(command)) => {
+                    Some(PendingPreflightCommand::Settled {
+                        command: command.clone(),
+                        cursor: None,
+                    })
+                }
+                OperationDelivery::Settled { command, cursor } => {
+                    Some(PendingPreflightCommand::Settled {
+                        command: command.clone(),
+                        cursor: *cursor,
+                    })
+                }
+                OperationDelivery::Raw { command, cursor } => Some(PendingPreflightCommand::Raw {
+                    command: command.clone(),
+                    cursor: *cursor,
+                }),
+                OperationDelivery::Expanding {
+                    command,
+                    main_loop,
+                    cursor,
+                } => Some(PendingPreflightCommand::Expanding {
+                    command: command.clone(),
+                    main_loop: *main_loop,
+                    cursor: *cursor,
+                }),
+                OperationDelivery::ImmediatePdfRetry(primitive) => {
+                    Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive))
+                }
+                OperationDelivery::Replay(None)
+                | OperationDelivery::Alignment(_)
+                | OperationDelivery::Prepared(_) => None,
+            };
+            let prepared = match self.prepare_operation(stores, preflight.delivery) {
+                Ok(prepared) => prepared,
+                Err(failure) => {
+                    if let Some(interaction) = saved_interaction {
+                        stores.set_interaction_mode(interaction);
+                    }
+                    if let Some(mark) = tracked_mark {
+                        let _ = stores.abandon_tracked_region(mark);
+                    }
+                    if let Some(scanned) = failure.unavailable {
+                        self.pending_resource_operation = Some(PendingResourceOperation {
+                            scanned,
+                            capabilities: preflight.capabilities,
+                        });
+                    }
+                    let result = self.finish_resource_preflight_failure(stores, *failure.error);
+                    if matches!(result, Ok(StepResult::Suspended(_)))
+                        && self.pending_resource_operation.is_none()
+                    {
+                        let retry_expansion = self.command.pending_expansion_command().cloned();
+                        self.pending_preflight_command = retry_command.map(|retry| {
+                            let retry = retry.with_retry_expansion(retry_expansion);
+                            match failure.cursor {
+                                Some(cursor) => retry.with_cursor(cursor),
+                                None => retry,
+                            }
+                        });
+                    }
+                    stores.commit_direct_operation(operation_mark);
+                    return match result {
+                        Err(error) => {
+                            let error = error.freeze_diagnostic_origin(
+                                stores,
+                                self.command.diagnostic_input_context(8),
+                            );
+                            Self::publish_pdf_fatal_error(stores, &error)?;
+                            Err(error)
+                        }
+                        result => result,
+                    };
+                }
+            };
+            let applied = self.apply_prepared_operation(stores, prepared);
             if let Some(interaction) = saved_interaction {
                 stores.set_interaction_mode(interaction);
             }
@@ -3748,16 +3956,11 @@ impl MainControl {
             } else {
                 None
             };
-        // TeX82 §§1030--1038 keep fetching and dispatching commands inside
-        // `main_control`; a host retry point is not a TeX command boundary.
-        // Keep one bounded rollback root across the same 256-command chunk
-        // documented by the stepwise execution contract. Stop earlier at a
-        // named boundary, group-lineage change, terminal result, observation
-        // boundary, or World effect. Effects return to the host immediately:
-        // a later command may read same-run output and hard limits are checked
-        // at this boundary. A resource miss can then
-        // replay at most this bounded prefix while successful delivery avoids
-        // cloning the aggregate command state once per command.
+        // This compatibility adapter is reachable only from active observed
+        // alignment delivery and explicit diagnostic expansion. Keep its
+        // bounded loop semantics until umber2-awgc.4.5 replaces those two
+        // callers with typed continuations. Migrated production delivery uses
+        // `execute_direct_episode` and cannot enter this aggregate batch.
         let batch_enabled = max_operations > 1
             && matches!(transaction, OperationTransaction::Advance)
             && tracked_region.is_none()
@@ -5889,6 +6092,10 @@ impl MainControl {
                             settled.map(tex_command::CommandReplayDelivery::Command)
                         }
                         Err(error) => {
+                            let retained = processor
+                                .pending_expansion_command()
+                                .cloned()
+                                .unwrap_or(retained);
                             let retry = PendingPreflightCommand::Expanding {
                                 command: retained,
                                 main_loop: self.main_loop_active,
@@ -5982,9 +6189,15 @@ impl MainControl {
             crate::transaction_protocol::canonical_command_capabilities(command.meaning());
         Ok(Some(PreflightDelivery {
             delivery: if settled_in_preflight {
-                OperationDelivery::Settled(command)
+                OperationDelivery::Settled {
+                    command,
+                    cursor: None,
+                }
             } else if raw_main_loop_delivery && continues_main_loop {
-                OperationDelivery::Raw(command)
+                OperationDelivery::Raw {
+                    command,
+                    cursor: None,
+                }
             } else {
                 OperationDelivery::Replay(Some(command))
             },
@@ -6091,156 +6304,167 @@ impl MainControl {
             let display_alignment_tail = matches!(&delivery, OperationDelivery::Replay(None))
                 && mode == Mode::DisplayMath
                 && self.modes.current_list().has_display_alignment();
-            let scanned = match delivery {
-                OperationDelivery::Replay(Some(command)) => {
-                    processor.resume_current_command(&command);
-                    processor.observe_expanded_delivery(&command);
-                    dispatch_main_control_command(
-                        &mut processor,
-                        command,
-                        mode,
-                        &self.boxes,
-                        innermost_group,
-                        job_is_all_over,
-                        self.modes.current_list().display_eq_no().is_some(),
-                        &mut self.shown_mode,
-                        &mut diagnostics,
-                        None,
-                        self.set_box_forbidden_depth == 0,
-                    )?
-                }
-                OperationDelivery::Settled(command) => {
-                    processor.resume_current_command(&command);
-                    dispatch_main_control_command(
-                        &mut processor,
-                        command,
-                        mode,
-                        &self.boxes,
-                        innermost_group,
-                        job_is_all_over,
-                        self.modes.current_list().display_eq_no().is_some(),
-                        &mut self.shown_mode,
-                        &mut diagnostics,
-                        None,
-                        self.set_box_forbidden_depth == 0,
-                    )?
-                }
-                OperationDelivery::Raw(command) => {
-                    processor.resume_current_command(&command);
-                    dispatch_main_control_command(
-                        &mut processor,
-                        command,
-                        mode,
-                        &self.boxes,
-                        innermost_group,
-                        job_is_all_over,
-                        self.modes.current_list().display_eq_no().is_some(),
-                        &mut self.shown_mode,
-                        &mut diagnostics,
-                        None,
-                        self.set_box_forbidden_depth == 0,
-                    )?
-                }
-                OperationDelivery::Replay(None) if display_alignment_tail => match processor
-                    .next_do_assignments_command()
-                    .map_err(command_error)?
-                {
-                    Some(command) => match command.meaning() {
-                        meaning
-                            if tex_command::exceeds_max_non_prefixed_command(meaning)
-                                || matches!(
-                                    meaning,
-                                    Meaning::CharToken {
-                                        cat: Catcode::MathShift,
-                                        ..
-                                    }
-                                ) =>
-                        {
-                            dispatch_main_control_command(
-                                &mut processor,
-                                command,
-                                mode,
-                                &self.boxes,
-                                innermost_group,
-                                job_is_all_over,
-                                false,
-                                &mut self.shown_mode,
-                                &mut diagnostics,
-                                None,
-                                false,
-                            )?
+            let scanned = (|| -> Result<ScannedStep, ExecError> {
+                Ok(match delivery {
+                    OperationDelivery::Replay(Some(command)) => {
+                        processor.resume_current_command(&command);
+                        processor.observe_expanded_delivery(&command);
+                        dispatch_main_control_command(
+                            &mut processor,
+                            command,
+                            mode,
+                            &self.boxes,
+                            innermost_group,
+                            job_is_all_over,
+                            self.modes.current_list().display_eq_no().is_some(),
+                            &mut self.shown_mode,
+                            &mut diagnostics,
+                            None,
+                            self.set_box_forbidden_depth == 0,
+                        )?
+                    }
+                    OperationDelivery::Settled { command, cursor } => {
+                        processor.resume_current_command(&command);
+                        if let Some(cursor) = cursor {
+                            processor.resume_delivery_cursor(cursor);
                         }
-                        _ => {
-                            processor.back_input(command).map_err(command_error)?;
-                            ScannedStep::DisplayAlignmentRecovery
+                        dispatch_main_control_command(
+                            &mut processor,
+                            command,
+                            mode,
+                            &self.boxes,
+                            innermost_group,
+                            job_is_all_over,
+                            self.modes.current_list().display_eq_no().is_some(),
+                            &mut self.shown_mode,
+                            &mut diagnostics,
+                            None,
+                            self.set_box_forbidden_depth == 0,
+                        )?
+                    }
+                    OperationDelivery::Raw { command, cursor } => {
+                        processor.resume_current_command(&command);
+                        if let Some(cursor) = cursor {
+                            processor.resume_delivery_cursor(cursor);
                         }
+                        dispatch_main_control_command(
+                            &mut processor,
+                            command,
+                            mode,
+                            &self.boxes,
+                            innermost_group,
+                            job_is_all_over,
+                            self.modes.current_list().display_eq_no().is_some(),
+                            &mut self.shown_mode,
+                            &mut diagnostics,
+                            None,
+                            self.set_box_forbidden_depth == 0,
+                        )?
+                    }
+                    OperationDelivery::Replay(None) if display_alignment_tail => match processor
+                        .next_do_assignments_command()
+                        .map_err(command_error)?
+                    {
+                        Some(command) => match command.meaning() {
+                            meaning
+                                if tex_command::exceeds_max_non_prefixed_command(meaning)
+                                    || matches!(
+                                        meaning,
+                                        Meaning::CharToken {
+                                            cat: Catcode::MathShift,
+                                            ..
+                                        }
+                                    ) =>
+                            {
+                                dispatch_main_control_command(
+                                    &mut processor,
+                                    command,
+                                    mode,
+                                    &self.boxes,
+                                    innermost_group,
+                                    job_is_all_over,
+                                    false,
+                                    &mut self.shown_mode,
+                                    &mut diagnostics,
+                                    None,
+                                    false,
+                                )?
+                            }
+                            _ => {
+                                processor.back_input(command).map_err(command_error)?;
+                                ScannedStep::DisplayAlignmentRecovery
+                            }
+                        },
+                        None => ScannedStep::EndOfInput,
                     },
-                    None => ScannedStep::EndOfInput,
-                },
-                OperationDelivery::Replay(None) => scan_replay_step(
-                    &mut processor,
-                    mode,
-                    &self.boxes,
-                    alignment_preamble,
-                    innermost_group,
-                    job_is_all_over,
-                    self.modes.current_list().display_eq_no().is_some(),
-                    self.main_loop_active,
-                    &mut self.shown_mode,
-                    &mut diagnostics,
-                )?,
-                OperationDelivery::Expanding {
-                    command,
-                    main_loop,
-                    cursor,
-                } => {
-                    processor.resume_delivery_cursor(cursor);
-                    prepare_command_trace(&mut processor, mode, self.shown_mode);
-                    settle_preflight_step(
+                    OperationDelivery::Replay(None) => scan_replay_step(
                         &mut processor,
+                        mode,
+                        &self.boxes,
+                        alignment_preamble,
+                        innermost_group,
+                        job_is_all_over,
+                        self.modes.current_list().display_eq_no().is_some(),
+                        self.main_loop_active,
+                        &mut self.shown_mode,
+                        &mut diagnostics,
+                    )?,
+                    OperationDelivery::Expanding {
                         command,
                         main_loop,
-                        mode,
-                        &self.boxes,
+                        cursor,
+                    } => {
+                        processor.resume_delivery_cursor(cursor);
+                        prepare_command_trace(&mut processor, mode, self.shown_mode);
+                        settle_preflight_step(
+                            &mut processor,
+                            command,
+                            main_loop,
+                            mode,
+                            &self.boxes,
+                            innermost_group,
+                            job_is_all_over,
+                            self.modes.current_list().display_eq_no().is_some(),
+                            &mut self.shown_mode,
+                            &mut diagnostics,
+                        )?
+                    }
+                    OperationDelivery::ImmediatePdfRetry(primitive) => match primitive {
+                        UnexpandablePrimitive::PdfObject => {
+                            ScannedStep::ImmediateExtension(ImmediateExtension::PdfObject(
+                                processor.scan_pdf_object_request().map_err(command_error)?,
+                            ))
+                        }
+                        UnexpandablePrimitive::PdfXForm => {
+                            ScannedStep::ImmediateExtension(ImmediateExtension::PdfForm(
+                                processor
+                                    .scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)
+                                    .map_err(command_error)?,
+                            ))
+                        }
+                        UnexpandablePrimitive::PdfXImage => ScannedStep::PdfXImage {
+                            request: processor.scan_pdf_image_request().map_err(command_error)?,
+                            resource: PdfImageResource::Unavailable,
+                        },
+                        _ => unreachable!("only immediate PDF retries reach this delivery"),
+                    },
+                    OperationDelivery::Alignment(alignment) => scan_alignment_delivery_step(
+                        &mut processor,
+                        alignment,
+                        &ReplayBoxes::default(),
                         innermost_group,
+                        mode,
                         job_is_all_over,
-                        self.modes.current_list().display_eq_no().is_some(),
+                        self.main_loop_active,
                         &mut self.shown_mode,
                         &mut diagnostics,
-                    )?
-                }
-                OperationDelivery::ImmediatePdfRetry(primitive) => match primitive {
-                    UnexpandablePrimitive::PdfObject => {
-                        ScannedStep::ImmediateExtension(ImmediateExtension::PdfObject(
-                            processor.scan_pdf_object_request().map_err(command_error)?,
-                        ))
-                    }
-                    UnexpandablePrimitive::PdfXForm => {
-                        ScannedStep::ImmediateExtension(ImmediateExtension::PdfForm(
-                            processor
-                                .scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)
-                                .map_err(command_error)?,
-                        ))
-                    }
-                    UnexpandablePrimitive::PdfXImage => ScannedStep::PdfXImage {
-                        request: processor.scan_pdf_image_request().map_err(command_error)?,
-                        resource: PdfImageResource::Unavailable,
-                    },
-                    _ => unreachable!("only immediate PDF retries reach this delivery"),
-                },
-                OperationDelivery::Alignment(alignment) => scan_alignment_delivery_step(
-                    &mut processor,
-                    alignment,
-                    &ReplayBoxes::default(),
-                    innermost_group,
-                    mode,
-                    job_is_all_over,
-                    self.main_loop_active,
-                    &mut self.shown_mode,
-                    &mut diagnostics,
-                )?,
-                OperationDelivery::Prepared(scanned) => *scanned,
-            };
+                    )?,
+                    OperationDelivery::Prepared(scanned) => *scanned,
+                })
+            })();
+            let cursor = processor.delivery_cursor();
+            let scanned =
+                scanned.map_err(|error| PrepareOperationError::with_cursor(error, cursor))?;
             diagnostics.extend(
                 processor
                     .take_semantic_diagnostics()

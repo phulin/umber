@@ -11,11 +11,12 @@ use crate::{SourceLocation, SourceProvenance, SourceRange};
 /// One command delivery, equivalent to TeX's `cur_cmd`, `cur_chr`, `cur_cs`,
 /// and `cur_tok`.
 ///
-/// This value is call-local: it is absent at durable named checkpoints and
-/// intentionally has no serialization or snapshot representation. Its
-/// delivery stamp identifies the exact live cursor transition and is not
-/// reconstructed from token equality.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// This value is normally call-local and remains absent at durable named
+/// checkpoints. A resource-suspended expanded scanner may retain exactly one
+/// current command as its typed continuation; its delivery stamp identifies
+/// that exact live cursor transition and is never reconstructed from token
+/// equality.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CurrentCommand {
     spelling: TracedTokenWord,
     origin: OriginRef,
@@ -43,7 +44,7 @@ pub struct CurrentCommand {
 /// `xray`, with a selector installed by the primitive table. These remain
 /// ephemeral with the current delivery and are never stored in snapshots or
 /// input payloads.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum CommandIdentity {
     Ordinary,
     ExpandAfter,
@@ -59,7 +60,7 @@ pub(crate) enum CommandIdentity {
 /// TeX.web §35 installs the classic conversion primitives with these values;
 /// §27's `conv_toks` then consumes the selector while retaining the original
 /// `convert` current-command identity throughout the conversion episode.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum ConvertSelector {
     Number,
     RomanNumeral,
@@ -102,7 +103,7 @@ impl ConvertSelector {
 /// command: `\show`, `\showbox`, `\showthe`, and `\showlists`. Their
 /// selector is current-command identity; the executor still owns each
 /// primitive's distinct typed diagnostic behavior.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum XRaySelector {
     Show,
     ShowBox,

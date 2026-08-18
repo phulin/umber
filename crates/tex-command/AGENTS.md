@@ -47,6 +47,14 @@ print channel of its own outside the borrowed
 - `src/command.rs`: public opaque, ephemeral current-command representation;
   its cloneable value crosses only executor preflight/retry seams and never a
   durable snapshot or format boundary.
+- `src/processor/expand.rs`: canonical expanded delivery, including the
+  same-borrow preflight settlement that preserves undefined commands for the
+  executor's single diagnostic boundary, and the typed `\expandafter` operand
+  and `\csname` accumulator frames retained when expansion suspends on
+  immutable host acquisition.
+- `src/processor/mod.rs`: processor construction plus the opaque delivery
+  cursor moved across an executor-owned typed resource continuation; it
+  restores observation ordering but owns no command/input semantics.
 - `src/error.rs`: command error and resource-need representation plus the
   shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
   and canonical scanner paths.

@@ -4468,6 +4468,245 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
 }
 
 #[test]
+fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
+    let source = br"\font\bodyfont=cmr10 \bodyfont \def\sectionref{0}\def\pagerefvalue{0}\def\newlabel#1#2{\gdef\sectionref{1}\gdef\pagerefvalue{1}}\def\load{\openin0=child \ifeof0\else\closein0\input child\fi \openin2=second \ifeof2\else\closein2\input second\fi \count0=7}\load\end";
+    let child = SourceRegistration::new(
+        RegisteredSourceKind::Generated,
+        Arc::<[u8]>::from(
+            &br"\newlabel{sec:intro}{{1}{1}}
+"[..],
+        ),
+    );
+    let second = SourceRegistration::new(
+        RegisteredSourceKind::Generated,
+        Arc::<[u8]>::from(&br"\global\count2=11\endinput"[..]),
+    );
+
+    let run = |preloaded: bool| {
+        let mut stores = crate::test_harness::universe_with_plain_catcodes();
+        stores.begin_retained_session().expect("retained session");
+        let mut control = MainControl::tex82_initex(&mut stores);
+        if preloaded {
+            register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+            control
+                .capabilities_mut()
+                .register_input("child.tex", child.clone());
+            control
+                .capabilities_mut()
+                .register_input("second.tex", second.clone());
+        }
+        register_source(&mut control, source);
+        stores.begin_private_revision();
+        if !preloaded {
+            assert!(matches!(
+                control.advance_episode(&mut stores).expect("font suspends"),
+                StepResult::Suspended(ResourceNeed::Font { .. })
+            ));
+            register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+            let mut child_probe = control.advance_episode(&mut stores).expect("probe step");
+            for _ in 0..8 {
+                if matches!(child_probe, StepResult::Suspended(_)) {
+                    break;
+                }
+                child_probe = control.advance_episode(&mut stores).expect("probe step");
+            }
+            assert!(matches!(
+                child_probe,
+                StepResult::Suspended(ResourceNeed::InputProbe { ref request })
+                    if request.name == "child.tex"
+            ));
+            control
+                .capabilities_mut()
+                .register_input("child.tex", child.clone());
+            let mut second_probe = control
+                .advance_episode(&mut stores)
+                .expect("second probe step");
+            for _ in 0..8 {
+                if matches!(second_probe, StepResult::Suspended(_)) {
+                    break;
+                }
+                second_probe = control
+                    .advance_episode(&mut stores)
+                    .expect("second probe step");
+            }
+            assert!(
+                matches!(
+                    second_probe,
+                    StepResult::Suspended(ResourceNeed::InputProbe { ref request })
+                        if request.name == "second.tex"
+                ),
+                "unexpected second probe: {second_probe:?}"
+            );
+            control
+                .capabilities_mut()
+                .register_input("second.tex", second.clone());
+        }
+        run_to_end(&mut control, &mut stores);
+        (
+            stores.count(0),
+            stores.count(1),
+            stores.count(2),
+            terminal_text(&stores),
+        )
+    };
+
+    let uninterrupted = run(true);
+    assert_eq!(uninterrupted.0, 7);
+    assert_eq!(uninterrupted.1, 0);
+    assert_eq!(uninterrupted.2, 11);
+    let suspended = run(false);
+    assert_eq!(suspended, uninterrupted);
+}
+
+#[test]
+fn nested_file_probe_resumes_expandafter_collector_and_csname_frames() {
+    // e-TeX [27.465] enters a nested general-text collector for `\unexpanded`.
+    // Its expanded opener may suspend inside pdfTeX §1590 file enquiry; retry
+    // must resume the special direct-splice route rather than expand the
+    // retained `\unexpanded` command as an ordinary command. TeX82 §§368 and
+    // 372 must likewise retain `\expandafter`'s first operand and `\csname`'s
+    // accumulated name when their nested expansion suspends.
+    let child = SourceRegistration::new(
+        RegisteredSourceKind::Generated,
+        Arc::<[u8]>::from(&b"AB"[..]),
+    );
+
+    let run = |source: &[u8], preloaded: bool| {
+        let mut stores = crate::test_harness::universe_with_plain_catcodes();
+        let mut control = pdftex_initex(&mut stores);
+        if preloaded {
+            control.capabilities_mut().register_input_probe(
+                "child",
+                tex_command::FileEnquiryResource::new(child.clone(), None),
+            );
+        }
+        register_source(&mut control, source);
+        if !preloaded {
+            let need = loop {
+                match control.advance_episode(&mut stores).expect("probe step") {
+                    StepResult::Suspended(ResourceNeed::InputProbe { request }) => break request,
+                    StepResult::Progress(_) => {}
+                    other => panic!("unexpected nested enquiry step: {other:?}"),
+                }
+            };
+            assert_eq!(need.name, "child");
+            control.capabilities_mut().register_input_probe(
+                need.name,
+                tex_command::FileEnquiryResource::new(child.clone(), None),
+            );
+        }
+        run_to_end(&mut control, &mut stores);
+        terminal_text(&stores)
+    };
+
+    for (source, expected) in [
+        (
+            br"\edef\result{\unexpanded\expandafter{\pdffiledump length 2{child}}}\message{[\result]}\end"
+                .as_slice(),
+            "[4142]",
+        ),
+        (
+            br"\edef\result{\csname a\pdffiledump length 2{child}b\endcsname}\message{[\meaning\result]}\end"
+                .as_slice(),
+            "a4142b",
+        ),
+    ] {
+        let uninterrupted = run(source, true);
+        assert!(uninterrupted.contains(expected), "{uninterrupted:?}");
+        assert_eq!(run(source, false), uninterrupted);
+    }
+}
+
+#[test]
+fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    stores.begin_retained_session().expect("retained session");
+    let mut control = MainControl::tex82_initex(&mut stores);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        include_bytes!("../../../../tests/corpus/stabilization/latex-references/source.tex"),
+    );
+    stores.begin_private_revision();
+    let mut requested = Vec::new();
+    let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+    let mut checkpoints = Vec::new();
+    let cancellation = crate::Cancellation::new();
+    for _ in 0..512 {
+        let result = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+            .step(&mut checkpoints, &cancellation);
+        match result {
+            crate::CanonicalStepResult::ResourceNeed(ResourceNeed::InputProbe { request }) => {
+                let (name, bytes): (&str, &[u8]) = match request.name.as_str() {
+                    "main.aux" => (
+                        "main.aux",
+                        br"\newlabel{sec:intro}{{1}{1}}
+",
+                    ),
+                    "main.toc" => (
+                        "main.toc",
+                        br"\contentsline{section}{Introduction}{1}
+",
+                    ),
+                    other => panic!("unexpected probe {other:?}"),
+                };
+                requested.push(name);
+                let source = SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(bytes),
+                );
+                ledger
+                    .fulfill(
+                        &mut control,
+                        &ResourceNeed::InputProbe {
+                            request: request.clone(),
+                        },
+                        crate::ResourceFulfillment::InputProbe {
+                            request,
+                            resource: tex_command::FileEnquiryResource::new(source, None),
+                        },
+                    )
+                    .expect("probe fulfillment matches");
+            }
+            crate::CanonicalStepResult::ResourceNeed(need @ ResourceNeed::Input { .. }) => {
+                let name = match &need {
+                    ResourceNeed::Input { name, .. } => name.clone(),
+                    _ => unreachable!(),
+                };
+                let bytes: &[u8] = match name.as_str() {
+                    "main.aux" => {
+                        br"\newlabel{sec:intro}{{1}{1}}
+"
+                    }
+                    "main.toc" => {
+                        br"\contentsline{section}{Introduction}{1}
+"
+                    }
+                    other => panic!("unexpected input {other:?}"),
+                };
+                ledger
+                    .fulfill(
+                        &mut control,
+                        &need,
+                        crate::ResourceFulfillment::Input {
+                            name,
+                            source: SourceRegistration::new(
+                                RegisteredSourceKind::Generated,
+                                Arc::<[u8]>::from(bytes),
+                            ),
+                        },
+                    )
+                    .expect("input fulfillment matches");
+            }
+            crate::CanonicalStepResult::Completed(ReplayStep::End) => break,
+            crate::CanonicalStepResult::Progress(_) | crate::CanonicalStepResult::Committed(_) => {}
+            other => panic!("unexpected reference step {other:?}"),
+        }
+    }
+    assert_eq!(requested, ["main.aux", "main.toc"]);
+}
+
+#[test]
 fn observed_resource_retry_moves_the_unpublished_prefix_exactly_once() {
     let source = br"\input child\end";
     let child =

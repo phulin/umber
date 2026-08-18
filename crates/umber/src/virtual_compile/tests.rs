@@ -2941,7 +2941,8 @@ fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent(
             partitioned_telemetry.execution.replayed_delivered_tokens,
             partitioned_telemetry.execution.replayed_dispatches,
         ),
-        (3, 5, 5),
+        (3, 0, 0),
+        "typed resource continuations retry locally without replaying deliveries"
     );
     assert_eq!(partitioned.attempts(), 4);
     assert!(
