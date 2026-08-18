@@ -1,6 +1,6 @@
 use tex_state::Universe;
 use tex_state::ids::TokenListId;
-use tex_state::macro_store::MacroMeaning;
+use tex_state::macro_store::{MacroMeaning, PackedMacroChunkOwner};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -129,6 +129,41 @@ fn admitted_macro_owners_are_directly_indexed_by_packed_chunk() {
                 .contains(definition.id())
         );
     }
+}
+
+#[test]
+fn replacing_a_chunk_owner_preserves_unchanged_definition_coordinates() {
+    let mut universe = Universe::new();
+    let first = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        TokenListId::EMPTY,
+        TokenListId::EMPTY,
+    ));
+    let mut parameters = ParameterState::default();
+    let first_owner =
+        parameters.admit_macro(first.id(), || universe.packed_macro_owner(first.id()));
+
+    let second = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        TokenListId::EMPTY,
+        TokenListId::EMPTY,
+    ));
+    assert_eq!(
+        PackedMacroChunkOwner::chunk_index(first.id()),
+        PackedMacroChunkOwner::chunk_index(second.id())
+    );
+    assert_eq!(
+        parameters.admit_macro(second.id(), || universe.packed_macro_owner(second.id())),
+        first_owner,
+        "the current immutable snapshot replaces the same packed chunk owner"
+    );
+
+    assert_eq!(
+        parameters.admit_macro(first.id(), || {
+            panic!("an unchanged definition coordinate must survive owner replacement")
+        }),
+        first_owner
+    );
 }
 
 #[test]
