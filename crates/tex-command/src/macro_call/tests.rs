@@ -132,7 +132,7 @@ fn admitted_macro_owners_are_directly_indexed_by_packed_chunk() {
 }
 
 #[test]
-fn replacing_a_chunk_owner_preserves_unchanged_definition_coordinates() {
+fn sealed_chunk_deltas_preserve_unchanged_definition_coordinates() {
     let mut universe = Universe::new();
     let first = universe.intern_macro(MacroMeaning::new(
         MeaningFlags::EMPTY,
@@ -152,10 +152,11 @@ fn replacing_a_chunk_owner_preserves_unchanged_definition_coordinates() {
         PackedMacroChunkOwner::chunk_index(first.id()),
         PackedMacroChunkOwner::chunk_index(second.id())
     );
-    assert_eq!(
-        parameters.admit_macro(second.id(), || universe.packed_macro_owner(second.id())),
-        first_owner,
-        "the current immutable snapshot replaces the same packed chunk owner"
+    let second_owner =
+        parameters.admit_macro(second.id(), || universe.packed_macro_owner(second.id()));
+    assert_ne!(
+        second_owner, first_owner,
+        "a definition added after publication owns a sealed delta segment"
     );
 
     assert_eq!(
@@ -163,6 +164,11 @@ fn replacing_a_chunk_owner_preserves_unchanged_definition_coordinates() {
             panic!("an unchanged definition coordinate must survive owner replacement")
         }),
         first_owner
+    );
+    assert!(
+        parameters
+            .admitted_macro(second_owner)
+            .contains(second.id())
     );
 }
 

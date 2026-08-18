@@ -183,15 +183,23 @@ MacroRecord {
 ```
 
 `PackedMacroRecord` is fixed at 112 bytes and `PackedMacroPattern` at 52 bytes.
-The chunk stores 8-byte traced parameter and replacement words plus compact
-token-list ids; it does not retain semantic children by itself. The existing
-environment definition root remains the lifetime authority until command
-admission collects every live definition and provenance root in that chunk
-under one `PackedMacroChunkOwner`. Reading an admitted macro then borrows the
-copy-only pattern and spans directly, without hashing, weak upgrade, or a
-per-definition owner operation. Reclaimed definition slots overwrite warmed
-text allocations, while an allocation serial invalidates post-mark records on
-rollback without a growing undo log.
+A physical arena segment stores 8-byte traced parameter and replacement words
+plus compact token-list ids; it does not retain semantic children by itself.
+The existing environment definition root remains the lifetime authority until
+command admission collects every live definition and provenance root in that
+segment under one `PackedMacroChunkOwner`. Reading an admitted macro then
+borrows the copy-only pattern and spans directly, without hashing or weak
+upgrade.
+
+Definition installation mutates only a private physical tail. The first
+command owner or store fork seals that tail; a later definition in the same
+logical 64-slot chunk appends to a fresh or recycled physical delta segment
+instead of using `Arc::make_mut` to copy published records and token words. A
+dense generation-bearing slot coordinate selects the current segment in
+constant time, while admitted command state retains older segments for replay.
+Reclaimed private segments and text allocations are reused after their last
+owner retires. A compact coordinate-change journal restores only definitions
+installed after a mark, so rollback never walks or copies the live arena.
 
 Arguments are spans in reusable 4,096-word, 256-record command chunks.
 `MacroArguments` is a fixed 16-byte `(chunk, start, len, record)` coordinate;

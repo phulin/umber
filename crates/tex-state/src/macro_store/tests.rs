@@ -225,6 +225,119 @@ fn ten_thousand_bounded_live_redefinitions_plateau_macro_storage() {
 }
 
 #[test]
+fn published_packed_segments_seal_without_copying_existing_records() {
+    let mut stores = Stores::new();
+    let empty = stores.token_list_ref(crate::ids::TokenListId::EMPTY);
+    let first_body = replacement(&mut stores, 10);
+    let first = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        empty.id(),
+        first_body.id(),
+    ));
+    let first_owner = stores
+        .testing_macro_store()
+        .packed_owner(first.id())
+        .expect("first definition has a packed owner");
+    assert_eq!(stores.testing_macro_store().packed_chunks.len(), 1);
+
+    let second_body = replacement(&mut stores, 11);
+    let second = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::LONG,
+        empty.id(),
+        second_body.id(),
+    ));
+    let macro_store = stores.testing_macro_store();
+    assert_eq!(
+        macro_store.packed_chunks.len(),
+        2,
+        "publishing a private tail seals it and appends a delta segment"
+    );
+    assert_eq!(macro_store.packed_chunks[0].records.len(), 1);
+    assert_eq!(macro_store.packed_chunks[1].records.len(), 1);
+    assert!(first_owner.contains(first.id()));
+    assert_eq!(
+        first_owner.meaning(first.id()),
+        Some(MacroMeaning::new(
+            MeaningFlags::EMPTY,
+            empty.id(),
+            first_body.id(),
+        ))
+    );
+    assert!(macro_store.packed_owner(second.id()).is_some());
+}
+
+#[test]
+fn alternating_published_redefinitions_recycle_two_arena_segments() {
+    let mut stores = Stores::new();
+    let empty = stores.token_list_ref(crate::ids::TokenListId::EMPTY);
+    let mut retained_owner: Option<super::PackedMacroChunkOwner> = None;
+    let mut retained_id = None;
+    for index in 0..10_000_u32 {
+        let body = replacement(&mut stores, index);
+        let definition = stores.intern_macro(MacroMeaning::new(
+            MeaningFlags::EMPTY,
+            empty.id(),
+            body.id(),
+        ));
+        if let (Some(owner), Some(id)) = (&retained_owner, retained_id) {
+            assert!(owner.contains(id), "a sealed generation remains replayable");
+        }
+        retained_owner = Some(
+            stores
+                .testing_macro_store()
+                .packed_owner(definition.id())
+                .expect("definition has a packed owner"),
+        );
+        retained_id = Some(definition.id());
+        drop(definition);
+    }
+    assert!(
+        stores.testing_macro_store().packed_chunks.len() <= 2,
+        "one published segment plus one private recyclable segment must plateau"
+    );
+}
+
+#[test]
+fn packed_coordinate_rollback_restores_the_prior_live_projection() {
+    let mut stores = Stores::new();
+    let empty = stores.token_list_ref(crate::ids::TokenListId::EMPTY);
+    let first_body = replacement(&mut stores, 20);
+    let first = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        empty.id(),
+        first_body.id(),
+    ));
+    let mark = stores.testing_macro_store().watermark();
+    let second_body = replacement(&mut stores, 21);
+    let second = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::LONG,
+        empty.id(),
+        second_body.id(),
+    ));
+    assert!(
+        stores
+            .testing_macro_store()
+            .packed_owner(second.id())
+            .is_some()
+    );
+
+    stores.testing_macro_store_mut().truncate_to(mark);
+
+    assert!(
+        stores
+            .testing_macro_store()
+            .packed_owner(first.id())
+            .is_some()
+    );
+    assert!(
+        stores
+            .testing_macro_store()
+            .packed_owner(second.id())
+            .is_none()
+    );
+}
+
+#[test]
 fn all_roots_live_grow_by_exact_object_and_logical_byte_totals() {
     let mut stores = Stores::new();
     let empty = stores.token_list_ref(crate::ids::TokenListId::EMPTY);

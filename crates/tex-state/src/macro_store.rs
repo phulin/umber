@@ -100,14 +100,43 @@ struct PackedMacroDefinitionRoots {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PackedMacroChunkOwner {
     chunk: Arc<PackedMacroChunk>,
-    roots: Arc<[PackedMacroDefinitionRoots]>,
+    roots: Arc<[Option<PackedMacroDefinitionRoots>]>,
 }
 
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct PackedMacroChunk {
-    records: Vec<Option<PackedMacroRecord>>,
+    logical_index: u32,
+    slots: [u8; PACKED_MACRO_CHUNK_RECORDS],
+    records: Vec<PackedMacroRecord>,
     words: Vec<TracedTokenWord>,
     token_ids: Vec<TokenListId>,
+}
+
+impl PackedMacroChunk {
+    fn new(logical_index: u32) -> Self {
+        Self {
+            logical_index,
+            slots: [0; PACKED_MACRO_CHUNK_RECORDS],
+            records: Vec::new(),
+            words: Vec::new(),
+            token_ids: Vec::new(),
+        }
+    }
+
+    fn record_index(&self, definition: MacroDefinitionId) -> Option<usize> {
+        if self.logical_index != PackedMacroChunkOwner::chunk_index(definition) {
+            return None;
+        }
+        self.slots[definition.raw() as usize % PACKED_MACRO_CHUNK_RECORDS]
+            .checked_sub(1)
+            .map(usize::from)
+    }
+
+    fn record(&self, definition: MacroDefinitionId) -> Option<&PackedMacroRecord> {
+        self.records
+            .get(self.record_index(definition)?)
+            .filter(|record| record.definition == definition)
+    }
 }
 
 const _: () = assert!(core::mem::size_of::<PackedMacroPattern>() == 52);
@@ -125,12 +154,7 @@ impl PackedMacroChunkOwner {
     }
 
     fn record(&self, definition: MacroDefinitionId) -> Option<&PackedMacroRecord> {
-        let index = definition.raw() as usize % PACKED_MACRO_CHUNK_RECORDS;
-        self.chunk
-            .records
-            .get(index)?
-            .as_ref()
-            .filter(|record| record.definition == definition)
+        self.chunk.record(definition)
     }
 
     #[must_use]
@@ -140,14 +164,7 @@ impl PackedMacroChunkOwner {
 
     #[must_use]
     pub fn owns_definition_slot(&self, definition: MacroDefinitionId) -> bool {
-        self.chunk
-            .records
-            .iter()
-            .flatten()
-            .next()
-            .is_some_and(|record| {
-                Self::chunk_index(record.definition) == Self::chunk_index(definition)
-            })
+        self.chunk.record_index(definition).is_some()
     }
 
     #[must_use]
@@ -234,9 +251,11 @@ impl PackedMacroChunkOwner {
         &self,
         definition: MacroDefinitionId,
     ) -> Option<&PackedMacroDefinitionRoots> {
+        let index = self.chunk.record_index(definition)?;
         self.roots
-            .iter()
-            .find(|roots| roots.definition == definition)
+            .get(index)?
+            .as_ref()
+            .filter(|roots| roots.definition == definition)
     }
 }
 
@@ -462,8 +481,21 @@ pub(crate) struct MacroStoreMark {
     bodies: u32,
     pub(crate) definitions: u32,
     packed_serial: u64,
+    packed_changes: u32,
     patch_events: u32,
     next_observation_operand: i64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PackedMacroLocation {
+    definition: MacroDefinitionId,
+    chunk: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PackedMacroLocationChange {
+    slot: u32,
+    previous: Option<PackedMacroLocation>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -488,7 +520,18 @@ pub struct MacroStore {
     definition_patch_handles: HashMap<MacroDefinitionId, PatchHandle<MacroDefinitionValue>>,
     definition_patch_leases: HashMap<MacroDefinitionId, PatchRootWeak>,
     patch_order: Vec<PatchEvent>,
+    /// Immutable physical arena segments. An `Arc` with another owner is
+    /// sealed: definition installation allocates or reuses a private segment
+    /// instead of copying its published records and token words.
     packed_chunks: Vec<Arc<PackedMacroChunk>>,
+    /// Current generation-bearing record coordinate by recyclable definition
+    /// slot. Physical segments may outlive this projection while command replay
+    /// owns an older generation.
+    packed_locations: Vec<Option<PackedMacroLocation>>,
+    packed_chunk_live: Vec<u8>,
+    packed_chunk_tails: Vec<Option<u32>>,
+    packed_free_chunks: Vec<u32>,
+    packed_changes: Vec<PackedMacroLocationChange>,
     next_packed_serial: u64,
     #[cfg(any(test, feature = "testing"))]
     force_candidate_collision: bool,
@@ -512,6 +555,11 @@ impl Clone for MacroStore {
             definition_patch_leases: HashMap::new(),
             patch_order: Vec::new(),
             packed_chunks: self.packed_chunks.clone(),
+            packed_locations: self.packed_locations.clone(),
+            packed_chunk_live: self.packed_chunk_live.clone(),
+            packed_chunk_tails: self.packed_chunk_tails.clone(),
+            packed_free_chunks: self.packed_free_chunks.clone(),
+            packed_changes: self.packed_changes.clone(),
             next_packed_serial: self.next_packed_serial,
             #[cfg(any(test, feature = "testing"))]
             force_candidate_collision: self.force_candidate_collision,
@@ -534,6 +582,11 @@ impl MacroStore {
             definition_patch_leases: HashMap::new(),
             patch_order: Vec::new(),
             packed_chunks: Vec::new(),
+            packed_locations: Vec::new(),
+            packed_chunk_live: Vec::new(),
+            packed_chunk_tails: Vec::new(),
+            packed_free_chunks: Vec::new(),
+            packed_changes: Vec::new(),
             next_packed_serial: 0,
             #[cfg(any(test, feature = "testing"))]
             force_candidate_collision: false,
@@ -623,6 +676,11 @@ impl MacroStore {
             definition_patch_leases: HashMap::new(),
             patch_order: Vec::new(),
             packed_chunks: Vec::new(),
+            packed_locations: Vec::new(),
+            packed_chunk_live: Vec::new(),
+            packed_chunk_tails: Vec::new(),
+            packed_free_chunks: Vec::new(),
+            packed_changes: Vec::new(),
             next_packed_serial: 0,
             #[cfg(any(test, feature = "testing"))]
             force_candidate_collision: false,
@@ -762,17 +820,17 @@ impl MacroStore {
         provenance: Option<MacroDefinitionProvenance>,
         observation_operand: i64,
     ) {
-        let chunk_index = definition.raw() as usize / PACKED_MACRO_CHUNK_RECORDS;
-        while self.packed_chunks.len() <= chunk_index {
-            self.packed_chunks.push(Arc::new(PackedMacroChunk {
-                records: vec![None; PACKED_MACRO_CHUNK_RECORDS],
-                words: Vec::new(),
-                token_ids: Vec::new(),
-            }));
+        let logical_index = PackedMacroChunkOwner::chunk_index(definition);
+        let slot = definition.raw() as usize;
+        if self.packed_locations.len() <= slot {
+            self.packed_locations.resize(slot + 1, None);
         }
-        let chunk = Arc::make_mut(&mut self.packed_chunks[chunk_index]);
-        let record_index = definition.raw() as usize % PACKED_MACRO_CHUNK_RECORDS;
-        let existing = chunk.records[record_index].clone();
+        let previous = self.packed_locations[slot];
+        let chunk_index = self.private_packed_chunk(logical_index, previous);
+        let chunk = Arc::get_mut(&mut self.packed_chunks[chunk_index])
+            .expect("selected packed macro arena segment is private");
+        let record_index = chunk.record_index(definition);
+        let existing = record_index.map(|index| chunk.records[index].clone());
         let allocation_serial = existing
             .as_ref()
             .filter(|record| record.definition == definition)
@@ -787,13 +845,13 @@ impl MacroStore {
         let roots = token_roots.expect("packed macro records require live token-list roots");
         let parameter_root = retain_or_replace_token_id(
             chunk,
-            record_index,
+            record_index.unwrap_or(chunk.records.len()),
             existing.as_ref().map(|record| record.parameter_root),
             roots.0.id(),
         );
         let replacement_root = retain_or_replace_token_id(
             chunk,
-            record_index,
+            record_index.unwrap_or(chunk.records.len()),
             existing.as_ref().map(|record| record.replacement_root),
             roots.1.id(),
         );
@@ -859,7 +917,7 @@ impl MacroStore {
                 u32::try_from(required_len).expect("macro text exceeds u32"),
             )
         };
-        chunk.records[record_index] = Some(PackedMacroRecord {
+        let record = PackedMacroRecord {
             definition,
             flags: meaning.flags(),
             parameter_root,
@@ -873,7 +931,124 @@ impl MacroStore {
                 .expect("macro replacement text exceeds u32"),
             observation_operand,
             allocation_serial,
+        };
+        let record_index = record_index.unwrap_or_else(|| {
+            let index = chunk.records.len();
+            chunk.records.push(record.clone());
+            chunk.slots[slot % PACKED_MACRO_CHUNK_RECORDS] =
+                u8::try_from(index + 1).expect("packed macro segment exceeds 64 records");
+            index
         });
+        chunk.records[record_index] = record;
+
+        let location = PackedMacroLocation {
+            definition,
+            chunk: u32::try_from(chunk_index).expect("packed macro chunks exceed u32"),
+        };
+        self.packed_changes.push(PackedMacroLocationChange {
+            slot: u32::try_from(slot).expect("macro definition slots exceed u32"),
+            previous,
+        });
+        self.replace_packed_location(slot, location);
+    }
+
+    /// Selects an unshared physical arena segment for one logical 64-slot
+    /// definition chunk. Published segments are immutable; a private dead
+    /// segment is recycled before the arena grows.
+    fn private_packed_chunk(
+        &mut self,
+        logical_index: u32,
+        previous: Option<PackedMacroLocation>,
+    ) -> usize {
+        if let Some(previous) = previous {
+            let index = previous.chunk as usize;
+            if self.packed_chunks[index].logical_index == logical_index
+                && Arc::strong_count(&self.packed_chunks[index]) == 1
+            {
+                self.set_packed_tail(logical_index, index);
+                return index;
+            }
+        }
+
+        if let Some(index) = self
+            .packed_chunk_tails
+            .get(logical_index as usize)
+            .copied()
+            .flatten()
+            .map(|index| index as usize)
+            && Arc::strong_count(&self.packed_chunks[index]) == 1
+            && self.packed_chunks[index].records.len() < PACKED_MACRO_CHUNK_RECORDS
+        {
+            return index;
+        }
+
+        if let Some(position) = self.packed_free_chunks.iter().position(|index| {
+            self.packed_chunk_live[*index as usize] == 0
+                && Arc::strong_count(&self.packed_chunks[*index as usize]) == 1
+        }) {
+            let index = self.packed_free_chunks.swap_remove(position) as usize;
+            let old_logical = self.packed_chunks[index].logical_index as usize;
+            if self.packed_chunk_tails.get(old_logical).copied().flatten() == Some(index as u32) {
+                self.packed_chunk_tails[old_logical] = None;
+            }
+            *Arc::get_mut(&mut self.packed_chunks[index])
+                .expect("free packed macro segment is private") =
+                PackedMacroChunk::new(logical_index);
+            self.set_packed_tail(logical_index, index);
+            return index;
+        }
+
+        let index = self.packed_chunks.len();
+        self.packed_chunks
+            .push(Arc::new(PackedMacroChunk::new(logical_index)));
+        self.packed_chunk_live.push(0);
+        self.set_packed_tail(logical_index, index);
+        index
+    }
+
+    fn set_packed_tail(&mut self, logical_index: u32, chunk: usize) {
+        let logical_index = logical_index as usize;
+        if self.packed_chunk_tails.len() <= logical_index {
+            self.packed_chunk_tails.resize(logical_index + 1, None);
+        }
+        self.packed_chunk_tails[logical_index] =
+            Some(u32::try_from(chunk).expect("packed macro chunks exceed u32"));
+    }
+
+    fn replace_packed_location(&mut self, slot: usize, location: PackedMacroLocation) {
+        self.set_packed_location(slot, Some(location));
+    }
+
+    fn set_packed_location(&mut self, slot: usize, location: Option<PackedMacroLocation>) {
+        let previous = core::mem::replace(&mut self.packed_locations[slot], location);
+        let previous_chunk = previous.map(|location| location.chunk);
+        let next_chunk = location.map(|location| location.chunk);
+        if previous_chunk == next_chunk {
+            return;
+        }
+        if let Some(previous_chunk) = previous_chunk {
+            let live = &mut self.packed_chunk_live[previous_chunk as usize];
+            *live = live
+                .checked_sub(1)
+                .expect("packed macro live count underflow");
+            if *live == 0 && !self.packed_free_chunks.contains(&previous_chunk) {
+                self.packed_free_chunks.push(previous_chunk);
+            }
+        }
+        if let Some(next_chunk) = next_chunk {
+            if self.packed_chunk_live[next_chunk as usize] == 0
+                && let Some(position) = self
+                    .packed_free_chunks
+                    .iter()
+                    .position(|candidate| *candidate == next_chunk)
+            {
+                self.packed_free_chunks.swap_remove(position);
+            }
+            self.packed_chunk_live[next_chunk as usize] = self.packed_chunk_live
+                [next_chunk as usize]
+                .checked_add(1)
+                .expect("packed macro segment exceeds 64 live records");
+        }
     }
 
     #[must_use]
@@ -882,14 +1057,17 @@ impl MacroStore {
         definition: MacroDefinitionId,
     ) -> Option<PackedMacroChunkOwner> {
         self.resolved_value(definition)?;
-        let chunk = self
-            .packed_chunks
-            .get(definition.raw() as usize / PACKED_MACRO_CHUNK_RECORDS)?;
+        let location = self
+            .packed_locations
+            .get(definition.raw() as usize)
+            .copied()
+            .flatten()
+            .filter(|location| location.definition == definition)?;
+        let chunk = self.packed_chunks.get(location.chunk as usize)?;
         let roots = chunk
             .records
             .iter()
-            .filter_map(|record| record.as_ref())
-            .filter_map(|record| {
+            .map(|record| {
                 let value = self.resolved_value(record.definition)?;
                 let body = value.value().body.value.value();
                 Some(PackedMacroDefinitionRoots {
@@ -908,12 +1086,15 @@ impl MacroStore {
     }
 
     fn packed_record(&self, definition: MacroDefinitionId) -> Option<&PackedMacroRecord> {
+        let location = self
+            .packed_locations
+            .get(definition.raw() as usize)
+            .copied()
+            .flatten()
+            .filter(|location| location.definition == definition)?;
         self.packed_chunks
-            .get(definition.raw() as usize / PACKED_MACRO_CHUNK_RECORDS)?
-            .records
-            .get(definition.raw() as usize % PACKED_MACRO_CHUNK_RECORDS)?
-            .as_ref()
-            .filter(|record| record.definition == definition)
+            .get(location.chunk as usize)?
+            .record(definition)
     }
 
     #[must_use]
@@ -921,7 +1102,9 @@ impl MacroStore {
         if self.resolved_value(id).is_some()
             && let Some(record) = self.packed_record(id)
         {
-            let chunk = &self.packed_chunks[id.raw() as usize / PACKED_MACRO_CHUNK_RECORDS];
+            let location = self.packed_locations[id.raw() as usize]
+                .expect("packed macro record has a location");
+            let chunk = &self.packed_chunks[location.chunk as usize];
             return MacroMeaning::new(
                 record.flags,
                 chunk.token_ids[record.parameter_root as usize],
@@ -1014,7 +1197,9 @@ impl MacroStore {
         if self.resolved_value(id).is_some()
             && let Some(record) = self.packed_record(id)
         {
-            let chunk = &self.packed_chunks[id.raw() as usize / PACKED_MACRO_CHUNK_RECORDS];
+            let location = self.packed_locations[id.raw() as usize]
+                .expect("packed macro record has a location");
+            let chunk = &self.packed_chunks[location.chunk as usize];
             let start = record.parameter_start as usize;
             let tokens = chunk.words[start..start + record.parameter_len as usize]
                 .iter()
@@ -1101,6 +1286,8 @@ impl MacroStore {
             definitions: u32::try_from(self.definitions.slot_len())
                 .expect("macro definition slots exceed u32 entries"),
             packed_serial: self.next_packed_serial,
+            packed_changes: u32::try_from(self.packed_changes.len())
+                .expect("packed macro changes exceed u32 entries"),
             patch_events: u32::try_from(self.patch_order.len())
                 .expect("macro patch events exceed u32 entries"),
             next_observation_operand: self.next_observation_operand,
@@ -1108,20 +1295,20 @@ impl MacroStore {
     }
 
     pub(crate) fn truncate_to(&mut self, mark: MacroStoreMark) {
-        if self.next_packed_serial != mark.packed_serial {
-            for chunk in &mut self.packed_chunks {
-                let chunk = Arc::make_mut(chunk);
-                for record in &mut chunk.records {
-                    if record
-                        .as_ref()
-                        .is_some_and(|record| record.allocation_serial >= mark.packed_serial)
-                    {
-                        *record = None;
-                    }
-                }
-            }
-            self.next_packed_serial = mark.packed_serial;
+        while self.packed_changes.len() > mark.packed_changes as usize {
+            let change = self
+                .packed_changes
+                .pop()
+                .expect("packed macro change journal is nonempty");
+            let previous = change.previous.filter(|location| {
+                self.packed_chunks
+                    .get(location.chunk as usize)
+                    .and_then(|chunk| chunk.record(location.definition))
+                    .is_some()
+            });
+            self.set_packed_location(change.slot as usize, previous);
         }
+        self.next_packed_serial = mark.packed_serial;
         while self.patch_order.len() > mark.patch_events as usize {
             match self
                 .patch_order
@@ -1255,7 +1442,7 @@ impl MacroStore {
             self.packed_chunks.len(),
             self.packed_chunks
                 .iter()
-                .map(|chunk| chunk.records.iter().flatten().count())
+                .map(|chunk| chunk.records.len())
                 .sum(),
             self.packed_chunks
                 .iter()
@@ -1368,9 +1555,7 @@ fn retain_or_replace_token_id(
     }
     let shared = chunk.records.iter().enumerate().any(|(index, record)| {
         index != record_index
-            && record.as_ref().is_some_and(|record| {
-                record.parameter_root == existing || record.replacement_root == existing
-            })
+            && (record.parameter_root == existing || record.replacement_root == existing)
     });
     if shared {
         retain_token_id(&mut chunk.token_ids, id)

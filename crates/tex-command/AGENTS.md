@@ -195,9 +195,10 @@ print channel of its own outside the borrowed
   caller that starts from a broader notion and subtracts them by hand is
   re-deriving this predicate one exception at a time.
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
-  macro matcher, admitted 64-record definition chunks, reusable argument
-  chunks, packed invocation-record coordinates, compact activation/replay
-  coordinates, and focused tests.
+  macro matcher, directly indexed admitted packed-macro arena segments and
+  exact-generation owner chains, reusable argument chunks, packed
+  invocation-record coordinates, compact activation/replay coordinates, and
+  focused tests.
 - `src/conditionals.rs`: private independent condition-stack machine; also
   renders e-TeX 2.6's `\tracingifs` `{...}` trace lines at conditional entry
   and at each `\or`/`\else`/`\fi` delimiter resolution, printed directly
