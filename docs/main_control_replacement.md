@@ -194,11 +194,11 @@ MacroRecord {
 `PackedMacroRecord` is fixed at 112 bytes and `PackedMacroPattern` at 52 bytes.
 A physical arena segment stores 8-byte traced parameter and replacement words
 plus compact token-list ids; it does not retain semantic children by itself.
-The existing environment definition root remains the lifetime authority until
-command admission collects every live definition and provenance root in that
-segment under one `PackedMacroChunkOwner`. Reading an admitted macro then
-borrows the copy-only pattern and spans directly, without hashing or weak
-upgrade.
+The environment stores a copy-only definition coordinate, while its canonical
+region-root set retains the containing segment once. Command admission borrows
+that region owner once for all definitions reached through the command state.
+Reading an admitted macro then borrows the copy-only pattern and spans directly,
+without hashing, weak upgrade, or a per-definition owner.
 
 Definition installation mutates only a private physical tail. The first
 command owner or store fork seals that tail; a later definition in the same
@@ -284,6 +284,127 @@ borrowed the admitted segment.
 Arena growth is geometric and capacity is reused after rollback. Bounded-live
 work must plateau both live bytes and registry metadata. All-live controls must
 grow by the exact documented payload and segment overhead.
+
+### Runtime value-region owner and transition contract
+
+Token lists, macro definitions, glue values, and their compact provenance do
+not use independent lifetime systems. They are columns of one logical runtime
+value region:
+
+```text
+RuntimeValueRegion {
+  key: RegionKey,
+  token_words: Vec<TracedTokenWord>,
+  token_lists: Vec<TokenListRow>,
+  macro_records: Vec<PackedMacroRecord>,
+  macro_roots: Vec<PackedMacroRoots>,
+  glue_specs: Vec<GlueSpec>,
+  provenance_roots: Vec<PackedOriginRoot>,
+}
+```
+
+The concrete implementation may split large columns into aligned physical
+chunks, but `RegionKey` remains the sole allocation and lifetime identity.
+`TokenListRef`, `MacroDefinitionRef`, and `GlueSpecRef` become copy-only typed
+coordinates containing a region key, row or span index, and the semantic id
+needed by their public equality contract. They contain no `Arc`, `Weak`, root
+marker, exact-index entry, or allocation-event owner. Cold format and detached
+publication may compare or hash resolved values, but those indexes never own a
+runtime region.
+
+The current `hot_core::arena` namespace, slot, generation, reservation, and
+tail-watermark rules are the implementation authority. The migration factors
+that lifecycle into a column-owning runtime region rather than creating a
+second token/macro/glue allocator. One mutable candidate owns the active bump
+region. Filling a physical region seals it by moving its buffers into one
+`Arc<SealedValueRegion>`; payload rows and backing allocations are not copied.
+The next active region reuses a retired slot only after advancing its
+generation.
+
+Ownership exists only at region granularity:
+
+| Owner                               | What it retains                                                               | When it releases                                             |
+| ----------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| active candidate                    | the mutable tail and any unadmitted scanner reservation                       | reservation rollback, candidate rejection, or sealing        |
+| dense Env root set                  | one sealed owner for every region used by current token, macro, or glue cells | the last current cell in that root set leaves the region     |
+| first-write/save journal frame      | regions containing old coordinates recorded by that frame                     | root commit retires inverses or rollback restores them       |
+| input/continuation root set         | regions used by live token frames, macro activations, and argument spans      | frame pop, continuation replacement, or detached publication |
+| page, output, and node root sets    | regions reached by unpublished page/output state                              | publication, rollback, or state retirement                   |
+| named checkpoint or generation fork | the sealed region-owner set admitted at the barrier                           | checkpoint pruning or generation drop                        |
+
+Each root set deduplicates by `RegionKey` and may keep a small use count for
+multiple coordinates in that _same canonical owner_. This is not per-value
+reference counting: a cell mutation updates one integer in its owning root set,
+and dropping a save frame or continuation drops its whole region-owner set.
+There is no global graph scan. Ordinary reads use a region already admitted by
+the relevant canonical root set; they do not clone an owner or repeat
+generation validation per value.
+
+`HotSnapshot` remains fixed-size. In addition to the existing dense-bank,
+stack, and external-journal cursors, its value-region mark records the candidate
+namespace, region-allocation sequence, sealed-suffix count, active region slot
+and generation, and the six column lengths. Opening a mark clones no live value
+and retains no region. The first write after a mark records the old coordinate
+in the inverse journal; that journal frame's root set then retains the old
+region once before the Env root set releases it.
+
+Rollback occurs in this order:
+
+1. validate the candidate/base identities, region generations, column
+   watermarks, inverse cursor, stack cursors, and external cursors without
+   mutation;
+2. restore dense cells and stack records backward, transferring their region
+   ownership from the inverse/save root sets to the restored canonical sets;
+3. drop region-root sets owned only by discarded input, continuation, page,
+   output, or save-stack suffixes;
+4. truncate the active column tails and release every whole region allocated
+   after the mark; and
+5. advance the generation of any released slot before it can be reused.
+
+Thus rollback work is proportional to mutated cells, popped stack entries, and
+discarded _regions_, never to all allocated values. A coordinate retained only
+in an arbitrary Rust local does not keep a region live and is rejected after
+rollback. A coordinate retained by an old group restore, continuation, or
+checkpoint does keep its sealed owner explicitly and remains resolvable through
+that canonical owner.
+
+Commit has two cases. If no coordinate in the candidate suffix survives in a
+canonical root set, commit truncates that suffix and keeps its warmed buffers
+for reuse. Otherwise it seals each surviving region once and transfers the
+owner into the affected root sets without copying rows. A group exit applies
+the same rule after restoring local saves: purely local suffix regions vanish;
+a region containing a global assignment is sealed and retained by the Env root
+set. Resource retry never publishes its candidate regions; suspension keeps the
+fixed mark, rejection discards the suffix wholesale, and success performs the
+same seal-or-truncate commit.
+
+An active region has a bounded geometric capacity. It may span several direct
+operations, so ordinary commands do not create one region owner each. When it
+fills, it seals; after the last current/save/input/checkpoint coordinate moves
+to a newer region, its owner drops and the allocator recycles the entire slot.
+This gives bounded redefinition a plateau while allowing all-live state to grow
+by the exact payload and region-header formula.
+
+The migration must land these reduced controls before replacing the live
+stores:
+
+- accept/reject proves success moves backing buffers without copying and
+  rejection makes every candidate coordinate stale;
+- nested groups prove an outer saved value retains its region, local suffixes
+  disappear at exit, and a global assignment transfers its region to Env;
+- resource retry proves a failed suffix is discarded wholesale, warmed region
+  capacity is reused, and stale retry coordinates reject;
+- old snapshots prove first-write journals retain old regions until rollback
+  or root commit and that snapshot capture remains fixed-size/allocation-free;
+- an all-live control proves exact logical row, byte, region, and registry
+  growth; and
+- 10,000 bounded redefinitions, group exits, and retry failures prove stable
+  payload capacity, registry capacity, and region-owner counts with zero
+  per-value `Arc`, `Weak`, upgrade, index, hash, or graph-scan work.
+
+The transitional reachable-value pools, per-value packed liveness markers, and
+per-value allocation-event journals are deleted when this cutover lands. They
+are not retained as a compatibility path.
 
 ### Region arena ownership contract
 
