@@ -5,8 +5,9 @@
 //! moving their vectors behind one region owner, and rollback recovers or drops
 //! whole suffix regions. Coordinates never own their payload.
 
+use core::cmp::Ordering;
 use core::mem::size_of;
-use core::num::{NonZeroU32, NonZeroU64};
+use core::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::sync::Arc;
 
 use super::{ChunkOwner, FIRST_GENERATION, RegionArenaError, RegionCoordinate, fresh_namespace};
@@ -162,6 +163,34 @@ struct SealedRuntimeValueRegion<TokenWord, TokenList, MacroRecord, MacroRoot, Gl
 type SealedOwner<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance> =
     Arc<SealedRuntimeValueRegion<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>>;
 
+struct RuntimeValueRegionRoot<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance> {
+    owner: SealedOwner<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>,
+    uses: NonZeroUsize,
+}
+
+/// One region admitted once through namespace, slot, and generation.
+///
+/// Reads through this borrow need only validate the typed offset. The borrow
+/// cannot outlive the canonical root set that owns the sealed region.
+pub(crate) struct AdmittedRuntimeValueRegion<
+    'a,
+    TokenWord,
+    TokenList,
+    MacroRecord,
+    MacroRoot,
+    Glue,
+    Provenance,
+> {
+    region: &'a SealedRuntimeValueRegion<
+        TokenWord,
+        TokenList,
+        MacroRecord,
+        MacroRoot,
+        Glue,
+        Provenance,
+    >,
+}
+
 /// Explicit canonical region-root set for immutable runtime values.
 ///
 /// Cloning this set is reserved for a generation fork or named checkpoint. It
@@ -174,7 +203,8 @@ pub(crate) struct AcceptedRuntimeValueRegions<
     Glue,
     Provenance,
 > {
-    regions: Vec<SealedOwner<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>>,
+    regions:
+        Vec<RuntimeValueRegionRoot<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>>,
     initial_region_capacity: NonZeroU32,
 }
 
@@ -183,7 +213,14 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance> Clone
 {
     fn clone(&self) -> Self {
         Self {
-            regions: self.regions.iter().map(Arc::clone).collect(),
+            regions: self
+                .regions
+                .iter()
+                .map(|root| RuntimeValueRegionRoot {
+                    owner: Arc::clone(&root.owner),
+                    uses: root.uses,
+                })
+                .collect(),
             initial_region_capacity: self.initial_region_capacity,
         }
     }
@@ -217,6 +254,26 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
             .token_words
             .get(coordinate.offset as usize)
             .ok_or(RegionArenaError::OffsetOutOfBounds)
+    }
+
+    pub(crate) fn admit(
+        &self,
+        key: ChunkOwner,
+    ) -> Result<
+        AdmittedRuntimeValueRegion<
+            '_,
+            TokenWord,
+            TokenList,
+            MacroRecord,
+            MacroRoot,
+            Glue,
+            Provenance,
+        >,
+        RegionArenaError,
+    > {
+        Ok(AdmittedRuntimeValueRegion {
+            region: self.resolve_region(key)?,
+        })
     }
 
     pub(crate) fn resolve_token_list(
@@ -275,7 +332,7 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
     }
 
     pub(crate) fn accounting(&self) -> RuntimeValueRegionAccounting {
-        accounting_for_regions(&self.regions, 0, 0, self.regions.capacity())
+        accounting_for_roots(&self.regions, 0, 0, self.regions.capacity())
     }
 
     /// Builds an explicit narrower canonical root set at a cold owner barrier.
@@ -283,13 +340,103 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
         let regions = self
             .regions
             .iter()
-            .filter(|region| keys.contains(&region.key))
-            .map(Arc::clone)
+            .filter_map(|root| {
+                let uses = keys.iter().filter(|key| **key == root.owner.key).count();
+                NonZeroUsize::new(uses).map(|uses| RuntimeValueRegionRoot {
+                    owner: Arc::clone(&root.owner),
+                    uses,
+                })
+            })
             .collect();
         Self {
             regions,
             initial_region_capacity: self.initial_region_capacity,
         }
+    }
+
+    /// Retains `uses` coordinates from one admitted source region.
+    ///
+    /// This operation clones the owner only when the destination did not
+    /// already name the region. Multiplicity remains local bookkeeping.
+    pub(crate) fn retain_from(
+        &mut self,
+        source: &Self,
+        key: ChunkOwner,
+        uses: NonZeroUsize,
+    ) -> Result<(), RegionArenaError> {
+        let source_root = source.root(key)?;
+        match self.root_position(key) {
+            Ok(index) => {
+                self.regions[index].uses = self.regions[index]
+                    .uses
+                    .checked_add(uses.get())
+                    .ok_or(RegionArenaError::SlotCapacityExhausted)?;
+            }
+            Err(index) => self.regions.insert(
+                index,
+                RuntimeValueRegionRoot {
+                    owner: Arc::clone(&source_root.owner),
+                    uses,
+                },
+            ),
+        }
+        Ok(())
+    }
+
+    /// Releases local coordinate uses and drops the sole region owner when
+    /// the last use leaves this canonical set.
+    pub(crate) fn release(
+        &mut self,
+        key: ChunkOwner,
+        uses: NonZeroUsize,
+    ) -> Result<(), RegionArenaError> {
+        let index = self
+            .root_position(key)
+            .map_err(|_| RegionArenaError::UnknownChunk)?;
+        let retained = self.regions[index]
+            .uses
+            .get()
+            .checked_sub(uses.get())
+            .ok_or(RegionArenaError::UnknownChunk)?;
+        if let Some(retained) = NonZeroUsize::new(retained) {
+            self.regions[index].uses = retained;
+        } else {
+            self.regions.remove(index);
+        }
+        Ok(())
+    }
+
+    /// Transfers uses without exposing an ownerless interval.
+    pub(crate) fn transfer(
+        source: &mut Self,
+        destination: &mut Self,
+        key: ChunkOwner,
+        uses: NonZeroUsize,
+    ) -> Result<(), RegionArenaError> {
+        destination.retain_from(source, key, uses)?;
+        source.release(key, uses)
+    }
+
+    fn root(
+        &self,
+        key: ChunkOwner,
+    ) -> Result<
+        &RuntimeValueRegionRoot<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>,
+        RegionArenaError,
+    > {
+        self.root_position(key)
+            .map(|index| &self.regions[index])
+            .map_err(|_| RegionArenaError::UnknownChunk)
+    }
+
+    fn root_position(&self, key: ChunkOwner) -> Result<usize, usize> {
+        self.regions
+            .binary_search_by(|root| compare_region_keys(root.owner.key, key))
+    }
+
+    #[cfg(test)]
+    fn testing_uses(&self, key: ChunkOwner) -> usize {
+        self.root(key).map_or(0, |root| root.uses.get())
     }
 
     fn resolve_region(
@@ -299,7 +446,90 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
         &SealedRuntimeValueRegion<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>,
         RegionArenaError,
     > {
-        resolve_sealed_region(&self.regions, key)
+        resolve_rooted_region(&self.regions, key)
+    }
+}
+
+impl<'a, TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
+    AdmittedRuntimeValueRegion<'a, TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
+{
+    fn validate<T>(&self, coordinate: RegionCoordinate<T>) -> Result<usize, RegionArenaError> {
+        if coordinate.key != self.region.key {
+            return Err(if coordinate.key.namespace != self.region.key.namespace {
+                RegionArenaError::ForeignNamespace
+            } else if coordinate.key.slot != self.region.key.slot {
+                RegionArenaError::UnknownChunk
+            } else {
+                RegionArenaError::StaleGeneration
+            });
+        }
+        Ok(coordinate.offset as usize)
+    }
+
+    pub(crate) fn token_word(
+        &self,
+        coordinate: RegionCoordinate<TokenWord>,
+    ) -> Result<&'a TokenWord, RegionArenaError> {
+        self.region
+            .columns
+            .token_words
+            .get(self.validate(coordinate)?)
+            .ok_or(RegionArenaError::OffsetOutOfBounds)
+    }
+
+    pub(crate) fn token_list(
+        &self,
+        coordinate: RegionCoordinate<TokenList>,
+    ) -> Result<&'a TokenList, RegionArenaError> {
+        self.region
+            .columns
+            .token_lists
+            .get(self.validate(coordinate)?)
+            .ok_or(RegionArenaError::OffsetOutOfBounds)
+    }
+
+    pub(crate) fn macro_record(
+        &self,
+        coordinate: RegionCoordinate<MacroRecord>,
+    ) -> Result<&'a MacroRecord, RegionArenaError> {
+        self.region
+            .columns
+            .macro_records
+            .get(self.validate(coordinate)?)
+            .ok_or(RegionArenaError::OffsetOutOfBounds)
+    }
+
+    pub(crate) fn macro_root(
+        &self,
+        coordinate: RegionCoordinate<MacroRoot>,
+    ) -> Result<&'a MacroRoot, RegionArenaError> {
+        self.region
+            .columns
+            .macro_roots
+            .get(self.validate(coordinate)?)
+            .ok_or(RegionArenaError::OffsetOutOfBounds)
+    }
+
+    pub(crate) fn glue(
+        &self,
+        coordinate: RegionCoordinate<Glue>,
+    ) -> Result<&'a Glue, RegionArenaError> {
+        self.region
+            .columns
+            .glue_specs
+            .get(self.validate(coordinate)?)
+            .ok_or(RegionArenaError::OffsetOutOfBounds)
+    }
+
+    pub(crate) fn provenance(
+        &self,
+        coordinate: RegionCoordinate<Provenance>,
+    ) -> Result<&'a Provenance, RegionArenaError> {
+        self.region
+            .columns
+            .provenance_roots
+            .get(self.validate(coordinate)?)
+            .ok_or(RegionArenaError::OffsetOutOfBounds)
     }
 }
 
@@ -493,7 +723,16 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
         RegionArenaError,
     > {
         self.seal_active()?;
-        self.base.regions.append(&mut self.sealed_suffix);
+        self.base
+            .regions
+            .extend(
+                self.sealed_suffix
+                    .drain(..)
+                    .map(|owner| RuntimeValueRegionRoot {
+                        owner,
+                        uses: NonZeroUsize::MIN,
+                    }),
+            );
         Ok(self.base)
     }
 
@@ -654,7 +893,7 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
     }
 
     pub(crate) fn accounting(&self) -> RuntimeValueRegionAccounting {
-        let mut accounting = self.base.accounting().plus(accounting_for_regions(
+        let mut accounting = self.base.accounting().plus(accounting_for_owners(
             &self.sealed_suffix,
             0,
             0,
@@ -852,6 +1091,47 @@ fn unseal_private<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance
     })
 }
 
+fn resolve_rooted_region<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>(
+    regions: &[RuntimeValueRegionRoot<
+        TokenWord,
+        TokenList,
+        MacroRecord,
+        MacroRoot,
+        Glue,
+        Provenance,
+    >],
+    key: ChunkOwner,
+) -> Result<
+    &SealedRuntimeValueRegion<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>,
+    RegionArenaError,
+> {
+    match regions.binary_search_by(|root| compare_region_keys(root.owner.key, key)) {
+        Ok(index) => Ok(&regions[index].owner),
+        Err(_)
+            if regions
+                .iter()
+                .any(|root| root.owner.key.namespace == key.namespace) =>
+        {
+            if regions.iter().any(|root| {
+                root.owner.key.namespace == key.namespace && root.owner.key.slot == key.slot
+            }) {
+                Err(RegionArenaError::StaleGeneration)
+            } else {
+                Err(RegionArenaError::UnknownChunk)
+            }
+        }
+        Err(_) => Err(RegionArenaError::ForeignNamespace),
+    }
+}
+
+fn compare_region_keys(left: ChunkOwner, right: ChunkOwner) -> Ordering {
+    (left.namespace, left.slot, left.generation).cmp(&(
+        right.namespace,
+        right.slot,
+        right.generation,
+    ))
+}
+
 fn resolve_sealed_region<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>(
     regions: &[SealedOwner<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>],
     key: ChunkOwner,
@@ -884,7 +1164,31 @@ fn resolve_sealed_region<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Pro
     }
 }
 
-fn accounting_for_regions<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>(
+fn accounting_for_roots<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>(
+    regions: &[RuntimeValueRegionRoot<
+        TokenWord,
+        TokenList,
+        MacroRecord,
+        MacroRoot,
+        Glue,
+        Provenance,
+    >],
+    reusable_regions: usize,
+    registry_slots: usize,
+    registry_capacity: usize,
+) -> RuntimeValueRegionAccounting {
+    regions.iter().fold(
+        RuntimeValueRegionAccounting {
+            reusable_regions,
+            registry_slots,
+            registry_capacity,
+            ..RuntimeValueRegionAccounting::default()
+        },
+        |accounting, root| accounting.plus(accounting_for_columns(&root.owner.columns, 1, 0)),
+    )
+}
+
+fn accounting_for_owners<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>(
     regions: &[SealedOwner<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>],
     reusable_regions: usize,
     registry_slots: usize,

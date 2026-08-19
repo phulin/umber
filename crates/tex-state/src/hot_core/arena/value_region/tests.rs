@@ -132,6 +132,70 @@ fn nested_group_and_global_transfer_keep_only_explicit_region_roots() {
 }
 
 #[test]
+fn admitted_reads_validate_region_once_and_offsets_remain_typed() {
+    let roots = TestRoots::new(capacity(4));
+    let mut candidate = roots.candidate().expect("candidate namespace exists");
+    let first = candidate.append_token_word(7).expect("word appends");
+    let second = candidate.append_token_word(9).expect("word appends");
+    let accepted = candidate.accept().expect("candidate seals");
+
+    let admitted = accepted.admit(first.owner()).expect("region admits");
+    assert_eq!(admitted.token_word(first), Ok(&7));
+    assert_eq!(admitted.token_word(second), Ok(&9));
+
+    let mut foreign_candidate = TestRoots::new(capacity(1))
+        .candidate()
+        .expect("foreign candidate exists");
+    let foreign = foreign_candidate
+        .append_token_word(11)
+        .expect("foreign word appends");
+    assert_eq!(
+        admitted.token_word(foreign),
+        Err(RegionArenaError::ForeignNamespace)
+    );
+}
+
+#[test]
+fn counted_root_transfer_clones_once_per_region_and_releases_last_use() {
+    let drops = Arc::new(AtomicUsize::new(0));
+    let empty = AcceptedRuntimeValueRegions::<DropProbe, (), (), (), (), ()>::new(capacity(4));
+    let mut candidate = empty.candidate().expect("candidate exists");
+    let first = candidate
+        .append_token_word(DropProbe::new(Arc::clone(&drops)))
+        .expect("first value appends");
+    let second = candidate
+        .append_token_word(DropProbe::new(Arc::clone(&drops)))
+        .expect("second value appends");
+    let mut source = candidate.accept().expect("candidate seals");
+    let mut destination = source.retain_regions(&[]);
+    let two = NonZeroUsize::new(2).expect("two is nonzero");
+
+    destination
+        .retain_from(&source, first.owner(), two)
+        .expect("destination retains region once");
+    assert_eq!(destination.testing_uses(first.owner()), 2);
+    assert_eq!(destination.testing_uses(second.owner()), 2);
+    assert_eq!(Arc::strong_count(&source.regions[0].owner), 2);
+
+    AcceptedRuntimeValueRegions::transfer(
+        &mut destination,
+        &mut source,
+        first.owner(),
+        NonZeroUsize::MIN,
+    )
+    .expect("one use transfers back");
+    assert_eq!(destination.testing_uses(first.owner()), 1);
+    assert_eq!(source.testing_uses(first.owner()), 2);
+
+    destination
+        .release(first.owner(), NonZeroUsize::MIN)
+        .expect("last destination use releases");
+    assert_eq!(Arc::strong_count(&source.regions[0].owner), 1);
+    drop(source);
+    assert_eq!(drops.load(Ordering::Relaxed), 2);
+}
+
+#[test]
 fn resource_retry_reuses_whole_region_capacity_under_new_generations() {
     let roots = TestRoots::new(capacity(8));
     let mut candidate = roots.candidate().expect("candidate namespace exists");
