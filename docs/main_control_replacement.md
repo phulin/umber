@@ -580,7 +580,7 @@ introducing another executor or state owner.
 
 Expansion and scanners are methods over the same input and state views.
 Common primitives scan operands and apply their mutation directly. They do not
-construct a universal `ScannedStep` value.
+construct a universal `ColdOperation` value.
 
 Rare or structurally large primitives may call a typed cold handler. The
 handler receives scalar values or arena spans and mutates the same `HotCore`.

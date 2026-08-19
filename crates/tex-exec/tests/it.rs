@@ -327,6 +327,36 @@ fn predecessor_operation_branches_are_absent() {
 }
 
 #[test]
+fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
+    let control = include_str!("../src/main_control.rs");
+    let interpreter = include_str!("../src/interpreter.rs");
+    let hot = include_str!("../src/main_control/hot_apply.rs");
+    let cold = include_str!("../src/main_control/cold/mod.rs");
+    let cold_operation = include_str!("../src/main_control/cold/operation.rs");
+    let cold_scan = include_str!("../src/main_control/cold/scan.rs");
+    let cold_apply = include_str!("../src/main_control/cold/apply.rs");
+
+    assert!(control.contains("mod cold;"));
+    assert!(control.contains("mod hot_apply;"));
+    assert_eq!(control.matches("fn command_processor<'a>(").count(), 1);
+    assert_eq!(
+        interpreter.matches("CommandProcessor::borrowed(").count(),
+        1
+    );
+    assert!(!control.contains("enum ScannedStep"));
+    assert!(!control.contains("struct PreparedOperation"));
+
+    assert!(cold.contains("mod operation;"));
+    assert!(cold.contains("mod scan;"));
+    assert!(cold.contains("mod apply;"));
+    assert!(cold_operation.contains("enum ColdOperation"));
+    assert!(cold_scan.contains("fn scan("));
+    assert!(cold_apply.contains("fn apply("));
+    assert!(!hot.contains("ColdOperation::"));
+    assert!(!hot.contains("PreparedColdOperation {"));
+}
+
+#[test]
 fn canonical_episode_has_no_admission_executor_or_coverage_fallback() {
     let control = include_str!("../src/main_control.rs");
     let facade = include_str!("../src/lib.rs");

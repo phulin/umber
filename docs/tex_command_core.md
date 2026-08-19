@@ -298,7 +298,7 @@ exhausted-but-unpopped levels (nested macro expansions, parameter
 substitutions, a trailing operand scan with no lookahead of its own), so the
 next real token the cascade finds can belong to the _enclosing_ cell/field
 context rather than the episode. `scan_alignment_delivery_step` reports this
-as `ScannedStep::ReplayCompleted`, exactly like ordinary `scan_step` already
+as `ColdOperation::ReplayCompleted`, exactly like ordinary `scan_step` already
 does via `get_x_token_with_replay_completion`, rather than risking that
 enclosing token being misattributed to the just-retired episode.
 
@@ -327,7 +327,7 @@ frozen-insertion recoveries (`\par`/`\fi`/`\cr`) rather than duplicated.
 half: given a command and the innermost `GroupKind`, it selects and issues the
 matching closer (`SemiSimple` → `\endgroup`, `MathShift` → `$`, `MathLeft` →
 `\right.`, otherwise → `}`, or the bottom-level drop when no group is open),
-returning `ScannedStep::OffSave`/`OffSaveBottomDrop` so the execute phase
+returning `ColdOperation::OffSave`/`OffSaveBottomDrop` so the execute phase
 prints the matching "Missing ... inserted"/"Extra ..." text once, after
 scanning already ran the recovery. It is written as a general, reusable
 routine rather than inlined at its first call site (TeX82 §1095's
@@ -848,7 +848,7 @@ dedicated `is_vadjust` flag telling replay to skip the 0..=255 clamp and the
 "you can't `\insert255`" rejection -- both diagnostics are specific to a
 user-scanned class and would otherwise misfire on `\vadjust`'s always-valid
 255 sentinel. `\vadjust` in (outer or internal) vertical mode is one of
-tex.web's "Forbidden cases" (`ScannedStep::IllegalInsertOrAdjust`, sharing
+tex.web's "Forbidden cases" (`ColdOperation::IllegalInsertOrAdjust`, sharing
 `report_illegal_case` with `IllegalBoxShift`/`IllegalItalicCorrection`) rather
 than `any_mode` like `\insert`. `finish_insert_or_adjust_group` branches on
 the completed class: 255 builds a bare `adjust_node` (`Node::Adjust`,
@@ -913,7 +913,7 @@ Several no-operand primitives cross the boundary as a bare mode-classification
 with no scanner of their own, since `scan_command` already has the live mode
 and (for the two that need it) `command` to back up: TeX82 §1105's
 `any_mode(remove_item): delete_last` (`\unpenalty`/`\unkern`/`\unskip`) is
-identical in every mode, so `scan_command` returns `ScannedStep::DeleteLast`
+identical in every mode, so `scan_command` returns `ColdOperation::DeleteLast`
 unconditionally and replay's existing mode/list-sensitive `delete_last` helper
 (shared with the legacy dispatcher) does the rest. TeX82 §1112's
 `hmode+ital_corr`/`mmode+ital_corr` (`\/`) differ only in which apply-time
@@ -925,7 +925,7 @@ instead, mirroring `IllegalBoxShift`'s `report_illegal_case` reuse. TeX82
 §1030/§1045/§1090's `\noboundary` similarly resolves per mode at apply time
 (a flag on the current list in hmode, `do_nothing` in mmode) except in
 vertical mode, where `scan_command` backs the token up and returns the
-existing generic `ScannedStep::ParagraphStart` exactly as `\hskip`/`\accent`
+existing generic `ColdOperation::ParagraphStart` exactly as `\hskip`/`\accent`
 already do. TeX82 §1171's `mmode+non_script` (`\nonscript`) and §1046's
 `non_math(non_script)` recovery for every other mode reuse
 `CommandProcessor::recover_missing_math_shift` unchanged -- the same generic
@@ -975,7 +975,7 @@ shared Forbidden-cases list first built at §1048) routes vmode/hmode
 `\eqno`/`\leqno` through the same `report_illegal_case` (``You can't use
 `\eqno' in ... mode``) already reused by `IllegalBoxShift`/
 `IllegalItalicCorrection`/`IllegalInsertOrAdjust`, via their own dedicated
-`ScannedStep::IllegalEqNo` arm (umber2-johp.88), not `insert_dollar_sign`.
+`ColdOperation::IllegalEqNo` arm (umber2-johp.88), not `insert_dollar_sign`.
 `mmode+eq_no` itself (gated by `privileged`/`cur_group`, §§1140-1142) is
 unaffected. This is umber2-johp.79's generalization of umber2-johp.56's
 original `mmode+hrule` mechanism to the entire §1046 table.
@@ -984,7 +984,7 @@ TeX82 §1264's `new_interaction` (`\batchmode`/`\nonstopmode`/`\scrollmode`/
 `\errorstopmode`, any_mode via §1210's `set_interaction`) sets `interaction`
 directly from the delivered primitive's own `chr_code`, with no operand scan
 of its own -- the same no-scan shape as `\unpenalty`/`\unkern`/`\unskip`'s
-`ScannedStep::DeleteLast`. `interaction` is a plain global Pascal variable
+`ColdOperation::DeleteLast`. `interaction` is a plain global Pascal variable
 outside `eqtb`, so this assignment ignores `\global`/`\globaldefs` and is
 never undone by group exit, unlike an ordinary parameter assignment
 (umber2-johp.83).
@@ -993,8 +993,8 @@ never undone by group exit, unlike an ordinary parameter assignment
 generic `Meaning::IntParam(index)` scan/apply arms, shared with every other
 integer parameter) rather than a distinct `UnexpandablePrimitive` variant, so
 its own value was already written correctly. The actual defect was that two
-of canonical replay's assignment apply arms -- `ScannedStep::MacroDefinition`
-(`\def`/`\edef`/`\gdef`/`\xdef`) and `ScannedStep::Let` (`\let`/
+of canonical replay's assignment apply arms -- `ColdOperation::MacroDefinition`
+(`\def`/`\edef`/`\gdef`/`\xdef`) and `ColdOperation::Let` (`\let`/
 `\futurelet`) -- used their raw `\global` prefix bit directly instead of
 resolving it through `assignment_global` (the shared helper every other
 assignment kind, including `\count`/`\dimen`/`\toks`/code-table/
@@ -3588,7 +3588,7 @@ this matrix and remains Beads `.4.2`.
 | Canonical family                                                                                   | WEB authority                                                                                                        | Canonical owner and committed test inventory                                                                                                                                                                                                                                                                |
 | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Delivery, expansion, recovery, and scanner state                                                   | TeX82 §§24--25; §1030                                                                                                | `CommandProcessor::{get_next,get_x_token}` is the only source path; `tex-command` raw/expanded delivery, macro, conditional, and structured-scanner tests plus `tex-exec` architecture gate.                                                                                                                |
-| Mode selection, groups, prefixes, definitions, registers, parameters, code tables, and diagnostics | TeX82 §1030+ mode tables; §§1064, 1066, 1095, 1131; §1257 (`new_font`)                                               | Typed `ScannedStep` application; `assignments_*`, `canonical_definition_*`, `canonical_font_definition_*`, `canonical_grouping_*`, and `canonical_display_diagnostics_*`.                                                                                                                                   |
+| Mode selection, groups, prefixes, definitions, registers, parameters, code tables, and diagnostics | TeX82 §1030+ mode tables; §§1064, 1066, 1095, 1131; §1257 (`new_font`)                                               | Typed `ColdOperation` application; `assignments_*`, `canonical_definition_*`, `canonical_font_definition_*`, `canonical_grouping_*`, and `canonical_display_diagnostics_*`.                                                                                                                                 |
 | Paragraph and horizontal material                                                                  | TeX82 §1030+ horizontal/vertical branches                                                                            | Typed paragraph start/backup, `\\everypar`, characters, spaces, ligatures, accents, discretionary, kern/glue, parshape, line breaking, and page contribution; `production_driver_*paragraph*`, `production_driver_*horizontal*`, and `paragraph_page_builder_is_observer_neutral`.                          |
 | Boxes, leaders, packing, splitting, and explicit shipment                                          | TeX82 §1071 (`box_end`/`\\shipout`) and §1030+ box branches                                                          | Typed box construction/selection/unboxing/leaders/vsplit; `canonical_box_*`, `canonical_vsplit_*`, `canonical_initex_replay_scans_setbox_*`, and `shipout_box_completion_*`.                                                                                                                                |
 | Math and display material                                                                          | TeX82 §§691--734 and §1030+ math branches                                                                            | Typed `MathRequest`/`MathDelimiterBoundary`; `canonical_math_*`, `canonical_math_replay_observer_does_not_change_frozen_mlist`, and math scanner recovery tests.                                                                                                                                            |
@@ -3636,7 +3636,7 @@ mechanism below after a survey found roughly half of
 `tex_state::meaning::UnexpandablePrimitive`'s ~266 variants had no named arm.
 
 **Mechanism.** `scan_command`'s final match arm no longer reads
-`_ => Ok(ScannedStep::Continue)` for `Meaning::UnexpandablePrimitive`. Instead
+`_ => Ok(ColdOperation::Continue)` for `Meaning::UnexpandablePrimitive`. Instead
 it delegates to `scan_unclassified_primitive(primitive, mode, origin)`, which
 is written as an **exhaustive match over the complete `UnexpandablePrimitive`
 enum** (not just the variants that currently lack a dispatch arm), split into
@@ -3674,7 +3674,7 @@ by whether Story, Gentle, or Plain reach them, for follow-on work.
 `umber2-johp.69` scoped itself to `UnexpandablePrimitive`, leaving every other
 `Meaning` variant (`CharToken`, register/parameter accessors, `Relax`,
 `Undefined`, `PageDimension`, and so on) to an ordinary
-`_ => Ok(ScannedStep::Continue)` fallback -- which then became the active
+`_ => Ok(ColdOperation::Continue)` fallback -- which then became the active
 hiding place, since it turns "not implemented" into "succeeded and consumed
 nothing" just as effectively (`\pagegoal=100pt` silently typeset `=100pt` as
 document text; Beads `umber2-johp.106`). `umber2-johp.108` removed it:
@@ -3695,7 +3695,7 @@ one more:
 
 Adding a new `Meaning` variant, or a new `Catcode`, therefore fails to compile
 until it is deliberately placed in a bucket. `scan_command` has no wildcard
-arm that resolves to a `ScannedStep` any more, at either level.
+arm that resolves to a `ColdOperation` any more, at either level.
 
 ### 33.3 Canonical observation vocabulary
 
@@ -3790,21 +3790,21 @@ character must not park the enclosing context at the lookahead.
 
 ### 33.5 Host-applied step routing
 
-Most `ScannedStep`s are applied by the free function `apply_scanned_step`,
+Most `ColdOperation`s are applied by the cold module's `apply_cold_operation`,
 which owns no `MainControl`. A few cannot be: TeX82 §1137's
 `init_math`, §1193's `after_math`, §1190's `math_left_right`, §1116's
 `append_discretionary`, the math-noad family, and the end of a replay episode
 all need the mode nest, the save stack, and the command processor's
 token-list scheduling at once, plus the ability to run nested episodes. Those
-steps are applied by `MainControl` itself, and `apply_scanned_step`
+steps are applied by `MainControl` itself, and `apply_cold_operation`
 carries an `unreachable!()` arm for each.
 
 There are three step-delivery entry points -- unobserved, observed, and the
 alignment cell's. The host-applied set is named exactly once, in
 `MainControl::apply_host_owned_step`, and all three route through
 it. It used to be an `if let` chain copied into each entry point, and the
-observed copy omitted `ScannedStep::MathShift`: an observed `$` fell through
-to `apply_scanned_step`'s `unreachable!()` and panicked while the identical
+observed copy omitted `ColdOperation::MathShift`: an observed `$` fell through
+to `apply_cold_operation`'s `unreachable!()` and panicked while the identical
 unobserved `$` executed correctly (`umber2-johp.118`). Add a host-applied
 step in that one function, never at a call site.
 

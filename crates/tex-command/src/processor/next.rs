@@ -195,7 +195,7 @@ impl CommandProcessor<'_> {
     /// retirement and keeps cascading to whatever real token follows, which
     /// can belong to the *enclosing* context rather than the episode; the
     /// caller (`scan_alignment_delivery_step`) needs `Completed` surfaced so
-    /// it can report `ScannedStep::ReplayCompleted` exactly as ordinary
+    /// it can report `ColdOperation::ReplayCompleted` exactly as ordinary
     /// (non-alignment) `scan_step` already does via
     /// `get_x_token_with_replay_completion`.
     ///

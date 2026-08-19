@@ -31,9 +31,14 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/main_control.rs`: sole production command delivery and execution driver, including same-borrow delivery, expansion, tracing, and ranked ordinary scanning whose retry command is retained only at a typed resource barrier, trace-mode continuity across that borrow, command-owned undefined recovery before stomach dispatch, typed alignment, diagnostic-assignment, and nested-immediate continuations, snapshot-free direct episodes, complete-job versus fragment root completion, bounded terminal-input continuation, loaded-profile versus canonical engine-binary semantic selection, typed committed mutation/effect observations, strong macro owners across scanned assignment apply seams, the execution-owned memo capability, and direct tracked-region lifecycle and mode projection.
 - `src/main_control/hot_apply.rs`: fused family-sized scan operands and direct
   in-place semantic handlers for the measured definition, let, catcode, and
-  ordinary-group families. These commands bypass universal `ScannedStep` and
-  `PreparedOperation` materialization; detached mutation values and macro-body
+  ordinary-group families. These commands bypass `ColdOperation` and
+  `PreparedColdOperation` materialization; detached mutation values and macro-body
   walks are demand-selected cold evidence.
+- `src/main_control/cold/`: uncommon-command boundary against that same
+  interpreter and semantic state. `operation.rs` owns the typed borrow-barrier
+  values; `scan.rs` owns uncommon operand collection; `apply.rs` owns their
+  semantic dispatch; `alignment.rs`, `pdf.rs`, and `support.rs` isolate the
+  corresponding complex families without introducing another executor.
 - `src/canonical_step.rs`: shared bounded-step result protocol and output ledger for checkpoint publication, resource fulfillment, suspension accounting, and cancellation.
 - `src/transaction_protocol.rs` and `src/transaction_protocol/tests.rs`:
   exhaustive canonical-command capability classification, mutation-free
