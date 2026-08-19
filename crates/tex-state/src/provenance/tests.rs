@@ -499,6 +499,39 @@ fn macro_invocation_accounting_tracks_live_parent_chains_and_rollback() {
 }
 
 #[test]
+fn cold_materialized_sidecar_keeps_exact_source_after_archive_rollback() {
+    let mut stores = Universe::new();
+    let snapshot = stores.snapshot();
+    let source_id = SourceId::new(17);
+    stores
+        .register_source(
+            source_id,
+            SourceDescriptor::named_generated("rolled-back.tex", Arc::from(&b"abc"[..])),
+        )
+        .expect("generated source registers");
+    let source = stores.source_range_origin(source_id, 0, 3);
+    let derived = stores.synthesized_origin(SynthesizedOriginKind::ValueRendering, source);
+    let sidecar = stores
+        .materialize_origin_ref(derived)
+        .expect("cold boundary materializes archived coordinates");
+
+    stores.rollback(&snapshot);
+    assert!(stores.origin_if_live(derived).is_none());
+    assert_eq!(
+        crate::ProvenanceResolver::new(&stores)
+            .resolve_origin_ref(&sidecar)
+            .expect("sidecar retains its detached source registration"),
+        crate::ResolvedSourceLocation {
+            path: "rolled-back.tex".to_owned(),
+            start: 0,
+            end: 3,
+            line: 1,
+            column: 1,
+        }
+    );
+}
+
+#[test]
 fn origin_record_layout_budget_covers_tail_and_chunk_growth() {
     let mut store = ProvenanceStore::new();
     let empty = store.stats();
