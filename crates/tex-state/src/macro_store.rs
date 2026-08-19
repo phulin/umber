@@ -230,21 +230,36 @@ impl PackedMacroChunkOwner {
         Some(self.record(definition)?.replacement_len as usize)
     }
 
+    /// Borrows one already-packed replacement word without materializing its
+    /// structural provenance owner.
+    ///
+    /// The admitted chunk owns the complete definition and provenance closure,
+    /// so ordinary replay can carry this copy-only word until a cold consumer
+    /// explicitly asks for [`Self::replacement_word`].
+    #[must_use]
+    pub fn replacement_traced_word(
+        &self,
+        definition: MacroDefinitionId,
+        index: usize,
+    ) -> Option<TracedTokenWord> {
+        let record = self.record(definition)?;
+        if index >= record.replacement_len as usize {
+            return None;
+        }
+        self.chunk
+            .words
+            .get(record.parameter_start as usize + record.parameter_len as usize + index)
+            .copied()
+    }
+
+    /// Materializes the structural origin owner for one cold consumer.
     #[must_use]
     pub fn replacement_word(
         &self,
         definition: MacroDefinitionId,
         index: usize,
     ) -> Option<RootedTracedTokenWord> {
-        let record = self.record(definition)?;
-        if index >= record.replacement_len as usize {
-            return None;
-        }
-        let word = self
-            .chunk
-            .words
-            .get(record.parameter_start as usize + record.parameter_len as usize + index)
-            .copied()?;
+        let word = self.replacement_traced_word(definition, index)?;
         let root = self
             .definition_roots(definition)
             .and_then(|roots| roots.provenance.as_ref())
