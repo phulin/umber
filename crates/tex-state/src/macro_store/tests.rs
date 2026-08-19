@@ -393,6 +393,27 @@ fn packed_owner_hit_validates_the_complete_copy_only_meaning() {
 }
 
 #[test]
+fn packed_owner_admission_reuses_segment_roots_without_per_definition_retains() {
+    let mut stores = Stores::new();
+    let empty = stores.token_list_ref(crate::ids::TokenListId::EMPTY);
+    let body = replacement(&mut stores, 25);
+    let definition = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        empty.id(),
+        body.id(),
+    ));
+    let before = (empty.strong_count(), body.strong_count());
+
+    let owner = stores
+        .testing_macro_store()
+        .packed_owner(definition.id())
+        .expect("definition has a packed owner");
+
+    assert_eq!((empty.strong_count(), body.strong_count()), before);
+    assert_eq!(owner.meaning(definition.id()), Some(definition.meaning()));
+}
+
+#[test]
 fn all_roots_live_grow_by_exact_object_and_logical_byte_totals() {
     let mut stores = Stores::new();
     let empty = stores.token_list_ref(crate::ids::TokenListId::EMPTY);

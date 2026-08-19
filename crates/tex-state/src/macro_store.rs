@@ -100,7 +100,6 @@ struct PackedMacroDefinitionRoots {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PackedMacroChunkOwner {
     chunk: Arc<PackedMacroChunk>,
-    roots: Arc<[Option<PackedMacroDefinitionRoots>]>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -108,6 +107,7 @@ struct PackedMacroChunk {
     logical_index: u32,
     slots: [u8; PACKED_MACRO_CHUNK_RECORDS],
     records: Vec<PackedMacroRecord>,
+    roots: Vec<Option<PackedMacroDefinitionRoots>>,
     words: Vec<TracedTokenWord>,
     token_ids: Vec<TokenListId>,
 }
@@ -118,6 +118,7 @@ impl PackedMacroChunk {
             logical_index,
             slots: [0; PACKED_MACRO_CHUNK_RECORDS],
             records: Vec::new(),
+            roots: Vec::new(),
             words: Vec::new(),
             token_ids: Vec::new(),
         }
@@ -284,7 +285,8 @@ impl PackedMacroChunkOwner {
         definition: MacroDefinitionId,
     ) -> Option<&PackedMacroDefinitionRoots> {
         let index = self.chunk.record_index(definition)?;
-        self.roots
+        self.chunk
+            .roots
             .get(index)?
             .as_ref()
             .filter(|roots| roots.definition == definition)
@@ -719,17 +721,7 @@ impl MacroStore {
         };
         for raw in 0..len as u32 {
             let root = store.frozen_roots[raw as usize].clone();
-            let body = root.value.value().body.value.value();
-            store.install_packed_record(
-                root.id(),
-                body.meaning(),
-                &body.parameter_pattern,
-                body.parameter_text.tokens(),
-                body.replacement_text.tokens(),
-                Some((&body.parameter_text, &body.replacement_text)),
-                None,
-                root.value.value().observation_operand,
-            );
+            store.install_packed_record(&root);
         }
         Ok(store)
     }
@@ -804,54 +796,20 @@ impl MacroStore {
             patch_root: None,
         };
         self.attach_definition_patch_allocation(&mut definition, domain);
-        self.install_packed_record(
-            definition.id(),
-            meaning,
-            &definition
-                .value
-                .value()
-                .body
-                .value
-                .value()
-                .parameter_pattern,
-            definition
-                .value
-                .value()
-                .body
-                .value
-                .value()
-                .parameter_text
-                .tokens(),
-            definition
-                .value
-                .value()
-                .body
-                .value
-                .value()
-                .replacement_text
-                .tokens(),
-            Some((
-                &definition.value.value().body.value.value().parameter_text,
-                &definition.value.value().body.value.value().replacement_text,
-            )),
-            definition.value.value().provenance.get().cloned(),
-            definition.value.value().observation_operand,
-        );
+        self.install_packed_record(&definition);
         definition
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn install_packed_record(
-        &mut self,
-        definition: MacroDefinitionId,
-        meaning: MacroMeaning,
-        pattern: &MacroParameterPattern,
-        parameter: &[Token],
-        replacement: &[Token],
-        token_roots: Option<(&TokenListRef, &TokenListRef)>,
-        provenance: Option<MacroDefinitionProvenance>,
-        observation_operand: i64,
-    ) {
+    fn install_packed_record(&mut self, definition_root: &MacroDefinitionRef) {
+        let definition = definition_root.id();
+        let definition_value = definition_root.value.value();
+        let body = definition_value.body.value.value();
+        let meaning = body.meaning();
+        let pattern = &body.parameter_pattern;
+        let parameter = body.parameter_text.tokens();
+        let replacement = body.replacement_text.tokens();
+        let provenance = definition_value.provenance.get().cloned();
+        let observation_operand = definition_value.observation_operand;
         let logical_index = PackedMacroChunkOwner::chunk_index(definition);
         let slot = definition.raw() as usize;
         if self.packed_locations.len() <= slot {
@@ -874,20 +832,19 @@ impl MacroStore {
                 },
                 |record| record.allocation_serial,
             );
-        let roots = token_roots.expect("packed macro records require live token-list roots");
         let parameter_root = retain_or_replace_token_id(
             chunk,
             record_index.unwrap_or(chunk.records.len()),
             existing.as_ref().map(|record| record.parameter_root),
             existing.as_ref().map(|record| record.replacement_root),
-            roots.0.id(),
+            body.parameter_text.id(),
         );
         let replacement_root = retain_or_replace_token_id(
             chunk,
             record_index.unwrap_or(chunk.records.len()),
             existing.as_ref().map(|record| record.replacement_root),
             Some(parameter_root),
-            roots.1.id(),
+            body.replacement_text.id(),
         );
         let parameter_origins = provenance
             .as_ref()
@@ -969,11 +926,18 @@ impl MacroStore {
         let record_index = record_index.unwrap_or_else(|| {
             let index = chunk.records.len();
             chunk.records.push(record.clone());
+            chunk.roots.push(None);
             chunk.slots[slot % PACKED_MACRO_CHUNK_RECORDS] =
                 u8::try_from(index + 1).expect("packed macro segment exceeds 64 records");
             index
         });
         chunk.records[record_index] = record;
+        chunk.roots[record_index] = Some(PackedMacroDefinitionRoots {
+            definition,
+            parameter_text: body.parameter_text.clone(),
+            replacement_text: body.replacement_text.clone(),
+            provenance,
+        });
 
         let location = PackedMacroLocation {
             definition,
@@ -1090,7 +1054,6 @@ impl MacroStore {
         &self,
         definition: MacroDefinitionId,
     ) -> Option<PackedMacroChunkOwner> {
-        self.resolved_value(definition)?;
         let location = self
             .packed_locations
             .get(definition.raw() as usize)
@@ -1098,23 +1061,8 @@ impl MacroStore {
             .flatten()
             .filter(|location| location.definition == definition)?;
         let chunk = self.packed_chunks.get(location.chunk as usize)?;
-        let roots = chunk
-            .records
-            .iter()
-            .map(|record| {
-                let value = self.resolved_value(record.definition)?;
-                let body = value.value().body.value.value();
-                Some(PackedMacroDefinitionRoots {
-                    definition: record.definition,
-                    parameter_text: body.parameter_text.clone(),
-                    replacement_text: body.replacement_text.clone(),
-                    provenance: value.value().provenance.get().cloned(),
-                })
-            })
-            .collect::<Vec<_>>();
         let owner = PackedMacroChunkOwner {
             chunk: Arc::clone(chunk),
-            roots: roots.into(),
         };
         owner.contains(definition).then_some(owner)
     }
@@ -1149,9 +1097,7 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn get(&self, id: MacroDefinitionId) -> MacroMeaning {
-        if self.resolved_value(id).is_some()
-            && let Some(record) = self.packed_record(id)
-        {
+        if let Some(record) = self.packed_record(id) {
             let location = self.packed_locations[id.raw() as usize]
                 .expect("packed macro record has a location");
             let chunk = &self.packed_chunks[location.chunk as usize];
@@ -1244,9 +1190,7 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn parameter_pattern(&self, id: MacroDefinitionId) -> MacroParameterPattern {
-        if self.resolved_value(id).is_some()
-            && let Some(record) = self.packed_record(id)
-        {
+        if let Some(record) = self.packed_record(id) {
             let location = self.packed_locations[id.raw() as usize]
                 .expect("packed macro record has a location");
             let chunk = &self.packed_chunks[location.chunk as usize];
@@ -1269,6 +1213,19 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn provenance(&self, id: MacroDefinitionId) -> Option<MacroDefinitionProvenance> {
+        if let Some(location) = self
+            .packed_locations
+            .get(id.raw() as usize)
+            .copied()
+            .flatten()
+            .filter(|location| location.definition == id)
+            && let Some(root) = self.packed_chunks[location.chunk as usize]
+                .roots
+                .get(self.packed_chunks[location.chunk as usize].record_index(id)?)
+                .and_then(Option::as_ref)
+        {
+            return root.provenance.clone();
+        }
         self.resolved_value(id)?.value().provenance.get().cloned()
     }
 
@@ -1277,33 +1234,19 @@ impl MacroStore {
         id: MacroDefinitionId,
         provenance: MacroDefinitionProvenance,
     ) {
-        let root = self
-            .resolved_value(id)
-            .expect("macro definition id is not live");
-        if let Err(existing) = root.value().provenance.set(provenance.clone()) {
+        let root = self.owner(id).expect("macro definition id is not live");
+        if let Err(existing) = root.value.value().provenance.set(provenance.clone()) {
             assert_eq!(
                 existing, provenance,
                 "macro provenance changed after publication"
             );
         }
-        let body = root.value().body.value.value();
-        self.install_packed_record(
-            id,
-            body.meaning(),
-            &body.parameter_pattern,
-            body.parameter_text.tokens(),
-            body.replacement_text.tokens(),
-            Some((&body.parameter_text, &body.replacement_text)),
-            Some(provenance),
-            root.value().observation_operand,
-        );
+        self.install_packed_record(&root);
     }
 
     #[must_use]
     pub(crate) fn observation_operand(&self, id: MacroDefinitionId) -> i64 {
-        if self.resolved_value(id).is_some()
-            && let Some(record) = self.packed_record(id)
-        {
+        if let Some(record) = self.packed_record(id) {
             return record.observation_operand;
         }
         self.resolved_value(id)
