@@ -1,5 +1,8 @@
 //! Atomic bundle reservation and admitted-slice resolution.
 
+use core::num::NonZeroUsize;
+use std::sync::Arc;
+
 use super::*;
 
 #[derive(Clone, Copy, Default)]
@@ -129,6 +132,137 @@ pub(super) fn token_list_view<'a>(
 ) -> Result<RuntimeTokenListView<'a>, RegionArenaError> {
     let admitted = regions.admit(coordinate.owner())?;
     token_list_view_in(&admitted, coordinate)
+}
+
+pub(super) fn candidate_token_list_view<'a>(
+    arena: &'a ConcreteArena,
+    coordinate: RuntimeTokenListCoordinate,
+) -> Result<RuntimeTokenListView<'a>, RegionArenaError> {
+    let columns = arena.resolve_columns(coordinate.owner())?;
+    let row = columns
+        .token_lists
+        .get(coordinate.row.offset() as usize)
+        .ok_or(RegionArenaError::OffsetOutOfBounds)?;
+    validate_token_identity(coordinate, row)?;
+    Ok(RuntimeTokenListView {
+        coordinate,
+        semantic_id: row.semantic_id,
+        tokens: resolve_local_span(&columns.token_words, row.tokens)?,
+        provenance_roots: resolve_local_span(&columns.provenance_roots, row.provenance_roots)?,
+    })
+}
+
+pub(super) fn candidate_macro_view<'a>(
+    arena: &'a ConcreteArena,
+    coordinate: RuntimeMacroCoordinate,
+) -> Result<RuntimeMacroView<'a>, RegionArenaError> {
+    let columns = arena.resolve_columns(coordinate.owner())?;
+    let offset = coordinate.row.offset() as usize;
+    let record = columns
+        .macro_records
+        .get(offset)
+        .ok_or(RegionArenaError::OffsetOutOfBounds)?;
+    let roots = columns
+        .macro_roots
+        .get(offset)
+        .ok_or(RegionArenaError::OffsetOutOfBounds)?;
+    validate_macro_identity(coordinate, record, roots)?;
+    let parameter_text = candidate_token_list_view(arena, roots.parameter_text)?;
+    let replacement_text = candidate_token_list_view(arena, roots.replacement_text)?;
+    let definition_origin = columns
+        .provenance_roots
+        .get(roots.definition_origin as usize)
+        .ok_or(RegionArenaError::OffsetOutOfBounds)?;
+    let parameter_origins = resolve_local_span(&columns.provenance_roots, roots.parameter_origins)?;
+    let replacement_origins =
+        resolve_local_span(&columns.provenance_roots, roots.replacement_origins)?;
+    Ok(RuntimeMacroView {
+        coordinate,
+        record,
+        parameter_text,
+        replacement_text,
+        definition_origin,
+        parameter_origins,
+        replacement_origins,
+    })
+}
+
+pub(super) fn candidate_glue_view<'a>(
+    arena: &'a ConcreteArena,
+    coordinate: RuntimeGlueCoordinate,
+) -> Result<RuntimeGlueView<'a>, RegionArenaError> {
+    let columns = arena.resolve_columns(coordinate.owner())?;
+    let spec = columns
+        .glue_specs
+        .get(coordinate.row.offset() as usize)
+        .ok_or(RegionArenaError::OffsetOutOfBounds)?;
+    Ok(RuntimeGlueView { coordinate, spec })
+}
+
+/// Seals the mutable tail and adds only previously absent region owners.
+pub(super) fn publish_candidate_regions(
+    arena: &mut ConcreteArena,
+    destination: &mut ConcreteRegions,
+) -> Result<(), RegionArenaError> {
+    arena.seal_active()?;
+    for root in &arena.base.regions {
+        retain_root_if_absent(destination, root.owner.key, root.uses, &root.owner)?;
+    }
+    for owner in &arena.sealed_suffix {
+        retain_root_if_absent(destination, owner.key, NonZeroUsize::MIN, owner)?;
+    }
+    Ok(())
+}
+
+fn retain_root_if_absent(
+    destination: &mut ConcreteRegions,
+    key: ChunkOwner,
+    uses: NonZeroUsize,
+    owner: &super::super::SealedOwner<
+        Token,
+        RuntimeTokenListRow,
+        RuntimeMacroRecord,
+        RuntimeMacroRootRow,
+        GlueSpec,
+        RuntimeOriginRoot,
+    >,
+) -> Result<(), RegionArenaError> {
+    match destination.root_position(key) {
+        Ok(_) => Ok(()),
+        Err(index) => {
+            if index != destination.regions.len() {
+                return Err(RegionArenaError::InvalidMark);
+            }
+            destination
+                .regions
+                .try_reserve(1)
+                .map_err(|_| RegionArenaError::AllocationFailed)?;
+            destination
+                .regions
+                .push(super::super::RuntimeValueRegionRoot {
+                    owner: Arc::clone(owner),
+                    uses,
+                });
+            Ok(())
+        }
+    }
+}
+
+pub(super) fn validate_private_truncate(
+    arena: &ConcreteArena,
+    mark: RuntimeValueRegionMark,
+) -> Result<(), RegionArenaError> {
+    arena.validate_mark(mark)?;
+    for owner in arena
+        .sealed_suffix
+        .iter()
+        .skip(mark.sealed_regions as usize)
+    {
+        if Arc::strong_count(owner) != 1 {
+            return Err(RegionArenaError::InvalidMark);
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn token_list_view_from_admission<'a>(

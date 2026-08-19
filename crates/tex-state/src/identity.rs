@@ -357,6 +357,10 @@ impl IdentityAllocator {
         })
     }
 
+    pub(crate) fn storage_shape(&self) -> (usize, usize) {
+        (self.slots.len(), self.slots.capacity())
+    }
+
     /// Captures the identity component of an aggregate store snapshot in O(1).
     #[must_use]
     pub(crate) fn watermark(&self) -> IdentityMark {
@@ -366,12 +370,12 @@ impl IdentityAllocator {
         }
     }
 
-    /// Truncates to an ancestor mark and advances the generation before reuse.
+    /// Preflights an ancestor rollback without changing liveness or generation.
     ///
     /// The active generation is intentionally absent from `IdentityMark` and
-    /// is never restored. Exhaustion leaves the allocator unchanged; callers
-    /// must start a fresh aggregate timeline rather than wrap.
-    pub(crate) fn rollback(&mut self, mark: IdentityMark) -> Result<(), IdentityError> {
+    /// exhaustion is rejected here so an aggregate can validate every family
+    /// before mutating any of them.
+    pub(crate) fn validate_rollback(&self, mark: IdentityMark) -> Result<(), IdentityError> {
         let len = mark.len;
         if len < self.builtin_slots as usize
             || len > self.slots.len()
@@ -380,6 +384,20 @@ impl IdentityAllocator {
         {
             return Err(IdentityError::InvalidatedMark);
         }
+        if len != self.slots.len() && self.active.generation.get() == u32::MAX {
+            return Err(IdentityError::GenerationExhausted);
+        }
+        Ok(())
+    }
+
+    /// Truncates to an ancestor mark and advances the generation before reuse.
+    ///
+    /// The active generation is never restored. Exhaustion leaves the
+    /// allocator unchanged; callers must start a fresh timeline rather than
+    /// wrap.
+    pub(crate) fn rollback(&mut self, mark: IdentityMark) -> Result<(), IdentityError> {
+        self.validate_rollback(mark)?;
+        let len = mark.len;
         if len == self.slots.len() {
             return Ok(());
         }

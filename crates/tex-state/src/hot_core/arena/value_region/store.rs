@@ -23,6 +23,7 @@ use super::{
     RuntimeValueRegionMark, checked_offset,
 };
 
+pub(crate) mod registry;
 mod storage;
 
 use storage::*;
@@ -439,6 +440,12 @@ pub(crate) struct RuntimeValueStore {
     regions: ConcreteRegions,
 }
 
+/// Fixed-size restoration point for a canonical published-region root set.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RuntimeValueStorePublicationMark {
+    regions: u32,
+}
+
 impl RuntimeValueStore {
     pub(crate) const fn new(initial_region_capacity: NonZeroU32) -> Self {
         Self {
@@ -457,6 +464,27 @@ impl RuntimeValueStore {
         Self {
             regions: self.regions.retain_regions(&[]),
         }
+    }
+
+    pub(crate) fn publication_mark(
+        &self,
+    ) -> Result<RuntimeValueStorePublicationMark, RegionArenaError> {
+        Ok(RuntimeValueStorePublicationMark {
+            regions: u32::try_from(self.regions.regions.len())
+                .map_err(|_| RegionArenaError::SlotCapacityExhausted)?,
+        })
+    }
+
+    /// Restores roots before the owning candidate rolls back its sealed suffix.
+    pub(crate) fn restore_publication(
+        &mut self,
+        mark: RuntimeValueStorePublicationMark,
+    ) -> Result<(), RegionArenaError> {
+        if mark.regions as usize > self.regions.regions.len() {
+            return Err(RegionArenaError::InvalidMark);
+        }
+        self.regions.regions.truncate(mark.regions as usize);
+        Ok(())
     }
 
     pub(crate) fn admit_token_list(
@@ -596,6 +624,12 @@ pub(crate) struct RuntimeValueCandidate {
 }
 
 impl RuntimeValueCandidate {
+    fn from_store(store: RuntimeValueStore) -> Result<Self, RegionArenaError> {
+        Ok(Self {
+            arena: RuntimeValueRegionArena::new(store.regions)?,
+        })
+    }
+
     pub(crate) fn mark(&self) -> Result<RuntimeValueRegionMark, RegionArenaError> {
         self.arena.mark()
     }
@@ -612,6 +646,34 @@ impl RuntimeValueCandidate {
         mark: RuntimeValueRegionMark,
     ) -> Result<(), RegionArenaError> {
         self.arena.truncate(mark)
+    }
+
+    pub(crate) fn validate_truncate(
+        &self,
+        mark: RuntimeValueRegionMark,
+    ) -> Result<(), RegionArenaError> {
+        validate_private_truncate(&self.arena, mark)
+    }
+
+    pub(crate) fn admit_token_list(
+        &self,
+        coordinate: RuntimeTokenListCoordinate,
+    ) -> Result<RuntimeTokenListView<'_>, RegionArenaError> {
+        candidate_token_list_view(&self.arena, coordinate)
+    }
+
+    pub(crate) fn admit_macro(
+        &self,
+        coordinate: RuntimeMacroCoordinate,
+    ) -> Result<RuntimeMacroView<'_>, RegionArenaError> {
+        candidate_macro_view(&self.arena, coordinate)
+    }
+
+    pub(crate) fn admit_glue(
+        &self,
+        coordinate: RuntimeGlueCoordinate,
+    ) -> Result<RuntimeGlueView<'_>, RegionArenaError> {
+        candidate_glue_view(&self.arena, coordinate)
     }
 
     pub(crate) fn append_token_list(
@@ -732,6 +794,27 @@ impl RuntimeValueCandidate {
 
     pub(crate) fn validate_accept(&self) -> Result<(), RegionArenaError> {
         self.arena.validate_accept()
+    }
+
+    /// Publishes only region owners absent from `destination` and stays live.
+    pub(crate) fn publish_into(
+        &mut self,
+        destination: &mut RuntimeValueStore,
+    ) -> Result<(), RegionArenaError> {
+        let mark = destination.publication_mark()?;
+        if let Err(error) = publish_candidate_regions(&mut self.arena, &mut destination.regions) {
+            destination.restore_publication(mark)?;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn published_store(&mut self) -> Result<RuntimeValueStore, RegionArenaError> {
+        let mut store = RuntimeValueStore {
+            regions: self.arena.base.retain_regions(&[]),
+        };
+        self.publish_into(&mut store)?;
+        Ok(store)
     }
 
     pub(crate) fn accept(self) -> Result<RuntimeValueStore, RegionArenaError> {

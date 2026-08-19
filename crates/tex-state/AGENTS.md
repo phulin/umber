@@ -70,6 +70,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
   composite publication, counted region roots, and admitted borrowed views.
 - `src/hot_core/arena/value_region/store/storage.rs`: Fallible whole-bundle
   reservation and one-time admitted slice resolution for concrete regions.
+- `src/hot_core/arena/value_region/store/registry.rs`: Persistent live
+  token/macro/glue candidate, append-only identity tables, dense coordinate
+  maps, fixed rollback marks, cold forks, and incremental region publication.
+- `src/hot_core/arena/value_region/store/registry/tests.rs`: Allocation/read,
+  stale/foreign identity, all-live growth, and bounded-retry registry controls.
 - `src/hot_core/arena/value_region/store/tests.rs`: Typed-coordinate,
   composite co-location, counted-root, oversized-list, and rollback controls
   for the concrete runtime value store.
