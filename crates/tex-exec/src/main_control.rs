@@ -5616,7 +5616,6 @@ impl MainControl {
                             | Meaning::Unknown(_)
                     ) =>
                 {
-                    let retained = command.clone();
                     prepare_command_trace(&mut processor, mode, self.shown_mode);
                     match processor.settle_current_command(command) {
                         Ok(settled) => {
@@ -5624,17 +5623,21 @@ impl MainControl {
                             settled.map(tex_command::CommandReplayDelivery::Command)
                         }
                         Err(error) => {
-                            let retained = processor
-                                .pending_expansion_command()
-                                .cloned()
-                                .unwrap_or(retained);
-                            let retry = PendingPreflightCommand::Expanding {
-                                command: retained,
-                                main_loop: self.main_loop_active,
-                                cursor: processor.delivery_cursor(),
-                            };
+                            // The expansion driver moves its live command into
+                            // command state only after an actual immutable-host
+                            // suspension. Fuel and semantic failures have no
+                            // retry command and must not clone one speculatively.
+                            let retry =
+                                processor
+                                    .pending_expansion_command()
+                                    .cloned()
+                                    .map(|command| PendingPreflightCommand::Expanding {
+                                        command,
+                                        main_loop: self.main_loop_active,
+                                        cursor: processor.delivery_cursor(),
+                                    });
                             drop(processor);
-                            self.pending_preflight_command = Some(retry);
+                            self.pending_preflight_command = retry;
                             return Err(command_error(error));
                         }
                     }
