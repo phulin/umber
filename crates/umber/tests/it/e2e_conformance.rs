@@ -259,6 +259,14 @@ struct LiveCapture {
     outcome: LiveSessionOutcome,
 }
 
+fn trip_geometry_profile(schema: SchemaVersion) -> GeometryEvidenceProfile {
+    if schema >= SchemaVersion::V3 {
+        GeometryEvidenceProfile::Located
+    } else {
+        GeometryEvidenceProfile::Positionless
+    }
+}
+
 fn command_stream_for_fixture_phase(
     fixture_name: &str,
     phase: &str,
@@ -285,15 +293,33 @@ impl LiveCapture {
     }
 
     fn geometry(&self, oracle: &[u8]) -> Vec<u8> {
-        let mut translator =
-            LiveSessionTranslator::for_root(SchemaVersion::V3, "terminal", self.root.clone());
+        let header = ObservationStream::from_canonical_json_lines(oracle)
+            .expect("oracle geometry stream validates")
+            .header;
+        let schema = SchemaVersion::try_from(header.schema).expect("supported geometry schema");
+        let geometry_profile = trip_geometry_profile(schema);
+        let mut translator = LiveSessionTranslator::for_root(schema, "terminal", self.root.clone());
         translator.translate_captured(self.observations.iter().cloned());
         tex_oracle::canonical_bundle_json_lines(
-            &translator.finalize_detached_evidence().geometry,
+            &translator
+                .finalize_profile(SemanticEvidenceProfile::Complete, geometry_profile)
+                .geometry,
             oracle,
         )
         .expect("geometry observations translate")
     }
+}
+
+#[test]
+fn trip_geometry_profile_follows_the_pinned_oracle_schema() {
+    assert_eq!(
+        trip_geometry_profile(SchemaVersion::V2),
+        GeometryEvidenceProfile::Positionless
+    );
+    assert_eq!(
+        trip_geometry_profile(SchemaVersion::V3),
+        GeometryEvidenceProfile::Located
+    );
 }
 
 fn transcript_channels(stores: &Universe, effects: &[EffectRecord]) -> (Vec<u8>, Vec<u8>) {
