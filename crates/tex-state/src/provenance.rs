@@ -1333,8 +1333,6 @@ pub(crate) struct ProvenanceStore {
     record_keys: OriginKeyRuns,
     next_record_key: u32,
     record_key_lease_end: u32,
-    next_unique_record_key: u32,
-    unique_record_key_lease_end: u32,
     unique_candidates: SmallVec<[(OriginRecord, OriginId); 4]>,
     rooted_list_identities: ReusableIdentityAllocator,
     rooted_list_slots: Vec<Option<RootedOriginListSlot>>,
@@ -1357,8 +1355,6 @@ impl Clone for ProvenanceStore {
             record_keys: self.record_keys.clone(),
             next_record_key: 0,
             record_key_lease_end: 0,
-            next_unique_record_key: 0,
-            unique_record_key_lease_end: 0,
             unique_candidates: self.unique_candidates.clone(),
             rooted_list_identities: self.rooted_list_identities.fork(),
             rooted_list_slots: self
@@ -1395,8 +1391,6 @@ impl ProvenanceStore {
             record_keys: OriginKeyRuns::default(),
             next_record_key: 0,
             record_key_lease_end: 0,
-            next_unique_record_key: 0,
-            unique_record_key_lease_end: 0,
             unique_candidates: SmallVec::new(),
             rooted_list_identities: ReusableIdentityAllocator::new(1),
             rooted_list_slots: vec![None],
@@ -1477,7 +1471,7 @@ impl ProvenanceStore {
         if self.records.len() >= self.record_limit {
             return OriginId::UNKNOWN;
         }
-        let Some(key) = self.next_unique_packed_arena_origin() else {
+        let Some(key) = self.next_packed_arena_origin() else {
             return OriginId::UNKNOWN;
         };
         let slot = u32::try_from(self.records.len())
@@ -1873,17 +1867,6 @@ impl ProvenanceStore {
         }
         let key = self.next_record_key;
         self.next_record_key += 1;
-        Some(key)
-    }
-
-    fn next_unique_packed_arena_origin(&mut self) -> Option<u32> {
-        if self.next_unique_record_key == self.unique_record_key_lease_end {
-            let lease = reserve_packed_arena_origins()?;
-            self.next_unique_record_key = lease.start;
-            self.unique_record_key_lease_end = lease.end;
-        }
-        let key = self.next_unique_record_key;
-        self.next_unique_record_key += 1;
         Some(key)
     }
 

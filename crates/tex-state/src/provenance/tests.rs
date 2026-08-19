@@ -128,6 +128,27 @@ fn concurrent_stores_keep_process_global_keys_in_local_affine_runs() {
 }
 
 #[test]
+fn ordinary_and_occurrence_unique_records_share_one_affine_key_lease() {
+    let mut store = ProvenanceStore::new();
+    for serial in 0..32_u64 {
+        let record = |operand| {
+            OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
+                operand,
+                OriginId::UNKNOWN,
+                OriginId::UNKNOWN,
+                OriginId::UNKNOWN,
+            ))
+        };
+        store.allocate(record(serial * 2));
+        store.allocate_unique(record(serial * 2 + 1));
+    }
+
+    let stats = store.stats();
+    assert_eq!(stats.origin_records(), 64);
+    assert_eq!(stats.origin_key_runs(), 1);
+}
+
+#[test]
 fn records_and_structural_origin_lists_allocate_and_read_back() {
     let mut store = ProvenanceStore::new();
     let source_record = OriginRecord::Source(SourceOrigin::new(SourceId::new(7), 123, 4, 9));
