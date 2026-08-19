@@ -1116,6 +1116,22 @@ impl MacroStore {
             .record(definition)
     }
 
+    /// Reads the current packed meaning without consulting the weak value
+    /// index. The caller must already hold a live semantic root for
+    /// `definition`; this is the allocation-free validation path for command
+    /// caches whose dense stored coordinate can be reused after rollback.
+    #[must_use]
+    pub(crate) fn packed_meaning(&self, definition: MacroDefinitionId) -> Option<MacroMeaning> {
+        let record = self.packed_record(definition)?;
+        let location = self.packed_locations[definition.raw() as usize]?;
+        let chunk = &self.packed_chunks[location.chunk as usize];
+        Some(MacroMeaning::new(
+            record.flags,
+            chunk.token_ids[record.parameter_root as usize],
+            chunk.token_ids[record.replacement_root as usize],
+        ))
+    }
+
     #[must_use]
     pub(crate) fn get(&self, id: MacroDefinitionId) -> MacroMeaning {
         if self.resolved_value(id).is_some()

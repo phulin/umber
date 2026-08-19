@@ -200,7 +200,7 @@ print channel of its own outside the borrowed
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
   macro matcher, directly indexed admitted packed-macro arena segments and
   exact-meaning owner chains that reject rollback-reused coordinates without
-  reconstructing ordinary cache hits, reusable argument chunks, packed
+  reconstructing or weak-upgrading ordinary cache hits, reusable argument chunks, packed
   invocation-record coordinates, compact activation/replay coordinates, and
   focused tests.
 - `src/conditionals.rs`: private independent condition-stack machine; also

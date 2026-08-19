@@ -611,7 +611,9 @@ impl CommandProcessor<'_> {
         self.command.parameters.prepare_argument_build();
         let admitted = self.command.parameters.admit_macro(
             definition,
-            self.state.macro_definition(definition),
+            self.state
+                .packed_macro_meaning(definition)
+                .unwrap_or_else(|| self.state.macro_definition(definition)),
             || self.state.packed_macro_owner(definition),
         );
         let meaning = self

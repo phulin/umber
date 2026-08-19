@@ -1643,6 +1643,10 @@ impl Stores {
             .expect("macro definition has no packed chunk")
     }
 
+    pub(crate) fn packed_macro_meaning(&self, id: MacroDefinitionId) -> Option<MacroMeaning> {
+        self.macros.packed_meaning(id)
+    }
+
     /// Reads a live frozen macro definition.
     #[must_use]
     pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {

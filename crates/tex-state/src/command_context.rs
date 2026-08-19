@@ -1268,6 +1268,13 @@ impl CommandContext<'_> {
         self.universe.packed_macro_owner(definition)
     }
 
+    /// Reads the current packed meaning for a definition already rooted by
+    /// this command without entering the weak value index.
+    #[must_use]
+    pub fn packed_macro_meaning(&self, definition: MacroDefinitionId) -> Option<MacroMeaning> {
+        self.universe.packed_macro_meaning(definition)
+    }
+
     /// Returns TeX82's definition-head identity for detached observation.
     #[must_use]
     pub fn macro_definition_observation_operand(&self, definition: MacroDefinitionId) -> i64 {

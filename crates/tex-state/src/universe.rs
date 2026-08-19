@@ -5457,6 +5457,14 @@ impl Universe {
         self.stores.packed_macro_owner(id)
     }
 
+    /// Reads the current packed meaning for a definition already rooted by
+    /// live command state, without entering the weak value index.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn packed_macro_meaning(&self, id: MacroDefinitionId) -> Option<MacroMeaning> {
+        self.stores.packed_macro_meaning(id)
+    }
+
     #[must_use]
     pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
         self.stores.macro_definition(id)
