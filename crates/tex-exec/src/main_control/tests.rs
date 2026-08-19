@@ -4467,26 +4467,32 @@ fn production_batch_commits_ordinary_prefix_before_terminal_transaction() {
 }
 
 #[test]
-fn production_batch_reuses_one_interpreter_across_group_operations() {
+fn ranked_assignments_use_one_processor_borrow_each() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);
-    register_source(
-        &mut control,
-        br"\begingroup\count0=11 \begingroup\count0=22\endgroup\endgroup\end",
-    );
+    register_source(&mut control, br"\def\a{A}\let\b=\a\catcode65=11 ");
 
-    assert_eq!(
-        control
-            .advance_episode(&mut stores)
-            .expect("grouped batch completes"),
-        StepResult::Progress(ReplayStep::End)
-    );
+    for operation in 0..3 {
+        let before = control.command.lifecycle_stats();
+        assert_eq!(
+            control
+                .advance(&mut stores)
+                .expect("ranked assignment completes"),
+            StepResult::Progress(ReplayStep::Continue)
+        );
+        let after = control.command.lifecycle_stats();
+        assert_eq!(
+            after.processor_entries,
+            before.processor_entries + 1,
+            "operation {operation} must deliver, expand, and scan in one borrow: {after:?}"
+        );
+        assert_eq!(after.processor_entries, after.processor_completions);
+        assert_eq!(after.live_processors, 0);
+        assert_eq!(after.maximum_live_processors, 1);
+    }
 
     let lifecycle = control.command.lifecycle_stats();
-    assert!(
-        lifecycle.processor_entries >= 5,
-        "the batch crossed several command borrow scopes: {lifecycle:?}"
-    );
+    assert_eq!(lifecycle.processor_entries, 3);
     assert_eq!(
         lifecycle.processor_entries, lifecycle.processor_completions,
         "every command facade retires before the episode barrier"

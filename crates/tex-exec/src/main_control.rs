@@ -603,6 +603,11 @@ enum OperationDelivery {
         alignment: Option<AlignmentIdentity>,
         cursor: tex_command::CommandDeliveryCursor,
     },
+    /// Ordinary ranked delivery and operand scanning completed inside the
+    /// preflight processor borrow. The typed family operand is the real Rust
+    /// borrow barrier before semantic state application; no command or
+    /// universal scanned-step DTO crosses it.
+    Hot(hot_apply::HotOperation),
     /// Delivery completed during mutation-free capability preflight. The
     /// semantic step still runs through the sole executor below.
     Prepared(Box<ScannedStep>),
@@ -3200,6 +3205,7 @@ impl MainControl {
                     OperationDelivery::Replay(None)
                     | OperationDelivery::Alignment(_)
                     | OperationDelivery::AlignmentRetry { .. }
+                    | OperationDelivery::Hot(_)
                     | OperationDelivery::Prepared(_) => None,
                 };
                 let prepared = match self.prepare_operation(stores, preflight.delivery) {
@@ -3361,6 +3367,7 @@ impl MainControl {
                     OperationDelivery::Replay(None)
                     | OperationDelivery::Alignment(_)
                     | OperationDelivery::AlignmentRetry { .. }
+                    | OperationDelivery::Hot(_)
                     | OperationDelivery::Prepared(_) => None,
                 };
                 if let crate::transaction_protocol::CommandPreflight::Transaction(transaction) =
@@ -3574,6 +3581,7 @@ impl MainControl {
                 OperationDelivery::Replay(None)
                 | OperationDelivery::Alignment(_)
                 | OperationDelivery::AlignmentRetry { .. }
+                | OperationDelivery::Hot(_)
                 | OperationDelivery::Prepared(_) => None,
             };
             let prepared = match self.prepare_operation(stores, preflight.delivery) {
@@ -5553,14 +5561,14 @@ impl MainControl {
         })
     }
 
-    /// Delivers the next settled command before choosing rollback authority.
+    /// Delivers, expands, and (for ranked ordinary families) scans the next
+    /// command before choosing rollback authority.
     ///
-    /// This is deliberately narrower than scanning: expanded delivery and
-    /// command tracing mutate only the command/input machine, while operand
-    /// scanning and semantic application begin after the returned static
-    /// capability has selected direct execution or a typed continuation.
-    /// Alignment-owned scanner phases use the same preparation boundary and
-    /// retain only their delivery tag when immutable host input suspends.
+    /// Delivery, expansion, tracing, and ordinary hot scanning mutate only
+    /// the command/input machine, so they share one processor borrow. A typed
+    /// hot operand releases that borrow before semantic application. Resource,
+    /// transaction, diagnostic, and alignment cases remain explicit barriers
+    /// and retain only their exact continuation tag.
     fn preflight_replay_delivery(
         &mut self,
         stores: &mut Universe,
@@ -5589,9 +5597,10 @@ impl MainControl {
         self.drain_file_framing_events(stores);
         self.refresh_host_capabilities(stores);
 
+        let innermost_group = stores.innermost_group_kind();
         let mut diagnostics = Vec::new();
         let raw_main_loop_delivery = self.main_loop_active;
-        let (delivery, settled_in_preflight) = {
+        let (delivery, settled_in_preflight, trace_reported, fused_hot, fused_retry, fused_error) = {
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
@@ -5606,7 +5615,7 @@ impl MainControl {
                 .get_next_with_replay_completion()
                 .map_err(command_error)?;
             let mut settled_in_preflight = false;
-            let delivery = match delivery {
+            let mut delivery = match delivery {
                 Some(tex_command::CommandReplayDelivery::Command(command))
                     if matches!(
                         command.meaning(),
@@ -5650,11 +5659,101 @@ impl MainControl {
                     .into_iter()
                     .map(PendingDiagnostic::Command),
             );
-            (delivery, settled_in_preflight)
+            let mut trace_reported = false;
+            let mut fused_hot = None;
+            let mut fused_retry = None;
+            let mut fused_error = None;
+            // Diagnostics are a real reporting barrier: preserve their
+            // established ordering before command tracing or operand work.
+            // The common diagnostic-free path continues in this same borrow.
+            if diagnostics.is_empty()
+                && let Some(tex_command::CommandReplayDelivery::Command(command)) = delivery.take()
+            {
+                let continues_main_loop = self.main_loop_active
+                    && matches!(
+                        command.meaning(),
+                        Meaning::CharToken {
+                            cat: Catcode::Letter | Catcode::Other,
+                            ..
+                        } | Meaning::CharGiven(_)
+                            | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+                    );
+                if !continues_main_loop {
+                    prepare_command_trace(&mut processor, mode, self.shown_mode);
+                    report_main_control_command_trace(
+                        &mut processor,
+                        mode,
+                        &command,
+                        &self.boxes,
+                        &mut self.shown_mode,
+                    );
+                    trace_reported = true;
+                }
+                if direct_hot_candidate(mode, &self.boxes, innermost_group, &command) {
+                    if !settled_in_preflight {
+                        processor.observe_expanded_delivery(&command);
+                    }
+                    #[cfg(feature = "profiling")]
+                    tex_state::measurement::record_hot_core_phase(
+                        tex_state::measurement::HotCorePhase::DeliveryAndScan,
+                    );
+                    #[cfg(feature = "profiling")]
+                    let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+                        tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
+                    );
+                    match scan_direct_hot_command(&mut processor, &command, innermost_group) {
+                        Ok(operation) => {
+                            let meaning = command.meaning();
+                            diagnostics.extend(
+                                processor
+                                    .take_semantic_diagnostics()
+                                    .into_iter()
+                                    .map(PendingDiagnostic::Command),
+                            );
+                            fused_hot = Some((operation, meaning));
+                        }
+                        Err(error) => {
+                            let cursor = processor.delivery_cursor();
+                            let retry_expansion = processor.pending_expansion_command().cloned();
+                            fused_retry = Some(
+                                PendingPreflightCommand::Settled {
+                                    command,
+                                    cursor: Some(cursor),
+                                }
+                                .with_retry_expansion(retry_expansion),
+                            );
+                            fused_error = Some(error);
+                        }
+                    }
+                } else {
+                    delivery = Some(tex_command::CommandReplayDelivery::Command(command));
+                }
+            }
+            (
+                delivery,
+                settled_in_preflight,
+                trace_reported,
+                fused_hot,
+                fused_retry,
+                fused_error,
+            )
         };
+        if let Some(error) = fused_error {
+            if execution_error_needs_command_retry(&error) {
+                self.pending_preflight_command = fused_retry;
+            }
+            return Err(error);
+        }
         self.capture_first_causal_context(stores, &diagnostics);
         report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
+
+        if let Some((operation, meaning)) = fused_hot {
+            return Ok(Some(PreflightDelivery {
+                delivery: OperationDelivery::Hot(operation),
+                capabilities: crate::transaction_protocol::canonical_command_capabilities(meaning),
+            }));
+        }
 
         let passive =
             || crate::transaction_protocol::canonical_command_capabilities(Meaning::Relax);
@@ -5685,7 +5784,7 @@ impl MainControl {
                 } | Meaning::CharGiven(_)
                     | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
             );
-        if !continues_main_loop {
+        if !continues_main_loop && !trace_reported {
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
@@ -5835,7 +5934,9 @@ impl MainControl {
         let innermost_group = stores.innermost_group_kind();
         let job_is_all_over = crate::page_output::job_is_all_over(stores);
         let mut diagnostics = Vec::new();
-        let scanned = {
+        let scanned = if let OperationDelivery::Hot(operation) = delivery {
+            ScannedOperation::Hot(operation)
+        } else {
             #[cfg(feature = "profiling")]
             tex_state::measurement::record_hot_core_phase(
                 tex_state::measurement::HotCorePhase::DeliveryAndScan,
@@ -6039,6 +6140,9 @@ impl MainControl {
                                 &mut diagnostics,
                             )?,
                         }
+                    }
+                    OperationDelivery::Hot(_) => {
+                        unreachable!("pre-scanned hot delivery bypasses processor construction")
                     }
                     OperationDelivery::Prepared(scanned) => (*scanned).into(),
                 })
@@ -8624,6 +8728,114 @@ fn scan_step(
         None,
         true,
     )
+}
+
+fn execution_error_needs_command_retry(error: &ExecError) -> bool {
+    match error {
+        ExecError::Captured { error, .. } => execution_error_needs_command_retry(error),
+        ExecError::MissingInput { .. }
+        | ExecError::MissingInputProbe { .. }
+        | ExecError::MissingFont { .. }
+        | ExecError::MissingPdfImage { .. } => true,
+        _ => false,
+    }
+}
+
+/// Whether a settled command can reach the ranked hot scanner without first
+/// crossing a transaction, resource, diagnostic, or contextual dispatcher
+/// barrier. Prefixes deliberately do not qualify: their substantive command
+/// is not known until the transactional prefix loop has run.
+fn direct_hot_candidate(
+    mode: Mode,
+    boxes: &ReplayBoxes,
+    innermost_group: Option<GroupKind>,
+    command: &tex_command::CurrentCommand,
+) -> bool {
+    if boxes.pending_leader.is_some() {
+        return false;
+    }
+    match command.meaning() {
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::Def
+            | UnexpandablePrimitive::Edef
+            | UnexpandablePrimitive::Gdef
+            | UnexpandablePrimitive::Xdef
+            | UnexpandablePrimitive::Let
+            | UnexpandablePrimitive::FutureLet
+            | UnexpandablePrimitive::CatCode
+            | UnexpandablePrimitive::BeginGroup,
+        ) => true,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup) => {
+            innermost_group == Some(GroupKind::SemiSimple)
+        }
+        Meaning::CharToken {
+            cat: Catcode::BeginGroup,
+            ..
+        } => {
+            !matches!(mode, Mode::Math | Mode::DisplayMath)
+                && !boxes.output_routine_opening_pending
+                && !boxes.recovery_simple_group_pending
+        }
+        Meaning::CharToken {
+            cat: Catcode::EndGroup,
+            ..
+        } => innermost_group == Some(GroupKind::Simple) && !boxes.recovery_simple_group_open,
+        _ => false,
+    }
+}
+
+/// Scans a command proven by [`direct_hot_candidate`] to have no contextual
+/// dispatcher work before the ranked hot family. The command remains borrowed
+/// so an actual immutable-resource suspension can move it into the exact retry
+/// continuation without a speculative clone.
+fn scan_direct_hot_command(
+    processor: &mut CommandProcessor<'_>,
+    command: &tex_command::CurrentCommand,
+    innermost_group: Option<GroupKind>,
+) -> Result<hot_apply::HotOperation, ExecError> {
+    #[cfg(feature = "profiling")]
+    {
+        tex_state::measurement::record_hot_core_command_family(hot_core_command_family(
+            command.meaning(),
+        ));
+        if let Meaning::UnexpandablePrimitive(primitive) = command.meaning() {
+            tex_state::measurement::record_hot_core_unexpandable_opcode(
+                usize::try_from(primitive.operand())
+                    .expect("unexpandable primitive operand fits usize"),
+            );
+        }
+    }
+    if innermost_group == Some(GroupKind::Simple)
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::EndGroup,
+                ..
+            }
+        )
+    {
+        return Ok(hot_apply::HotOperation::end_ordinary_group());
+    }
+    let global = effective_global(
+        processor.int_param(IntParam::GLOBAL_DEFS),
+        matches!(
+            command.meaning(),
+            Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
+            )
+        ),
+    );
+    match hot_apply::scan(
+        processor,
+        command,
+        global,
+        MeaningFlags::EMPTY,
+        innermost_group,
+    ) {
+        Ok(Some(operation)) => Ok(operation),
+        Ok(None) => unreachable!("direct hot candidate reaches the ranked hot scanner"),
+        Err(error) => Err(error.capture_command_origin_ref(command.origin_ref().clone())),
+    }
 }
 
 /// Dispatches one already-fetched command through TeX82 §1030's `reswitch:`
