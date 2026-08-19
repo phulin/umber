@@ -6,7 +6,7 @@
 use crate::ContentHash;
 use crate::ids::TokenListId;
 use crate::patch_domain::{
-    PatchAllocationDomain, PatchHandle, PatchRoot, PatchRootLease, PatchRootWeak,
+    PatchAllocationDomain, PatchHandle, PatchRoot, PatchRootAnchor, PatchRootLease,
 };
 #[cfg(any(test, feature = "testing"))]
 use crate::reachable_value::LookupWork;
@@ -144,10 +144,55 @@ impl TokenSemanticIdBuilder {
 /// A rollback watermark for the token store.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TokenStoreMark {
-    weak_slots: u32,
+    arena_slots: u32,
+    arena_allocations: u32,
+    packed_allocations: u32,
     patch_allocations: u32,
     #[cfg(any(test, feature = "testing"))]
     testing_detached_roots: u32,
+}
+
+#[derive(Debug)]
+struct PackedTokenPair {
+    ids: [TokenListId; 2],
+    liveness: [Arc<()>; 2],
+    semantic_ids: [TokenSemanticId; 2],
+    parameter_len: u32,
+    tokens: Box<[Token]>,
+}
+
+#[derive(Clone, Debug)]
+struct PackedTokenListRef {
+    pair: Arc<PackedTokenPair>,
+    _liveness: Option<Arc<()>>,
+    index: u8,
+}
+
+impl PackedTokenListRef {
+    fn rooted(&self) -> Self {
+        Self {
+            pair: Arc::clone(&self.pair),
+            _liveness: Some(Arc::clone(&self.pair.liveness[self.index as usize])),
+            index: self.index,
+        }
+    }
+
+    fn id(&self) -> TokenListId {
+        self.pair.ids[self.index as usize]
+    }
+
+    fn semantic_id(&self) -> TokenSemanticId {
+        self.pair.semantic_ids[self.index as usize]
+    }
+
+    fn tokens(&self) -> &[Token] {
+        let split = self.pair.parameter_len as usize;
+        if self.index == 0 {
+            &self.pair.tokens[..split]
+        } else {
+            &self.pair.tokens[split..]
+        }
+    }
 }
 
 /// An owned scratch buffer for building a token list before freezing it.
@@ -230,7 +275,8 @@ impl TokenListValue {
 /// One strong exact-content owner paired with its timeline-local coordinate.
 #[derive(Clone, Debug)]
 pub struct TokenListRef {
-    value: ReachableValueRef<TokenListValue>,
+    value: Option<ReachableValueRef<TokenListValue>>,
+    packed: Option<PackedTokenListRef>,
     patch_root: Option<PatchRootLease>,
 }
 
@@ -245,21 +291,35 @@ impl TokenListRef {
     /// Returns the compact physical coordinate carried beside this owner.
     #[must_use]
     pub fn id(&self) -> TokenListId {
-        TokenListId::from_identity(self.value.identity())
+        self.packed.as_ref().map_or_else(
+            || TokenListId::from_identity(self.exact_value().identity()),
+            PackedTokenListRef::id,
+        )
     }
 
     /// Borrows the immutable semantic token sequence.
     #[must_use]
     pub fn tokens(&self) -> &[Token] {
-        &self.value.value().tokens
+        self.packed
+            .as_ref()
+            .map_or_else(|| self.exact_value().value().tokens.as_ref(), PackedTokenListRef::tokens)
     }
 
     pub(crate) fn semantic_id(&self) -> TokenSemanticId {
-        self.value.value().semantic_id
+        self.packed.as_ref().map_or_else(
+            || self.exact_value().value().semantic_id,
+            PackedTokenListRef::semantic_id,
+        )
     }
 
     fn shared(&self) -> Arc<TokenListValue> {
-        self.value.shared()
+        self.exact_value().shared()
+    }
+
+    fn exact_value(&self) -> &ReachableValueRef<TokenListValue> {
+        self.value
+            .as_ref()
+            .expect("arena-backed token list has no exact value")
     }
 
     #[cfg(test)]
@@ -269,7 +329,7 @@ impl TokenListRef {
 
     #[cfg(test)]
     pub(crate) fn strong_count(&self) -> usize {
-        self.value.strong_count()
+        self.exact_value().strong_count()
     }
 }
 
@@ -333,8 +393,10 @@ pub struct TokenStore {
     frozen_lookup: FrozenTokenLookup,
     frozen_len: u32,
     patch_handles: HashMap<TokenListId, PatchHandle<TokenListValue>>,
-    patch_root_leases: HashMap<TokenListId, PatchRootWeak>,
+    patch_root_leases: HashMap<TokenListId, PatchRootAnchor>,
     patch_order: Vec<TokenListId>,
+    packed_locations: Vec<Option<PackedTokenListRef>>,
+    packed_allocations: Vec<[Option<TokenListId>; 2]>,
     /// Explicit detached owners used only by legacy test construction APIs.
     /// Production interning returns `TokenListRef` and never enters this row.
     #[cfg(any(test, feature = "testing"))]
@@ -357,6 +419,8 @@ impl Clone for TokenStore {
             patch_handles: HashMap::new(),
             patch_root_leases: HashMap::new(),
             patch_order: Vec::new(),
+            packed_locations: self.packed_locations.clone(),
+            packed_allocations: Vec::new(),
             #[cfg(any(test, feature = "testing"))]
             testing_detached_roots: self.testing_detached_roots.clone(),
             #[cfg(test)]
@@ -392,7 +456,8 @@ impl TokenStore {
                 roots
                     .into_iter()
                     .map(|value| TokenListRef {
-                        value,
+                        value: Some(value),
+                        packed: None,
                         patch_root: None,
                     })
                     .collect::<Vec<_>>(),
@@ -404,6 +469,8 @@ impl TokenStore {
             patch_handles: HashMap::new(),
             patch_root_leases: HashMap::new(),
             patch_order: Vec::new(),
+            packed_locations: Vec::new(),
+            packed_allocations: Vec::new(),
             #[cfg(any(test, feature = "testing"))]
             testing_detached_roots: Vec::new(),
             #[cfg(test)]
@@ -448,9 +515,10 @@ impl TokenStore {
         let (pool, roots) = ReachableValuePool::from_fixed_values(values, 1);
         let roots = roots
             .into_iter()
-            .map(|value| TokenListRef {
-                value,
-                patch_root: None,
+                .map(|value| TokenListRef {
+                    value: Some(value),
+                    packed: None,
+                    patch_root: None,
             })
             .collect::<Vec<_>>();
         Ok(Self {
@@ -461,6 +529,8 @@ impl TokenStore {
             patch_handles: HashMap::new(),
             patch_root_leases: HashMap::new(),
             patch_order: Vec::new(),
+            packed_locations: vec![None; count as usize],
+            packed_allocations: Vec::new(),
             #[cfg(any(test, feature = "testing"))]
             testing_detached_roots: Vec::new(),
             #[cfg(test)]
@@ -544,7 +614,8 @@ impl TokenStore {
             #[cfg(feature = "profiling")]
             crate::measurement::record_token_intern(tokens.len(), true, 0, 0);
             return TokenListRef {
-                value,
+                value: Some(value),
+                packed: None,
                 patch_root: None,
             };
         }
@@ -557,7 +628,8 @@ impl TokenStore {
             },
         );
         let mut root = TokenListRef {
-            value,
+            value: Some(value),
+            packed: None,
             patch_root: None,
         };
         self.attach_patch_allocation(&mut root, domain);
@@ -624,7 +696,8 @@ impl TokenStore {
             semantic_id,
         });
         let mut root = TokenListRef {
-            value,
+            value: Some(value),
+            packed: None,
             patch_root: None,
         };
         self.attach_patch_allocation(&mut root, domain);
@@ -636,6 +709,69 @@ impl TokenStore {
             core::mem::size_of::<TokenSemanticId>(),
         );
         root
+    }
+
+    /// Publishes the parameter and replacement text of one ordinary macro as
+    /// a single immutable arena payload. The two token coordinates share one
+    /// allocation and do not enter the weak value graph or exact index.
+    pub(crate) fn allocate_traced_pair(
+        &mut self,
+        parameter: &[TracedTokenWord],
+        replacement: &[TracedTokenWord],
+        semantic_ids: [TokenSemanticId; 2],
+    ) -> (TokenListRef, TokenListRef) {
+        let mut allocated = [None, None];
+        let ids = core::array::from_fn(|index| {
+            let words = [parameter, replacement][index];
+            if words.is_empty() {
+                TokenListId::EMPTY
+            } else {
+                let id = TokenListId::from_identity(self.pool.reserve_external());
+                allocated[index] = Some(id);
+                id
+            }
+        });
+        let tokens = parameter
+            .iter()
+            .chain(replacement)
+            .map(|word| {
+                word.token()
+                    .expect("validated traced token became invalid during arena allocation")
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let pair = Arc::new(PackedTokenPair {
+            ids,
+            liveness: std::array::from_fn(|_| Arc::new(())),
+            semantic_ids,
+            parameter_len: u32::try_from(parameter.len())
+                .expect("macro parameter text exceeds u32"),
+            tokens,
+        });
+        let roots = [0_u8, 1_u8].map(|index| {
+            if ids[index as usize] == TokenListId::EMPTY {
+                self.frozen_roots[0].clone()
+            } else {
+                let packed = PackedTokenListRef {
+                    pair: Arc::clone(&pair),
+                    _liveness: None,
+                    index,
+                };
+                let slot = packed.id().raw() as usize;
+                if self.packed_locations.len() <= slot {
+                    self.packed_locations.resize(slot + 1, None);
+                }
+                assert!(self.packed_locations[slot].is_none());
+                self.packed_locations[slot] = Some(packed.clone());
+                TokenListRef {
+                    value: None,
+                    packed: Some(packed.rooted()),
+                    patch_root: None,
+                }
+            }
+        });
+        self.packed_allocations.push(allocated);
+        (roots[0].clone(), roots[1].clone())
     }
 
     #[cfg(test)]
@@ -673,7 +809,7 @@ impl TokenStore {
             return;
         };
         let handle = domain
-            .allocate_shared(root.shared(), root.value.value().logical_bytes())
+            .allocate_shared(root.shared(), root.exact_value().value().logical_bytes())
             .expect("private token allocation belongs to the active operation");
         assert!(
             self.patch_handles.insert(root.id(), handle).is_none(),
@@ -684,7 +820,7 @@ impl TokenStore {
             .expect("new private token root belongs to the active domain");
         assert!(
             self.patch_root_leases
-                .insert(root.id(), lease.downgrade())
+                .insert(root.id(), lease.anchor())
                 .is_none()
         );
         root.patch_root = Some(lease);
@@ -708,10 +844,22 @@ impl TokenStore {
         if let Some(root) = self.frozen_roots.get(raw as usize) {
             return root.clone();
         }
+        if let Some(root) = self
+            .packed_locations
+            .get(raw as usize)
+            .and_then(Option::as_ref)
+        {
+            return TokenListRef {
+                value: None,
+                packed: Some(root.rooted()),
+                patch_root: None,
+            };
+        }
         self.pool.resolve_slot(raw).map_or_else(
             || self.frozen_roots[0].clone(),
             |value| TokenListRef {
-                value,
+                value: Some(value),
+                packed: None,
                 patch_root: None,
             },
         )
@@ -719,13 +867,26 @@ impl TokenStore {
 
     /// Clones a strong owner for one currently-live coordinate.
     pub(crate) fn owner(&self, id: TokenListId) -> Option<TokenListRef> {
+        if let Some(packed) = self
+            .packed_locations
+            .get(id.raw() as usize)
+            .and_then(Option::as_ref)
+            .filter(|packed| packed.id() == id)
+        {
+            return Some(TokenListRef {
+                value: None,
+                packed: Some(packed.rooted()),
+                patch_root: None,
+            });
+        }
         self.frozen_root(id).cloned().or_else(|| {
             self.pool.resolve(id.identity()).map(|value| TokenListRef {
-                value,
+                value: Some(value),
+                packed: None,
                 patch_root: self
                     .patch_root_leases
                     .get(&id)
-                    .and_then(PatchRootWeak::upgrade),
+                    .map(PatchRootAnchor::lease),
             })
         })
     }
@@ -733,7 +894,7 @@ impl TokenStore {
     /// Validates that an already-owned token list belongs to this timeline
     /// without reconstructing ownership through a weak slot.
     pub(crate) fn accepts_owner(&self, owner: &TokenListRef) -> bool {
-        self.pool.contains_identity(owner.value.identity())
+        self.pool.contains_identity(owner.id().identity())
     }
 
     /// Clones the owner named either by a live identity or a compact stored
@@ -747,30 +908,28 @@ impl TokenStore {
             .get(id.raw() as usize)
             .cloned()
             .or_else(|| {
+                self.packed_locations
+                    .get(id.raw() as usize)
+                    .and_then(Option::as_ref)
+                    .map(|packed| TokenListRef {
+                        value: None,
+                        packed: Some(packed.rooted()),
+                        patch_root: None,
+                    })
+            })
+            .or_else(|| {
                 self.pool.resolve_slot(id.raw()).map(|value| {
                     let resolved = TokenListId::from_identity(value.identity());
                     TokenListRef {
-                        value,
+                        value: Some(value),
+                        packed: None,
                         patch_root: self
                             .patch_root_leases
                             .get(&resolved)
-                            .and_then(PatchRootWeak::upgrade),
+                            .map(PatchRootAnchor::lease),
                     }
                 })
             })
-    }
-
-    fn resolved_value(&self, id: TokenListId) -> Option<ReachableValueRef<TokenListValue>> {
-        if !id.is_stored() {
-            if let Some(root) = self.frozen_root(id) {
-                return Some(root.value.clone());
-            }
-            return self.pool.resolve(id.identity());
-        }
-        self.frozen_roots
-            .get(id.raw() as usize)
-            .map(|root| root.value.clone())
-            .or_else(|| self.pool.resolve_slot(id.raw()))
     }
 
     fn frozen_root(&self, id: TokenListId) -> Option<&TokenListRef> {
@@ -781,10 +940,9 @@ impl TokenStore {
 
     /// Returns the canonical semantic identity stored with a live token list.
     pub(crate) fn semantic_id(&self, id: TokenListId) -> TokenSemanticId {
-        self.resolved_value(id)
+        self.resolved_owner(id)
             .expect("token list id is not live")
-            .value()
-            .semantic_id
+            .semantic_id()
     }
 
     /// Returns whether `id` names a currently-live token-list slot.
@@ -796,15 +954,22 @@ impl TokenStore {
 
     #[must_use]
     pub(crate) fn resolve_stored(&self, id: TokenListId) -> Option<TokenListId> {
-        self.resolved_value(id)
-            .map(|value| TokenListId::from_identity(value.identity()))
+        self.resolved_owner(id).map(|owner| owner.id())
     }
 
     /// Takes a rollback watermark over weak slots and private metadata.
     #[must_use]
     pub(crate) fn watermark(&self) -> TokenStoreMark {
         TokenStoreMark {
-            weak_slots: u32_len(self.pool.slot_len(), "token-list slots exceed u32 entries"),
+            arena_slots: u32_len(self.pool.slot_len(), "token-list slots exceed u32 entries"),
+            arena_allocations: u32_len(
+                self.pool.allocation_mark(),
+                "token-list allocation events exceed u32 entries",
+            ),
+            packed_allocations: u32_len(
+                self.packed_allocations.len(),
+                "packed token allocations exceed u32 entries",
+            ),
             patch_allocations: u32_len(
                 self.patch_order.len(),
                 "token-list patch allocations exceed u32 entries",
@@ -814,6 +979,37 @@ impl TokenStore {
                 self.testing_detached_roots.len(),
                 "testing detached token roots exceed u32",
             ),
+        }
+    }
+
+    /// Retires packed token coordinates whose macro arena roots have already
+    /// been explicitly retired at this mutation boundary.
+    pub(crate) fn prepare_runtime_allocation(&mut self) {
+        let mut allocation_index = 0;
+        while allocation_index < self.packed_allocations.len() {
+            let allocation = self.packed_allocations[allocation_index];
+            let is_unrooted = allocation.iter().flatten().all(|id| {
+                self.packed_locations
+                    .get(id.raw() as usize)
+                    .and_then(Option::as_ref)
+                    .filter(|packed| packed.id() == *id)
+                    .is_none_or(|packed| {
+                        Arc::strong_count(&packed.pair.liveness[packed.index as usize]) == 1
+                    })
+            });
+            if !is_unrooted {
+                allocation_index += 1;
+                continue;
+            }
+            let allocation = self.packed_allocations.swap_remove(allocation_index);
+            for id in allocation.into_iter().flatten() {
+                let slot = id.raw() as usize;
+                let packed = self.packed_locations[slot]
+                    .take()
+                    .expect("unrooted packed token location is live");
+                assert_eq!(packed.id(), id);
+                self.pool.release_external(id.identity());
+            }
         }
     }
 
@@ -827,8 +1023,22 @@ impl TokenStore {
             assert!(self.patch_handles.remove(&id).is_some());
             assert!(self.patch_root_leases.remove(&id).is_some());
         }
+        while self.packed_allocations.len() > mark.packed_allocations as usize {
+            let allocation = self
+                .packed_allocations
+                .pop()
+                .expect("packed token allocation journal is nonempty");
+            for id in allocation.into_iter().rev().flatten() {
+                let slot = id.raw() as usize;
+                let packed = self.packed_locations[slot]
+                    .take()
+                    .expect("packed token location is live");
+                assert_eq!(packed.id(), id);
+                self.pool.release_external(id.identity());
+            }
+        }
         self.pool
-            .prioritize_reclamation_from(mark.weak_slots as usize);
+            .rollback_to_allocation_mark(mark.arena_allocations as usize);
     }
 
     pub(crate) fn slot_len(&self) -> u32 {
@@ -855,6 +1065,12 @@ impl TokenStore {
         self.patch_handles.clear();
         self.patch_root_leases.clear();
         self.patch_order.clear();
+        self.pool.prioritize_reclamation_from(0);
+    }
+
+    pub(crate) fn retire_unrooted_region_values(&mut self) {
+        self.prepare_runtime_allocation();
+        self.pool.prioritize_reclamation_from(0);
     }
 
     #[cfg(test)]
@@ -905,16 +1121,17 @@ impl TokenStore {
         };
         work.generation_checks += pool_work.generation_checks;
         work.slot_probes += pool_work.slot_probes;
-        work.weak_upgrades += pool_work.weak_upgrades;
+        work.owner_clones += pool_work.owner_clones;
         let root = value.map(|value| {
             work.patch_lease_probes += 1;
             let resolved = TokenListId::from_identity(value.identity());
             TokenListRef {
-                value,
+                value: Some(value),
+                packed: None,
                 patch_root: self
                     .patch_root_leases
                     .get(&resolved)
-                    .and_then(PatchRootWeak::upgrade),
+                    .map(PatchRootAnchor::lease),
             }
         });
         (root, work)
@@ -931,7 +1148,8 @@ impl TokenStore {
         });
         (
             value.map(|value| TokenListRef {
-                value,
+                value: Some(value),
+                packed: None,
                 patch_root: None,
             }),
             work,

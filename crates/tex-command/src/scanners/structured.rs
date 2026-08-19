@@ -79,8 +79,8 @@ pub struct ScannedMacroDefinition {
     /// executor never has to reopen raw input between the primitive and its
     /// parameter/replacement scan.
     pub target: Symbol,
-    pub parameter_text: TracedTokenList,
-    pub replacement_text: TracedTokenList,
+    pub parameter_text: RootedTracedTokenBuffer,
+    pub replacement_text: RootedTracedTokenBuffer,
     pub provenance: StructuredProvenance,
     pub definition_origin: tex_state::provenance::OriginRef,
 }
@@ -3688,8 +3688,11 @@ impl CommandProcessor<'_> {
                 self.scan_definition_target()?
             }
         };
-        let scanned = self.scan_toks(ScanToksMode::MacroDefinitionFor { expanded, target })?;
-        let provenance = provenance(&scanned);
+        let scanned =
+            self.scan_toks_buffers(ScanToksMode::MacroDefinitionFor { expanded, target })?;
+        let provenance = StructuredProvenance {
+            primary: scanned.primary,
+        };
         Ok(ScannedMacroDefinition {
             target,
             parameter_text: scanned.parameter_text,

@@ -2434,10 +2434,8 @@ impl CommandProcessor<'_> {
     ) -> InputLevelId {
         let owner = self.command.parameters.admitted_macro(admitted);
         let definition_origin = owner
-            .provenance(definition)
-            .map_or(OriginId::UNKNOWN, |provenance| {
-                provenance.definition_ref().id()
-            });
+            .definition_origin(definition)
+            .unwrap_or(OriginId::UNKNOWN);
         let parent = self.command.parameters.parent_invocation();
         let definition_operand = owner
             .observation_operand(definition)

@@ -42,12 +42,12 @@ fn exact_content_deduplicates_and_collision_candidates_do_not_alias() {
 }
 
 #[test]
-fn final_owner_release_makes_slot_collectible_and_generation_safe() {
+fn next_allocation_retires_unrooted_region_slot_generation_safely() {
     let mut store = GlueStore::new();
     let stale = store.intern_owned(spec(1), None);
     let stale_id = stale.id();
     drop(stale);
-    assert!(!store.contains(stale_id));
+    assert!(store.contains(stale_id));
 
     let replacement = store.intern_owned(spec(2), None);
     assert_eq!(replacement.id().raw(), stale_id.raw());
@@ -56,7 +56,7 @@ fn final_owner_release_makes_slot_collectible_and_generation_safe() {
 }
 
 #[test]
-fn loaded_base_is_explicit_and_future_append_remains_weak() {
+fn loaded_base_is_explicit_and_runtime_region_retires_at_mutation() {
     let mut store = GlueStore::from_frozen(vec![GlueSpec::ZERO, spec(40)], FrozenLookup::empty())
         .expect("valid frozen glue");
     let frozen = store.stored_slot(1);
@@ -65,6 +65,8 @@ fn loaded_base_is_explicit_and_future_append_remains_weak() {
     let dynamic = store.intern_owned(spec(41), None);
     let dynamic_id = dynamic.id();
     drop(dynamic);
+    assert!(store.contains(dynamic_id));
+    let _replacement = store.intern_owned(spec(42), None);
     assert!(!store.contains(dynamic_id));
     assert_eq!(store.stored_slot(1).spec(), spec(40));
 }
@@ -103,6 +105,7 @@ fn rejected_private_domain_cannot_keep_an_unrooted_slot_live() {
     drop(rejected);
     domain.commit_operation(operation).expect("commit");
     drop(domain);
+    store.clear_patch_allocations();
 
     assert!(!store.contains(rejected_id));
 }
@@ -119,9 +122,9 @@ fn ten_thousand_bounded_live_redefinitions_plateau() {
     let totals = store.testing_live_totals();
     assert!(
         shape.0 <= 3,
-        "weak slots should track bounded live roots: {shape:?}"
+        "region slots should track bounded live roots: {shape:?}"
     );
-    assert_eq!(totals.0, 2, "zero plus one dynamic value remain live");
+    assert_eq!(totals.0, 3, "zero plus current and one retired-at-next-mutation value remain");
     assert!(shape.2 <= 1_024);
     assert!(shape.4 <= 64);
 }

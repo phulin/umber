@@ -10,20 +10,23 @@ use std::{
     marker::PhantomData,
     mem,
     panic::RefUnwindSafe,
-    sync::{Arc, Weak},
+    sync::Arc,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 type ErasedPayload = dyn Any + Send + Sync;
 
 #[derive(Debug)]
 pub(crate) struct DomainOwnerToken {
-    _identity: u8,
+    identity: u64,
 }
+
+static NEXT_DOMAIN_ID: AtomicU64 = AtomicU64::new(1);
 
 struct AllocationSlot {
     payload: Arc<ErasedPayload>,
     logical_bytes: usize,
-    typed_root: Option<Weak<PatchTypedRootToken>>,
+    typed_root: Option<Arc<PatchTypedRootToken>>,
 }
 
 impl fmt::Debug for AllocationSlot {
@@ -63,7 +66,7 @@ pub(crate) struct PatchAllocationDomain {
 /// A single-use aggregate operation mark.
 #[derive(Debug)]
 pub(crate) struct PatchOperationMark {
-    owner: Weak<DomainOwnerToken>,
+    owner: u64,
     serial: u64,
 }
 
@@ -71,14 +74,14 @@ pub(crate) struct PatchOperationMark {
 #[cfg(any(test, feature = "testing"))]
 #[derive(Clone, Debug)]
 pub struct TestingPrivateRevisionDomainProbe {
-    owner: Weak<DomainOwnerToken>,
+    owner: Arc<DomainOwnerToken>,
 }
 
 #[cfg(any(test, feature = "testing"))]
 impl TestingPrivateRevisionDomainProbe {
     #[must_use]
     pub fn is_live(&self) -> bool {
-        self.owner.strong_count() != 0
+        Arc::strong_count(&self.owner) != 1
     }
 }
 
@@ -86,7 +89,7 @@ impl TestingPrivateRevisionDomainProbe {
 #[allow(dead_code)] // Typed store migrations consume this generic hook in later epic children.
 #[derive(Debug)]
 pub(crate) struct PatchHandle<T> {
-    owner: Weak<DomainOwnerToken>,
+    owner: u64,
     slot: usize,
     marker: PhantomData<fn() -> T>,
 }
@@ -96,17 +99,17 @@ pub(crate) struct PatchHandle<T> {
 pub(crate) struct PatchRootLease(Arc<PatchTypedRootToken>);
 
 #[derive(Clone, Debug)]
-pub(crate) struct PatchRootWeak(Weak<PatchTypedRootToken>);
+pub(crate) struct PatchRootAnchor(Arc<PatchTypedRootToken>);
 
 impl PatchRootLease {
-    pub(crate) fn downgrade(&self) -> PatchRootWeak {
-        PatchRootWeak(Arc::downgrade(&self.0))
+    pub(crate) fn anchor(&self) -> PatchRootAnchor {
+        PatchRootAnchor(Arc::clone(&self.0))
     }
 }
 
-impl PatchRootWeak {
-    pub(crate) fn upgrade(&self) -> Option<PatchRootLease> {
-        self.0.upgrade().map(PatchRootLease)
+impl PatchRootAnchor {
+    pub(crate) fn lease(&self) -> PatchRootLease {
+        PatchRootLease(Arc::clone(&self.0))
     }
 }
 
@@ -118,7 +121,7 @@ struct PatchTypedRootToken {
 impl<T> Clone for PatchHandle<T> {
     fn clone(&self) -> Self {
         Self {
-            owner: self.owner.clone(),
+            owner: self.owner,
             slot: self.slot,
             marker: PhantomData,
         }
@@ -128,7 +131,7 @@ impl<T> Clone for PatchHandle<T> {
 /// One type-erased root named explicitly at revision acceptance.
 #[derive(Clone, Debug)]
 pub(crate) struct PatchRoot {
-    owner: Arc<DomainOwnerToken>,
+    owner: u64,
     slot: usize,
     payload: Arc<ErasedPayload>,
     logical_bytes: usize,
@@ -137,7 +140,8 @@ pub(crate) struct PatchRoot {
 /// Independently owned immutable objects selected by accepted roots.
 #[derive(Debug)]
 pub(crate) struct AcceptedPatchObjects {
-    owner: Arc<DomainOwnerToken>,
+    owner: u64,
+    _owner_lifetime: Arc<DomainOwnerToken>,
     objects: Vec<(usize, AllocationSlot)>,
     #[allow(dead_code)] // Reported when migrated stores begin transferring roots.
     logical_bytes: usize,
@@ -168,8 +172,10 @@ pub(crate) enum PatchDomainError {
 
 impl PatchAllocationDomain {
     pub(crate) fn new() -> Self {
+        let identity = NEXT_DOMAIN_ID.fetch_add(1, Ordering::Relaxed);
+        assert_ne!(identity, 0, "private revision domain identity exhausted");
         Self {
-            owner: Arc::new(DomainOwnerToken { _identity: 0 }),
+            owner: Arc::new(DomainOwnerToken { identity }),
             slots: Vec::new(),
             logical_bytes: 0,
             next_operation_serial: 0,
@@ -200,7 +206,7 @@ impl PatchAllocationDomain {
                 .expect("testing allocation is inside the operation just opened");
         }
         Ok(PatchOperationMark {
-            owner: Arc::downgrade(&self.owner),
+            owner: self.owner.identity,
             serial,
         })
     }
@@ -266,7 +272,7 @@ impl PatchAllocationDomain {
         });
         self.logical_bytes = self.logical_bytes.saturating_add(logical_bytes);
         Ok(PatchHandle {
-            owner: Arc::downgrade(&self.owner),
+            owner: self.owner.identity,
             slot,
             marker: PhantomData,
         })
@@ -281,7 +287,7 @@ impl PatchAllocationDomain {
     {
         let _ = self.get(handle)?;
         let lease = PatchRootLease(Arc::new(PatchTypedRootToken { _identity: 0 }));
-        self.slots[handle.slot].typed_root = Some(Arc::downgrade(&lease.0));
+        self.slots[handle.slot].typed_root = Some(Arc::clone(&lease.0));
         Ok(lease)
     }
 
@@ -298,8 +304,7 @@ impl PatchAllocationDomain {
         if self.slots[handle.slot]
             .typed_root
             .as_ref()
-            .and_then(Weak::upgrade)
-            .is_none()
+            .is_none_or(|root| Arc::strong_count(root) <= 2)
         {
             return Ok(None);
         }
@@ -311,7 +316,7 @@ impl PatchAllocationDomain {
     where
         T: Any + Send + Sync + RefUnwindSafe,
     {
-        if !self.owner_matches(&handle.owner) {
+        if !self.owner_matches(handle.owner) {
             return Err(PatchDomainError::ForeignRoot);
         }
         let slot = self
@@ -331,7 +336,7 @@ impl PatchAllocationDomain {
         let _ = self.get(handle)?;
         let slot = &self.slots[handle.slot];
         Ok(PatchRoot {
-            owner: Arc::clone(&self.owner),
+            owner: self.owner.identity,
             slot: handle.slot,
             payload: Arc::clone(&slot.payload),
             logical_bytes: slot.logical_bytes,
@@ -346,7 +351,7 @@ impl PatchAllocationDomain {
             return Err(PatchDomainError::OperationAlreadyActive);
         }
         for root in &roots {
-            if !Arc::ptr_eq(&self.owner, &root.owner) {
+            if self.owner.identity != root.owner {
                 return Err(PatchDomainError::ForeignRoot);
             }
             let Some(slot) = self.slots.get(root.slot) else {
@@ -374,7 +379,8 @@ impl PatchAllocationDomain {
             ));
         }
         Ok(AcceptedPatchObjects {
-            owner: self.owner,
+            owner: self.owner.identity,
+            _owner_lifetime: self.owner,
             objects,
             logical_bytes,
         })
@@ -401,7 +407,7 @@ impl PatchAllocationDomain {
     #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_probe(&self) -> TestingPrivateRevisionDomainProbe {
         TestingPrivateRevisionDomainProbe {
-            owner: Arc::downgrade(&self.owner),
+            owner: Arc::clone(&self.owner),
         }
     }
 
@@ -416,7 +422,7 @@ impl PatchAllocationDomain {
     }
 
     fn validate_operation(&self, mark: &PatchOperationMark) -> Result<(), PatchDomainError> {
-        if !self.owner_matches(&mark.owner) {
+        if !self.owner_matches(mark.owner) {
             return Err(PatchDomainError::StaleOperation);
         }
         let operation = self
@@ -429,8 +435,8 @@ impl PatchAllocationDomain {
         Ok(())
     }
 
-    fn owner_matches(&self, owner: &Weak<DomainOwnerToken>) -> bool {
-        Weak::ptr_eq(owner, &Arc::downgrade(&self.owner))
+    fn owner_matches(&self, owner: u64) -> bool {
+        owner == self.owner.identity
     }
 }
 
@@ -440,10 +446,7 @@ impl AcceptedPatchObjects {
     where
         T: Any + Send + Sync + RefUnwindSafe,
     {
-        let Some(owner) = handle.owner.upgrade() else {
-            return Err(PatchDomainError::StaleRoot);
-        };
-        if !Arc::ptr_eq(&self.owner, &owner) {
+        if self.owner != handle.owner {
             return Err(PatchDomainError::ForeignRoot);
         }
         let index = self

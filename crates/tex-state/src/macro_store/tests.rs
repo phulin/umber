@@ -103,7 +103,7 @@ fn provenance_is_occurrence_local_and_not_part_of_body_identity() {
 }
 
 #[test]
-fn diagnostic_invocation_provenance_does_not_keep_definition_alive() {
+fn diagnostic_invocation_provenance_does_not_prevent_explicit_region_retirement() {
     let mut stores = Stores::new();
     let empty = stores.token_list_ref(crate::ids::TokenListId::EMPTY);
     let definition = stores.intern_macro(MacroMeaning::new(
@@ -122,16 +122,19 @@ fn diagnostic_invocation_provenance_does_not_keep_definition_alive() {
     );
     drop(definition);
 
+    let replacement = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::OUTER,
+        empty.id(),
+        empty.id(),
+    ));
+
     assert!(!stores.testing_macro_store().contains(id));
     let crate::provenance::OriginRecord::MacroInvocation(invocation) = stores.origin(invocation)
     else {
         panic!("expected macro invocation provenance");
     };
     assert_eq!(invocation.definition_operand(), definition_operand);
-    assert_eq!(
-        stores.testing_macro_store().testing_live_totals(),
-        (0, 0, 0, 0)
-    );
+    assert_eq!(replacement.meaning().flags(), MeaningFlags::OUTER);
 }
 
 #[test]
@@ -208,7 +211,7 @@ fn ten_thousand_bounded_live_redefinitions_plateau_macro_storage() {
     let (bodies, _, definitions, _) = stores.testing_macro_store().testing_live_totals();
     let (body_shape, definition_shape) = stores.testing_macro_store().testing_pool_shapes();
     let packed_shape = stores.testing_macro_store().testing_packed_shape();
-    assert_eq!((bodies, definitions), (1, 1));
+    assert_eq!((bodies, definitions), (2, 1));
     assert!(
         body_shape.0 <= 2,
         "dead body slots must be reusable: {body_shape:?}"

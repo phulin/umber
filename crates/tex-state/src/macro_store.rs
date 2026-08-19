@@ -7,11 +7,12 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
+use smallvec::SmallVec;
 
 use crate::identity::HandleIdentity;
 use crate::ids::{MacroDefinitionId, OriginListId, TokenListId};
 use crate::meaning::MeaningFlags;
-use crate::patch_domain::{PatchAllocationDomain, PatchHandle, PatchRoot, PatchRootWeak};
+use crate::patch_domain::{PatchAllocationDomain, PatchHandle, PatchRoot, PatchRootAnchor};
 #[cfg(any(test, feature = "testing"))]
 use crate::reachable_value::LookupWork;
 use crate::reachable_value::ReachableValuePool;
@@ -37,6 +38,14 @@ pub struct PackedMacroPattern {
 }
 
 impl PackedMacroPattern {
+    fn unpacked(self) -> MacroParameterPattern {
+        MacroParameterPattern {
+            offsets: self.offsets,
+            widths: self.widths,
+            count: self.count,
+        }
+    }
+
     #[must_use]
     pub const fn parameter_count(self) -> usize {
         self.count as usize
@@ -88,9 +97,21 @@ struct PackedMacroRecord {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct PackedMacroDefinitionRoots {
     definition: MacroDefinitionId,
+    liveness: Arc<()>,
     parameter_text: TokenListRef,
     replacement_text: TokenListRef,
-    provenance: Option<MacroDefinitionProvenance>,
+    provenance: PackedMacroProvenance,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum PackedMacroProvenance {
+    Unknown,
+    Exact(MacroDefinitionProvenance),
+    Archived {
+        definition_origin: crate::provenance::OriginRef,
+        parameter_roots: SmallVec<[crate::provenance::OriginRef; 2]>,
+        replacement_roots: SmallVec<[crate::provenance::OriginRef; 2]>,
+    },
 }
 
 /// One immutable admitted owner for up to 64 packed macro records.
@@ -262,18 +283,81 @@ impl PackedMacroChunkOwner {
         index: usize,
     ) -> Option<RootedTracedTokenWord> {
         let word = self.replacement_traced_word(definition, index)?;
-        let root = self
-            .definition_roots(definition)
-            .and_then(|roots| roots.provenance.as_ref())
-            .and_then(|provenance| provenance.replacement_ref().root(index))
-            .unwrap_or_else(crate::provenance::OriginRef::unknown);
+        let root = self.root_for_word(definition, word, false, index);
         Some(RootedTracedTokenWord::from_word(word, root))
+    }
+
+    fn root_for_word(
+        &self,
+        definition: MacroDefinitionId,
+        word: TracedTokenWord,
+        parameter: bool,
+        index: usize,
+    ) -> crate::provenance::OriginRef {
+        let Some(roots) = self.definition_roots(definition) else {
+            return crate::provenance::OriginRef::direct(word.origin());
+        };
+        match &roots.provenance {
+            PackedMacroProvenance::Unknown => crate::provenance::OriginRef::direct(word.origin()),
+            PackedMacroProvenance::Exact(provenance) => {
+                let list = if parameter {
+                    provenance.parameter_ref()
+                } else {
+                    provenance.replacement_ref()
+                };
+                list.root(index)
+                    .unwrap_or_else(|| crate::provenance::OriginRef::direct(word.origin()))
+            }
+            PackedMacroProvenance::Archived {
+                parameter_roots,
+                replacement_roots,
+                ..
+            } => {
+                let candidates = if parameter {
+                    parameter_roots
+                } else {
+                    replacement_roots
+                };
+                candidates
+                    .binary_search_by_key(&word.origin(), crate::provenance::OriginRef::id)
+                    .map_or_else(
+                        |_| crate::provenance::OriginRef::direct(word.origin()),
+                        |index| candidates[index].clone(),
+                    )
+            }
+        }
     }
 
     #[must_use]
     pub fn provenance(&self, definition: MacroDefinitionId) -> Option<MacroDefinitionProvenance> {
         self.record(definition)?;
-        self.definition_roots(definition)?.provenance.clone()
+        match &self.definition_roots(definition)?.provenance {
+            PackedMacroProvenance::Exact(provenance) => Some(provenance.clone()),
+            PackedMacroProvenance::Unknown | PackedMacroProvenance::Archived { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn definition_origin(&self, definition: MacroDefinitionId) -> Option<OriginId> {
+        self.record(definition)?;
+        Some(match &self.definition_roots(definition)?.provenance {
+            PackedMacroProvenance::Unknown => OriginId::UNKNOWN,
+            PackedMacroProvenance::Exact(provenance) => provenance.definition_origin(),
+            PackedMacroProvenance::Archived {
+                definition_origin, ..
+            } => definition_origin.id(),
+        })
+    }
+
+    #[must_use]
+    pub fn parameter_traced_word(
+        &self,
+        definition: MacroDefinitionId,
+        index: usize,
+    ) -> Option<TracedTokenWord> {
+        let record = self.record(definition)?;
+        (index < record.parameter_len as usize)
+            .then(|| self.chunk.words[record.parameter_start as usize + index])
     }
 
     #[must_use]
@@ -292,6 +376,13 @@ impl PackedMacroChunkOwner {
             .as_ref()
             .filter(|roots| roots.definition == definition)
     }
+
+    pub(super) fn definition_liveness(
+        &self,
+        definition: MacroDefinitionId,
+    ) -> Option<Arc<()>> {
+        Some(Arc::clone(&self.definition_roots(definition)?.liveness))
+    }
 }
 
 /// Allocation-free index of parameter markers in frozen macro parameter text.
@@ -304,28 +395,37 @@ pub struct MacroParameterPattern {
 
 impl MacroParameterPattern {
     pub fn from_tokens(tokens: &[Token]) -> Self {
+        Self::from_token_iter(tokens.iter().copied())
+    }
+
+    pub(crate) fn from_traced_words(words: &[TracedTokenWord]) -> Self {
+        Self::from_token_iter(words.iter().map(|word| word.semantic_token()))
+    }
+
+    fn from_token_iter(tokens: impl Iterator<Item = Token>) -> Self {
         let mut offsets = [0; MACRO_PARAMETER_SLOTS];
         let mut widths = [0; MACRO_PARAMETER_SLOTS];
         let mut count = 0_usize;
-        for (index, token) in tokens.iter().enumerate() {
+        let mut previous = None;
+        for (index, token) in tokens.enumerate() {
             if matches!(token, Token::Param(_)) {
                 assert!(
                     count < MACRO_PARAMETER_SLOTS,
                     "macro has more than nine parameters"
                 );
-                let has_spelled_marker = index != 0
-                    && matches!(
-                        tokens[index - 1],
-                        Token::Char {
-                            cat: crate::token::Catcode::Parameter,
-                            ..
-                        }
-                    );
+                let has_spelled_marker = matches!(
+                    previous,
+                    Some(Token::Char {
+                        cat: crate::token::Catcode::Parameter,
+                        ..
+                    })
+                );
                 offsets[count] = u32::try_from(index - usize::from(has_spelled_marker))
                     .expect("token list length exceeds u32");
                 widths[count] = if has_spelled_marker { 2 } else { 1 };
                 count += 1;
             }
+            previous = Some(token);
         }
         Self {
             offsets,
@@ -483,7 +583,10 @@ impl MacroDefinitionProvenance {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MacroStoreMark {
     bodies: u32,
+    body_allocations: u32,
     pub(crate) definitions: u32,
+    definition_allocations: u32,
+    external_definitions: u32,
     packed_serial: u64,
     packed_changes: u32,
     patch_events: u32,
@@ -511,7 +614,7 @@ enum PatchEvent {
 #[cfg(any(test, feature = "testing"))]
 pub(crate) type PoolShape = (usize, usize, usize, usize, usize, usize);
 
-/// Weak macro-body and definition-occurrence storage.
+/// Region-owned macro-body and definition-occurrence storage.
 #[derive(Debug)]
 pub struct MacroStore {
     bodies: ReachableValuePool<MacroBodySemanticId, MacroBodyValue>,
@@ -519,9 +622,9 @@ pub struct MacroStore {
     frozen_roots: Arc<[MacroDefinitionRef]>,
     next_observation_operand: i64,
     body_patch_handles: HashMap<HandleIdentity, PatchHandle<MacroBodyValue>>,
-    body_patch_leases: HashMap<HandleIdentity, PatchRootWeak>,
+    body_patch_leases: HashMap<HandleIdentity, PatchRootAnchor>,
     definition_patch_handles: HashMap<MacroDefinitionId, PatchHandle<MacroDefinitionValue>>,
-    definition_patch_leases: HashMap<MacroDefinitionId, PatchRootWeak>,
+    definition_patch_leases: HashMap<MacroDefinitionId, PatchRootAnchor>,
     patch_order: Vec<PatchEvent>,
     /// Immutable physical arena segments. An `Arc` with another owner is
     /// sealed: definition installation allocates or reuses a private segment
@@ -535,6 +638,7 @@ pub struct MacroStore {
     packed_chunk_tails: Vec<Option<u32>>,
     packed_free_chunks: Vec<u32>,
     packed_changes: Vec<PackedMacroLocationChange>,
+    external_definitions: Vec<MacroDefinitionId>,
     next_packed_serial: u64,
     #[cfg(any(test, feature = "testing"))]
     force_candidate_collision: bool,
@@ -562,6 +666,7 @@ impl Clone for MacroStore {
             packed_chunk_tails: self.packed_chunk_tails.clone(),
             packed_free_chunks: self.packed_free_chunks.clone(),
             packed_changes: self.packed_changes.clone(),
+            external_definitions: Vec::new(),
             next_packed_serial: self.next_packed_serial,
             #[cfg(any(test, feature = "testing"))]
             force_candidate_collision: self.force_candidate_collision,
@@ -588,6 +693,7 @@ impl MacroStore {
             packed_chunk_tails: Vec::new(),
             packed_free_chunks: Vec::new(),
             packed_changes: Vec::new(),
+            external_definitions: Vec::new(),
             next_packed_serial: 0,
             #[cfg(any(test, feature = "testing"))]
             force_candidate_collision: false,
@@ -660,7 +766,8 @@ impl MacroStore {
         let frozen_roots: Arc<[MacroDefinitionRef]> = roots
             .into_iter()
             .map(|value| MacroDefinitionRef {
-                value,
+                value: Some(value),
+                packed: None,
                 patch_root: None,
             })
             .collect::<Vec<_>>()
@@ -681,6 +788,7 @@ impl MacroStore {
             packed_chunk_tails: Vec::new(),
             packed_free_chunks: Vec::new(),
             packed_changes: Vec::new(),
+            external_definitions: Vec::new(),
             next_packed_serial: 0,
             #[cfg(any(test, feature = "testing"))]
             force_candidate_collision: false,
@@ -733,7 +841,7 @@ impl MacroStore {
             patch_root: self
                 .body_patch_leases
                 .get(&body_identity)
-                .and_then(PatchRootWeak::upgrade),
+                .map(PatchRootAnchor::lease),
         };
         let mut domain = domain;
         if is_new_body {
@@ -774,6 +882,117 @@ impl MacroStore {
         self.allocate_definition(body, provenance, observation_width, domain)
     }
 
+    /// Publishes an ordinary macro occurrence directly into the packed arena.
+    /// Its generation-bearing coordinate is reserved in the shared identity
+    /// table, but no weak body or definition object is created.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn allocate_packed_with_provenance(
+        &mut self,
+        flags: MeaningFlags,
+        parameter_text: TokenListRef,
+        replacement_text: TokenListRef,
+        parameter_pattern: MacroParameterPattern,
+        definition_origin: crate::provenance::OriginRef,
+        parameter_roots: &[crate::provenance::OriginRef],
+        replacement_roots: &[crate::provenance::OriginRef],
+        parameter_words: &[TracedTokenWord],
+        replacement_words: &[TracedTokenWord],
+        observation_width: u32,
+    ) -> MacroDefinitionRef {
+        self.retire_unrooted_external_definitions();
+        let definition = MacroDefinitionId::from_identity(self.definitions.reserve_external());
+        let observation_operand = self.next_observation_operand;
+        self.next_observation_operand = self
+            .next_observation_operand
+            .checked_sub(i64::from(observation_width))
+            .expect("macro observation operand underflow");
+        self.install_packed_record_parts(
+            definition,
+            flags,
+            parameter_text,
+            replacement_text,
+            parameter_pattern,
+            PackedMacroProvenance::Archived {
+                definition_origin,
+                parameter_roots: parameter_roots.iter().cloned().collect(),
+                replacement_roots: replacement_roots.iter().cloned().collect(),
+            },
+            observation_operand,
+            Some((parameter_words, replacement_words)),
+        );
+        self.external_definitions.push(definition);
+        MacroDefinitionRef::packed(
+            definition,
+            self.packed_owner(definition)
+                .expect("new packed definition has no owner"),
+        )
+    }
+
+    /// Retires packed coordinates that no canonical typed root still owns.
+    /// This runs only at explicit state-mutation boundaries; dropping an
+    /// arbitrary borrowed handle does not mutate arena membership.
+    pub(crate) fn prepare_runtime_allocation(&mut self) {
+        self.retire_unrooted_external_definitions();
+    }
+
+    fn retire_unrooted_external_definitions(&mut self) {
+        let mut index = 0;
+        let mut retired_any = false;
+        while index < self.external_definitions.len() {
+            let definition = self.external_definitions[index];
+            let unrooted = {
+                let Some(location) = self
+                    .packed_locations
+                    .get(definition.raw() as usize)
+                    .copied()
+                    .flatten()
+                    .filter(|location| location.definition == definition)
+                else {
+                    self.external_definitions.swap_remove(index);
+                    self.definitions.release_external(definition.identity());
+                    retired_any = true;
+                    continue;
+                };
+                let chunk = &self.packed_chunks[location.chunk as usize];
+                let Some(record_index) = chunk.record_index(definition) else {
+                    self.external_definitions.swap_remove(index);
+                    self.set_packed_location(definition.raw() as usize, None);
+                    self.definitions.release_external(definition.identity());
+                    retired_any = true;
+                    continue;
+                };
+                chunk.roots[record_index]
+                    .as_ref()
+                    .is_none_or(|roots| Arc::strong_count(&roots.liveness) == 1)
+            };
+            if !unrooted {
+                index += 1;
+                continue;
+            }
+            self.external_definitions.swap_remove(index);
+            let slot = definition.raw() as usize;
+            self.set_packed_location(slot, None);
+            self.definitions.release_external(definition.identity());
+            retired_any = true;
+        }
+        if retired_any {
+            self.recycle_unshared_free_chunks();
+        }
+    }
+
+    fn recycle_unshared_free_chunks(&mut self) {
+        for chunk_index in self.packed_free_chunks.iter().copied() {
+            let index = chunk_index as usize;
+            if Arc::strong_count(&self.packed_chunks[index]) != 1 {
+                continue;
+            }
+            let logical_index = self.packed_chunks[index].logical_index;
+            *Arc::get_mut(&mut self.packed_chunks[index])
+                .expect("unshared free packed macro chunk is private") =
+                PackedMacroChunk::new(logical_index);
+        }
+    }
+
     fn allocate_definition(
         &mut self,
         body: MacroBodyRef,
@@ -796,7 +1015,8 @@ impl MacroStore {
             .expect("macro observation operand underflow");
         let value = self.definitions.insert_unindexed(value);
         let mut definition = MacroDefinitionRef {
-            value,
+            value: Some(value),
+            packed: None,
             patch_root: None,
         };
         self.attach_definition_patch_allocation(&mut definition, domain);
@@ -806,14 +1026,39 @@ impl MacroStore {
 
     fn install_packed_record(&mut self, definition_root: &MacroDefinitionRef) {
         let definition = definition_root.id();
-        let definition_value = definition_root.value.value();
+        let definition_value = definition_root.exact_value().value();
         let body = definition_value.body.value.value();
-        let meaning = body.meaning();
-        let pattern = &body.parameter_pattern;
-        let parameter = body.parameter_text.tokens();
-        let replacement = body.replacement_text.tokens();
-        let provenance = definition_value.provenance.get().cloned();
-        let observation_operand = definition_value.observation_operand;
+        self.install_packed_record_parts(
+            definition,
+            body.flags,
+            body.parameter_text.clone(),
+            body.replacement_text.clone(),
+            body.parameter_pattern.clone(),
+            definition_value
+                .provenance
+                .get()
+                .cloned()
+                .map_or(PackedMacroProvenance::Unknown, PackedMacroProvenance::Exact),
+            definition_value.observation_operand,
+            None,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn install_packed_record_parts(
+        &mut self,
+        definition: MacroDefinitionId,
+        flags: MeaningFlags,
+        parameter_text: TokenListRef,
+        replacement_text: TokenListRef,
+        pattern: MacroParameterPattern,
+        provenance: PackedMacroProvenance,
+        observation_operand: i64,
+        traced_words: Option<(&[TracedTokenWord], &[TracedTokenWord])>,
+    ) {
+        let meaning = MacroMeaning::new(flags, parameter_text.id(), replacement_text.id());
+        let parameter = parameter_text.tokens();
+        let replacement = replacement_text.tokens();
         let logical_index = PackedMacroChunkOwner::chunk_index(definition);
         let slot = definition.raw() as usize;
         if self.packed_locations.len() <= slot {
@@ -841,44 +1086,48 @@ impl MacroStore {
             record_index.unwrap_or(chunk.records.len()),
             existing.as_ref().map(|record| record.parameter_root),
             existing.as_ref().map(|record| record.replacement_root),
-            body.parameter_text.id(),
+            parameter_text.id(),
         );
         let replacement_root = retain_or_replace_token_id(
             chunk,
             record_index.unwrap_or(chunk.records.len()),
             existing.as_ref().map(|record| record.replacement_root),
             Some(parameter_root),
-            body.replacement_text.id(),
+            replacement_text.id(),
         );
-        let parameter_origins = provenance
-            .as_ref()
-            .map(MacroDefinitionProvenance::parameter_ref);
-        let parameter_words = || {
-            parameter.iter().copied().enumerate().map(|(index, token)| {
-                TracedTokenWord::pack(
-                    token,
-                    parameter_origins
-                        .and_then(|origins| origins.origins().get(index).copied())
-                        .unwrap_or(crate::token::OriginId::UNKNOWN),
-                )
-            })
+        let parameter_origins = match &provenance {
+            PackedMacroProvenance::Exact(provenance) => Some(provenance.parameter_ref()),
+            PackedMacroProvenance::Unknown | PackedMacroProvenance::Archived { .. } => None,
         };
-        let replacement_origins = provenance
-            .as_ref()
-            .map(MacroDefinitionProvenance::replacement_ref);
-        let replacement_words = || {
-            replacement
-                .iter()
-                .copied()
-                .enumerate()
-                .map(|(index, token)| {
+        let parameter_word = |index: usize| {
+            traced_words.map_or_else(
+                || {
                     TracedTokenWord::pack(
-                        token,
+                        parameter[index],
+                        parameter_origins
+                            .and_then(|origins| origins.origins().get(index).copied())
+                            .unwrap_or(crate::token::OriginId::UNKNOWN),
+                    )
+                },
+                |(words, _)| words[index],
+            )
+        };
+        let replacement_origins = match &provenance {
+            PackedMacroProvenance::Exact(provenance) => Some(provenance.replacement_ref()),
+            PackedMacroProvenance::Unknown | PackedMacroProvenance::Archived { .. } => None,
+        };
+        let replacement_word = |index: usize| {
+            traced_words.map_or_else(
+                || {
+                    TracedTokenWord::pack(
+                        replacement[index],
                         replacement_origins
                             .and_then(|origins| origins.origins().get(index).copied())
                             .unwrap_or(crate::token::OriginId::UNKNOWN),
                     )
-                })
+                },
+                |(_, words)| words[index],
+            )
         };
         let required_len = parameter.len().saturating_add(replacement.len());
         let (parameter_start, allocation_len) = if existing
@@ -886,27 +1135,32 @@ impl MacroStore {
             .is_some_and(|record| required_len <= record.allocation_len as usize)
         {
             let existing = existing.as_ref().expect("checked packed record");
-            for (slot, word) in chunk.words[existing.parameter_start as usize
+            for (index, slot) in chunk.words[existing.parameter_start as usize
                 ..existing.parameter_start as usize + parameter.len()]
                 .iter_mut()
-                .zip(parameter_words())
+                .enumerate()
             {
-                *slot = word;
+                *slot = parameter_word(index);
             }
             let replacement_start = existing.parameter_start as usize + parameter.len();
-            for (slot, word) in chunk.words
+            for (index, slot) in chunk.words
                 [replacement_start..replacement_start + replacement.len()]
                 .iter_mut()
-                .zip(replacement_words())
+                .enumerate()
             {
-                *slot = word;
+                *slot = replacement_word(index);
             }
             (existing.parameter_start, existing.allocation_len)
         } else {
             let parameter_start =
                 u32::try_from(chunk.words.len()).expect("macro chunk exceeds u32");
-            chunk.words.extend(parameter_words());
-            chunk.words.extend(replacement_words());
+            chunk.words.reserve(required_len);
+            chunk
+                .words
+                .extend((0..parameter.len()).map(parameter_word));
+            chunk
+                .words
+                .extend((0..replacement.len()).map(replacement_word));
             (
                 parameter_start,
                 u32::try_from(required_len).expect("macro text exceeds u32"),
@@ -937,8 +1191,9 @@ impl MacroStore {
         chunk.records[record_index] = record;
         chunk.roots[record_index] = Some(PackedMacroDefinitionRoots {
             definition,
-            parameter_text: body.parameter_text.clone(),
-            replacement_text: body.replacement_text.clone(),
+            liveness: Arc::new(()),
+            parameter_text,
+            replacement_text,
             provenance,
         });
 
@@ -1100,10 +1355,11 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn get(&self, id: MacroDefinitionId) -> MacroMeaning {
-        let value = self
-            .resolved_value(id)
-            .expect("macro definition id is not live");
-        if let Some(record) = self.packed_record(id) {
+        if (id.is_stored()
+            || self.frozen_root(id).is_some()
+            || self.definitions.contains_identity(id.identity()))
+            && let Some(record) = self.packed_record(id)
+        {
             let location = self.packed_locations[id.raw() as usize]
                 .expect("packed macro record has a location");
             let chunk = &self.packed_chunks[location.chunk as usize];
@@ -1113,20 +1369,32 @@ impl MacroStore {
                 chunk.token_ids[record.replacement_root as usize],
             );
         }
-        value.value().body.value.value().meaning()
+        self.resolved_value(id)
+            .expect("macro definition id is not live")
+            .value()
+            .body
+            .value
+            .value()
+            .meaning()
     }
 
     #[must_use]
     pub(crate) fn owner(&self, id: MacroDefinitionId) -> Option<MacroDefinitionRef> {
+        if self.definitions.contains_external_identity(id.identity())
+            && let Some(owner) = self.packed_owner(id)
+        {
+            return Some(MacroDefinitionRef::packed(id, owner));
+        }
         self.frozen_root(id).cloned().or_else(|| {
             self.definitions
                 .resolve(id.identity())
                 .map(|value| MacroDefinitionRef {
-                    value,
+                    value: Some(value),
+                    packed: None,
                     patch_root: self
                         .definition_patch_leases
                         .get(&id)
-                        .and_then(PatchRootWeak::upgrade),
+                        .map(PatchRootAnchor::lease),
                 })
         })
     }
@@ -1141,14 +1409,30 @@ impl MacroStore {
             .get(id.raw() as usize)
             .cloned()
             .or_else(|| {
+                let location = self
+                    .packed_locations
+                    .get(id.raw() as usize)
+                    .copied()
+                    .flatten()?;
+                if !self
+                    .definitions
+                    .contains_external_identity(location.definition.identity())
+                {
+                    return None;
+                }
+                self.packed_owner(location.definition)
+                    .map(|owner| MacroDefinitionRef::packed(location.definition, owner))
+            })
+            .or_else(|| {
                 self.definitions.resolve_slot(id.raw()).map(|value| {
                     let resolved = MacroDefinitionId::from_identity(value.identity());
                     MacroDefinitionRef {
-                        value,
+                        value: Some(value),
+                        packed: None,
                         patch_root: self
                             .definition_patch_leases
                             .get(&resolved)
-                            .and_then(PatchRootWeak::upgrade),
+                            .map(PatchRootAnchor::lease),
                     }
                 })
             })
@@ -1160,13 +1444,13 @@ impl MacroStore {
     ) -> Option<crate::reachable_value::ReachableValueRef<MacroDefinitionValue>> {
         if !id.is_stored() {
             if let Some(root) = self.frozen_root(id) {
-                return Some(root.value.clone());
+                return root.value.clone();
             }
             return self.definitions.resolve(id.identity());
         }
         self.frozen_roots
             .get(id.raw() as usize)
-            .map(|root| root.value.clone())
+            .and_then(|root| root.value.clone())
             .or_else(|| self.definitions.resolve_slot(id.raw()))
     }
 
@@ -1178,28 +1462,39 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn stored_slot(&self, raw: u32) -> Option<MacroDefinitionRef> {
-        self.frozen_roots.get(raw as usize).cloned().or_else(|| {
+        self.frozen_roots
+            .get(raw as usize)
+            .cloned()
+            .or_else(|| {
+                let location = self
+                    .packed_locations
+                    .get(raw as usize)
+                    .copied()
+                    .flatten()?;
+                if !self
+                    .definitions
+                    .contains_external_identity(location.definition.identity())
+                {
+                    return None;
+                }
+                self.packed_owner(location.definition)
+                    .map(|owner| MacroDefinitionRef::packed(location.definition, owner))
+            })
+            .or_else(|| {
             self.definitions
                 .resolve_slot(raw)
                 .map(|value| MacroDefinitionRef {
-                    value,
+                    value: Some(value),
+                    packed: None,
                     patch_root: None,
                 })
-        })
+            })
     }
 
     #[must_use]
     pub(crate) fn parameter_pattern(&self, id: MacroDefinitionId) -> MacroParameterPattern {
         if let Some(record) = self.packed_record(id) {
-            let location = self.packed_locations[id.raw() as usize]
-                .expect("packed macro record has a location");
-            let chunk = &self.packed_chunks[location.chunk as usize];
-            let start = record.parameter_start as usize;
-            let tokens = chunk.words[start..start + record.parameter_len as usize]
-                .iter()
-                .map(|word| word.semantic_token())
-                .collect::<Vec<_>>();
-            return MacroParameterPattern::from_tokens(&tokens);
+            return record.pattern.unpacked();
         }
         self.resolved_value(id)
             .expect("macro definition id is not live")
@@ -1224,7 +1519,10 @@ impl MacroStore {
                 .get(self.packed_chunks[location.chunk as usize].record_index(id)?)
                 .and_then(Option::as_ref)
         {
-            return root.provenance.clone();
+            return match &root.provenance {
+                PackedMacroProvenance::Exact(provenance) => Some(provenance.clone()),
+                PackedMacroProvenance::Unknown | PackedMacroProvenance::Archived { .. } => None,
+            };
         }
         self.resolved_value(id)?.value().provenance.get().cloned()
     }
@@ -1235,7 +1533,12 @@ impl MacroStore {
         provenance: MacroDefinitionProvenance,
     ) {
         let root = self.owner(id).expect("macro definition id is not live");
-        if let Err(existing) = root.value.value().provenance.set(provenance.clone()) {
+        if let Err(existing) = root
+            .exact_value()
+            .value()
+            .provenance
+            .set(provenance.clone())
+        {
             assert_eq!(
                 existing, provenance,
                 "macro provenance changed after publication"
@@ -1268,16 +1571,21 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn resolve_stored(&self, id: MacroDefinitionId) -> Option<MacroDefinitionId> {
-        self.resolved_value(id)
-            .map(|value| MacroDefinitionId::from_identity(value.identity()))
+        self.resolved_owner(id).map(|owner| owner.id())
     }
 
     #[must_use]
     pub(crate) fn watermark(&self) -> MacroStoreMark {
         MacroStoreMark {
             bodies: u32::try_from(self.bodies.slot_len()).expect("macro body slots exceed u32"),
+            body_allocations: u32::try_from(self.bodies.allocation_mark())
+                .expect("macro body allocation events exceed u32"),
             definitions: u32::try_from(self.definitions.slot_len())
                 .expect("macro definition slots exceed u32 entries"),
+            definition_allocations: u32::try_from(self.definitions.allocation_mark())
+                .expect("macro definition allocation events exceed u32"),
+            external_definitions: u32::try_from(self.external_definitions.len())
+                .expect("external macro definitions exceed u32 entries"),
             packed_serial: self.next_packed_serial,
             packed_changes: u32::try_from(self.packed_changes.len())
                 .expect("packed macro changes exceed u32 entries"),
@@ -1301,6 +1609,12 @@ impl MacroStore {
             });
             self.set_packed_location(change.slot as usize, previous);
         }
+        while self.external_definitions.len() > mark.external_definitions as usize {
+            let definition = self.external_definitions
+                .pop()
+                .expect("external macro definition journal is nonempty");
+            self.definitions.release_external(definition.identity());
+        }
         self.next_packed_serial = mark.packed_serial;
         while self.patch_order.len() > mark.patch_events as usize {
             match self
@@ -1318,10 +1632,10 @@ impl MacroStore {
                 }
             }
         }
-        self.bodies
-            .prioritize_reclamation_from(mark.bodies as usize);
         self.definitions
-            .prioritize_reclamation_from(mark.definitions as usize);
+            .rollback_to_allocation_mark(mark.definition_allocations as usize);
+        self.bodies
+            .rollback_to_allocation_mark(mark.body_allocations as usize);
         self.next_observation_operand = mark.next_observation_operand;
     }
 
@@ -1352,6 +1666,14 @@ impl MacroStore {
         self.definition_patch_handles.clear();
         self.definition_patch_leases.clear();
         self.patch_order.clear();
+        self.definitions.prioritize_reclamation_from(0);
+        self.bodies.prioritize_reclamation_from(0);
+    }
+
+    pub(crate) fn retire_unrooted_region_values(&mut self) {
+        self.retire_unrooted_external_definitions();
+        self.definitions.prioritize_reclamation_from(0);
+        self.bodies.prioritize_reclamation_from(0);
     }
 
     fn attach_body_patch_allocation(
@@ -1370,7 +1692,7 @@ impl MacroStore {
         assert!(self.body_patch_handles.insert(id, handle).is_none());
         assert!(
             self.body_patch_leases
-                .insert(id, lease.downgrade())
+                .insert(id, lease.anchor())
                 .is_none()
         );
         root.patch_root = Some(lease);
@@ -1385,7 +1707,7 @@ impl MacroStore {
         let Some(domain) = domain else { return };
         let id = root.id();
         let handle = domain
-            .allocate_shared(root.shared(), root.value.value().logical_bytes())
+            .allocate_shared(root.shared(), root.exact_value().value().logical_bytes())
             .expect("private macro-definition allocation belongs to active operation");
         let lease = domain
             .install_root_lease(&handle)
@@ -1393,7 +1715,7 @@ impl MacroStore {
         assert!(self.definition_patch_handles.insert(id, handle).is_none());
         assert!(
             self.definition_patch_leases
-                .insert(id, lease.downgrade())
+                .insert(id, lease.anchor())
                 .is_none()
         );
         root.patch_root = Some(lease);
@@ -1406,7 +1728,7 @@ impl MacroStore {
         id: MacroDefinitionId,
     ) -> (TokenListRef, TokenListRef) {
         let owner = self.owner(id).expect("macro definition id is not live");
-        let body = owner.value.value().body.value.value();
+        let body = owner.exact_value().value().body.value.value();
         (body.parameter_text.clone(), body.replacement_text.clone())
     }
 
@@ -1476,7 +1798,7 @@ impl MacroStore {
         };
         work.generation_checks += pool_work.generation_checks;
         work.slot_probes += pool_work.slot_probes;
-        work.weak_upgrades += pool_work.weak_upgrades;
+        work.owner_clones += pool_work.owner_clones;
         let meaning = value.map(|value| value.value().body.value.value().meaning());
         (meaning, work)
     }

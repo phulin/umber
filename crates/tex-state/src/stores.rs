@@ -1792,6 +1792,51 @@ impl Stores {
         self.install_macro_meaning(symbol, flags, definition, global)
     }
 
+    /// Installs one scanner-completed macro directly into the dense token and
+    /// macro arenas. The scanner buffers already own and validate their traced
+    /// words, so ordinary publication does not need weak objects or exact
+    /// candidate indexes.
+    pub fn set_macro_meaning_from_buffers(
+        &mut self,
+        symbol: impl SymbolReference,
+        flags: MeaningFlags,
+        parameter_text: &crate::token::RootedTracedTokenBuffer,
+        replacement_text: &crate::token::RootedTracedTokenBuffer,
+        definition_origin: crate::provenance::OriginRef,
+        global: bool,
+    ) -> CellMutationReceipt {
+        self.assert_live_origin(definition_origin.id());
+        self.macros.prepare_runtime_allocation();
+        self.tokens.prepare_runtime_allocation();
+        let parameter_semantic_id = self.traced_token_list_semantic_id(parameter_text.words());
+        let replacement_semantic_id =
+            self.traced_token_list_semantic_id(replacement_text.words());
+        let (parameter_root, replacement_root) = self.tokens.allocate_traced_pair(
+            parameter_text.words(),
+            replacement_text.words(),
+            [parameter_semantic_id, replacement_semantic_id],
+        );
+        let parameter_pattern =
+            MacroParameterPattern::from_traced_words(parameter_text.words());
+        let observation_width = u32::try_from(
+            1_usize + parameter_text.len() + replacement_text.len(),
+        )
+        .expect("macro token list length exceeds u32");
+        let definition = self.macros.allocate_packed_with_provenance(
+            flags,
+            parameter_root,
+            replacement_root,
+            parameter_pattern,
+            definition_origin,
+            parameter_text.roots(),
+            replacement_text.roots(),
+            parameter_text.words(),
+            replacement_text.words(),
+            observation_width,
+        );
+        self.install_macro_meaning(symbol, flags, definition, global)
+    }
+
     fn install_macro_meaning(
         &mut self,
         symbol: impl SymbolReference,
@@ -3520,6 +3565,7 @@ impl Stores {
             self.update_exact_env_cell(cell, self.env.semantic_word(cell));
         }
         self.mark_exact_env_journal_current();
+        self.retire_unrooted_region_values();
         self.capture_box_restore_texts(&mut restores);
         let code_before = self.code_tables.generations();
         let code_restores = self.code_tables.leave_group();
@@ -3552,6 +3598,7 @@ impl Stores {
             self.update_exact_env_cell(cell, self.env.semantic_word(cell));
         }
         self.mark_exact_env_journal_current();
+        self.retire_unrooted_region_values();
         self.capture_box_restore_texts(&mut restores);
         let code_before = self.code_tables.generations();
         let code_restores = self.code_tables.leave_group();
@@ -3974,6 +4021,7 @@ impl Stores {
         if !self.env.direct_operation_changed(mark.env) || !self.env.can_retire_direct_operation() {
             if discard_exact_history {
                 self.discard_exact_env_undo_history();
+                self.retire_unrooted_region_values();
             }
             self.finish_node_operation();
             return false;
@@ -3984,8 +4032,15 @@ impl Stores {
             .expect("direct retirement eligibility was checked above");
         self.discard_exact_env_undo_history();
         self.mark_exact_env_journal_current();
+        self.retire_unrooted_region_values();
         self.finish_node_operation();
         true
+    }
+
+    fn retire_unrooted_region_values(&mut self) {
+        self.macros.retire_unrooted_region_values();
+        self.tokens.retire_unrooted_region_values();
+        self.glue.retire_unrooted_region_values();
     }
 
     /// Finishes one executor operation without discarding its live-root projection.

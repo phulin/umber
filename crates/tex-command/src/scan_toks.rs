@@ -346,6 +346,16 @@ pub(crate) struct ScannedToks {
     pub(crate) malformed_parameter: bool,
 }
 
+/// Scanner-completed buffers before an owning publication policy is chosen.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ScannedToksBuffers {
+    pub(crate) parameter_text: RootedTracedTokenBuffer,
+    pub(crate) replacement_text: RootedTracedTokenBuffer,
+    pub(crate) primary: OriginId,
+    pub(crate) primary_root: tex_state::provenance::OriginRef,
+    pub(crate) malformed_parameter: bool,
+}
+
 /// TeX82 §403's result after a mandatory left-brace scan.
 #[derive(Debug)]
 pub(crate) enum ScannedLeftBrace {
@@ -392,6 +402,24 @@ impl CommandProcessor<'_> {
     /// the collector's closing brace inaccessible to expansion that happens
     /// to retire an inserted replay level.
     pub(crate) fn scan_toks(&mut self, mode: ScanToksMode) -> Result<ScannedToks, CommandError> {
+        let result = self.scan_toks_buffers(mode)?;
+        Ok(ScannedToks {
+            parameter_text: self
+                .state
+                .finish_rooted_traced_token_list(&result.parameter_text),
+            replacement_text: self
+                .state
+                .finish_rooted_traced_token_list(&result.replacement_text),
+            primary: result.primary,
+            primary_root: result.primary_root,
+            malformed_parameter: result.malformed_parameter,
+        })
+    }
+
+    pub(crate) fn scan_toks_buffers(
+        &mut self,
+        mode: ScanToksMode,
+    ) -> Result<ScannedToksBuffers, CommandError> {
         let config = ScanToksConfig::parse(mode);
         let (episode, phase) = match self.command.pending_scan_toks.pop() {
             Some(pending) if pending.config == config => (pending.episode, pending.phase),
@@ -437,20 +465,24 @@ impl CommandProcessor<'_> {
         partial.extend(
             result
                 .replacement_text
-                .token_ref()
-                .tokens()
+                .words()
                 .iter()
-                .copied()
-                .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),
+                .map(|word| TracedTokenWord::pack(word.semantic_token(), OriginId::UNKNOWN)),
         );
         self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
         self.finish_scanner_episode(episode);
         let completed_tokens = if !self.is_observed() {
             Vec::new()
         } else if config.purpose.renders_detokenized_result() {
+            let semantic_tokens = result
+                .replacement_text
+                .words()
+                .iter()
+                .map(|word| word.semantic_token())
+                .collect::<Vec<_>>();
             crate::processor::expand::token_slice_string_text(
                 &mut self.state,
-                result.replacement_text.token_ref().tokens(),
+                &semantic_tokens,
             )
             .chars()
             .map(|ch| {
@@ -470,11 +502,14 @@ impl CommandProcessor<'_> {
         } else {
             result
                 .replacement_text
-                .token_ref()
-                .tokens()
+                .words()
                 .iter()
-                .copied()
-                .map(|token| self.observed_token(TracedTokenWord::pack(token, OriginId::UNKNOWN)))
+                .map(|word| {
+                    self.observed_token(TracedTokenWord::pack(
+                        word.semantic_token(),
+                        OriginId::UNKNOWN,
+                    ))
+                })
                 .collect()
         };
         observe!(
@@ -497,7 +532,7 @@ impl CommandProcessor<'_> {
         config: ScanToksConfig,
         episode: &ScannerEpisode,
         phase: PendingScanToksPhase,
-    ) -> Result<ScannedToks, ScanToksFailure> {
+    ) -> Result<ScannedToksBuffers, ScanToksFailure> {
         // `macro_parameters` is TeX82 §477's `macro_def` flag carried together
         // with §479's `t`: `Some(highest)` selects the parameter-character
         // rule and bounds a legal parameter number, `None` leaves parameter
@@ -667,9 +702,9 @@ impl CommandProcessor<'_> {
         if let Some(brace) = hash_brace {
             replacement.push(brace);
         }
-        Ok(ScannedToks {
-            parameter_text: self.state.finish_rooted_traced_token_list(&parameter_text),
-            replacement_text: self.state.finish_rooted_traced_token_list(&replacement),
+        Ok(ScannedToksBuffers {
+            parameter_text: std::mem::take(&mut *parameter_text),
+            replacement_text: std::mem::take(&mut *replacement),
             primary,
             primary_root,
             malformed_parameter,
@@ -1431,14 +1466,12 @@ impl CommandProcessor<'_> {
     }
 }
 
-fn parameter_text_for_runaway(result: &ScannedToks) -> Vec<TracedTokenWord> {
+fn parameter_text_for_runaway(result: &ScannedToksBuffers) -> Vec<TracedTokenWord> {
     let mut tokens: Vec<_> = result
         .parameter_text
-        .token_ref()
-        .tokens()
+        .words()
         .iter()
-        .copied()
-        .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
+        .map(|word| TracedTokenWord::pack(word.semantic_token(), OriginId::UNKNOWN))
         .collect();
     // TeX82 §§294/306/473 store one `def_ref` list whose `end_match_token`
     // separates parameter text from replacement text and prints as `->`.

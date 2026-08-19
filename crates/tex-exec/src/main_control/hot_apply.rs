@@ -69,11 +69,26 @@ impl HotOperation {
             .then(|| TokenListRecord {
                 transition: "complete",
                 purpose: "protected_macro",
-                tokens: observed_macro_body(
-                    definition.parameter_text.token_list(),
-                    definition.replacement_text.token_list(),
-                    stores,
-                ),
+                tokens: {
+                    let mut tokens = definition
+                        .parameter_text
+                        .words()
+                        .iter()
+                        .map(|word| match word.semantic_token() {
+                            Token::Param(_) => ObservedToken::MacroMatch,
+                            token => observed_macro_token(token, stores),
+                        })
+                        .collect::<Vec<_>>();
+                    tokens.push(ObservedToken::MacroEndMatch);
+                    tokens.extend(
+                        definition
+                            .replacement_text
+                            .words()
+                            .iter()
+                            .map(|word| observed_macro_token(word.semantic_token(), stores)),
+                    );
+                    tokens
+                },
             })
     }
 }
@@ -200,24 +215,19 @@ fn apply_macro_definition(
     target: Symbol,
     flags: MeaningFlags,
     global: bool,
-    parameter_text: &TracedTokenList,
-    replacement_text: &TracedTokenList,
+    parameter_text: &tex_state::token::RootedTracedTokenBuffer,
+    replacement_text: &tex_state::token::RootedTracedTokenBuffer,
     definition_origin: &tex_state::provenance::OriginRef,
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
 ) -> Result<ReplayStep, ExecError> {
-    let provenance = MacroDefinitionProvenance::new(
-        definition_origin.clone(),
-        parameter_text.origin_ref().clone(),
-        replacement_text.origin_ref().clone(),
-    );
     assignment_tracing::trace_meaning_write(stores, Token::Cs(target), true, global, |stores| {
-        stores.set_macro_meaning_from_traced(
+        stores.set_macro_meaning_from_buffers(
             target,
             flags,
             parameter_text,
             replacement_text,
-            provenance,
+            definition_origin.clone(),
             global,
         )
     });
@@ -225,13 +235,16 @@ fn apply_macro_definition(
     // TeX82 §1211's trace seam reports the stored body. Walking that body is
     // cold evidence publication, never part of an unobserved definition.
     if command.observes_mutations() {
+        let meaning = stores
+            .macro_meaning(target)
+            .expect("new macro definition is installed");
         let record = MutationRecord {
             target: MutationTarget::Meaning,
             key: ObservationValue::Name(stores.resolve(target).to_owned()),
             value: ObservationValue::Tokens(observed_stored_macro_body(
                 flags,
-                parameter_text.token_list(),
-                replacement_text.token_list(),
+                meaning.parameter_text(),
+                meaning.replacement_text(),
                 stores,
             )),
             global,

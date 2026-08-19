@@ -221,11 +221,13 @@ impl ReusableIdentityAllocator {
     }
 
     /// Returns whether `identity` names the currently live use of its slot.
+    #[allow(dead_code)]
     pub(crate) fn contains(&self, identity: HandleIdentity) -> bool {
         self.slots.get(identity.slot as usize).copied().flatten() == Some(identity.tag())
     }
 
     /// Returns the live identity occupying one physical slot.
+    #[allow(dead_code)]
     pub(crate) fn identity_at(&self, slot: u32) -> Option<HandleIdentity> {
         let tag = self.slots.get(slot as usize).copied().flatten()?;
         Some(HandleIdentity {
@@ -237,6 +239,7 @@ impl ReusableIdentityAllocator {
 
     /// Returns physical slot and reusable-entry counts for ownership tests.
     #[cfg(any(test, feature = "testing"))]
+    #[allow(dead_code)]
     pub(crate) fn testing_shape(&self) -> (usize, usize, usize) {
         (self.slots.len(), self.slots.capacity(), self.free.len())
     }
@@ -391,6 +394,7 @@ impl IdentityAllocator {
         self.slots.truncate(len);
         Ok(())
     }
+
 }
 
 fn fresh_namespace() -> NonZeroU64 {

@@ -35,7 +35,7 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, GlueId, TokenListId};
 use tex_state::interner::{ControlSequenceKind, Symbol, SymbolId};
-use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
+use tex_state::macro_store::MacroMeaning;
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFontSize, MathFraction,
     MathNoad, MathStyle, NoadClass, NoadKind,

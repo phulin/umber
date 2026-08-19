@@ -214,6 +214,22 @@ impl<'a> Detacher<'a> {
         recipe
     }
 
+    fn origin_words(
+        &mut self,
+        origins: impl IntoIterator<Item = OriginId>,
+    ) -> OriginListRecipeId {
+        let origins = origins
+            .into_iter()
+            .map(|origin| self.origin_id(origin))
+            .collect::<Vec<_>>();
+        if origins.is_empty() {
+            return OriginListRecipeId(0);
+        }
+        let recipe = OriginListRecipeId(self.origin_lists.len());
+        self.origin_lists.push(origins);
+        recipe
+    }
+
     fn origin_id(&mut self, id: OriginId) -> OriginRecipeId {
         if let Some(recipe) = self.origin_ids.get(&id) {
             return *recipe;
@@ -357,21 +373,25 @@ impl<'a> Detacher<'a> {
         let parameters = self.token_list(&self.universe.token_list_ref(meaning.parameter_text()));
         let replacement =
             self.token_list(&self.universe.token_list_ref(meaning.replacement_text()));
-        let (definition_origin, parameter_origins, replacement_origins) =
-            owner.provenance(definition).map_or(
-                (
-                    OriginRecipeId(0),
-                    OriginListRecipeId(0),
-                    OriginListRecipeId(0),
-                ),
-                |provenance| {
-                    (
-                        self.origin_ref(provenance.definition_ref()),
-                        self.origin_list(provenance.parameter_ref()),
-                        self.origin_list(provenance.replacement_ref()),
-                    )
-                },
-            );
+        let definition_origin = self.origin_id(
+            owner
+                .definition_origin(definition)
+                .unwrap_or(OriginId::UNKNOWN),
+        );
+        let parameter_origins = self.origin_words(
+            (0..owner.parameter_len(definition).unwrap_or(0)).filter_map(|index| {
+                owner
+                    .parameter_traced_word(definition, index)
+                    .map(|word| word.origin())
+            }),
+        );
+        let replacement_origins = self.origin_words(
+            (0..owner.replacement_len(definition).unwrap_or(0)).filter_map(|index| {
+                owner
+                    .replacement_traced_word(definition, index)
+                    .map(|word| word.origin())
+            }),
+        );
         self.macros[recipe.0] = OwnedMacro {
             flags: meaning.flags(),
             parameters,

@@ -394,6 +394,7 @@ fn private_token_acceptance_selects_exact_roots_and_drops_unselected_payloads() 
     let accepted = domain
         .accept(selected_roots)
         .expect("selected root transfers");
+    store.clear_patch_allocations();
     assert_eq!(accepted.len(), 1);
     assert_eq!(
         accepted.logical_bytes(),
@@ -429,8 +430,8 @@ fn ten_thousand_bounded_live_redefinitions_plateau_every_pool_dimension() {
     let (live_objects, _) = store.testing_live_totals();
 
     assert_eq!(current.tokens().len(), 1);
-    assert_eq!(live_objects, 2, "only empty and current values remain live");
-    assert!(slots <= 3, "weak slots did not plateau: {slots}");
+    assert_eq!(live_objects, 3, "empty, current, and one retired-at-next-mutation value remain");
+    assert!(slots <= 3, "region slots did not plateau: {slots}");
     assert!(
         slot_capacity <= 4,
         "slot capacity did not plateau: {slot_capacity}"

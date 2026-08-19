@@ -127,7 +127,7 @@ fn acceptance_keeps_only_distinct_explicit_roots_without_the_domain() {
 }
 
 #[test]
-fn rejection_drops_complete_domain_and_handles_keep_no_owner_alive() {
+fn rejection_drops_complete_domain_and_handles_retain_only_a_raw_coordinate() {
     let drops = Arc::new(AtomicUsize::new(0));
     let handle = {
         let mut domain = PatchAllocationDomain::new();
@@ -139,7 +139,7 @@ fn rejection_drops_complete_domain_and_handles_keep_no_owner_alive() {
         handle
     };
     assert_eq!(drops.load(Ordering::SeqCst), 1);
-    assert!(handle.owner.upgrade().is_none());
+    assert_ne!(handle.owner, 0);
 }
 
 #[test]

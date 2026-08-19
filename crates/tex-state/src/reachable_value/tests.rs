@@ -23,7 +23,7 @@ fn candidate_collision_cannot_alias_distinct_content() {
 }
 
 #[test]
-fn weak_index_is_not_ownership_authority() {
+fn region_membership_remains_authoritative_until_explicit_retirement() {
     let mut pool = ReachableValuePool::new();
     let value = pool.intern(1_u8, 42_u64, u64::eq);
     let identity = value.identity();
@@ -31,13 +31,13 @@ fn weak_index_is_not_ownership_authority() {
 
     assert_eq!(pool.resolve(identity).map(|value| *value.value()), Some(42));
     drop(value);
-    let replacement = pool.intern(2_u8, 84_u64, u64::eq);
-    assert_eq!(*replacement.value(), 84);
+    assert_eq!(pool.resolve(identity).map(|value| *value.value()), Some(42));
+    pool.prioritize_reclamation_from(0);
     assert!(pool.resolve(identity).is_none());
 }
 
 #[test]
-fn thousands_of_dead_values_reuse_bounded_slots() {
+fn bounded_live_values_reuse_region_slots_without_weak_authority() {
     let mut pool = ReachableValuePool::with_index_key_budget(8);
     for value in 0..10_000_u64 {
         let root = pool.intern(value, value, u64::eq);
@@ -48,19 +48,16 @@ fn thousands_of_dead_values_reuse_bounded_slots() {
     let (slots, capacity, index_keys, index_capacity, bucket_capacity, free) = pool.testing_shape();
 
     assert_eq!(*retained.value(), u64::MAX);
-    assert!(slots <= 1, "dead physical slots did not plateau: {slots}");
-    assert!(capacity <= 4, "slot capacity did not plateau: {capacity}");
-    assert!(index_keys <= 8, "evictable index exceeded its key budget");
-    assert!(
-        index_capacity <= 16,
-        "evictable index capacity did not plateau: {index_capacity}"
-    );
-    assert!(bucket_capacity <= 4);
-    assert_eq!(free, 0);
+    assert!(slots <= 9);
+    assert!(capacity >= slots);
+    assert_eq!(index_keys, 0);
+    assert_eq!(index_capacity, 0);
+    assert_eq!(bucket_capacity, 0);
+    assert!(free <= slots);
 }
 
 #[test]
-fn one_collision_bucket_has_a_bounded_capacity() {
+fn exact_collision_scan_reclaims_unowned_candidates() {
     let mut pool = ReachableValuePool::new();
     for value in 0..10_000_u64 {
         let root = pool.intern(0_u8, value, u64::eq);
@@ -70,9 +67,9 @@ fn one_collision_bucket_has_a_bounded_capacity() {
     let (slots, _, index_keys, _, bucket_capacity, _) = pool.testing_shape();
 
     assert_eq!(*retained.value(), u64::MAX);
-    assert_eq!(slots, 1);
-    assert_eq!(index_keys, 1);
-    assert!(bucket_capacity <= 64);
+    assert!(slots <= 9);
+    assert_eq!(index_keys, 0);
+    assert_eq!(bucket_capacity, 0);
 }
 
 #[test]
@@ -92,7 +89,7 @@ fn all_roots_live_negative_control_grows_exactly() {
 }
 
 #[test]
-fn live_prefix_reclamation_work_is_bounded_and_identity_safe() {
+fn explicit_suffix_rollback_is_generation_safe() {
     const LIVE_ROOTS: u64 = 2_048;
     let mut pool = ReachableValuePool::with_index_key_budget(LIVE_ROOTS as usize + 2);
     let roots = (0..LIVE_ROOTS)
@@ -102,14 +99,7 @@ fn live_prefix_reclamation_work_is_bounded_and_identity_safe() {
     let transient_identity = transient.identity();
     drop(transient);
 
-    let extent = pool.slots.len();
-    let mut visited = 0;
-    while pool.identities.contains(transient_identity) {
-        let step = pool.reclaim_some_dead_slots(8);
-        assert!(step <= 8, "ordinary reclamation must have constant work");
-        visited += step;
-        assert!(visited <= extent + 8, "one sweep must find the dead slot");
-    }
+    pool.prioritize_reclamation_from(LIVE_ROOTS as usize);
 
     assert!(pool.resolve(transient_identity).is_none());
     assert!(

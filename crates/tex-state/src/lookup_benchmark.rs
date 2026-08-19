@@ -18,7 +18,7 @@ pub enum LookupFamily {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LookupCase {
     LiveHit,
-    DeadWeakSlot,
+    RetiredRegionSlot,
     GenerationMismatch,
     FormatHole,
     CollisionSafe,
@@ -27,7 +27,7 @@ pub enum LookupCase {
 impl LookupCase {
     pub const ALL: [Self; 5] = [
         Self::LiveHit,
-        Self::DeadWeakSlot,
+        Self::RetiredRegionSlot,
         Self::GenerationMismatch,
         Self::FormatHole,
         Self::CollisionSafe,
@@ -37,7 +37,7 @@ impl LookupCase {
     pub const fn name(self) -> &'static str {
         match self {
             Self::LiveHit => "live_hit",
-            Self::DeadWeakSlot => "dead_weak_slot",
+            Self::RetiredRegionSlot => "retired_region_slot",
             Self::GenerationMismatch => "generation_mismatch",
             Self::FormatHole => "format_hole",
             Self::CollisionSafe => "collision_safe",
@@ -168,9 +168,11 @@ fn token_cases() -> [TokenCase; 5] {
     let live_id = live.id();
 
     let mut dead_store = TokenStore::new();
+    let dead_mark = dead_store.watermark();
     let dead = dead_store.testing_owned(&[char_token('d')], TokenSemanticId::testing(2), None);
     let dead_id = dead.id();
     drop(dead);
+    dead_store.truncate_to(dead_mark);
 
     let mut stale_store = TokenStore::new();
     let stale = stale_store.testing_owned(&[char_token('s')], TokenSemanticId::testing(3), None);
@@ -182,9 +184,11 @@ fn token_cases() -> [TokenCase; 5] {
     assert_ne!(stale_id, replacement.id());
 
     let mut hole_store = TokenStore::new();
+    let hole_mark = hole_store.watermark();
     let hole = hole_store.testing_owned(&[char_token('h')], TokenSemanticId::testing(5), None);
     let hole_id = hole.id();
     drop(hole);
+    hole_store.truncate_to(hole_mark);
 
     let mut collision_store = TokenStore::new();
     let collision_key = TokenSemanticId::testing(6);
@@ -244,9 +248,11 @@ fn macro_cases() -> [MacroCase; 5] {
     let live_id = live.id();
 
     let mut dead_store = MacroStore::new();
+    let dead_mark = dead_store.watermark();
     let dead = intern_macro(&mut dead_store, &tokens, 1);
     let dead_id = dead.id();
     drop(dead);
+    dead_store.truncate_to(dead_mark);
 
     let mut stale_store = MacroStore::new();
     let stale = intern_macro(&mut stale_store, &tokens, 2);
@@ -257,9 +263,11 @@ fn macro_cases() -> [MacroCase; 5] {
     assert_ne!(stale_id, replacement.id());
 
     let mut hole_store = MacroStore::new();
+    let hole_mark = hole_store.watermark();
     let hole = intern_macro(&mut hole_store, &tokens, 4);
     let hole_id = hole.id();
     drop(hole);
+    hole_store.truncate_to(hole_mark);
 
     let collision_tokens = macro_tokens();
     let mut collision_store = MacroStore::new();
@@ -374,8 +382,8 @@ mod tests {
     fn lookup_work_gate_covers_safety_branches_without_repeated_resolution() {
         let benchmark = ReachabilityLookupBenchmark::new();
         for (family, expected_work) in [
-            (LookupFamily::TokenList, [5, 4, 2, 3, 8]),
-            (LookupFamily::MacroBody, [4, 4, 2, 3, 8]),
+            (LookupFamily::TokenList, [4, 2, 2, 2, 6]),
+            (LookupFamily::MacroBody, [3, 2, 2, 2, 6]),
         ] {
             for (case, expected) in LookupCase::ALL.into_iter().zip(expected_work) {
                 let measured = benchmark.measure(family, case);

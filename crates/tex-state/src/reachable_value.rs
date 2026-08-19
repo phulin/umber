@@ -1,27 +1,28 @@
-//! Reusable weak-slot storage for reachability-owned immutable values.
+//! Region-owned immutable values with generation-checked dense coordinates.
 //!
-//! Strong references live in typed semantic roots. This module owns only
-//! timeline-local coordinates and a bounded, non-authoritative lookup index.
+//! The arena is the sole liveness authority. Typed roots share immutable
+//! payloads, while rollback explicitly truncates the region and advances its
+//! generation before a suffix coordinate can be reused.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
-use std::sync::{Arc, Weak};
+use std::marker::PhantomData;
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::identity::{HandleIdentity, ReusableIdentityAllocator};
 
-const DEFAULT_INDEX_KEY_BUDGET: usize = 1_024;
-const INDEX_BUCKET_ENTRY_BUDGET: usize = 64;
 const RECLAIM_WORK_PER_OPERATION: usize = 8;
 
-/// Deterministic primitive work performed by one weak-pool lookup.
+/// Deterministic primitive work performed by one arena lookup.
 #[cfg(any(test, feature = "testing"))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct LookupWork {
     pub(crate) fixed_root_probes: usize,
     pub(crate) generation_checks: usize,
     pub(crate) slot_probes: usize,
-    pub(crate) weak_upgrades: usize,
+    pub(crate) owner_clones: usize,
     pub(crate) candidate_entries: usize,
     pub(crate) exact_comparisons: usize,
     pub(crate) patch_lease_probes: usize,
@@ -33,7 +34,7 @@ impl LookupWork {
         self.fixed_root_probes
             + self.generation_checks
             + self.slot_probes
-            + self.weak_upgrades
+            + self.owner_clones
             + self.candidate_entries
             + self.exact_comparisons
             + self.patch_lease_probes
@@ -45,19 +46,20 @@ pub(crate) struct ReachableValueRef<T> {
     object: Arc<ReachableValueObject<T>>,
 }
 
-struct ReachableValueObject<T> {
-    identity: HandleIdentity,
-    value: Arc<T>,
-}
-
 impl<T> Clone for ReachableValueRef<T> {
     fn clone(&self) -> Self {
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_hot_core_arc_retain();
         Self {
             object: Arc::clone(&self.object),
         }
     }
+}
+
+#[derive(Debug)]
+struct ReachableValueObject<T> {
+    identity: HandleIdentity,
+    value: Arc<T>,
+    #[cfg(test)]
+    region_memberships: AtomicUsize,
 }
 
 impl<T: fmt::Debug> fmt::Debug for ReachableValueRef<T> {
@@ -80,14 +82,13 @@ impl<T> ReachableValueRef<T> {
     }
 
     pub(crate) fn shared(&self) -> Arc<T> {
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_hot_core_arc_retain();
         Arc::clone(&self.object.value)
     }
 
     #[cfg(test)]
     pub(crate) fn strong_count(&self) -> usize {
         Arc::strong_count(&self.object)
+            .saturating_sub(self.object.region_memberships.load(Ordering::Relaxed))
     }
 
     #[cfg(test)]
@@ -102,27 +103,30 @@ pub(crate) fn testing_value_ref<T>(identity: HandleIdentity, value: T) -> Reacha
         object: Arc::new(ReachableValueObject {
             identity,
             value: Arc::new(value),
+            #[cfg(test)]
+            region_memberships: AtomicUsize::new(0),
         }),
     }
 }
 
 #[derive(Debug)]
-struct WeakSlot<T> {
+struct ArenaSlot<K, T> {
     identity: HandleIdentity,
-    value: Weak<ReachableValueObject<T>>,
+    key: Option<K>,
+    value: Arc<ReachableValueObject<T>>,
 }
 
-/// Weak reusable slots plus a bounded candidate index.
+/// Strong region slots plus a cold exact-comparison path.
 ///
 /// `K` is only a candidate key. `intern` always invokes exact equality before
 /// reusing a live object, so key collisions cannot alias content.
 #[derive(Debug)]
 pub(crate) struct ReachableValuePool<K, T> {
     identities: ReusableIdentityAllocator,
-    slots: Vec<Option<WeakSlot<T>>>,
+    slots: Vec<Option<ArenaSlot<K, T>>>,
+    allocation_events: Vec<HandleIdentity>,
     sweep_cursor: usize,
-    index: HashMap<K, Vec<u32>>,
-    index_key_budget: usize,
+    marker: PhantomData<K>,
 }
 
 impl<K, T> Clone for ReachableValuePool<K, T>
@@ -136,19 +140,37 @@ where
                 .slots
                 .iter()
                 .map(|slot| {
-                    slot.as_ref().map(|slot| WeakSlot {
-                        identity: slot.identity,
-                        value: {
-                            #[cfg(feature = "profiling")]
-                            crate::measurement::record_hot_core_weak_retain();
-                            slot.value.clone()
-                        },
+                    slot.as_ref().map(|slot| {
+                        #[cfg(test)]
+                        {
+                            slot.value
+                                .region_memberships
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                        ArenaSlot {
+                            identity: slot.identity,
+                            key: slot.key.clone(),
+                            value: Arc::clone(&slot.value),
+                        }
                     })
                 })
                 .collect(),
+            allocation_events: self.allocation_events.clone(),
             sweep_cursor: self.sweep_cursor,
-            index: self.index.clone(),
-            index_key_budget: self.index_key_budget,
+            marker: PhantomData,
+        }
+    }
+}
+
+#[cfg(test)]
+impl<K, T> Drop for ReachableValuePool<K, T> {
+    fn drop(&mut self) {
+        for slot in self.slots.iter().flatten() {
+            let previous = slot
+                .value
+                .region_memberships
+                .fetch_sub(1, Ordering::Relaxed);
+            assert_ne!(previous, 0, "arena region membership underflow");
         }
     }
 }
@@ -158,14 +180,13 @@ where
     K: Clone + Eq + Hash,
 {
     pub(crate) fn new() -> Self {
-        Self::with_index_key_budget(DEFAULT_INDEX_KEY_BUDGET)
+        Self::with_index_key_budget(0)
     }
 
     /// Installs a validated immutable prefix and returns its explicit owners.
     ///
     /// Fixed values participate in coordinate resolution but not in the
-    /// bounded dynamic candidate index. A family-specific frozen lookup can
-    /// select them without making weak index membership authoritative.
+    /// dynamic exact key. A family-specific frozen lookup selects them.
     pub(crate) fn from_fixed_values(
         values: Vec<T>,
         builtin_slots: u32,
@@ -181,14 +202,13 @@ where
             let value = Arc::new(ReachableValueObject {
                 identity,
                 value: Arc::new(value),
+                #[cfg(test)]
+                region_memberships: AtomicUsize::new(1),
             });
-            slots.push(Some(WeakSlot {
+            slots.push(Some(ArenaSlot {
                 identity,
-                value: {
-                    #[cfg(feature = "profiling")]
-                    crate::measurement::record_hot_core_weak_retain();
-                    Arc::downgrade(&value)
-                },
+                key: None,
+                value: Arc::clone(&value),
             }));
             roots.push(ReachableValueRef { object: value });
         }
@@ -196,25 +216,25 @@ where
             Self {
                 identities,
                 slots,
+                allocation_events: Vec::new(),
                 sweep_cursor: 0,
-                index: HashMap::new(),
-                index_key_budget: DEFAULT_INDEX_KEY_BUDGET,
+                marker: PhantomData,
             },
             roots,
         )
     }
 
-    fn with_index_key_budget(index_key_budget: usize) -> Self {
+    fn with_index_key_budget(_index_key_budget: usize) -> Self {
         Self {
             identities: ReusableIdentityAllocator::new(0),
             slots: Vec::new(),
+            allocation_events: Vec::new(),
             sweep_cursor: 0,
-            index: HashMap::new(),
-            index_key_budget,
+            marker: PhantomData,
         }
     }
 
-    /// Reuses an exact live value or installs one new weak slot.
+    /// Reuses an exact live value or installs one new arena slot.
     pub(crate) fn intern(
         &mut self,
         key: K,
@@ -244,45 +264,14 @@ where
         key: &K,
         exact_eq: impl Fn(&T) -> bool,
     ) -> Option<ReachableValueRef<T>> {
-        #[cfg(feature = "profiling")]
-        let mut candidate_entries = 0;
-        #[cfg(feature = "profiling")]
-        let mut exact_comparisons = 0;
         self.reclaim_some_dead_slots(RECLAIM_WORK_PER_OPERATION);
-        let mut exact = None;
-        let mut remove_empty_candidates = false;
-        if let Some(candidates) = self.index.get_mut(key) {
-            candidates.retain(|&raw| {
-                #[cfg(feature = "profiling")]
-                {
-                    candidate_entries += 1;
-                }
-                let Some(slot) = self.slots.get(raw as usize).and_then(Option::as_ref) else {
-                    return false;
-                };
-                let upgraded = slot.value.upgrade();
-                #[cfg(feature = "profiling")]
-                crate::measurement::record_hot_core_weak_upgrade(upgraded.is_some());
-                let Some(candidate) = upgraded else {
-                    return false;
-                };
-                #[cfg(feature = "profiling")]
-                {
-                    exact_comparisons += 1;
-                }
-                if exact.is_none() && exact_eq(&candidate.value) {
-                    exact = Some(ReachableValueRef { object: candidate });
-                }
-                true
-            });
-            remove_empty_candidates = candidates.is_empty();
-        }
-        if remove_empty_candidates {
-            self.index.remove(key);
-        }
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_hot_core_weak_index(candidate_entries, exact_comparisons);
-        exact
+        self.slots.iter().flatten().find_map(|slot| {
+            (slot.key.as_ref() == Some(key)
+                && exact_eq(&slot.value.value))
+            .then(|| ReachableValueRef {
+                object: Arc::clone(&slot.value),
+            })
+        })
     }
 
     /// Installs a value after the caller has performed exact candidate lookup.
@@ -301,11 +290,41 @@ where
         self.insert(value, None)
     }
 
-    fn insert(&mut self, value: T, key: Option<K>) -> ReachableValueRef<T> {
-        #[cfg(feature = "profiling")]
-        let _allocation_scope = crate::measurement::hot_core_allocation_scope(
-            crate::measurement::HotCoreAllocationOwner::WeakValueStore,
+    /// Reserves one generation-bearing coordinate whose value is owned by a
+    /// family-specific immutable arena rather than by this pool's payload row.
+    ///
+    /// The empty slot is deliberate: identity validation remains shared with
+    /// exact values, while hot arena values do not allocate a second owner
+    /// merely to keep a coordinate live.
+    pub(crate) fn reserve_external(&mut self) -> HandleIdentity {
+        let identity = self
+            .identities
+            .allocate()
+            .expect("reachable-value identity capacity exhausted");
+        let raw = identity.slot() as usize;
+        if raw == self.slots.len() {
+            self.slots.push(None);
+        }
+        assert!(raw < self.slots.len(), "external value slot exceeds table");
+        assert!(self.slots[raw].is_none(), "external value slot is occupied");
+        self.allocation_events.push(identity);
+        identity
+    }
+
+    /// Retires one coordinate whose payload was owned by a family-specific
+    /// arena, advancing its generation before the slot can be reused.
+    pub(crate) fn release_external(&mut self, identity: HandleIdentity) {
+        let raw = identity.slot() as usize;
+        assert!(
+            self.slots.get(raw).is_some_and(Option::is_none),
+            "external value slot is not reserved"
         );
+        self.identities
+            .release(identity)
+            .expect("external arena coordinate is stale or foreign");
+    }
+
+    fn insert(&mut self, value: T, key: Option<K>) -> ReachableValueRef<T> {
         self.reclaim_some_dead_slots(RECLAIM_WORK_PER_OPERATION);
         let identity = self
             .identities
@@ -314,6 +333,8 @@ where
         let shared = Arc::new(ReachableValueObject {
             identity,
             value: Arc::new(value),
+            #[cfg(test)]
+            region_memberships: AtomicUsize::new(1),
         });
         let raw = identity.slot() as usize;
         if raw == self.slots.len() {
@@ -321,28 +342,16 @@ where
         }
         assert!(raw < self.slots.len(), "reusable value slot exceeds table");
         assert!(self.slots[raw].is_none(), "reusable value slot is occupied");
-        self.slots[raw] = Some(WeakSlot {
+        self.slots[raw] = Some(ArenaSlot {
             identity,
-            value: {
-                #[cfg(feature = "profiling")]
-                crate::measurement::record_hot_core_weak_retain();
-                Arc::downgrade(&shared)
-            },
+            key,
+            value: Arc::clone(&shared),
         });
-        if let Some(key) = key.filter(|_| self.index_key_budget != 0) {
-            if self.index.len() >= self.index_key_budget && !self.index.contains_key(&key) {
-                self.index.clear();
-            }
-            let bucket = self.index.entry(key).or_default();
-            if bucket.len() >= INDEX_BUCKET_ENTRY_BUDGET {
-                bucket.clear();
-            }
-            bucket.push(identity.slot());
-        }
+        self.allocation_events.push(identity);
         ReachableValueRef { object: shared }
     }
 
-    /// Resolves one exact live coordinate without making the index authority.
+    /// Resolves one exact live arena coordinate.
     pub(crate) fn resolve(&self, identity: HandleIdentity) -> Option<ReachableValueRef<T>> {
         if !self.identities.contains(identity) {
             return None;
@@ -351,10 +360,9 @@ where
         if slot.identity != identity {
             return None;
         }
-        let upgraded = slot.value.upgrade();
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_hot_core_weak_upgrade(upgraded.is_some());
-        Some(ReachableValueRef { object: upgraded? })
+        Some(ReachableValueRef {
+            object: Arc::clone(&slot.value),
+        })
     }
 
     /// Executes the production identity-resolution branches while reporting
@@ -382,11 +390,10 @@ where
         if slot.identity != identity {
             return (None, work);
         }
-        work.weak_upgrades += 1;
         (
-            slot.value
-                .upgrade()
-                .map(|object| ReachableValueRef { object }),
+            Some(ReachableValueRef {
+                object: Arc::clone(&slot.value),
+            }),
             work,
         )
     }
@@ -394,13 +401,12 @@ where
     /// Resolves the currently live value in one physical slot.
     ///
     /// This is a compact-coordinate projection, not an ownership query: the
-    /// weak slot upgrades only while a typed semantic owner already exists.
+    /// the returned owner shares the region-owned immutable payload.
     pub(crate) fn resolve_slot(&self, raw: u32) -> Option<ReachableValueRef<T>> {
         let slot = self.slots.get(raw as usize)?.as_ref()?;
-        let upgraded = slot.value.upgrade();
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_hot_core_weak_upgrade(upgraded.is_some());
-        Some(ReachableValueRef { object: upgraded? })
+        Some(ReachableValueRef {
+            object: Arc::clone(&slot.value),
+        })
     }
 
     /// Executes the production stored-slot branches with deterministic work
@@ -410,18 +416,17 @@ where
         &self,
         raw: u32,
     ) -> (Option<ReachableValueRef<T>>, LookupWork) {
-        let mut work = LookupWork {
+        let work = LookupWork {
             slot_probes: 1,
             ..LookupWork::default()
         };
         let Some(slot) = self.slots.get(raw as usize).and_then(Option::as_ref) else {
             return (None, work);
         };
-        work.weak_upgrades += 1;
         (
-            slot.value
-                .upgrade()
-                .map(|object| ReachableValueRef { object }),
+            Some(ReachableValueRef {
+                object: Arc::clone(&slot.value),
+            }),
             work,
         )
     }
@@ -436,20 +441,15 @@ where
     ) -> (Option<ReachableValueRef<T>>, LookupWork) {
         let mut work = LookupWork::default();
         let mut exact = None;
-        if let Some(candidates) = self.index.get(key) {
-            for &raw in candidates {
+        for slot in self.slots.iter().flatten() {
+            if slot.key.as_ref() == Some(key) {
                 work.candidate_entries += 1;
                 work.slot_probes += 1;
-                let Some(slot) = self.slots.get(raw as usize).and_then(Option::as_ref) else {
-                    continue;
-                };
-                work.weak_upgrades += 1;
-                let Some(candidate) = slot.value.upgrade() else {
-                    continue;
-                };
                 work.exact_comparisons += 1;
-                if exact.is_none() && exact_eq(&candidate.value) {
-                    exact = Some(ReachableValueRef { object: candidate });
+                if exact.is_none() && exact_eq(&slot.value.value) {
+                    exact = Some(ReachableValueRef {
+                        object: Arc::clone(&slot.value),
+                    });
                 }
             }
         }
@@ -461,15 +461,55 @@ where
         self.slots.len()
     }
 
-    /// Validates a typed coordinate without upgrading the value's weak slot.
+    pub(crate) fn allocation_mark(&self) -> usize {
+        self.allocation_events.len()
+    }
+
+    /// Retires all allocations after a mark, including coordinates that
+    /// reused holes below the mark's physical slot-table extent.
+    pub(crate) fn rollback_to_allocation_mark(&mut self, mark: usize) {
+        assert!(
+            mark <= self.allocation_events.len(),
+            "arena allocation mark is ahead of state"
+        );
+        while self.allocation_events.len() > mark {
+            let identity = self
+                .allocation_events
+                .pop()
+                .expect("allocation event journal is nonempty");
+            if !self.identities.contains(identity) {
+                continue;
+            }
+            let raw = identity.slot() as usize;
+            if self.slots[raw]
+                .as_ref()
+                .is_some_and(|slot| slot.identity != identity)
+            {
+                continue;
+            }
+            self.clear_slot(raw);
+            self.identities
+                .release(identity)
+                .expect("arena allocation event and identity table diverged");
+        }
+        self.sweep_cursor = self.sweep_cursor.min(self.slots.len());
+    }
+
+    /// Validates a typed coordinate without cloning its immutable payload.
     pub(crate) fn contains_identity(&self, identity: HandleIdentity) -> bool {
         self.identities.contains(identity)
     }
 
-    /// Advances a bounded weak-metadata sweep. The strong owner has already
-    /// destroyed a dead value, so interning need not rescan every live slot
-    /// before doing useful work. Reclaimed identities remain generation-safe
-    /// through `ReusableIdentityAllocator`.
+    /// Returns whether a live coordinate is owned by a family-specific arena
+    /// rather than by an exact-value payload row in this pool.
+    pub(crate) fn contains_external_identity(&self, identity: HandleIdentity) -> bool {
+        self.identities.contains(identity)
+            && self
+                .slots
+                .get(identity.slot() as usize)
+                .is_some_and(Option::is_none)
+    }
+
     fn reclaim_some_dead_slots(&mut self, work: usize) -> usize {
         let mut visited = 0;
         while visited < work && !self.slots.is_empty() {
@@ -479,35 +519,55 @@ where
             let index = self.sweep_cursor;
             self.sweep_cursor += 1;
             visited += 1;
-            let slot = &mut self.slots[index];
-            let Some(occupied) = slot else {
+            let Some(slot) = &self.slots[index] else {
                 continue;
             };
-            if occupied.value.strong_count() != 0 {
+            if Arc::strong_count(&slot.value) != 1 {
                 continue;
             }
+            let identity = slot.identity;
+            self.clear_slot(index);
             self.identities
-                .release(occupied.identity)
-                .expect("weak value slot and identity table diverged");
-            *slot = None;
+                .release(identity)
+                .expect("arena slot and identity table diverged");
         }
         visited
     }
 
-    /// Biases the next bounded sweep toward a rollback suffix.
-    ///
-    /// The caller supplies only the physical extent captured in its O(1)
-    /// operation mark. No slot is released here: the ordinary generation-safe
-    /// sweep still checks the weak owner after restoration has dropped the
-    /// discarded roots.
+    /// Reclaims an unowned rollback suffix immediately and biases later
+    /// bounded reclamation toward any externally retained values in it.
     pub(crate) fn prioritize_reclamation_from(&mut self, slot: usize) {
+        assert!(slot <= self.slots.len(), "arena rollback mark is ahead of state");
+        for index in slot..self.slots.len() {
+            let Some(entry) = &self.slots[index] else {
+                continue;
+            };
+            if Arc::strong_count(&entry.value) != 1 {
+                continue;
+            }
+            let identity = entry.identity;
+            self.clear_slot(index);
+            self.identities
+                .release(identity)
+                .expect("arena rollback slot and identity table diverged");
+        }
         self.sweep_cursor = slot.min(self.slots.len());
     }
 
-    #[cfg(test)]
-    fn clear_index(&mut self) {
-        self.index.clear();
+    fn clear_slot(&mut self, index: usize) {
+        let _slot = self.slots[index].take();
+        #[cfg(test)]
+        if let Some(slot) = &_slot {
+            let previous = slot
+                .value
+                .region_memberships
+                .fetch_sub(1, Ordering::Relaxed);
+            assert_ne!(previous, 0, "arena region membership underflow");
+        }
     }
+
+    #[cfg(test)]
+    fn clear_index(&mut self) {}
 
     #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_shape(&self) -> (usize, usize, usize, usize, usize, usize) {
@@ -516,9 +576,9 @@ where
         (
             identity_slots,
             identity_capacity,
-            self.index.len(),
-            self.index.capacity(),
-            self.index.values().map(Vec::capacity).max().unwrap_or(0),
+            0,
+            0,
+            0,
             free,
         )
     }
@@ -530,7 +590,9 @@ where
     ) -> (usize, usize) {
         self.slots
             .iter()
-            .filter_map(|slot| slot.as_ref()?.value.upgrade())
+            .filter_map(|slot| {
+                slot.as_ref().map(|slot| &slot.value)
+            })
             .fold((0, 0), |(objects, bytes), value| {
                 (
                     objects + 1,

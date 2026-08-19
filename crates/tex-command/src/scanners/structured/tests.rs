@@ -293,16 +293,8 @@ fn missing_macro_target_reports_once_and_leaves_following_command() {
     };
 
     assert_eq!(universe.resolve(definition.target), "inaccessible");
-    assert!(
-        universe
-            .tokens(definition.parameter_text.token_list())
-            .is_empty()
-    );
-    assert!(
-        universe
-            .tokens(definition.replacement_text.token_list())
-            .is_empty()
-    );
+    assert!(definition.parameter_text.is_empty());
+    assert!(definition.replacement_text.is_empty());
     assert!(matches!(
         next.meaning(),
         Meaning::CharToken {
@@ -1422,11 +1414,21 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
     };
     assert_eq!(definition.target, target);
     assert_eq!(
-        universe.tokens(definition.parameter_text.token_list()),
+        definition
+            .parameter_text
+            .words()
+            .iter()
+            .map(|word| word.semantic_token())
+            .collect::<Vec<_>>(),
         &[Token::Param(1)]
     );
     assert_eq!(
-        universe.tokens(definition.replacement_text.token_list()),
+        definition
+            .replacement_text
+            .words()
+            .iter()
+            .map(|word| word.semantic_token())
+            .collect::<Vec<_>>(),
         &[Token::Param(1)]
     );
 }
@@ -1470,7 +1472,12 @@ fn expanded_macro_definition_splices_the_spacefactor_from_the_host() {
 
     assert_eq!(definition.target, target);
     assert_eq!(
-        universe.tokens(definition.replacement_text.token_list()),
+        definition
+            .replacement_text
+            .words()
+            .iter()
+            .map(|word| word.semantic_token())
+            .collect::<Vec<_>>(),
         &[
             Token::Char {
                 ch: '1',

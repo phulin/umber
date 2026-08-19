@@ -11,7 +11,9 @@ use crate::reachable_value::ReachableValueRef;
 use crate::state_hash::StateHasher;
 use crate::token_store::{TokenListRef, TokenSemanticId};
 
-use super::{MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern};
+use super::{
+    MacroDefinitionProvenance, MacroMeaning, MacroParameterPattern, PackedMacroChunkOwner,
+};
 
 const MACRO_BODY_ID_DOMAIN: u64 = 0x6d61_6372_6f5f_626f;
 
@@ -110,7 +112,8 @@ impl MacroDefinitionValue {
 /// One strong definition occurrence, paired with its compact coordinate.
 #[derive(Clone, Debug)]
 pub struct MacroDefinitionRef {
-    pub(super) value: ReachableValueRef<MacroDefinitionValue>,
+    pub(super) value: Option<ReachableValueRef<MacroDefinitionValue>>,
+    pub(super) packed: Option<(MacroDefinitionId, PackedMacroChunkOwner, Arc<()>)>,
     pub(super) patch_root: Option<PatchRootLease>,
 }
 
@@ -149,14 +152,39 @@ impl MacroDefinitionRef {
         let (_, roots) =
             ReachableValuePool::<u64, MacroDefinitionValue>::from_fixed_values(values, 0);
         Self {
-            value: roots[raw as usize].clone(),
+            value: Some(roots[raw as usize].clone()),
+            packed: None,
             patch_root: None,
         }
     }
 
+    pub(super) fn packed(
+        id: MacroDefinitionId,
+        owner: PackedMacroChunkOwner,
+    ) -> Self {
+        debug_assert!(owner.contains(id));
+        let liveness = owner
+            .definition_liveness(id)
+            .expect("packed macro definition has no liveness root");
+        Self {
+            value: None,
+            packed: Some((id, owner, liveness)),
+            patch_root: None,
+        }
+    }
+
+    pub(super) fn exact_value(&self) -> &ReachableValueRef<MacroDefinitionValue> {
+        self.value
+            .as_ref()
+            .expect("arena-backed macro definition has no exact value")
+    }
+
     #[must_use]
     pub fn id(&self) -> MacroDefinitionId {
-        MacroDefinitionId::from_identity(self.value.identity())
+        self.packed.as_ref().map_or_else(
+            || MacroDefinitionId::from_identity(self.exact_value().identity()),
+            |(id, _, _)| *id,
+        )
     }
 
     /// Returns the compact slot coordinate carried by this owner.
@@ -167,23 +195,30 @@ impl MacroDefinitionRef {
 
     #[must_use]
     pub fn meaning(&self) -> MacroMeaning {
-        self.value.value().body.value.value().meaning()
+        self.packed.as_ref().map_or_else(
+            || self.exact_value().value().body.value.value().meaning(),
+            |(id, owner, _)| {
+                owner
+                    .meaning(*id)
+                    .expect("packed macro owner lost its definition")
+            },
+        )
     }
 
     pub(super) fn shared(&self) -> Arc<MacroDefinitionValue> {
-        self.value.shared()
+        self.exact_value().shared()
     }
 
     #[cfg(test)]
     pub(crate) fn strong_count(&self) -> usize {
-        self.value.strong_count()
+        self.exact_value().strong_count()
     }
 
     #[cfg(test)]
     pub(crate) fn body_ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(
-            &self.value.value().body.shared(),
-            &other.value.value().body.shared(),
+            &self.exact_value().value().body.shared(),
+            &other.exact_value().value().body.shared(),
         )
     }
 }

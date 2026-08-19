@@ -1327,7 +1327,7 @@ fn rollback_restores_token_store_as_part_of_snapshot_tuple() {
     stores.rollback(&snapshot);
     let reused = stores.intern_token_list(&[crate::token::Token::param(2)]);
 
-    assert_ne!(reused.raw(), stale.id().raw());
+    assert_eq!(reused.raw(), stale.id().raw());
     assert_ne!(reused, stale.id());
     assert_eq!(stores.tokens(reused), &[crate::token::Token::param(2)]);
 }
@@ -1926,21 +1926,17 @@ fn finish_node_list_rejects_foreign_glue_id() {
 }
 
 #[test]
-fn freeze_node_list_accepts_explicit_owner_retained_across_rollback() {
+#[should_panic(expected = "stored token-list slot is not live")]
+fn freeze_node_list_rejects_noncanonical_owner_retained_across_rollback() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let stale = stores.intern_token_list_ref_in_domain(&[crate::token::Token::param(1)], None);
 
     stores.rollback(&snapshot);
-    let list = stores.freeze_node_list(&[Node::Mark {
+    let _ = stores.freeze_node_list(&[Node::Mark {
         class: 0,
         tokens: stale.clone(),
     }]);
-    assert!(matches!(
-        list.nodes().get(0),
-        Some(crate::node_arena::NodeRef::Mark { class: 0, tokens })
-            if tokens.id() == stale.id()
-    ));
 }
 
 #[test]

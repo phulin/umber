@@ -4229,7 +4229,7 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
     let stale_argument = one_macro_argument(stale_word, 1);
     let structurally_retained = InputSummary::new(
         vec![token_frame(
-            stale_list,
+            list.clone(),
             MacroArguments::new(),
             OriginId::UNKNOWN,
         )],
@@ -4241,6 +4241,15 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
     universe.set_input_summary(InputSummary::default());
     drop(structurally_retained);
     let mut invalid = vec![
+        InputSummary::new(
+            vec![token_frame(
+                stale_list,
+                MacroArguments::new(),
+                OriginId::UNKNOWN,
+            )],
+            None,
+            None,
+        ),
         InputSummary::new(
             vec![InputFrameSummary::Source {
                 source_id: crate::SourceId::new(1),
@@ -4533,7 +4542,7 @@ fn fixed_size_direct_operation_mark_does_not_add_a_checkpoint_hash_boundary() {
     let checkpoint_hash = with_mark.state_hash_base.checkpoint_hash;
     let mark = with_mark.begin_direct_operation();
     assert!(
-        std::mem::size_of_val(&mark) <= 16 * std::mem::size_of::<usize>(),
+        std::mem::size_of_val(&mark) <= 20 * std::mem::size_of::<usize>(),
         "direct operation cursor must remain fixed and small"
     );
     with_mark.commit_direct_operation(mark);

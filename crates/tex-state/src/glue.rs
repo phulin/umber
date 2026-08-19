@@ -3,7 +3,7 @@
 use crate::frozen_lookup::FrozenLookup;
 use crate::ids::GlueId;
 use crate::patch_domain::{
-    PatchAllocationDomain, PatchHandle, PatchRoot, PatchRootLease, PatchRootWeak,
+    PatchAllocationDomain, PatchHandle, PatchRoot, PatchRootAnchor, PatchRootLease,
 };
 use crate::reachable_value::{ReachableValuePool, ReachableValueRef};
 use crate::scaled::Scaled;
@@ -150,6 +150,7 @@ impl From<&GlueSpecRef> for GlueId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct GlueStoreMark {
     pub(crate) specs: u32,
+    allocations: u32,
     patch_allocations: u32,
     #[cfg(any(test, feature = "testing"))]
     testing_detached_roots: u32,
@@ -163,7 +164,7 @@ pub struct GlueStore {
     frozen_lookup: FrozenLookup,
     frozen_len: u32,
     patch_handles: HashMap<GlueId, PatchHandle<GlueSpec>>,
-    patch_root_leases: HashMap<GlueId, PatchRootWeak>,
+    patch_root_leases: HashMap<GlueId, PatchRootAnchor>,
     patch_order: Vec<GlueId>,
     /// Explicit detached owners used only by legacy test construction APIs.
     /// Production interning returns `GlueSpecRef` and never enters this row.
@@ -271,7 +272,7 @@ impl GlueStore {
                 patch_root: self
                     .patch_root_leases
                     .get(&id)
-                    .and_then(PatchRootWeak::upgrade),
+                    .map(PatchRootAnchor::lease),
             };
         }
         let value = self.pool.insert_new(key, spec);
@@ -303,7 +304,7 @@ impl GlueStore {
             .expect("new private glue root belongs to the active domain");
         assert!(
             self.patch_root_leases
-                .insert(root.id(), lease.downgrade())
+                .insert(root.id(), lease.anchor())
                 .is_none()
         );
         root.patch_root = Some(lease);
@@ -322,7 +323,7 @@ impl GlueStore {
                     patch_root: self
                         .patch_root_leases
                         .get(&id)
-                        .and_then(PatchRootWeak::upgrade),
+                        .map(PatchRootAnchor::lease),
                 })
             })
     }
@@ -367,6 +368,8 @@ impl GlueStore {
     pub(crate) fn watermark(&self) -> GlueStoreMark {
         GlueStoreMark {
             specs: self.slot_len(),
+            allocations: u32::try_from(self.pool.allocation_mark())
+                .expect("glue allocation events exceed u32"),
             patch_allocations: u32::try_from(self.patch_order.len())
                 .expect("glue patch allocations exceed u32"),
             #[cfg(any(test, feature = "testing"))]
@@ -384,7 +387,8 @@ impl GlueStore {
             assert!(self.patch_handles.remove(&id).is_some());
             assert!(self.patch_root_leases.remove(&id).is_some());
         }
-        self.pool.prioritize_reclamation_from(mark.specs as usize);
+        self.pool
+            .rollback_to_allocation_mark(mark.allocations as usize);
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -415,6 +419,11 @@ impl GlueStore {
         self.patch_handles.clear();
         self.patch_root_leases.clear();
         self.patch_order.clear();
+        self.pool.prioritize_reclamation_from(0);
+    }
+
+    pub(crate) fn retire_unrooted_region_values(&mut self) {
+        self.pool.prioritize_reclamation_from(0);
     }
 
     #[must_use]

@@ -5578,6 +5578,28 @@ impl Universe {
         self.consume_env_mutation(receipt);
     }
 
+    /// Installs a scanner-completed macro directly into the dense runtime
+    /// arenas without first freezing exact token-list values.
+    pub fn set_macro_meaning_from_buffers(
+        &mut self,
+        symbol: impl crate::interner::SymbolReference,
+        flags: crate::meaning::MeaningFlags,
+        parameter_text: &crate::token::RootedTracedTokenBuffer,
+        replacement_text: &crate::token::RootedTracedTokenBuffer,
+        definition_origin: crate::provenance::OriginRef,
+        global: bool,
+    ) {
+        let receipt = self.stores.set_macro_meaning_from_buffers(
+            symbol,
+            flags,
+            parameter_text,
+            replacement_text,
+            definition_origin,
+            global,
+        );
+        self.consume_env_mutation(receipt);
+    }
+
     #[must_use]
     pub fn macro_meaning(
         &self,
