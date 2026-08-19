@@ -6169,7 +6169,7 @@ impl MainControl {
             #[cfg(feature = "profiling")]
             if matches!(scanned, ScannedOperation::Cold(_)) {
                 tex_state::measurement::record_hot_core_materialization(
-                    tex_state::measurement::HotCoreMaterialization::ColdOperation,
+                    tex_state::measurement::HotCoreMaterialization::ScannedStep,
                 );
             }
             diagnostics.extend(
