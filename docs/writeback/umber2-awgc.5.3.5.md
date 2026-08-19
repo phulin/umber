@@ -27,8 +27,10 @@ conflating stored replay with new allocation.
 
 ## Fused boundary
 
-The ranked expansion classifier covers macro expansion and the measured
-`ExpandAfter`, conditional, `CsName`, and converted-token primitive families.
+The ranked expansion classifier covers macro expansion plus exactly
+`ExpandAfter`, `Fi`, `IfX`, `IfNum`, `If`, `CsName`, `NoExpand`, `Detokenize`,
+`String`, `IfFalse`, `RomanNumeral`, `Else`, `Expanded`, `IfCsName`, `Number`,
+and `The`.
 The live command remains borrowed for the successful hot path. Suspension
 captures it once in the existing continuation, including exact fuel,
 provenance, observations, diagnostic queues, and nested expansion state.
@@ -44,9 +46,9 @@ path.
 
 ## Exact fixed-clock measurement
 
-The final feature-enabled profiling binary was built from `cb7524152` and has
+The final feature-enabled profiling binary was built from `cefd56ab2` and has
 SHA-256
-`c98d7174c3cab3dc386483d7ebf8cd9db13b209e21c814f12d16799e5fa4821c`.
+`c9de6aee3b03fcef7197b023cdfc1dcda90aeb2ce11784e0851de09eb8aaf988`.
 Both measurements used `SOURCE_DATE_EPOCH=1787080434`, the restored schema-11
 pdfLaTeX format, schema-3 distribution, exact 105-key offline closure, and
 `ArXiv.tex` SHA-256
@@ -66,9 +68,40 @@ pdfLaTeX format, schema-3 distribution, exact 105-key offline closure, and
 Operation entries fall 58.9% at 6M and 59.6% at 12M. Expansion DTOs fall
 97.65% and 97.52%; the remaining 10,497 and 23,055 are the finite cold
 suspension/fallback list, not hot ranked expansion. The final guarded runs took
-7.75 seconds and 14.52 seconds with 322,984 KiB and 453,240 KiB peak RSS. These
+7.22 seconds and 14.13 seconds with 323,448 KiB and 453,156 KiB peak RSS. These
 wall/RSS values are diagnostic; the exact work and structural counters are the
 acceptance authority.
+
+Every remaining materialization is accounted for by the complement of the
+ranked classifier. The measured finite cold list is:
+
+| Cold expandable opcode |   6M count |  12M count |
+| ---------------------- | ---------: | ---------: |
+| `Meaning`              |        579 |        869 |
+| `Input`                |         65 |        121 |
+| `EndInput`             |         30 |         57 |
+| `JobName`              |          1 |          1 |
+| `IfTrue`               |        360 |        731 |
+| `IfCat`                |      2,133 |      4,395 |
+| `IfDim`                |        112 |        117 |
+| `IfOdd`                |      2,819 |      7,063 |
+| `IfCase`               |      1,341 |      3,175 |
+| `IfVMode`              |         25 |         28 |
+| `IfHMode`              |         91 |        501 |
+| `IfMMode`              |          1 |          1 |
+| `IfVoid`               |          1 |          1 |
+| `IfVBox`               |          1 |          1 |
+| `IfEof`                |        187 |        187 |
+| `Or`                   |      1,291 |      3,118 |
+| `Unexpanded`           |        278 |        515 |
+| `Unless`               |          2 |         39 |
+| `Scantokens`           |          0 |          6 |
+| `IfDefined`            |        206 |        315 |
+| `FileSize`             |        115 |        224 |
+| `StringCompare`        |        857 |      1,588 |
+| `ShellEscape`          |          1 |          1 |
+| `CreationDate`         |          1 |          1 |
+| **Exact sum**          | **10,497** | **23,055** |
 
 Both runs report zero `CommandState` and step-snapshot clones. The warmed
 packed cutover gate reports zero allocations, requested bytes, `Arc`/`Weak`
@@ -117,9 +150,23 @@ definition-slot reuse, exact-meaning owner validation, resource-retry trace
 continuity, Batch diagnostic selection, and stored/transient physical token
 ownership.
 
-The ignored e-TRIP run retains an older independent observer-oracle mismatch:
-expected 297,156 command events and actual 297,158, first diverging at event
-57,934. Its terminal transcript and normalized DVI are byte-exact at SHA-256
+The blocker diagnosis also restored exact e-TRIP without changing an oracle or
+comparison policy. TeX82 sections 366, 370, and 380 require `undefined_cs` to
+be reported and discarded inside `x_token`; preflight had instead preserved
+four expanded deliveries for a second stomach-owned recovery path. The sole
+command projection is now exact at 297,154 records after the oracle's two
+typed `protected_delivery_suppression` records are excluded as designed.
+Geometry is exact at SHA-256
+`7bad29074d9f62af2895c1673356dae79329113a6aadacd2af59f0a2ba75e2a3`,
+the transcript is exact at
+`dc7ab0835d868d7f1c79cbf8f4ce6f23c052b6be7348e36a7a5a2c8fb1247ad7`,
+and normalized DVI is exact at
 `700e8ed48c34c84b8c40e0730a3b9864186f32c7c187b29b7c6866d3adc6d67d`.
-This mismatch predates the physical-owner repair and is not hidden by changing
-the comparator or expected fixture.
+Allocator-memory rows remain advisory under the existing conformance contract.
+
+Final TRIP exposed one related trace-state seam after command/geometry/DVI had
+already converged: section 367 consumed the mode prefix while tracing an
+undefined command, but the diagnostic barrier failed to advance the
+executor's `shown_mode` before a fresh facade traced the following command.
+Commit `cefd56ab2` moves that state transition before the reporting barrier;
+the focused positive control, exact TRIP, and exact e-TRIP all pass.
