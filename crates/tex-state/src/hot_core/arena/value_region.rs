@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use super::{ChunkOwner, FIRST_GENERATION, RegionArenaError, RegionCoordinate, fresh_namespace};
 
+pub(crate) mod store;
+
 /// The six physical columns that make up one logical runtime value region.
 struct RuntimeValueColumns<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance> {
     token_words: Vec<TokenWord>,

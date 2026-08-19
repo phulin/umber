@@ -65,6 +65,14 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/hot_core/arena/value_region.rs`: Heterogeneous token, macro, glue, and
   provenance columns sharing one rollback-owned region lifecycle and explicit
   canonical sealed-region root sets.
+- `src/hot_core/arena/value_region/store.rs`: Concrete runtime token-list,
+  macro, glue, and provenance row facade with copy-only coordinates, atomic
+  composite publication, counted region roots, and admitted borrowed views.
+- `src/hot_core/arena/value_region/store/storage.rs`: Fallible whole-bundle
+  reservation and one-time admitted slice resolution for concrete regions.
+- `src/hot_core/arena/value_region/store/tests.rs`: Typed-coordinate,
+  composite co-location, counted-root, oversized-list, and rollback controls
+  for the concrete runtime value store.
 - `src/hot_core/arena/value_region/tests.rs`: Accept/reject, nested owner,
   resource retry, old-mark, exact all-live, and 10,000-cycle plateau controls
   for runtime value regions.
