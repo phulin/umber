@@ -1,5 +1,6 @@
 //! Persistent live token, macro, and glue registry over one arena candidate.
 
+use core::fmt;
 use core::num::NonZeroU32;
 
 use crate::glue::GlueSpec;
@@ -95,6 +96,15 @@ pub(crate) struct RuntimeValueRegistry {
     token_locations: Vec<RuntimeTokenListCoordinate>,
     macro_locations: Vec<RuntimeMacroCoordinate>,
     glue_locations: Vec<RuntimeGlueCoordinate>,
+}
+
+impl fmt::Debug for RuntimeValueRegistry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RuntimeValueRegistry")
+            .field("accounting", &self.accounting())
+            .finish()
+    }
 }
 
 impl RuntimeValueRegistry {
@@ -277,18 +287,67 @@ impl RuntimeValueRegistry {
         Ok(())
     }
 
-    /// Cold generation fork: seals once, shares region owners, and forks ids.
-    pub(crate) fn fork(&mut self) -> Result<Self, RuntimeValueRegistryError> {
-        let published = self.candidate.published_store()?;
-        Ok(Self {
-            candidate: RuntimeValueCandidate::from_store(published)?,
+    /// Cold generation fork. Immutable regions share one owner each; values
+    /// in the private active region alone are copied into a fresh namespace.
+    pub(crate) fn fork(&self) -> Result<Self, RuntimeValueRegistryError> {
+        let active_owner = self.candidate.active_owner();
+        let mut child = Self {
+            candidate: RuntimeValueCandidate::from_store(self.candidate.sealed_store())?,
             token_identities: self.token_identities.fork(),
             macro_identities: self.macro_identities.fork(),
             glue_identities: self.glue_identities.fork(),
             token_locations: self.token_locations.clone(),
             macro_locations: self.macro_locations.clone(),
             glue_locations: self.glue_locations.clone(),
-        })
+        };
+        let Some(active_owner) = active_owner else {
+            return Ok(child);
+        };
+
+        for (slot, coordinate) in self.token_locations.iter().copied().enumerate() {
+            if coordinate.owner() != active_owner {
+                continue;
+            }
+            let view = self.candidate.admit_token_list(coordinate)?;
+            let copied = child.candidate.append_token_list(RuntimeTokenListInput {
+                id: coordinate.id(),
+                semantic_id: view.semantic_id(),
+                tokens: view.tokens(),
+                provenance_roots: view.provenance_roots(),
+            })?;
+            child.token_locations[slot] = copied;
+        }
+        for (slot, coordinate) in self.macro_locations.iter().copied().enumerate() {
+            if coordinate.owner() != active_owner {
+                continue;
+            }
+            let view = self.candidate.admit_macro(coordinate)?;
+            let meaning = view.meaning();
+            let parameter_text = child.token_coordinate(meaning.parameter_text())?;
+            let replacement_text = child.token_coordinate(meaning.replacement_text())?;
+            let copied = child.candidate.append_macro(RuntimeMacroInput {
+                definition: coordinate.id(),
+                flags: meaning.flags(),
+                parameter_pattern: view.parameter_pattern(),
+                parameter_text,
+                replacement_text,
+                definition_origin: view.definition_origin(),
+                parameter_origins: view.parameter_origins(),
+                replacement_origins: view.replacement_origins(),
+                observation_operand: view.observation_operand(),
+                allocation_serial: view.allocation_serial(),
+            })?;
+            child.macro_locations[slot] = copied;
+        }
+        for (slot, coordinate) in self.glue_locations.iter().copied().enumerate() {
+            if coordinate.owner() != active_owner {
+                continue;
+            }
+            let view = self.candidate.admit_glue(coordinate)?;
+            let copied = child.candidate.append_glue(coordinate.id(), *view.spec())?;
+            child.glue_locations[slot] = copied;
+        }
+        Ok(child)
     }
 
     pub(crate) fn empty_published_store(&self) -> RuntimeValueStore {

@@ -26,6 +26,13 @@ fn token(ch: char) -> Token {
     }
 }
 
+fn glue(width: i32) -> GlueSpec {
+    GlueSpec {
+        width: Scaled::from_raw(width),
+        ..GlueSpec::ZERO
+    }
+}
+
 fn token_input<'a>(value: u64, tokens: &'a [Token]) -> RuntimeTokenValueInput<'a> {
     RuntimeTokenValueInput {
         semantic_id: semantic(value),
@@ -162,6 +169,13 @@ fn fork_shares_inherited_rows_and_rejects_foreign_suffix_ids() {
     let inherited = parent
         .allocate_token_list(token_input(4, &inherited_values))
         .expect("inherited token allocates");
+    let unknown = OriginRef::unknown();
+    let inherited_macro = parent
+        .allocate_macro(macro_input(TokenListId::EMPTY, inherited, &unknown))
+        .expect("inherited macro allocates");
+    let inherited_glue = parent
+        .allocate_glue(glue(17))
+        .expect("inherited glue allocates");
     let mut child = parent.fork().expect("cold fork succeeds");
     let parent_values = [token('p')];
     let child_values = [token('c')];
@@ -185,6 +199,21 @@ fn fork_shares_inherited_rows_and_rejects_foreign_suffix_ids() {
             .expect("child inherits")
             .tokens(),
         inherited_values
+    );
+    assert_eq!(
+        child
+            .macro_definition(inherited_macro)
+            .expect("child inherits macro")
+            .meaning()
+            .replacement_text(),
+        inherited
+    );
+    assert_eq!(
+        *child
+            .glue(inherited_glue)
+            .expect("child inherits glue")
+            .spec(),
+        glue(17)
     );
     assert!(child.token_list(parent_only).is_err());
     assert!(parent.token_list(child_only).is_err());

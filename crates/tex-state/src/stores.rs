@@ -45,6 +45,12 @@ fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
     }
 }
 use crate::glue::{GlueSpec, GlueSpecRef, GlueStore, GlueStoreMark};
+use crate::hot_core::arena::store::registry::{
+    RuntimeValueRegistry, RuntimeValueRegistryMark,
+};
+use crate::hot_core::arena::store::{
+    RuntimeValueStore, RuntimeValueStorePublicationMark,
+};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
@@ -77,7 +83,10 @@ use crate::token_store::{
     TokenStoreMark,
 };
 use std::mem;
+use std::num::NonZeroU32;
 use std::sync::Arc;
+
+const RUNTIME_VALUE_REGION_CAPACITY: NonZeroU32 = NonZeroU32::new(4_096).unwrap();
 
 mod exact_identity;
 mod format;
@@ -115,6 +124,8 @@ pub(crate) struct StoreSnapshot {
     source_map_mark: SourceMapMark,
     macro_mark: MacroStoreMark,
     glue_mark: GlueStoreMark,
+    runtime_value_mark: RuntimeValueRegistryMark,
+    runtime_value_roots_mark: RuntimeValueStorePublicationMark,
     font_mark: FontStoreMark,
     code_tables_snapshot: CodeTablesSnapshot,
     hyphenation: Arc<HyphenationTable>,
@@ -139,6 +150,8 @@ pub(crate) struct StorePatchOperationMark {
     tokens: TokenStoreMark,
     macros: MacroStoreMark,
     glue: GlueStoreMark,
+    runtime_values: RuntimeValueRegistryMark,
+    runtime_value_roots: RuntimeValueStorePublicationMark,
 }
 
 #[derive(Clone, Debug)]
@@ -202,6 +215,8 @@ pub struct Stores {
     source_fragments: FragmentStore,
     macros: MacroStore,
     glue: GlueStore,
+    runtime_values: RuntimeValueRegistry,
+    runtime_value_roots: RuntimeValueStore,
     fonts: FontStore,
     node_ref_index: NodeListWeakIndex,
     code_tables: CodeTables,
@@ -620,6 +635,10 @@ impl Clone for Stores {
     fn clone(&self) -> Self {
         let mut env = self.env.clone();
         env.reset_snapshot_roots_for_fork();
+        let runtime_values = self
+            .runtime_values
+            .fork()
+            .expect("runtime value registry fork must remain representable");
         Self {
             owner: StoreOwner::new(),
             env,
@@ -632,6 +651,8 @@ impl Clone for Stores {
             source_fragments: self.source_fragments.clone(),
             macros: self.macros.clone(),
             glue: self.glue.clone(),
+            runtime_values,
+            runtime_value_roots: self.runtime_value_roots.clone(),
             fonts: self.fonts.clone(),
             node_ref_index: NodeListWeakIndex::new(),
             code_tables: self.code_tables.clone(),
@@ -1112,6 +1133,14 @@ impl Stores {
     /// Creates an empty state-store tuple.
     #[must_use]
     pub fn new() -> Self {
+        let empty_token_semantic_id = TokenSemanticIdBuilder::new().finish();
+        let mut runtime_values =
+            RuntimeValueRegistry::new(RUNTIME_VALUE_REGION_CAPACITY, empty_token_semantic_id)
+                .expect("canonical runtime values must fit an empty registry");
+        let mut runtime_value_roots = runtime_values.empty_published_store();
+        runtime_values
+            .publish_into(&mut runtime_value_roots)
+            .expect("canonical runtime values must publish");
         let mut stores = Self {
             owner: StoreOwner::new(),
             env: Env::new(),
@@ -1124,6 +1153,8 @@ impl Stores {
             source_fragments: FragmentStore::new(),
             macros: MacroStore::new(),
             glue: GlueStore::new(),
+            runtime_values,
+            runtime_value_roots,
             fonts: FontStore::new(),
             node_ref_index: NodeListWeakIndex::new(),
             code_tables: CodeTables::new(),
@@ -2202,10 +2233,24 @@ impl Stores {
             tokens: self.tokens.watermark(),
             macros: self.macros.watermark(),
             glue: self.glue.watermark(),
+            runtime_values: self
+                .runtime_values
+                .mark()
+                .expect("runtime value mark must remain representable"),
+            runtime_value_roots: self
+                .runtime_value_roots
+                .publication_mark()
+                .expect("runtime root mark must remain representable"),
         }
     }
 
     pub(crate) fn discard_patch_operation_allocations(&mut self, mark: StorePatchOperationMark) {
+        self.runtime_value_roots
+            .restore_publication(mark.runtime_value_roots)
+            .expect("patch runtime root mark belongs to this store");
+        self.runtime_values
+            .rollback(mark.runtime_values)
+            .expect("patch runtime value mark belongs to this store");
         self.tokens.truncate_to(mark.tokens);
         self.macros.truncate_to(mark.macros);
         self.glue.truncate_to(mark.glue);
@@ -3986,6 +4031,9 @@ impl Stores {
     #[must_use]
     pub(crate) fn checkpoint(&mut self) -> StoreSnapshot {
         self.synchronize_exact_env_identity();
+        self.runtime_values
+            .publish_into(&mut self.runtime_value_roots)
+            .expect("runtime values must publish before checkpoint");
         StoreSnapshot {
             owner: self.owner.snapshot_owner(),
             env_snapshot: self.env.checkpoint(),
@@ -3997,6 +4045,14 @@ impl Stores {
             source_map_mark: self.source_map.watermark(),
             macro_mark: self.macros.watermark(),
             glue_mark: self.glue.watermark(),
+            runtime_value_mark: self
+                .runtime_values
+                .mark()
+                .expect("runtime value mark must remain representable"),
+            runtime_value_roots_mark: self
+                .runtime_value_roots
+                .publication_mark()
+                .expect("runtime root mark must remain representable"),
             font_mark: self.fonts.watermark(),
             code_tables_snapshot: self.code_tables.checkpoint(),
             hyphenation: self.hyphenation.clone(),
@@ -4091,6 +4147,12 @@ impl Stores {
             );
         }
         self.string_pool.rollback_to(snapshot.string_pool);
+        self.runtime_value_roots
+            .restore_publication(snapshot.runtime_value_roots_mark)
+            .expect("snapshot runtime root mark belongs to this store");
+        self.runtime_values
+            .rollback(snapshot.runtime_value_mark)
+            .expect("snapshot runtime value mark belongs to this store");
         self.tokens.truncate_to(snapshot.token_mark);
         self.provenance.truncate_to(snapshot.provenance_mark);
         self.source_map.truncate_to(snapshot.source_map_mark);

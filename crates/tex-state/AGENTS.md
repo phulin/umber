@@ -72,7 +72,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   reservation and one-time admitted slice resolution for concrete regions.
 - `src/hot_core/arena/value_region/store/registry.rs`: Persistent live
   token/macro/glue candidate, append-only identity tables, dense coordinate
-  maps, fixed rollback marks, cold forks, and incremental region publication.
+  maps, fixed rollback marks, incremental region publication, and cold forks
+  that share sealed regions while copying only the private active suffix.
 - `src/hot_core/arena/value_region/store/registry/tests.rs`: Allocation/read,
   stale/foreign identity, all-live growth, and bounded-retry registry controls.
 - `src/hot_core/arena/value_region/store/tests.rs`: Typed-coordinate,
@@ -234,6 +235,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
 - `src/token_store.rs`: Reachability-owned immutable token-list values, explicit loaded-format roots, collision-safe weak lookup, reusable generation-safe slots, typed private-acceptance leases, and rollback/private-patch coordination.
 - `src/token_store/tests.rs`: Unit tests for exact token-list interning, loaded-base ownership, weak-slot reclamation/reuse, builder reuse, collision handling, rollback, and private-patch transfer.
+- `src/stores.rs`: Also owns the unified runtime-value registry and published
+  region-root set; checkpoints and private-operation rollback restore published
+  roots before truncating registry suffixes.
 - `src/universe.rs`: Top-level TeX state timeline and sole state API, with
   snapshots, effect commits, execution-side dependency-aware getters and
   barriers, precise World mutation-guard stamping, the strong frozen-macro

@@ -440,6 +440,15 @@ pub(crate) struct RuntimeValueStore {
     regions: ConcreteRegions,
 }
 
+impl fmt::Debug for RuntimeValueStore {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RuntimeValueStore")
+            .field("accounting", &self.accounting())
+            .finish()
+    }
+}
+
 /// Fixed-size restoration point for a canonical published-region root set.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeValueStorePublicationMark {
@@ -630,6 +639,18 @@ impl RuntimeValueCandidate {
         })
     }
 
+    /// Shares every immutable region while leaving the private active suffix
+    /// for the cold fork path to copy into its own namespace.
+    fn sealed_store(&self) -> RuntimeValueStore {
+        RuntimeValueStore {
+            regions: clone_sealed_regions(&self.arena),
+        }
+    }
+
+    fn active_owner(&self) -> Option<ChunkOwner> {
+        self.arena.active.as_ref().map(|active| active.key)
+    }
+
     pub(crate) fn mark(&self) -> Result<RuntimeValueRegionMark, RegionArenaError> {
         self.arena.mark()
     }
@@ -807,14 +828,6 @@ impl RuntimeValueCandidate {
             return Err(error);
         }
         Ok(())
-    }
-
-    fn published_store(&mut self) -> Result<RuntimeValueStore, RegionArenaError> {
-        let mut store = RuntimeValueStore {
-            regions: self.arena.base.retain_regions(&[]),
-        };
-        self.publish_into(&mut store)?;
-        Ok(store)
     }
 
     pub(crate) fn accept(self) -> Result<RuntimeValueStore, RegionArenaError> {

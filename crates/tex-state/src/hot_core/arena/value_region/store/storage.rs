@@ -214,6 +214,25 @@ pub(super) fn publish_candidate_regions(
     Ok(())
 }
 
+/// Clones only the one owner per already-immutable region. The mutable active
+/// region is deliberately excluded and is copied into a fresh child namespace
+/// by the registry's cold fork path.
+pub(super) fn clone_sealed_regions(arena: &ConcreteArena) -> ConcreteRegions {
+    let mut regions = arena.base.clone();
+    regions
+        .regions
+        .extend(
+            arena
+                .sealed_suffix
+                .iter()
+                .map(|owner| super::super::RuntimeValueRegionRoot {
+                    owner: Arc::clone(owner),
+                    uses: NonZeroUsize::MIN,
+                }),
+        );
+    regions
+}
+
 fn retain_root_if_absent(
     destination: &mut ConcreteRegions,
     key: ChunkOwner,
