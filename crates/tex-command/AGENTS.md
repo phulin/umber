@@ -54,7 +54,8 @@ print channel of its own outside the borrowed
   executor's single diagnostic boundary. The ordinary driver owns one live
   current command and lends it through macro and ranked primitive expansion;
   it moves that value into continuation state only after a typed immutable-host
-  suspension. The same rule covers the typed `\expandafter` operand and
+  suspension, and a resumed primitive retains §367's already-emitted trace
+  instead of printing the command twice. The same rule covers the typed `\expandafter` operand and
   `\csname` accumulator frames.
 - `src/processor/mod.rs`: processor construction plus the opaque delivery
   cursor moved across an executor-owned typed resource continuation; it
@@ -198,7 +199,8 @@ print channel of its own outside the borrowed
   re-deriving this predicate one exception at a time.
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
   macro matcher, directly indexed admitted packed-macro arena segments and
-  exact-generation owner chains, reusable argument chunks, packed
+  exact-meaning owner chains that reject rollback-reused coordinates without
+  reconstructing ordinary cache hits, reusable argument chunks, packed
   invocation-record coordinates, compact activation/replay coordinates, and
   focused tests.
 - `src/conditionals.rs`: private independent condition-stack machine; also

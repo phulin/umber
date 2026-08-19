@@ -11905,6 +11905,26 @@ fn undefined_control_sequence_reports_once_and_drops_only_its_token() {
 }
 
 #[test]
+fn batch_undefined_recovery_keeps_the_log_only_selector() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = MainControl::tex82_initex(&mut stores);
+    stores.set_interaction_mode(tex_state::InteractionMode::Batch);
+    register_source(&mut control, br"\missing\count0=23\end");
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 23, "batch recovery continues the job");
+    assert_eq!(stores.world().error_channel().error_count(), 1);
+    assert!(
+        !pending_sink_text(&stores, true).contains("Undefined control sequence"),
+        "batch errors must not escape the log-only selector"
+    );
+    assert!(
+        pending_sink_text(&stores, false).contains("Undefined control sequence"),
+        "batch errors remain in the transcript log"
+    );
+}
+
+#[test]
 fn misplaced_tab_reports_once_and_drops_only_the_delimiter() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = MainControl::tex82_initex(&mut stores);

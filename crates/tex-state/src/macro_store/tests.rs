@@ -338,6 +338,61 @@ fn packed_coordinate_rollback_restores_the_prior_live_projection() {
 }
 
 #[test]
+fn recycled_definition_slot_splits_previously_shared_token_roots() {
+    let mut stores = Stores::new();
+    let shared = replacement(&mut stores, 22);
+    let first = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        shared.id(),
+        shared.id(),
+    ));
+    let first_id = first.id();
+    drop(first);
+
+    let empty = stores.token_list_ref(crate::ids::TokenListId::EMPTY);
+    let replacement = replacement(&mut stores, 23);
+    let second = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::LONG,
+        empty.id(),
+        replacement.id(),
+    ));
+    assert_eq!(second.id().raw(), first_id.raw());
+    assert_ne!(second.id(), first_id);
+
+    let owner = stores
+        .testing_macro_store()
+        .packed_owner(second.id())
+        .expect("recycled definition has a packed owner");
+    assert_eq!(owner.meaning(second.id()), Some(second.meaning()));
+}
+
+#[test]
+fn packed_owner_hit_validates_the_complete_copy_only_meaning() {
+    let mut stores = Stores::new();
+    let empty = stores.token_list_ref(crate::ids::TokenListId::EMPTY);
+    let body = replacement(&mut stores, 24);
+    let definition = stores.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        empty.id(),
+        body.id(),
+    ));
+    let owner = stores
+        .testing_macro_store()
+        .packed_owner(definition.id())
+        .expect("definition has a packed owner");
+
+    assert!(owner.contains_meaning(definition.id(), definition.meaning()));
+    assert!(!owner.contains_meaning(
+        definition.id(),
+        MacroMeaning::new(MeaningFlags::LONG, empty.id(), body.id())
+    ));
+    assert!(!owner.contains_meaning(
+        definition.id(),
+        MacroMeaning::new(MeaningFlags::EMPTY, empty.id(), empty.id())
+    ));
+}
+
+#[test]
 fn all_roots_live_grow_by_exact_object_and_logical_byte_totals() {
     let mut stores = Stores::new();
     let empty = stores.token_list_ref(crate::ids::TokenListId::EMPTY);

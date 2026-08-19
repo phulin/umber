@@ -175,9 +175,11 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
         Token::Cs(macro_name),
         frame.as_origin().clone(),
     );
-    state.parameters.admit_macro(macro_root.id(), || {
-        universe.packed_macro_owner(macro_root.id())
-    });
+    state
+        .parameters
+        .admit_macro(macro_root.id(), macro_root.meaning(), || {
+            universe.packed_macro_owner(macro_root.id())
+        });
     let arguments = state.parameters.store_arguments(
         tex_state::token::RootedTracedTokenBuffer::new([
             tex_state::token::RootedTracedTokenWord::new(Token::Cs(macro_name), inserted.clone()),

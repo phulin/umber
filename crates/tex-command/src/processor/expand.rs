@@ -726,7 +726,12 @@ impl CommandProcessor<'_> {
                 self.command.transient.active_expansion_depth = depth
                     .checked_add(1)
                     .ok_or_else(CommandError::input_invariant)?;
-                let result = self.expanded_delivery_driver(pending.take(), policy, expanded);
+                let result = self.expanded_delivery_driver(
+                    pending.take(),
+                    policy,
+                    expanded,
+                    resumed_pending,
+                );
                 assert_eq!(
                     self.command.transient.active_expansion_depth,
                     depth + 1,
@@ -784,9 +789,11 @@ impl CommandProcessor<'_> {
         mut pending: Option<CurrentCommand>,
         policy: DeliveryPolicy,
         expanded: ExpandedDeliveryPolicy,
+        resumed_pending: bool,
     ) -> Result<Option<DeliveryEvent>, CommandError> {
         let expansions_before = self.command.expansion.cumulative_expansions;
         let mut first = true;
+        let mut suppress_first_expansion_trace = resumed_pending;
         loop {
             let command = match pending.take() {
                 Some(command) => command,
@@ -879,7 +886,10 @@ impl CommandProcessor<'_> {
             // bookkeeping, then resumes the enclosing expanded-token loop.
             // A user paragraph has been backed up for that loop; an EOF
             // recovery paragraph was consumed by the failed match instead.
-            match self.expand(&command) {
+            match self.expand_with_trace(
+                &command,
+                !std::mem::take(&mut suppress_first_expansion_trace),
+            ) {
                 // TeX82 §394 resumes expanded delivery after both an ordinary
                 // runaway paragraph and §23's outer-validity recovery has
                 // aborted a macro match. The latter leaves the recovered
@@ -985,6 +995,16 @@ impl CommandProcessor<'_> {
     /// TeX.web's scalar `expand`: each case changes the active input/state
     /// directly, then returns to [`Self::get_x_token_scalar`].
     pub(crate) fn expand(&mut self, command: &CurrentCommand) -> Result<(), CommandError> {
+        self.expand_with_trace(command, true)
+    }
+
+    /// Continues one expansion attempt while preserving §367's already
+    /// emitted trace across an immutable-resource suspension.
+    fn expand_with_trace(
+        &mut self,
+        command: &CurrentCommand,
+        report_trace: bool,
+    ) -> Result<(), CommandError> {
         #[cfg(feature = "profiling")]
         {
             if !is_ranked_fused_expansion(command.meaning()) {
@@ -1019,10 +1039,11 @@ impl CommandProcessor<'_> {
         // Undefined control sequences reach the same branch through §370.
         // Macros and `end_template` take §366's other two branches and do not
         // cross this diagnostic boundary.
-        if self
-            .state
-            .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
-            > 1
+        if report_trace
+            && self
+                .state
+                .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
+                > 1
             && (matches!(
                 command.meaning(),
                 Meaning::ExpandablePrimitive(primitive)

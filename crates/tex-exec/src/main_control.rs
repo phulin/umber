@@ -3544,8 +3544,9 @@ impl MainControl {
             // settled command without entering a second ErrorStop input
             // dialogue; recovery input still belongs to diagnostics raised
             // by operand scanning and semantic application.
-            let saved_interaction =
-                preserves_undefined_for_executor_diagnostic.then(|| stores.interaction_mode());
+            let saved_interaction = preserves_undefined_for_executor_diagnostic
+                .then(|| stores.interaction_mode())
+                .filter(|mode| *mode == tex_state::InteractionMode::ErrorStop);
             if saved_interaction.is_some() {
                 stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
             }
@@ -5678,6 +5679,9 @@ impl MainControl {
                         } | Meaning::CharGiven(_)
                             | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
                     );
+                if processor.command_trace_printed() {
+                    self.shown_mode = Some(mode);
+                }
                 if !continues_main_loop {
                     prepare_command_trace(&mut processor, mode, self.shown_mode);
                     report_main_control_command_trace(

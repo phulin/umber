@@ -44,9 +44,12 @@ fn macro_context_reads_the_admitted_chunk_after_definition_retirement() {
     );
     universe.commit_direct_operation(first);
 
-    let admitted = command
-        .parameters
-        .admit_macro(definition, || universe.packed_macro_owner(definition));
+    let admitted =
+        command
+            .parameters
+            .admit_macro(definition, universe.macro_definition(definition), || {
+                universe.packed_macro_owner(definition)
+            });
     let arguments = command.parameters.store_arguments(
         tex_state::token::RootedTracedTokenBuffer::default(),
         [None; 9],

@@ -162,6 +162,23 @@ impl PackedMacroChunkOwner {
         self.record(definition).is_some()
     }
 
+    /// Whether this retained physical record is the current immutable
+    /// meaning named by a definition coordinate.
+    ///
+    /// Store rollback can lawfully reuse a timeline-local definition
+    /// identity after retiring the allocation that previously occupied it.
+    /// Command caches therefore validate both the identity and its two token
+    /// roots before reusing an admitted chunk.
+    #[must_use]
+    pub fn contains_meaning(&self, definition: MacroDefinitionId, meaning: MacroMeaning) -> bool {
+        self.record(definition).is_some_and(|record| {
+            record.flags == meaning.flags()
+                && self.chunk.token_ids[record.parameter_root as usize] == meaning.parameter_text()
+                && self.chunk.token_ids[record.replacement_root as usize]
+                    == meaning.replacement_text()
+        })
+    }
+
     #[must_use]
     pub fn owns_definition_slot(&self, definition: MacroDefinitionId) -> bool {
         self.chunk.record_index(definition).is_some()
@@ -847,12 +864,14 @@ impl MacroStore {
             chunk,
             record_index.unwrap_or(chunk.records.len()),
             existing.as_ref().map(|record| record.parameter_root),
+            existing.as_ref().map(|record| record.replacement_root),
             roots.0.id(),
         );
         let replacement_root = retain_or_replace_token_id(
             chunk,
             record_index.unwrap_or(chunk.records.len()),
             existing.as_ref().map(|record| record.replacement_root),
+            Some(parameter_root),
             roots.1.id(),
         );
         let parameter_origins = provenance
@@ -1545,6 +1564,7 @@ fn retain_or_replace_token_id(
     chunk: &mut PackedMacroChunk,
     record_index: usize,
     existing: Option<u32>,
+    sibling: Option<u32>,
     id: TokenListId,
 ) -> u32 {
     let Some(existing) = existing else {
@@ -1553,10 +1573,11 @@ fn retain_or_replace_token_id(
     if chunk.token_ids[existing as usize] == id {
         return existing;
     }
-    let shared = chunk.records.iter().enumerate().any(|(index, record)| {
-        index != record_index
-            && (record.parameter_root == existing || record.replacement_root == existing)
-    });
+    let shared = sibling == Some(existing)
+        || chunk.records.iter().enumerate().any(|(index, record)| {
+            index != record_index
+                && (record.parameter_root == existing || record.replacement_root == existing)
+        });
     if shared {
         retain_token_id(&mut chunk.token_ids, id)
     } else {

@@ -232,7 +232,8 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
     assert!(expansion.contains("match self.macro_call(command)?"));
     assert!(expansion.contains("MacroCallOutcome::Activated"));
     assert!(expansion.contains("MacroCallOutcome::PrefixMismatchRecovered"));
-    assert!(expansion.contains("match self.expand(&command)"));
+    assert!(expansion.contains("match self.expand_with_trace("));
+    assert!(expansion.contains("suppress_first_expansion_trace"));
     assert!(expansion.contains("self.command.retain_pending_expansion(command);"));
     assert!(
         !expansion.contains("let retry = command.clone();"),

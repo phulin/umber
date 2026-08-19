@@ -4530,9 +4530,11 @@ fn macro_activations_allocate_nested_invocation_provenance() {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let empty = universe.intern_token_list(&[]);
     let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
-    let admitted = command.parameters.admit_macro(definition.id(), || {
-        universe.packed_macro_owner(definition.id())
-    });
+    let admitted = command
+        .parameters
+        .admit_macro(definition.id(), definition.meaning(), || {
+            universe.packed_macro_owner(definition.id())
+        });
     let target = universe.intern("nested").symbol();
     let mut capabilities = CommandHostCapabilities::default();
     let outer_invocation;
@@ -4591,9 +4593,12 @@ fn meaning_reads_immutable_replacement_after_nested_macro_retirement() {
     let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, expanded));
     let empty_definition =
         universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
-    let admitted = command.parameters.admit_macro(empty_definition.id(), || {
-        universe.packed_macro_owner(empty_definition.id())
-    });
+    let admitted =
+        command
+            .parameters
+            .admit_macro(empty_definition.id(), empty_definition.meaning(), || {
+                universe.packed_macro_owner(empty_definition.id())
+            });
     let target = universe.intern("getxresult").symbol();
     universe.set_meaning(
         target,

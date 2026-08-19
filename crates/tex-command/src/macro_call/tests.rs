@@ -109,16 +109,18 @@ fn admitted_macro_owners_are_directly_indexed_by_packed_chunk() {
     let mut parameters = ParameterState::default();
     let mut admitted = Vec::new();
     for definition in &definitions {
-        admitted.push(parameters.admit_macro(definition.id(), || {
-            universe.packed_macro_owner(definition.id())
-        }));
+        admitted.push(
+            parameters.admit_macro(definition.id(), definition.meaning(), || {
+                universe.packed_macro_owner(definition.id())
+            }),
+        );
     }
 
     assert_eq!(parameters.admitted_macros.len(), 3);
     assert_eq!(parameters.admitted_macro_chunks.len(), 3);
     for (definition, expected) in definitions.iter().zip(admitted).rev() {
         assert_eq!(
-            parameters.admit_macro(definition.id(), || {
+            parameters.admit_macro(definition.id(), definition.meaning(), || {
                 panic!("an indexed owner must not be reconstructed")
             }),
             expected
@@ -140,8 +142,9 @@ fn sealed_chunk_deltas_preserve_unchanged_definition_coordinates() {
         TokenListId::EMPTY,
     ));
     let mut parameters = ParameterState::default();
-    let first_owner =
-        parameters.admit_macro(first.id(), || universe.packed_macro_owner(first.id()));
+    let first_owner = parameters.admit_macro(first.id(), first.meaning(), || {
+        universe.packed_macro_owner(first.id())
+    });
 
     let second = universe.intern_macro(MacroMeaning::new(
         MeaningFlags::EMPTY,
@@ -152,15 +155,16 @@ fn sealed_chunk_deltas_preserve_unchanged_definition_coordinates() {
         PackedMacroChunkOwner::chunk_index(first.id()),
         PackedMacroChunkOwner::chunk_index(second.id())
     );
-    let second_owner =
-        parameters.admit_macro(second.id(), || universe.packed_macro_owner(second.id()));
+    let second_owner = parameters.admit_macro(second.id(), second.meaning(), || {
+        universe.packed_macro_owner(second.id())
+    });
     assert_ne!(
         second_owner, first_owner,
         "a definition added after publication owns a sealed delta segment"
     );
 
     assert_eq!(
-        parameters.admit_macro(first.id(), || {
+        parameters.admit_macro(first.id(), first.meaning(), || {
             panic!("an unchanged definition coordinate must survive owner replacement")
         }),
         first_owner
@@ -170,6 +174,54 @@ fn sealed_chunk_deltas_preserve_unchanged_definition_coordinates() {
             .admitted_macro(second_owner)
             .contains(second.id())
     );
+}
+
+#[test]
+fn recycled_slot_cache_revalidates_exact_generation_coordinates() {
+    let mut first_universe = Universe::new();
+    let first = first_universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        TokenListId::EMPTY,
+        TokenListId::EMPTY,
+    ));
+    let mut second_universe = Universe::new();
+    let second = second_universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::LONG,
+        TokenListId::EMPTY,
+        TokenListId::EMPTY,
+    ));
+    assert_eq!(first.id().raw(), second.id().raw());
+    assert_ne!(first.id(), second.id());
+
+    let mut parameters = ParameterState::default();
+    let owner = parameters.admit_macro(first.id(), first.meaning(), || {
+        first_universe.packed_macro_owner(first.id())
+    });
+    assert_eq!(
+        parameters.admit_macro(second.id(), second.meaning(), || {
+            second_universe.packed_macro_owner(second.id())
+        }),
+        owner,
+        "an idle dense slot reuses its admitted owner coordinate"
+    );
+    assert!(parameters.admitted_macro(owner).contains(second.id()));
+
+    assert_eq!(
+        parameters.admit_macro(first.id(), first.meaning(), || {
+            first_universe.packed_macro_owner(first.id())
+        }),
+        owner,
+        "an exact index must reject the different generation now in its slot"
+    );
+    assert!(parameters.admitted_macro(owner).contains(first.id()));
+    assert_eq!(
+        parameters.admit_macro(second.id(), second.meaning(), || {
+            second_universe.packed_macro_owner(second.id())
+        }),
+        owner,
+        "alternating restored generations keep the exact coordinate current"
+    );
+    assert!(parameters.admitted_macro(owner).contains(second.id()));
 }
 
 #[test]
@@ -229,9 +281,11 @@ fn activation_boundary_owns_arguments_before_exposing_its_body() {
         TokenListId::EMPTY,
         TokenListId::EMPTY,
     ));
-    let admitted = state.parameters.admit_macro(definition.id(), || {
-        universe.packed_macro_owner(definition.id())
-    });
+    let admitted = state
+        .parameters
+        .admit_macro(definition.id(), definition.meaning(), || {
+            universe.packed_macro_owner(definition.id())
+        });
     let arguments = builder.finish(&mut state.parameters);
     let body = state.push_macro_activation(
         tex_state::interner::Symbol::testing_new(1),

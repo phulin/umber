@@ -3,7 +3,7 @@
 use tex_state::env::banks::IntParam;
 use tex_state::ids::MacroDefinitionId;
 use tex_state::interner::Symbol;
-use tex_state::macro_store::{PackedMacroChunkOwner, PackedMacroPattern};
+use tex_state::macro_store::{MacroMeaning, PackedMacroChunkOwner, PackedMacroPattern};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, RootedTracedTokenBuffer, Token, TracedTokenWord};
 
@@ -333,6 +333,7 @@ impl ParameterState {
     fn indexed_macro_owner(
         &self,
         definition: MacroDefinitionId,
+        meaning: MacroMeaning,
     ) -> Option<(usize, &PackedMacroChunkOwner)> {
         let mut encoded = self
             .admitted_macro_definition_heads
@@ -343,7 +344,10 @@ impl ParameterState {
             let entry = self.admitted_macro_definitions[index as usize];
             if entry.definition == definition {
                 let owner = entry.owner as usize;
-                return Some((owner, &self.admitted_macros[owner]));
+                let owner = &self.admitted_macros[owner];
+                if owner.contains_meaning(definition, meaning) {
+                    return Some((entry.owner as usize, owner));
+                }
             }
             encoded = entry.next;
         }
@@ -370,6 +374,8 @@ impl ParameterState {
         while let Some(entry_index) = encoded.checked_sub(1) {
             let entry = self.admitted_macro_definitions[entry_index as usize];
             if entry.definition == definition {
+                self.admitted_macro_definitions[entry_index as usize].owner =
+                    u32::try_from(index).expect("admitted macro chunks exceed u32");
                 return;
             }
             encoded = entry.next;
@@ -388,9 +394,10 @@ impl ParameterState {
     pub(crate) fn admit_macro(
         &mut self,
         definition: MacroDefinitionId,
+        meaning: MacroMeaning,
         owner: impl FnOnce() -> PackedMacroChunkOwner,
     ) -> u32 {
-        if let Some((index, _)) = self.indexed_macro_owner(definition) {
+        if let Some((index, _)) = self.indexed_macro_owner(definition, meaning) {
             return u32::try_from(index).expect("admitted macro chunks exceed u32");
         }
         // A definition generation retained by an active replacement level can
@@ -400,7 +407,7 @@ impl ParameterState {
         if let Some(index) = self
             .admitted_macros
             .iter()
-            .position(|candidate| candidate.contains(definition))
+            .position(|candidate| candidate.contains_meaning(definition, meaning))
         {
             self.index_macro_definition(definition, index);
             return u32::try_from(index).expect("admitted macro chunks exceed u32");
@@ -432,9 +439,6 @@ impl ParameterState {
     }
 
     pub(crate) fn macro_owner(&self, definition: MacroDefinitionId) -> &PackedMacroChunkOwner {
-        if let Some((_, owner)) = self.indexed_macro_owner(definition) {
-            return owner;
-        }
         // A newer generation can occupy the chunk cache while an older macro
         // body is still active. This cold search is required only for
         // detachment and diagnostics of that retained generation; ordinary
@@ -605,10 +609,11 @@ impl CommandProcessor<'_> {
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
         self.command.parameters.prepare_argument_build();
-        let admitted = self
-            .command
-            .parameters
-            .admit_macro(definition, || self.state.packed_macro_owner(definition));
+        let admitted = self.command.parameters.admit_macro(
+            definition,
+            self.state.macro_definition(definition),
+            || self.state.packed_macro_owner(definition),
+        );
         let meaning = self
             .command
             .parameters
