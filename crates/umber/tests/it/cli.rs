@@ -1507,7 +1507,7 @@ fn hot_core_census_is_machine_readable_and_request_scoped() {
     let source = temp_dir.path().join("hot-core-census.tex");
     fs::write(
         &source,
-        "\\def\\a#1{#1}\\let\\b=\\a{\\catcode64=11}A\\end\n",
+        "\\def\\a#1{#1}\\let\\b=\\a{\\catcode64=11}\\begingroup\\endgroup\\end\n",
     )
     .expect("write hot-core census fixture");
 
@@ -1558,9 +1558,13 @@ fn hot_core_census_is_machine_readable_and_request_scoped() {
     let cloned = census["materializations"]["apply_step_clone"]
         .as_u64()
         .expect("apply-clone count");
-    assert!(
-        cloned > 0 && cloned < prepared,
-        "hot definitions, lets, catcodes, and groups bypass apply-step cloning: {census}"
+    let scanned = census["materializations"]["scanned_step"]
+        .as_u64()
+        .expect("scanned-step count");
+    assert_eq!(
+        (scanned, prepared, cloned),
+        (1, 1, 1),
+        "only the cold terminal command materializes the universal scan/prepare/apply DTOs: {census}"
     );
     assert!(
         census["interpreter"]["operation_entries"]

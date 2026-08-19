@@ -1,84 +1,198 @@
-//! Allocation-free semantic application for the measured common commands.
+//! Fused scanning and allocation-free application for common commands.
 //!
 //! These handlers are the single semantic owner for TeX82 §§1211--1234's
-//! definition, let, prefix-result, group, and catcode families. Scanning still
-//! produces a typed operand during the staged migration, but application
-//! borrows it in place: it neither clones the universal step nor formats
-//! detached evidence unless an observer is attached.
+//! definition, let, prefix-result, group, and catcode families. They scan into
+//! a family-sized typed operand and apply it immediately after the command
+//! processor releases its borrow. The universal `ScannedStep` and
+//! `PreparedOperation` representations never exist on this path.
 
 use super::*;
 
-/// Applies one measured common step, returning `None` for the cold dispatcher.
+/// The complete operand of one measured common operation.
+///
+/// This enum is intentionally private to the fused scan/apply seam. It is not
+/// a second executor or a durable continuation: it exists only long enough to
+/// release `CommandProcessor`'s borrow of `Universe` before stomach mutation.
+pub(super) enum HotOperation {
+    MacroDefinition {
+        definition: tex_command::ScannedMacroDefinition,
+        flags: MeaningFlags,
+        global: bool,
+    },
+    Let {
+        assignment: tex_command::ScannedLetAssignment,
+        global: bool,
+    },
+    CatCode {
+        character: char,
+        value: i32,
+        global: bool,
+    },
+    EnterGroup(GroupKind),
+    LeaveGroup {
+        kind: GroupKind,
+        context: &'static str,
+    },
+}
+
+impl HotOperation {
+    pub(super) const fn begin_ordinary_group() -> Self {
+        Self::EnterGroup(GroupKind::Simple)
+    }
+
+    pub(super) const fn end_ordinary_group() -> Self {
+        Self::LeaveGroup {
+            kind: GroupKind::Simple,
+            context: "ordinary simple group",
+        }
+    }
+
+    pub(super) const fn fires_afterassignment(&self) -> bool {
+        matches!(
+            self,
+            Self::MacroDefinition { .. } | Self::Let { .. } | Self::CatCode { .. }
+        )
+    }
+
+    pub(super) fn protected_definition_observation(
+        &self,
+        stores: &Universe,
+    ) -> Option<TokenListRecord> {
+        let Self::MacroDefinition {
+            definition, flags, ..
+        } = self
+        else {
+            return None;
+        };
+        flags
+            .contains(MeaningFlags::PROTECTED)
+            .then(|| TokenListRecord {
+                transition: "complete",
+                purpose: "protected_macro",
+                tokens: observed_macro_body(
+                    definition.parameter_text.token_list(),
+                    definition.replacement_text.token_list(),
+                    stores,
+                ),
+            })
+    }
+}
+
+/// Scans a ranked common command after §1211's prefix loop and all contextual
+/// mode/group cases have selected the ordinary assignment arm.
+pub(super) fn scan(
+    processor: &mut CommandProcessor<'_>,
+    command: &tex_command::CurrentCommand,
+    global: bool,
+    flags: MeaningFlags,
+    innermost_group: Option<GroupKind>,
+) -> Result<Option<HotOperation>, ExecError> {
+    let operation = match command.meaning() {
+        Meaning::CharToken {
+            cat: Catcode::BeginGroup,
+            ..
+        } => HotOperation::begin_ordinary_group(),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginGroup) => {
+            HotOperation::EnterGroup(GroupKind::SemiSimple)
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup)
+            if innermost_group == Some(GroupKind::SemiSimple) =>
+        {
+            HotOperation::LeaveGroup {
+                kind: GroupKind::SemiSimple,
+                context: "semi simple group",
+            }
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CatCode) => {
+            let character = processor
+                .scan_restricted_integer(RestrictedIntegerClass::CharacterCode)
+                .map_err(command_error)?
+                .value;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_integer().map_err(command_error)?.value;
+            HotOperation::CatCode {
+                character: char::from_u32(character as u32)
+                    .expect("scan_char_num returns a valid character"),
+                value,
+                global,
+            }
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Def
+            | UnexpandablePrimitive::Edef
+            | UnexpandablePrimitive::Gdef
+            | UnexpandablePrimitive::Xdef),
+        ) => HotOperation::MacroDefinition {
+            definition: processor
+                .scan_macro_definition(matches!(
+                    primitive,
+                    UnexpandablePrimitive::Edef | UnexpandablePrimitive::Xdef
+                ))
+                .map_err(command_error)?,
+            flags,
+            global,
+        },
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::Let | UnexpandablePrimitive::FutureLet),
+        ) => HotOperation::Let {
+            assignment: processor
+                .scan_let_assignment(primitive == UnexpandablePrimitive::FutureLet)
+                .map_err(command_error)?,
+            global,
+        },
+        _ => return Ok(None),
+    };
+    Ok(Some(operation))
+}
+
+/// Applies one measured common operation to canonical state and journals.
 pub(super) fn apply(
-    scanned: &ScannedStep,
+    operation: &HotOperation,
     stores: &mut Universe,
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_>,
-) -> Option<Result<ReplayStep, ExecError>> {
-    let result = match scanned {
-        ScannedStep::MacroDefinition {
-            target,
+) -> Result<ReplayStep, ExecError> {
+    match operation {
+        HotOperation::MacroDefinition {
+            definition,
             flags,
             global,
-            parameter_text,
-            replacement_text,
-            definition_origin,
         } => apply_macro_definition(
-            *target,
+            definition.target,
             *flags,
             *global,
-            parameter_text,
-            replacement_text,
-            definition_origin,
+            &definition.parameter_text,
+            &definition.replacement_text,
+            &definition.definition_origin,
             stores,
             command,
         ),
-        ScannedStep::Let {
-            target,
-            source,
-            meaning,
-            macro_root,
-            global,
-        } => {
+        HotOperation::Let { assignment, global } => {
             // Keep the source spelling and macro definition strongly rooted
             // through the dense-cell replacement. They are semantically cold
             // but prevent the copied meaning from outliving its owner.
-            let _strong_roots = (source, macro_root);
-            apply_let(*target, *meaning, *global, stores, command)
+            let _strong_roots = (&assignment.source, &assignment.macro_root);
+            apply_let(
+                assignment.target,
+                assignment.meaning,
+                *global,
+                stores,
+                command,
+            )
         }
-        ScannedStep::CodeTable {
-            primitive: UnexpandablePrimitive::CatCode,
+        HotOperation::CatCode {
             character,
             value,
             global,
         } => apply_catcode(*character, *value, *global, stores, command),
-        ScannedStep::BeginOrdinaryGroup => flush_group_boundary(modes, stores, command).map(|()| {
-            enter_group(stores, command.state, GroupKind::Simple);
+        HotOperation::EnterGroup(kind) => flush_group_boundary(modes, stores, command).map(|()| {
+            enter_group(stores, command.state, *kind);
             ReplayStep::Continue
         }),
-        ScannedStep::BeginSemiSimpleGroup => {
-            flush_group_boundary(modes, stores, command).map(|()| {
-                enter_group(stores, command.state, GroupKind::SemiSimple);
-                ReplayStep::Continue
-            })
+        HotOperation::LeaveGroup { kind, context } => {
+            leave_group(*kind, context, modes, stores, command)
         }
-        ScannedStep::EndOrdinaryGroup => leave_group(
-            GroupKind::Simple,
-            "ordinary simple group",
-            modes,
-            stores,
-            command,
-        ),
-        ScannedStep::EndSemiSimpleGroup => leave_group(
-            GroupKind::SemiSimple,
-            "semi simple group",
-            modes,
-            stores,
-            command,
-        ),
-        _ => return None,
-    };
-    Some(result)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

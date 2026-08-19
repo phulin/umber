@@ -678,6 +678,30 @@ struct PreparedOperation {
     prepared_page_count: usize,
 }
 
+/// The result of the unified scan/execute seam.
+///
+/// Common unexpandable families are already applied when this value is
+/// returned. Cold and barrier families retain the existing prepared value.
+enum OperationReadiness {
+    Applied(Result<ReplayStep, ExecError>),
+    Prepared(PreparedOperation),
+}
+
+/// One command after canonical delivery and operand scanning.
+///
+/// The hot variant is a family-sized borrow-release operand. Only the cold
+/// variant materializes the universal compatibility step.
+enum ScannedOperation {
+    Hot(hot_apply::HotOperation),
+    Cold(ScannedStep),
+}
+
+impl From<ScannedStep> for ScannedOperation {
+    fn from(scanned: ScannedStep) -> Self {
+        Self::Cold(scanned)
+    }
+}
+
 struct PendingResourceOperation {
     scanned: Box<ScannedStep>,
     capabilities: crate::transaction_protocol::CommandCapabilities,
@@ -3229,7 +3253,7 @@ impl MainControl {
                         return result;
                     }
                 };
-                let applied = self.apply_prepared_operation(stores, prepared);
+                let applied = self.apply_ready_operation(stores, prepared);
                 self.record_save_stack_usage(stores);
                 let boundary = self.episode_commit_boundary(
                     stores,
@@ -3339,6 +3363,14 @@ impl MainControl {
                     | OperationDelivery::AlignmentRetry { .. }
                     | OperationDelivery::Prepared(_) => None,
                 };
+                if let crate::transaction_protocol::CommandPreflight::Transaction(transaction) =
+                    preflight.capabilities.preflight()
+                {
+                    let transaction = transaction.transaction();
+                    transaction
+                        .admit(transaction.projection())
+                        .expect("preflight owns the exact narrow projection");
+                }
                 let prepared = match self.prepare_operation(stores, preflight.delivery) {
                     Ok(prepared) => prepared,
                     Err(failure) => {
@@ -3397,23 +3429,19 @@ impl MainControl {
                         }
                     }
                 };
-                if let ScannedStep::ImmediateExtension(ImmediateExtension::PdfExtensionInDviMode(
-                    primitive,
-                )) = &prepared.scanned
+                if let OperationReadiness::Prepared(PreparedOperation {
+                    scanned:
+                        ScannedStep::ImmediateExtension(ImmediateExtension::PdfExtensionInDviMode(
+                            primitive,
+                        )),
+                    ..
+                }) = &prepared
                 {
                     retry_command = Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive));
                 }
-                if let crate::transaction_protocol::CommandPreflight::Transaction(transaction) =
-                    preflight.capabilities.preflight()
-                {
-                    let transaction = transaction.transaction();
-                    transaction
-                        .admit(transaction.projection())
-                        .expect("preflight owns the exact narrow projection");
-                }
                 self.episode_telemetry.record_attempt();
                 self.advance_telemetry.attempts += 1;
-                let applied = self.apply_prepared_operation(stores, prepared);
+                let applied = self.apply_ready_operation(stores, prepared);
                 self.record_save_stack_usage(stores);
                 let boundary = self.episode_commit_boundary(
                     stores,
@@ -3596,7 +3624,7 @@ impl MainControl {
                     };
                 }
             };
-            let applied = self.apply_prepared_operation(stores, prepared);
+            let applied = self.apply_ready_operation(stores, prepared);
             if let Some(interaction) = saved_interaction {
                 stores.set_interaction_mode(interaction);
             }
@@ -3967,7 +3995,7 @@ impl MainControl {
                 };
             }
         };
-        match self.apply_prepared_operation(stores, prepared) {
+        match self.apply_ready_operation(stores, prepared) {
             Ok(_) => {
                 self.modes
                     .commit_journal(mode_mark)
@@ -5720,19 +5748,34 @@ impl MainControl {
         stores: &mut Universe,
         delivery: OperationDelivery,
     ) -> Result<ReplayStep, ExecError> {
-        let prepared = self
+        let readiness = self
             .prepare_operation(stores, delivery)
             .map_err(|failure| *failure.error)?;
-        self.apply_prepared_operation(stores, prepared)
+        self.apply_ready_operation(stores, readiness)
     }
 
-    /// Completes command delivery, operand scanning, and immutable resource
-    /// resolution before any semantic transaction is opened.
+    fn apply_ready_operation(
+        &mut self,
+        stores: &mut Universe,
+        readiness: OperationReadiness,
+    ) -> Result<ReplayStep, ExecError> {
+        match readiness {
+            OperationReadiness::Applied(result) => result,
+            OperationReadiness::Prepared(prepared) => {
+                self.apply_prepared_operation(stores, prepared)
+            }
+        }
+    }
+
+    /// Completes one canonical operation after mutation-free capability
+    /// preflight. Common unexpandable families scan and apply here without a
+    /// universal DTO; cold and barrier families return a prepared value after
+    /// immutable resource resolution.
     fn prepare_operation(
         &mut self,
         stores: &mut Universe,
         delivery: OperationDelivery,
-    ) -> Result<PreparedOperation, PrepareOperationError> {
+    ) -> Result<OperationReadiness, PrepareOperationError> {
         if stores.dependency_region_is_active() {
             let mode = self.modes.current_mode();
             let mode_key = DependencyKey::Engine(DependencyEngineField::Mode);
@@ -5808,7 +5851,7 @@ impl MainControl {
             let display_alignment_tail = matches!(&delivery, OperationDelivery::Replay(None))
                 && mode == Mode::DisplayMath
                 && self.modes.current_list().has_display_alignment();
-            let scanned = (|| -> Result<ScannedStep, ExecError> {
+            let scanned = (|| -> Result<ScannedOperation, ExecError> {
                 Ok(match delivery {
                     OperationDelivery::Replay(Some(command)) => {
                         processor.resume_current_command(&command);
@@ -5896,10 +5939,10 @@ impl MainControl {
                             }
                             _ => {
                                 processor.back_input(command).map_err(command_error)?;
-                                ScannedStep::DisplayAlignmentRecovery
+                                ScannedStep::DisplayAlignmentRecovery.into()
                             }
                         },
-                        None => ScannedStep::EndOfInput,
+                        None => ScannedStep::EndOfInput.into(),
                     },
                     OperationDelivery::Replay(None) => scan_replay_step(
                         &mut processor,
@@ -5938,6 +5981,7 @@ impl MainControl {
                             ScannedStep::ImmediateExtension(ImmediateExtension::PdfObject(
                                 processor.scan_pdf_object_request().map_err(command_error)?,
                             ))
+                            .into()
                         }
                         UnexpandablePrimitive::PdfXForm => {
                             ScannedStep::ImmediateExtension(ImmediateExtension::PdfForm(
@@ -5945,11 +5989,13 @@ impl MainControl {
                                     .scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)
                                     .map_err(command_error)?,
                             ))
+                            .into()
                         }
                         UnexpandablePrimitive::PdfXImage => ScannedStep::PdfXImage {
                             request: processor.scan_pdf_image_request().map_err(command_error)?,
                             resource: PdfImageResource::Unavailable,
-                        },
+                        }
+                        .into(),
                         _ => unreachable!("only immediate PDF retries reach this delivery"),
                     },
                     OperationDelivery::Alignment(alignment) => scan_alignment_delivery_step(
@@ -5991,16 +6037,18 @@ impl MainControl {
                             )?,
                         }
                     }
-                    OperationDelivery::Prepared(scanned) => *scanned,
+                    OperationDelivery::Prepared(scanned) => (*scanned).into(),
                 })
             })();
             let cursor = processor.delivery_cursor();
             let scanned =
                 scanned.map_err(|error| PrepareOperationError::with_cursor(error, cursor))?;
             #[cfg(feature = "profiling")]
-            tex_state::measurement::record_hot_core_materialization(
-                tex_state::measurement::HotCoreMaterialization::ScannedStep,
-            );
+            if matches!(scanned, ScannedOperation::Cold(_)) {
+                tex_state::measurement::record_hot_core_materialization(
+                    tex_state::measurement::HotCoreMaterialization::ScannedStep,
+                );
+            }
             diagnostics.extend(
                 processor
                     .take_semantic_diagnostics()
@@ -6030,6 +6078,22 @@ impl MainControl {
         self.capture_first_causal_context(stores, &diagnostics);
         report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
+        let scanned = match scanned {
+            ScannedOperation::Cold(scanned) => scanned,
+            ScannedOperation::Hot(operation) => {
+                let artifact_count = stores.world().artifact_commits().len();
+                let effect_count = stores.world().effect_records().len();
+                let prepared_page_count = self.prepared_dvi_pages.len();
+                return Ok(OperationReadiness::Applied(self.apply_hot_operation(
+                    stores,
+                    operation,
+                    outer_paragraph_was_active,
+                    artifact_count,
+                    effect_count,
+                    prepared_page_count,
+                )));
+            }
+        };
         let scanned = self.resolve_font_resource(scanned, stores)?;
         let scanned = self.resolve_input_stream_resource(scanned, stores)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
@@ -6037,13 +6101,115 @@ impl MainControl {
         tex_state::measurement::record_hot_core_materialization(
             tex_state::measurement::HotCoreMaterialization::PreparedOperation,
         );
-        Ok(PreparedOperation {
+        Ok(OperationReadiness::Prepared(PreparedOperation {
             scanned,
             outer_paragraph_was_active,
             artifact_count: stores.world().artifact_commits().len(),
             effect_count: stores.world().effect_records().len(),
             prepared_page_count: self.prepared_dvi_pages.len(),
-        })
+        }))
+    }
+
+    /// Applies a measured common operation without constructing the universal
+    /// scan/preparation DTOs. `CommandProcessor` has released its borrow, but
+    /// the enclosing direct-operation transaction and persistent interpreter
+    /// remain the same ones that performed delivery and scanning.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_hot_operation(
+        &mut self,
+        stores: &mut Universe,
+        operation: hot_apply::HotOperation,
+        outer_paragraph_was_active: bool,
+        artifact_count: usize,
+        effect_count: usize,
+        prepared_page_count: usize,
+    ) -> Result<ReplayStep, ExecError> {
+        self.main_loop_active = false;
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_phase(
+            tex_state::measurement::HotCorePhase::SemanticApply,
+        );
+        #[cfg(feature = "profiling")]
+        let _semantic_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+        );
+        let observing = self.operation_observations.is_some();
+        let mut assignment_receipts = observing.then(Vec::new);
+        let fires_afterassignment = operation.fires_afterassignment();
+        let result = hot_apply::apply(
+            &operation,
+            stores,
+            &mut self.modes,
+            &mut CommandMachine {
+                state: &mut self.command,
+                fuel: self.fuel.fuel_mut(),
+                capabilities: &mut self.capabilities,
+                observations: &mut self.operation_observations,
+                assignment_receipts: assignment_receipts.as_mut(),
+                shown_mode: &mut self.shown_mode,
+                initex: self.initex,
+                emit_dvi_override: self.emit_dvi_override,
+            },
+        );
+        if result.is_ok() {
+            self.fire_pending_page_output(stores)?;
+        }
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_phase(
+            tex_state::measurement::HotCorePhase::EvidencePublication,
+        );
+        #[cfg(feature = "profiling")]
+        let _evidence_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
+        );
+        if result.is_ok() {
+            let mut records = self
+                .command
+                .publish_named_token_list_pushes(&mut stores.command_context())
+                .into_iter()
+                .map(CommandObservation::Input)
+                .collect::<Vec<_>>();
+            if observing && let Some(protected) = operation.protected_definition_observation(stores)
+            {
+                records.push(CommandObservation::TokenList(protected));
+            }
+            records.extend(
+                assignment_receipts
+                    .into_iter()
+                    .flatten()
+                    .map(CommandObservation::Mutation),
+            );
+            records.extend(
+                committed_stream_effect_observations(
+                    effect_count,
+                    prepared_page_count,
+                    stores,
+                    &self.prepared_dvi_pages,
+                )
+                .into_iter()
+                .map(CommandObservation::Effect),
+            );
+            for shipout in committed_shipout_observations(artifact_count, stores) {
+                records.push(CommandObservation::Effect(shipout));
+            }
+            self.page_output_observations.append_to(&mut records);
+            self.observe_committed(records);
+        }
+        if result.is_ok() && fires_afterassignment {
+            schedule_afterassignment(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut self.operation_observations,
+                stores,
+            )?;
+        }
+        self.page_output_observations.clear();
+        if result.is_ok() {
+            self.finish_shipout_publication(artifact_count, effect_count, stores);
+            self.finish_paragraph_boundary(outer_paragraph_was_active, stores);
+        }
+        result
     }
 
     fn apply_prepared_operation(
@@ -6165,40 +6331,34 @@ impl MainControl {
             initex: self.initex,
             emit_dvi_override: self.emit_dvi_override,
         };
-        let mut result = if let Some(applied) =
-            hot_apply::apply(&scanned, stores, &mut self.modes, &mut command)
-        {
-            applied
-        } else {
-            #[cfg(feature = "profiling")]
-            tex_state::measurement::record_hot_core_materialization(
-                tex_state::measurement::HotCoreMaterialization::ApplyStepClone,
+        #[cfg(feature = "profiling")]
+        tex_state::measurement::record_hot_core_materialization(
+            tex_state::measurement::HotCoreMaterialization::ApplyStepClone,
+        );
+        #[cfg(feature = "profiling")]
+        let scanned_for_apply = {
+            let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+                tex_state::measurement::HotCoreAllocationOwner::ApplyStepClone,
             );
-            #[cfg(feature = "profiling")]
-            let scanned_for_apply = {
-                let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
-                    tex_state::measurement::HotCoreAllocationOwner::ApplyStepClone,
-                );
-                scanned.clone()
-            };
-            #[cfg(not(feature = "profiling"))]
-            let scanned_for_apply = scanned.clone();
-            apply_scanned_step(
-                scanned_for_apply,
-                stores,
-                &mut self.modes,
-                &mut self.next_alignment_identity,
-                &mut self.active_alignment,
-                &mut command,
-                &mut self.boxes,
-                &self.active_discretionaries,
-                &self.active_math_choices,
-                &self.active_math_left_boundaries,
-                &self.active_math_shifts,
-                &mut self.prepared_dvi_pages,
-                &mut self.end_job_ejection_pending,
-            )
+            scanned.clone()
         };
+        #[cfg(not(feature = "profiling"))]
+        let scanned_for_apply = scanned.clone();
+        let mut result = apply_scanned_step(
+            scanned_for_apply,
+            stores,
+            &mut self.modes,
+            &mut self.next_alignment_identity,
+            &mut self.active_alignment,
+            &mut command,
+            &mut self.boxes,
+            &self.active_discretionaries,
+            &self.active_math_choices,
+            &self.active_math_left_boundaries,
+            &self.active_math_shifts,
+            &mut self.prepared_dvi_pages,
+            &mut self.end_job_ejection_pending,
+        );
         if result.is_ok()
             && !redundant_glue
             && let Some((index, physical, source_identity, pointer_sources)) = match &scanned {
@@ -6344,11 +6504,6 @@ impl MainControl {
                 if let Some(resume) = self.command.alignment_resume_observation() {
                     records.push(CommandObservation::Alignment(resume));
                 }
-            }
-            if observing
-                && let Some(protected) = protected_macro_definition_observation(&scanned, stores)
-            {
-                records.push(CommandObservation::TokenList(protected));
             }
             records.extend(
                 assignment_receipts
@@ -7543,14 +7698,6 @@ enum ScannedStep {
         primitive: UnexpandablePrimitive,
         target: tex_command::PrintCommand,
     },
-    MacroDefinition {
-        target: Symbol,
-        flags: MeaningFlags,
-        global: bool,
-        parameter_text: TracedTokenList,
-        replacement_text: TracedTokenList,
-        definition_origin: tex_state::provenance::OriginRef,
-    },
     CharacterDefinition {
         primitive: UnexpandablePrimitive,
         target: Symbol,
@@ -7591,13 +7738,6 @@ enum ScannedStep {
         provisional_old: Meaning,
         _provisional_macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
         index: u16,
-        global: bool,
-    },
-    Let {
-        target: Symbol,
-        source: Option<Symbol>,
-        meaning: Meaning,
-        macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
         global: bool,
     },
     AfterGroup(tex_state::token::RootedTracedTokenWord),
@@ -7710,8 +7850,6 @@ enum ScannedStep {
     },
     BeginSimpleGroup,
     EndSimpleGroup,
-    BeginSemiSimpleGroup,
-    EndSemiSimpleGroup,
     /// TeX82 §1068's `handle_right_brace` for a brace the current group
     /// cannot account for. `forgotten` is §1069's `case cur_group of` -- the
     /// opener the brace was probably standing in for -- and `None` is §1068's
@@ -7741,8 +7879,6 @@ enum ScannedStep {
     OffSaveBottomDrop {
         token: Token,
     },
-    BeginOrdinaryGroup,
-    EndOrdinaryGroup,
     OutputRoutineOpeningBrace,
     EndOutputRoutine,
     AlignmentPeekCell {
@@ -7885,10 +8021,8 @@ impl ScannedStep {
                 | Self::InputStream { .. }
                 | Self::Arithmetic { .. }
                 | Self::InvalidArithmeticTarget { .. }
-                | Self::MacroDefinition { .. }
                 | Self::CharacterDefinition { .. }
                 | Self::RegisterDefinition { .. }
-                | Self::Let { .. }
                 | Self::ParagraphShape { .. }
                 | Self::PenaltyArray { .. }
                 | Self::FontSelect { .. }
@@ -7952,7 +8086,7 @@ fn scan_replay_step(
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
-) -> Result<ScannedStep, ExecError> {
+) -> Result<ScannedOperation, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
             AlignmentPreamblePhase::Opening => {
@@ -7970,7 +8104,7 @@ fn scan_replay_step(
                 if processor.command_trace_printed() {
                     *shown_mode = Some(mode);
                 }
-                Ok(ScannedStep::AlignmentPreambleOpening { alignment, packing })
+                Ok(ScannedStep::AlignmentPreambleOpening { alignment, packing }.into())
             }
             AlignmentPreamblePhase::Start { owner } => {
                 // TeX82 §§299, 367, 759, and 774: `init_align` has already
@@ -7985,22 +8119,22 @@ fn scan_replay_step(
                 if processor.command_trace_printed() {
                     *shown_mode = Some(mode);
                 }
-                Ok(ScannedStep::AlignmentPreambleStart { alignment })
+                Ok(ScannedStep::AlignmentPreambleStart { alignment }.into())
             }
             AlignmentPreamblePhase::CellOpening => {
                 let opening = processor
                     .scan_alignment_cell_opening()
                     .map_err(command_error)?;
-                Ok(ScannedStep::AlignmentCellOpening { alignment, opening })
+                Ok(ScannedStep::AlignmentCellOpening { alignment, opening }.into())
             }
             AlignmentPreamblePhase::NextCellOpening => {
                 let opening = processor
                     .scan_alignment_next_cell_opening()
                     .map_err(command_error)?;
-                Ok(ScannedStep::AlignmentCellOpening { alignment, opening })
+                Ok(ScannedStep::AlignmentCellOpening { alignment, opening }.into())
             }
             AlignmentPreamblePhase::AlignPeek { after_noalign } => {
-                scan_alignment_peek(processor, alignment, after_noalign)
+                scan_alignment_peek(processor, alignment, after_noalign).map(Into::into)
             }
             AlignmentPreamblePhase::NoAlignBody => scan_noalign_body(
                 processor,
@@ -8149,10 +8283,10 @@ fn scan_noalign_body(
     job_is_all_over: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
-) -> Result<ScannedStep, ExecError> {
+) -> Result<ScannedOperation, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
     let Some(command) = processor.get_x_token().map_err(command_error)? else {
-        return Ok(ScannedStep::EndOfInput);
+        return Ok(ScannedStep::EndOfInput.into());
     };
     report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
     match command.meaning() {
@@ -8164,9 +8298,9 @@ fn scan_noalign_body(
                 processor
                     .insert_partoken_before(command)
                     .map_err(command_error)?;
-                return Ok(ScannedStep::Continue);
+                return Ok(ScannedStep::Continue.into());
             }
-            Ok(ScannedStep::NoAlignEndGroup { alignment })
+            Ok(ScannedStep::NoAlignEndGroup { alignment }.into())
         }
         // A `\noalign` body is ordinary main control between its braces
         // (TeX82 §785's `no_align_group`), so it dispatches through the same
@@ -8202,20 +8336,22 @@ fn scan_alignment_delivery_step(
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
-) -> Result<ScannedStep, ExecError> {
+) -> Result<ScannedOperation, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
     match processor
         .get_x_alignment_delivery(main_loop_active)
         .map_err(command_error)?
     {
-        None => Ok(ScannedStep::EndOfInput),
+        None => Ok(ScannedStep::EndOfInput.into()),
         // An executor-owned replay episode (a math field/group/choice branch
         // or discretionary part) retired mid-cell. This must be reported
         // exactly like ordinary `scan_step`'s `ReplayCompleted` case, rather
         // than falling through to interpret whatever the cascade found next
         // as this cell's own content: that next token can belong to the
         // *enclosing* cell/field context, not the just-retired episode.
-        Some(AlignmentDelivery::Completed(episode)) => Ok(ScannedStep::ReplayCompleted(episode)),
+        Some(AlignmentDelivery::Completed(episode)) => {
+            Ok(ScannedStep::ReplayCompleted(episode).into())
+        }
         Some(AlignmentDelivery::Command(command)) => {
             // TeX82 §§1034/1038 keeps an adjacent character fetched by
             // `main_loop_lookahead` inside `main_loop`, even when §789's
@@ -8256,7 +8392,7 @@ fn scan_alignment_delivery_step(
                         tex_command::AlignmentDeliveryEvent::ClosingBrace(command),
                     )
                     .map_err(command_error)?;
-                return Ok(ScannedStep::MissingAlignmentCr);
+                return Ok(ScannedStep::MissingAlignmentCr.into());
             }
             if matches!(command.meaning(), Meaning::EndV) {
                 // TeX82 §§1046-1047 route `mmode+endv` through
@@ -8269,13 +8405,13 @@ fn scan_alignment_delivery_step(
                     processor
                         .recover_missing_math_shift(command)
                         .map_err(command_error)?;
-                    return Ok(ScannedStep::MissingMathShift);
+                    return Ok(ScannedStep::MissingMathShift.into());
                 }
                 if partoken_context_replays(processor, mode, 2) {
                     processor
                         .insert_partoken_before(command)
                         .map_err(command_error)?;
-                    return Ok(ScannedStep::Continue);
+                    return Ok(ScannedStep::Continue.into());
                 }
                 // TeX82 §1131 accepts end-v only when `cur_group=align_group`.
                 // The replay driver tracks align-error's inserted `{`
@@ -8289,9 +8425,9 @@ fn scan_alignment_delivery_step(
                 if boxes.recovery_simple_group_open
                     || innermost_group == Some(GroupKind::SemiSimple)
                 {
-                    return scan_off_save(processor, command, innermost_group);
+                    return scan_off_save(processor, command, innermost_group).map(Into::into);
                 }
-                return Ok(ScannedStep::AlignmentCellFinish { alignment });
+                return Ok(ScannedStep::AlignmentCellFinish { alignment }.into());
             }
             // An alignment cell's body is ordinary main control bounded by
             // §1130's `vmode+endv,hmode+endv: do_endv`, not a dispatcher of
@@ -8312,7 +8448,7 @@ fn scan_alignment_delivery_step(
             )
         }
         Some(AlignmentDelivery::Event(event)) => {
-            scan_alignment_delivery_event(processor, alignment, event)
+            scan_alignment_delivery_event(processor, alignment, event).map(Into::into)
         }
     }
 }
@@ -8361,18 +8497,18 @@ fn settle_preflight_step(
     display_eq_no: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
-) -> Result<ScannedStep, ExecError> {
+) -> Result<ScannedOperation, ExecError> {
     let delivery = processor
         .settle_preflight_command(command, main_loop)
         .map_err(command_error)?;
     let Some(delivery) = delivery else {
-        return Ok(ScannedStep::EndOfInput);
+        return Ok(ScannedStep::EndOfInput.into());
     };
     let tex_command::CommandReplayDelivery::Command(command) = delivery else {
         let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
             unreachable!();
         };
-        return Ok(ScannedStep::ReplayCompleted(episode));
+        return Ok(ScannedStep::ReplayCompleted(episode).into());
     };
     let continues_main_loop = main_loop
         && matches!(
@@ -8395,7 +8531,8 @@ fn settle_preflight_step(
     {
         return Ok(ScannedStep::NoBoundary {
             suppress_right: true,
-        });
+        }
+        .into());
     }
     dispatch_main_control_command(
         processor,
@@ -8423,7 +8560,7 @@ fn scan_step(
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
-) -> Result<ScannedStep, ExecError> {
+) -> Result<ScannedOperation, ExecError> {
     // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
     // `get_x_token`; §1034's inner character loop instead re-enters at
     // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a
@@ -8435,13 +8572,13 @@ fn scan_step(
         processor.get_x_token_with_replay_completion()
     };
     let Some(delivery) = delivery.map_err(command_error)? else {
-        return Ok(ScannedStep::EndOfInput);
+        return Ok(ScannedStep::EndOfInput.into());
     };
     let tex_command::CommandReplayDelivery::Command(command) = delivery else {
         let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
             unreachable!();
         };
-        return Ok(ScannedStep::ReplayCompleted(episode));
+        return Ok(ScannedStep::ReplayCompleted(episode).into());
     };
     // TeX82 §§1034/1038 keeps a fetched character inside `main_loop`;
     // it reaches neither `reswitch` nor §1030's command trace. A
@@ -8468,7 +8605,8 @@ fn scan_step(
     {
         return Ok(ScannedStep::NoBoundary {
             suppress_right: true,
-        });
+        }
+        .into());
     }
     dispatch_main_control_command(
         processor,
@@ -8521,7 +8659,7 @@ fn dispatch_main_control_command(
     diagnostics: &mut Vec<PendingDiagnostic>,
     alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
-) -> Result<ScannedStep, ExecError> {
+) -> Result<ScannedOperation, ExecError> {
     // TeX82 §1078 uses §404's non-blank, non-relax fetch after every leader
     // payload. Constructed boxes close in a separate replay step, so the first
     // token after the box has already reached this dispatcher. Finish §404
@@ -8604,7 +8742,7 @@ fn dispatch_main_control_command_inner(
     diagnostics: &mut Vec<PendingDiagnostic>,
     alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
-) -> Result<ScannedStep, ExecError> {
+) -> Result<ScannedOperation, ExecError> {
     // TeX82 §1078 fetches the command following a completed leader payload
     // inside `box_end`, before control returns to §1030's `big_switch` or
     // §1211's prefix loop. Split replay finishes the box in one step and
@@ -8614,13 +8752,14 @@ fn dispatch_main_control_command_inner(
     // consume and restore the following assignment instead.
     if let Some((kind, payload)) = boxes.pending_leader.as_ref() {
         let Some(glue) = scan_leader_glue_command(processor, command, mode)? else {
-            return Ok(ScannedStep::LeadersNotFollowedByGlue);
+            return Ok(ScannedStep::LeadersNotFollowedByGlue.into());
         };
         return Ok(ScannedStep::Leaders {
             kind: *kind,
             payload: payload.clone(),
             glue,
-        });
+        }
+        .into());
     }
     // §1030's `reswitch:` label sits *above* the big case, not at the fetch:
     // a case that has already fetched its own replacement command dispatches
@@ -8677,7 +8816,7 @@ fn dispatch_main_control_command_inner(
                     processor.error_context(),
                     etex,
                 ));
-                return Ok(ScannedStep::Continue);
+                return Ok(ScannedStep::Continue.into());
             }
         }
         // §1213's `<Discard the prefixes \long and \outer if they are
@@ -8718,12 +8857,13 @@ fn dispatch_main_control_command_inner(
                         .get_x_alignment_delivery(false)
                         .map_err(command_error)?
                     {
-                        None => return Ok(ScannedStep::EndOfInput),
+                        None => return Ok(ScannedStep::EndOfInput.into()),
                         Some(AlignmentDelivery::Completed(episode)) => {
-                            return Ok(ScannedStep::ReplayCompleted(episode));
+                            return Ok(ScannedStep::ReplayCompleted(episode).into());
                         }
                         Some(AlignmentDelivery::Event(event)) => {
-                            return scan_alignment_delivery_event(processor, alignment, event);
+                            return scan_alignment_delivery_event(processor, alignment, event)
+                                .map(Into::into);
                         }
                         Some(AlignmentDelivery::Command(next))
                             if matches!(
@@ -8738,7 +8878,7 @@ fn dispatch_main_control_command_inner(
                 }
             } else {
                 let Some(next) = processor.next_non_blank_x_token().map_err(command_error)? else {
-                    return Ok(ScannedStep::EndOfInput);
+                    return Ok(ScannedStep::EndOfInput.into());
                 };
                 next
             };
@@ -8753,7 +8893,7 @@ fn dispatch_main_control_command_inner(
             )
         {
             let Some(next) = processor.get_x_token().map_err(command_error)? else {
-                return Ok(ScannedStep::Continue);
+                return Ok(ScannedStep::Continue.into());
             };
             suppress_left_boundary = matches!(
                 next.meaning(),
@@ -8795,8 +8935,8 @@ fn dispatch_main_control_command_inner(
             set_box_allowed,
             shown_mode,
         )?;
-        if suppress_left_boundary {
-            match &mut scanned {
+        if suppress_left_boundary
+            && let ScannedOperation::Cold(
                 ScannedStep::Character {
                     suppress_left_boundary,
                     ..
@@ -8804,9 +8944,10 @@ fn dispatch_main_control_command_inner(
                 | ScannedStep::CharacterCode {
                     suppress_left_boundary,
                     ..
-                } => *suppress_left_boundary = true,
-                _ => {}
-            }
+                },
+            ) = &mut scanned
+        {
+            *suppress_left_boundary = true;
         }
         return Ok(scanned);
     }
@@ -9114,7 +9255,7 @@ fn scan_command(
     display_eq_no: bool,
     set_box_allowed: bool,
     shown_mode: &mut Option<Mode>,
-) -> Result<ScannedStep, ExecError> {
+) -> Result<ScannedOperation, ExecError> {
     if let Meaning::UnexpandablePrimitive(
         primitive @ (UnexpandablePrimitive::TextFont
         | UnexpandablePrimitive::ScriptFont
@@ -9138,7 +9279,8 @@ fn scan_command(
             family,
             font,
             global,
-        });
+        }
+        .into());
     }
     // Math operands are scanned exclusively by `tex-command`.  The replay
     // driver receives a typed scalar request and schedules any opaque field
@@ -9160,14 +9302,15 @@ fn scan_command(
             processor
                 .scan_math_delimiter_boundary(kind)
                 .map_err(command_error)?,
-        ));
+        )
+        .into());
     }
     if matches!(mode, Mode::Math | Mode::DisplayMath)
         && let Some(request) = processor
             .scan_math_request(&command)
             .map_err(command_error)?
     {
-        return Ok(ScannedStep::Math(request));
+        return Ok(ScannedStep::Math(request).into());
     }
     if matches!(mode, Mode::Math | Mode::DisplayMath)
         && let Meaning::CharToken {
@@ -9175,14 +9318,15 @@ fn scan_command(
             ..
         } = command.meaning()
     {
-        return Ok(ScannedStep::Math(MathRequest::Script(
-            tex_command::ScannedMathScript {
+        return Ok(
+            ScannedStep::Math(MathRequest::Script(tex_command::ScannedMathScript {
                 kind: MathScriptKind::Superscript,
                 provenance: tex_command::StructuredProvenance {
                     primary: command.origin(),
                 },
-            },
-        )));
+            }))
+            .into(),
+        );
     }
     if matches!(mode, Mode::Math | Mode::DisplayMath)
         && let Meaning::CharToken {
@@ -9190,14 +9334,15 @@ fn scan_command(
             ..
         } = command.meaning()
     {
-        return Ok(ScannedStep::Math(MathRequest::Script(
-            tex_command::ScannedMathScript {
+        return Ok(
+            ScannedStep::Math(MathRequest::Script(tex_command::ScannedMathScript {
                 kind: MathScriptKind::Subscript,
                 provenance: tex_command::StructuredProvenance {
                     primary: command.origin(),
                 },
-            },
-        )));
+            }))
+            .into(),
+        );
     }
 
     if boxes.output_routine_opening_pending
@@ -9209,7 +9354,7 @@ fn scan_command(
             }
         )
     {
-        return Ok(ScannedStep::OutputRoutineOpeningBrace);
+        return Ok(ScannedStep::OutputRoutineOpeningBrace.into());
     }
     // `align_error`'s inserted brace is an actual execution group, even when
     // it appears inside a replayed box body.  It must therefore win over the
@@ -9223,7 +9368,7 @@ fn scan_command(
             }
         )
     {
-        return Ok(ScannedStep::BeginSimpleGroup);
+        return Ok(ScannedStep::BeginSimpleGroup.into());
     }
     if boxes.recovery_simple_group_open
         && matches!(
@@ -9234,7 +9379,7 @@ fn scan_command(
             }
         )
     {
-        return Ok(ScannedStep::EndSimpleGroup);
+        return Ok(ScannedStep::EndSimpleGroup.into());
     }
     // TeX82 §1068 dispatches a right brace from the current `cur_group`.
     // An ancestor simple group must not make a nested box's body closer look
@@ -9248,7 +9393,9 @@ fn scan_command(
             }
         )
     {
-        return Ok(ScannedStep::EndOrdinaryGroup);
+        return Ok(ScannedOperation::Hot(
+            hot_apply::HotOperation::end_ordinary_group(),
+        ));
     }
     // TeX82 §1186's `math_group` arm of `handle_right_brace` (the brace that
     // closes a subformula scanned by §1151's `scan_math`) and §1174's
@@ -9265,7 +9412,7 @@ fn scan_command(
             }
         )
     {
-        return Ok(ScannedStep::EndMathGroup(kind));
+        return Ok(ScannedStep::EndMathGroup(kind).into());
     }
     if innermost_group == Some(GroupKind::Disc)
         && matches!(
@@ -9276,7 +9423,7 @@ fn scan_command(
             }
         )
     {
-        return Ok(ScannedStep::DiscretionaryPartEnd);
+        return Ok(ScannedStep::DiscretionaryPartEnd.into());
     }
     // TeX82 §1150's `mmode+left_brace`: a bare explicit brace encountered
     // directly in math mode starts a subformula that becomes the nucleus of a
@@ -9304,9 +9451,7 @@ fn scan_command(
         } = command.meaning()
     {
         processor.back_input(command).map_err(command_error)?;
-        return Ok(ScannedStep::Math(MathRequest::TextField(
-            MathTextFieldKind::Ord,
-        )));
+        return Ok(ScannedStep::Math(MathRequest::TextField(MathTextFieldKind::Ord)).into());
     }
     // TeX82 §1068's `handle_right_brace` dispatches purely on `cur_group`, so
     // a box body's own closing brace is exactly the one delivered while the
@@ -9337,11 +9482,12 @@ fn scan_command(
             processor
                 .insert_partoken_before(command)
                 .map_err(command_error)?;
-            return Ok(ScannedStep::Continue);
+            return Ok(ScannedStep::Continue.into());
         }
         return Ok(ScannedStep::BoxEndGroup {
             ships_out: box_state.ships_out,
-        });
+        }
+        .into());
     }
     // TeX82 §1016 opens `output_group` before replaying the braced output
     // token list. A box body nested in that list owns its closing brace first;
@@ -9360,9 +9506,9 @@ fn scan_command(
             processor
                 .insert_partoken_before(command)
                 .map_err(command_error)?;
-            return Ok(ScannedStep::Continue);
+            return Ok(ScannedStep::Continue.into());
         }
-        return Ok(ScannedStep::EndOutputRoutine);
+        return Ok(ScannedStep::EndOutputRoutine.into());
     }
     // TeX82 §1090's `@<Cases of |main_control| that build boxes and lists@>`
     // opens with one shared vertical-mode case, not thirteen separate ones:
@@ -9389,13 +9535,44 @@ fn scan_command(
         && starts_paragraph_in_vertical_mode(command.meaning())
     {
         processor.back_input(command).map_err(command_error)?;
-        return Ok(ScannedStep::ParagraphStart);
+        return Ok(ScannedStep::ParagraphStart.into());
     }
+    if let Some(operation) = hot_apply::scan(processor, &command, global, flags, innermost_group)? {
+        return Ok(ScannedOperation::Hot(operation));
+    }
+    scan_cold_command(
+        processor,
+        command,
+        global,
+        mode,
+        boxes,
+        innermost_group,
+        job_is_all_over,
+        display_eq_no,
+        set_box_allowed,
+        shown_mode,
+    )
+    .map(Into::into)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_cold_command(
+    processor: &mut CommandProcessor<'_>,
+    command: tex_command::CurrentCommand,
+    global: bool,
+    mode: Mode,
+    boxes: &ReplayBoxes,
+    innermost_group: Option<GroupKind>,
+    job_is_all_over: bool,
+    display_eq_no: bool,
+    set_box_allowed: bool,
+    shown_mode: &mut Option<Mode>,
+) -> Result<ScannedStep, ExecError> {
     match command.meaning() {
         Meaning::CharToken {
             cat: Catcode::BeginGroup,
             ..
-        } => Ok(ScannedStep::BeginOrdinaryGroup),
+        } => unreachable!("ordinary group entry is owned by fused hot dispatch"),
         // TeX82 §1068's `handle_right_brace` sends three of its `cur_group`
         // cases to §1069's `extra_right_brace`, which names the group opener
         // the brace was mistaken for; every other unmatched brace is §1068's
@@ -9412,12 +9589,12 @@ fn scan_command(
             },
         }),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginGroup) => {
-            Ok(ScannedStep::BeginSemiSimpleGroup)
+            unreachable!("semi-simple group entry is owned by fused hot dispatch")
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup)
             if innermost_group == Some(GroupKind::SemiSimple) =>
         {
-            Ok(ScannedStep::EndSemiSimpleGroup)
+            unreachable!("semi-simple group exit is owned by fused hot dispatch")
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup) => {
             // TeX82 §1215's `\let` copies `cur_cmd`/`cur_chr`, so every
@@ -10372,8 +10549,7 @@ fn scan_command(
             }
         }
         Meaning::UnexpandablePrimitive(
-            primitive @ (UnexpandablePrimitive::CatCode
-            | UnexpandablePrimitive::LcCode
+            primitive @ (UnexpandablePrimitive::LcCode
             | UnexpandablePrimitive::UcCode
             | UnexpandablePrimitive::SfCode
             | UnexpandablePrimitive::MathCode
@@ -10398,6 +10574,9 @@ fn scan_command(
                 value,
                 global,
             })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CatCode) => {
+            unreachable!("catcode assignments are owned by fused hot dispatch")
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfLpCode
@@ -10436,27 +10615,11 @@ fn scan_command(
             | UnexpandablePrimitive::Divide),
         ) => scan_arithmetic_assignment(processor, primitive, global),
         Meaning::UnexpandablePrimitive(
-            primitive @ (UnexpandablePrimitive::Def
+            UnexpandablePrimitive::Def
             | UnexpandablePrimitive::Edef
             | UnexpandablePrimitive::Gdef
-            | UnexpandablePrimitive::Xdef),
-        ) => {
-            let expanded = matches!(
-                primitive,
-                UnexpandablePrimitive::Edef | UnexpandablePrimitive::Xdef
-            );
-            let definition = processor
-                .scan_macro_definition(expanded)
-                .map_err(command_error)?;
-            Ok(ScannedStep::MacroDefinition {
-                target: definition.target,
-                flags,
-                global,
-                parameter_text: definition.parameter_text,
-                replacement_text: definition.replacement_text,
-                definition_origin: definition.definition_origin,
-            })
-        }
+            | UnexpandablePrimitive::Xdef,
+        ) => unreachable!("macro definitions are owned by fused hot dispatch"),
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::CharDef | UnexpandablePrimitive::MathCharDef),
         ) => {
@@ -10517,28 +10680,9 @@ fn scan_command(
                 .map_err(command_error)?;
             Ok(ScannedStep::Continue)
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Let) => {
-            let assignment = processor
-                .scan_let_assignment(false)
-                .map_err(command_error)?;
-            Ok(ScannedStep::Let {
-                target: assignment.target,
-                source: assignment.source,
-                meaning: assignment.meaning,
-                macro_root: assignment.macro_root,
-                global,
-            })
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FutureLet) => {
-            let assignment = processor.scan_let_assignment(true).map_err(command_error)?;
-            Ok(ScannedStep::Let {
-                target: assignment.target,
-                source: assignment.source,
-                meaning: assignment.meaning,
-                macro_root: assignment.macro_root,
-                global,
-            })
-        }
+        Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::Let | UnexpandablePrimitive::FutureLet,
+        ) => unreachable!("let assignments are owned by fused hot dispatch"),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::AfterGroup) => {
             Ok(ScannedStep::AfterGroup(
                 processor
@@ -13436,36 +13580,6 @@ fn meaning_mutation_value(meaning: Meaning, stores: &Universe) -> ObservationVal
     }
 }
 
-/// e-TeX change section [49] inserts `protected_token` at the front of a
-/// protected macro's stored body immediately before `define`. The reference
-/// semantic seam reports the unmarked body at that insertion boundary; the
-/// following meaning mutation reports the actual marked stored body.
-fn protected_macro_definition_observation(
-    scanned: &ScannedStep,
-    stores: &Universe,
-) -> Option<TokenListRecord> {
-    let ScannedStep::MacroDefinition {
-        flags,
-        parameter_text,
-        replacement_text,
-        ..
-    } = scanned
-    else {
-        return None;
-    };
-    flags
-        .contains(MeaningFlags::PROTECTED)
-        .then(|| TokenListRecord {
-            transition: "complete",
-            purpose: "protected_macro",
-            tokens: observed_macro_body(
-                parameter_text.token_list(),
-                replacement_text.token_list(),
-                stores,
-            ),
-        })
-}
-
 /// The macro body as stored by TeX82 §294 and e-TeX change section [49].
 fn observed_stored_macro_body(
     flags: MeaningFlags,
@@ -16075,9 +16189,6 @@ fn apply_scanned_step(
             report.error().jump_out()?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::MacroDefinition { .. } => {
-            unreachable!("measured macro definitions are owned by hot_apply")
-        }
         ScannedStep::CharacterDefinition {
             primitive,
             target,
@@ -16224,7 +16335,6 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::Let { .. } => unreachable!("measured let assignments are owned by hot_apply"),
         ScannedStep::AfterGroup(token) => {
             stores.push_aftergroup_traced(token);
             Ok(ReplayStep::Continue)
@@ -16905,11 +17015,6 @@ fn apply_scanned_step(
             )?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BeginOrdinaryGroup
-        | ScannedStep::BeginSemiSimpleGroup
-        | ScannedStep::EndSemiSimpleGroup => {
-            unreachable!("measured group transitions are owned by hot_apply")
-        }
         ScannedStep::ExtraRightBrace { forgotten: None } => {
             // TeX82 §1068's `bottom_level` arm of `handle_right_brace`.
             let context = command.state.output_open_context(&stores.command_context());
@@ -16970,9 +17075,6 @@ fn apply_scanned_step(
                 context,
             )?;
             Ok(ReplayStep::Continue)
-        }
-        ScannedStep::EndOrdinaryGroup => {
-            unreachable!("measured group transitions are owned by hot_apply")
         }
         ScannedStep::EndMathGroup(kind) => {
             // TeX82 §1186 and §1174's `build_choices` both open with
