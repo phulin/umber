@@ -591,6 +591,37 @@ fn tracingcommands_two_traces_nonmacro_expansion_before_big_switch_result() {
 }
 
 #[test]
+fn tracingcommands_preserves_shown_mode_across_expansion_diagnostic_barrier() {
+    // TeX82 §§299/367/370: tracing an undefined control sequence consumes
+    // the mode prefix before §370 reports its recoverable error. Resuming the
+    // settled command after that report must retain `shown_mode` rather than
+    // print the restricted-horizontal prefix a second time.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = MainControl::tex82_initex(&mut stores);
+    let undefined = stores.intern("undefined").symbol();
+    stores.set_meaning(undefined, Meaning::Undefined);
+    register_source(
+        &mut control,
+        b"\\tracingcommands=2\\tracingonline=1\\hbox{\\undefined\\relax}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    assert!(
+        log.contains("{restricted horizontal mode: undefined}"),
+        "{log}"
+    );
+    assert!(log.contains("{\\relax}"), "{log}");
+    assert_eq!(
+        log.matches("restricted horizontal mode:").count(),
+        1,
+        "the expansion trace, not the post-diagnostic command, owns the sole mode prefix: {log}"
+    );
+}
+
+#[test]
 fn tracingcommands_expansion_after_eqno_reports_restored_display_mode() {
     // TeX82 §§299/1193: the math shift finishes the equation-number mlist in
     // ordinary math mode, then `fin_mlist` restores the enclosing display

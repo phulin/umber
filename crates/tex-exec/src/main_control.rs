@@ -5660,6 +5660,14 @@ impl MainControl {
                     .into_iter()
                     .map(PendingDiagnostic::Command),
             );
+            // TeX82 §§299/367 advance `shown_mode` as soon as expansion
+            // prints a command trace. A recoverable expansion diagnostic is a
+            // reporting barrier below, but it does not undo that trace-state
+            // transition: the following settled command must not print the
+            // same mode prefix again in a fresh processor facade.
+            if processor.command_trace_printed() {
+                self.shown_mode = Some(mode);
+            }
             let mut trace_reported = false;
             let mut fused_hot = None;
             let mut fused_retry = None;
@@ -5679,9 +5687,6 @@ impl MainControl {
                         } | Meaning::CharGiven(_)
                             | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
                     );
-                if processor.command_trace_printed() {
-                    self.shown_mode = Some(mode);
-                }
                 if !continues_main_loop {
                     prepare_command_trace(&mut processor, mode, self.shown_mode);
                     report_main_control_command_trace(
