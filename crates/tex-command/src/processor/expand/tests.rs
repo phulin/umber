@@ -3950,6 +3950,142 @@ fn etex_undefined_recovery_retires_macro_without_observer_diagnostic() {
     ));
 }
 
+/// TeX82 §§366/370/380 make `x_token` expand, report, and discard
+/// `undefined_cs` before returning the following unexpandable command. The
+/// main-control preflight seam starts from an already raw-delivered command,
+/// so it must retain that exact rule rather than returning the undefined
+/// command as an expanded delivery to the executor.
+#[test]
+fn preflight_settlement_discards_undefined_before_returning_following_command() {
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"A".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let undefined = universe.intern("undefined").symbol();
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(undefined))])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::MacroReplacement,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
+        let raw_undefined = match processor
+            .get_next_with_replay_completion()
+            .expect("raw preflight delivery succeeds")
+            .expect("raw preflight command")
+        {
+            crate::CommandReplayDelivery::Command(command) => command,
+            crate::CommandReplayDelivery::Completed(_) => {
+                panic!("raw preflight must deliver the undefined command")
+            }
+        };
+        assert_eq!(raw_undefined.meaning(), Meaning::Undefined);
+
+        let settled = processor
+            .settle_current_command(raw_undefined)
+            .expect("undefined recovery is finite")
+            .expect("following source token resumes");
+        assert_eq!(
+            settled.spelling().semantic_token(),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter
+            }
+        );
+    }
+    assert!(matches!(
+        command.take_semantic_diagnostics().as_slice(),
+        [crate::CommandSemanticDiagnostic::UndefinedControlSequence { .. }]
+    ));
+    assert!(
+        !recorder.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Command(record)
+                if record.boundary == CommandDeliveryBoundary::Expanded
+                    && record.command == "undefined_cs"
+        )),
+        "§380 does not return undefined_cs at the expanded boundary"
+    );
+    let undefined_position = recorder
+        .0
+        .iter()
+        .position(|record| {
+            matches!(
+                record,
+                CommandObservation::Command(command)
+                    if command.boundary == CommandDeliveryBoundary::Raw
+                        && command.command == "undefined_cs"
+            )
+        })
+        .expect("raw undefined command observed");
+    assert!(matches!(
+        recorder.0.get(undefined_position + 1),
+        Some(CommandObservation::Input(record))
+            if record.transition == crate::observation::InputTransition::Retire
+                && record.reason == crate::observation::InputReason::Macro
+    ));
+}
+
+/// TeX82 §379's `\noexpand` is the negative control: its one-shot frozen
+/// relax has the spelling of an undefined control sequence but is below
+/// `max_command`, so preflight settlement must return it without §370's
+/// diagnostic.
+#[test]
+fn preflight_settlement_preserves_noexpanded_undefined_as_frozen_relax() {
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let noexpand = universe.intern("noexpand").symbol();
+    universe.set_meaning(
+        noexpand,
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand),
+    );
+    let undefined = universe.intern("undefined").symbol();
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(noexpand)),
+            traced(Token::Cs(undefined)),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
+    let raw_noexpand = match processor
+        .get_next_with_replay_completion()
+        .expect("raw preflight delivery succeeds")
+        .expect("raw noexpand command")
+    {
+        crate::CommandReplayDelivery::Command(command) => command,
+        crate::CommandReplayDelivery::Completed(_) => {
+            panic!("raw preflight must deliver noexpand")
+        }
+    };
+    let settled = processor
+        .settle_current_command(raw_noexpand)
+        .expect("noexpand settlement succeeds")
+        .expect("frozen relax delivery");
+
+    assert_eq!(settled.meaning(), Meaning::Relax);
+    assert_eq!(settled.spelling().semantic_token(), Token::Cs(undefined));
+    assert_eq!(
+        settled.identity(),
+        crate::command::CommandIdentity::NoExpandFrozenRelax
+    );
+    assert!(command.take_semantic_diagnostics().is_empty());
+}
+
 /// Bounded source fixture for the e-TeX 2.6 §370 observer boundary. The raw
 /// undefined command is visible, recovery remains semantic, and detached
 /// observation resumes at the following expanded token with no diagnostic

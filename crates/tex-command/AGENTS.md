@@ -50,8 +50,9 @@ print channel of its own outside the borrowed
   its cloneable value crosses only executor preflight/retry seams and never a
   durable snapshot or format boundary.
 - `src/processor/expand.rs`: canonical expanded delivery, including the
-  same-borrow preflight settlement that preserves undefined commands for the
-  executor's single diagnostic boundary. The ordinary driver owns one live
+  same-borrow preflight settlement that reports and discards undefined
+  commands before returning the following command to the executor. The
+  ordinary driver owns one live
   current command and lends it through macro and ranked primitive expansion;
   it moves that value into continuation state only after a typed immutable-host
   suspension, and a resumed primitive retains §367's already-emitted trace

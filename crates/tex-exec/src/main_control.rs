@@ -7355,11 +7355,6 @@ enum ScannedStep {
     AlignPeekRestart {
         alignment: AlignmentIdentity,
     },
-    /// TeX82 §370's undefined-control-sequence expansion error. The gullet
-    /// delivers this only because its ordinary expanded-command loop has not
-    /// yet claimed `Meaning::Undefined`; main control still preserves §370's
-    /// observable report and drop behavior explicitly.
-    UndefinedControlSequence,
     /// TeX82 §1128's `abs(align_state)>2` recovery: report the delivered
     /// delimiter and drop it without a backup or inserted brace.
     MisplacedAlignmentDelimiter {
@@ -12174,10 +12169,11 @@ fn scan_unclassified_meaning(
                 .map_err(command_error)?;
             Ok(ScannedStep::MissingMathShift)
         }
-        // TeX82 §370's `Complain about an undefined macro` reports and drops
-        // the token. Umber's gullet currently delivers this meaning to main
-        // control, which preserves that same observable transition here.
-        Meaning::Undefined => Ok(ScannedStep::UndefinedControlSequence),
+        // TeX82 §§366/370/380 put `undefined_cs` above `max_command`, so the
+        // command-owned expanded-delivery loop reports and drops it before
+        // main control can receive a command. Reaching stomach dispatch would
+        // prove that a fetch policy has recreated a second recovery owner.
+        Meaning::Undefined => unreachable!("undefined_cs escaped expanded delivery"),
         // A macro is expanded by `get_x_token` (§380) and `\noexpand` turns
         // one into a frozen relax (§358), so neither should ever be
         // delivered as an unexpandable command. `\endcsname` is the one
@@ -16999,11 +16995,6 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Some(context),
             )?;
-            Ok(ReplayStep::Continue)
-        }
-        ScannedStep::UndefinedControlSequence => {
-            let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::report_undefined_control_sequence(stores, Some(context))?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::MisplacedAlignmentDelimiter { token, context } => {

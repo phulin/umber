@@ -262,7 +262,8 @@ const fn is_ranked_fused_expansion(meaning: Meaning) -> bool {
 impl CommandProcessor<'_> {
     /// Settles one raw command already delivered by the same processor
     /// episode. This is the capability-preflight seam: macro/expandable
-    /// nesting and ordered raw/expanded observations remain in one borrow.
+    /// nesting, undefined-command recovery, and ordered raw/expanded
+    /// observations remain in one borrow.
     #[doc(hidden)]
     pub fn settle_current_command(
         &mut self,
@@ -274,7 +275,7 @@ impl CommandProcessor<'_> {
                 mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
                     fetch: ExpandedFetch::XToken,
                     protected_macros: ProtectedMacroHandling::Expand,
-                    undefined: UndefinedHandling::Preserve,
+                    undefined: UndefinedHandling::Diagnose,
                     observation: ExpandedObservationPolicy::Commit,
                     first_command: FirstCommandPolicy::Ordinary,
                 }),
