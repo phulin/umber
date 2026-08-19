@@ -13,6 +13,12 @@ distribution, ordered 105-key closure, offline cache, 120-second timeout, and
 1,536-MiB RSS guard from [`umber2-awgc.5.2`](umber2-awgc.5.2.md). Both stopped
 at the requested typed fuel boundary with empty stdout and exact work vectors:
 
+The historical command left the TeX-visible job clock live. The exact vectors
+in this table are reproducible with the corrected
+`SOURCE_DATE_EPOCH=1787080434` authority recorded by
+[`umber2-awgc.5.3.8`](umber2-awgc.5.3.8.md); a different clock is a different
+semantic workload even when every content hash is unchanged.
+
 | Boundary | Fuel charges | Token-frame steps | Expanded deliveries | Meaning lookups | Scanner tokens | Write expansions |
 | -------- | -----------: | ----------------: | ------------------: | --------------: | -------------: | ---------------: |
 | 6M       |    6,000,000 |         5,999,815 |             507,410 |       1,718,333 |      5,352,087 |              588 |

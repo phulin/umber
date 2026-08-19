@@ -20,6 +20,12 @@ changed. Only the fuel boundary and receipt output paths differ. The 6M and
 and
 `b4eaffa7cc79bc9c5ea0666a70d807d95c5e6d2fccaf34ca57896ded651ac008`.
 
+Correction: the original command receipt did not record a fixed job clock.
+The vectors below are therefore tied to the run's live 2026-08-18 19:13 UTC
+minute. [`umber2-awgc.5.3.8`](umber2-awgc.5.3.8.md) recovers that input as
+`SOURCE_DATE_EPOCH=1787080434`, proves the first TeX-visible divergence, and
+promotes the fixed value into the performance authority.
+
 Both rows returned typed status 1 at exact fuel exhaustion, emitted empty
 stdout with SHA-256
 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`,

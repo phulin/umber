@@ -27,6 +27,15 @@ The primary performance authority is the pinned offline `2606.12566`
 pdfLaTeX workload. Synthetic workloads may diagnose a mechanism but may not be
 used as headline promotion evidence.
 
+The authority pins every TeX-visible host input, including
+`SOURCE_DATE_EPOCH=1787080434` and `LC_ALL=C.UTF-8`. A run that leaves the job
+clock live is diagnostic only and cannot establish work-vector or artifact
+identity. TeX82 §241 initializes `\time`, `\day`, `\month`, and `\year` from
+the host before input begins, and the loaded LaTeX format expands those values
+from its `everyjob` hook. The corrected machine-readable authority and the
+negative control that exposed the missing clock pin are recorded in
+[`umber2-awgc.5.3.8-authority.json`](writeback/umber2-awgc.5.3.8-authority.json).
+
 The final target is:
 
 - complete the pinned paper in at most 20 seconds and at most 150 MiB peak RSS
@@ -679,6 +688,10 @@ The child-1 receipt fixes the comparison authority. Every later stage records:
 - `Arc` clone/drop, weak lookup, content hash, and provenance publication
   counts; and
 - exact semantic and output identities.
+
+Every fixed-prefix row must also record the pinned job-clock and locale
+environment above. Matching source, format, distribution, cache, command-line
+arguments, and fuel is insufficient when the TeX-visible clock differs.
 
 The current-core structural fields come from the profiling-only
 `HOT_CORE_CENSUS` report documented in
