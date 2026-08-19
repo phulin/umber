@@ -12,7 +12,7 @@ cargo run --manifest-path benchmarks/hot-core-snapshot/Cargo.toml
 The gate warms every arena, stack, dense-bank, inverse-journal, and external
 cursor path, then performs 10,000 aggregate accept/reject/retry cycles. It
 requires zero allocation calls, zero requested bytes, exact retained-accounting
-plateau, a 192-byte `HotSnapshot`, and zero snapshot-owned retained bytes.
+plateau, a 152-byte `HotSnapshot`, and zero snapshot-owned retained bytes.
 
 Build or run the diagnostic Criterion rows with:
 

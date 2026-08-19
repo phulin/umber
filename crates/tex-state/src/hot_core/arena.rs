@@ -16,8 +16,10 @@ const FIRST_GENERATION: NonZeroU32 = NonZeroU32::MIN;
 static NEXT_ARENA_NAMESPACE: AtomicU64 = AtomicU64::new(FIRST_ARENA_NAMESPACE);
 
 mod layout;
+mod value_region;
 
 pub(crate) use layout::*;
+pub(crate) use value_region::*;
 
 struct ChunkSlot<T> {
     generation: NonZeroU32,
@@ -37,23 +39,27 @@ impl<T> ChunkSlot<T> {
 }
 
 struct AcceptedLayer<T> {
-    parent: AcceptedRegionArena<T>,
     namespace: NonZeroU64,
     slots: Box<[ChunkSlot<T>]>,
-    accounting: RegionArenaAccounting,
 }
 
-/// Immutable accepted chunk layers shared once per candidate, not per value.
+/// An explicit region-root set shared at region granularity, never per value.
+///
+/// Each entry owns exactly one immutable accepted layer. Layers do not retain
+/// their predecessors, so constructing a narrower canonical root set can
+/// release unrelated regions without walking or dismantling an ancestry chain.
 pub(crate) struct AcceptedRegionArena<T> {
-    newest: Option<Arc<AcceptedLayer<T>>>,
+    regions: Vec<Arc<AcceptedLayer<T>>>,
     initial_chunk_capacity: NonZeroU32,
+    accounting: RegionArenaAccounting,
 }
 
 impl<T> Clone for AcceptedRegionArena<T> {
     fn clone(&self) -> Self {
         Self {
-            newest: self.newest.as_ref().map(Arc::clone),
+            regions: self.regions.iter().map(Arc::clone).collect(),
             initial_chunk_capacity: self.initial_chunk_capacity,
+            accounting: self.accounting,
         }
     }
 }
@@ -61,8 +67,18 @@ impl<T> Clone for AcceptedRegionArena<T> {
 impl<T> AcceptedRegionArena<T> {
     pub(crate) const fn new(initial_chunk_capacity: NonZeroU32) -> Self {
         Self {
-            newest: None,
+            regions: Vec::new(),
             initial_chunk_capacity,
+            accounting: RegionArenaAccounting {
+                logical_values: 0,
+                logical_value_bytes: 0,
+                live_chunks: 0,
+                reusable_chunks: 0,
+                retained_payload_values: 0,
+                retained_payload_bytes: 0,
+                registry_slots: 0,
+                retained_registry_bytes: 0,
+            },
         }
     }
 
@@ -82,14 +98,11 @@ impl<T> AcceptedRegionArena<T> {
     }
 
     pub(crate) fn accounting(&self) -> RegionArenaAccounting {
-        self.newest
-            .as_ref()
-            .map_or_else(RegionArenaAccounting::default, |layer| layer.accounting)
+        self.accounting
     }
 
     fn resolve_chunk(&self, key: ChunkOwner) -> Result<&[T], RegionArenaError> {
-        let mut cursor = self.newest.as_ref();
-        while let Some(layer) = cursor {
+        for layer in self.regions.iter().rev() {
             if layer.namespace == key.namespace {
                 let slot = layer
                     .slots
@@ -103,14 +116,13 @@ impl<T> AcceptedRegionArena<T> {
                 }
                 return Ok(&slot.values);
             }
-            cursor = layer.parent.newest.as_ref();
         }
         Err(RegionArenaError::ForeignNamespace)
     }
 
     #[cfg(test)]
     fn shares_newest_layer_with(&self, other: &Self) -> bool {
-        match (&self.newest, &other.newest) {
+        match (self.regions.last(), other.regions.last()) {
             (Some(left), Some(right)) => Arc::ptr_eq(left, right),
             (None, None) => true,
             _ => false,
@@ -364,18 +376,14 @@ impl<T> RegionArena<T> {
             registry_slots: self.slots.len(),
             retained_registry_bytes: self.slots.len().saturating_mul(size_of::<ChunkSlot<T>>()),
         };
-        let accounting = self.base.accounting().plus(delta);
-        let initial_chunk_capacity = self.base.initial_chunk_capacity;
+        let accounting = self.base.accounting.plus(delta);
         let layer = AcceptedLayer {
-            parent: self.base,
             namespace: self.namespace,
             slots: self.slots.into_boxed_slice(),
-            accounting,
         };
-        Ok(AcceptedRegionArena {
-            newest: Some(Arc::new(layer)),
-            initial_chunk_capacity,
-        })
+        self.base.regions.push(Arc::new(layer));
+        self.base.accounting = accounting;
+        Ok(self.base)
     }
 
     fn appendable_tail(&self, values: u32) -> Result<Option<u32>, RegionArenaError> {

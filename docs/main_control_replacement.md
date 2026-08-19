@@ -532,7 +532,7 @@ bank and inverse journal, and six external-ledger cursors. It deliberately
 assigns no TeX command meaning to those values. MainControl, format DTOs, and
 incremental DTOs do not consume this substrate yet.
 
-`HotSnapshot` is a 192-byte copy-only runtime value. It contains the candidate
+`HotSnapshot` is a 152-byte copy-only runtime value. It contains the candidate
 and accepted-base identities, four arena watermarks, six stack lengths, the
 dense-bank journal mark, and the page/PDF/effect/output/source/resource
 cursors. Its retained-byte contribution is zero regardless of live-state size.
@@ -551,7 +551,7 @@ reuses warmed arena, stack, and journal capacity.
 The assertion-bearing `benchmarks/hot-core-snapshot` gate performs 10,000
 aggregate accept/reject/retry cycles after warmup and requires exactly zero
 allocation calls, zero requested bytes, and byte-for-byte identical aggregate
-accounting at the end. Crate tests separately pin the 192-byte layout, zero
+accounting at the end. Crate tests separately pin the 152-byte layout, zero
 snapshot retention, exact all-live logical growth, accepted-base visibility,
 nested commit transfer, and atomic stale/foreign rejection. Runtime marks and
 coordinates derive no serialization and remain absent from format and detached

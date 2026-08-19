@@ -62,6 +62,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/hot_core/arena/layout.rs`: Fixed-width typed coordinates, spans,
   reservations, rollback marks, validation errors, and logical/retained
   accounting values for the region arena.
+- `src/hot_core/arena/value_region.rs`: Heterogeneous token, macro, glue, and
+  provenance columns sharing one rollback-owned region lifecycle and explicit
+  canonical sealed-region root sets.
+- `src/hot_core/arena/value_region/tests.rs`: Accept/reject, nested owner,
+  resource retry, old-mark, exact all-live, and 10,000-cycle plateau controls
+  for runtime value regions.
 - `src/hot_core/arena/tests.rs`: Coordinate validation, accepted-base sharing,
   candidate isolation, rollback, plateau, and exact-growth controls for the
   HotCore arena substrate.
@@ -78,7 +84,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/hot_core/mod.rs`: Private HotCore storage module boundary; command
   semantics remain outside this substrate.
 - `src/hot_core/snapshot.rs` and `src/hot_core/snapshot/tests.rs`: Storage-only
-  HotCore aggregate, 192-byte runtime snapshots, atomic restore preflight,
+  HotCore aggregate, 152-byte runtime snapshots, atomic restore preflight,
   accepted-base lifecycle, exact-growth controls, and warmed aggregate plateau
   coverage.
 - `src/hot_core/stack.rs` and `src/hot_core/stack/tests.rs`: Copy-only compact

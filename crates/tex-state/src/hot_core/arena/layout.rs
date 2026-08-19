@@ -95,6 +95,10 @@ pub(crate) struct RegionCoordinate<T> {
 }
 
 impl<T> RegionCoordinate<T> {
+    pub(crate) const fn owner(self) -> ChunkOwner {
+        self.key
+    }
+
     pub(crate) const fn offset(self) -> u32 {
         self.offset
     }

@@ -68,7 +68,7 @@ fn main() {
     assert_eq!(calls, 0, "warmed HotCore cycles allocated {calls} times");
     assert_eq!(bytes, 0, "warmed HotCore cycles requested {bytes} bytes");
     assert_eq!(final_accounting, plateau, "HotCore storage did not plateau");
-    assert_eq!(TestingHotCore::snapshot_size(), 192);
+    assert_eq!(TestingHotCore::snapshot_size(), 152);
     assert_eq!(TestingHotCore::snapshot_retained_bytes(), 0);
     println!(
         "hot-core-gate: cycles={CYCLES} allocations={calls} requested_bytes={bytes} snapshot_bytes={} retained_bytes={} checksum={checksum}",

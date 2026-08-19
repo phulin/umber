@@ -10,11 +10,13 @@ use crate::hot_core::snapshot::{
     AcceptedHotCore, HotArenaKind, HotCore, HotCoreAccounting, HotSnapshot, HotStackKind,
 };
 
-const ARENAS: [HotArenaKind; 4] = [
-    HotArenaKind::Token,
-    HotArenaKind::Argument,
+const ARENAS: [HotArenaKind; 6] = [
+    HotArenaKind::TokenWord,
+    HotArenaKind::TokenList,
+    HotArenaKind::MacroRecord,
+    HotArenaKind::MacroRoot,
+    HotArenaKind::Glue,
     HotArenaKind::Provenance,
-    HotArenaKind::Node,
 ];
 const STACKS: [HotStackKind; 6] = [
     HotStackKind::Input,

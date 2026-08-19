@@ -2,11 +2,13 @@ use core::mem::{needs_drop, size_of};
 
 use super::*;
 
-const ARENAS: [HotArenaKind; 4] = [
-    HotArenaKind::Token,
-    HotArenaKind::Argument,
+const ARENAS: [HotArenaKind; 6] = [
+    HotArenaKind::TokenWord,
+    HotArenaKind::TokenList,
+    HotArenaKind::MacroRecord,
+    HotArenaKind::MacroRoot,
+    HotArenaKind::Glue,
     HotArenaKind::Provenance,
-    HotArenaKind::Node,
 ];
 const STACKS: [HotStackKind; 6] = [
     HotStackKind::Input,
@@ -51,7 +53,7 @@ fn mutate_suffix(core: &mut HotCore, seed: u64) {
 
 #[test]
 fn hot_snapshot_is_a_plain_fixed_size_runtime_mark() {
-    assert_eq!(size_of::<HotSnapshot>(), 192);
+    assert_eq!(size_of::<HotSnapshot>(), 152);
     assert!(!needs_drop::<HotSnapshot>());
 
     let mut core = candidate(&base());
@@ -95,16 +97,16 @@ fn rollback_restores_every_composed_component_exactly() {
     let before = core.accounting();
     let snapshot = core.snapshot().expect("snapshot opens");
     let token = core
-        .append_arena_word(HotArenaKind::Token, 91)
+        .append_arena_word(HotArenaKind::TokenWord, 91)
         .expect("token word appends");
     mutate_suffix(&mut core, 100);
-    assert_eq!(core.resolve(HotArenaKind::Token, token), Ok(&91));
+    assert_eq!(core.resolve(HotArenaKind::TokenWord, token), Ok(&91));
     assert_eq!(core.state_value(7), Ok(107));
     assert_eq!(core.stack_len(HotStackKind::Mode), 16);
 
     core.rollback(snapshot)
         .expect("aggregate suffix rolls back");
-    assert!(core.resolve(HotArenaKind::Token, token).is_err());
+    assert!(core.resolve(HotArenaKind::TokenWord, token).is_err());
     assert_eq!(core.state_value(7), Ok(0));
     assert_eq!(core.stack_len(HotStackKind::Mode), 0);
     assert_eq!(
@@ -124,35 +126,48 @@ fn accepted_bases_remain_readable_across_accept_reject_and_retry() {
     let empty = base();
     let mut author = candidate(&empty);
     let inherited = author
-        .append_arena_word(HotArenaKind::Token, 11)
+        .append_arena_word(HotArenaKind::TokenWord, 11)
         .expect("accepted token appends");
     let accepted = author.accept().expect("author overlay accepts");
-    assert_eq!(accepted.resolve(HotArenaKind::Token, inherited), Ok(&11));
+    assert_eq!(
+        accepted.resolve(HotArenaKind::TokenWord, inherited),
+        Ok(&11)
+    );
 
     let mut rejected = candidate(&accepted);
     let rejected_word = rejected
-        .append_arena_word(HotArenaKind::Token, 12)
+        .append_arena_word(HotArenaKind::TokenWord, 12)
         .expect("rejected token appends");
-    assert_eq!(rejected.resolve(HotArenaKind::Token, inherited), Ok(&11));
+    assert_eq!(
+        rejected.resolve(HotArenaKind::TokenWord, inherited),
+        Ok(&11)
+    );
     drop(rejected);
 
     let mut retry = candidate(&accepted);
-    assert_eq!(retry.resolve(HotArenaKind::Token, inherited), Ok(&11));
-    assert!(retry.resolve(HotArenaKind::Token, rejected_word).is_err());
+    assert_eq!(retry.resolve(HotArenaKind::TokenWord, inherited), Ok(&11));
+    assert!(
+        retry
+            .resolve(HotArenaKind::TokenWord, rejected_word)
+            .is_err()
+    );
     let attempt = retry.snapshot().expect("retry attempt opens");
     let discarded = retry
-        .append_arena_word(HotArenaKind::Token, 13)
+        .append_arena_word(HotArenaKind::TokenWord, 13)
         .expect("retry suffix appends");
     retry.rollback(attempt).expect("retry attempt rejects");
-    assert!(retry.resolve(HotArenaKind::Token, discarded).is_err());
+    assert!(retry.resolve(HotArenaKind::TokenWord, discarded).is_err());
     let replacement = retry
-        .append_arena_word(HotArenaKind::Token, 14)
+        .append_arena_word(HotArenaKind::TokenWord, 14)
         .expect("retry replacement appends");
     let next = retry.accept().expect("retry candidate accepts");
 
-    assert_eq!(next.resolve(HotArenaKind::Token, inherited), Ok(&11));
-    assert_eq!(next.resolve(HotArenaKind::Token, replacement), Ok(&14));
-    assert!(next.resolve(HotArenaKind::Token, rejected_word).is_err());
+    assert_eq!(next.resolve(HotArenaKind::TokenWord, inherited), Ok(&11));
+    assert_eq!(next.resolve(HotArenaKind::TokenWord, replacement), Ok(&14));
+    assert!(
+        next.resolve(HotArenaKind::TokenWord, rejected_word)
+            .is_err()
+    );
 }
 
 #[test]
@@ -240,8 +255,8 @@ fn all_live_aggregate_growth_has_exact_logical_accounting() {
             .expect("all-live dense value writes");
     }
     let live = core.accounting();
-    assert_eq!(live.arena_logical_values, 4 * 9);
-    assert_eq!(live.arena_logical_bytes, 4 * 9 * size_of::<u64>());
+    assert_eq!(live.arena_logical_values, 6 * 9);
+    assert_eq!(live.arena_logical_bytes, 6 * 9 * size_of::<u64>());
     assert_eq!(live.stack_logical_entries, 6 * 13);
     assert_eq!(live.stack_logical_bytes, 6 * 13 * size_of::<u64>());
     assert_eq!(live.dense_logical_cells, 40);

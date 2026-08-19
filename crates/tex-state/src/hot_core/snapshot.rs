@@ -5,12 +5,13 @@
 //! coordinates are format or incremental-checkpoint DTOs.
 
 use core::fmt;
+use core::mem::size_of;
 use core::num::{NonZeroU32, NonZeroU64};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::arena::{
-    AcceptedRegionArena, RegionArena, RegionArenaAccounting, RegionArenaError, RegionArenaMark,
-    RegionCoordinate,
+    AcceptedRuntimeValueRegions, RegionArenaError, RegionCoordinate, RuntimeValueRegionAccounting,
+    RuntimeValueRegionArena, RuntimeValueRegionMark,
 };
 use super::journal::{FirstWriteJournal, FirstWriteJournalError, FirstWriteMark};
 use super::stack::{PodStack, PodStackAccounting, PodStackError, PodStackMark};
@@ -22,10 +23,12 @@ static NEXT_HOT_CORE_IDENTITY: AtomicU64 = AtomicU64::new(FIRST_HOT_CORE_IDENTIT
 /// One typed arena family in the storage-only aggregate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HotArenaKind {
-    Token,
-    Argument,
+    TokenWord,
+    TokenList,
+    MacroRecord,
+    MacroRoot,
+    Glue,
     Provenance,
-    Node,
 }
 
 /// One typed stack family in the storage-only aggregate.
@@ -133,10 +136,7 @@ impl ExternalJournalCursors {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct HotSnapshot {
     owner: HotCoreOwner,
-    token_arena: RegionArenaMark,
-    argument_arena: RegionArenaMark,
-    provenance_arena: RegionArenaMark,
-    node_arena: RegionArenaMark,
+    value_regions: RuntimeValueRegionMark,
     input_stack: PodStackMark,
     parameter_stack: PodStackMark,
     condition_stack: PodStackMark,
@@ -157,20 +157,14 @@ impl HotSnapshot {
 #[derive(Clone)]
 pub(crate) struct AcceptedHotCore {
     identity: NonZeroU64,
-    token_arena: AcceptedRegionArena<u64>,
-    argument_arena: AcceptedRegionArena<u64>,
-    provenance_arena: AcceptedRegionArena<u64>,
-    node_arena: AcceptedRegionArena<u64>,
+    value_regions: AcceptedRuntimeValueRegions<u64, u64, u64, u64, u64, u64>,
 }
 
 impl AcceptedHotCore {
     pub(crate) fn new(initial_chunk_capacity: NonZeroU32) -> Result<Self, HotCoreError> {
         Ok(Self {
             identity: fresh_hot_core_identity()?,
-            token_arena: AcceptedRegionArena::new(initial_chunk_capacity),
-            argument_arena: AcceptedRegionArena::new(initial_chunk_capacity),
-            provenance_arena: AcceptedRegionArena::new(initial_chunk_capacity),
-            node_arena: AcceptedRegionArena::new(initial_chunk_capacity),
+            value_regions: AcceptedRuntimeValueRegions::new(initial_chunk_capacity),
         })
     }
 
@@ -186,22 +180,10 @@ impl AcceptedHotCore {
                 candidate: fresh_hot_core_identity()?,
                 accepted_base: self.identity,
             },
-            token_arena: self
-                .token_arena
+            value_regions: self
+                .value_regions
                 .candidate()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Token, error))?,
-            argument_arena: self
-                .argument_arena
-                .candidate()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Argument, error))?,
-            provenance_arena: self
-                .provenance_arena
-                .candidate()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Provenance, error))?,
-            node_arena: self
-                .node_arena
-                .candidate()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Node, error))?,
+                .map_err(|error| HotCoreError::Arena(HotArenaKind::TokenWord, error))?,
             input_stack: PodStack::new(),
             parameter_stack: PodStack::new(),
             condition_stack: PodStack::new(),
@@ -220,29 +202,24 @@ impl AcceptedHotCore {
         coordinate: RegionCoordinate<u64>,
     ) -> Result<&u64, RegionArenaError> {
         match kind {
-            HotArenaKind::Token => self.token_arena.resolve(coordinate),
-            HotArenaKind::Argument => self.argument_arena.resolve(coordinate),
-            HotArenaKind::Provenance => self.provenance_arena.resolve(coordinate),
-            HotArenaKind::Node => self.node_arena.resolve(coordinate),
+            HotArenaKind::TokenWord => self.value_regions.resolve_token_word(coordinate),
+            HotArenaKind::TokenList => self.value_regions.resolve_token_list(coordinate),
+            HotArenaKind::MacroRecord => self.value_regions.resolve_macro_record(coordinate),
+            HotArenaKind::MacroRoot => self.value_regions.resolve_macro_root(coordinate),
+            HotArenaKind::Glue => self.value_regions.resolve_glue(coordinate),
+            HotArenaKind::Provenance => self.value_regions.resolve_provenance(coordinate),
         }
     }
 
-    pub(crate) fn accounting(&self) -> RegionArenaAccounting {
-        self.token_arena
-            .accounting()
-            .plus(self.argument_arena.accounting())
-            .plus(self.provenance_arena.accounting())
-            .plus(self.node_arena.accounting())
+    pub(crate) fn accounting(&self) -> RuntimeValueRegionAccounting {
+        self.value_regions.accounting()
     }
 }
 
 /// Mutable candidate overlay composed from every compact storage primitive.
 pub(crate) struct HotCore {
     owner: HotCoreOwner,
-    token_arena: RegionArena<u64>,
-    argument_arena: RegionArena<u64>,
-    provenance_arena: RegionArena<u64>,
-    node_arena: RegionArena<u64>,
+    value_regions: RuntimeValueRegionArena<u64, u64, u64, u64, u64, u64>,
     input_stack: PodStack<u64>,
     parameter_stack: PodStack<u64>,
     condition_stack: PodStack<u64>,
@@ -259,22 +236,10 @@ impl HotCore {
     pub(crate) fn snapshot(&mut self) -> Result<HotSnapshot, HotCoreError> {
         let snapshot = HotSnapshot {
             owner: self.owner,
-            token_arena: self
-                .token_arena
+            value_regions: self
+                .value_regions
                 .mark()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Token, error))?,
-            argument_arena: self
-                .argument_arena
-                .mark()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Argument, error))?,
-            provenance_arena: self
-                .provenance_arena
-                .mark()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Provenance, error))?,
-            node_arena: self
-                .node_arena
-                .mark()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Node, error))?,
+                .map_err(|error| HotCoreError::Arena(HotArenaKind::TokenWord, error))?,
             input_stack: self
                 .input_stack
                 .mark()
@@ -314,18 +279,9 @@ impl HotCore {
         self.mutation_journal
             .rollback(&mut self.state, snapshot.mutation_journal)
             .map_err(HotCoreError::MutationJournal)?;
-        self.token_arena
-            .truncate(snapshot.token_arena)
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Token, error))?;
-        self.argument_arena
-            .truncate(snapshot.argument_arena)
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Argument, error))?;
-        self.provenance_arena
-            .truncate(snapshot.provenance_arena)
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Provenance, error))?;
-        self.node_arena
-            .truncate(snapshot.node_arena)
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Node, error))?;
+        self.value_regions
+            .truncate(snapshot.value_regions)
+            .map_err(|error| HotCoreError::Arena(HotArenaKind::TokenWord, error))?;
         truncate_stack(
             &mut self.input_stack,
             snapshot.input_stack,
@@ -377,22 +333,10 @@ impl HotCore {
         let identity = fresh_hot_core_identity()?;
         Ok(AcceptedHotCore {
             identity,
-            token_arena: self
-                .token_arena
+            value_regions: self
+                .value_regions
                 .accept()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Token, error))?,
-            argument_arena: self
-                .argument_arena
-                .accept()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Argument, error))?,
-            provenance_arena: self
-                .provenance_arena
-                .accept()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Provenance, error))?,
-            node_arena: self
-                .node_arena
-                .accept()
-                .map_err(|error| HotCoreError::Arena(HotArenaKind::Node, error))?,
+                .map_err(|error| HotCoreError::Arena(HotArenaKind::TokenWord, error))?,
         })
     }
 
@@ -401,17 +345,15 @@ impl HotCore {
         kind: HotArenaKind,
         value: u64,
     ) -> Result<RegionCoordinate<u64>, HotCoreError> {
-        let arena = self.arena_mut(kind);
-        let reservation = arena
-            .reserve(NonZeroU32::MIN)
-            .map_err(|error| HotCoreError::Arena(kind, error))?;
-        let coordinate = arena
-            .append(reservation, value)
-            .map_err(|error| HotCoreError::Arena(kind, error))?;
-        let _ = arena
-            .freeze(reservation)
-            .map_err(|error| HotCoreError::Arena(kind, error))?;
-        Ok(coordinate)
+        let result = match kind {
+            HotArenaKind::TokenWord => self.value_regions.append_token_word(value),
+            HotArenaKind::TokenList => self.value_regions.append_token_list(value),
+            HotArenaKind::MacroRecord => self.value_regions.append_macro_record(value),
+            HotArenaKind::MacroRoot => self.value_regions.append_macro_root(value),
+            HotArenaKind::Glue => self.value_regions.append_glue(value),
+            HotArenaKind::Provenance => self.value_regions.append_provenance(value),
+        };
+        result.map_err(|error| HotCoreError::Arena(kind, error))
     }
 
     pub(crate) fn resolve(
@@ -419,7 +361,14 @@ impl HotCore {
         kind: HotArenaKind,
         coordinate: RegionCoordinate<u64>,
     ) -> Result<&u64, RegionArenaError> {
-        self.arena(kind).resolve(coordinate)
+        match kind {
+            HotArenaKind::TokenWord => self.value_regions.resolve_token_word(coordinate),
+            HotArenaKind::TokenList => self.value_regions.resolve_token_list(coordinate),
+            HotArenaKind::MacroRecord => self.value_regions.resolve_macro_record(coordinate),
+            HotArenaKind::MacroRoot => self.value_regions.resolve_macro_root(coordinate),
+            HotArenaKind::Glue => self.value_regions.resolve_glue(coordinate),
+            HotArenaKind::Provenance => self.value_regions.resolve_provenance(coordinate),
+        }
     }
 
     pub(crate) fn push_stack(
@@ -453,12 +402,7 @@ impl HotCore {
     }
 
     pub(crate) fn accounting(&self) -> HotCoreAccounting {
-        let arenas = self
-            .token_arena
-            .accounting()
-            .plus(self.argument_arena.accounting())
-            .plus(self.provenance_arena.accounting())
-            .plus(self.node_arena.accounting());
+        let arenas = self.value_regions.accounting();
         let stacks = [
             self.input_stack.accounting(),
             self.parameter_stack.accounting(),
@@ -473,7 +417,7 @@ impl HotCore {
         let journal = self.mutation_journal.accounting();
         HotCoreAccounting {
             arena_logical_values: arenas.logical_values,
-            arena_logical_bytes: arenas.logical_value_bytes,
+            arena_logical_bytes: arenas.logical_bytes,
             stack_logical_entries: stacks.logical_entries,
             stack_logical_bytes: stacks.logical_bytes,
             dense_logical_cells: state.logical_cells,
@@ -482,7 +426,7 @@ impl HotCore {
             active_snapshots: journal.active_marks,
             retained_bytes: arenas
                 .retained_payload_bytes
-                .saturating_add(arenas.retained_registry_bytes)
+                .saturating_add(arenas.registry_capacity.saturating_mul(size_of::<usize>()))
                 .saturating_add(stacks.retained_heap_bytes)
                 .saturating_add(state.retained_heap_bytes)
                 .saturating_add(journal.retained_heap_bytes),
@@ -499,18 +443,9 @@ impl HotCore {
         self.mutation_journal
             .validate_rollback(&self.state, snapshot.mutation_journal)
             .map_err(HotCoreError::MutationJournal)?;
-        self.token_arena
-            .validate_mark(snapshot.token_arena)
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Token, error))?;
-        self.argument_arena
-            .validate_mark(snapshot.argument_arena)
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Argument, error))?;
-        self.provenance_arena
-            .validate_mark(snapshot.provenance_arena)
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Provenance, error))?;
-        self.node_arena
-            .validate_mark(snapshot.node_arena)
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Node, error))?;
+        self.value_regions
+            .validate_mark(snapshot.value_regions)
+            .map_err(|error| HotCoreError::Arena(HotArenaKind::TokenWord, error))?;
         validate_stack(&self.input_stack, snapshot.input_stack, HotStackKind::Input)?;
         validate_stack(
             &self.parameter_stack,
@@ -535,36 +470,9 @@ impl HotCore {
     }
 
     fn validate_arena_accepts(&self) -> Result<(), HotCoreError> {
-        self.token_arena
+        self.value_regions
             .validate_accept()
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Token, error))?;
-        self.argument_arena
-            .validate_accept()
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Argument, error))?;
-        self.provenance_arena
-            .validate_accept()
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Provenance, error))?;
-        self.node_arena
-            .validate_accept()
-            .map_err(|error| HotCoreError::Arena(HotArenaKind::Node, error))
-    }
-
-    fn arena(&self, kind: HotArenaKind) -> &RegionArena<u64> {
-        match kind {
-            HotArenaKind::Token => &self.token_arena,
-            HotArenaKind::Argument => &self.argument_arena,
-            HotArenaKind::Provenance => &self.provenance_arena,
-            HotArenaKind::Node => &self.node_arena,
-        }
-    }
-
-    fn arena_mut(&mut self, kind: HotArenaKind) -> &mut RegionArena<u64> {
-        match kind {
-            HotArenaKind::Token => &mut self.token_arena,
-            HotArenaKind::Argument => &mut self.argument_arena,
-            HotArenaKind::Provenance => &mut self.provenance_arena,
-            HotArenaKind::Node => &mut self.node_arena,
-        }
+            .map_err(|error| HotCoreError::Arena(HotArenaKind::TokenWord, error))
     }
 
     fn stack(&self, kind: HotStackKind) -> &PodStack<u64> {
