@@ -1366,7 +1366,7 @@ impl CommandProcessor<'_> {
                     // diagnostic seam at that error site, so its detached
                     // event stream advances directly to the next input
                     // transition.
-                    self.observe_command_diagnostic("undefined_control_sequence", &command);
+                    self.observe_command_diagnostic("undefined_control_sequence", command);
                 }
                 Ok(())
             }
