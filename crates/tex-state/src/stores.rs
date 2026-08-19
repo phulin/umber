@@ -1809,19 +1809,16 @@ impl Stores {
         self.macros.prepare_runtime_allocation();
         self.tokens.prepare_runtime_allocation();
         let parameter_semantic_id = self.traced_token_list_semantic_id(parameter_text.words());
-        let replacement_semantic_id =
-            self.traced_token_list_semantic_id(replacement_text.words());
+        let replacement_semantic_id = self.traced_token_list_semantic_id(replacement_text.words());
         let (parameter_root, replacement_root) = self.tokens.allocate_traced_pair(
             parameter_text.words(),
             replacement_text.words(),
             [parameter_semantic_id, replacement_semantic_id],
         );
-        let parameter_pattern =
-            MacroParameterPattern::from_traced_words(parameter_text.words());
-        let observation_width = u32::try_from(
-            1_usize + parameter_text.len() + replacement_text.len(),
-        )
-        .expect("macro token list length exceeds u32");
+        let parameter_pattern = MacroParameterPattern::from_traced_words(parameter_text.words());
+        let observation_width =
+            u32::try_from(1_usize + parameter_text.len() + replacement_text.len())
+                .expect("macro token list length exceeds u32");
         let definition = self.macros.allocate_packed_with_provenance(
             flags,
             parameter_root,

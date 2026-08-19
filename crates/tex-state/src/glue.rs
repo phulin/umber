@@ -269,10 +269,7 @@ impl GlueStore {
             let id = GlueId::from_identity(value.identity());
             return GlueSpecRef {
                 value,
-                patch_root: self
-                    .patch_root_leases
-                    .get(&id)
-                    .map(PatchRootAnchor::lease),
+                patch_root: self.patch_root_leases.get(&id).map(PatchRootAnchor::lease),
             };
         }
         let value = self.pool.insert_new(key, spec);
@@ -320,10 +317,7 @@ impl GlueStore {
             .or_else(|| {
                 self.pool.resolve(id.identity()).map(|value| GlueSpecRef {
                     value,
-                    patch_root: self
-                        .patch_root_leases
-                        .get(&id)
-                        .map(PatchRootAnchor::lease),
+                    patch_root: self.patch_root_leases.get(&id).map(PatchRootAnchor::lease),
                 })
             })
     }

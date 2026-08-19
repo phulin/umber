@@ -5,9 +5,9 @@
 //! diagnostic identity while the weak body pool deduplicates flags,
 //! parameter structure, and parameter/replacement token-list roots.
 
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
-use smallvec::SmallVec;
 
 use crate::identity::HandleIdentity;
 use crate::ids::{MacroDefinitionId, OriginListId, TokenListId};
@@ -377,10 +377,7 @@ impl PackedMacroChunkOwner {
             .filter(|roots| roots.definition == definition)
     }
 
-    pub(super) fn definition_liveness(
-        &self,
-        definition: MacroDefinitionId,
-    ) -> Option<Arc<()>> {
+    pub(super) fn definition_liveness(&self, definition: MacroDefinitionId) -> Option<Arc<()>> {
         Some(Arc::clone(&self.definition_roots(definition)?.liveness))
     }
 }
@@ -1033,7 +1030,7 @@ impl MacroStore {
             body.flags,
             body.parameter_text.clone(),
             body.replacement_text.clone(),
-            body.parameter_pattern.clone(),
+            body.parameter_pattern,
             definition_value
                 .provenance
                 .get()
@@ -1155,9 +1152,7 @@ impl MacroStore {
             let parameter_start =
                 u32::try_from(chunk.words.len()).expect("macro chunk exceeds u32");
             chunk.words.reserve(required_len);
-            chunk
-                .words
-                .extend((0..parameter.len()).map(parameter_word));
+            chunk.words.extend((0..parameter.len()).map(parameter_word));
             chunk
                 .words
                 .extend((0..replacement.len()).map(replacement_word));
@@ -1466,11 +1461,7 @@ impl MacroStore {
             .get(raw as usize)
             .cloned()
             .or_else(|| {
-                let location = self
-                    .packed_locations
-                    .get(raw as usize)
-                    .copied()
-                    .flatten()?;
+                let location = self.packed_locations.get(raw as usize).copied().flatten()?;
                 if !self
                     .definitions
                     .contains_external_identity(location.definition.identity())
@@ -1481,13 +1472,13 @@ impl MacroStore {
                     .map(|owner| MacroDefinitionRef::packed(location.definition, owner))
             })
             .or_else(|| {
-            self.definitions
-                .resolve_slot(raw)
-                .map(|value| MacroDefinitionRef {
-                    value: Some(value),
-                    packed: None,
-                    patch_root: None,
-                })
+                self.definitions
+                    .resolve_slot(raw)
+                    .map(|value| MacroDefinitionRef {
+                        value: Some(value),
+                        packed: None,
+                        patch_root: None,
+                    })
             })
     }
 
@@ -1503,7 +1494,6 @@ impl MacroStore {
             .value
             .value()
             .parameter_pattern
-            .clone()
     }
 
     #[must_use]
@@ -1610,7 +1600,8 @@ impl MacroStore {
             self.set_packed_location(change.slot as usize, previous);
         }
         while self.external_definitions.len() > mark.external_definitions as usize {
-            let definition = self.external_definitions
+            let definition = self
+                .external_definitions
                 .pop()
                 .expect("external macro definition journal is nonempty");
             self.definitions.release_external(definition.identity());
@@ -1690,11 +1681,7 @@ impl MacroStore {
             .install_root_lease(&handle)
             .expect("new private macro body belongs to active domain");
         assert!(self.body_patch_handles.insert(id, handle).is_none());
-        assert!(
-            self.body_patch_leases
-                .insert(id, lease.anchor())
-                .is_none()
-        );
+        assert!(self.body_patch_leases.insert(id, lease.anchor()).is_none());
         root.patch_root = Some(lease);
         self.patch_order.push(PatchEvent::Body(id));
     }

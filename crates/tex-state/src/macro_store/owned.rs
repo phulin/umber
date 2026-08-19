@@ -158,10 +158,7 @@ impl MacroDefinitionRef {
         }
     }
 
-    pub(super) fn packed(
-        id: MacroDefinitionId,
-        owner: PackedMacroChunkOwner,
-    ) -> Self {
+    pub(super) fn packed(id: MacroDefinitionId, owner: PackedMacroChunkOwner) -> Self {
         debug_assert!(owner.contains(id));
         let liveness = owner
             .definition_liveness(id)

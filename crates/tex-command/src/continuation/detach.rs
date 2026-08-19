@@ -214,10 +214,7 @@ impl<'a> Detacher<'a> {
         recipe
     }
 
-    fn origin_words(
-        &mut self,
-        origins: impl IntoIterator<Item = OriginId>,
-    ) -> OriginListRecipeId {
+    fn origin_words(&mut self, origins: impl IntoIterator<Item = OriginId>) -> OriginListRecipeId {
         let origins = origins
             .into_iter()
             .map(|origin| self.origin_id(origin))

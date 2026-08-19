@@ -394,7 +394,6 @@ impl IdentityAllocator {
         self.slots.truncate(len);
         Ok(())
     }
-
 }
 
 fn fresh_namespace() -> NonZeroU64 {

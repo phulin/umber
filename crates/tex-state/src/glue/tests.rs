@@ -124,7 +124,10 @@ fn ten_thousand_bounded_live_redefinitions_plateau() {
         shape.0 <= 3,
         "region slots should track bounded live roots: {shape:?}"
     );
-    assert_eq!(totals.0, 3, "zero plus current and one retired-at-next-mutation value remain");
+    assert_eq!(
+        totals.0, 3,
+        "zero plus current and one retired-at-next-mutation value remain"
+    );
     assert!(shape.2 <= 1_024);
     assert!(shape.4 <= 64);
 }

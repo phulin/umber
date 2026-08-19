@@ -266,10 +266,10 @@ where
     ) -> Option<ReachableValueRef<T>> {
         self.reclaim_some_dead_slots(RECLAIM_WORK_PER_OPERATION);
         self.slots.iter().flatten().find_map(|slot| {
-            (slot.key.as_ref() == Some(key)
-                && exact_eq(&slot.value.value))
-            .then(|| ReachableValueRef {
-                object: Arc::clone(&slot.value),
+            (slot.key.as_ref() == Some(key) && exact_eq(&slot.value.value)).then(|| {
+                ReachableValueRef {
+                    object: Arc::clone(&slot.value),
+                }
             })
         })
     }
@@ -537,7 +537,10 @@ where
     /// Reclaims an unowned rollback suffix immediately and biases later
     /// bounded reclamation toward any externally retained values in it.
     pub(crate) fn prioritize_reclamation_from(&mut self, slot: usize) {
-        assert!(slot <= self.slots.len(), "arena rollback mark is ahead of state");
+        assert!(
+            slot <= self.slots.len(),
+            "arena rollback mark is ahead of state"
+        );
         for index in slot..self.slots.len() {
             let Some(entry) = &self.slots[index] else {
                 continue;
@@ -573,14 +576,7 @@ where
     pub(crate) fn testing_shape(&self) -> (usize, usize, usize, usize, usize, usize) {
         let (identity_slots, identity_capacity, free) = self.identities.testing_shape();
         debug_assert_eq!(identity_slots, self.slots.len());
-        (
-            identity_slots,
-            identity_capacity,
-            0,
-            0,
-            0,
-            free,
-        )
+        (identity_slots, identity_capacity, 0, 0, 0, free)
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -590,9 +586,7 @@ where
     ) -> (usize, usize) {
         self.slots
             .iter()
-            .filter_map(|slot| {
-                slot.as_ref().map(|slot| &slot.value)
-            })
+            .filter_map(|slot| slot.as_ref().map(|slot| &slot.value))
             .fold((0, 0), |(objects, bytes), value| {
                 (
                     objects + 1,

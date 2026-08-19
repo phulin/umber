@@ -480,25 +480,22 @@ impl CommandProcessor<'_> {
                 .iter()
                 .map(|word| word.semantic_token())
                 .collect::<Vec<_>>();
-            crate::processor::expand::token_slice_string_text(
-                &mut self.state,
-                &semantic_tokens,
-            )
-            .chars()
-            .map(|ch| {
-                self.observed_token(TracedTokenWord::pack(
-                    Token::Char {
-                        ch,
-                        cat: if ch == ' ' {
-                            Catcode::Space
-                        } else {
-                            Catcode::Other
+            crate::processor::expand::token_slice_string_text(&mut self.state, &semantic_tokens)
+                .chars()
+                .map(|ch| {
+                    self.observed_token(TracedTokenWord::pack(
+                        Token::Char {
+                            ch,
+                            cat: if ch == ' ' {
+                                Catcode::Space
+                            } else {
+                                Catcode::Other
+                            },
                         },
-                    },
-                    OriginId::UNKNOWN,
-                ))
-            })
-            .collect()
+                        OriginId::UNKNOWN,
+                    ))
+                })
+                .collect()
         } else {
             result
                 .replacement_text

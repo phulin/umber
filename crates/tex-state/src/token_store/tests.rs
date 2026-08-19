@@ -430,7 +430,10 @@ fn ten_thousand_bounded_live_redefinitions_plateau_every_pool_dimension() {
     let (live_objects, _) = store.testing_live_totals();
 
     assert_eq!(current.tokens().len(), 1);
-    assert_eq!(live_objects, 3, "empty, current, and one retired-at-next-mutation value remain");
+    assert_eq!(
+        live_objects, 3,
+        "empty, current, and one retired-at-next-mutation value remain"
+    );
     assert!(slots <= 3, "region slots did not plateau: {slots}");
     assert!(
         slot_capacity <= 4,

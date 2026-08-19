@@ -300,9 +300,10 @@ impl TokenListRef {
     /// Borrows the immutable semantic token sequence.
     #[must_use]
     pub fn tokens(&self) -> &[Token] {
-        self.packed
-            .as_ref()
-            .map_or_else(|| self.exact_value().value().tokens.as_ref(), PackedTokenListRef::tokens)
+        self.packed.as_ref().map_or_else(
+            || self.exact_value().value().tokens.as_ref(),
+            PackedTokenListRef::tokens,
+        )
     }
 
     pub(crate) fn semantic_id(&self) -> TokenSemanticId {
@@ -515,10 +516,10 @@ impl TokenStore {
         let (pool, roots) = ReachableValuePool::from_fixed_values(values, 1);
         let roots = roots
             .into_iter()
-                .map(|value| TokenListRef {
-                    value: Some(value),
-                    packed: None,
-                    patch_root: None,
+            .map(|value| TokenListRef {
+                value: Some(value),
+                packed: None,
+                patch_root: None,
             })
             .collect::<Vec<_>>();
         Ok(Self {
@@ -883,10 +884,7 @@ impl TokenStore {
             self.pool.resolve(id.identity()).map(|value| TokenListRef {
                 value: Some(value),
                 packed: None,
-                patch_root: self
-                    .patch_root_leases
-                    .get(&id)
-                    .map(PatchRootAnchor::lease),
+                patch_root: self.patch_root_leases.get(&id).map(PatchRootAnchor::lease),
             })
         })
     }
