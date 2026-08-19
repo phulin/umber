@@ -36,6 +36,22 @@
       }
     ]
   },
+  "combinedCandidate": {
+    "commit": "2aa839634",
+    "binarySha256": "228f0faaff283eee72b0962744c43af6e1786074ed02c339bd63393c258a25c0",
+    "rows": [
+      {
+        "fuel": 6000000,
+        "work": [6000000, 5999815, 507410, 1718333, 5352087, 588],
+        "processorEntries": 78140
+      },
+      {
+        "fuel": 12000000,
+        "work": [12000000, 11999815, 1177349, 3506292, 10599869, 1182],
+        "processorEntries": 158474
+      }
+    ]
+  },
   "negativeControl": {
     "sourceDateEpoch": "1787011200",
     "utc": "2026-08-18T00:00:00Z",

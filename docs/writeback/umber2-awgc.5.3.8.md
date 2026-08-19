@@ -52,6 +52,18 @@ and
 Both returned typed status 1 at exact fuel exhaustion and emitted empty
 stdout.
 
+The combined fused candidate at commit `2aa839634` independently produced the
+same two vectors with binary SHA-256
+`228f0faaff283eee72b0962744c43af6e1786074ed02c339bd63393c258a25c0`.
+Its persistent processor entries fell from 190,107 to 78,140 at 6M and from
+392,501 to 158,474 at 12M. Thus neither fused path owns a work-vector delta.
+The candidate's separate loaded-format TRIP cache defect remains owned by its
+implementation issue and does not alter this authority result.
+
+On the clean authority branch, `cargo test -q --tests` passed, the exhaustive
+command-stream tracer reported `VERDICT: CLEAN` with zero gating or advisory
+divergences, and `scripts/check.sh` ended with `all 4 gates passed`.
+
 The machine-readable authority is
 [`umber2-awgc.5.3.8-authority.json`](umber2-awgc.5.3.8-authority.json). Later
 performance rows must record the pinned clock and locale alongside the
