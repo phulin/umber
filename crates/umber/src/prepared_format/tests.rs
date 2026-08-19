@@ -348,12 +348,16 @@ fn loaded_job_applies_explicit_provenance_demand_after_format_restore() {
         .expect("diagnostics-only loaded job");
     let diagnostics_frames = diagnostics.universe.macro_invocation_origins_for_testing();
     assert_eq!(diagnostics_frames.len(), 1);
-    assert!(
-        diagnostics
-            .universe
-            .origin_ref(diagnostics_frames[0])
-            .is_none(),
-        "without a rendered-source consumer only the compact archived frame remains"
+    let diagnostics_artifact = diagnostics
+        .universe
+        .world()
+        .committed_artifacts()
+        .first()
+        .expect("diagnostics-only shipped artifact");
+    assert_eq!(
+        diagnostics_artifact.render_node_count(),
+        0,
+        "without a rendered-source consumer the artifact retains no cold sidecar"
     );
 
     let mut rendered_observer = Recorder::default();
@@ -368,15 +372,21 @@ fn loaded_job_applies_explicit_provenance_demand_after_format_restore() {
             .macro_invocation_provenance_stats()
             .invocations()
             > 0,
-        "the explicit rendered-source consumer retains the producing macro frame"
+        "the loaded job archives its producing macro frame"
     );
+    let rendered_artifact = rendered
+        .universe
+        .world()
+        .committed_artifacts()
+        .first()
+        .expect("rendered-source shipped artifact");
+    assert!(rendered_artifact.render_node_count() > 0);
     assert!(
-        rendered
-            .universe
-            .macro_invocation_origins_for_testing()
-            .into_iter()
-            .any(|origin| rendered.universe.origin_ref(origin).is_some()),
-        "rendered material owns the cold-materialized structural frame"
+        (0..rendered_artifact.render_node_count()).any(|node| matches!(
+            rendered_artifact.render_origin(node, 0),
+            tex_state::ArtifactOrigin::Rooted(_) | tex_state::ArtifactOrigin::Stable(_)
+        )),
+        "rendered material owns an exact cold provenance sidecar"
     );
     assert_eq!(
         fixture.image(),
