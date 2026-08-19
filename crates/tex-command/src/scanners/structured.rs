@@ -3609,8 +3609,10 @@ impl CommandProcessor<'_> {
             let token = scanned.token_ref().tokens()[index];
             let origin = scanned
                 .origin_ref()
-                .root(index)
-                .unwrap_or_else(tex_state::provenance::OriginRef::unknown);
+                .origins()
+                .get(index)
+                .copied()
+                .unwrap_or(OriginId::UNKNOWN);
             let token = match token {
                 Token::Char { ch, cat } => {
                     let code = if uppercase {
@@ -3624,10 +3626,10 @@ impl CommandProcessor<'_> {
                 }
                 Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => token,
             };
-            shifted.push(tex_state::token::RootedTracedTokenWord::new(token, origin));
+            shifted.push(TracedTokenWord::pack(token, origin));
         }
         let level = self.command.push_token_level(
-            TokenPayload::transient_rooted(shifted),
+            TokenPayload::transient(shifted),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,

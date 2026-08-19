@@ -943,7 +943,6 @@ pub enum OriginRecord {
 
 #[derive(Debug)]
 struct OriginValue {
-    id: OriginId,
     record: OriginRecord,
     children: SmallVec<[OriginRef; 3]>,
     source_registration: Option<SourceRegistrationRef>,
@@ -1243,12 +1242,6 @@ struct OriginKeyRuns {
 }
 
 #[derive(Debug)]
-struct RootedOriginSlot {
-    key: u32,
-    value: Weak<OriginValue>,
-}
-
-#[derive(Debug)]
 struct RootedOriginListSlot {
     identity: HandleIdentity,
     entry_len: usize,
@@ -1343,13 +1336,6 @@ pub(crate) struct ProvenanceStore {
     next_unique_record_key: u32,
     unique_record_key_lease_end: u32,
     unique_candidates: SmallVec<[(OriginRecord, OriginId); 4]>,
-    rooted_record_slots: Vec<Option<RootedOriginSlot>>,
-    rooted_record_free: Vec<usize>,
-    rooted_record_sweep_cursor: usize,
-    rooted_record_occupied: usize,
-    rooted_record_keys: HashMap<u32, usize>,
-    rooted_record_candidates: HashMap<OriginRecord, SmallVec<[Weak<OriginValue>; 2]>>,
-    pending_record_roots: HashMap<OriginId, OriginRef>,
     rooted_list_identities: ReusableIdentityAllocator,
     rooted_list_slots: Vec<Option<RootedOriginListSlot>>,
     rooted_list_sweep_cursor: usize,
@@ -1359,8 +1345,6 @@ pub(crate) struct ProvenanceStore {
     record_limit: usize,
     list_span_limit: usize,
     list_entry_limit: usize,
-    weak_record_slot_limit: usize,
-    weak_record_candidate_key_limit: usize,
     weak_list_slot_limit: usize,
     weak_list_candidate_key_limit: usize,
 }
@@ -1376,22 +1360,6 @@ impl Clone for ProvenanceStore {
             next_unique_record_key: 0,
             unique_record_key_lease_end: 0,
             unique_candidates: self.unique_candidates.clone(),
-            rooted_record_slots: self
-                .rooted_record_slots
-                .iter()
-                .map(|slot| {
-                    slot.as_ref().map(|slot| RootedOriginSlot {
-                        key: slot.key,
-                        value: slot.value.clone(),
-                    })
-                })
-                .collect(),
-            rooted_record_free: self.rooted_record_free.clone(),
-            rooted_record_sweep_cursor: self.rooted_record_sweep_cursor,
-            rooted_record_occupied: self.rooted_record_occupied,
-            rooted_record_keys: self.rooted_record_keys.clone(),
-            rooted_record_candidates: self.rooted_record_candidates.clone(),
-            pending_record_roots: HashMap::new(),
             rooted_list_identities: self.rooted_list_identities.fork(),
             rooted_list_slots: self
                 .rooted_list_slots
@@ -1411,8 +1379,6 @@ impl Clone for ProvenanceStore {
             record_limit: self.record_limit,
             list_span_limit: self.list_span_limit,
             list_entry_limit: self.list_entry_limit,
-            weak_record_slot_limit: self.weak_record_slot_limit,
-            weak_record_candidate_key_limit: self.weak_record_candidate_key_limit,
             weak_list_slot_limit: self.weak_list_slot_limit,
             weak_list_candidate_key_limit: self.weak_list_candidate_key_limit,
         }
@@ -1432,13 +1398,6 @@ impl ProvenanceStore {
             next_unique_record_key: 0,
             unique_record_key_lease_end: 0,
             unique_candidates: SmallVec::new(),
-            rooted_record_slots: Vec::new(),
-            rooted_record_free: Vec::new(),
-            rooted_record_sweep_cursor: 0,
-            rooted_record_occupied: 0,
-            rooted_record_keys: HashMap::new(),
-            rooted_record_candidates: HashMap::new(),
-            pending_record_roots: HashMap::new(),
             rooted_list_identities: ReusableIdentityAllocator::new(1),
             rooted_list_slots: vec![None],
             rooted_list_sweep_cursor: 1,
@@ -1448,8 +1407,6 @@ impl ProvenanceStore {
             record_limit: DEFAULT_ORIGIN_RECORD_LIMIT,
             list_span_limit: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
             list_entry_limit: DEFAULT_ORIGIN_LIST_ENTRY_LIMIT,
-            weak_record_slot_limit: DEFAULT_ORIGIN_RECORD_LIMIT,
-            weak_record_candidate_key_limit: RECORD_CANDIDATE_KEY_BUDGET,
             weak_list_slot_limit: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
             weak_list_candidate_key_limit: LIST_CANDIDATE_KEY_BUDGET,
         }
@@ -1459,13 +1416,8 @@ impl ProvenanceStore {
         self.record_limit = budgets.live_atoms;
         self.list_span_limit = budgets.live_origin_lists;
         self.list_entry_limit = budgets.origin_list_entries;
-        self.weak_record_slot_limit = budgets.weak_atom_slots;
-        self.weak_record_candidate_key_limit = budgets.weak_atom_candidate_keys;
         self.weak_list_slot_limit = budgets.weak_list_slots;
         self.weak_list_candidate_key_limit = budgets.weak_list_candidate_keys;
-        if self.rooted_record_candidates.len() > self.weak_record_candidate_key_limit {
-            self.rooted_record_candidates.clear();
-        }
         if self.rooted_list_candidates.len() > self.weak_list_candidate_key_limit {
             self.rooted_list_candidates.clear();
         }
@@ -1540,8 +1492,9 @@ impl ProvenanceStore {
         id
     }
 
-    /// Interns one immutable structural origin and returns its sole authority:
-    /// a typed strong root. Store slots and candidate buckets remain weak.
+    /// Archives one immutable origin and returns an optional cold structural
+    /// projection. The archive coordinate remains authoritative after the
+    /// projection is dropped.
     pub(crate) fn allocate_rooted(
         &mut self,
         record: OriginRecord,
@@ -1550,133 +1503,21 @@ impl ProvenanceStore {
         self.allocate_rooted_with_registration(record, children, None)
     }
 
-    pub(crate) fn allocate_pending_rooted(
-        &mut self,
-        record: OriginRecord,
-        children: impl IntoIterator<Item = OriginRef>,
-    ) -> OriginRef {
-        let root = self.allocate_rooted(record, children);
-        if root.record().is_some() {
-            self.pending_record_roots.insert(root.id(), root.clone());
-        }
-        root
-    }
-
-    pub(crate) fn allocate_pending_rooted_with_registration(
-        &mut self,
-        record: OriginRecord,
-        children: impl IntoIterator<Item = OriginRef>,
-        source_registration: Option<SourceRegistrationRef>,
-    ) -> OriginRef {
-        let root = self.allocate_rooted_with_registration(record, children, source_registration);
-        if root.record().is_some() {
-            self.pending_record_roots.insert(root.id(), root.clone());
-        }
-        root
-    }
-
     pub(crate) fn allocate_rooted_with_registration(
         &mut self,
         record: OriginRecord,
         children: impl IntoIterator<Item = OriginRef>,
         source_registration: Option<SourceRegistrationRef>,
     ) -> OriginRef {
-        #[cfg(feature = "profiling")]
-        let frame = matches!(record, OriginRecord::MacroInvocation(_));
-        let mut exact = None;
-        let mut remove_empty_candidates = false;
-        if let Some(candidates) = self.rooted_record_candidates.get_mut(&record) {
-            candidates.retain(|candidate| {
-                let Some(value) = candidate.upgrade() else {
-                    return false;
-                };
-                if exact.is_none() {
-                    exact = Some(value);
-                }
-                true
-            });
-            remove_empty_candidates = candidates.is_empty();
+        let id = self.allocate(record);
+        if !matches!(id.decode(), OriginEncoding::Arena(_)) {
+            return OriginRef::direct(id);
         }
-        if remove_empty_candidates {
-            self.rooted_record_candidates.remove(&record);
-        }
-        if let Some(value) = exact {
-            #[cfg(feature = "profiling")]
-            {
-                crate::measurement::record_provenance_intern(frame, true, false);
-                crate::measurement::record_provenance_root_retain(frame);
-            }
-            return OriginRef {
-                id: value.id,
-                value: Some(value),
-                source_registration: None,
-            };
-        }
-        self.reclaim_some_dead_rooted_records(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
-        if self.rooted_record_occupied >= self.record_limit
-            || (self.rooted_record_free.is_empty()
-                && self.rooted_record_slots.len() >= self.weak_record_slot_limit)
-        {
-            self.reclaim_dead_rooted_records();
-        }
-        if self.rooted_record_occupied >= self.record_limit
-            || (self.rooted_record_free.is_empty()
-                && self.rooted_record_slots.len() >= self.weak_record_slot_limit)
-        {
-            #[cfg(feature = "profiling")]
-            crate::measurement::record_provenance_intern(frame, false, false);
-            return match record {
-                OriginRecord::Inserted(inserted)
-                    if inserted.kind() == InsertedOriginKind::NoExpand =>
-                {
-                    OriginRef::direct(OriginId::NOEXPAND_FALLBACK)
-                }
-                _ => OriginRef::unknown(),
-            };
-        }
-        let Some(key) = self.next_packed_arena_origin() else {
-            #[cfg(feature = "profiling")]
-            crate::measurement::record_provenance_intern(frame, false, false);
-            return OriginRef::unknown();
-        };
-        let id = OriginId::arena(key).expect("global packed provenance key is representable");
         let value = Arc::new(OriginValue {
-            id,
             record,
             children: children.into_iter().collect(),
             source_registration,
         });
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_provenance_intern(frame, false, true);
-        let slot = self
-            .rooted_record_free
-            .pop()
-            .unwrap_or(self.rooted_record_slots.len());
-        if slot == self.rooted_record_slots.len() {
-            self.rooted_record_slots.push(None);
-        }
-        self.rooted_record_slots[slot] = Some(RootedOriginSlot {
-            key,
-            value: Arc::downgrade(&value),
-        });
-        self.rooted_record_occupied += 1;
-        self.rooted_record_keys.insert(key, slot);
-        if self.weak_record_candidate_key_limit == 0 {
-            return OriginRef {
-                id,
-                value: Some(value),
-                source_registration: None,
-            };
-        }
-        if self.rooted_record_candidates.len() >= self.weak_record_candidate_key_limit
-            && !self.rooted_record_candidates.contains_key(&record)
-        {
-            self.rooted_record_candidates.clear();
-        }
-        self.rooted_record_candidates
-            .entry(record)
-            .or_default()
-            .push(Arc::downgrade(&value));
         OriginRef {
             id,
             value: Some(value),
@@ -1696,23 +1537,7 @@ impl ProvenanceStore {
             | crate::token::OriginEncoding::NoExpandFallback
             | crate::token::OriginEncoding::DirectSource(_) => Some(OriginRef::direct(id)),
             crate::token::OriginEncoding::Arena(key) => {
-                let slot = *self.rooted_record_keys.get(&key)?;
-                let value = self
-                    .rooted_record_slots
-                    .get(slot)?
-                    .as_ref()?
-                    .value
-                    .upgrade()?;
-                #[cfg(feature = "profiling")]
-                crate::measurement::record_provenance_root_retain(matches!(
-                    value.record,
-                    OriginRecord::MacroInvocation(_)
-                ));
-                Some(OriginRef {
-                    id,
-                    value: Some(value),
-                    source_registration: None,
-                })
+                self.record_keys.slot(key).map(|_| OriginRef::direct(id))
             }
         };
         #[cfg(feature = "profiling")]
@@ -1725,13 +1550,27 @@ impl ProvenanceStore {
     /// Ordinary macro replay carries only the archived coordinate. Cold node,
     /// diagnostic, and continuation publication call this boundary when the
     /// record must outlive the command arena.
-    pub(crate) fn materialize_origin_ref(&mut self, id: OriginId) -> Option<OriginRef> {
-        if let Some(root) = self.origin_ref(id) {
-            return Some(root);
-        }
-        let OriginEncoding::Arena(key) = id.decode() else {
+    pub(crate) fn materialize_origin_ref(
+        &mut self,
+        id: OriginId,
+        source_map: &crate::source_map::SourceMap,
+    ) -> Option<OriginRef> {
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_provenance_origin_resolution();
+        let OriginEncoding::Arena(_) = id.decode() else {
+            if let OriginEncoding::DirectSource(position) = id.decode() {
+                return Some(source_map.registration_for_position(position).map_or_else(
+                    || OriginRef::direct(id),
+                    |registration| OriginRef::direct_registered(id, registration),
+                ));
+            }
             return Some(OriginRef::direct(id));
         };
+        if !self.contains_origin(id) {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_hot_core_provenance_materialization(false);
+            return None;
+        }
         let record = self.get(id);
         let child_ids: SmallVec<[OriginId; 3]> = match record {
             OriginRecord::MacroInvocation(origin) => smallvec::smallvec![
@@ -1745,109 +1584,24 @@ impl ProvenanceStore {
         };
         let children = child_ids
             .into_iter()
-            .map(|child| self.materialize_origin_ref(child))
+            .map(|child| self.materialize_origin_ref(child, source_map))
             .collect::<Option<SmallVec<[OriginRef; 3]>>>()?;
-        self.reclaim_some_dead_rooted_records(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
-        if self.rooted_record_occupied >= self.record_limit
-            || (self.rooted_record_free.is_empty()
-                && self.rooted_record_slots.len() >= self.weak_record_slot_limit)
-        {
-            self.reclaim_dead_rooted_records();
-        }
-        if self.rooted_record_occupied >= self.record_limit
-            || (self.rooted_record_free.is_empty()
-                && self.rooted_record_slots.len() >= self.weak_record_slot_limit)
-        {
-            return None;
-        }
+        let source_registration = match record {
+            OriginRecord::SourceSpan(span) => source_map.registration_for_span(span),
+            _ => None,
+        };
         let value = Arc::new(OriginValue {
-            id,
             record,
             children,
-            source_registration: None,
+            source_registration,
         });
-        let slot = self
-            .rooted_record_free
-            .pop()
-            .unwrap_or(self.rooted_record_slots.len());
-        if slot == self.rooted_record_slots.len() {
-            self.rooted_record_slots.push(None);
-        }
-        self.rooted_record_slots[slot] = Some(RootedOriginSlot {
-            key,
-            value: Arc::downgrade(&value),
-        });
-        self.rooted_record_occupied += 1;
-        self.rooted_record_keys.insert(key, slot);
-        self.rooted_record_candidates
-            .entry(record)
-            .or_default()
-            .push(Arc::downgrade(&value));
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_hot_core_provenance_materialization(true);
         Some(OriginRef {
             id,
             value: Some(value),
             source_registration: None,
         })
-    }
-
-    /// Advances a bounded weak-slot sweep. Dead roots do not require prompt
-    /// destruction—the final strong owner already destroyed the value—so
-    /// ordinary allocation only needs to retire enough weak metadata to keep
-    /// churn bounded. Admission falls back to a complete sweep at a hard
-    /// limit, where an exact live count is required.
-    fn reclaim_some_dead_rooted_records(&mut self, work: usize) -> usize {
-        let mut visited = 0;
-        #[cfg(feature = "profiling")]
-        let mut reclaimed = 0;
-        while visited < work && !self.rooted_record_slots.is_empty() {
-            if self.rooted_record_sweep_cursor >= self.rooted_record_slots.len() {
-                self.rooted_record_sweep_cursor = 0;
-            }
-            let index = self.rooted_record_sweep_cursor;
-            self.rooted_record_sweep_cursor += 1;
-            visited += 1;
-            let slot = &mut self.rooted_record_slots[index];
-            let Some(occupied) = slot else {
-                continue;
-            };
-            if occupied.value.strong_count() != 0 {
-                continue;
-            }
-            self.rooted_record_keys.remove(&occupied.key);
-            *slot = None;
-            self.rooted_record_free.push(index);
-            self.rooted_record_occupied -= 1;
-            #[cfg(feature = "profiling")]
-            {
-                reclaimed += 1;
-            }
-        }
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_provenance_reclaim(false, visited, reclaimed);
-        visited
-    }
-
-    fn reclaim_dead_rooted_records(&mut self) {
-        let extent = self.rooted_record_slots.len();
-        self.reclaim_some_dead_rooted_records(extent);
-        self.rooted_record_candidates.retain(|_, candidates| {
-            candidates.retain(|candidate| candidate.strong_count() != 0);
-            !candidates.is_empty()
-        });
-    }
-
-    #[cfg(test)]
-    fn live_rooted_record_count(&self) -> usize {
-        self.rooted_record_occupied
-    }
-
-    #[cfg(test)]
-    fn rooted_record_shape(&mut self) -> (usize, usize) {
-        self.reclaim_dead_rooted_records();
-        (
-            self.live_rooted_record_count(),
-            self.rooted_record_slots.len(),
-        )
     }
 
     pub(crate) fn allocate_rooted_list(&mut self, roots: &[OriginRef]) -> OriginListRef {
@@ -1858,6 +1612,12 @@ impl ProvenanceStore {
             Self::insert_distinct_owner(&mut owners, root.clone());
         }
         self.allocate_rooted_list_value(ids, owners)
+    }
+
+    /// Cold atom projections are deliberately not indexed by the store.
+    #[cfg(test)]
+    const fn rooted_record_shape(&self) -> (usize, usize) {
+        (0, 0)
     }
 
     pub(crate) fn allocate_unrooted_origin_ids(
@@ -1892,14 +1652,21 @@ impl ProvenanceStore {
         for &id in &ids {
             if matches!(id.decode(), OriginEncoding::Arena(_)) {
                 assert!(
-                    roots.binary_search_by_key(&id, OriginRef::id).is_ok(),
-                    "arena-backed transient position {:?} has no structural owner among {:?}",
+                    self.contains_origin(id)
+                        || roots.binary_search_by_key(&id, OriginRef::id).is_ok(),
+                    "arena-backed transient position {:?} has neither an archive coordinate nor a structural owner",
                     id.decode(),
-                    roots.iter().map(OriginRef::id).collect::<Vec<_>>()
                 );
             }
         }
-        self.allocate_rooted_list_value(ids, roots.to_vec())
+        self.allocate_rooted_list_value(
+            ids,
+            roots
+                .iter()
+                .filter(|root| root.record().is_some())
+                .cloned()
+                .collect(),
+        )
     }
 
     fn insert_distinct_owner(owners: &mut Vec<OriginRef>, root: OriginRef) {
@@ -1985,9 +1752,6 @@ impl ProvenanceStore {
         });
         #[cfg(feature = "profiling")]
         crate::measurement::record_provenance_list_intern(false, true);
-        for root in &value.owners {
-            self.pending_record_roots.remove(&root.id());
-        }
         let raw = identity.slot() as usize;
         if raw == self.rooted_list_slots.len() {
             self.rooted_list_slots.push(None);
@@ -2132,13 +1896,6 @@ impl ProvenanceStore {
         let crate::token::OriginEncoding::Arena(index) = id.decode() else {
             panic!("direct source origin has no provenance arena record");
         };
-        if let Some(slot) = self.rooted_record_keys.get(&index)
-            && let Some(value) = self.rooted_record_slots[*slot]
-                .as_ref()
-                .and_then(|slot| slot.value.upgrade())
-        {
-            return value.record;
-        }
         let index = self.record_keys.slot(index).expect("origin id is not live") as usize;
         self.records
             .get_slot(index)
@@ -2151,14 +1908,7 @@ impl ProvenanceStore {
         match id.decode() {
             crate::token::OriginEncoding::Unknown => true,
             crate::token::OriginEncoding::NoExpandFallback => true,
-            crate::token::OriginEncoding::Arena(index) => {
-                self.record_keys.slot(index).is_some()
-                    || self
-                        .rooted_record_keys
-                        .get(&index)
-                        .and_then(|slot| self.rooted_record_slots.get(*slot)?.as_ref())
-                        .is_some_and(|slot| slot.value.strong_count() != 0)
-            }
+            crate::token::OriginEncoding::Arena(index) => self.record_keys.slot(index).is_some(),
             crate::token::OriginEncoding::DirectSource(_) => false,
         }
     }
@@ -2194,22 +1944,7 @@ impl ProvenanceStore {
     /// retained arena and packed-key storage.
     #[must_use]
     pub(crate) fn macro_invocation_stats(&self) -> MacroInvocationProvenanceStats {
-        let rooted_invocations = self
-            .rooted_record_slots
-            .iter()
-            .filter_map(|slot| slot.as_ref()?.value.upgrade())
-            .filter(|value| matches!(value.record, OriginRecord::MacroInvocation(_)))
-            .filter(|value| {
-                let OriginEncoding::Arena(key) = value.id.decode() else {
-                    return true;
-                };
-                self.record_keys.slot(key).is_none()
-            })
-            .count();
-        let invocations = self
-            .records
-            .macro_invocation_records()
-            .saturating_add(rooted_invocations);
+        let invocations = self.records.macro_invocation_records();
         let records = self.records.len();
         let record_bytes = self.stats().origin_record_retained_bytes();
         let retained_bytes = if records == 0 {

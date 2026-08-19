@@ -491,7 +491,7 @@ impl ParameterState {
         let start = chunk.words.len();
         let len = words.len();
         let record = chunk.records.len();
-        chunk.words.extend(words.rooted_words());
+        chunk.words.extend_archived(words.words().iter().copied());
         chunk.records.push(ranges);
         MacroArguments {
             chunk: u32::try_from(chunk_index).expect("macro argument chunks exceed u32"),
@@ -521,6 +521,19 @@ impl ParameterState {
         self.argument_chunks[arguments.chunk as usize]
             .words
             .get_rooted(arguments.start as usize + index)
+    }
+
+    pub(crate) fn argument_traced_word(
+        &self,
+        arguments: MacroArguments,
+        index: usize,
+    ) -> Option<TracedTokenWord> {
+        if index >= arguments.len as usize || arguments.chunk == MacroArguments::EMPTY_CHUNK {
+            return None;
+        }
+        self.argument_chunks[arguments.chunk as usize]
+            .words
+            .get(arguments.start as usize + index)
     }
 
     pub(crate) fn argument_ranges(

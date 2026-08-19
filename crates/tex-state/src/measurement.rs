@@ -602,29 +602,6 @@ const PROV_ORIGIN_RESOLUTIONS: usize = 22;
 const PROV_LIST_RESOLUTIONS: usize = 23;
 const PROV_LIST_RESOLUTION_COMPARISONS: usize = 24;
 
-pub(crate) fn record_provenance_intern(frame: bool, hit: bool, allocated: bool) {
-    let (calls, hits, misses, allocations) = if frame {
-        (
-            PROV_FRAME_INTERN_CALLS,
-            PROV_FRAME_INTERN_HITS,
-            PROV_FRAME_INTERN_MISSES,
-            PROV_FRAME_ALLOCATIONS,
-        )
-    } else {
-        (
-            PROV_ATOM_INTERN_CALLS,
-            PROV_ATOM_INTERN_HITS,
-            PROV_ATOM_INTERN_MISSES,
-            PROV_ATOM_ALLOCATIONS,
-        )
-    };
-    PROVENANCE_COUNTERS[calls].fetch_add(1, Ordering::Relaxed);
-    PROVENANCE_COUNTERS[if hit { hits } else { misses }].fetch_add(1, Ordering::Relaxed);
-    if allocated {
-        PROVENANCE_COUNTERS[allocations].fetch_add(1, Ordering::Relaxed);
-    }
-}
-
 pub(crate) fn record_provenance_list_intern(hit: bool, allocated: bool) {
     PROVENANCE_COUNTERS[PROV_LIST_INTERN_CALLS].fetch_add(1, Ordering::Relaxed);
     PROVENANCE_COUNTERS[if hit {

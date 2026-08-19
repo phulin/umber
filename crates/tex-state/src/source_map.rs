@@ -566,6 +566,17 @@ impl SourceMap {
             .cloned()
     }
 
+    pub(crate) fn registration_for_position(
+        &self,
+        position: SourcePos,
+    ) -> Option<SourceRegistrationRef> {
+        let region = self.region_for_position(position)?;
+        self.registration_roots
+            .get(region.identity.slot() as usize)
+            .filter(|registration| registration.region() == region)
+            .cloned()
+    }
+
     pub(crate) fn registered_source(&self, source: SourceId) -> Option<RegisteredSource> {
         let region = self.region_for_source(source)?;
         Some(RegisteredSource::new(region.start, region.byte_len))

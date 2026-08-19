@@ -181,11 +181,8 @@ impl CurrentCommand {
         direct_source: bool,
         state: &mut CommandContext<'_>,
     ) -> Self {
-        let origin = state
-            .origin_ref(spelling.origin())
-            .unwrap_or_else(|| OriginRef::direct(spelling.origin()));
         Self::resolve_rooted(
-            RootedTracedTokenWord::from_word(spelling, origin),
+            RootedTracedTokenWord::from_word(spelling, OriginRef::direct(spelling.origin())),
             delivery,
             source_provenance,
             direct_source,
@@ -200,7 +197,8 @@ impl CurrentCommand {
         direct_source: bool,
         state: &mut CommandContext<'_>,
     ) -> Self {
-        let (spelling, origin) = spelling.into_parts();
+        let (spelling, structural_origin) = spelling.into_parts();
+        let origin = OriginRef::direct(structural_origin.id());
         let token = spelling.semantic_token();
         let (control_sequence, meaning) = match token {
             Token::Cs(symbol) => (Some(symbol), state.meaning(symbol)),

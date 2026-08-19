@@ -204,7 +204,7 @@ fn exact_records_and_lists_share_structural_slots() {
     let first = store.allocate_rooted(record, []);
     let second = store.allocate_rooted(record, []);
     assert_eq!(first, second);
-    assert_eq!(store.rooted_record_shape(), (1, 1));
+    assert_eq!(store.rooted_record_shape(), (0, 0));
 
     let first_list = store.allocate_rooted_list(&[first.clone(), OriginRef::unknown()]);
     let second_list = store.allocate_rooted_list(&[first, OriginRef::unknown()]);
@@ -228,14 +228,12 @@ fn exact_structural_hits_skip_unrelated_reclamation_work() {
     drop(dead_list);
     drop(dead);
 
-    let record_cursor = store.rooted_record_sweep_cursor;
     let list_cursor = store.rooted_list_sweep_cursor;
     assert_eq!(store.allocate_rooted(record, []).id(), root.id());
     assert_eq!(
         store.allocate_rooted_list(std::slice::from_ref(&root)).id(),
         list.id()
     );
-    assert_eq!(store.rooted_record_sweep_cursor, record_cursor);
     assert_eq!(store.rooted_list_sweep_cursor, list_cursor);
 }
 
@@ -268,7 +266,7 @@ fn expansion_frame_children_fit_the_inline_allocation() {
 
 #[cfg(feature = "profiling")]
 #[test]
-fn lifecycle_counters_cover_macro_hits_misses_ownership_reclaim_and_resolution() {
+fn lifecycle_counters_keep_archive_coordinates_out_of_the_weak_atom_index() {
     let before = crate::measurement::provenance_lifecycle_measurement();
     {
         let mut store = ProvenanceStore::new();
@@ -296,17 +294,15 @@ fn lifecycle_counters_cover_macro_hits_misses_ownership_reclaim_and_resolution()
         drop(replacement);
     }
     let work = crate::measurement::provenance_lifecycle_measurement().saturating_sub(before);
-    assert!(work.atom_intern_hits >= 1);
-    assert!(work.atom_intern_misses >= 2);
-    assert!(work.frame_intern_hits >= 1);
-    assert!(work.frame_intern_misses >= 1);
+    assert_eq!(work.atom_intern_calls, 0);
+    assert_eq!(work.frame_intern_calls, 0);
     assert!(work.list_intern_hits >= 1);
     assert!(work.list_intern_misses >= 1);
     assert!(work.atom_retains >= 1 && work.atom_releases >= 1);
     assert!(work.frame_retains >= 1 && work.frame_releases >= 1);
     assert!(work.list_retains >= 1 && work.list_releases >= 1);
-    assert!(work.atom_reclaim_visits >= 1);
-    assert!(work.list_reclaim_visits >= 1);
+    assert_eq!(work.atom_reclaim_visits, 0);
+    assert_eq!(work.list_reclaim_visits, 0);
     assert!(work.origin_resolutions >= 1);
     assert!(work.list_resolutions >= 1 && work.list_resolution_comparisons >= 1);
 }
@@ -488,14 +484,14 @@ fn macro_invocation_accounting_tracks_live_parent_chains_and_rollback() {
         child,
         "the inline recent-frame cache reuses an exact retry without a weak candidate"
     );
-    assert!(stores.origin_ref(child).is_none());
+    assert_eq!(stores.origin_ref(child).map(|root| root.id()), Some(child));
     let materialized = stores
         .materialize_origin_ref(child)
         .expect("cold publication materializes an archived frame");
     assert_eq!(materialized.id(), child);
     assert_eq!(materialized.record(), Some(stores.origin(child)));
     drop(materialized);
-    assert!(stores.origin_ref(child).is_none());
+    assert_eq!(stores.origin_ref(child).map(|root| root.id()), Some(child));
 
     stores.rollback(&snapshot);
     assert_eq!(stores.macro_invocation_provenance_stats().invocations(), 0);
@@ -628,8 +624,8 @@ fn rooted_provenance_obeys_each_explicit_live_and_weak_budget() {
         OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format)),
         [],
     );
-    assert_ne!(replacement.id(), OriginId::UNKNOWN);
-    assert_eq!(store.rooted_record_shape(), (1, 1));
+    assert_eq!(replacement.id(), OriginId::UNKNOWN);
+    assert_eq!(store.rooted_record_shape(), (0, 0));
     assert_eq!(store.rooted_list_shape(), (0, 0, 2));
 }
 
@@ -709,7 +705,7 @@ fn universe_provenance_stats_measure_rollback_truncation() {
 }
 
 #[test]
-fn rooted_final_owner_release_reuses_weak_slots_without_stale_resolution() {
+fn rooted_final_owner_release_leaves_only_the_archived_coordinate() {
     let mut store = ProvenanceStore::new();
     let first = store.allocate_rooted(
         OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Engine)),
@@ -726,8 +722,11 @@ fn rooted_final_owner_release_reuses_weak_slots_without_stale_resolution() {
         [],
     );
     assert_ne!(second.id(), first_id);
-    assert!(store.origin_ref(first_id).is_none());
-    assert_eq!(store.rooted_record_shape(), (1, 1));
+    assert_eq!(
+        store.origin_ref(first_id).map(|root| root.id()),
+        Some(first_id)
+    );
+    assert_eq!(store.rooted_record_shape(), (0, 0));
 }
 
 #[test]
@@ -771,7 +770,7 @@ fn rooted_provenance_plateaus_for_dead_work_and_grows_exactly_for_live_work() {
         drop(list);
         drop(root);
     }
-    assert_eq!(bounded.rooted_record_shape(), (0, 1));
+    assert_eq!(bounded.rooted_record_shape(), (0, 0));
     assert_eq!(bounded.rooted_list_shape(), (0, 0, 2));
 
     let mut all_live = ProvenanceStore::new();
@@ -792,10 +791,7 @@ fn rooted_provenance_plateaus_for_dead_work_and_grows_exactly_for_live_work() {
         .iter()
         .map(|root| all_live.allocate_rooted_list(std::slice::from_ref(root)))
         .collect::<Vec<_>>();
-    assert_eq!(
-        all_live.rooted_record_shape(),
-        (OPERATIONS as usize, OPERATIONS as usize)
-    );
+    assert_eq!(all_live.rooted_record_shape(), (0, 0));
     assert_eq!(
         all_live.rooted_list_shape(),
         (
@@ -871,7 +867,7 @@ fn structural_lists_plateau_for_direct_churn_and_grow_by_distinct_live_roots() {
 }
 
 #[test]
-fn rooted_record_reclamation_is_bounded_and_preserves_live_negative_control() {
+fn archived_records_need_no_weak_reclamation_and_preserve_exact_reuse() {
     const LIVE_ROOTS: u64 = 1_024;
     let mut store = ProvenanceStore::new();
     let roots = (0..LIVE_ROOTS)
@@ -894,20 +890,11 @@ fn rooted_record_reclamation_is_bounded_and_preserves_live_negative_control() {
     let transient_id = transient.id();
     drop(transient);
 
-    let extent = store.rooted_record_slots.len();
-    let mut visited = 0;
-    while store.rooted_record_occupied > roots.len() {
-        let step =
-            store.reclaim_some_dead_rooted_records(super::ROOTED_RECLAIM_WORK_PER_ALLOCATION);
-        assert!(
-            step <= 1,
-            "ordinary reclamation must visit at most one slot"
-        );
-        visited += step;
-        assert!(visited <= extent + 1, "one sweep must find the dead slot");
-    }
-
-    assert!(store.origin_ref(transient_id).is_none());
+    assert_eq!(store.rooted_record_shape(), (0, 0));
+    assert_eq!(
+        store.origin_ref(transient_id).map(|root| root.id()),
+        Some(transient_id)
+    );
     assert!(
         roots
             .iter()
@@ -950,9 +937,9 @@ fn node_owners_plateau_for_10k_released_roots_and_retain_10k_live_roots() {
         );
         assert!(bounded.origin_ref(id).is_some());
         drop(owner);
-        assert!(bounded.origin_ref(id).is_none());
+        assert_eq!(bounded.origin_ref(id).map(|root| root.id()), Some(id));
     }
-    assert_eq!(bounded.rooted_record_shape(), (0, 1));
+    assert_eq!(bounded.rooted_record_shape(), (0, 0));
 
     let mut all_live = ProvenanceStore::new();
     let roots = (0..OPERATIONS)
@@ -979,10 +966,7 @@ fn node_owners_plateau_for_10k_released_roots_and_retain_10k_live_roots() {
         .collect::<Vec<_>>();
     let live_owner = freeze_test_nodes(nodes, OPERATIONS);
     drop(roots);
-    assert_eq!(
-        all_live.rooted_record_shape(),
-        (OPERATIONS as usize, OPERATIONS as usize)
-    );
+    assert_eq!(all_live.rooted_record_shape(), (0, 0));
     drop(live_owner);
 }
 
@@ -1023,5 +1007,5 @@ fn structural_owner_and_committed_artifact_release_their_exact_node_roots() {
     drop(list);
     assert!(store.origin_ref(id).is_some());
     drop(artifact);
-    assert!(store.origin_ref(id).is_none());
+    assert_eq!(store.origin_ref(id).map(|root| root.id()), Some(id));
 }

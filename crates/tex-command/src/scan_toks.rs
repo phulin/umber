@@ -1418,9 +1418,14 @@ impl CommandProcessor<'_> {
             .map(|(index, token)| {
                 let origin = list
                     .origin_ref()
-                    .root(index)
-                    .unwrap_or_else(tex_state::provenance::OriginRef::unknown);
-                RootedTracedTokenWord::new(token, origin)
+                    .origins()
+                    .get(index)
+                    .copied()
+                    .unwrap_or(OriginId::UNKNOWN);
+                RootedTracedTokenWord::from_word(
+                    TracedTokenWord::pack(token, origin),
+                    tex_state::provenance::OriginRef::direct(origin),
+                )
             })
             .collect()
     }
@@ -1734,7 +1739,7 @@ impl CommandProcessor<'_> {
         self.command.load_next_source_line(endlinechar);
         while let Some(character) = self.command.next_source_character() {
             let ch = crate::profile::token_character(character.code());
-            let origin = self.state.source_token_origin_ref(
+            let origin = self.state.source_token_origin(
                 character.range().source(),
                 character.range().start(),
                 character.range().end(),
@@ -1744,7 +1749,7 @@ impl CommandProcessor<'_> {
             } else {
                 Catcode::Other
             };
-            tokens.push(RootedTracedTokenWord::new(Token::Char { ch, cat }, origin));
+            tokens.extend_archived([TracedTokenWord::pack(Token::Char { ch, cat }, origin)]);
         }
         self.retire_read_line_level(level)?;
         Ok(())

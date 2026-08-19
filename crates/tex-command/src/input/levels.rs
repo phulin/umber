@@ -5,7 +5,9 @@ use smallvec::SmallVec;
 use tex_state::ids::MacroDefinitionId;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
 use tex_state::provenance::{OriginListRef, OriginRef};
-use tex_state::token::{RootedTracedTokenBuffer, RootedTracedTokenWord, Token, TracedTokenWord};
+use tex_state::token::{
+    OriginId, RootedTracedTokenBuffer, RootedTracedTokenWord, Token, TracedTokenWord,
+};
 use tex_state::token_store::TokenListRef;
 
 use crate::macro_call::{MacroActivationId, MacroArgumentRange};
@@ -223,13 +225,17 @@ impl PackedTokenChunk {
             .copied()
             .enumerate()
             .map(|(index, token)| {
-                RootedTracedTokenWord::new(
+                TracedTokenWord::pack(
                     token,
-                    origins.root(index).unwrap_or_else(OriginRef::unknown),
+                    origins
+                        .origins()
+                        .get(index)
+                        .copied()
+                        .unwrap_or(OriginId::UNKNOWN),
                 )
             });
         Self {
-            words: RootedTracedTokenBuffer::new(words),
+            words: RootedTracedTokenBuffer::with_archived_origins(words),
             source_provenance: SmallVec::new(),
             ownership: PackedTokenOwnership::Stored,
         }
@@ -239,12 +245,9 @@ impl PackedTokenChunk {
         self.words.len()
     }
 
-    pub(crate) fn get(
-        &self,
-        index: usize,
-    ) -> Option<(RootedTracedTokenWord, Option<SourceProvenance>)> {
+    pub(crate) fn get(&self, index: usize) -> Option<(TracedTokenWord, Option<SourceProvenance>)> {
         Some((
-            self.words.get_rooted(index)?,
+            self.words.get(index)?,
             self.source_provenance.get(index).copied().flatten(),
         ))
     }

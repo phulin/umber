@@ -1474,7 +1474,7 @@ impl CommandProcessor<'_> {
                 direct_source,
             } = delivery;
 
-            if let Token::Param(slot) = spelling.word().semantic_token() {
+            if let Token::Param(slot) = spelling.semantic_token() {
                 let replay = self
                     .command
                     .replay_out_parameter(level, slot)
@@ -1498,7 +1498,7 @@ impl CommandProcessor<'_> {
             let delivery_stamp = DeliveryStamp::new(level.0, position, self.next_delivery_sequence);
             self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
             if matches!(
-                spelling.word().semantic_token(),
+                spelling.semantic_token(),
                 Token::Cs(_)
                     | Token::Char {
                         cat: Catcode::Active,
@@ -1507,7 +1507,7 @@ impl CommandProcessor<'_> {
             ) {
                 self.record_meaning_lookup();
             }
-            let mut command = CurrentCommand::resolve_rooted(
+            let mut command = CurrentCommand::resolve(
                 spelling,
                 delivery_stamp,
                 source_provenance,
@@ -1795,9 +1795,9 @@ impl CommandProcessor<'_> {
                         RetirementRestart::Continue => {}
                         RetirementRestart::EndV(level) => {
                             return Ok(Some(DeliveredToken {
-                                spelling: tex_state::token::RootedTracedTokenWord::new(
+                                spelling: TracedTokenWord::pack(
                                     self.state.frozen_end_template_token(),
-                                    tex_state::provenance::OriginRef::unknown(),
+                                    tex_state::token::OriginId::UNKNOWN,
                                 ),
                                 level,
                                 position: u64::try_from(index)
@@ -1991,7 +1991,7 @@ impl CommandProcessor<'_> {
         &mut self,
         source_token: &SourceToken,
         allow_control_sequence_creation: bool,
-    ) -> tex_state::token::RootedTracedTokenWord {
+    ) -> TracedTokenWord {
         let token = match source_token {
             SourceToken::Character { code, catcode, .. } => Token::Char {
                 ch: character_from_code(*code),
@@ -2024,19 +2024,19 @@ impl CommandProcessor<'_> {
         let range = source_token.range();
         let origin = if range.end().saturating_sub(range.start()) == 1 {
             self.state
-                .source_token_origin_ref(range.source(), range.start(), range.end())
+                .source_token_origin(range.source(), range.start(), range.end())
         } else {
             self.state
-                .source_range_origin_ref(range.source(), range.start(), range.end())
+                .source_range_origin(range.source(), range.start(), range.end())
         };
-        tex_state::token::RootedTracedTokenWord::new(token, origin)
+        TracedTokenWord::pack(token, origin)
     }
 
     fn next_stored_token(
         cursor: &TokenCursor,
         parameters: &crate::macro_call::ParameterState,
     ) -> Option<(
-        tex_state::token::RootedTracedTokenWord,
+        TracedTokenWord,
         u64,
         TokenBehavior,
         Option<SourceProvenance>,
@@ -2051,11 +2051,11 @@ impl CommandProcessor<'_> {
                 ..
             } => parameters
                 .admitted_macro(*admitted)
-                .replacement_word(*definition, index)
+                .replacement_traced_word(*definition, index)
                 .map(|spelling| (spelling, None)),
             TokenPayload::ArgumentRange { arguments, range } => (index
                 < range.end().saturating_sub(range.start()))
-            .then(|| parameters.argument_word(*arguments, range.start() + index))
+            .then(|| parameters.argument_traced_word(*arguments, range.start() + index))
             .flatten()
             .map(|spelling| (spelling, None)),
         }?;
@@ -2636,7 +2636,7 @@ pub(crate) fn stored_input_reason(reason: crate::input::StoredReplayReason) -> I
 }
 
 struct DeliveredToken {
-    spelling: tex_state::token::RootedTracedTokenWord,
+    spelling: TracedTokenWord,
     level: InputLevelId,
     position: u64,
     behavior: TokenBehavior,

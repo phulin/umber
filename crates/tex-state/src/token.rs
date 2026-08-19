@@ -401,10 +401,6 @@ impl RootedTracedTokenBuffer {
         tokens: impl IntoIterator<Item = Token>,
         origin: crate::provenance::OriginRef,
     ) -> Self {
-        assert!(
-            origin.record().is_some() || !matches!(origin.id().decode(), OriginEncoding::Arena(_)),
-            "arena-backed transient token run was supplied without structural ownership"
-        );
         let id = origin.id();
         let words = tokens
             .into_iter()
@@ -415,6 +411,16 @@ impl RootedTracedTokenBuffer {
             roots.push(origin);
         }
         Self { words, roots }
+    }
+
+    /// Stores words whose arena origins are retained by the compact
+    /// provenance archive rather than by per-value structural roots.
+    #[must_use]
+    pub fn with_archived_origins(words: impl IntoIterator<Item = TracedTokenWord>) -> Self {
+        Self {
+            words: words.into_iter().collect(),
+            roots: SmallVec::new(),
+        }
     }
 
     #[must_use]
@@ -457,11 +463,6 @@ impl RootedTracedTokenBuffer {
 
     pub fn push(&mut self, token: RootedTracedTokenWord) {
         let (word, root) = token.into_parts();
-        assert!(
-            root.record().is_some() || !matches!(root.id().decode(), OriginEncoding::Arena(_)),
-            "arena-backed transient token {:?} was supplied without structural ownership",
-            word.token()
-        );
         self.words.push(word);
         self.insert_root(root);
     }
@@ -478,6 +479,11 @@ impl RootedTracedTokenBuffer {
 
     pub fn extend_unowned(&mut self, tokens: impl IntoIterator<Item = TracedTokenWord>) {
         self.extend(tokens.into_iter().map(RootedTracedTokenWord::unowned));
+    }
+
+    /// Appends words already retained by the compact provenance archive.
+    pub fn extend_archived(&mut self, tokens: impl IntoIterator<Item = TracedTokenWord>) {
+        self.words.extend(tokens);
     }
 
     /// Appends another rooted buffer without expanding it into per-token
@@ -622,10 +628,6 @@ impl RootedTracedTokenWord {
     /// not address a structural provenance atom.
     #[must_use]
     pub fn unowned(word: TracedTokenWord) -> Self {
-        assert!(
-            !matches!(word.origin().decode(), OriginEncoding::Arena(_)),
-            "arena-backed traced word requires a structural origin root"
-        );
         Self {
             word,
             origin: crate::provenance::OriginRef::direct(word.origin()),

@@ -1693,14 +1693,10 @@ impl CommandProcessor<'_> {
     fn expand_csname(&mut self, opener: &CurrentCommand) -> Result<(), CommandError> {
         let name = self.scan_csname_characters()?;
         let symbol = self.state.intern_relaxed_control_sequence(&name);
-        let origin = self.state.synthesized_origin_ref(
-            SynthesizedOriginKind::Expansion,
-            opener.origin_ref().clone(),
-        );
-        self.back_input_rooted_token(tex_state::token::RootedTracedTokenWord::new(
-            Token::Cs(symbol),
-            origin,
-        ))
+        let origin = self
+            .state
+            .synthesized_origin(SynthesizedOriginKind::Expansion, opener.origin());
+        self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), origin))
     }
 
     /// Collects TeX82 §372's expanded character list through `\\endcsname`.
@@ -1855,21 +1851,17 @@ impl CommandProcessor<'_> {
             // distinction is observable after the relax terminates the
             // active filename scan: its depleted inserted level retires, so
             // a diagnostic on the restored command says `<recently read>`.
-            let opener_origin = opener.origin_ref().clone();
+            let opener_origin = opener.origin();
             self.back_input(opener)?;
             let origin = self
                 .state
-                .synthesized_origin_ref(SynthesizedOriginKind::Expansion, opener_origin);
-            let frozen_relax =
-                tex_state::token::RootedTracedTokenWord::new(Token::frozen_relax(), origin);
+                .synthesized_origin(SynthesizedOriginKind::Expansion, opener_origin);
+            let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), origin);
             let level = self.command.push_token_level(
-                TokenPayload::backed_up_rooted([crate::input::RootedBackedUpToken::new(
-                    BackedUpToken {
-                        spelling: frozen_relax.word(),
-                        source_provenance: None,
-                    },
-                    frozen_relax.into_parts().1,
-                )]),
+                TokenPayload::backed_up([BackedUpToken {
+                    spelling: frozen_relax,
+                    source_provenance: None,
+                }]),
                 TokenBehavior::BackedUp(BackupTreatment::Ordinary),
                 RetirementBehavior::Pop,
                 ReplayTrace::Inserted,
@@ -2335,11 +2327,15 @@ impl CommandProcessor<'_> {
     ) {
         let origin = self
             .state
-            .synthesized_origin_ref(SynthesizedOriginKind::ValueRendering, parent.clone());
+            .synthesized_origin(SynthesizedOriginKind::ValueRendering, parent.id());
         let mut tokens = tokens.into_iter();
         let first = tokens.next();
-        let payload =
-            TokenPayload::transient_with_shared_origin(first.into_iter().chain(tokens), origin);
+        let payload = TokenPayload::transient(
+            first
+                .into_iter()
+                .chain(tokens)
+                .map(|token| TracedTokenWord::pack(token, origin)),
+        );
         self.insert_expansion_list(payload, first);
     }
 

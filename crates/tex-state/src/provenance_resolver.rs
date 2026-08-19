@@ -102,6 +102,9 @@ impl<'a> ProvenanceResolver<'a> {
     /// coordinate to remain indexed by the current Universe.
     #[must_use]
     pub fn resolve_origin_ref(&self, origin: &OriginRef) -> Option<ResolvedSourceLocation> {
+        if origin.record().is_none() && origin.source_registration().is_none() {
+            return self.resolve_origin(origin.id());
+        }
         let mut current = origin;
         for _ in 0..self.trace_depth.saturating_add(4) {
             if let Some(registration) = current.source_registration() {
@@ -129,6 +132,9 @@ impl<'a> ProvenanceResolver<'a> {
         fragments: &FragmentStore,
         layout: &EditorLayout,
     ) -> LayoutResolvedOrigin {
+        if origin.record().is_none() && origin.source_registration().is_none() {
+            return self.resolve_layout_origin(origin.id(), fragments, layout);
+        }
         let mut current = origin;
         for _ in 0..self.trace_depth.saturating_add(4) {
             if let Some(span) = fragments

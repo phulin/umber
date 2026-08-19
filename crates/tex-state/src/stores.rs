@@ -2359,7 +2359,7 @@ impl Stores {
 
     pub fn source_span_origin_ref(&mut self, span: SourceSpan) -> OriginRef {
         let registration = self.source_map.registration_for_span(span);
-        self.provenance.allocate_pending_rooted_with_registration(
+        self.provenance.allocate_rooted_with_registration(
             OriginRecord::SourceSpan(span),
             [],
             registration,
@@ -2511,7 +2511,7 @@ impl Stores {
         parent: OriginRef,
     ) -> OriginRef {
         self.assert_live_token(token);
-        self.provenance.allocate_pending_rooted(
+        self.provenance.allocate_rooted(
             OriginRecord::Inserted(InsertedOrigin::new(kind, token, parent.id())),
             [parent],
         )
@@ -2535,7 +2535,7 @@ impl Stores {
         kind: SynthesizedOriginKind,
         parent: OriginRef,
     ) -> OriginRef {
-        self.provenance.allocate_pending_rooted(
+        self.provenance.allocate_rooted(
             OriginRecord::Synthesized(SynthesizedOrigin::new(kind, parent.id())),
             [parent],
         )
@@ -2556,7 +2556,7 @@ impl Stores {
             SyntheticOriginKind::Bootstrap => OriginRef::unknown(),
             _ => self
                 .provenance
-                .allocate_pending_rooted(OriginRecord::Synthetic(SyntheticOrigin::new(kind)), []),
+                .allocate_rooted(OriginRecord::Synthetic(SyntheticOrigin::new(kind)), []),
         }
     }
 
@@ -2565,7 +2565,7 @@ impl Stores {
     }
 
     pub fn materialize_origin_ref(&mut self, id: OriginId) -> Option<OriginRef> {
-        self.provenance.materialize_origin_ref(id)
+        self.provenance.materialize_origin_ref(id, &self.source_map)
     }
 
     /// Reads a live origin record.

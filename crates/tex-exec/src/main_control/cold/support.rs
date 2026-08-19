@@ -78,12 +78,15 @@ pub(in crate::main_control) fn schedule_aftergroup(
         .map(|spelling| {
             let (spelling, parent) = spelling.into_parts();
             let token = spelling.semantic_token();
-            let origin = stores.inserted_origin_ref(
+            let origin = stores.inserted_origin(
                 tex_state::provenance::InsertedOriginKind::AfterGroup,
                 token,
-                parent,
+                parent.id(),
             );
-            tex_state::token::RootedTracedTokenWord::new(token, origin)
+            tex_state::token::RootedTracedTokenWord::new(
+                token,
+                tex_state::provenance::OriginRef::direct(origin),
+            )
         })
         .collect::<Vec<_>>();
     command
@@ -120,14 +123,13 @@ pub(in crate::main_control) fn schedule_afterassignment(
     let Some(token) = stores.take_afterassignment() else {
         return Ok(());
     };
-    let origin = stores.inserted_origin_ref(
+    let origin = stores.inserted_origin(
         tex_state::provenance::InsertedOriginKind::AfterAssignment,
         token,
-        tex_state::provenance::OriginRef::unknown(),
+        tex_state::token::OriginId::UNKNOWN,
     );
     let mut processor = command_processor(command, fuel, capabilities, observations, stores);
-    let result = processor
-        .back_input_rooted_token(tex_state::token::RootedTracedTokenWord::new(token, origin));
+    let result = processor.back_input_token(tex_state::token::TracedTokenWord::pack(token, origin));
     result.map_err(command_error)
 }
 
@@ -1115,16 +1117,16 @@ pub(in crate::main_control) fn schedule_everybox(
     let tokens: Vec<_> = stores.tokens(tokens).to_vec();
     let mut traced = tex_state::token::RootedTracedTokenBuffer::default();
     for token in tokens {
-        let origin = stores.inserted_origin_ref(
+        let origin = stores.inserted_origin(
             tex_state::provenance::InsertedOriginKind::TokenListReplay(if horizontal {
                 tex_state::TokenListReplayKind::EveryHBox
             } else {
                 tex_state::TokenListReplayKind::EveryVBox
             }),
             token,
-            tex_state::provenance::OriginRef::unknown(),
+            tex_state::token::OriginId::UNKNOWN,
         );
-        traced.push(tex_state::token::RootedTracedTokenWord::new(token, origin));
+        traced.extend_archived([tex_state::token::TracedTokenWord::pack(token, origin)]);
     }
     command.push_everybox(stores.finish_rooted_traced_token_list(&traced), horizontal);
 }
@@ -1145,14 +1147,14 @@ pub(in crate::main_control) fn schedule_everycr(command: &mut CommandState, stor
     let tokens: Vec<_> = stores.tokens(tokens).to_vec();
     let mut traced = tex_state::token::RootedTracedTokenBuffer::default();
     for token in tokens {
-        let origin = stores.inserted_origin_ref(
+        let origin = stores.inserted_origin(
             tex_state::provenance::InsertedOriginKind::TokenListReplay(
                 tex_state::TokenListReplayKind::EveryCr,
             ),
             token,
-            tex_state::provenance::OriginRef::unknown(),
+            tex_state::token::OriginId::UNKNOWN,
         );
-        traced.push(tex_state::token::RootedTracedTokenWord::new(token, origin));
+        traced.extend_archived([tex_state::token::TracedTokenWord::pack(token, origin)]);
     }
     command.push_everycr(stores.finish_rooted_traced_token_list(&traced));
 }
@@ -1177,14 +1179,14 @@ pub(in crate::main_control) fn schedule_everyjob(
     let tokens: Vec<_> = stores.tokens(tokens).to_vec();
     let mut traced = tex_state::token::RootedTracedTokenBuffer::default();
     for token in tokens {
-        let origin = stores.inserted_origin_ref(
+        let origin = stores.inserted_origin(
             tex_state::provenance::InsertedOriginKind::TokenListReplay(
                 tex_state::TokenListReplayKind::EveryJob,
             ),
             token,
-            tex_state::provenance::OriginRef::unknown(),
+            tex_state::token::OriginId::UNKNOWN,
         );
-        traced.push(tex_state::token::RootedTracedTokenWord::new(token, origin));
+        traced.extend_archived([tex_state::token::TracedTokenWord::pack(token, origin)]);
     }
     command.push_everyjob(stores.finish_rooted_traced_token_list(&traced));
 }

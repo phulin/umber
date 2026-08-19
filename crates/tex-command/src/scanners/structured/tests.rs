@@ -3437,7 +3437,6 @@ fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
                 .get(index)
                 .expect("the shifted list retains every origin")
                 .0
-                .word()
                 .origin()
         })
         .collect::<Vec<_>>();
