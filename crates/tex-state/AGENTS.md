@@ -208,7 +208,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/tests/replay_common.rs`: Shared helpers for replay tests, including model cells and expected hash state.
 - `src/token.rs`: Token and catcode value definitions, constructors,
   classification helpers, and inline-small rooted traced-token buffers with
-  sparse provenance ownership and spillover storage.
+  sparse provenance ownership and spillover storage. Generated runs sharing
+  one origin pack every word against its id and move that structural root into
+  the sparse owner set once; they never clone it per token before deduplication.
 - `src/token/tests.rs`: Unit tests for token constructors, catcodes, parameter tokens, and display/debug behavior.
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
 - `src/token_store.rs`: Reachability-owned immutable token-list values, explicit loaded-format roots, collision-safe weak lookup, reusable generation-safe slots, typed private-acceptance leases, and rollback/private-patch coordination.

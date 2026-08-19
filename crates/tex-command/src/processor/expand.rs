@@ -2316,11 +2316,9 @@ impl CommandProcessor<'_> {
             .synthesized_origin_ref(SynthesizedOriginKind::ValueRendering, parent.clone());
         let mut tokens = tokens.into_iter();
         let first = tokens.next();
-        let traced = first
-            .into_iter()
-            .chain(tokens)
-            .map(|token| tex_state::token::RootedTracedTokenWord::new(token, origin.clone()));
-        self.insert_expansion_list(TokenPayload::transient_rooted(traced), first);
+        let payload =
+            TokenPayload::transient_with_shared_origin(first.into_iter().chain(tokens), origin);
+        self.insert_expansion_list(payload, first);
     }
 
     /// Performs TeX82 §323's `ins_list` for one expansion result.

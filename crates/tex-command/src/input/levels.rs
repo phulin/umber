@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 use tex_state::ids::MacroDefinitionId;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
 use tex_state::provenance::{OriginListRef, OriginRef};
-use tex_state::token::{RootedTracedTokenBuffer, RootedTracedTokenWord, TracedTokenWord};
+use tex_state::token::{RootedTracedTokenBuffer, RootedTracedTokenWord, Token, TracedTokenWord};
 use tex_state::token_store::TokenListRef;
 
 use crate::macro_call::{MacroActivationId, MacroArgumentRange};
@@ -195,6 +195,9 @@ pub(crate) enum TokenPayload {
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct PackedTokenChunk {
     words: RootedTracedTokenBuffer,
+    /// Position-aligned only for backed-up physical-source tokens. Ordinary
+    /// generated/stored runs canonically leave this empty: absence already
+    /// denotes `None` and must not allocate a redundant per-position vector.
     source_provenance: SmallVec<[Option<SourceProvenance>; 2]>,
     backed_up: bool,
 }
@@ -212,10 +215,9 @@ impl PackedTokenChunk {
                     origins.root(index).unwrap_or_else(OriginRef::unknown),
                 )
             });
-        let len = tokens.tokens().len();
         Self {
             words: RootedTracedTokenBuffer::new(words),
-            source_provenance: smallvec::smallvec![None; len],
+            source_provenance: SmallVec::new(),
             backed_up: false,
         }
     }
@@ -253,6 +255,8 @@ impl PackedTokenChunk {
     }
 
     pub(crate) fn source_provenance(&self) -> &[Option<SourceProvenance>] {
+        debug_assert!(self.backed_up);
+        debug_assert_eq!(self.source_provenance.len(), self.words.len());
         &self.source_provenance
     }
 
@@ -291,10 +295,23 @@ impl TokenPayload {
         tokens: impl IntoIterator<Item = RootedTracedTokenWord>,
     ) -> Self {
         let words = RootedTracedTokenBuffer::new(tokens);
-        let len = words.len();
         Self::Packed(PackedTokenChunk {
             words,
-            source_provenance: smallvec::smallvec![None; len],
+            source_provenance: SmallVec::new(),
+            backed_up: false,
+        })
+    }
+
+    /// Packs generated tokens that all carry one structural origin without
+    /// forming a temporary strong owner for every position.
+    pub(crate) fn transient_with_shared_origin(
+        tokens: impl IntoIterator<Item = Token>,
+        origin: OriginRef,
+    ) -> Self {
+        let words = RootedTracedTokenBuffer::with_shared_origin(tokens, origin);
+        Self::Packed(PackedTokenChunk {
+            words,
+            source_provenance: SmallVec::new(),
             backed_up: false,
         })
     }

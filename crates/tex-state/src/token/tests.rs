@@ -297,6 +297,28 @@ fn mutable_rooted_buffer_tracks_exact_distinct_structural_owners() {
 }
 
 #[test]
+fn shared_origin_run_retains_one_owner_for_all_packed_positions() {
+    let mut universe = crate::Universe::new();
+    let token = Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    };
+    let origin =
+        universe.inserted_origin_ref(InsertedOriginKind::Unread, token, OriginRef::unknown());
+    let origin_id = origin.id();
+    let buffer = RootedTracedTokenBuffer::with_shared_origin([token; 32], origin);
+
+    assert_eq!(buffer.len(), 32);
+    assert!(buffer.words().iter().all(|word| word.origin() == origin_id));
+    assert_eq!(buffer.roots().len(), 1);
+    assert_eq!(buffer.roots()[0].id(), origin_id);
+
+    let empty = RootedTracedTokenBuffer::with_shared_origin([], OriginRef::unknown());
+    assert!(empty.is_empty());
+    assert!(empty.roots().is_empty());
+}
+
+#[test]
 fn mutable_rooted_buffer_churn_keeps_direct_storage_empty_and_live_growth_exact() {
     let token = Token::Char {
         ch: 'x',

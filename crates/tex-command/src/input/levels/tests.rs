@@ -48,7 +48,9 @@ fn packed_transient_chunks_own_only_distinct_structural_origins() {
         panic!("transient payload is packed");
     };
     assert_eq!(rooted.words.roots().len(), 1);
+    assert!(rooted.source_provenance.is_empty());
     assert!(direct.words.roots().is_empty());
+    assert!(direct.source_provenance.is_empty());
     drop(universe);
     assert!(
         rooted
@@ -56,6 +58,27 @@ fn packed_transient_chunks_own_only_distinct_structural_origins() {
             .rooted_words()
             .all(|word| word.origin_ref().record().is_some())
     );
+}
+
+#[test]
+fn generated_shared_origin_run_has_one_root_and_no_none_sidecar() {
+    let mut universe = Universe::new();
+    let root = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
+    let root_id = root.id();
+    let token = Token::Char {
+        ch: 'x',
+        cat: Catcode::Other,
+    };
+    let payload = TokenPayload::transient_with_shared_origin([token; 32], root);
+    let TokenPayload::Packed(chunk) = payload else {
+        panic!("transient payload is packed");
+    };
+
+    assert_eq!(chunk.words.len(), 32);
+    assert_eq!(chunk.words.roots().len(), 1);
+    assert_eq!(chunk.words.roots()[0].id(), root_id);
+    assert!(chunk.source_provenance.is_empty());
+    assert_eq!(chunk.get(31).expect("last generated token").1, None);
 }
 
 #[test]

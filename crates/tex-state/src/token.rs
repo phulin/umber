@@ -390,6 +390,33 @@ impl RootedTracedTokenBuffer {
         buffer
     }
 
+    /// Packs a run whose positions all share one structural origin.
+    ///
+    /// The packed words carry the origin id independently, so retaining and
+    /// deduplicating one `OriginRef` per input token would be redundant. This
+    /// constructor moves the shared owner into the sparse root set exactly
+    /// once and never forms those transient per-position strong owners.
+    #[must_use]
+    pub fn with_shared_origin(
+        tokens: impl IntoIterator<Item = Token>,
+        origin: crate::provenance::OriginRef,
+    ) -> Self {
+        assert!(
+            origin.record().is_some() || !matches!(origin.id().decode(), OriginEncoding::Arena(_)),
+            "arena-backed transient token run was supplied without structural ownership"
+        );
+        let id = origin.id();
+        let words = tokens
+            .into_iter()
+            .map(|token| TracedTokenWord::pack(token, id))
+            .collect::<SmallVec<_>>();
+        let mut roots = SmallVec::new();
+        if !words.is_empty() && origin.record().is_some() {
+            roots.push(origin);
+        }
+        Self { words, roots }
+    }
+
     #[must_use]
     pub fn words(&self) -> &[TracedTokenWord] {
         &self.words
