@@ -57,7 +57,7 @@ use crate::macro_store::{
     MacroStoreMark,
 };
 use crate::math::MathFontSize;
-use crate::meaning::Meaning;
+use crate::meaning::{Meaning, MeaningFlags};
 use crate::node::Node;
 use crate::node_arena::{NodeListBuilder, NodeListRef, NodeListWeakIndex};
 use crate::provenance::{
@@ -1708,13 +1708,7 @@ impl Stores {
         macro_meaning: MacroMeaning,
     ) -> CellMutationReceipt {
         let definition = self.intern_macro(macro_meaning);
-        self.set_meaning(
-            symbol,
-            Meaning::Macro {
-                flags: macro_meaning.flags(),
-                definition: definition.id(),
-            },
-        )
+        self.install_macro_meaning(symbol, macro_meaning.flags(), definition, false)
     }
 
     /// Sets a local macro meaning with diagnostic definition provenance.
@@ -1725,13 +1719,7 @@ impl Stores {
         provenance: MacroDefinitionProvenance,
     ) -> CellMutationReceipt {
         let definition = self.intern_macro_with_provenance(macro_meaning, Some(provenance));
-        self.set_meaning(
-            symbol,
-            Meaning::Macro {
-                flags: macro_meaning.flags(),
-                definition: definition.id(),
-            },
-        )
+        self.install_macro_meaning(symbol, macro_meaning.flags(), definition, false)
     }
 
     /// Sets a global macro meaning by freezing its public aggregate first.
@@ -1741,13 +1729,7 @@ impl Stores {
         macro_meaning: MacroMeaning,
     ) -> CellMutationReceipt {
         let definition = self.intern_macro(macro_meaning);
-        self.set_meaning_global(
-            symbol,
-            Meaning::Macro {
-                flags: macro_meaning.flags(),
-                definition: definition.id(),
-            },
-        )
+        self.install_macro_meaning(symbol, macro_meaning.flags(), definition, true)
     }
 
     /// Sets a global macro meaning with diagnostic definition provenance.
@@ -1758,13 +1740,23 @@ impl Stores {
         provenance: MacroDefinitionProvenance,
     ) -> CellMutationReceipt {
         let definition = self.intern_macro_with_provenance(macro_meaning, Some(provenance));
-        self.set_meaning_global(
-            symbol,
-            Meaning::Macro {
-                flags: macro_meaning.flags(),
-                definition: definition.id(),
-            },
-        )
+        self.install_macro_meaning(symbol, macro_meaning.flags(), definition, true)
+    }
+
+    fn install_macro_meaning(
+        &mut self,
+        symbol: impl SymbolReference,
+        flags: MeaningFlags,
+        definition: MacroDefinitionRef,
+        global: bool,
+    ) -> CellMutationReceipt {
+        let symbol = self.resolve_symbol_reference(symbol);
+        let meaning = Meaning::Macro {
+            flags,
+            definition: definition.id(),
+        };
+        self.env
+            .set_meaning_slot_with_macro_root(symbol.raw(), meaning, Some(definition), global)
     }
 
     /// Decodes a symbol's meaning as a public macro aggregate when applicable.

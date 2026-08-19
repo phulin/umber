@@ -78,12 +78,7 @@ impl MacroBodyValue {
     }
 
     pub(super) fn logical_bytes(&self) -> usize {
-        core::mem::size_of::<Self>().saturating_add(
-            self.parameter_pattern
-                .tokens
-                .len()
-                .saturating_mul(core::mem::size_of::<crate::token::Token>()),
-        )
+        core::mem::size_of::<Self>()
     }
 }
 

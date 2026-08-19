@@ -21,6 +21,7 @@ use crate::token_store::{TokenListRef, TokenSemanticId};
 
 const MACRO_PARAMETER_SLOTS: usize = 9;
 const PACKED_MACRO_CHUNK_RECORDS: usize = 64;
+const PACKED_MACRO_INITIAL_WORDS: usize = 256;
 mod owned;
 
 pub use owned::MacroDefinitionRef;
@@ -107,7 +108,7 @@ struct PackedMacroChunk {
     logical_index: u32,
     slots: [u8; PACKED_MACRO_CHUNK_RECORDS],
     records: Vec<PackedMacroRecord>,
-    roots: Vec<Option<PackedMacroDefinitionRoots>>,
+    roots: [Option<PackedMacroDefinitionRoots>; PACKED_MACRO_CHUNK_RECORDS],
     words: Vec<TracedTokenWord>,
     token_ids: Vec<TokenListId>,
 }
@@ -117,10 +118,10 @@ impl PackedMacroChunk {
         Self {
             logical_index,
             slots: [0; PACKED_MACRO_CHUNK_RECORDS],
-            records: Vec::new(),
-            roots: Vec::new(),
-            words: Vec::new(),
-            token_ids: Vec::new(),
+            records: Vec::with_capacity(PACKED_MACRO_CHUNK_RECORDS),
+            roots: std::array::from_fn(|_| None),
+            words: Vec::with_capacity(PACKED_MACRO_INITIAL_WORDS),
+            token_ids: Vec::with_capacity(PACKED_MACRO_CHUNK_RECORDS * 2),
         }
     }
 
@@ -294,9 +295,8 @@ impl PackedMacroChunkOwner {
 }
 
 /// Allocation-free index of parameter markers in frozen macro parameter text.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MacroParameterPattern {
-    tokens: Arc<[Token]>,
     offsets: [u32; MACRO_PARAMETER_SLOTS],
     widths: [u8; MACRO_PARAMETER_SLOTS],
     count: u8,
@@ -328,7 +328,6 @@ impl MacroParameterPattern {
             }
         }
         Self {
-            tokens: Arc::from(tokens),
             offsets,
             widths,
             count: count as u8,
@@ -361,38 +360,9 @@ impl MacroParameterPattern {
         (start, end)
     }
 
-    #[must_use]
-    pub fn leading(&self) -> &[Token] {
-        &self.tokens[..self.leading_end(self.tokens.len())]
-    }
-
-    #[must_use]
-    pub fn delimiter(&self, parameter: usize) -> &[Token] {
-        let (start, end) = self.delimiter_bounds(parameter, self.tokens.len());
-        &self.tokens[start..end]
-    }
-
-    /// Character code retained by TeX82 §476's match token.
-    #[must_use]
-    pub fn marker(&self, parameter: usize) -> char {
-        assert!(parameter < self.parameter_count());
-        if self.widths[parameter] == 2 {
-            let Token::Char {
-                ch,
-                cat: crate::token::Catcode::Parameter,
-            } = self.tokens[self.offsets[parameter] as usize]
-            else {
-                unreachable!("two-token parameter marker has parameter catcode")
-            };
-            ch
-        } else {
-            '#'
-        }
-    }
-
-    fn packed(&self) -> PackedMacroPattern {
+    fn packed(&self, token_count: usize) -> PackedMacroPattern {
         PackedMacroPattern {
-            leading_end: u32::try_from(self.leading_end(self.tokens.len()))
+            leading_end: u32::try_from(self.leading_end(token_count))
                 .expect("macro parameter text exceeds u32"),
             offsets: self.offsets,
             widths: self.widths,
@@ -913,7 +883,7 @@ impl MacroStore {
             flags: meaning.flags(),
             parameter_root,
             replacement_root,
-            pattern: pattern.packed(),
+            pattern: pattern.packed(parameter.len()),
             parameter_start,
             parameter_len: u32::try_from(parameter.len())
                 .expect("macro parameter text exceeds u32"),
@@ -926,7 +896,6 @@ impl MacroStore {
         let record_index = record_index.unwrap_or_else(|| {
             let index = chunk.records.len();
             chunk.records.push(record.clone());
-            chunk.roots.push(None);
             chunk.slots[slot % PACKED_MACRO_CHUNK_RECORDS] =
                 u8::try_from(index + 1).expect("packed macro segment exceeds 64 records");
             index
