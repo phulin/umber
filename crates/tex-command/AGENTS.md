@@ -113,7 +113,8 @@ print channel of its own outside the borrowed
   and focused conformance tests.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
   source/token cursors over chunk-owned packed traced words, cold backup source
-  coordinates, orthogonal delivery/retirement classifications, and compact
+  coordinates, explicit stored/transient/backed-up TeX82 cell ownership,
+  orthogonal delivery/retirement classifications, and compact
   admitted-macro replacement and argument-span coordinates. A source level's `open_depths` field is
   `\tracingnesting`'s own record; see `src/tracing_nesting.rs`.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,

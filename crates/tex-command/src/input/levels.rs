@@ -199,7 +199,20 @@ pub(crate) struct PackedTokenChunk {
     /// generated/stored runs canonically leave this empty: absence already
     /// denotes `None` and must not allocate a redundant per-position vector.
     source_provenance: SmallVec<[Option<SourceProvenance>; 2]>,
-    backed_up: bool,
+    ownership: PackedTokenOwnership,
+}
+
+/// TeX82 one-word allocator ownership carried independently of Umber's
+/// uniform packed host representation.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+enum PackedTokenOwnership {
+    /// Replaying an immutable token list adds only TeX's list-stack reference.
+    #[default]
+    Stored,
+    /// Inserted/generated scanner words own freshly allocated one-word cells.
+    Transient,
+    /// `back_input` owns freshly allocated cells plus source replay metadata.
+    BackedUp,
 }
 
 impl PackedTokenChunk {
@@ -218,7 +231,7 @@ impl PackedTokenChunk {
         Self {
             words: RootedTracedTokenBuffer::new(words),
             source_provenance: SmallVec::new(),
-            backed_up: false,
+            ownership: PackedTokenOwnership::Stored,
         }
     }
 
@@ -241,7 +254,7 @@ impl PackedTokenChunk {
     }
 
     fn backed_up_token(&self, index: usize) -> Option<BackedUpToken> {
-        if !self.backed_up {
+        if self.ownership != PackedTokenOwnership::BackedUp {
             return None;
         }
         Some(BackedUpToken {
@@ -255,13 +268,13 @@ impl PackedTokenChunk {
     }
 
     pub(crate) fn source_provenance(&self) -> &[Option<SourceProvenance>] {
-        debug_assert!(self.backed_up);
+        debug_assert_eq!(self.ownership, PackedTokenOwnership::BackedUp);
         debug_assert_eq!(self.source_provenance.len(), self.words.len());
         &self.source_provenance
     }
 
     pub(crate) const fn is_backed_up(&self) -> bool {
-        self.backed_up
+        matches!(self.ownership, PackedTokenOwnership::BackedUp)
     }
 }
 
@@ -298,7 +311,7 @@ impl TokenPayload {
         Self::Packed(PackedTokenChunk {
             words,
             source_provenance: SmallVec::new(),
-            backed_up: false,
+            ownership: PackedTokenOwnership::Transient,
         })
     }
 
@@ -312,7 +325,7 @@ impl TokenPayload {
         Self::Packed(PackedTokenChunk {
             words,
             source_provenance: SmallVec::new(),
-            backed_up: false,
+            ownership: PackedTokenOwnership::Transient,
         })
     }
 
@@ -332,27 +345,33 @@ impl TokenPayload {
         Self::Packed(PackedTokenChunk {
             words,
             source_provenance,
-            backed_up: true,
+            ownership: PackedTokenOwnership::BackedUp,
         })
     }
 
     pub(crate) fn transient_words(&self) -> Option<&[TracedTokenWord]> {
         match self {
-            Self::Packed(chunk) if !chunk.backed_up => Some(chunk.words.words()),
+            Self::Packed(chunk) if chunk.ownership == PackedTokenOwnership::Transient => {
+                Some(chunk.words.words())
+            }
             _ => None,
         }
     }
 
     pub(crate) fn transient_len(&self) -> Option<usize> {
         match self {
-            Self::Packed(chunk) if !chunk.backed_up => Some(chunk.len()),
+            Self::Packed(chunk) if chunk.ownership == PackedTokenOwnership::Transient => {
+                Some(chunk.len())
+            }
             _ => None,
         }
     }
 
     pub(crate) fn backed_up_len(&self) -> Option<usize> {
         match self {
-            Self::Packed(chunk) if chunk.backed_up => Some(chunk.len()),
+            Self::Packed(chunk) if chunk.ownership == PackedTokenOwnership::BackedUp => {
+                Some(chunk.len())
+            }
             _ => None,
         }
     }
@@ -365,7 +384,7 @@ impl TokenPayload {
     }
 
     pub(crate) fn is_backed_up(&self) -> bool {
-        matches!(self, Self::Packed(chunk) if chunk.backed_up)
+        matches!(self, Self::Packed(chunk) if chunk.ownership == PackedTokenOwnership::BackedUp)
     }
 
     /// Prepends e-TeX aftergroup tokens, promoting inline storage when the
@@ -376,7 +395,7 @@ impl TokenPayload {
     ) -> Option<()> {
         let mut prefix = prefix.into_iter().collect::<Vec<_>>();
         match self {
-            Self::Packed(chunk) if chunk.backed_up => {
+            Self::Packed(chunk) if chunk.ownership == PackedTokenOwnership::BackedUp => {
                 let mut words = RootedTracedTokenBuffer::default();
                 let mut provenance = SmallVec::new();
                 for token in prefix.drain(..) {
@@ -400,7 +419,7 @@ impl TokenPayload {
         byte_delta: i64,
     ) -> Option<()> {
         match self {
-            Self::Packed(chunk) if chunk.backed_up => {
+            Self::Packed(chunk) if chunk.ownership == PackedTokenOwnership::BackedUp => {
                 for provenance in chunk.source_provenance.iter_mut().flatten() {
                     provenance.rehome(source, byte_delta)?;
                 }
@@ -420,7 +439,7 @@ impl TokenPayload {
                     .zip(live.words.words())
                     .any(|(recorded, live)| recorded.token() != live.token())
                 || recorded.source_provenance != live.source_provenance
-                || recorded.backed_up != live.backed_up
+                || recorded.ownership != live.ownership
             {
                 return None;
             }

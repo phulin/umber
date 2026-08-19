@@ -63,7 +63,7 @@ fn push_activation(
 #[test]
 fn transient_dynamic_words_count_owned_buffers_once() {
     let mut state = CommandState::default();
-    let universe = Universe::new();
+    let mut universe = Universe::new();
     let arguments = Arc::from([traced('a'), traced('b'), traced('c')]);
     push_activation(
         &mut state,
@@ -99,7 +99,12 @@ fn transient_dynamic_words_count_owned_buffers_once() {
     );
     state.push_token_level(
         TokenPayload::stored(
-            universe.token_list_ref(TokenListId::EMPTY),
+            universe.intern_token_list_ref(
+                &[Token::Char {
+                    ch: 's',
+                    cat: Catcode::Other,
+                }; 4],
+            ),
             tex_state::provenance::OriginListRef::empty(),
         ),
         TokenBehavior::Ordinary,
@@ -108,8 +113,9 @@ fn transient_dynamic_words_count_owned_buffers_once() {
     );
 
     // TeX82 §§357/390: the argument-range cursor shares its activation's
-    // three token nodes, the recovery list owns two more, and a stored replay
-    // only adds a reference. Neither shared nor stored tokens are duplicated.
+    // three token nodes, the recovery list owns two more, and replaying the
+    // four-word stored list only adds a reference. Neither shared nor stored
+    // tokens are duplicated merely because every host payload is packed.
     assert_eq!(state.transient_dynamic_words(), 5);
 }
 
