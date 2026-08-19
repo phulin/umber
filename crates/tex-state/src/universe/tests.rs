@@ -2005,7 +2005,7 @@ fn universe_is_send() {
 }
 
 #[test]
-fn traced_list_finish_reuses_semantics_but_preserves_each_origin_instance() {
+fn traced_list_finish_uses_fresh_runtime_coordinates_with_equal_semantics() {
     let mut universe = Universe::new();
     let symbol = universe.intern("traced-list-cs");
     let first_origin = universe.synthetic_origin_ref(SyntheticOriginKind::Test);
@@ -2037,8 +2037,22 @@ fn traced_list_finish_reuses_semantics_but_preserves_each_origin_instance() {
     let first_list = universe.finish_rooted_traced_token_list(&first);
     let second_list = universe.finish_rooted_traced_token_list(&second);
 
-    assert_eq!(first_list.token_list(), bulk);
-    assert_eq!(second_list.token_list(), bulk);
+    assert_ne!(first_list.token_list(), bulk);
+    assert_ne!(second_list.token_list(), bulk);
+    assert_ne!(first_list.token_list(), second_list.token_list());
+    let semantic = universe.stores.testing_token_semantic_id(bulk);
+    assert_eq!(
+        universe
+            .stores
+            .testing_token_semantic_id(first_list.token_list()),
+        semantic
+    );
+    assert_eq!(
+        universe
+            .stores
+            .testing_token_semantic_id(second_list.token_list()),
+        semantic
+    );
     assert_ne!(first_list.origin_list(), second_list.origin_list());
     assert_eq!(universe.tokens(first_list.token_list()), tokens);
     assert_eq!(

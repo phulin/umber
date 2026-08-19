@@ -1743,6 +1743,55 @@ impl Stores {
         self.install_macro_meaning(symbol, macro_meaning.flags(), definition, true)
     }
 
+    /// Installs an ordinary runtime definition from the scanner's existing
+    /// strong token owners, without weak resolution or exact-body interning.
+    pub fn set_macro_meaning_from_traced(
+        &mut self,
+        symbol: impl SymbolReference,
+        flags: MeaningFlags,
+        parameter_text: &TracedTokenList,
+        replacement_text: &TracedTokenList,
+        provenance: MacroDefinitionProvenance,
+        global: bool,
+    ) -> CellMutationReceipt {
+        let parameter_root = parameter_text.token_ref();
+        let replacement_root = replacement_text.token_ref();
+        assert!(
+            self.tokens.accepts_owner(parameter_root),
+            "macro parameter tokens belong to a foreign or stale timeline"
+        );
+        assert!(
+            self.tokens.accepts_owner(replacement_root),
+            "macro replacement tokens belong to a foreign or stale timeline"
+        );
+        self.assert_live_origin(provenance.definition_origin());
+        assert_eq!(
+            parameter_root.len(),
+            provenance.parameter_ref().origins().len(),
+            "macro parameter token and origin lengths differ"
+        );
+        assert_eq!(
+            replacement_root.len(),
+            provenance.replacement_ref().origins().len(),
+            "macro replacement token and origin lengths differ"
+        );
+        let meaning = MacroMeaning::new(flags, parameter_root.id(), replacement_root.id());
+        let parameter_pattern = MacroParameterPattern::from_tokens(parameter_root.tokens());
+        let observation_width =
+            u32::try_from(1_usize + parameter_root.len() + replacement_root.len())
+                .expect("macro token list length exceeds u32");
+        let definition = self.macros.allocate_with_provenance(
+            meaning,
+            parameter_root.clone(),
+            replacement_root.clone(),
+            parameter_pattern,
+            Some(provenance),
+            observation_width,
+            None,
+        );
+        self.install_macro_meaning(symbol, flags, definition, global)
+    }
+
     fn install_macro_meaning(
         &mut self,
         symbol: impl SymbolReference,
@@ -2029,26 +2078,9 @@ impl Stores {
         domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
     ) -> TracedTokenList {
         let semantic_id = self.traced_token_list_semantic_id(traced);
-        let frozen_hash = self.tokens.has_frozen_lists().then(|| {
-            self.frozen_token_lookup_hash(traced.iter().map(|word| {
-                word.token()
-                    .expect("validated traced token became invalid during lookup encoding")
-            }))
-        });
-        let legacy_key = self.tokens.requires_legacy_frozen_key().then(|| {
-            self.legacy_frozen_token_lookup_key(traced.iter().map(|word| {
-                word.token()
-                    .expect("validated traced token became invalid during lookup encoding")
-            }))
-        });
-
-        let token_list = self.tokens.intern_traced_owned_with_semantic_id(
-            traced,
-            semantic_id,
-            frozen_hash.unwrap_or(0),
-            legacy_key.as_deref(),
-            domain,
-        );
+        let token_list =
+            self.tokens
+                .allocate_traced_owned_with_semantic_id(traced, semantic_id, domain);
         #[cfg(feature = "profiling")]
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
         let origin_list = self
@@ -2064,25 +2096,9 @@ impl Stores {
     ) -> TracedTokenList {
         let words = traced.words();
         let semantic_id = self.traced_token_list_semantic_id(words);
-        let frozen_hash = self.tokens.has_frozen_lists().then(|| {
-            self.frozen_token_lookup_hash(words.iter().map(|word| {
-                word.token()
-                    .expect("validated traced token became invalid during lookup encoding")
-            }))
-        });
-        let legacy_key = self.tokens.requires_legacy_frozen_key().then(|| {
-            self.legacy_frozen_token_lookup_key(words.iter().map(|word| {
-                word.token()
-                    .expect("validated traced token became invalid during lookup encoding")
-            }))
-        });
-        let token_list = self.tokens.intern_traced_owned_with_semantic_id(
-            words,
-            semantic_id,
-            frozen_hash.unwrap_or(0),
-            legacy_key.as_deref(),
-            domain,
-        );
+        let token_list =
+            self.tokens
+                .allocate_traced_owned_with_semantic_id(words, semantic_id, domain);
         #[cfg(feature = "profiling")]
         crate::measurement::record_traced_list_finish(words.len(), 0, 0);
         let origin_list = self

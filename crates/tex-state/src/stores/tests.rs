@@ -1035,8 +1035,8 @@ fn macro_definitions_own_parameter_and_replacement_token_children() {
     assert!(stored_parameter.ptr_eq(&parameter_root));
     assert!(stored_replacement.ptr_eq(&replacement_root));
     drop((stored_parameter, stored_replacement));
-    assert_eq!(parameter_root.strong_count(), parameter_before + 1);
-    assert_eq!(replacement_root.strong_count(), replacement_before + 1);
+    assert_eq!(parameter_root.strong_count(), parameter_before + 2);
+    assert_eq!(replacement_root.strong_count(), replacement_before + 2);
 
     let fork = stores.clone();
     let fork_definition = fork

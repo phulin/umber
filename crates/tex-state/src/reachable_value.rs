@@ -287,6 +287,21 @@ where
 
     /// Installs a value after the caller has performed exact candidate lookup.
     pub(crate) fn insert_new(&mut self, key: K, value: T) -> ReachableValueRef<T> {
+        self.insert(value, Some(key))
+    }
+
+    /// Installs a fresh runtime value without publishing it in the cold exact
+    /// candidate index.
+    ///
+    /// Ordinary TeX execution gives each occurrence its own physical
+    /// coordinate. Canonical identity and exact reuse are publication-barrier
+    /// concerns, so indexing a value that no hot caller will query only grows
+    /// metadata and turns allocation into hash-table work.
+    pub(crate) fn insert_unindexed(&mut self, value: T) -> ReachableValueRef<T> {
+        self.insert(value, None)
+    }
+
+    fn insert(&mut self, value: T, key: Option<K>) -> ReachableValueRef<T> {
         #[cfg(feature = "profiling")]
         let _allocation_scope = crate::measurement::hot_core_allocation_scope(
             crate::measurement::HotCoreAllocationOwner::WeakValueStore,
@@ -314,7 +329,7 @@ where
                 Arc::downgrade(&shared)
             },
         });
-        if self.index_key_budget != 0 {
+        if let Some(key) = key.filter(|_| self.index_key_budget != 0) {
             if self.index.len() >= self.index_key_budget && !self.index.contains_key(&key) {
                 self.index.clear();
             }
@@ -444,6 +459,11 @@ where
     /// Returns the physical slot-table extent used by compact projections.
     pub(crate) fn slot_len(&self) -> usize {
         self.slots.len()
+    }
+
+    /// Validates a typed coordinate without upgrading the value's weak slot.
+    pub(crate) fn contains_identity(&self, identity: HandleIdentity) -> bool {
+        self.identities.contains(identity)
     }
 
     /// Advances a bounded weak-metadata sweep. The strong owner has already

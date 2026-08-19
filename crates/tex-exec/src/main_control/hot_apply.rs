@@ -206,22 +206,20 @@ fn apply_macro_definition(
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
 ) -> Result<ReplayStep, ExecError> {
-    let meaning = MacroMeaning::new(
-        flags,
-        parameter_text.token_list(),
-        replacement_text.token_list(),
-    );
     let provenance = MacroDefinitionProvenance::new(
         definition_origin.clone(),
         parameter_text.origin_ref().clone(),
         replacement_text.origin_ref().clone(),
     );
     assignment_tracing::trace_meaning_write(stores, Token::Cs(target), true, global, |stores| {
-        if global {
-            stores.set_macro_meaning_global_with_provenance(target, meaning, provenance)
-        } else {
-            stores.set_macro_meaning_with_provenance(target, meaning, provenance)
-        }
+        stores.set_macro_meaning_from_traced(
+            target,
+            flags,
+            parameter_text,
+            replacement_text,
+            provenance,
+            global,
+        )
     });
 
     // TeX82 §1211's trace seam reports the stored body. Walking that body is

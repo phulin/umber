@@ -5556,6 +5556,28 @@ impl Universe {
         self.consume_env_mutation(receipt);
     }
 
+    /// Installs an ordinary scanned macro occurrence from its existing token
+    /// owners, bypassing weak resolution and cold exact-content indexes.
+    pub fn set_macro_meaning_from_traced(
+        &mut self,
+        symbol: impl crate::interner::SymbolReference,
+        flags: crate::meaning::MeaningFlags,
+        parameter_text: &TracedTokenList,
+        replacement_text: &TracedTokenList,
+        provenance: MacroDefinitionProvenance,
+        global: bool,
+    ) {
+        let receipt = self.stores.set_macro_meaning_from_traced(
+            symbol,
+            flags,
+            parameter_text,
+            replacement_text,
+            provenance,
+            global,
+        );
+        self.consume_env_mutation(receipt);
+    }
+
     #[must_use]
     pub fn macro_meaning(
         &self,

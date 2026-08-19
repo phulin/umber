@@ -517,7 +517,6 @@ pub struct MacroStore {
     bodies: ReachableValuePool<MacroBodySemanticId, MacroBodyValue>,
     definitions: ReachableValuePool<u64, MacroDefinitionValue>,
     frozen_roots: Arc<[MacroDefinitionRef]>,
-    next_definition_serial: u64,
     next_observation_operand: i64,
     body_patch_handles: HashMap<HandleIdentity, PatchHandle<MacroBodyValue>>,
     body_patch_leases: HashMap<HandleIdentity, PatchRootWeak>,
@@ -551,7 +550,6 @@ impl Clone for MacroStore {
             bodies: self.bodies.clone(),
             definitions: self.definitions.clone(),
             frozen_roots: Arc::clone(&self.frozen_roots),
-            next_definition_serial: self.next_definition_serial,
             next_observation_operand: self.next_observation_operand,
             body_patch_handles: HashMap::new(),
             body_patch_leases: HashMap::new(),
@@ -578,7 +576,6 @@ impl MacroStore {
             bodies: ReachableValuePool::new(),
             definitions: ReachableValuePool::new(),
             frozen_roots: Arc::from([]),
-            next_definition_serial: 0,
             next_observation_operand: 249_985,
             body_patch_handles: HashMap::new(),
             body_patch_leases: HashMap::new(),
@@ -672,7 +669,6 @@ impl MacroStore {
             bodies,
             definitions,
             frozen_roots,
-            next_definition_serial: len as u64,
             next_observation_operand,
             body_patch_handles: HashMap::new(),
             body_patch_leases: HashMap::new(),
@@ -744,6 +740,47 @@ impl MacroStore {
             self.attach_body_patch_allocation(&mut body, domain.as_deref_mut());
         }
 
+        self.allocate_definition(body, provenance, observation_width, domain)
+    }
+
+    /// Publishes an ordinary runtime definition occurrence without consulting
+    /// or extending the cold exact-body candidate index.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn allocate_with_provenance(
+        &mut self,
+        meaning: MacroMeaning,
+        parameter_root: TokenListRef,
+        replacement_root: TokenListRef,
+        parameter_pattern: MacroParameterPattern,
+        provenance: Option<MacroDefinitionProvenance>,
+        observation_width: u32,
+        domain: Option<&mut PatchAllocationDomain>,
+    ) -> MacroDefinitionRef {
+        assert_eq!(parameter_root.id(), meaning.parameter_text());
+        assert_eq!(replacement_root.id(), meaning.replacement_text());
+        let body_value = MacroBodyValue {
+            flags: meaning.flags(),
+            parameter_text: parameter_root,
+            replacement_text: replacement_root,
+            parameter_pattern,
+        };
+        let body_value = self.bodies.insert_unindexed(body_value);
+        let mut body = MacroBodyRef {
+            value: body_value,
+            patch_root: None,
+        };
+        let mut domain = domain;
+        self.attach_body_patch_allocation(&mut body, domain.as_deref_mut());
+        self.allocate_definition(body, provenance, observation_width, domain)
+    }
+
+    fn allocate_definition(
+        &mut self,
+        body: MacroBodyRef,
+        provenance: Option<MacroDefinitionProvenance>,
+        observation_width: u32,
+        domain: Option<&mut PatchAllocationDomain>,
+    ) -> MacroDefinitionRef {
         let provenance_cell = OnceLock::new();
         if let Some(provenance) = provenance {
             let _ = provenance_cell.set(provenance);
@@ -757,10 +794,7 @@ impl MacroStore {
             .next_observation_operand
             .checked_sub(i64::from(observation_width))
             .expect("macro observation operand underflow");
-        let serial = self.next_definition_serial;
-        self.next_definition_serial = self.next_definition_serial.wrapping_add(1);
-        let _ = self.definitions.find_exact(&serial, |_| false);
-        let value = self.definitions.insert_new(serial, value);
+        let value = self.definitions.insert_unindexed(value);
         let mut definition = MacroDefinitionRef {
             value,
             patch_root: None,
@@ -824,8 +858,8 @@ impl MacroStore {
                 TracedTokenWord::pack(
                     token,
                     parameter_origins
-                        .and_then(|origins| origins.root(index))
-                        .map_or(crate::token::OriginId::UNKNOWN, |root| root.id()),
+                        .and_then(|origins| origins.origins().get(index).copied())
+                        .unwrap_or(crate::token::OriginId::UNKNOWN),
                 )
             })
         };
@@ -841,8 +875,8 @@ impl MacroStore {
                     TracedTokenWord::pack(
                         token,
                         replacement_origins
-                            .and_then(|origins| origins.root(index))
-                            .map_or(crate::token::OriginId::UNKNOWN, |root| root.id()),
+                            .and_then(|origins| origins.origins().get(index).copied())
+                            .unwrap_or(crate::token::OriginId::UNKNOWN),
                     )
                 })
         };
@@ -1066,6 +1100,9 @@ impl MacroStore {
 
     #[must_use]
     pub(crate) fn get(&self, id: MacroDefinitionId) -> MacroMeaning {
+        let value = self
+            .resolved_value(id)
+            .expect("macro definition id is not live");
         if let Some(record) = self.packed_record(id) {
             let location = self.packed_locations[id.raw() as usize]
                 .expect("packed macro record has a location");
@@ -1076,13 +1113,7 @@ impl MacroStore {
                 chunk.token_ids[record.replacement_root as usize],
             );
         }
-        self.resolved_value(id)
-            .expect("macro definition id is not live")
-            .value()
-            .body
-            .value
-            .value()
-            .meaning()
+        value.value().body.value.value().meaning()
     }
 
     #[must_use]

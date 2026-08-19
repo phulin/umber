@@ -593,23 +593,49 @@ impl TokenStore {
         self.testing_intern_with_semantic_id(&tokens, semantic_id, frozen_hash, legacy_key, domain)
     }
 
-    /// Interns traced tokens and returns the strong exact-content owner.
-    pub(crate) fn intern_traced_owned_with_semantic_id(
+    /// Publishes one ordinary runtime token-list occurrence without consulting
+    /// or extending the cold exact-content index.
+    ///
+    /// Empty lists still use the immortal canonical root. Nonempty runtime
+    /// lists deliberately receive fresh physical coordinates; semantic
+    /// equality is carried by `semantic_id`, while format and detached import
+    /// continue to use the collision-checked interning entry point above.
+    pub(crate) fn allocate_traced_owned_with_semantic_id(
         &mut self,
         traced: &[TracedTokenWord],
         semantic_id: TokenSemanticId,
-        frozen_hash: u64,
-        legacy_key: Option<&[u8]>,
         domain: Option<&mut PatchAllocationDomain>,
     ) -> TokenListRef {
+        if traced.is_empty() {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_token_intern(0, true, 0, 0);
+            return self.frozen_roots[0].clone();
+        }
         let tokens = traced
             .iter()
             .map(|word| {
                 word.token()
-                    .expect("validated traced token became invalid during interning")
+                    .expect("validated traced token became invalid during allocation")
             })
-            .collect::<Vec<_>>();
-        self.intern_owned_with_semantic_id(&tokens, semantic_id, frozen_hash, legacy_key, domain)
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let value = self.pool.insert_unindexed(TokenListValue {
+            tokens,
+            semantic_id,
+        });
+        let mut root = TokenListRef {
+            value,
+            patch_root: None,
+        };
+        self.attach_patch_allocation(&mut root, domain);
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_token_intern(
+            traced.len(),
+            false,
+            traced.len().saturating_mul(core::mem::size_of::<Token>()),
+            core::mem::size_of::<TokenSemanticId>(),
+        );
+        root
     }
 
     #[cfg(test)]
@@ -702,6 +728,12 @@ impl TokenStore {
                     .and_then(PatchRootWeak::upgrade),
             })
         })
+    }
+
+    /// Validates that an already-owned token list belongs to this timeline
+    /// without reconstructing ownership through a weak slot.
+    pub(crate) fn accepts_owner(&self, owner: &TokenListRef) -> bool {
+        self.pool.contains_identity(owner.value.identity())
     }
 
     /// Clones the owner named either by a live identity or a compact stored
