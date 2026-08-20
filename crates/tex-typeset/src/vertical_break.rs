@@ -255,7 +255,6 @@ fn sub(lhs: Scaled, rhs: Scaled) -> Result<Scaled, VerticalBreakError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PageListTestExt;
     use tex_state::Universe;
     use tex_state::glue::{GlueSpec, Order};
     use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Sign};
@@ -268,7 +267,7 @@ mod tests {
     }
 
     fn hbox(universe: &mut Universe, height: i32, depth: i32) -> Node {
-        let children = universe.publish_page_nodes_for_test(&[]);
+        let children = universe.publish_page_nodes(&[]);
         Node::HList(BoxNode::new(BoxNodeFields {
             width: sp(10),
             height: sp(height),
@@ -296,13 +295,13 @@ mod tests {
     #[test]
     fn glue_break_uses_stretch_badness() {
         let mut universe = Universe::new();
-        let glue = universe.intern_glue(GlueSpec {
+        let glue = GlueSpec {
             width: sp(1),
             stretch: sp(100),
             stretch_order: Order::Normal,
             shrink: sp(0),
             shrink_order: Order::Normal,
-        });
+        };
         let nodes = vec![
             hbox(&mut universe, 10, 0),
             Node::Glue {
@@ -334,13 +333,13 @@ mod tests {
     #[test]
     fn kern_before_glue_is_a_legal_break() {
         let mut universe = Universe::new();
-        let glue = universe.intern_glue(GlueSpec {
+        let glue = GlueSpec {
             width: sp(3),
             stretch: sp(0),
             stretch_order: Order::Normal,
             shrink: sp(0),
             shrink_order: Order::Normal,
-        });
+        };
         let nodes = vec![
             hbox(&mut universe, 10, 0),
             Node::Kern {
@@ -364,13 +363,13 @@ mod tests {
     #[test]
     fn reports_infinite_shrink_glue_that_enters_accounting() {
         let mut universe = Universe::new();
-        let glue = universe.intern_glue(GlueSpec {
+        let glue = GlueSpec {
             width: sp(0),
             stretch: sp(0),
             stretch_order: Order::Normal,
             shrink: sp(5),
             shrink_order: Order::Fil,
-        });
+        };
         let nodes = vec![
             hbox(&mut universe, 10, 0),
             Node::Glue {

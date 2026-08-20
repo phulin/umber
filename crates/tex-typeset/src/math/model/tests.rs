@@ -1,4 +1,3 @@
-use crate::PageListTestExt;
 use tex_state::Universe;
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathNoad,
@@ -65,17 +64,24 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
 
     let mut stores = Universe::new();
     let arms =
-        [1, 2, 3, 4].map(|penalty| stores.publish_page_nodes_for_test(&[Node::Penalty(penalty)]));
+        [1, 2, 3, 4].map(|penalty| stores.publish_page_nodes(&[Node::Penalty(penalty)]));
     let choice = MathChoice {
         display: arms[0].clone(),
         text: arms[1].clone(),
         script: arms[2].clone(),
         script_script: arms[3].clone(),
     };
-    assert_eq!(choice.display.to_vec(), [Node::Penalty(1)]);
-    assert_eq!(choice.text.to_vec(), [Node::Penalty(2)]);
-    assert_eq!(choice.script.to_vec(), [Node::Penalty(3)]);
-    assert_eq!(choice.script_script.to_vec(), [Node::Penalty(4)]);
+    let values = |root| {
+        stores
+            .page_node_list(root)
+            .expect("math choice arm belongs to the page arena")
+            .nodes()
+            .to_vec()
+    };
+    assert_eq!(values(choice.display), [Node::Penalty(1)]);
+    assert_eq!(values(choice.text), [Node::Penalty(2)]);
+    assert_eq!(values(choice.script), [Node::Penalty(3)]);
+    assert_eq!(values(choice.script_script), [Node::Penalty(4)]);
 
     let fraction = MathFraction {
         numerator: arms[0].clone(),

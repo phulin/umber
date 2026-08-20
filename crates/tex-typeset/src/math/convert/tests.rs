@@ -1,5 +1,4 @@
 use super::*;
-use crate::PageListTestExt;
 use crate::math::tests::{math_char, noad, root_nodes, setup_universe};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
@@ -30,7 +29,7 @@ fn first_pass_observes_check_dimensions_pack_for_every_noad() {
     // `hpack(new_hlist(q), natural)`. Empty, unscripted noads therefore each
     // publish a distinct zero-size completion without relying on §754.
     let mut stores = setup_universe();
-    let input = stores.publish_page_nodes_for_test(
+    let input = stores.publish_page_nodes(
         &(0..9)
             .map(|_| {
                 Node::MathNoad(MathNoad::new(
@@ -66,8 +65,8 @@ fn first_pass_observes_check_dimensions_pack_for_every_noad() {
 fn mlist_passes_cover_all_styles_bins_nonscript_spacing_and_penalties() {
     let mut stores = setup_universe();
     let arms = ['a', 'b', 'c', '+']
-        .map(|ch| stores.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, ch))]));
-    let choice = stores.publish_page_nodes_for_test(&[Node::MathChoice(MathChoice {
+        .map(|ch| stores.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, ch))]));
+    let choice = stores.publish_page_nodes(&[Node::MathChoice(MathChoice {
         display: arms[0].clone(),
         text: arms[1].clone(),
         script: arms[2].clone(),
@@ -112,8 +111,8 @@ fn mlist_passes_cover_all_styles_bins_nonscript_spacing_and_penalties() {
     assert_eq!(last.class, NoadClass::Ord);
     assert_eq!(last.penalty, INF_PENALTY);
 
-    let zero = stores.intern_glue(GlueSpec::ZERO);
-    let nonscript = stores.publish_page_nodes_for_test(&[
+    let zero = GlueSpec::ZERO;
+    let nonscript = stores.publish_page_nodes(&[
         Node::Glue {
             spec: zero,
             kind: GlueKind::NonScript,
@@ -147,14 +146,14 @@ fn mlist_passes_cover_all_styles_bins_nonscript_spacing_and_penalties() {
         assert_eq!(has_kern, !style.is_script_or_smaller(), "{style:?}");
     }
 
-    let missing = stores.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
+    let missing = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::MathChar(math_char('\u{10ffff}')),
     ))]);
     let missing = mlist_to_hlist(&stores, missing, Style::TEXT, false, &params);
     assert!(missing.root().is_empty());
 
-    let penalized = stores.publish_page_nodes_for_test(&[
+    let penalized = stores.publish_page_nodes(&[
         Node::MathNoad(noad(NoadClass::Ord, 'a')),
         Node::MathNoad(noad(NoadClass::Bin, '+')),
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
@@ -178,7 +177,7 @@ fn middle_and_right_restore_base_style_before_nested_math_choices() {
     // `cur_style` to the style supplied to `mlist_to_hlist`.
     let mut stores = setup_universe();
     let arms = ['a', 'b', 'c', '+']
-        .map(|ch| stores.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, ch))]));
+        .map(|ch| stores.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, ch))]));
     let choice = MathChoice {
         display: arms[0].clone(),
         text: arms[1].clone(),
@@ -210,12 +209,12 @@ fn middle_and_right_restore_base_style_before_nested_math_choices() {
             NoadKind::MiddleDelimiter { delimiter: 0 },
             NoadKind::RightDelimiter { delimiter: 0 },
         ] {
-            let nested = stores.publish_page_nodes_for_test(&[
+            let nested = stores.publish_page_nodes(&[
                 Node::MathStyle(tex_state::math::MathStyle::ScriptScript),
                 Node::MathNoad(MathNoad::new(boundary.clone(), MathField::Empty)),
                 Node::MathChoice(choice.clone()),
             ]);
-            let input = stores.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
+            let input = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
                 MathField::SubMlist(nested.clone()),
             ))]);
@@ -229,7 +228,7 @@ fn middle_and_right_restore_base_style_before_nested_math_choices() {
         }
     }
 
-    let left = stores.publish_page_nodes_for_test(&[
+    let left = stores.publish_page_nodes(&[
         Node::MathStyle(tex_state::math::MathStyle::Script),
         Node::MathNoad(MathNoad::new(
             NoadKind::LeftDelimiter { delimiter: 0 },
@@ -351,7 +350,7 @@ fn explicit_penalty_suppresses_preceding_bin_penalty() {
     // transaction, but it must still suppress the automatic bin-op penalty.
     let mut stores = setup_universe();
     stores.set_int_param(IntParam::BIN_OP_PENALTY, -3333);
-    let input = stores.publish_page_nodes_for_test(&[
+    let input = stores.publish_page_nodes(&[
         Node::MathNoad(noad(NoadClass::Ord, 'A')),
         Node::MathNoad(noad(NoadClass::Bin, '+')),
         Node::Penalty(1000),

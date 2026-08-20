@@ -25,24 +25,6 @@ pub use packing::{
 };
 pub use vertical_break::{VerticalBreak, VerticalBreakError, vert_break};
 
-#[cfg(test)]
-pub(crate) trait PageListTestExt {
-    fn publish_page_nodes_for_test(
-        &mut self,
-        nodes: &[tex_state::node::Node],
-    ) -> tex_state::node_arena::PageListId;
-}
-
-#[cfg(test)]
-impl PageListTestExt for Universe {
-    fn publish_page_nodes_for_test(
-        &mut self,
-        nodes: &[tex_state::node::Node],
-    ) -> tex_state::node_arena::PageListId {
-        self.publish_page_nodes(nodes)
-    }
-}
-
 /// TeX's infinite badness sentinel.
 pub const INF_BAD: i32 = 10_000;
 

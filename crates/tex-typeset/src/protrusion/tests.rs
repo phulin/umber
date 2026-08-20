@@ -1,5 +1,4 @@
 use super::*;
-use crate::PageListTestExt;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
@@ -62,7 +61,7 @@ fn materializes_margin_kerns_inside_paragraph_skip_glue() {
     let font = state.intern_font(protruding_font());
     state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
     state.set_pdf_font_code(PdfFontCode::Rp, font, b'.', 700);
-    let zero = state.intern_glue(GlueSpec::ZERO);
+    let zero = GlueSpec::ZERO;
     let mut nodes = vec![
         Node::Glue {
             spec: zero,
@@ -138,12 +137,12 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
     let font = state.intern_font(protruding_font());
     state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
     state.set_pdf_font_code(PdfFontCode::Rp, font, b'A', 500);
-    let empty = state.publish_page_nodes_for_test(&[]);
-    let zero_glue = state.intern_glue(GlueSpec::ZERO);
-    let wide_glue = state.intern_glue(GlueSpec {
+    let empty = state.publish_page_nodes(&[]);
+    let zero_glue = GlueSpec::ZERO;
+    let wide_glue = GlueSpec {
         width: sp(1),
         ..GlueSpec::ZERO
-    });
+    };
 
     let transparent = [
         Node::Penalty(123),
