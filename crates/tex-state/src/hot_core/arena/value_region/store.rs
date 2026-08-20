@@ -705,6 +705,15 @@ impl RuntimeValueRootSet {
         self.regions.accounting()
     }
 
+    pub(crate) fn retained_owner_bytes(&self) -> usize {
+        self.regions.regions.first().map_or(0, |root| {
+            self.regions
+                .regions
+                .capacity()
+                .saturating_mul(core::mem::size_of_val(root))
+        })
+    }
+
     #[cfg(test)]
     fn testing_uses(&self, owner: ChunkOwner) -> usize {
         self.regions.testing_uses(owner)

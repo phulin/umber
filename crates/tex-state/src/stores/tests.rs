@@ -494,6 +494,55 @@ fn compact_and_survivor_nodes_preserve_mark_coordinates_until_rollback() {
 }
 
 #[test]
+fn frozen_node_payload_retains_its_deduplicated_runtime_value_regions() {
+    let mut stores = Stores::new();
+    let snapshot = stores.checkpoint();
+    let tokens = stores.intern_token_list_ref_in_domain(
+        &[Token::Char {
+            ch: 'r',
+            cat: Catcode::Other,
+        }],
+        None,
+    );
+    let coordinate = stores
+        .runtime_values
+        .token_coordinate(tokens.id())
+        .expect("new token coordinate resolves");
+    let frozen = stores.freeze_node_list(&[
+        Node::Mark { class: 0, tokens },
+        Node::Mark { class: 1, tokens },
+    ]);
+
+    let roots = frozen
+        .runtime_value_roots()
+        .expect("nonempty value-bearing node payload owns a root set");
+    assert_eq!(roots.accounting().region_owners, 1);
+    let retained = roots.accounting().retained_payload_bytes;
+
+    stores.rollback(&snapshot);
+    assert_eq!(
+        frozen
+            .runtime_value_roots()
+            .expect("payload root set survives registry rollback")
+            .admit_token_list(coordinate)
+            .expect("payload-owned coordinate remains directly admissible")
+            .tokens(),
+        [Token::Char {
+            ch: 'r',
+            cat: Catcode::Other,
+        }]
+    );
+    assert_eq!(
+        frozen
+            .runtime_value_roots()
+            .expect("payload root set survives registry rollback")
+            .accounting()
+            .retained_payload_bytes,
+        retained
+    );
+}
+
+#[test]
 fn node_semantic_ids_exclude_token_provenance() {
     let mut stores = Stores::new();
     let token = Token::Char {

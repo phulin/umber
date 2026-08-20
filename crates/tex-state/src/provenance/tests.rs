@@ -23,7 +23,7 @@ fn freeze_test_nodes(nodes: Vec<Node>, semantic: u64) -> NodeListRef {
     }
     let mut identity = NodeSemanticIdBuilder::new();
     identity.push(|hasher| hasher.u64(semantic));
-    NodeListRef::freeze_builder(nodes, Vec::new(), identity.finish(), needs)
+    NodeListRef::freeze_builder(nodes, Vec::new(), None, identity.finish(), needs)
 }
 
 #[test]

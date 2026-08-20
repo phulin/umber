@@ -3587,15 +3587,29 @@ impl Stores {
     /// immutable compact graph. No aggregate destination is changed if
     /// validation fails.
     pub fn freeze_node_list_ref(&mut self, builder: NodeListBuilder) -> NodeListRef {
+        // A node payload is a canonical value-coordinate consumer. Seal once
+        // at this publication boundary and retain only the regions named by
+        // its direct token/glue fields; child payloads retain their own sets.
+        self.seal_runtime_value_regions();
         let children = builder.direct_children();
         let (semantic_id, needs) = self.validate_and_plan_direct_node_list(&builder, &children);
+        let mut runtime_value_roots = self.runtime_values.empty_root_set();
+        if builder.compact_rows().is_none() {
+            self.retain_runtime_value_roots_in_nodes(&mut runtime_value_roots, builder.as_slice());
+        }
         let frozen = match builder.into_compact_rows() {
             Ok(rows) => {
                 debug_assert!(children.is_empty());
                 debug_assert_eq!(needs, crate::node_arena::SidecarNeeds::default());
                 NodeListRef::freeze_compact_builder(rows, semantic_id)
             }
-            Err(nodes) => NodeListRef::freeze_builder(nodes, children, semantic_id, needs),
+            Err(nodes) => NodeListRef::freeze_builder(
+                nodes,
+                children,
+                Some(runtime_value_roots),
+                semantic_id,
+                needs,
+            ),
         };
         self.node_ref_index.intern(frozen)
     }

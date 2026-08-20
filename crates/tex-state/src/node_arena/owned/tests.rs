@@ -50,7 +50,7 @@ fn freeze(stores: &mut Stores, nodes: impl IntoIterator<Item = Node>) -> NodeLis
 fn testing_ref(node: Node, semantic_id: NodeSemanticId) -> NodeListRef {
     let mut needs = SidecarNeeds::default();
     needs.preflight_and_count(&node);
-    NodeListRef::freeze_builder(vec![node], Vec::new(), semantic_id, needs)
+    NodeListRef::freeze_builder(vec![node], Vec::new(), None, semantic_id, needs)
 }
 
 #[test]

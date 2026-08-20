@@ -12,6 +12,36 @@ use crate::token::{OriginId, Token};
 use crate::world::World;
 
 impl Stores {
+    pub(crate) fn retain_runtime_value_roots_in_nodes(
+        &self,
+        destination: &mut crate::hot_core::arena::store::RuntimeValueRootSet,
+        nodes: &[Node],
+    ) {
+        let mut collector = RuntimeValueRootCollector {
+            registry: &self.runtime_values,
+            source: &self.runtime_value_roots,
+            destination,
+        };
+        for node in nodes {
+            NodeRef::from(node).visit_schema(&mut collector);
+        }
+    }
+
+    pub(crate) fn retain_runtime_value_roots_in_frozen_nodes(
+        &self,
+        destination: &mut crate::hot_core::arena::store::RuntimeValueRootSet,
+        nodes: crate::node_arena::NodeList<'_>,
+    ) {
+        let mut collector = RuntimeValueRootCollector {
+            registry: &self.runtime_values,
+            source: &self.runtime_value_roots,
+            destination,
+        };
+        for node in nodes.iter() {
+            node.visit_schema(&mut collector);
+        }
+    }
+
     /// Detaches TeX82 §§252/283's display from the effective value selected by
     /// `unsave`, while group ownership still keeps that value live. Journal
     /// redo words are replay metadata, not TeX save-stack values: in
@@ -436,6 +466,34 @@ impl Stores {
         };
         let _ = rec;
         receipt
+    }
+}
+
+struct RuntimeValueRootCollector<'a> {
+    registry: &'a crate::hot_core::arena::store::registry::RuntimeValueRegistry,
+    source: &'a crate::hot_core::arena::store::RuntimeValueRootSet,
+    destination: &'a mut crate::hot_core::arena::store::RuntimeValueRootSet,
+}
+
+impl NodeSchemaVisitor for RuntimeValueRootCollector<'_> {
+    fn descriptor(&mut self, _descriptor: &'static NodeDescriptor) {}
+
+    fn handle(&mut self, event: NodeHandleEvent<'_>) {
+        match event.handle {
+            NodeHandle::Glue(id) => self
+                .registry
+                .retain_glue_into(self.source, self.destination, id)
+                .expect("validated node glue must retain its sealed region"),
+            NodeHandle::TokenList(id) => self
+                .registry
+                .retain_token_list_into(self.source, self.destination, id)
+                .expect("validated node tokens must retain their sealed region"),
+            NodeHandle::Font(_)
+            | NodeHandle::NodeList(_)
+            | NodeHandle::Origin(_)
+            | NodeHandle::Origins(_)
+            | NodeHandle::OriginRefs(_) => {}
+        }
     }
 }
 

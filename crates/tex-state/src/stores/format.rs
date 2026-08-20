@@ -2390,6 +2390,7 @@ fn install_frozen_sections(
         })
         .collect::<Result<_, StoreFormatError>>()?;
     let mut storage = crate::node_arena::NodeStorage::default();
+    let mut runtime_value_roots = stores.runtime_values.empty_root_set();
     let mut verified_semantics = std::collections::BTreeMap::new();
     let mut spans = Vec::with_capacity(node_lists.lists.len());
     for (list, expected_id) in node_lists.lists.into_iter().zip(node_lists.semantic_ids) {
@@ -2403,6 +2404,10 @@ fn install_frozen_sections(
             .map(|node| node.restore(&content_ids, &node_ids))
             .collect::<Result<Vec<_>, _>>()?;
         let (start, len) = storage.append_compact_nodes(&nodes);
+        stores.retain_runtime_value_roots_in_frozen_nodes(
+            &mut runtime_value_roots,
+            storage.view(start, len),
+        );
         if start != id.start() || len != id.len() {
             return Err(StoreFormatError::Invalid("frozen node span metadata"));
         }
@@ -2440,6 +2445,7 @@ fn install_frozen_sections(
         storage,
         spans,
         Vec::new(),
+        Some(runtime_value_roots),
     ));
     #[cfg(feature = "profiling")]
     crate::measurement::record_format_restore_work(1, 0, 0);

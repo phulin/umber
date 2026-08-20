@@ -2,7 +2,7 @@
 
 use core::fmt;
 use core::mem::size_of;
-use core::num::NonZeroU32;
+use core::num::{NonZeroU32, NonZeroUsize};
 
 use crate::glue::GlueSpec;
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityError};
@@ -587,6 +587,30 @@ impl RuntimeValueRegistry {
         Ok(())
     }
 
+    pub(crate) fn retain_token_list_into(
+        &self,
+        source: &RuntimeValueRootSet,
+        destination: &mut RuntimeValueRootSet,
+        id: TokenListId,
+    ) -> Result<(), RuntimeValueRegistryError> {
+        destination.retain_token_list_from(
+            source,
+            self.token_coordinate(id)?,
+            NonZeroUsize::MIN,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn retain_glue_into(
+        &self,
+        source: &RuntimeValueRootSet,
+        destination: &mut RuntimeValueRootSet,
+        id: GlueId,
+    ) -> Result<(), RuntimeValueRegistryError> {
+        destination.retain_glue_from(source, self.glue_coordinate(id)?, NonZeroUsize::MIN)?;
+        Ok(())
+    }
+
     /// Rebuilds a generation fork at an inherited published checkpoint.
     ///
     /// The parent arena mark names the source candidate namespace and cannot
@@ -831,7 +855,7 @@ impl RuntimeValueRegistry {
             })
     }
 
-    fn token_coordinate(
+    pub(crate) fn token_coordinate(
         &self,
         id: TokenListId,
     ) -> Result<RuntimeTokenListCoordinate, RuntimeValueRegistryError> {

@@ -31,6 +31,7 @@ pub(crate) struct NodeListPayload {
     pub(crate) storage: NodeStorage,
     semantic_spans: Box<[OwnedSemanticSpan]>,
     children: Box<[NodeListRef]>,
+    runtime_value_roots: Option<crate::hot_core::arena::store::RuntimeValueRootSet>,
     logical_bytes: usize,
     retained_bytes: usize,
 }
@@ -80,7 +81,7 @@ impl NodeListRef {
         };
         Self::from_payload(
             id,
-            NodeListPayload::new(root, NodeStorage::default(), Vec::new(), Vec::new()),
+            NodeListPayload::new(root, NodeStorage::default(), Vec::new(), Vec::new(), None),
             NodeSemanticId::empty(),
         )
     }
@@ -178,7 +179,11 @@ impl NodeListRef {
     /// Reports allocator-retained bytes owned directly by this payload.
     #[must_use]
     pub fn retained_payload_bytes(&self) -> usize {
-        self.payload().retained_bytes
+        self.payload().retained_bytes.saturating_add(
+            self.payload()
+                .runtime_value_roots()
+                .map_or(0, |roots| roots.retained_owner_bytes()),
+        )
     }
 
     /// Resolves a compact child coordinate for the duration of this owner
@@ -250,9 +255,17 @@ impl NodeListRef {
             .expect("live node-list owner must retain its payload")
     }
 
+    #[cfg(test)]
+    pub(crate) fn runtime_value_roots(
+        &self,
+    ) -> Option<&crate::hot_core::arena::store::RuntimeValueRootSet> {
+        self.payload().runtime_value_roots()
+    }
+
     pub(crate) fn freeze_builder(
         mut nodes: Vec<Node>,
         children: Vec<NodeListRef>,
+        runtime_value_roots: Option<crate::hot_core::arena::store::RuntimeValueRootSet>,
         semantic_id: NodeSemanticId,
         needs: SidecarNeeds,
     ) -> Self {
@@ -277,6 +290,7 @@ impl NodeListRef {
                 semantic_id,
             }],
             children,
+            runtime_value_roots,
         );
         Self::from_payload(root_id, payload, semantic_id)
     }
@@ -306,6 +320,7 @@ impl NodeListRef {
                 semantic_id,
             }],
             Vec::new(),
+            None,
         );
         Self::from_payload(root_id, payload, semantic_id)
     }
@@ -394,6 +409,7 @@ fn empty_payload() -> &'static Arc<NodeListPayload> {
             NodeStorage::default(),
             Vec::new(),
             Vec::new(),
+            None,
         ))
     })
 }
@@ -404,6 +420,7 @@ impl NodeListPayload {
         storage: NodeStorage,
         mut semantic_spans: Vec<OwnedSemanticSpan>,
         mut children: Vec<NodeListRef>,
+        runtime_value_roots: Option<crate::hot_core::arena::store::RuntimeValueRootSet>,
     ) -> Self {
         semantic_spans.sort_unstable_by_key(|span| (span.start, span.len));
         for duplicate in semantic_spans.windows(2) {
@@ -450,6 +467,7 @@ impl NodeListPayload {
             storage,
             semantic_spans: semantic_spans.into_boxed_slice(),
             children: children.into_boxed_slice(),
+            runtime_value_roots,
             logical_bytes: usize::try_from(storage_logical)
                 .expect("node-list logical bytes exceed usize")
                 .saturating_add(span_logical)
@@ -481,6 +499,12 @@ impl NodeListPayload {
             .binary_search_by_key(&root, |child| child.payload().root)
             .ok()
             .map(|index| &self.children[index])
+    }
+
+    pub(crate) fn runtime_value_roots(
+        &self,
+    ) -> Option<&crate::hot_core::arena::store::RuntimeValueRootSet> {
+        self.runtime_value_roots.as_ref()
     }
 
     #[cfg(test)]
