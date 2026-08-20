@@ -266,9 +266,9 @@ The builder owns one mutable row stream. General and mixed material uses native
 `Node` rows; an admitted character/kern-only run stays in the same builder as
 an eight-byte inline row and promotes in place if mixed material arrives. At
 freeze, `tex-state` derives direct-child reachability, validates handles,
-computes allocation-independent semantic identity, and move-encodes one
-immutable `NodeListRef`. Mode-list semantic and TeX-physical projections use
-the same builder implementation and retain only their required
+computes allocation-independent semantic identity, and publishes one typed
+page-arena coordinate. Mode-list semantic and TeX-physical projections use the
+same builder implementation and retain only their required
 projection/allocator metadata. Output, effect, observer/diagnostic, format,
 state-identity, terminal, and named-checkpoint barriers materialize immutable
 node sidecars before publication. Subsequent mutation invalidates them; the
@@ -306,7 +306,7 @@ output-owner gate.
 
 Issue `umber2-ujwo` closed that output-owner gate. Fresh ordinary and packed
 shipout now create one operation-local `tex-out::DviPagePlanCoEmitter` beside
-the artifact encoder. The existing immutable `NodeListRef` traversal feeds
+the artifact encoder. The completed page-arena traversal feeds
 artifact bytes and page-local DVI decisions together: font registration,
 characters and ligatures, kerns, glue, rules, boxes, math movement, and DVI
 specials are compiled without reading the completed artifact stream. The

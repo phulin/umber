@@ -26,6 +26,7 @@ pub use object::{
 pub use outline::PdfOutlineRecord;
 pub use thread::{PdfThreadBeadRecord, PdfThreadRecord};
 
+use std::hash::Hash;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -749,7 +750,6 @@ pub struct PdfPageRecord {
 }
 
 /// Immutable captured box and canonical identities for one `\pdfxform`.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfFormRecord<G> {
     object: u32,
     resource: u32,
@@ -761,6 +761,73 @@ pub struct PdfFormRecord<G> {
     attr: Option<PdfTokenParameter>,
     resources: Option<PdfTokenParameter>,
     immediate: bool,
+}
+
+impl<G> Clone for PdfFormRecord<G> {
+    fn clone(&self) -> Self {
+        Self {
+            object: self.object,
+            resource: self.resource,
+            box_list: self.box_list,
+            box_semantic_id: self.box_semantic_id,
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+            attr: self.attr.clone(),
+            resources: self.resources.clone(),
+            immediate: self.immediate,
+        }
+    }
+}
+
+impl<G> std::fmt::Debug for PdfFormRecord<G> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PdfFormRecord")
+            .field("object", &self.object)
+            .field("resource", &self.resource)
+            .field("box_list", &self.box_list)
+            .field("box_semantic_id", &self.box_semantic_id)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("depth", &self.depth)
+            .field("attr", &self.attr)
+            .field("resources", &self.resources)
+            .field("immediate", &self.immediate)
+            .finish()
+    }
+}
+
+impl<G> PartialEq for PdfFormRecord<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.object == other.object
+            && self.resource == other.resource
+            && self.box_list == other.box_list
+            && self.box_semantic_id == other.box_semantic_id
+            && self.width == other.width
+            && self.height == other.height
+            && self.depth == other.depth
+            && self.attr == other.attr
+            && self.resources == other.resources
+            && self.immediate == other.immediate
+    }
+}
+
+impl<G> Eq for PdfFormRecord<G> {}
+
+impl<G> std::hash::Hash for PdfFormRecord<G> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.object.hash(state);
+        self.resource.hash(state);
+        self.box_list.hash(state);
+        self.box_semantic_id.hash(state);
+        self.width.hash(state);
+        self.height.hash(state);
+        self.depth.hash(state);
+        self.attr.hash(state);
+        self.resources.hash(state);
+        self.immediate.hash(state);
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

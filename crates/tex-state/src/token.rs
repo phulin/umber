@@ -251,7 +251,7 @@ impl TokenWord {
         }
     }
 
-    pub(crate) const fn raw(self) -> u32 {
+    pub const fn raw(self) -> u32 {
         self.0
     }
 

@@ -1155,7 +1155,7 @@ impl<Glue, Tokens> Whatsit<Glue, Tokens> {
 /// Rare article-thread marker kept out of the hot inline node representation.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfThreadNode<Tokens = NodeTokenList> {
-    pub identifier: crate::PdfActionIdentifier,
+    pub identifier: NodePdfActionIdentifier,
     pub dimensions: crate::PdfAnnotationDimensions,
     pub attributes: Tokens,
     pub running: bool,
@@ -1164,9 +1164,17 @@ pub struct PdfThreadNode<Tokens = NodeTokenList> {
 /// Rare destination marker kept out of the hot inline node representation.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct PdfDestinationNode {
-    pub identifier: crate::PdfActionIdentifier,
+    pub identifier: NodePdfActionIdentifier,
     pub structure: Option<u32>,
     pub kind: PdfDestinationKind,
+}
+
+/// A navigation identifier copied into the semantic lifetime of a node.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum NodePdfActionIdentifier {
+    Name(NodeTokenList),
+    Number(u32),
+    Raw(NodeTokenList),
 }
 
 /// A page destination view, retained until final traversal resolves geometry.

@@ -469,8 +469,8 @@ paragraph topology again. Post-line-break processing moves both channels with
 paired cursors: the semantic channel supplies boxes and output, while the
 physical channel preserves discretionary and ligature topology solely for
 diagnostics. Nested discretionary replacement metrics use an explicit cursor
-stack, and final `NodeListRef` release drains uniquely owned descendant
-payloads with an explicit stack. Analysis and teardown therefore remain
+stack, and completed-page release walks the exact page-arena closure with an
+explicit stack. Analysis and teardown therefore remain
 stack-safe at TeX's deep-list limits, while storage is linear in paragraph
 nodes and legal break sites.
 
