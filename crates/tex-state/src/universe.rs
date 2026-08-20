@@ -2,21 +2,23 @@
 
 use crate::command_context::CommandContext;
 use crate::definition_arena::{DefinitionAllocationError, DefinitionId};
-use crate::durable_arena::{DurableAllocationError, GlueId, TokenListId};
+use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
 use crate::env::group::{GroupFrame, GroupKind};
 use crate::env::{AssignmentScope, CodeTableKind, StateError};
 use crate::generation::{GenerationBrand, GenerationOwner, with_generation};
 use crate::glue::GlueSpec;
 use crate::interner::{
-    Interner, InternerAccessError, InternerBudget, InternerError, InternerRetirement,
-    InternerUsage, SymbolId,
+    ControlSequenceKind, Interner, InternerAccessError, InternerBudget, InternerError,
+    InternerRetirement, InternerUsage, Symbol, SymbolId,
 };
 use crate::journal::JournalCursor;
 use crate::meaning::MeaningWord;
 use crate::node_arena::{DurableListId, NodeArenaError, NodeList};
+use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
 use crate::stores::{StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
+use crate::world::World;
 
 #[cfg(test)]
 #[path = "universe/tests.rs"]
@@ -32,6 +34,16 @@ pub enum UniverseError {
     NodeArena(NodeArenaError),
     State(StateError),
     Retired,
+}
+
+/// Current engine interaction mode.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum InteractionMode {
+    Batch,
+    Nonstop,
+    Scroll,
+    #[default]
+    ErrorStop,
 }
 
 /// One explicit macro-definition escape root in a promotion batch.
@@ -80,6 +92,7 @@ pub struct PromotionReceipt<G> {
     pub definitions: Vec<DefinitionId<G>>,
     pub token_lists: Vec<TokenListId<G>>,
     pub glue: Vec<GlueId<G>>,
+    pub provenance: Vec<ProvenanceId<G>>,
 }
 
 impl From<InternerError> for UniverseError {
@@ -122,6 +135,8 @@ impl From<NodeArenaError> for UniverseError {
 pub struct Universe<G> {
     interner: Interner,
     core: Option<StateCore<G>>,
+    world: World,
+    interaction_mode: InteractionMode,
 }
 
 impl<G> Universe<G> {
@@ -129,6 +144,8 @@ impl<G> Universe<G> {
         Self {
             interner,
             core: Some(core),
+            world: World::default(),
+            interaction_mode: InteractionMode::default(),
         }
     }
 
@@ -150,6 +167,55 @@ impl<G> Universe<G> {
 
     pub fn resolve_symbol(&self, symbol: SymbolId) -> Result<&str, UniverseError> {
         Ok(self.interner.resolve_id(symbol)?)
+    }
+
+    #[must_use]
+    pub fn resolve(&self, symbol: Symbol) -> Option<&str> {
+        self.interner.resolve_local(symbol)
+    }
+
+    #[must_use]
+    pub fn qualify_symbol(&self, symbol: Symbol) -> Option<SymbolId> {
+        self.interner.qualify_local(symbol)
+    }
+
+    #[must_use]
+    pub fn control_sequence_kind(&self, symbol: Symbol) -> Option<ControlSequenceKind> {
+        self.qualify_symbol(symbol)
+            .and_then(|id| self.interner.kind_id(id).ok())
+    }
+
+    pub fn meaning(
+        &self,
+        symbol: Symbol,
+    ) -> Result<crate::meaning::ResolvedMeaning<G>, UniverseError> {
+        Ok(self.command_context()?.meaning(symbol)?)
+    }
+
+    #[must_use]
+    pub const fn world(&self) -> &World {
+        &self.world
+    }
+
+    pub const fn world_mut(&mut self) -> &mut World {
+        &mut self.world
+    }
+
+    #[must_use]
+    pub const fn interaction_mode(&self) -> InteractionMode {
+        self.interaction_mode
+    }
+
+    pub const fn set_interaction_mode(&mut self, mode: InteractionMode) {
+        self.interaction_mode = mode;
+    }
+
+    #[must_use]
+    pub fn int_param(&self, parameter: crate::env::banks::IntParam) -> i32 {
+        self.core
+            .as_ref()
+            .and_then(|core| core.admit().state().integer_parameter(parameter).ok())
+            .unwrap_or(0)
     }
 
     pub fn allocate_definition(
@@ -186,6 +252,18 @@ impl<G> Universe<G> {
             .allocate_glue(value)?)
     }
 
+    pub fn allocate_provenance(
+        &mut self,
+        value: OriginRecord,
+    ) -> Result<ProvenanceId<G>, UniverseError> {
+        Ok(self
+            .core
+            .as_mut()
+            .ok_or(UniverseError::Retired)?
+            .admit_mut()?
+            .allocate_provenance(value)?)
+    }
+
     /// Promotes only the caller's declared escaping roots.
     ///
     /// All source traversal happens before this boundary. The state core
@@ -197,6 +275,7 @@ impl<G> Universe<G> {
         definitions: &[DefinitionPromotion<'_>],
         token_lists: &[TokenListPromotion<'_>],
         glue_values: &[GlueSpec],
+        provenance: &[OriginRecord],
     ) -> Result<PromotionReceipt<G>, PromotionError> {
         self.core
             .as_mut()
@@ -206,7 +285,7 @@ impl<G> Universe<G> {
                 StateError::GenerationInUse => PromotionError::GenerationInUse,
                 _ => PromotionError::AllocationFailed,
             })?
-            .promote_values(definitions, token_lists, glue_values)
+            .promote_values(definitions, token_lists, glue_values, provenance)
     }
 
     pub fn assign_meaning(
@@ -371,6 +450,14 @@ impl<G> Universe<G> {
     /// Retires the session epoch and revision generation together. The
     /// aggregate remains only as a typed retired shell which rejects reuse.
     pub fn retire(&mut self) -> Result<UniverseRetirement, UniverseError> {
+        if !self
+            .core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .can_retire()
+        {
+            return Err(UniverseError::State(StateError::GenerationInUse));
+        }
         let core = self.core.take().ok_or(UniverseError::Retired)?;
         let interner = self.interner.retire()?;
         Ok(UniverseRetirement {

@@ -1,11 +1,12 @@
 //! Coarse revision-generation owner and admitted state views.
 
 use crate::definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
-use crate::durable_arena::{DurableAllocationError, GlueId, TokenListId};
+use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
 use crate::env::{DenseState, StateError};
 use crate::generation::{Generation, GenerationOwner, GenerationRetirement};
 use crate::glue::GlueSpec;
 use crate::node_arena::{DurableListId, DurableNodeArena, NodeArenaError, NodeList};
+use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
 
 #[cfg(test)]
@@ -84,6 +85,11 @@ impl<G> StateCore<G> {
     pub(crate) fn owns_generation(&self, owner: &GenerationOwner<G>) -> bool {
         self.generation.same_generation(owner)
     }
+
+    #[must_use]
+    pub(crate) fn can_retire(&self) -> bool {
+        self.generation.is_unique()
+    }
 }
 
 /// Immutable, already-admitted hot view.
@@ -120,6 +126,10 @@ impl<'a, G> AdmittedState<'a, G> {
         id: DurableListId<G>,
     ) -> Result<NodeList<'a, G, GlueId<G>, TokenListId<G>>, NodeArenaError> {
         self.nodes.get(id)
+    }
+
+    pub(crate) fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
+        self.generation.provenance().get(id)
     }
 }
 
@@ -170,6 +180,13 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.nodes.get(id)
     }
 
+    pub(crate) fn allocate_provenance(
+        &mut self,
+        value: OriginRecord,
+    ) -> Result<ProvenanceId<G>, DurableAllocationError> {
+        self.generation.provenance_mut().allocate(value)
+    }
+
     /// Promotes one already-validated batch while this unique admitted borrow
     /// prevents any consumer from observing partial destination state.
     pub(crate) fn promote_values(
@@ -177,6 +194,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         definitions: &[crate::universe::DefinitionPromotion<'_>],
         token_lists: &[crate::universe::TokenListPromotion<'_>],
         glue_values: &[GlueSpec],
+        provenance: &[OriginRecord],
     ) -> Result<crate::universe::PromotionReceipt<G>, crate::universe::PromotionError> {
         let definition_words = definitions.iter().try_fold(0usize, |total, definition| {
             total
@@ -205,10 +223,14 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation
             .glue_mut()
             .reserve_batch(glue_values.len())?;
+        self.generation
+            .provenance_mut()
+            .reserve_batch(provenance.len())?;
 
         let mut promoted_definitions = Vec::new();
         let mut promoted_token_lists = Vec::new();
         let mut promoted_glue = Vec::new();
+        let mut promoted_provenance = Vec::new();
         promoted_definitions
             .try_reserve_exact(definitions.len())
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
@@ -217,6 +239,9 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
         promoted_glue
             .try_reserve_exact(glue_values.len())
+            .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
+        promoted_provenance
+            .try_reserve_exact(provenance.len())
             .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
 
         for definition in definitions {
@@ -243,11 +268,20 @@ impl<'a, G> AdmittedStateMut<'a, G> {
                     .expect("the complete glue promotion batch was reserved"),
             );
         }
+        for &record in provenance {
+            promoted_provenance.push(
+                self.generation
+                    .provenance_mut()
+                    .allocate(record)
+                    .expect("the complete provenance promotion batch was reserved"),
+            );
+        }
 
         Ok(crate::universe::PromotionReceipt {
             definitions: promoted_definitions,
             token_lists: promoted_token_lists,
             glue: promoted_glue,
+            provenance: promoted_provenance,
         })
     }
 }

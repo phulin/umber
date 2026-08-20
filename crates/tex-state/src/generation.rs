@@ -93,6 +93,14 @@ impl<G> GenerationOwner<G> {
         Arc::get_mut(&mut self.generation)
     }
 
+    /// Returns whether this is the only coarse owner of the generation.
+    ///
+    /// This is a cold lifecycle check, never a per-value access path.
+    #[must_use]
+    pub(crate) fn is_unique(&self) -> bool {
+        Arc::strong_count(&self.generation) == 1
+    }
+
     pub(crate) fn retire(self) -> Result<GenerationRetirement, Self> {
         match Arc::try_unwrap(self.generation) {
             Ok(generation) => Ok(generation.retire()),

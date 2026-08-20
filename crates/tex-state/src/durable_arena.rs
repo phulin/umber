@@ -268,6 +268,18 @@ impl<G> ProvenanceArena<G> {
         Ok(ProvenanceId::from_row(row))
     }
 
+    /// Reserves a complete promotion batch without publishing a row.
+    pub(crate) fn reserve_batch(&mut self, rows: usize) -> Result<(), DurableAllocationError> {
+        self.rows
+            .len()
+            .checked_add(rows)
+            .and_then(|len| u32::try_from(len).ok())
+            .ok_or(DurableAllocationError::CapacityOverflow)?;
+        self.rows
+            .try_reserve(rows)
+            .map_err(|_| DurableAllocationError::AllocationFailed)
+    }
+
     #[must_use]
     #[inline(always)]
     pub(crate) fn get(&self, id: ProvenanceId<G>) -> OriginRecord {

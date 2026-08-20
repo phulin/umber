@@ -6,7 +6,8 @@ pub mod banks;
 pub(crate) mod group;
 
 use banks::{
-    BankCell, BankError, DenseBank, LEVEL_ONE, PARAMETER_COUNT, PagedDenseBank, RegisterBank,
+    BankCell, BankError, DenseBank, IntParam, LEVEL_ONE, PARAMETER_COUNT, PagedDenseBank,
+    RegisterBank,
 };
 use group::{GroupFrame, GroupKind, GroupMismatch};
 
@@ -237,6 +238,14 @@ impl<G> DenseState<G> {
     #[inline(always)]
     pub(crate) fn dimension(&self, index: u16) -> Result<Scaled, StateError> {
         Ok(self.dimensions.get(index)?.value)
+    }
+
+    #[inline(always)]
+    pub(crate) fn integer_parameter(&self, parameter: IntParam) -> Result<i32, StateError> {
+        Ok(self
+            .integer_parameters
+            .get(u32::from(parameter.raw()))?
+            .value)
     }
 
     pub(crate) fn assign_dimension(

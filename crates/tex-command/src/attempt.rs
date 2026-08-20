@@ -9,10 +9,11 @@ use core::num::NonZeroU64;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tex_state::glue::GlueSpec;
+use tex_state::provenance::OriginRecord;
 use tex_state::token::{TokenWord, TracedTokenWord};
 use tex_state::{
-    DefinitionId, DefinitionPromotion, GenerationOwner, GlueId, PromotionError, TokenListId,
-    TokenListPromotion, Universe,
+    DefinitionId, DefinitionPromotion, GenerationOwner, GlueId, PromotionError, ProvenanceId,
+    TokenListId, TokenListPromotion, Universe,
 };
 
 #[cfg(test)]
@@ -64,7 +65,17 @@ macro_rules! attempt_id {
 attempt_id!(AttemptTokenListId);
 attempt_id!(AttemptGlueId);
 attempt_id!(AttemptDefinitionId);
+attempt_id!(AttemptArgumentRecordId);
 attempt_id!(AttemptNameId);
+attempt_id!(AttemptProvenanceId);
+
+/// Provenance beside one attempt token: either an already-admitted compact
+/// origin or a typed row owned by this attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AttemptOrigin {
+    Admitted(tex_state::token::OriginId),
+    Local(AttemptProvenanceId),
+}
 
 /// A typed open token-builder cursor. It names no allocation of its own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,13 +91,18 @@ pub(crate) struct AttemptTokenBuilder {
 pub(crate) struct AttemptMark {
     key: NonZeroU64,
     traced_words: u32,
+    traced_origins: u32,
     token_scratch: u32,
+    origin_scratch: u32,
     token_builders: u32,
     token_lists: u32,
     glue_values: u32,
     definitions: u32,
+    argument_words: u32,
+    argument_records: u32,
     name_bytes: u32,
     names: u32,
+    provenance: u32,
 }
 
 /// Invalid foreign coordinates or bounded-capacity failure.
@@ -148,13 +164,18 @@ struct AttemptRow<T> {
 pub(crate) struct AttemptArena<G> {
     key: AttemptKey,
     traced_words: Vec<TracedTokenWord>,
+    traced_origins: Vec<Option<AttemptProvenanceId>>,
     token_scratch: Vec<TracedTokenWord>,
+    origin_scratch: Vec<Option<AttemptProvenanceId>>,
     token_builders: Vec<AttemptTokenBuilder>,
     token_lists: Vec<AttemptRow<AttemptRange>>,
     glue_values: Vec<AttemptRow<GlueSpec>>,
     definitions: Vec<AttemptRow<AttemptDefinition>>,
+    argument_words: Vec<AttemptTokenListId>,
+    argument_records: Vec<AttemptRow<AttemptRange>>,
     name_bytes: Vec<u8>,
     names: Vec<AttemptRow<AttemptRange>>,
+    provenance: Vec<AttemptRow<OriginRecord>>,
     _generation: PhantomData<fn(&G) -> &G>,
 }
 
@@ -163,13 +184,18 @@ impl<G> Default for AttemptArena<G> {
         Self {
             key: AttemptKey::fresh(),
             traced_words: Vec::new(),
+            traced_origins: Vec::new(),
             token_scratch: Vec::new(),
+            origin_scratch: Vec::new(),
             token_builders: Vec::new(),
             token_lists: Vec::new(),
             glue_values: Vec::new(),
             definitions: Vec::new(),
+            argument_words: Vec::new(),
+            argument_records: Vec::new(),
             name_bytes: Vec::new(),
             names: Vec::new(),
+            provenance: Vec::new(),
             _generation: PhantomData,
         }
     }
@@ -182,8 +208,12 @@ impl<G> AttemptArena<G> {
             key: self.key.0,
             traced_words: u32::try_from(self.traced_words.len())
                 .expect("attempt traced-word length is bounded"),
+            traced_origins: u32::try_from(self.traced_origins.len())
+                .expect("attempt traced-origin length is bounded"),
             token_scratch: u32::try_from(self.token_scratch.len())
                 .expect("attempt token-scratch length is bounded"),
+            origin_scratch: u32::try_from(self.origin_scratch.len())
+                .expect("attempt origin-scratch length is bounded"),
             token_builders: u32::try_from(self.token_builders.len())
                 .expect("attempt token-builder length is bounded"),
             token_lists: u32::try_from(self.token_lists.len())
@@ -192,9 +222,15 @@ impl<G> AttemptArena<G> {
                 .expect("attempt glue length is bounded"),
             definitions: u32::try_from(self.definitions.len())
                 .expect("attempt definition length is bounded"),
+            argument_words: u32::try_from(self.argument_words.len())
+                .expect("attempt argument-word length is bounded"),
+            argument_records: u32::try_from(self.argument_records.len())
+                .expect("attempt argument-record length is bounded"),
             name_bytes: u32::try_from(self.name_bytes.len())
                 .expect("attempt name-byte length is bounded"),
             names: u32::try_from(self.names.len()).expect("attempt name length is bounded"),
+            provenance: u32::try_from(self.provenance.len())
+                .expect("attempt provenance length is bounded"),
         }
     }
 
@@ -205,25 +241,36 @@ impl<G> AttemptArena<G> {
         }
         let lengths = [
             (mark.traced_words as usize, self.traced_words.len()),
+            (mark.traced_origins as usize, self.traced_origins.len()),
             (mark.token_scratch as usize, self.token_scratch.len()),
+            (mark.origin_scratch as usize, self.origin_scratch.len()),
             (mark.token_builders as usize, self.token_builders.len()),
             (mark.token_lists as usize, self.token_lists.len()),
             (mark.glue_values as usize, self.glue_values.len()),
             (mark.definitions as usize, self.definitions.len()),
+            (mark.argument_words as usize, self.argument_words.len()),
+            (mark.argument_records as usize, self.argument_records.len()),
             (mark.name_bytes as usize, self.name_bytes.len()),
             (mark.names as usize, self.names.len()),
+            (mark.provenance as usize, self.provenance.len()),
         ];
         if lengths.iter().any(|(mark, live)| mark > live) {
             return Err(AttemptError::InvalidCoordinate);
         }
         // Child coordinates disappear before their backing suffixes.
         self.names.truncate(mark.names as usize);
+        self.provenance.truncate(mark.provenance as usize);
+        self.argument_records
+            .truncate(mark.argument_records as usize);
+        self.argument_words.truncate(mark.argument_words as usize);
         self.definitions.truncate(mark.definitions as usize);
         self.glue_values.truncate(mark.glue_values as usize);
         self.token_lists.truncate(mark.token_lists as usize);
         self.token_builders.truncate(mark.token_builders as usize);
         self.token_scratch.truncate(mark.token_scratch as usize);
+        self.origin_scratch.truncate(mark.origin_scratch as usize);
         self.traced_words.truncate(mark.traced_words as usize);
+        self.traced_origins.truncate(mark.traced_origins as usize);
         self.name_bytes.truncate(mark.name_bytes as usize);
         Ok(())
     }
@@ -251,6 +298,29 @@ impl<G> AttemptArena<G> {
         builder: AttemptTokenBuilder,
         word: TracedTokenWord,
     ) -> Result<(), AttemptError> {
+        self.push_token_parts(builder, word, None)
+    }
+
+    pub(crate) fn push_token_with_local_origin(
+        &mut self,
+        builder: AttemptTokenBuilder,
+        word: TokenWord,
+        origin: AttemptProvenanceId,
+    ) -> Result<(), AttemptError> {
+        self.provenance(origin)?;
+        self.push_token_parts(
+            builder,
+            TracedTokenWord::from_parts(word, tex_state::token::OriginId::UNKNOWN),
+            Some(origin),
+        )
+    }
+
+    fn push_token_parts(
+        &mut self,
+        builder: AttemptTokenBuilder,
+        word: TracedTokenWord,
+        origin: Option<AttemptProvenanceId>,
+    ) -> Result<(), AttemptError> {
         self.validate_key(builder.key)?;
         if self.token_builders.last() != Some(&builder)
             || builder.start as usize > self.token_scratch.len()
@@ -260,7 +330,11 @@ impl<G> AttemptArena<G> {
         self.token_scratch
             .try_reserve(1)
             .map_err(|_| AttemptError::AllocationFailed)?;
+        self.origin_scratch
+            .try_reserve(1)
+            .map_err(|_| AttemptError::AllocationFailed)?;
         self.token_scratch.push(word);
+        self.origin_scratch.push(origin);
         Ok(())
     }
 
@@ -283,12 +357,18 @@ impl<G> AttemptArena<G> {
         self.traced_words
             .try_reserve(len)
             .map_err(|_| AttemptError::AllocationFailed)?;
+        self.traced_origins
+            .try_reserve(len)
+            .map_err(|_| AttemptError::AllocationFailed)?;
         self.token_lists
             .try_reserve(1)
             .map_err(|_| AttemptError::AllocationFailed)?;
         self.traced_words
             .extend_from_slice(&self.token_scratch[start..]);
+        self.traced_origins
+            .extend_from_slice(&self.origin_scratch[start..]);
         self.token_scratch.truncate(start);
+        self.origin_scratch.truncate(start);
         self.token_builders.pop();
         self.token_lists.push(AttemptRow {
             serial: id.serial,
@@ -342,6 +422,56 @@ impl<G> AttemptArena<G> {
         Ok(id)
     }
 
+    pub(crate) fn allocate_provenance(
+        &mut self,
+        value: OriginRecord,
+    ) -> Result<AttemptProvenanceId, AttemptError> {
+        let id = AttemptProvenanceId::new(self.key, self.provenance.len())?;
+        self.provenance
+            .try_reserve(1)
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        self.provenance.push(AttemptRow {
+            serial: id.serial,
+            value,
+        });
+        Ok(id)
+    }
+
+    pub(crate) fn provenance(&self, id: AttemptProvenanceId) -> Result<OriginRecord, AttemptError> {
+        self.validate_key(id.key)?;
+        self.provenance
+            .get(id.index())
+            .copied()
+            .filter(|row| row.serial == id.serial)
+            .map(|row| row.value)
+            .ok_or(AttemptError::InvalidCoordinate)
+    }
+
+    pub(crate) fn token_origin(
+        &self,
+        id: AttemptTokenListId,
+        index: usize,
+    ) -> Result<AttemptOrigin, AttemptError> {
+        self.validate_key(id.key)?;
+        let range = self
+            .token_lists
+            .get(id.index())
+            .copied()
+            .filter(|row| row.serial == id.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?
+            .value;
+        if index >= range.len as usize {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        let absolute = range.start as usize + index;
+        match self.traced_origins[absolute] {
+            Some(origin) => Ok(AttemptOrigin::Local(origin)),
+            None => Ok(AttemptOrigin::Admitted(
+                self.traced_words[absolute].origin(),
+            )),
+        }
+    }
+
     pub(crate) fn glue(&self, id: AttemptGlueId) -> Result<GlueSpec, AttemptError> {
         self.validate_key(id.key)?;
         self.glue_values
@@ -371,6 +501,44 @@ impl<G> AttemptArena<G> {
             },
         });
         Ok(id)
+    }
+
+    /// Stores one macro activation's argument ranges without cloning tokens.
+    pub(crate) fn allocate_arguments(
+        &mut self,
+        arguments: &[AttemptTokenListId],
+    ) -> Result<AttemptArgumentRecordId, AttemptError> {
+        for &argument in arguments {
+            self.token_words(argument)?;
+        }
+        let range = AttemptRange::checked(self.argument_words.len(), arguments.len())?;
+        let id = AttemptArgumentRecordId::new(self.key, self.argument_records.len())?;
+        self.argument_words
+            .try_reserve(arguments.len())
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        self.argument_records
+            .try_reserve(1)
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        self.argument_words.extend_from_slice(arguments);
+        self.argument_records.push(AttemptRow {
+            serial: id.serial,
+            value: range,
+        });
+        Ok(id)
+    }
+
+    pub(crate) fn arguments(
+        &self,
+        id: AttemptArgumentRecordId,
+    ) -> Result<&[AttemptTokenListId], AttemptError> {
+        self.validate_key(id.key)?;
+        let row = self
+            .argument_records
+            .get(id.index())
+            .copied()
+            .filter(|row| row.serial == id.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        row.value.resolve(&self.argument_words)
     }
 
     pub(crate) fn allocate_name(&mut self, name: &str) -> Result<AttemptNameId, AttemptError> {
@@ -412,13 +580,16 @@ impl<G> AttemptArena<G> {
         let mut token_relocation = vec![None; self.token_lists.len()];
         let mut glue_relocation = vec![None; self.glue_values.len()];
         let mut definition_relocation = vec![None; self.definitions.len()];
+        let mut provenance_relocation = vec![None; self.provenance.len()];
         let mut token_scheduled = vec![false; self.token_lists.len()];
         let mut glue_scheduled = vec![false; self.glue_values.len()];
         let mut definition_scheduled = vec![false; self.definitions.len()];
+        let mut provenance_scheduled = vec![false; self.provenance.len()];
         let mut token_sources = Vec::<(AttemptTokenListId, Vec<TokenWord>)>::new();
         let mut glue_sources = Vec::<(AttemptGlueId, GlueSpec)>::new();
         let mut definition_sources =
             Vec::<(AttemptDefinitionId, Vec<TokenWord>, Vec<TokenWord>)>::new();
+        let mut provenance_sources = Vec::<(AttemptProvenanceId, OriginRecord)>::new();
 
         for &id in roots.token_lists {
             self.collect_token_source(id, &mut token_scheduled, &mut token_sources)?;
@@ -457,6 +628,17 @@ impl<G> AttemptArena<G> {
             let replacement_text = self.semantic_words(definition.replacement_text)?;
             definition_sources.push((id, parameter_text, replacement_text));
         }
+        for &id in roots.provenance {
+            self.validate_key(id.key)?;
+            let scheduled = provenance_scheduled
+                .get_mut(id.index())
+                .ok_or(AttemptError::InvalidCoordinate)?;
+            let record = self.provenance(id)?;
+            if !*scheduled {
+                *scheduled = true;
+                provenance_sources.push((id, record));
+            }
+        }
 
         let definitions = definition_sources
             .iter()
@@ -475,7 +657,12 @@ impl<G> AttemptArena<G> {
             .iter()
             .map(|(_, glue)| *glue)
             .collect::<Vec<_>>();
-        let receipt = universe.promote_values(&definitions, &token_lists, &glue_values)?;
+        let provenance = provenance_sources
+            .iter()
+            .map(|(_, record)| *record)
+            .collect::<Vec<_>>();
+        let receipt =
+            universe.promote_values(&definitions, &token_lists, &glue_values, &provenance)?;
 
         for ((source, _), destination) in token_sources.iter().zip(receipt.token_lists) {
             token_relocation[source.index()] = Some(destination);
@@ -485,6 +672,9 @@ impl<G> AttemptArena<G> {
         }
         for ((source, _, _), destination) in definition_sources.iter().zip(receipt.definitions) {
             definition_relocation[source.index()] = Some(destination);
+        }
+        for ((source, _), destination) in provenance_sources.iter().zip(receipt.provenance) {
+            provenance_relocation[source.index()] = Some(destination);
         }
 
         Ok(AttemptPromotion {
@@ -502,6 +692,11 @@ impl<G> AttemptArena<G> {
                 .definitions
                 .iter()
                 .map(|id| definition_relocation[id.index()].expect("declared root was promoted"))
+                .collect(),
+            provenance: roots
+                .provenance
+                .iter()
+                .map(|id| provenance_relocation[id.index()].expect("declared root was promoted"))
                 .collect(),
         })
     }
@@ -547,6 +742,7 @@ pub(crate) struct AttemptEscapeRoots<'a> {
     pub(crate) token_lists: &'a [AttemptTokenListId],
     pub(crate) glue: &'a [AttemptGlueId],
     pub(crate) definitions: &'a [AttemptDefinitionId],
+    pub(crate) provenance: &'a [AttemptProvenanceId],
 }
 
 /// Durable coordinates returned in the caller's declared root order.
@@ -555,6 +751,7 @@ pub(crate) struct AttemptPromotion<G> {
     pub(crate) token_lists: Vec<TokenListId<G>>,
     pub(crate) glue: Vec<GlueId<G>>,
     pub(crate) definitions: Vec<DefinitionId<G>>,
+    pub(crate) provenance: Vec<ProvenanceId<G>>,
 }
 
 /// Opaque owner transferred between consecutive command operations.

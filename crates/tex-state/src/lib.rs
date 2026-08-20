@@ -130,7 +130,7 @@ pub use dependency::{
     DependencyRuntime, DependencyTracker, DependencyValidation, DependencyValue,
     DependencyWorldField, ObservedDependency, TrackedRegionBarrier,
 };
-pub use durable_arena::{DurableAllocationError, GlueId, TokenListId};
+pub use durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
 pub use effect_journal::EffectJournal;
 pub use engine_state::{EngineMode, EngineStateSnapshot};
 pub use env::group::{GroupFrame, GroupKind, GroupMismatch};
@@ -169,8 +169,8 @@ pub use source_fragments::{
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
 pub use universe::{
-    DefinitionPromotion, PromotionError, PromotionReceipt, TokenListPromotion, Universe,
-    UniverseError, UniverseRetirement, with_universe,
+    DefinitionPromotion, InteractionMode, PromotionError, PromotionReceipt, TokenListPromotion,
+    Universe, UniverseError, UniverseRetirement, with_universe,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

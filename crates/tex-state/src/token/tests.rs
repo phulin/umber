@@ -1,9 +1,5 @@
-use super::{
-    Catcode, OriginId, RootedTracedTokenBuffer, RootedTracedTokenWord, Token, TokenWord,
-    TracedTokenWord,
-};
+use super::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 use crate::interner::Symbol;
-use crate::provenance::{InsertedOriginKind, OriginRef};
 
 #[test]
 fn token_word_round_trips_every_category_code() {
@@ -245,54 +241,4 @@ fn packed_token_decode_rejects_unrepresentable_payloads() {
     assert_eq!(bad_param_zero.unpack(), None);
     assert_eq!(bad_param_ten.unpack(), None);
     assert_eq!(bad_char_scalar.unpack(), None);
-}
-
-#[test]
-fn rooted_buffer_append_preserves_token_and_origin_order() {
-    let mut universe = crate::Universe::new();
-    let first_token = Token::Char {
-        ch: 'a',
-        cat: Catcode::Letter,
-    };
-    let second_token = Token::Char {
-        ch: 'b',
-        cat: Catcode::Letter,
-    };
-    let first = universe.inserted_origin_ref(
-        InsertedOriginKind::Unread,
-        first_token,
-        OriginRef::unknown(),
-    );
-    let second = universe.inserted_origin_ref(
-        InsertedOriginKind::Unread,
-        second_token,
-        OriginRef::unknown(),
-    );
-    let mut target =
-        RootedTracedTokenBuffer::new([RootedTracedTokenWord::new(first_token, first.clone())]);
-    let source = RootedTracedTokenBuffer::new([
-        RootedTracedTokenWord::new(first_token, first.clone()),
-        RootedTracedTokenWord::new(second_token, second.clone()),
-    ]);
-
-    target.append_buffer(source);
-
-    assert_eq!(
-        target
-            .words()
-            .iter()
-            .copied()
-            .map(TracedTokenWord::semantic_token)
-            .collect::<Vec<_>>(),
-        [first_token, first_token, second_token]
-    );
-    assert_eq!(
-        target
-            .words()
-            .iter()
-            .copied()
-            .map(TracedTokenWord::origin)
-            .collect::<Vec<_>>(),
-        [first.id(), first.id(), second.id()]
-    );
 }

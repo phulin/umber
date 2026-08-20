@@ -1,12 +1,14 @@
 //! Already-admitted, interpretation-neutral command-state borrow.
 
 use crate::definition_arena::{DefinitionId, DefinitionView};
-use crate::durable_arena::{GlueId, TokenListId};
+use crate::durable_arena::{GlueId, ProvenanceId, TokenListId};
+use crate::env::banks::IntParam;
 use crate::env::{CodeTableKind, DenseState, StateError};
 use crate::glue::GlueSpec;
-use crate::interner::{Interner, InternerAccessError, SymbolId};
+use crate::interner::{ControlSequenceKind, Interner, InternerAccessError, Symbol, SymbolId};
 use crate::meaning::ResolvedMeaning;
 use crate::node_arena::{DurableListId, NodeArenaError, NodeList};
+use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
 use crate::stores::AdmittedState;
 use crate::token::TokenWord;
@@ -30,13 +32,31 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[inline(always)]
-    pub fn meaning(&self, symbol: SymbolId) -> Result<ResolvedMeaning<G>, StateError> {
+    pub fn meaning(&self, symbol: Symbol) -> Result<ResolvedMeaning<G>, StateError> {
+        self.interner
+            .resolve_local(symbol)
+            .ok_or(StateError::ForeignSession)?;
+        self.admitted.state().meaning(symbol)
+    }
+
+    #[inline(always)]
+    pub fn meaning_id(&self, symbol: SymbolId) -> Result<ResolvedMeaning<G>, StateError> {
         // `resolve_id` is the admission check. The compact slot is then a
         // direct index for the lifetime of this context.
         self.interner
             .resolve_id(symbol)
             .map_err(|_| StateError::ForeignSession)?;
         self.admitted.state().meaning(symbol.symbol())
+    }
+
+    pub fn resolve(&self, symbol: Symbol) -> Option<&'a str> {
+        self.interner.resolve_local(symbol)
+    }
+
+    pub fn control_sequence_kind(&self, symbol: Symbol) -> Option<ControlSequenceKind> {
+        self.interner
+            .qualify_local(symbol)
+            .and_then(|id| self.interner.kind_id(id).ok())
     }
 
     #[inline(always)]
@@ -55,6 +75,11 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[inline(always)]
+    pub fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
+        self.admitted.provenance(id)
+    }
+
+    #[inline(always)]
     pub fn count(&self, index: u16) -> Result<i32, StateError> {
         self.admitted.state().count(index)
     }
@@ -62,6 +87,11 @@ impl<'a, G> CommandContext<'a, G> {
     #[inline(always)]
     pub fn dimension(&self, index: u16) -> Result<Scaled, StateError> {
         self.admitted.state().dimension(index)
+    }
+
+    #[inline(always)]
+    pub fn int_param(&self, parameter: IntParam) -> Result<i32, StateError> {
+        self.admitted.state().integer_parameter(parameter)
     }
 
     #[inline(always)]
