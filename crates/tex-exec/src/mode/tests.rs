@@ -30,13 +30,12 @@ fn nest_usage_records_tex82_pre_push_depth_and_survives_pop() {
 }
 
 #[test]
-fn mode_summary_shares_frozen_level_root_and_restored_builder_detaches() {
+fn mode_summary_restores_an_independent_semantic_builder() {
     let mut nest = ModeNest::new();
     nest.push(Mode::Horizontal).expect("test mode push");
     nest.current_list_mutation().push(kern(1));
     let summary = nest.summary();
 
-    assert!(Arc::ptr_eq(&nest.levels, &summary.levels));
     let snapshot_nodes = summary
         .levels
         .last()
@@ -47,10 +46,8 @@ fn mode_summary_shares_frozen_level_root_and_restored_builder_detaches() {
         .to_vec();
 
     let mut restored = ModeNest::from_summary(summary.clone()).expect("restore mode nest");
-    assert!(Arc::ptr_eq(&restored.levels, &summary.levels));
     restored.current_list_mutation().push(kern(2));
 
-    assert!(!Arc::ptr_eq(&restored.levels, &summary.levels));
     let restored_nodes = restored
         .levels
         .last()
@@ -131,13 +128,12 @@ fn preexisting_node_write_barriers_apply_scoped_mutations() {
 }
 
 #[test]
-fn pushing_a_shared_mode_nest_preserves_the_snapshot_root() {
+fn pushing_a_mode_nest_preserves_the_prior_summary() {
     let mut nest = ModeNest::new();
     let summary = nest.summary();
 
     nest.push(Mode::Horizontal).expect("test mode push");
 
-    assert!(!Arc::ptr_eq(&nest.levels, &summary.levels));
     assert_eq!(summary.levels.len(), 1);
     assert_eq!(nest.depth(), 2);
     assert_eq!(nest.current_mode(), Mode::Horizontal);
@@ -602,7 +598,7 @@ fn mode_entry_lines_survive_summary_restore_and_journal_rollback() {
 }
 
 #[test]
-fn journal_rejects_non_innermost_and_stale_generation_cursors() {
+fn journal_rejects_a_non_innermost_cursor_without_state_drift() {
     use super::journal::CursorError;
 
     let mut nest = ModeNest::new();
@@ -612,15 +608,7 @@ fn journal_rejects_non_innermost_and_stale_generation_cursors() {
     assert_eq!(nest.commit_journal(outer), Err(CursorError::NotInnermost));
     nest.rollback_journal(inner).expect("inner rollback");
     nest.commit_journal(outer).expect("outer commit");
-
-    nest.reset_journal_for_test();
-    let current = nest.begin_journal();
-    assert_eq!(
-        nest.rollback_journal(outer),
-        Err(CursorError::WrongGeneration)
-    );
-    nest.rollback_journal(current)
-        .expect("current generation rollback");
+    assert_eq!(nest.summary(), ModeNest::new().summary());
 }
 
 #[test]

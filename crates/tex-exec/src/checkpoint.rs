@@ -307,14 +307,6 @@ impl EngineCheckpoint {
             && self.modes == other.modes
     }
 
-    /// Returns whether this checkpoint already carries the optional
-    /// probabilistic identity used by suffix-adoption comparisons.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn has_exact_state_identity(&self) -> bool {
-        self.universe.has_exact_state_identity()
-    }
-
     /// Rehomes revision-relative root metadata after a validated convergence
     /// match while adopting the owner-owned state snapshot by reference.
     pub fn rehome_converged_root(

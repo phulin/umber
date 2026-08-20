@@ -25,13 +25,14 @@ long-lived editor-session strategy over executor-named checkpoints.
 - `src/trace.rs`: derived ordered leaf/parent trace summaries, dependency reduction, and atomic replay.
 - `src/trace/tests.rs`: parent composition, leaf-equivalence, ordering, and atomic-miss coverage.
 - `src/tests.rs`: synthetic edit, convergence, retention, and cold-parity tests.
-- `src/tests/long_session.rs`: routine ownership smoke coverage and the explicit
-  2,048 accepted/rejected patch plateau and RSS tier.
+- `src/tests/long_session.rs`: routine accepted/rejected revision, resource
+  retry, checkpoint, effect, artifact, and cold-DVI equivalence coverage plus
+  the explicit 2,048-cycle semantic stress tier.
 
 ## Validation
 
 Run `cargo test --tests -p tex-incr`. When changing edit mapping or convergence,
 run the explicit 1,000-edit tier with
 `cargo test --tests -p tex-incr tests::thousand_edit_scripted_fuzz_matches_cold_every_revision -- --ignored --exact`
-as well. Long-session ownership changes also run
-`cargo test -q -j 1 --tests -p tex-incr tests::long_session::long_session_thousands_plateau_at_equal_work_milestones -- --ignored --exact --test-threads=1`.
+as well. Long-session semantic changes also run
+`cargo test -q -j 1 --tests -p tex-incr tests::long_session::long_session_thousands_match_clean_at_equal_work_milestones -- --ignored --exact --test-threads=1`.

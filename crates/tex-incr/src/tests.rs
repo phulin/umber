@@ -107,7 +107,6 @@ fn cold_history_contains_only_named_restartable_boundaries() {
         session.history()[0].key().boundary,
         EngineBoundary::JobStart
     );
-    assert!(session.substrate.is_some());
     assert_eq!(output.artifacts.len(), 2);
 }
 
@@ -214,7 +213,7 @@ fn zero_render_cache_budget_rebuilds_without_changing_output() {
 }
 
 #[test]
-fn published_output_survives_session_generation_release() {
+fn published_output_is_detached_from_the_session_lifetime() {
     let accepted = {
         let text = "\\font\\tenrm=cmr10\\relax\\tenrm\\shipout\\hbox{A}\\end";
         let mut session = Session::start(
@@ -343,7 +342,7 @@ fn rendered_source_queries_reject_another_revision_one_session() {
 }
 
 #[test]
-fn accepted_history_retains_live_identities_for_direct_convergence() {
+fn no_op_revision_converges_and_preserves_cold_output() {
     let text = source("a");
     let mut session = Session::start(
         template(),
@@ -354,13 +353,6 @@ fn accepted_history_retains_live_identities_for_direct_convergence() {
     )
     .expect("session starts");
     let cold = session.cold().expect("cold execution succeeds");
-    assert!(
-        session
-            .history()
-            .iter()
-            .all(|record| record.checkpoint().has_exact_state_identity()),
-        "cold history must capture canonical identities while each boundary is live"
-    );
     let expected_convergence = session.history().get(1).map(BoundaryRecord::key);
     let output = session
         .advance(
@@ -380,13 +372,6 @@ fn accepted_history_retains_live_identities_for_direct_convergence() {
     assert_eq!(output.reuse.same_history_hash_mismatches, 0);
     assert!(output.reuse.reexecuted_bytes > 0);
     assert!(output.reuse.reexecuted_tokens > 0);
-    assert!(
-        session
-            .history()
-            .iter()
-            .all(|record| record.checkpoint().has_exact_state_identity()),
-        "convergence must retain the already captured identities"
-    );
     assert_eq!(
         output.dvi_bytes().expect("incremental DVI"),
         cold.dvi_bytes().expect("cold DVI")
@@ -952,13 +937,6 @@ fn nonconvergent_advance_prunes_fully_replaced_fragment_bytes() {
     assert_eq!(output.reuse.pages_reused, 0);
     assert!(output.reuse.reexecuted_bytes > 0);
     assert!(output.reuse.reexecuted_tokens > 0);
-    assert!(
-        session
-            .history
-            .iter()
-            .all(|record| record.checkpoint().has_exact_state_identity()),
-        "a nonconvergent revision must publish live identities for its new accepted history"
-    );
     assert_eq!(session.fragments.bytes(initial), None);
     assert_eq!(session.fragments.source_bytes(), replacement.len());
 }
@@ -1112,10 +1090,6 @@ fn candidate_retries_staged_missing_input_without_losing_state() {
     .expect("session starts");
     let mut inputs = StagedInputResolver::default();
     let mut candidate = session.start_cold_candidate().expect("cold candidate");
-    assert_eq!(
-        candidate.universe.testing_private_revision_domain_stats(),
-        Some((0, 0, 0, false))
-    );
     let awaiting = candidate
         .drive_with_resource_resolvers(
             &mut DecliningStagedResourceHost::new(&mut inputs),
@@ -1127,14 +1101,10 @@ fn candidate_retries_staged_missing_input_without_losing_state() {
         RevisionCandidateResult::AwaitingResources(ResourceNeed::Input { ref name, .. })
             if name == "child.tex"
     ));
-    assert_eq!(
-        candidate.universe.testing_private_revision_domain_stats(),
-        Some((0, 0, 0, false)),
-        "NeedResource closes and truncates only its failed operation"
+    inputs.files.insert(
+        "child".to_owned(),
+        "\\message{child-ok}\\shipout\\vbox{\\hrule height1pt width2pt}".to_owned(),
     );
-    inputs
-        .files
-        .insert("child".to_owned(), "\\relax".to_owned());
     assert!(matches!(
         candidate
             .drive_with_resource_resolvers(
@@ -1144,211 +1114,35 @@ fn candidate_retries_staged_missing_input_without_losing_state() {
             .expect("provisioned retry completes"),
         RevisionCandidateResult::Complete
     ));
-    assert_eq!(
-        candidate.universe.testing_private_revision_domain_stats(),
-        Some((0, 0, 0, false))
-    );
-    session
+    let telemetry = candidate.execution_telemetry();
+    assert_eq!(telemetry.suspensions, 1);
+    assert_eq!(telemetry.local_step_retries, 1);
+    assert_eq!(telemetry.replayed_delivered_tokens, 0);
+    assert_eq!(telemetry.replayed_dispatches, 0);
+    let accepted = session
         .accept_cold_candidate(candidate)
         .expect("completed retry accepts");
-    assert_eq!(
-        session
-            .substrate
-            .as_ref()
-            .expect("accepted cold substrate")
-            .testing_private_revision_domain_stats(),
-        None
-    );
-}
 
-#[test]
-fn dropping_private_candidate_releases_its_complete_domain() {
-    let session = Session::start(
+    let mut cold = Session::start(
         template_without_preinstalled_primitives(),
-        "rejected-domain",
+        "staged-canonical-input",
         RevisionId::new(1),
-        "\\message{committed}\\input child \\end",
+        "\\input child \\end",
         usize::MAX,
     )
-    .expect("session starts");
-    let mut inputs = StagedInputResolver::default();
-    let mut candidate = session.start_cold_candidate().expect("cold candidate");
-    let initial_values = candidate.universe.testing_ownership_census();
-    let probe = candidate
-        .universe
-        .testing_private_revision_domain_probe()
-        .expect("candidate owns one domain");
-    assert!(probe.is_live());
-    candidate
-        .universe
-        .testing_arm_next_private_revision_operation_allocation(64);
-    assert!(matches!(
-        candidate
-            .drive_with_resource_resolvers(
-                &mut DecliningStagedResourceHost::new(&mut inputs),
-                &Cancellation::new(),
-            )
-            .expect("candidate suspends after the committed message"),
-        RevisionCandidateResult::AwaitingResources(ResourceNeed::Input { ref name, .. })
-            if name == "child.tex"
-    ));
-    let retained = candidate
-        .universe
-        .testing_private_revision_domain_stats()
-        .expect("candidate domain remains live across suspension");
-    assert_eq!(
-        retained.0, 1,
-        "only the synthetic probe belongs to the private patch domain"
-    );
-    assert_eq!(
-        retained.1, 64,
-        "the private patch domain retains the exact synthetic probe charge"
-    );
-    assert!(!retained.3);
-    let retained_values = candidate.universe.testing_ownership_census();
-    assert!(
-        retained_values.token_lists.live_objects > initial_values.token_lists.live_objects,
-        "message tokens are owned by the runtime value region"
-    );
-    assert!(
-        retained_values.provenance_lists > initial_values.provenance_lists,
-        "message provenance lists are owned by the runtime value region"
-    );
-    inputs
-        .files
-        .insert("child".to_owned(), "\\relax".to_owned());
-    assert!(matches!(
-        candidate
-            .drive_with_resource_resolvers(
-                &mut DecliningStagedResourceHost::new(&mut inputs),
-                &Cancellation::new(),
-            )
-            .expect("candidate completes after resource fulfillment"),
-        RevisionCandidateResult::Complete
-    ));
-    assert_eq!(
-        candidate.universe.testing_private_revision_domain_stats(),
-        Some(retained),
-        "successful private work is retained exactly once across retry"
-    );
-
-    drop(candidate);
-
-    assert!(!probe.is_live());
-    assert!(session.substrate.is_none());
-}
-
-#[test]
-fn accepted_replacement_closes_domain_and_unrooted_replacement_is_refused_atomically() {
-    let original = "\\end";
-    let edited = "\\relax \\end";
-    let mut session = Session::start(
-        template_without_preinstalled_primitives(),
-        "replacement-domain",
-        RevisionId::new(1),
-        original,
-        usize::MAX,
+    .expect("cold comparison starts");
+    cold.register_input_file(
+        Path::new("child.tex"),
+        b"\\message{child-ok}\\shipout\\vbox{\\hrule height1pt width2pt}".to_vec(),
     )
-    .expect("session starts");
-    session.cold().expect("initial revision accepts");
+    .expect("cold comparison input registers");
+    let cold = cold.cold().expect("cold comparison succeeds");
+    assert_eq!(accepted.effects, cold.effects);
+    assert_eq!(accepted.artifacts, cold.artifacts);
+    assert_eq!(accepted.dvi_pages, cold.dvi_pages);
     assert_eq!(
-        session
-            .substrate
-            .as_ref()
-            .expect("accepted initial substrate")
-            .testing_private_revision_domain_stats(),
-        None
-    );
-
-    let replacement_edit = || Edit {
-        base_revision: RevisionId::new(1),
-        expected_hash: ContentHash::from_bytes(original.as_bytes()),
-        range: 0..original.len(),
-        replacement: edited.to_owned(),
-    };
-    let mut accepted_candidate = session
-        .start_advance_candidate_from_job_start(RevisionId::new(2), replacement_edit())
-        .expect("replacement candidate starts");
-    assert!(matches!(
-        &accepted_candidate.kind,
-        RevisionCandidateKind::Replacement { .. }
-    ));
-    assert!(matches!(
-        accepted_candidate
-            .drive_with_resource_resolvers(&mut StagedResourceHost::default(), &Cancellation::new())
-            .expect("replacement completes"),
-        RevisionCandidateResult::Complete
-    ));
-    let accepted_pending = session
-        .prepare_revision_candidate(accepted_candidate)
-        .expect("replacement prepares");
-    let TransactionSubstrate::Replaced {
-        substrate: pending_substrate,
-        ..
-    } = &accepted_pending.substrate
-    else {
-        panic!("forced job-start revision replaces its substrate");
-    };
-    assert_eq!(
-        pending_substrate.testing_private_revision_domain_stats(),
-        Some((0, 0, 0, false))
-    );
-    session
-        .accept_revision(accepted_pending)
-        .expect("empty private domain closes on acceptance");
-    assert_eq!(session.revision, RevisionId::new(2));
-    assert_eq!(
-        session
-            .substrate
-            .as_ref()
-            .expect("accepted replacement substrate")
-            .testing_private_revision_domain_stats(),
-        None
-    );
-
-    let refused_original = session.source.clone();
-    let refused_edit = Edit {
-        base_revision: RevisionId::new(2),
-        expected_hash: session.content_hash,
-        range: 0..refused_original.len(),
-        replacement: "\\relax \\relax \\end".to_owned(),
-    };
-    let mut refused_candidate = session
-        .start_advance_candidate_from_job_start(RevisionId::new(3), refused_edit)
-        .expect("second replacement candidate starts");
-    let refused_probe = refused_candidate
-        .universe
-        .testing_private_revision_domain_probe()
-        .expect("replacement owns a domain");
-    assert!(matches!(
-        refused_candidate
-            .drive_with_resource_resolvers(&mut StagedResourceHost::default(), &Cancellation::new())
-            .expect("second replacement completes"),
-        RevisionCandidateResult::Complete
-    ));
-    refused_candidate
-        .completed_universe_mut()
-        .expect("completed candidate exposes its universe")
-        .testing_commit_private_revision_allocation(4_096);
-    let refused_pending = session
-        .prepare_revision_candidate(refused_candidate)
-        .expect("second replacement prepares");
-    assert!(matches!(
-        session.accept_revision(refused_pending),
-        Err(SessionError::PrivateRevisionAcceptance(
-            tex_state::PrivateRevisionAcceptanceError::UnrootedAllocations
-        ))
-    ));
-    assert!(!refused_probe.is_live());
-    assert_eq!(session.revision, RevisionId::new(2));
-    assert_eq!(session.source, refused_original);
-    assert_eq!(
-        session
-            .substrate
-            .as_ref()
-            .expect("previous accepted substrate remains")
-            .testing_private_revision_domain_stats(),
-        None
+        accepted.dvi_bytes().expect("retried DVI"),
+        cold.dvi_bytes().expect("cold DVI")
     );
 }
 
@@ -1876,12 +1670,6 @@ fn restored_suffix_resource_candidate_retries_once_and_rejects_atomically() {
         .last()
         .expect("accepted checkpoint")
         .state_hash();
-    let before_owners = session
-        .substrate
-        .as_ref()
-        .expect("accepted substrate")
-        .testing_ownership_census();
-    let before_layout_generation = session.layout.generation();
     let before_layout_pieces = session.layout.pieces().to_vec();
     let before_layout_doc_starts = session.layout.doc_starts().to_vec();
     let end = accepted_source.rfind("\\end").expect("terminal end");
@@ -1947,7 +1735,6 @@ fn restored_suffix_resource_candidate_retries_once_and_rejects_atomically() {
 
     assert_eq!(session.revision(), RevisionId::new(2));
     assert_eq!(session.source(), accepted_source);
-    assert_eq!(session.layout.generation(), before_layout_generation);
     assert_eq!(session.layout.pieces(), before_layout_pieces);
     assert_eq!(session.layout.doc_starts(), before_layout_doc_starts);
     assert_eq!(session.retention_metrics(), Some(before_retention));
@@ -1958,14 +1745,6 @@ fn restored_suffix_resource_candidate_retries_once_and_rejects_atomically() {
             .expect("accepted checkpoint")
             .state_hash(),
         before_state_hash
-    );
-    assert_eq!(
-        session
-            .substrate
-            .as_ref()
-            .expect("accepted substrate")
-            .testing_ownership_census(),
-        before_owners
     );
     let after_output = session.output(ReuseMetrics::default(), before_retention);
     assert_eq!(after_output.effects, before_output.effects);

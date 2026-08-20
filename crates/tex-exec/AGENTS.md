@@ -41,10 +41,10 @@ Command operands are scanned by `tex-command` into typed request and result valu
   corresponding complex families without introducing another executor.
 - `src/canonical_step.rs`: shared bounded-step result protocol and output ledger for checkpoint publication, resource fulfillment, suspension accounting, and cancellation.
 - `src/transaction_protocol.rs` and `src/transaction_protocol/tests.rs`:
-  exhaustive canonical-command capability classification, mutation-free
-  preflight, exact `HotSnapshot` owner/mark projections, and narrow-transaction
-  admission controls. This is the migration protocol; it does not open a
-  snapshot or execute a command.
+  exhaustive canonical-command capability classification and mutation-free
+  preflight. Compatibility assertions over exact owner/mark projections,
+  admission variants, and preflight layout are retired; external rollback and
+  parity tests are the migration authority.
 - `src/assignments/`: the `AssignmentCommitter` authority for scoped writes,
   e-TeX redundant-local decisions, tracing, and typed mutation receipts, plus
   primitive registration delegated from `tex-command`'s integrated catalogue.

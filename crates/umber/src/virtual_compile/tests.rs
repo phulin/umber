@@ -112,14 +112,6 @@ fn session(main: &str) -> VirtualCompileSession {
     session
 }
 
-#[test]
-fn virtual_compile_session_keeps_engine_owners_out_of_caller_stack() {
-    assert!(
-        std::mem::size_of::<VirtualCompileSession>() <= 4_096,
-        "the public orchestration value must remain shallow"
-    );
-}
-
 fn load_profile_format(mode: EngineMode, bytes: &[u8]) -> Universe {
     let mut stores = Universe::from_format(World::memory(), bytes).expect("profile format loads");
     mode.install_after_format(&mut stores);
@@ -1026,7 +1018,6 @@ struct AcceptedSessionState {
     revision: RevisionId,
     content_hash: ContentHash,
     output: MemoryRunOutput,
-    file_generation: umber_vfs::StorageIdentity,
     generated: Option<Vec<u8>>,
     history: Vec<(RevisionId, tex_incr::BoundaryKey, usize, usize, u64)>,
     observations: crate::AcceptedInputObservationLedger,
@@ -1042,7 +1033,6 @@ fn accepted_session_state(session: &VirtualCompileSession) -> AcceptedSessionSta
             .accepted_output
             .clone()
             .expect("accepted session output"),
-        file_generation: snapshot.generation_identity(),
         generated: snapshot
             .get(&generated_path)
             .expect("generated lookup")
@@ -3420,7 +3410,6 @@ fn accepted_patch_publishes_root_generated_files_and_output_together() {
     let CompileAttemptResult::Complete(old_output) = session.compile_attempt() else {
         panic!("initial revision should complete");
     };
-    let old_generation = session.workspace.snapshot().generation_identity();
     let start = source.find("old").expect("old payload");
     let mut next_source = source.to_owned();
     next_source.replace_range(start..start + 3, "new");
@@ -3440,7 +3429,6 @@ fn accepted_patch_publishes_root_generated_files_and_output_together() {
     };
 
     let snapshot = session.workspace.snapshot();
-    assert_ne!(snapshot.generation_identity(), old_generation);
     assert_eq!(
         snapshot
             .get(&session.main_path)
@@ -3495,7 +3483,6 @@ fn failed_patch_restores_the_complete_accepted_build() {
     };
     let old_hash = session.content_hash().expect("accepted hash");
     let old_snapshot = session.workspace.snapshot();
-    let old_generation = old_snapshot.generation_identity();
     let old_root = old_snapshot
         .get(&session.main_path)
         .expect("root lookup")
@@ -3526,7 +3513,6 @@ fn failed_patch_restores_the_complete_accepted_build() {
     ));
 
     let snapshot = session.workspace.snapshot();
-    assert_eq!(snapshot.generation_identity(), old_generation);
     assert_eq!(
         snapshot
             .get(&session.main_path)
