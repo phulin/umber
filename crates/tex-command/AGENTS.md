@@ -42,11 +42,11 @@ print channel of its own outside the borrowed
   semantics that survive loading an older format, capabilities, stable
   fingerprints, and focused value/identity tests.
 - `src/state.rs`: persistent command state, cross-processor executor-owned
-  replay-completion fences, and the process-local bounded rooted-token scratch
-  pool, which retains the complete inline-or-spilled buffer rather than a
-  second words-only storage shape. Resource continuations also retain nested
-  token collectors, expansion operands, names, and integer-scan prefixes here;
-  they are process-local command state, never format or summary payload.
+  replay-completion fences, and the live operation-scoped `AttemptArena`.
+  Resource continuations move that complete arena, its coarse
+  `GenerationOwner`, typed ids, and integer resume cursors; resumption
+  re-borrows dense state and cancellation drops the package wholesale. These
+  are process-local command state, never format or summary payload.
   Also owns `\tracingnesting`'s `record_source_open_depths`/
   `source_open_depths`, the `grp_stack`/`if_stack` recording e-TeX 2.6
   [23.328] compares at a source level's `end_file_reading`.
