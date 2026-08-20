@@ -1,11 +1,9 @@
-//! Checkpointed annotation and logical-link object records.
-
-use crate::scaled::Scaled;
-use crate::token_store::TokenListRef;
+//! Checkpointed annotation and logical-link records.
 
 use super::PdfActionSpec;
+use crate::durable_arena::TokenListId;
+use crate::scaled::Scaled;
 
-/// pdfTeX rule dimensions; `None` retains the running sentinel until shipout.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PdfAnnotationDimensions {
     pub width: Option<Scaled>,
@@ -21,36 +19,47 @@ impl PdfAnnotationDimensions {
     };
 }
 
-/// Initialized contents of one general `\pdfannot` object.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfAnnotationData {
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct PdfAnnotationData<G> {
     pub dimensions: PdfAnnotationDimensions,
-    pub entries: TokenListRef,
+    pub entries: TokenListId<G>,
 }
 
-/// One annotation reservation. `data == None` is `reserveobjnum` state.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfAnnotationRecord {
+impl<G> Copy for PdfAnnotationData<G> {}
+
+impl<G> Clone for PdfAnnotationData<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct PdfAnnotationRecord<G> {
     object: u32,
-    data: Option<PdfAnnotationData>,
+    data: Option<PdfAnnotationData<G>>,
 }
 
-impl PdfAnnotationRecord {
+impl<G> Copy for PdfAnnotationRecord<G> {}
+
+impl<G> Clone for PdfAnnotationRecord<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> PdfAnnotationRecord<G> {
     pub(super) const fn reserved(object: u32) -> Self {
         Self { object, data: None }
     }
-
     #[must_use]
     pub const fn object(&self) -> u32 {
         self.object
     }
-
     #[must_use]
-    pub fn data(&self) -> Option<PdfAnnotationData> {
-        self.data.clone()
+    pub const fn data(&self) -> Option<PdfAnnotationData<G>> {
+        self.data
     }
-
-    pub(super) fn initialize(&mut self, data: PdfAnnotationData) -> Result<(), ()> {
+    pub(super) fn initialize(&mut self, data: PdfAnnotationData<G>) -> Result<(), ()> {
         if self.data.is_some() {
             return Err(());
         }
@@ -59,28 +68,42 @@ impl PdfAnnotationRecord {
     }
 }
 
-/// One logical link created by `\pdfstartlink`.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfLinkRecord {
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct PdfLinkRecord<G> {
     object: u32,
     dimensions: PdfAnnotationDimensions,
-    attributes: TokenListRef,
-    action: PdfActionSpec,
+    attributes: TokenListId<G>,
+    action: PdfActionSpec<G>,
 }
 
-/// One currently open logical link and the mode-nest depth where it started.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfOpenLink {
-    pub record: PdfLinkRecord,
+impl<G> Copy for PdfLinkRecord<G> {}
+
+impl<G> Clone for PdfLinkRecord<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct PdfOpenLink<G> {
+    pub record: PdfLinkRecord<G>,
     pub nesting_depth: u32,
 }
 
-impl PdfLinkRecord {
-    pub(super) fn new(
+impl<G> Copy for PdfOpenLink<G> {}
+
+impl<G> Clone for PdfOpenLink<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> PdfLinkRecord<G> {
+    pub(super) const fn new(
         object: u32,
         dimensions: PdfAnnotationDimensions,
-        attributes: TokenListRef,
-        action: PdfActionSpec,
+        attributes: TokenListId<G>,
+        action: PdfActionSpec<G>,
     ) -> Self {
         Self {
             object,
@@ -89,35 +112,30 @@ impl PdfLinkRecord {
             action,
         }
     }
-
     #[must_use]
     pub const fn object(&self) -> u32 {
         self.object
     }
-
     #[must_use]
     pub const fn dimensions(&self) -> PdfAnnotationDimensions {
         self.dimensions
     }
-
     #[must_use]
-    pub fn attributes(&self) -> crate::ids::TokenListId {
-        self.attributes.id()
+    pub const fn attributes(&self) -> TokenListId<G> {
+        self.attributes
     }
-
     #[must_use]
-    pub fn action(&self) -> PdfActionSpec {
-        self.action.clone()
+    pub const fn action(&self) -> PdfActionSpec<G> {
+        self.action
     }
 }
 
-/// A `useobjnum` target is absent, already initialized, or not an annotation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PdfAnnotationInitializeError(pub u32);
 
-impl std::fmt::Display for PdfAnnotationInitializeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PDF annotation object {} is unavailable", self.0)
+impl core::fmt::Display for PdfAnnotationInitializeError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(formatter, "PDF annotation object {} is unavailable", self.0)
     }
 }
 

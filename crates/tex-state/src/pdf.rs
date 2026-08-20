@@ -26,17 +26,16 @@ pub use object::{
 pub use outline::PdfOutlineRecord;
 pub use thread::{PdfThreadBeadRecord, PdfThreadRecord};
 
-use std::hash::Hash;
-use std::sync::Arc;
+use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
 use crate::ContentHash;
-use crate::ids::{FontId, TokenListId};
+use crate::durable_arena::TokenListId;
+use crate::ids::FontId;
 use crate::node_arena::DurableListId;
 use crate::scaled::Scaled;
 use crate::state_hash::{StateHashFragment, StateHasher};
-use crate::token_store::TokenListRef;
 use std::collections::BTreeMap;
 
 const PDF_STATE_DOMAIN: u64 = 0x7064_665f_7374_6174;
@@ -221,7 +220,7 @@ pub struct PdfExternalImageSource {
     pub metadata: PdfExternalImageMetadata,
     pub natural_width: Scaled,
     pub natural_height: Scaled,
-    pub bytes: Arc<[u8]>,
+    pub bytes: Vec<u8>,
 }
 
 /// Final dimensions recorded by `\pdfximage` after optional scaling.
@@ -347,7 +346,7 @@ pub struct PdfExternalImageRecord {
     metadata: PdfExternalImageMetadata,
     dimensions: PdfExternalImageDimensions,
     color_space_object: i32,
-    bytes: Arc<[u8]>,
+    bytes: Vec<u8>,
     mask_object: Option<u32>,
 }
 
@@ -376,11 +375,6 @@ impl PdfExternalImageRecord {
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
-    }
-
-    #[must_use]
-    pub fn shared_bytes(&self) -> Arc<[u8]> {
-        Arc::clone(&self.bytes)
     }
 
     #[must_use]
@@ -712,41 +706,89 @@ impl PdfOutputParameters {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct PdfTokenParameter {
-    pub(crate) tokens: TokenListRef,
+pub(crate) struct PdfTokenParameter<G> {
+    pub(crate) tokens: TokenListId<G>,
     pub(crate) semantic_id: StateHashFragment,
 }
 
-impl PdfTokenParameter {
-    #[must_use]
-    pub(crate) fn id(&self) -> TokenListId {
-        self.tokens.id()
+impl<G> Copy for PdfTokenParameter<G> {}
+
+impl<G> Clone for PdfTokenParameter<G> {
+    fn clone(&self) -> Self {
+        *self
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct PdfPageParameters {
+impl<G> std::fmt::Debug for PdfTokenParameter<G> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PdfTokenParameter")
+            .field("tokens", &self.tokens)
+            .field("semantic_id", &self.semantic_id)
+            .finish()
+    }
+}
+
+impl<G> PartialEq for PdfTokenParameter<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.tokens == other.tokens && self.semantic_id == other.semantic_id
+    }
+}
+
+impl<G> Eq for PdfTokenParameter<G> {}
+
+impl<G> Hash for PdfTokenParameter<G> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.tokens.hash(state);
+        self.semantic_id.hash(state);
+    }
+}
+
+impl<G> PdfTokenParameter<G> {
+    #[must_use]
+    pub(crate) const fn id(&self) -> TokenListId<G> {
+        self.tokens
+    }
+}
+
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub(crate) struct PdfPageParameters<G> {
     pub(crate) h_origin: Scaled,
     pub(crate) v_origin: Scaled,
     pub(crate) width: Scaled,
     pub(crate) height: Scaled,
     pub(crate) link_margin: Scaled,
-    pub(crate) page_attr: PdfTokenParameter,
-    pub(crate) resources: PdfTokenParameter,
+    pub(crate) page_attr: PdfTokenParameter<G>,
+    pub(crate) resources: PdfTokenParameter<G>,
     /// Raw `\pdfomitprocset` value captured when this page is shipped.
     pub(crate) omit_procset: i32,
     pub(crate) space_font_name: u32,
 }
 
+impl<G> Copy for PdfPageParameters<G> {}
+
+impl<G> Clone for PdfPageParameters<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 /// Stable object identities assigned to one committed PDF page.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfPageRecord {
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct PdfPageRecord<G> {
     artifact: ContentHash,
     resources_object: u32,
     contents_object: u32,
     page_object: u32,
-    parameters: PdfPageParameters,
+    parameters: PdfPageParameters<G>,
+}
+
+impl<G> Copy for PdfPageRecord<G> {}
+
+impl<G> Clone for PdfPageRecord<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 /// Immutable captured box and canonical identities for one `\pdfxform`.
@@ -758,8 +800,8 @@ pub struct PdfFormRecord<G> {
     width: Scaled,
     height: Scaled,
     depth: Scaled,
-    attr: Option<PdfTokenParameter>,
-    resources: Option<PdfTokenParameter>,
+    attr: Option<PdfTokenParameter<G>>,
+    resources: Option<PdfTokenParameter<G>>,
     immediate: bool,
 }
 
@@ -890,12 +932,12 @@ impl<G> PdfFormRecord<G> {
         self.depth
     }
     #[must_use]
-    pub fn attr(&self) -> Option<TokenListId> {
-        self.attr.as_ref().map(PdfTokenParameter::id)
+    pub fn attr(&self) -> Option<TokenListId<G>> {
+        self.attr.as_ref().map(PdfTokenParameter::<G>::id)
     }
     #[must_use]
-    pub fn resources(&self) -> Option<TokenListId> {
-        self.resources.as_ref().map(PdfTokenParameter::id)
+    pub fn resources(&self) -> Option<TokenListId<G>> {
+        self.resources.as_ref().map(PdfTokenParameter::<G>::id)
     }
     #[must_use]
     pub const fn immediate(&self) -> bool {
@@ -903,7 +945,7 @@ impl<G> PdfFormRecord<G> {
     }
 }
 
-impl PdfPageRecord {
+impl<G> PdfPageRecord<G> {
     pub(crate) fn retarget_artifact(&mut self, artifact: ContentHash) {
         self.artifact = artifact;
     }
@@ -944,11 +986,11 @@ impl PdfPageRecord {
         self.parameters.link_margin
     }
     #[must_use]
-    pub fn page_attr(&self) -> TokenListId {
+    pub fn page_attr(&self) -> TokenListId<G> {
         self.parameters.page_attr.id()
     }
     #[must_use]
-    pub fn resources(&self) -> TokenListId {
+    pub fn resources(&self) -> TokenListId<G> {
         self.parameters.resources.id()
     }
     #[must_use]
@@ -961,13 +1003,13 @@ impl PdfPageRecord {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct PdfStateCursor {
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub(crate) struct PdfStateCursor<G> {
     enabled: bool,
     next_object: u32,
     page_count: usize,
     output_parameters: Option<PdfOutputParameters>,
-    pk_mode: Option<PdfTokenParameter>,
+    pk_mode: Option<PdfTokenParameter<G>>,
     font_operation_count: usize,
     font_resource_count: usize,
     fingerprint: StateHashFragment,
@@ -976,7 +1018,7 @@ pub(crate) struct PdfStateCursor {
     raw_object_fingerprint: StateHashFragment,
     document_fragment_fingerprint: StateHashFragment,
     document_objects: PdfDocumentObjectIds,
-    catalog_open_action: Option<PdfActionRecord>,
+    catalog_open_action: Option<PdfActionRecord<G>>,
     action_fingerprint: StateHashFragment,
     page_reservation_fingerprint: StateHashFragment,
     space_font_name_count: usize,
@@ -998,24 +1040,55 @@ pub(crate) struct PdfStateCursor {
     thread_fingerprint: StateHashFragment,
 }
 
-#[derive(Clone, Debug)]
+impl<G> Copy for PdfStateCursor<G> {}
+
+impl<G> Clone for PdfStateCursor<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct PdfStateSnapshot<G> {
-    cursor: PdfStateCursor,
-    match_state: Arc<PdfMatchState>,
-    external_images: Arc<Vec<PdfExternalImageRecord>>,
-    raw_objects: PdfRawObjects,
-    document_fragments: PdfDocumentFragments,
-    page_reservations: Arc<Vec<PdfPageReservation>>,
-    annotations: Arc<Vec<PdfAnnotationRecord>>,
-    links: Arc<Vec<PdfLinkRecord>>,
-    open_links: Arc<Vec<PdfOpenLink>>,
-    color_stacks: Arc<Vec<PdfColorStack>>,
-    forms: Arc<Vec<PdfFormRecord<G>>>,
-    form_artifacts: Arc<BTreeMap<u32, PdfFormArtifact>>,
-    destinations: Arc<Vec<PdfDestinationRecord>>,
-    structure_destinations: Arc<Vec<PdfDestinationRecord>>,
-    outlines: Arc<Vec<PdfOutlineRecord>>,
-    threads: Arc<Vec<PdfThreadRecord>>,
+    cursor: PdfStateCursor<G>,
+    match_state: PdfMatchState,
+    external_images: Vec<PdfExternalImageRecord>,
+    raw_objects: PdfRawObjects<G>,
+    document_fragments: PdfDocumentFragments<G>,
+    page_reservations: Vec<PdfPageReservation>,
+    annotations: Vec<PdfAnnotationRecord<G>>,
+    links: Vec<PdfLinkRecord<G>>,
+    open_links: Vec<PdfOpenLink<G>>,
+    color_stacks: Vec<PdfColorStack>,
+    forms: Vec<PdfFormRecord<G>>,
+    form_artifacts: BTreeMap<u32, PdfFormArtifact>,
+    destinations: Vec<PdfDestinationRecord>,
+    structure_destinations: Vec<PdfDestinationRecord>,
+    outlines: Vec<PdfOutlineRecord<G>>,
+    threads: Vec<PdfThreadRecord>,
+}
+
+impl<G> Clone for PdfStateSnapshot<G> {
+    fn clone(&self) -> Self {
+        Self {
+            cursor: self.cursor,
+            match_state: self.match_state.clone(),
+            external_images: self.external_images.clone(),
+            raw_objects: self.raw_objects.clone(),
+            document_fragments: self.document_fragments.clone(),
+            page_reservations: self.page_reservations.clone(),
+            annotations: self.annotations.clone(),
+            links: self.links.clone(),
+            open_links: self.open_links.clone(),
+            color_stacks: self.color_stacks.clone(),
+            forms: self.forms.clone(),
+            form_artifacts: self.form_artifacts.clone(),
+            destinations: self.destinations.clone(),
+            structure_destinations: self.structure_destinations.clone(),
+            outlines: self.outlines.clone(),
+            threads: self.threads.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1040,53 +1113,53 @@ impl Default for PdfMatchState {
 }
 
 /// Live append-only PDF allocation state owned by one Universe timeline.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct PdfState<G> {
     enabled: bool,
     next_object: u32,
-    pages: Vec<PdfPageRecord>,
+    pages: Vec<PdfPageRecord<G>>,
     output_parameters: Option<PdfOutputParameters>,
-    pk_mode: Option<PdfTokenParameter>,
+    pk_mode: Option<PdfTokenParameter<G>>,
     font_operations: Vec<PdfFontOperation>,
     font_resources: Vec<PdfFontResourceRecord>,
     fingerprint: StateHashFragment,
-    match_state: Arc<PdfMatchState>,
-    external_images: Arc<Vec<PdfExternalImageRecord>>,
+    match_state: PdfMatchState,
+    external_images: Vec<PdfExternalImageRecord>,
     external_image_fingerprint: StateHashFragment,
-    raw_objects: PdfRawObjects,
-    document_fragments: PdfDocumentFragments,
+    raw_objects: PdfRawObjects<G>,
+    document_fragments: PdfDocumentFragments<G>,
     document_objects: PdfDocumentObjectIds,
-    catalog_open_action: Option<PdfActionRecord>,
+    catalog_open_action: Option<PdfActionRecord<G>>,
     action_fingerprint: StateHashFragment,
-    page_reservations: Arc<Vec<PdfPageReservation>>,
+    page_reservations: Vec<PdfPageReservation>,
     page_reservation_fingerprint: StateHashFragment,
     space_font_names: Vec<Vec<u8>>,
     space_font_name_lookup: BTreeMap<Vec<u8>, u32>,
     current_space_font_name: u32,
     space_font_name_fingerprint: StateHashFragment,
-    annotations: Arc<Vec<PdfAnnotationRecord>>,
+    annotations: Vec<PdfAnnotationRecord<G>>,
     annotation_fingerprint: StateHashFragment,
-    links: Arc<Vec<PdfLinkRecord>>,
+    links: Vec<PdfLinkRecord<G>>,
     link_fingerprint: StateHashFragment,
-    open_links: Arc<Vec<PdfOpenLink>>,
+    open_links: Vec<PdfOpenLink<G>>,
     open_link_fingerprint: StateHashFragment,
-    color_stacks: Arc<Vec<PdfColorStack>>,
+    color_stacks: Vec<PdfColorStack>,
     color_stack_fingerprint: StateHashFragment,
     last_position: (Scaled, Scaled),
     snap_reference: (Scaled, Scaled),
-    forms: Arc<Vec<PdfFormRecord<G>>>,
+    forms: Vec<PdfFormRecord<G>>,
     form_fingerprint: StateHashFragment,
     next_form_resource: u32,
-    form_artifacts: Arc<BTreeMap<u32, PdfFormArtifact>>,
+    form_artifacts: BTreeMap<u32, PdfFormArtifact>,
     form_artifact_fingerprint: StateHashFragment,
     return_value: i32,
-    destinations: Arc<Vec<PdfDestinationRecord>>,
+    destinations: Vec<PdfDestinationRecord>,
     destination_fingerprint: StateHashFragment,
-    structure_destinations: Arc<Vec<PdfDestinationRecord>>,
+    structure_destinations: Vec<PdfDestinationRecord>,
     structure_destination_fingerprint: StateHashFragment,
-    outlines: Arc<Vec<PdfOutlineRecord>>,
+    outlines: Vec<PdfOutlineRecord<G>>,
     outline_fingerprint: StateHashFragment,
-    threads: Arc<Vec<PdfThreadRecord>>,
+    threads: Vec<PdfThreadRecord>,
     thread_fingerprint: StateHashFragment,
 }
 
@@ -1102,45 +1175,45 @@ impl<G> Default for PdfState<G> {
             font_operations: Vec::new(),
             font_resources: Vec::new(),
             fingerprint: base_fingerprint(false),
-            match_state: Arc::new(PdfMatchState::default()),
-            external_images: Arc::new(Vec::new()),
+            match_state: PdfMatchState::default(),
+            external_images: Vec::new(),
             external_image_fingerprint: external_image_base_fingerprint(),
-            raw_objects: PdfRawObjects::default(),
-            document_fragments: PdfDocumentFragments::default(),
+            raw_objects: PdfRawObjects::<G>::default(),
+            document_fragments: PdfDocumentFragments::<G>::default(),
             document_objects: PdfDocumentObjectIds::default(),
             catalog_open_action: None,
             action_fingerprint: StateHasher::new_exact(0x7064_665f_6163_746e).finish_fragment(),
-            page_reservations: Arc::new(Vec::new()),
+            page_reservations: Vec::new(),
             page_reservation_fingerprint: StateHasher::new_exact(0x7064_665f_7067_7273)
                 .finish_fragment(),
             space_font_names: vec![default_space_font.clone()],
             space_font_name_lookup: BTreeMap::from([(default_space_font.clone(), 0)]),
             current_space_font_name: 0,
             space_font_name_fingerprint: space_font_name_fingerprint(&default_space_font),
-            annotations: Arc::new(Vec::new()),
-            annotation_fingerprint: annotation_fingerprint(&[]),
-            links: Arc::new(Vec::new()),
+            annotations: Vec::new(),
+            annotation_fingerprint: annotation_fingerprint::<G>(&[]),
+            links: Vec::new(),
             link_fingerprint: StateHasher::new_exact(0x7064_665f_6c69_6e6b).finish_fragment(),
-            open_links: Arc::new(Vec::new()),
-            open_link_fingerprint: open_link_fingerprint(&[]),
-            color_stacks: Arc::new(Vec::new()),
+            open_links: Vec::new(),
+            open_link_fingerprint: open_link_fingerprint::<G>(&[]),
+            color_stacks: Vec::new(),
             color_stack_fingerprint: color_stack_fingerprint(&[]),
             last_position: (Scaled::from_raw(0), Scaled::from_raw(0)),
             snap_reference: (Scaled::from_raw(0), Scaled::from_raw(0)),
-            forms: Arc::new(Vec::new()),
+            forms: Vec::new(),
             form_fingerprint: StateHasher::new_exact(PDF_FORM_DOMAIN).finish_fragment(),
             next_form_resource: 1,
-            form_artifacts: Arc::new(BTreeMap::new()),
+            form_artifacts: BTreeMap::new(),
             form_artifact_fingerprint: StateHasher::new_exact(0x7064_665f_666d_6172)
                 .finish_fragment(),
             return_value: 0,
-            destinations: Arc::new(Vec::new()),
+            destinations: Vec::new(),
             destination_fingerprint: destination_fingerprint(&[], false),
-            structure_destinations: Arc::new(Vec::new()),
+            structure_destinations: Vec::new(),
             structure_destination_fingerprint: destination_fingerprint(&[], true),
-            outlines: Arc::new(Vec::new()),
-            outline_fingerprint: outline_fingerprint(&[]),
-            threads: Arc::new(Vec::new()),
+            outlines: Vec::new(),
+            outline_fingerprint: outline_fingerprint::<G>(&[]),
+            threads: Vec::new(),
             thread_fingerprint: thread_fingerprint(&[]),
         }
     }
@@ -1162,15 +1235,15 @@ impl<G> PdfState<G> {
         self.enabled
     }
     #[must_use]
-    pub(crate) fn pages(&self) -> &[PdfPageRecord] {
+    pub(crate) fn pages(&self) -> &[PdfPageRecord<G>] {
         &self.pages
     }
 
-    pub(crate) fn take_page_suffix(&mut self, start: usize) -> Vec<PdfPageRecord> {
+    pub(crate) fn take_page_suffix(&mut self, start: usize) -> Vec<PdfPageRecord<G>> {
         self.pages.split_off(start.min(self.pages.len()))
     }
 
-    pub(crate) fn restore_page_suffix(&mut self, pages: Vec<PdfPageRecord>) {
+    pub(crate) fn restore_page_suffix(&mut self, pages: Vec<PdfPageRecord<G>>) {
         self.pages.extend(pages);
     }
     pub(crate) fn set_space_font_name(&mut self, name: Vec<u8>) {
@@ -1201,7 +1274,7 @@ impl<G> PdfState<G> {
     }
     pub(crate) fn capture_format(
         &self,
-        mut detach_tokens: impl FnMut(TokenListId) -> Result<Vec<u8>, String>,
+        mut detach_tokens: impl FnMut(TokenListId<G>) -> Result<Vec<u8>, String>,
         mut detach_nodes: impl FnMut(DurableListId<G>) -> Result<Vec<u8>, String>,
     ) -> Result<Option<PdfFormatState>, String> {
         let glyph_to_unicode = self
@@ -1315,7 +1388,7 @@ impl<G> PdfState<G> {
 
     pub(crate) fn restore_format(
         format: PdfFormatState,
-        mut import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter, String>,
+        mut import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter<G>, String>,
         mut import_nodes: impl FnMut(&[u8]) -> Result<(DurableListId<G>, StateHashFragment), String>,
     ) -> Result<Self, String> {
         if format.version != 1 || format.next_object == 0 || format.next_form_resource == 0 {
@@ -1375,7 +1448,7 @@ impl<G> PdfState<G> {
                 state
                     .initialize_raw_object(
                         id,
-                        PdfRawObjectData::new(data.stream, attr, data.file, body),
+                        PdfRawObjectData::<G>::new(data.stream, attr, data.file, body),
                         record.immediate,
                     )
                     .map_err(|_| "invalid PDF raw-object initialization".to_owned())?;
@@ -1406,21 +1479,19 @@ impl<G> PdfState<G> {
                 .map_err(|error| error.to_string())?;
         }
         if !format.external_images.is_empty() {
-            state.external_images = Arc::new(
-                format
-                    .external_images
-                    .into_iter()
-                    .map(|image| PdfExternalImageRecord {
-                        id: PdfExternalImageId(image.id),
-                        identity: ContentHash::new(image.identity),
-                        metadata: image.metadata,
-                        dimensions: image.dimensions,
-                        color_space_object: image.color_space_object,
-                        bytes: Arc::from(image.bytes),
-                        mask_object: image.mask_object,
-                    })
-                    .collect(),
-            );
+            state.external_images = format
+                .external_images
+                .into_iter()
+                .map(|image| PdfExternalImageRecord {
+                    id: PdfExternalImageId(image.id),
+                    identity: ContentHash::new(image.identity),
+                    metadata: image.metadata,
+                    dimensions: image.dimensions,
+                    color_space_object: image.color_space_object,
+                    bytes: image.bytes,
+                    mask_object: image.mask_object,
+                })
+                .collect();
             state.external_image_fingerprint = external_image_fingerprint(&state.external_images);
         }
         state.next_object = format.next_object;
@@ -1458,8 +1529,8 @@ impl<G> PdfState<G> {
         &mut self,
         artifact: ContentHash,
         output: PdfOutputParameters,
-        page: PdfPageParameters,
-        pk_mode: PdfTokenParameter,
+        page: PdfPageParameters<G>,
+        pk_mode: PdfTokenParameter<G>,
     ) {
         if !self.enabled {
             return;
@@ -1506,8 +1577,8 @@ impl<G> PdfState<G> {
     }
 
     #[must_use]
-    pub(crate) fn pk_mode(&self) -> Option<TokenListId> {
-        self.pk_mode.as_ref().map(PdfTokenParameter::id)
+    pub(crate) fn pk_mode(&self) -> Option<TokenListId<G>> {
+        self.pk_mode.as_ref().map(PdfTokenParameter::<G>::id)
     }
 
     pub(crate) fn push_font_map(&mut self, operation: PdfFontMapOperation) {
@@ -1638,10 +1709,10 @@ impl<G> PdfState<G> {
 
     pub(crate) fn reserve_annotation(
         &mut self,
-    ) -> Result<PdfAnnotationRecord, PdfObjectCapacityError> {
+    ) -> Result<PdfAnnotationRecord<G>, PdfObjectCapacityError> {
         let object = self.reserve_document_object()?;
-        let record = PdfAnnotationRecord::reserved(object);
-        Arc::make_mut(&mut self.annotations).push(record.clone());
+        let record = PdfAnnotationRecord::<G>::reserved(object);
+        self.annotations.push(record.clone());
         self.annotation_fingerprint =
             append_annotation_reservation_fingerprint(self.annotation_fingerprint, object);
         Ok(record)
@@ -1650,10 +1721,10 @@ impl<G> PdfState<G> {
     pub(crate) fn initialize_annotation(
         &mut self,
         object: u32,
-        data: PdfAnnotationData,
+        data: PdfAnnotationData<G>,
         entries_semantic_id: StateHashFragment,
-    ) -> Result<PdfAnnotationRecord, PdfAnnotationInitializeError> {
-        let records = Arc::make_mut(&mut self.annotations);
+    ) -> Result<PdfAnnotationRecord<G>, PdfAnnotationInitializeError> {
+        let records = &mut self.annotations;
         let record = records
             .iter_mut()
             .find(|record| record.object() == object)
@@ -1672,7 +1743,7 @@ impl<G> PdfState<G> {
     }
 
     #[must_use]
-    pub(crate) fn annotations(&self) -> &[PdfAnnotationRecord] {
+    pub(crate) fn annotations(&self) -> &[PdfAnnotationRecord<G>] {
         &self.annotations
     }
 
@@ -1704,7 +1775,7 @@ impl<G> PdfState<G> {
         } else {
             &mut self.destinations
         };
-        Arc::make_mut(records).push(record.clone());
+        records.push(record.clone());
         if structure {
             self.structure_destination_fingerprint = destination_fingerprint(records, true);
         } else {
@@ -1725,7 +1796,7 @@ impl<G> PdfState<G> {
         } else {
             &mut self.destinations
         };
-        let record = Arc::make_mut(records)
+        let record = records
             .iter_mut()
             .find(|record| record.object() == reserved.object())
             .expect("reserved destination exists");
@@ -1762,7 +1833,7 @@ impl<G> PdfState<G> {
             Some(index) => index,
             None => {
                 let object = self.reserve_document_object()?;
-                Arc::make_mut(&mut self.threads).push(PdfThreadRecord::new(identity, object));
+                self.threads.push(PdfThreadRecord::new(identity, object));
                 self.threads.len() - 1
             }
         };
@@ -1770,7 +1841,7 @@ impl<G> PdfState<G> {
             self.reserve_document_object()?,
             self.reserve_document_object()?,
         );
-        let threads = Arc::make_mut(&mut self.threads);
+        let threads = &mut self.threads;
         threads[index].push_bead(bead);
         self.thread_fingerprint = thread_fingerprint(threads);
         Ok((threads[index].clone(), bead))
@@ -1789,7 +1860,7 @@ impl<G> PdfState<G> {
         }
         let object = self.reserve_document_object()?;
         let record = PdfThreadRecord::new(identity, object);
-        let threads = Arc::make_mut(&mut self.threads);
+        let threads = &mut self.threads;
         threads.push(record.clone());
         self.thread_fingerprint = thread_fingerprint(threads);
         Ok(record)
@@ -1801,16 +1872,16 @@ impl<G> PdfState<G> {
 
     pub(crate) fn create_outline(
         &mut self,
-        attributes: TokenListRef,
-        action: PdfActionSpec,
+        attributes: TokenListId<G>,
+        action: PdfActionSpec<G>,
         count: i32,
-        title: TokenListRef,
+        title: TokenListId<G>,
         semantic_ids: [StateHashFragment; 3],
-    ) -> Result<PdfOutlineRecord, PdfObjectCapacityError> {
+    ) -> Result<PdfOutlineRecord<G>, PdfObjectCapacityError> {
         let action_object = self.reserve_document_object()?;
         let item_object = self.reserve_document_object()?;
         let title_object = self.reserve_document_object()?;
-        let record = PdfOutlineRecord::new(
+        let record = PdfOutlineRecord::<G>::new(
             action_object,
             item_object,
             title_object,
@@ -1826,11 +1897,11 @@ impl<G> PdfState<G> {
             semantic_ids[1],
             semantic_ids[2],
         );
-        Arc::make_mut(&mut self.outlines).push(record.clone());
+        self.outlines.push(record.clone());
         Ok(record)
     }
 
-    pub(crate) fn outlines(&self) -> &[PdfOutlineRecord] {
+    pub(crate) fn outlines(&self) -> &[PdfOutlineRecord<G>] {
         &self.outlines
     }
 
@@ -1842,25 +1913,25 @@ impl<G> PdfState<G> {
     pub(crate) fn create_link(
         &mut self,
         dimensions: PdfAnnotationDimensions,
-        attributes: TokenListRef,
-        action: PdfActionSpec,
+        attributes: TokenListId<G>,
+        action: PdfActionSpec<G>,
         attributes_semantic_id: StateHashFragment,
         action_semantic_id: StateHashFragment,
         nesting_depth: u32,
-    ) -> Result<PdfLinkRecord, PdfObjectCapacityError> {
+    ) -> Result<PdfLinkRecord<G>, PdfObjectCapacityError> {
         let object = self.reserve_document_object()?;
-        let record = PdfLinkRecord::new(object, dimensions, attributes, action);
+        let record = PdfLinkRecord::<G>::new(object, dimensions, attributes, action);
         self.link_fingerprint = append_link_fingerprint(
             self.link_fingerprint,
             &record,
             attributes_semantic_id,
             action_semantic_id,
         );
-        Arc::make_mut(&mut self.open_links).push(PdfOpenLink {
+        self.open_links.push(PdfOpenLink {
             record: record.clone(),
             nesting_depth,
         });
-        Arc::make_mut(&mut self.links).push(record.clone());
+        self.links.push(record.clone());
         self.open_link_fingerprint = open_link_fingerprint(&self.open_links);
         Ok(record)
     }
@@ -1869,14 +1940,14 @@ impl<G> PdfState<G> {
         self.reserve_document_object()
     }
 
-    pub(crate) fn end_link(&mut self) -> Option<PdfOpenLink> {
-        let open = Arc::make_mut(&mut self.open_links).pop();
+    pub(crate) fn end_link(&mut self) -> Option<PdfOpenLink<G>> {
+        let open = self.open_links.pop();
         self.open_link_fingerprint = open_link_fingerprint(&self.open_links);
         open
     }
 
     #[must_use]
-    pub(crate) fn links(&self) -> &[PdfLinkRecord] {
+    pub(crate) fn links(&self) -> &[PdfLinkRecord<G>] {
         &self.links
     }
 
@@ -1886,7 +1957,7 @@ impl<G> PdfState<G> {
     }
 
     #[must_use]
-    pub(crate) fn open_links(&self) -> &[PdfOpenLink] {
+    pub(crate) fn open_links(&self) -> &[PdfOpenLink<G>] {
         &self.open_links
     }
 
@@ -2247,7 +2318,7 @@ impl<G> PdfState<G> {
         id: PdfExternalImageId,
         metadata: PdfExternalImageMetadata,
     ) -> Result<(), PdfExternalImageRegistrationError> {
-        let images = Arc::make_mut(&mut self.external_images);
+        let images = &mut self.external_images;
         match images.binary_search_by_key(&id, |record| record.id) {
             Ok(_) => return Err(PdfExternalImageRegistrationError::Duplicate(id)),
             Err(index) => images.insert(
@@ -2262,7 +2333,7 @@ impl<G> PdfState<G> {
                         depth: Scaled::from_raw(0),
                     },
                     color_space_object: 0,
-                    bytes: Arc::from([]),
+                    bytes: Vec::new(),
                     mask_object: None,
                 },
             ),
@@ -2320,7 +2391,7 @@ impl<G> PdfState<G> {
             bytes: source.bytes,
             mask_object,
         };
-        Arc::make_mut(&mut self.external_images).push(record.clone());
+        self.external_images.push(record.clone());
         self.external_image_fingerprint = external_image_fingerprint(&self.external_images);
         Ok(record)
     }
@@ -2366,7 +2437,7 @@ impl<G> PdfState<G> {
         box_list: DurableListId<G>,
         box_semantic_id: StateHashFragment,
         dimensions: (Scaled, Scaled, Scaled),
-        options: (Option<PdfTokenParameter>, Option<PdfTokenParameter>),
+        options: (Option<PdfTokenParameter<G>>, Option<PdfTokenParameter<G>>),
         immediate: bool,
     ) -> Result<PdfFormRecord<G>, PdfObjectCapacityError> {
         let (object, resource) = identity;
@@ -2384,7 +2455,7 @@ impl<G> PdfState<G> {
             immediate,
         };
         self.form_fingerprint = append_form_fingerprint(self.form_fingerprint, &record);
-        Arc::make_mut(&mut self.forms).push(record.clone());
+        self.forms.push(record.clone());
         Ok(record)
     }
 
@@ -2420,7 +2491,7 @@ impl<G> PdfState<G> {
         hasher.i32(artifact.snap_reference.0.raw());
         hasher.i32(artifact.snap_reference.1.raw());
         self.form_artifact_fingerprint = hasher.finish_fragment();
-        Arc::make_mut(&mut self.form_artifacts).insert(object, artifact);
+        self.form_artifacts.insert(object, artifact);
     }
 
     #[must_use]
@@ -2431,14 +2502,14 @@ impl<G> PdfState<G> {
     pub(crate) fn initialize_raw_object(
         &mut self,
         id: PdfRawObjectId,
-        data: PdfRawObjectData,
+        data: PdfRawObjectData<G>,
         immediate: bool,
     ) -> Result<(), PdfRawObjectInitializeError> {
         self.raw_objects.initialize(id, data, immediate)
     }
 
     #[must_use]
-    pub(crate) fn raw_object(&self, id: PdfRawObjectId) -> Option<PdfRawObjectRecord> {
+    pub(crate) fn raw_object(&self, id: PdfRawObjectId) -> Option<PdfRawObjectRecord<G>> {
         self.raw_objects.record(id)
     }
 
@@ -2450,7 +2521,7 @@ impl<G> PdfState<G> {
     }
 
     #[must_use]
-    pub(crate) fn raw_objects(&self) -> &[PdfRawObjectRecord] {
+    pub(crate) fn raw_objects(&self) -> &[PdfRawObjectRecord<G>] {
         self.raw_objects.records()
     }
 
@@ -2462,7 +2533,7 @@ impl<G> PdfState<G> {
     pub(crate) fn append_document_fragment(
         &mut self,
         kind: PdfDocumentFragmentKind,
-        value: PdfTokenParameter,
+        value: PdfTokenParameter<G>,
     ) {
         self.document_fragments.append(kind, value);
     }
@@ -2470,18 +2541,18 @@ impl<G> PdfState<G> {
     pub(crate) fn document_fragments(
         &self,
         kind: PdfDocumentFragmentKind,
-    ) -> impl Iterator<Item = TokenListId> + '_ {
+    ) -> impl Iterator<Item = TokenListId<G>> + '_ {
         self.document_fragments.values(kind)
     }
 
     pub(crate) fn set_catalog_open_action(
         &mut self,
-        spec: PdfActionSpec,
+        spec: PdfActionSpec<G>,
         fingerprint: StateHashFragment,
         destination_identity: Option<PdfDestinationIdentity>,
         structure_identity: Option<PdfDestinationIdentity>,
         thread_identity: Option<PdfDestinationIdentity>,
-    ) -> Result<PdfActionRecord, PdfObjectCapacityError> {
+    ) -> Result<PdfActionRecord<G>, PdfObjectCapacityError> {
         debug_assert!(self.catalog_open_action.is_none());
         let id = self.reserve_document_object()?;
         let target_object = if let Some(identity) = thread_identity {
@@ -2500,27 +2571,27 @@ impl<G> PdfState<G> {
                 .then(|| self.reserve_document_object())
                 .transpose()?
         };
-        if let PdfActionSpec::GoTo(PdfActionDestination {
+        if let PdfActionSpec::<G>::GoTo(PdfActionDestination {
             file: None,
             target: PdfActionTarget::Page { number, .. },
             ..
         }) = &spec
         {
-            Arc::make_mut(&mut self.page_reservations).push(PdfPageReservation {
+            self.page_reservations.push(PdfPageReservation {
                 number: *number,
                 object: target_object.expect("internal page action reserves its page object"),
             });
             self.page_reservation_fingerprint =
                 page_reservation_fingerprint(&self.page_reservations);
         }
-        let record = PdfActionRecord::new(id, spec, target_object, structure_object);
+        let record = PdfActionRecord::<G>::new(id, spec, target_object, structure_object);
         self.catalog_open_action = Some(record.clone());
         self.action_fingerprint = fingerprint;
         Ok(record)
     }
 
     #[must_use]
-    pub(crate) fn catalog_open_action(&self) -> Option<PdfActionRecord> {
+    pub(crate) fn catalog_open_action(&self) -> Option<PdfActionRecord<G>> {
         self.catalog_open_action.clone()
     }
 
@@ -2572,7 +2643,7 @@ impl<G> PdfState<G> {
     }
 
     #[must_use]
-    pub(crate) fn cursor(&self) -> PdfStateCursor {
+    pub(crate) fn cursor(&self) -> PdfStateCursor<G> {
         PdfStateCursor {
             enabled: self.enabled,
             next_object: self.next_object,
@@ -2613,21 +2684,21 @@ impl<G> PdfState<G> {
     pub(crate) fn snapshot(&self) -> PdfStateSnapshot<G> {
         PdfStateSnapshot {
             cursor: self.cursor(),
-            match_state: Arc::clone(&self.match_state),
-            external_images: Arc::clone(&self.external_images),
+            match_state: self.match_state.clone(),
+            external_images: self.external_images.clone(),
             raw_objects: self.raw_objects.clone(),
             document_fragments: self.document_fragments.clone(),
-            page_reservations: Arc::clone(&self.page_reservations),
-            annotations: Arc::clone(&self.annotations),
-            links: Arc::clone(&self.links),
-            open_links: Arc::clone(&self.open_links),
-            color_stacks: Arc::clone(&self.color_stacks),
-            forms: Arc::clone(&self.forms),
-            form_artifacts: Arc::clone(&self.form_artifacts),
-            destinations: Arc::clone(&self.destinations),
-            structure_destinations: Arc::clone(&self.structure_destinations),
-            outlines: Arc::clone(&self.outlines),
-            threads: Arc::clone(&self.threads),
+            page_reservations: self.page_reservations.clone(),
+            annotations: self.annotations.clone(),
+            links: self.links.clone(),
+            open_links: self.open_links.clone(),
+            color_stacks: self.color_stacks.clone(),
+            forms: self.forms.clone(),
+            form_artifacts: self.form_artifacts.clone(),
+            destinations: self.destinations.clone(),
+            structure_destinations: self.structure_destinations.clone(),
+            outlines: self.outlines.clone(),
+            threads: self.threads.clone(),
         }
     }
 
@@ -2700,13 +2771,13 @@ impl<G> PdfState<G> {
         matched: bool,
     ) {
         let fingerprint = match_fingerprint(&haystack, &captures, slot_count, matched);
-        self.match_state = Arc::new(PdfMatchState {
+        self.match_state = PdfMatchState {
             haystack,
             captures,
             slot_count,
             matched,
             fingerprint,
-        });
+        };
     }
 
     pub(crate) fn match_capture(&self, index: u32) -> Option<(u32, &[u8])> {
@@ -2822,10 +2893,7 @@ impl<G> PdfState<G> {
 
     pub(crate) fn rollback_form_colors(&mut self, rollback: PdfFormColorRollback) {
         let PdfFormColorRollback(runtimes, fingerprint) = rollback;
-        for (stack, runtime) in Arc::make_mut(&mut self.color_stacks)
-            .iter_mut()
-            .zip(runtimes)
-        {
+        for (stack, runtime) in self.color_stacks.iter_mut().zip(runtimes) {
             stack.form = runtime;
         }
         self.color_stack_fingerprint = fingerprint;
@@ -2836,7 +2904,7 @@ impl<G> PdfState<G> {
             return;
         }
         let initial = b"0 g 0 G".to_vec();
-        Arc::make_mut(&mut self.color_stacks).push(PdfColorStack {
+        self.color_stacks.push(PdfColorStack {
             mode: PdfColorStackMode::Direct,
             restore_at_page_start: true,
             page: PdfColorStackRuntime {
@@ -2862,7 +2930,7 @@ impl<G> PdfState<G> {
             return Err(PdfColorStackCapacityError);
         }
         let id = self.color_stacks.len() as u32;
-        Arc::make_mut(&mut self.color_stacks).push(PdfColorStack {
+        self.color_stacks.push(PdfColorStack {
             mode,
             restore_at_page_start,
             page: PdfColorStackRuntime {
@@ -2890,7 +2958,7 @@ impl<G> PdfState<G> {
         action: &PdfColorStackAction,
     ) -> Result<PdfColorStackEmission, PdfColorStackApplyError> {
         self.ensure_default_color_stack();
-        let Some(stack) = Arc::make_mut(&mut self.color_stacks).get_mut(id as usize) else {
+        let Some(stack) = self.color_stacks.get_mut(id as usize) else {
             return Err(PdfColorStackApplyError::Unknown);
         };
         let runtime = match target {
@@ -2976,7 +3044,7 @@ fn page_reservation_fingerprint(reservations: &[PdfPageReservation]) -> StateHas
     hasher.finish_fragment()
 }
 
-fn annotation_fingerprint(_records: &[PdfAnnotationRecord]) -> StateHashFragment {
+fn annotation_fingerprint<G>(_records: &[PdfAnnotationRecord<G>]) -> StateHashFragment {
     StateHasher::new_exact(0x7064_665f_616e_6e6f).finish_fragment()
 }
 
@@ -3006,9 +3074,9 @@ fn append_annotation_data_fingerprint(
     hasher.finish_fragment()
 }
 
-fn append_link_fingerprint(
+fn append_link_fingerprint<G>(
     previous: StateHashFragment,
-    record: &PdfLinkRecord,
+    record: &PdfLinkRecord<G>,
     attributes_semantic_id: StateHashFragment,
     action_semantic_id: StateHashFragment,
 ) -> StateHashFragment {
@@ -3021,7 +3089,7 @@ fn append_link_fingerprint(
     hasher.finish_fragment()
 }
 
-fn open_link_fingerprint(links: &[PdfOpenLink]) -> StateHashFragment {
+fn open_link_fingerprint<G>(links: &[PdfOpenLink<G>]) -> StateHashFragment {
     let mut hasher = StateHasher::new_exact(0x7064_665f_6f70_6c6e);
     hasher.usize(links.len());
     for link in links {
@@ -3059,7 +3127,7 @@ fn destination_fingerprint(records: &[PdfDestinationRecord], structure: bool) ->
     hasher.finish_fragment()
 }
 
-fn outline_fingerprint(_records: &[PdfOutlineRecord]) -> StateHashFragment {
+fn outline_fingerprint<G>(_records: &[PdfOutlineRecord<G>]) -> StateHashFragment {
     StateHasher::new_exact(0x7064_665f_6f75_746c).finish_fragment()
 }
 
@@ -3085,9 +3153,9 @@ fn thread_fingerprint(records: &[PdfThreadRecord]) -> StateHashFragment {
     hasher.finish_fragment()
 }
 
-fn append_outline_fingerprint(
+fn append_outline_fingerprint<G>(
     previous: StateHashFragment,
-    record: &PdfOutlineRecord,
+    record: &PdfOutlineRecord<G>,
     attributes_semantic_id: StateHashFragment,
     action_semantic_id: StateHashFragment,
     title_semantic_id: StateHashFragment,
@@ -3359,7 +3427,10 @@ fn freeze_fingerprint(
     hasher.finish_fragment()
 }
 
-fn append_fingerprint(previous: StateHashFragment, record: &PdfPageRecord) -> StateHashFragment {
+fn append_fingerprint<G>(
+    previous: StateHashFragment,
+    record: &PdfPageRecord<G>,
+) -> StateHashFragment {
     let mut hasher = StateHasher::new_exact(PDF_PAGE_DOMAIN);
     previous.apply(&mut hasher);
     hasher.bytes(&record.artifact.bytes());
@@ -3399,9 +3470,9 @@ fn append_form_fingerprint<G>(
     hasher.finish_fragment()
 }
 
-fn freeze_pk_mode_fingerprint(
+fn freeze_pk_mode_fingerprint<G>(
     previous: StateHashFragment,
-    mode: &PdfTokenParameter,
+    mode: &PdfTokenParameter<G>,
 ) -> StateHashFragment {
     let mut hasher = StateHasher::new_exact(PDF_PAGE_DOMAIN);
     previous.apply(&mut hasher);
@@ -3430,1267 +3501,4 @@ fn hash_output_parameters(hasher: &mut StateHasher, parameters: Option<PdfOutput
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_token_ref() -> TokenListRef {
-        crate::token_store::testing_empty_token_list_ref()
-    }
-
-    fn test_token_parameter(identity: u8) -> PdfTokenParameter {
-        PdfTokenParameter {
-            tokens: test_token_ref(),
-            semantic_id: test_identity(identity),
-        }
-    }
-
-    fn test_identity(value: u8) -> StateHashFragment {
-        StateHashFragment::from_parts(
-            u64::from(value),
-            crate::state_hash::semantic_identity_bytes(b"umber-pdf-test-identity", &[value]),
-        )
-    }
-
-    #[test]
-    fn pdf_records_and_page_suffixes_preserve_token_parameter_semantics() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let initial = state.snapshot();
-        let initial_hash = state.hash_fragment();
-        let root = test_token_ref();
-        let parameter = PdfTokenParameter {
-            tokens: root,
-            semantic_id: test_identity(6),
-        };
-
-        let annotation = state.reserve_annotation().expect("annotation reservation");
-        state
-            .initialize_annotation(
-                annotation.object(),
-                PdfAnnotationData {
-                    dimensions: PdfAnnotationDimensions::RUNNING,
-                    entries: root,
-                },
-                test_identity(6),
-            )
-            .expect("annotation initialization");
-        state
-            .create_link(
-                PdfAnnotationDimensions::RUNNING,
-                root,
-                PdfActionSpec::User(root),
-                test_identity(6),
-                test_identity(7),
-                1,
-            )
-            .expect("link creation");
-        state
-            .create_outline(
-                root,
-                PdfActionSpec::User(root),
-                0,
-                root,
-                [test_identity(6), test_identity(7), test_identity(8)],
-            )
-            .expect("outline creation");
-        let raw = state.reserve_raw_object().expect("raw object reservation");
-        state
-            .initialize_raw_object(
-                raw,
-                PdfRawObjectData::new(false, None, false, parameter.clone()),
-                true,
-            )
-            .expect("raw object initialization");
-        state.append_document_fragment(PdfDocumentFragmentKind::Names, parameter.clone());
-        let action = PdfActionSpec::User(root);
-        state
-            .set_catalog_open_action(
-                action.clone(),
-                action.fingerprint(|_| test_identity(9)),
-                None,
-                None,
-                None,
-            )
-            .expect("catalog action reservation");
-        state.rollback(initial.clone());
-        assert_eq!(state.hash_fragment(), initial_hash);
-
-        let page_root = test_token_ref();
-        let page_parameter = PdfTokenParameter {
-            tokens: page_root,
-            semantic_id: test_identity(10),
-        };
-        state.commit_page(
-            ContentHash::new([7; 32]),
-            PdfOutputParameters {
-                output: 1,
-                major_version: 1,
-                minor_version: 4,
-                compress_level: 0,
-                object_compress_level: 0,
-                decimal_digits: 3,
-                gamma: 0,
-                image_gamma: 0,
-                image_hicolor: 0,
-                image_apply_gamma: 0,
-                draft_mode: 0,
-                inclusion_copy_fonts: 0,
-                pk_resolution: 0,
-                unique_resource_names: 0,
-            },
-            PdfPageParameters {
-                h_origin: Scaled::from_raw(0),
-                v_origin: Scaled::from_raw(0),
-                width: Scaled::from_raw(1),
-                height: Scaled::from_raw(1),
-                link_margin: Scaled::from_raw(0),
-                page_attr: page_parameter.clone(),
-                resources: page_parameter.clone(),
-                omit_procset: 0,
-                space_font_name: 0,
-            },
-            page_parameter,
-        );
-        let suffix = state.take_page_suffix(0);
-        assert!(state.pages().is_empty());
-        assert_eq!(
-            suffix[0].parameters.page_attr.semantic_id,
-            test_identity(10)
-        );
-        state.restore_page_suffix(suffix);
-        state.rollback(initial);
-        assert!(state.pages().is_empty());
-    }
-
-    #[test]
-    fn annotation_and_link_objects_are_typed_hashed_and_rollback_safe() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let base = state.snapshot();
-        let base_hash = state.hash_fragment();
-
-        let reserved = state.reserve_annotation().expect("reserve annotation");
-        assert_eq!(reserved.object(), 1);
-        assert_eq!(reserved.data(), None);
-        assert_eq!(state.last_annotation(), 1);
-        let dimensions = PdfAnnotationDimensions {
-            width: Some(Scaled::from_raw(10)),
-            height: None,
-            depth: Some(Scaled::from_raw(2)),
-        };
-        let annotation = state
-            .initialize_annotation(
-                reserved.object(),
-                PdfAnnotationData {
-                    dimensions,
-                    entries: test_token_ref(),
-                },
-                test_identity(17),
-            )
-            .expect("initialize annotation");
-        assert_eq!(
-            annotation.data().expect("initialized").dimensions,
-            dimensions
-        );
-        assert!(
-            state
-                .initialize_annotation(
-                    reserved.object(),
-                    PdfAnnotationData {
-                        dimensions,
-                        entries: test_token_ref(),
-                    },
-                    test_identity(17),
-                )
-                .is_err(),
-            "useobjnum cannot initialize an annotation twice"
-        );
-
-        let link = state
-            .create_link(
-                PdfAnnotationDimensions::RUNNING,
-                test_token_ref(),
-                PdfActionSpec::User(test_token_ref()),
-                test_identity(19),
-                test_identity(23),
-                1,
-            )
-            .expect("create link");
-        assert_eq!(link.object(), 2);
-        assert_eq!(state.last_link(), 2);
-        assert_eq!(state.end_link().expect("open link").record, link);
-        assert_ne!(state.hash_fragment(), base_hash);
-
-        state.rollback(base);
-        assert_eq!(state.next_object(), 1);
-        assert_eq!(state.last_annotation(), 0);
-        assert_eq!(state.last_link(), 0);
-        assert_eq!(state.hash_fragment(), base_hash);
-    }
-
-    #[test]
-    fn page_group_selector_keeps_first_group_on_page_and_later_groups_on_forms() {
-        let mut selector = PdfPageGroupSelector::new(0);
-        assert_eq!(selector.include(false), PdfPageGroupInclusion::None);
-        assert!(!selector.has_selection());
-        assert_eq!(
-            selector.include(true),
-            PdfPageGroupInclusion::SelectForOutputPage
-        );
-        assert!(selector.has_selection());
-        assert_eq!(
-            selector.include(true),
-            PdfPageGroupInclusion::KeepOnIncludedForm {
-                warning: Some(PdfPageGroupWarning::MultipleGroupsOnOnePage),
-            }
-        );
-        assert_eq!(
-            selector.include(false),
-            PdfPageGroupInclusion::None,
-            "images without page groups do not disturb the first selection"
-        );
-        assert!(selector.has_selection());
-    }
-
-    #[test]
-    fn page_group_warning_matches_pdftex_for_zero_positive_and_negative_controls() {
-        for (control, warning) in [
-            (0, Some(PdfPageGroupWarning::MultipleGroupsOnOnePage)),
-            (1, None),
-            (-1, None),
-        ] {
-            let mut selector = PdfPageGroupSelector::new(control);
-            assert_eq!(
-                selector.include(true),
-                PdfPageGroupInclusion::SelectForOutputPage
-            );
-            assert_eq!(
-                selector.include(true),
-                PdfPageGroupInclusion::KeepOnIncludedForm { warning },
-                "control {control}"
-            );
-        }
-        assert_eq!(
-            PdfPageGroupWarning::MultipleGroupsOnOnePage.message(),
-            "PDF inclusion: multiple pdfs with page group included in a single page"
-        );
-    }
-
-    #[test]
-    fn font_configuration_preserves_pdftex_thresholds_and_pk_resolution() {
-        let mut configuration = PdfFontConfiguration {
-            adjust_spacing: 1,
-            protrude_chars: 1,
-            tracing_fonts: 1,
-            adjust_interword_glue: 1,
-            prepend_kern: 1,
-            append_kern: 1,
-            generate_to_unicode: 1,
-            pk_resolution: 0,
-            omit_charset: 1,
-        };
-        assert!(configuration.adjusts_spacing());
-        assert!(!configuration.adjusts_line_breaking());
-        assert!(configuration.protrudes_chars());
-        assert!(!configuration.protrudes_during_line_breaking());
-        assert!(configuration.traces_fonts());
-        assert!(configuration.adjusts_interword_glue());
-        assert!(configuration.prepends_kerns());
-        assert!(configuration.appends_kerns());
-        assert!(configuration.generates_to_unicode());
-        assert!(configuration.omits_charset());
-        assert_eq!(configuration.resolved_pk_resolution(600), 600);
-
-        configuration.adjust_spacing = 2;
-        configuration.protrude_chars = 2;
-        configuration.pk_resolution = 9_000;
-        assert!(configuration.adjusts_line_breaking());
-        assert!(configuration.protrudes_during_line_breaking());
-        assert_eq!(configuration.resolved_pk_resolution(600), 8_000);
-
-        configuration.pk_resolution = -1;
-        configuration.omit_charset = -1;
-        assert_eq!(configuration.resolved_pk_resolution(600), 72);
-        assert!(configuration.omits_charset());
-    }
-
-    #[test]
-    fn image_output_controls_use_pdftex_consumer_ranges() {
-        let parameters = PdfOutputParameters {
-            output: 1,
-            major_version: 1,
-            minor_version: 4,
-            compress_level: 9,
-            object_compress_level: 0,
-            decimal_digits: 3,
-            gamma: -1,
-            image_gamma: 1_000_001,
-            image_hicolor: 2,
-            image_apply_gamma: -1,
-            draft_mode: 2,
-            inclusion_copy_fonts: -1,
-            pk_resolution: 9_000,
-            unique_resource_names: -2,
-        }
-        .normalized();
-        assert_eq!(parameters.gamma, 0);
-        assert_eq!(parameters.image_gamma, 1_000_000);
-        assert_eq!(parameters.image_hicolor, 1);
-        assert_eq!(parameters.image_apply_gamma, 0);
-        assert_eq!(parameters.draft_mode, 2);
-        assert_eq!(parameters.inclusion_copy_fonts, 0);
-        assert_eq!(parameters.pk_resolution, 8_000);
-        assert_eq!(parameters.unique_resource_names, 0);
-    }
-
-    #[test]
-    fn rollback_reuses_page_object_suffix_and_fingerprint() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let snapshot = state.snapshot();
-        let hash = ContentHash::new([7; 32]);
-        let parameters = PdfOutputParameters {
-            output: 1,
-            major_version: 1,
-            minor_version: 4,
-            compress_level: 9,
-            object_compress_level: 0,
-            decimal_digits: 3,
-            gamma: 1_000,
-            image_gamma: 2_200,
-            image_hicolor: 1,
-            image_apply_gamma: 0,
-            draft_mode: 0,
-            inclusion_copy_fonts: 0,
-            pk_resolution: 0,
-            unique_resource_names: 0,
-        };
-        let token = test_token_parameter(0);
-        let page = PdfPageParameters {
-            h_origin: Scaled::from_raw(10),
-            v_origin: Scaled::from_raw(20),
-            width: Scaled::from_raw(30),
-            height: Scaled::from_raw(40),
-            link_margin: Scaled::from_raw(0),
-            page_attr: token.clone(),
-            resources: token.clone(),
-            omit_procset: 0,
-            space_font_name: 0,
-        };
-        state.commit_page(hash, parameters, page.clone(), token.clone());
-        let first = (state.pages()[0].clone(), state.cursor());
-        state.rollback(snapshot);
-        state.commit_page(hash, parameters, page, token);
-        assert_eq!((state.pages()[0].clone(), state.cursor()), first);
-    }
-
-    #[test]
-    fn font_output_log_rolls_back_and_projects_last_attribute_and_char_union() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let font = crate::font::NULL_FONT;
-        state.set_font_attribute(font, b"/StemV 70".to_vec());
-        state.include_font_chars(font, vec![b'B', b'A', b'B']);
-        state.set_glyph_to_unicode(PdfGlyphToUnicode {
-            tfm_name: None,
-            glyph_name: b"A".to_vec(),
-            unicode: vec![0x41],
-        });
-        let checkpoint = state.snapshot();
-        let checkpoint_hash = state.hash_fragment();
-
-        state.set_font_attribute(font, b"/StemV 80".to_vec());
-        state.include_font_chars(font, vec![b'C']);
-        state.disable_builtin_to_unicode(font);
-        state.set_glyph_to_unicode(PdfGlyphToUnicode {
-            tfm_name: None,
-            glyph_name: b"A".to_vec(),
-            unicode: vec![0x391],
-        });
-        state.push_font_map(PdfFontMapOperation::Line(
-            tex_fonts::PdfFontMapEntry::parse(b"cmr10 CMR10 <cmr10.pfb").expect("valid map entry"),
-        ));
-        assert_eq!(state.font_attribute(font), b"/StemV 80");
-        assert_eq!(state.included_font_chars(font), b"ABC");
-        assert_eq!(state.font_maps().count(), 1);
-        assert_eq!(
-            state.glyph_to_unicode(b"cmr10", b"A"),
-            Some([0x391].as_slice())
-        );
-        assert!(state.builtin_to_unicode_disabled(font));
-
-        state.rollback(checkpoint);
-        assert_eq!(state.font_attribute(font), b"/StemV 70");
-        assert_eq!(state.included_font_chars(font), b"AB");
-        assert_eq!(state.font_maps().count(), 0);
-        assert_eq!(
-            state.glyph_to_unicode(b"cmr10", b"A"),
-            Some([0x41].as_slice())
-        );
-        assert!(!state.builtin_to_unicode_disabled(font));
-        assert_eq!(state.hash_fragment(), checkpoint_hash);
-    }
-
-    #[test]
-    fn pk_font_provision_is_typed_hashed_and_rollback_owned() {
-        let mut bytes = vec![247, 89, 0];
-        bytes.extend_from_slice(&[0; 16]);
-        bytes.extend_from_slice(&[0xe0, 9, 65, 0, 0, 0, 3, 3, 2, 0, 1, 0b1010_1000]);
-        bytes.push(245);
-        let font = tex_fonts::PdfPkFont::parse(&bytes).expect("synthetic PK parses");
-        let request = tex_fonts::PdfPkFontRequest::new(b"cmr10".to_vec(), 300, b"cx".to_vec());
-        let mut state = PdfState::<()>::default();
-        let before = state.hash_fragment();
-        let snapshot = state.snapshot();
-        state.provide_pk_font(request.clone(), font.clone());
-        assert_eq!(state.pk_font(&request), Some(&font));
-        assert_ne!(state.hash_fragment(), before);
-        state.rollback(snapshot);
-        assert!(state.pk_font(&request).is_none());
-        assert_eq!(state.hash_fragment(), before);
-    }
-
-    #[test]
-    fn map_line_resolution_keeps_first_duplicate_and_honors_replace_and_remove() {
-        let mut state = PdfState::<()>::default();
-        for line in [
-            b"cmr10 First <cmr10.pfb".as_slice(),
-            b"+cmr10 Ignored <ignored.pfb",
-            b"=cmr10 Replacement <replacement.pfb",
-            b"-cmr10",
-            b"cmtt10 CMTT10 <cmtt10.pfb",
-        ] {
-            state.push_font_map(PdfFontMapOperation::Line(
-                tex_fonts::PdfFontMapEntry::parse(line).expect("valid map entry"),
-            ));
-        }
-        assert_eq!(state.font_map_duplicate_names(), [b"cmr10"]);
-        let entries = state.resolved_font_map_lines();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].tex_name, b"cmtt10");
-    }
-
-    #[test]
-    fn implicit_pdftex_map_is_requested_and_resolved_from_provisioned_bytes() {
-        let mut state = PdfState::<()>::default();
-        assert_eq!(state.font_map_file_requests(), [b"pdftex.map"]);
-        state.provide_font_map_file(
-            b"pdftex.map".to_vec(),
-            tex_fonts::PdfFontMap::parse(b"cmr10 CMR10 <cmr10.pfb\n").expect("default map parses"),
-        );
-        let entries = state.resolved_font_map_lines();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].tex_name, b"cmr10");
-        assert_eq!(
-            entries[0].font_file.as_deref(),
-            Some(b"cmr10.pfb".as_slice())
-        );
-    }
-
-    #[test]
-    fn first_unmodified_map_suppresses_default_but_modified_map_preserves_it() {
-        let mut replacement = PdfState::<()>::default();
-        replacement.push_font_map(PdfFontMapOperation::File(
-            tex_fonts::PdfFontMapFile::parse(b"custom.map").expect("map request parses"),
-        ));
-        assert_eq!(replacement.font_map_file_requests(), [b"custom.map"]);
-
-        let mut additive = PdfState::<()>::default();
-        additive.push_font_map(PdfFontMapOperation::File(
-            tex_fonts::PdfFontMapFile::parse(b"+custom.map").expect("map request parses"),
-        ));
-        assert_eq!(
-            additive.font_map_file_requests(),
-            [b"custom.map".to_vec(), b"pdftex.map".to_vec()]
-        );
-    }
-
-    #[test]
-    fn empty_map_primitive_blocks_the_implicit_default_map() {
-        let mut state = PdfState::<()>::default();
-        state.push_font_map(PdfFontMapOperation::BlockDefault);
-        assert!(state.font_map_file_requests().is_empty());
-        assert!(state.resolved_font_map_lines().is_empty());
-    }
-
-    #[test]
-    fn external_image_metadata_is_typed_hashed_and_rollback_safe() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let initial = state.snapshot();
-        let initial_hash = state.hash_fragment();
-        let id = PdfExternalImageId::new(7).expect("valid image object");
-        let metadata = PdfExternalImageMetadata::PdfPage {
-            page_box: PdfPageBox {
-                left: Scaled::from_raw(-2),
-                bottom: Scaled::from_raw(3),
-                right: Scaled::from_raw(40),
-                top: Scaled::from_raw(50),
-            },
-            rotation: PdfPageRotation::Clockwise90,
-            page: 1,
-            total_pages: 3,
-            has_page_group: false,
-            pdf_version: (1, 4),
-        };
-
-        state
-            .register_external_image(id, metadata)
-            .expect("register image metadata");
-        let registered_hash = state.hash_fragment();
-        assert_ne!(registered_hash, initial_hash);
-        assert_eq!(state.external_image(id), Some(metadata));
-        assert!(!state.is_format_empty());
-        assert_eq!(metadata.bbox_coordinate(1), Some(Scaled::from_raw(-2)));
-        assert_eq!(metadata.bbox_coordinate(4), Some(Scaled::from_raw(50)));
-        assert_eq!(metadata.bbox_coordinate(5), None);
-        assert_eq!(
-            state.register_external_image(
-                id,
-                PdfExternalImageMetadata::Raster(PdfRasterImageMetadata::placeholder()),
-            ),
-            Err(PdfExternalImageRegistrationError::Duplicate(id))
-        );
-
-        state.rollback(initial.clone());
-        assert_eq!(state.external_image(id), None);
-        assert_eq!(state.hash_fragment(), initial_hash);
-        state
-            .register_external_image(id, metadata)
-            .expect("replay image metadata");
-        assert_eq!(state.hash_fragment(), registered_hash);
-
-        assert_eq!(
-            PdfExternalImageMetadata::Raster(PdfRasterImageMetadata::placeholder())
-                .bbox_coordinate(3),
-            Some(Scaled::from_raw(0))
-        );
-    }
-
-    #[test]
-    fn allocated_external_images_share_the_object_ledger_and_replay_exactly() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let snapshot = state.snapshot();
-        let source = PdfExternalImageSource {
-            identity: ContentHash::new([19; 32]),
-            metadata: PdfExternalImageMetadata::Raster(PdfRasterImageMetadata::placeholder()),
-            natural_width: Scaled::from_raw(640),
-            natural_height: Scaled::from_raw(480),
-            bytes: Arc::from([1, 2, 3]),
-        };
-        let dimensions = PdfExternalImageDimensions {
-            width: Scaled::from_raw(320),
-            height: Scaled::from_raw(240),
-            depth: Scaled::from_raw(7),
-        };
-
-        let allocated = state
-            .allocate_external_image(source.clone(), dimensions, -7)
-            .expect("allocate image");
-        let record = state.last_external_image().expect("last image");
-        assert_eq!(allocated.id().raw(), 1);
-        assert_eq!(record.id(), allocated.id());
-        assert_eq!(record.identity(), source.identity);
-        assert_eq!(record.metadata(), source.metadata);
-        assert_eq!(record.dimensions(), dimensions);
-        assert_eq!(record.color_space_object(), -7);
-        assert_eq!(state.cursor().next_object, 2);
-        let allocated_hash = state.hash_fragment();
-
-        state.rollback(snapshot);
-        assert_eq!(state.last_external_image(), None);
-        assert_eq!(
-            state
-                .allocate_external_image(source, dimensions, -7)
-                .expect("replay allocation"),
-            allocated
-        );
-        assert_eq!(state.hash_fragment(), allocated_hash);
-    }
-
-    #[test]
-    fn alpha_external_images_reserve_their_companion_and_replay_exactly() {
-        // pdftex.web §1552 allocates the image object before `read_image`;
-        // an alpha PNG then reserves its companion in that shared PDF ledger.
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let snapshot = state.snapshot();
-        let source = PdfExternalImageSource {
-            identity: ContentHash::new([23; 32]),
-            metadata: PdfExternalImageMetadata::Raster(PdfRasterImageMetadata {
-                format: PdfRasterFormat::Png,
-                width: 1,
-                height: 1,
-                bits_per_component: 8,
-                color_space: PdfRasterColorSpace::Gray,
-                alpha: true,
-                png_color_type: Some(4),
-            }),
-            natural_width: Scaled::from_raw(640),
-            natural_height: Scaled::from_raw(480),
-            bytes: Arc::from([1, 2, 3]),
-        };
-        let dimensions = PdfExternalImageDimensions {
-            width: Scaled::from_raw(320),
-            height: Scaled::from_raw(240),
-            depth: Scaled::from_raw(0),
-        };
-
-        let allocated = state
-            .allocate_external_image(source.clone(), dimensions, 0)
-            .expect("allocate alpha image");
-        assert_eq!(allocated.id().raw(), 1);
-        assert_eq!(allocated.mask_object(), Some(2));
-        assert_eq!(state.next_object(), 3);
-        let allocated_hash = state.hash_fragment();
-
-        state.rollback(snapshot);
-        assert_eq!(state.next_object(), 1);
-        assert_eq!(state.last_external_image(), None);
-        assert_eq!(
-            state
-                .allocate_external_image(source, dimensions, 0)
-                .expect("replay alpha allocation"),
-            allocated
-        );
-        assert_eq!(state.hash_fragment(), allocated_hash);
-    }
-
-    #[test]
-    fn raw_object_reservation_initialization_and_rollback_share_one_ledger() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let initial = state.snapshot();
-        let initial_hash = state.hash_fragment();
-
-        let first = state.reserve_raw_object().expect("reserve raw object");
-        assert_eq!(first.raw(), 1);
-        assert_eq!(state.last_raw_object(), 1);
-        assert_eq!(state.next_object(), 2);
-        assert_eq!(state.raw_object(first).expect("reserved").data(), None);
-        let tokens = test_token_parameter(17);
-        let data = PdfRawObjectData::new(true, Some(tokens.clone()), false, tokens);
-        state
-            .initialize_raw_object(first, data.clone(), true)
-            .expect("initialize reservation");
-        let initialized = state.snapshot();
-        let record = state.raw_object(first).expect("initialized");
-        assert_eq!(record.data(), Some(data.clone()));
-        assert!(record.is_immediate());
-        assert!(!state.is_format_empty());
-        assert_eq!(
-            state.initialize_raw_object(first, data.clone(), false),
-            Err(PdfRawObjectInitializeError::AlreadyInitialized(first))
-        );
-        state
-            .reference_raw_object(first)
-            .expect("reference initialized object");
-        assert!(state.raw_object(first).expect("referenced").is_referenced());
-        let referenced_hash = state.hash_fragment();
-        state.rollback(initialized);
-        assert!(
-            !state
-                .raw_object(first)
-                .expect("rolled back")
-                .is_referenced()
-        );
-        state.reference_raw_object(first).expect("replay reference");
-        assert_eq!(state.hash_fragment(), referenced_hash);
-        let allocated_hash = state.hash_fragment();
-        assert_ne!(allocated_hash, initial_hash);
-
-        state.rollback(initial);
-        assert_eq!(state.raw_object(first), None);
-        assert_eq!(state.last_raw_object(), 0);
-        assert_eq!(state.next_object(), 1);
-        assert_eq!(state.hash_fragment(), initial_hash);
-        let replay = state.reserve_raw_object().expect("replay reservation");
-        state
-            .initialize_raw_object(replay, data, true)
-            .expect("replay initialization");
-        state
-            .reference_raw_object(replay)
-            .expect("replay reference after aggregate rollback");
-        assert_eq!(replay, first);
-        assert_eq!(state.hash_fragment(), allocated_hash);
-    }
-
-    #[test]
-    fn document_fragments_preserve_kind_order_hash_and_rollback() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let initial = state.snapshot();
-        let initial_hash = state.hash_fragment();
-        let first = test_token_parameter(11);
-        let second = test_token_parameter(22);
-
-        state.append_document_fragment(PdfDocumentFragmentKind::Info, first.clone());
-        state.append_document_fragment(PdfDocumentFragmentKind::Catalog, first.clone());
-        state.append_document_fragment(PdfDocumentFragmentKind::Info, second.clone());
-        assert_eq!(
-            state
-                .document_fragments(PdfDocumentFragmentKind::Info)
-                .collect::<Vec<_>>(),
-            vec![first.id(), second.id()]
-        );
-        assert_eq!(
-            state
-                .document_fragments(PdfDocumentFragmentKind::Catalog)
-                .collect::<Vec<_>>(),
-            vec![first.id()]
-        );
-        assert!(!state.is_format_empty());
-        let appended_hash = state.hash_fragment();
-        assert_ne!(appended_hash, initial_hash);
-
-        state.rollback(initial);
-        assert_eq!(
-            state
-                .document_fragments(PdfDocumentFragmentKind::Info)
-                .count(),
-            0
-        );
-        assert_eq!(state.hash_fragment(), initial_hash);
-        state.append_document_fragment(PdfDocumentFragmentKind::Info, first.clone());
-        state.append_document_fragment(PdfDocumentFragmentKind::Catalog, first);
-        state.append_document_fragment(PdfDocumentFragmentKind::Info, second);
-        assert_eq!(state.hash_fragment(), appended_hash);
-    }
-
-    #[test]
-    fn return_value_is_checkpointed_hashed_and_excluded_from_formats() {
-        let mut state = PdfState::<()>::default();
-        assert_eq!(state.return_value(), 0);
-        assert!(state.is_format_empty());
-        let initial = state.snapshot();
-        let initial_hash = state.hash_fragment();
-
-        state.set_return_value(-1);
-        assert_eq!(state.return_value(), -1);
-        assert!(state.is_format_empty());
-        let failed_hash = state.hash_fragment();
-        assert_ne!(failed_hash, initial_hash);
-
-        state.rollback(initial.clone());
-        assert_eq!(state.return_value(), 0);
-        assert_eq!(state.hash_fragment(), initial_hash);
-        state.set_return_value(-1);
-        assert_eq!(state.hash_fragment(), failed_hash);
-        state.rollback(initial);
-    }
-
-    #[test]
-    fn space_font_names_are_interned_checkpointed_and_page_addressable() {
-        let mut state = PdfState::<()>::default();
-        assert_eq!(state.space_font_name(0), Some(b"pdftexspace".as_slice()));
-        assert!(state.is_format_empty());
-        let initial = state.snapshot();
-        let initial_hash = state.hash_fragment();
-
-        state.set_space_font_name(b"fixture-space".to_vec());
-        let selected = state.current_space_font_name_id();
-        assert_eq!(selected, 1);
-        assert_eq!(
-            state.space_font_name(selected),
-            Some(b"fixture-space".as_slice())
-        );
-        let selected_hash = state.hash_fragment();
-        assert_ne!(selected_hash, initial_hash);
-        state.set_space_font_name(b"fixture-space".to_vec());
-        assert_eq!(state.current_space_font_name_id(), selected);
-        assert_eq!(state.space_font_names.len(), 2);
-
-        state.rollback(initial.clone());
-        assert_eq!(state.current_space_font_name_id(), 0);
-        assert_eq!(state.space_font_name(selected), None);
-        assert_eq!(state.hash_fragment(), initial_hash);
-
-        state.set_space_font_name(b"fixture-space".to_vec());
-        assert_eq!(state.current_space_font_name_id(), selected);
-        assert_eq!(state.hash_fragment(), selected_hash);
-        state.rollback(initial);
-        assert!(state.is_format_empty());
-    }
-
-    #[test]
-    fn mixed_resource_allocation_is_collision_free_and_replays_exactly() {
-        let mut pk_bytes = vec![247, 89, 0];
-        pk_bytes.extend_from_slice(&[0; 16]);
-        pk_bytes.extend_from_slice(&[0xe0, 9, 65, 0, 0, 0, 3, 3, 2, 0, 1, 0b1010_1000]);
-        pk_bytes.push(245);
-        let pk_font = tex_fonts::PdfPkFont::parse(&pk_bytes).expect("synthetic PK parses");
-        let pk_request = tex_fonts::PdfPkFontRequest::new(b"cmr10".to_vec(), 300, b"cx".to_vec());
-        let token = test_token_parameter(29);
-        let output = PdfOutputParameters {
-            output: 1,
-            major_version: 1,
-            minor_version: 4,
-            compress_level: 0,
-            object_compress_level: 0,
-            decimal_digits: 3,
-            gamma: 0,
-            image_gamma: 0,
-            image_hicolor: 0,
-            image_apply_gamma: 0,
-            draft_mode: 0,
-            inclusion_copy_fonts: 0,
-            pk_resolution: 300,
-            unique_resource_names: 0,
-        };
-        let page = PdfPageParameters {
-            h_origin: Scaled::from_raw(0),
-            v_origin: Scaled::from_raw(0),
-            width: Scaled::from_raw(1),
-            height: Scaled::from_raw(1),
-            link_margin: Scaled::from_raw(0),
-            page_attr: token.clone(),
-            resources: token.clone(),
-            omit_procset: 0,
-            space_font_name: 0,
-        };
-        let exercise = |state: &mut PdfState<()>| {
-            state.provide_pk_font(pk_request.clone(), pk_font.clone());
-            state
-                .register_external_image(
-                    PdfExternalImageId::new(99).expect("image identity"),
-                    PdfExternalImageMetadata::Raster(PdfRasterImageMetadata::placeholder()),
-                )
-                .expect("image metadata");
-            let font = state
-                .ensure_font_resource(
-                    crate::font::NULL_FONT,
-                    tex_fonts::FontSourceIdentity::from_bytes([7; 32]),
-                    tex_fonts::PdfFontResourceIdentity::new([11; 32], None),
-                )
-                .expect("font object");
-            let raw = state.reserve_raw_object().expect("raw object");
-            state
-                .initialize_raw_object(
-                    raw,
-                    PdfRawObjectData::new(false, None, false, token.clone()),
-                    true,
-                )
-                .expect("raw data");
-            state.commit_page(
-                ContentHash::new([13; 32]),
-                output,
-                page.clone(),
-                token.clone(),
-            );
-            state.append_document_fragment(PdfDocumentFragmentKind::Names, token.clone());
-            let document = state
-                .finalize_document_objects(true)
-                .expect("document objects");
-            let page = &state.pages()[0];
-            vec![
-                font.object_number(),
-                raw.raw(),
-                page.resources_object(),
-                page.page_object(),
-                page.contents_object(),
-                document.pages().expect("pages"),
-                document.names().expect("names"),
-                document.catalog().expect("catalog"),
-                document.info().expect("info"),
-            ]
-        };
-
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let initial = state.snapshot();
-        let first = exercise(&mut state);
-        assert_eq!(first, (1..=9).collect::<Vec<_>>());
-        let completed_hash = state.hash_fragment();
-        let completed_cursor = state.cursor();
-
-        state.rollback(initial);
-        let replay = exercise(&mut state);
-        assert_eq!(replay, first);
-        assert_eq!(state.cursor(), completed_cursor);
-        assert_eq!(state.hash_fragment(), completed_hash);
-    }
-
-    #[test]
-    fn final_document_objects_allocate_once_through_the_shared_ledger() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let token = test_token_parameter(7);
-        let raw = state.reserve_raw_object().expect("raw object");
-        assert_eq!(raw.raw(), 1);
-        state.append_document_fragment(PdfDocumentFragmentKind::Names, token);
-        let before = state.snapshot();
-
-        let objects = state
-            .finalize_document_objects(true)
-            .expect("final dictionaries");
-        assert_eq!(objects.pages(), Some(2));
-        assert_eq!(objects.names(), Some(3));
-        assert_eq!(objects.catalog(), Some(4));
-        assert_eq!(objects.info(), Some(5));
-        assert_eq!(state.next_object(), 6);
-        assert_eq!(
-            state
-                .finalize_document_objects(true)
-                .expect("repeated finalization"),
-            objects,
-            "finalization is idempotent"
-        );
-
-        state.rollback(before);
-        assert_eq!(state.next_object(), 2);
-        let replay = state
-            .finalize_document_objects(true)
-            .expect("replayed finalization");
-        assert_eq!(replay, objects);
-    }
-
-    #[test]
-    fn catalog_page_action_reserves_and_replays_the_target_page_identity() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let initial = state.snapshot();
-        let initial_hash = state.hash_fragment();
-        let action = PdfActionSpec::GoTo(PdfActionDestination {
-            file: None,
-            structure: None,
-            target: PdfActionTarget::Page {
-                number: 1,
-                view: test_token_ref(),
-            },
-            window: PdfActionWindow::Unspecified,
-        });
-        let record = state
-            .set_catalog_open_action(
-                action.clone(),
-                action.fingerprint(|_| test_identity(17)),
-                None,
-                None,
-                None,
-            )
-            .expect("reserve action and page target");
-        assert_eq!(record.id(), 1);
-        assert_eq!(record.target_object(), Some(2));
-        assert_eq!(state.next_object(), 3);
-
-        let parameters = PdfOutputParameters {
-            output: 1,
-            major_version: 1,
-            minor_version: 4,
-            compress_level: 0,
-            object_compress_level: 0,
-            decimal_digits: 3,
-            gamma: 0,
-            image_gamma: 0,
-            image_hicolor: 0,
-            image_apply_gamma: 0,
-            draft_mode: 0,
-            inclusion_copy_fonts: 0,
-            pk_resolution: 0,
-            unique_resource_names: 0,
-        };
-        let token = test_token_parameter(17);
-        state.commit_page(
-            ContentHash::new([4; 32]),
-            parameters,
-            PdfPageParameters {
-                h_origin: Scaled::from_raw(0),
-                v_origin: Scaled::from_raw(0),
-                width: Scaled::from_raw(1),
-                height: Scaled::from_raw(1),
-                link_margin: Scaled::from_raw(0),
-                page_attr: token.clone(),
-                resources: token.clone(),
-                omit_procset: 0,
-                space_font_name: 0,
-            },
-            token.clone(),
-        );
-        assert_eq!(state.pages()[0].resources_object(), 3);
-        assert_eq!(state.pages()[0].contents_object(), 4);
-        assert_eq!(state.pages()[0].page_object(), 2);
-        let completed_hash = state.hash_fragment();
-
-        state.rollback(initial.clone());
-        assert_eq!(state.catalog_open_action(), None);
-        assert_eq!(state.hash_fragment(), initial_hash);
-        let replay = state
-            .set_catalog_open_action(
-                action.clone(),
-                action.fingerprint(|_| test_identity(17)),
-                None,
-                None,
-                None,
-            )
-            .expect("replay action reservation");
-        assert_eq!(replay, record);
-        state.rollback(initial);
-        assert_eq!(state.hash_fragment(), initial_hash);
-        assert_ne!(completed_hash, initial_hash);
-    }
-
-    #[test]
-    fn catalog_thread_action_reuses_the_checkpointed_thread_identity() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let initial = state.snapshot();
-        let action = PdfActionSpec::Thread(PdfActionDestination {
-            file: None,
-            structure: None,
-            target: PdfActionTarget::Destination(PdfActionIdentifier::Number(7)),
-            window: PdfActionWindow::Unspecified,
-        });
-        let identity = PdfDestinationIdentity::Number(7);
-        let record = state
-            .set_catalog_open_action(
-                action.clone(),
-                action.fingerprint(|_| test_identity(17)),
-                None,
-                None,
-                Some(identity.clone()),
-            )
-            .expect("reserve action and thread target");
-        assert_eq!(record.id(), 1);
-        assert_eq!(record.target_object(), Some(2));
-        assert_eq!(state.threads()[0].identity(), &identity);
-        assert_eq!(state.threads()[0].object(), 2);
-
-        state.rollback(initial);
-        assert!(state.threads().is_empty());
-        let replay = state
-            .set_catalog_open_action(
-                action.clone(),
-                action.fingerprint(|_| test_identity(17)),
-                None,
-                None,
-                Some(identity),
-            )
-            .expect("replay action and thread reservation");
-        assert_eq!(replay, record);
-    }
-
-    #[test]
-    fn thread_beads_are_typed_hashed_and_rollback_owned() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let checkpoint = state.snapshot();
-        let initial_hash = state.hash_fragment();
-        let identity = PdfDestinationIdentity::Name(b"running".to_vec());
-
-        let (thread, bead) = state
-            .append_thread_bead(identity.clone())
-            .expect("append first thread bead");
-        assert_eq!(thread.identity(), &identity);
-        assert_eq!(thread.object(), 1);
-        assert_eq!(bead.bead_object(), 2);
-        assert_eq!(bead.rectangle_object(), 3);
-        assert_eq!(thread.beads(), &[bead]);
-        assert_eq!(state.next_object(), 4);
-        let appended_hash = state.hash_fragment();
-        assert_ne!(appended_hash, initial_hash);
-
-        state.rollback(checkpoint.clone());
-        assert!(state.threads().is_empty());
-        assert_eq!(state.next_object(), 1);
-        assert_eq!(state.hash_fragment(), initial_hash);
-
-        let replay = state
-            .append_thread_bead(identity)
-            .expect("replay first thread bead");
-        assert_eq!(replay, (thread, bead));
-        assert_eq!(state.hash_fragment(), appended_hash);
-        state.rollback(checkpoint);
-        assert_eq!(state.hash_fragment(), initial_hash);
-    }
-
-    #[test]
-    fn color_stacks_are_checkpointed_and_page_and_form_state_stay_independent() {
-        let mut state = PdfState::<()>::default();
-        let before_hash = state.hash_fragment();
-        let before = state.snapshot();
-        let id = state
-            .allocate_color_stack(PdfColorStackMode::Page, true, b"0 0 1 rg".to_vec())
-            .expect("color stack capacity");
-        assert_eq!(id, 1);
-        let allocated_hash = state.hash_fragment();
-        assert_ne!(allocated_hash, before_hash);
-
-        let page = state
-            .apply_color_stack(
-                id,
-                PdfColorStackTarget::Page,
-                &PdfColorStackAction::Push(b"1 0 0 rg".to_vec()),
-            )
-            .expect("page push");
-        assert_eq!(page.payload, b"1 0 0 rg");
-        let form = state
-            .apply_color_stack(id, PdfColorStackTarget::Form, &PdfColorStackAction::Current)
-            .expect("form current");
-        assert_eq!(form.payload, b"0 0 1 rg");
-        assert_eq!(
-            state.apply_color_stack(0, PdfColorStackTarget::Page, &PdfColorStackAction::Pop),
-            Err(PdfColorStackApplyError::Underflow)
-        );
-
-        state.rollback(before);
-        assert_eq!(
-            state.allocate_color_stack(PdfColorStackMode::Page, true, b"0 0 1 rg".to_vec()),
-            Ok(1)
-        );
-        assert_eq!(state.hash_fragment(), allocated_hash);
-    }
-
-    #[test]
-    fn disabled_page_color_restoration_query_is_observationally_inert() {
-        let mut state = PdfState::<()>::default();
-        let before = state.cursor();
-        let before_hash = state.hash_fragment();
-
-        assert!(state.page_color_stack_restorations().is_empty());
-        assert_eq!(state.cursor(), before);
-        assert_eq!(state.hash_fragment(), before_hash);
-        assert!(state.is_format_empty());
-    }
-
-    #[test]
-    fn saved_positions_and_snap_reference_rollback_and_replay_exactly() {
-        let mut state = PdfState::<()>::default();
-        let before = state.snapshot();
-        state.publish_traversal_positions(
-            Some((Scaled::from_raw(17), Scaled::from_raw(-23))),
-            (Scaled::from_raw(31), Scaled::from_raw(47)),
-        );
-        let changed = state.hash_fragment();
-        assert_eq!(
-            state.last_position(),
-            (Scaled::from_raw(17), Scaled::from_raw(-23))
-        );
-        assert_eq!(
-            state.snap_reference(),
-            (Scaled::from_raw(31), Scaled::from_raw(47))
-        );
-        state.rollback(before.clone());
-        assert_eq!(
-            state.last_position(),
-            (Scaled::from_raw(0), Scaled::from_raw(0))
-        );
-        state.publish_traversal_positions(
-            Some((Scaled::from_raw(17), Scaled::from_raw(-23))),
-            (Scaled::from_raw(31), Scaled::from_raw(47)),
-        );
-        assert_eq!(state.hash_fragment(), changed);
-    }
-
-    #[test]
-    fn destination_maps_are_disjoint_duplicate_aware_and_rollback_safe() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let checkpoint = state.snapshot();
-        let initial_hash = state.hash_fragment();
-        let identity = PdfDestinationIdentity::Name(b"same".to_vec());
-        let regular = state
-            .reserve_destination(identity.clone(), false)
-            .expect("regular reservation");
-        let structure = state
-            .reserve_destination(identity.clone(), true)
-            .expect("structure reservation");
-        assert_eq!((regular.object(), structure.object()), (1, 2));
-        assert!(
-            !state
-                .define_destination(identity.clone(), None)
-                .expect("regular definition")
-                .duplicate
-        );
-        assert!(
-            state
-                .define_destination(identity.clone(), None)
-                .expect("regular duplicate")
-                .duplicate
-        );
-        let structure_definition = state
-            .define_destination(identity.clone(), Some(99))
-            .expect("structure definition");
-        assert!(!structure_definition.duplicate);
-        assert_eq!(structure_definition.record.structure(), Some(99));
-        let completed_hash = state.hash_fragment();
-
-        state.rollback(checkpoint.clone());
-        assert!(state.destinations(false).is_empty());
-        assert!(state.destinations(true).is_empty());
-        assert_eq!(state.hash_fragment(), initial_hash);
-        assert_eq!(
-            state
-                .reserve_destination(identity.clone(), false)
-                .expect("replay regular reservation")
-                .object(),
-            regular.object()
-        );
-        assert_eq!(
-            state
-                .reserve_destination(identity.clone(), true)
-                .expect("replay structure reservation")
-                .object(),
-            structure.object()
-        );
-        assert!(
-            !state
-                .define_destination(identity.clone(), None)
-                .expect("replay regular definition")
-                .duplicate
-        );
-        assert!(
-            state
-                .define_destination(identity.clone(), None)
-                .expect("replay regular duplicate")
-                .duplicate
-        );
-        assert!(
-            !state
-                .define_destination(identity, Some(99))
-                .expect("replay structure definition")
-                .duplicate
-        );
-        assert_eq!(state.hash_fragment(), completed_hash);
-        state.rollback(checkpoint);
-        assert_ne!(completed_hash, initial_hash);
-    }
-
-    #[test]
-    fn outlines_allocate_action_item_title_and_rollback_as_one_ledger_entry() {
-        let mut state = PdfState::<()>::default();
-        state.enable();
-        let checkpoint = state.snapshot();
-        let record = state
-            .create_outline(
-                test_token_ref(),
-                PdfActionSpec::User(test_token_ref()),
-                -2,
-                test_token_ref(),
-                [test_identity(1), test_identity(2), test_identity(3)],
-            )
-            .expect("outline");
-        assert_eq!(
-            (
-                record.action_object(),
-                record.item_object(),
-                record.title_object()
-            ),
-            (1, 2, 3)
-        );
-        assert_eq!(state.next_object(), 4);
-        let hash = state.hash_fragment();
-        state.rollback(checkpoint.clone());
-        assert!(state.outlines().is_empty());
-        let replay = state
-            .create_outline(
-                test_token_ref(),
-                PdfActionSpec::User(test_token_ref()),
-                -2,
-                test_token_ref(),
-                [test_identity(1), test_identity(2), test_identity(3)],
-            )
-            .expect("replay");
-        assert_eq!(replay, record);
-        assert_eq!(state.hash_fragment(), hash);
-    }
-}
+mod tests;

@@ -1,7 +1,5 @@
 //! Checkpointed raw fragments for PDF document dictionaries and trailer data.
 
-use std::sync::Arc;
-
 use crate::state_hash::{StateHashFragment, StateHasher};
 
 use super::PdfTokenParameter;
@@ -77,29 +75,46 @@ impl PdfDocumentFragmentKind {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct PdfDocumentFragment {
+#[derive(Debug, Eq, Hash, PartialEq)]
+struct PdfDocumentFragment<G> {
     kind: PdfDocumentFragmentKind,
-    value: PdfTokenParameter,
+    value: PdfTokenParameter<G>,
 }
 
-/// Copy-on-write document fragments shared by PDF snapshots.
-#[derive(Clone, Debug)]
-pub(crate) struct PdfDocumentFragments {
-    fragments: Arc<Vec<PdfDocumentFragment>>,
+impl<G> Copy for PdfDocumentFragment<G> {}
+
+impl<G> Clone for PdfDocumentFragment<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+/// Owned document fragments copied into explicit PDF checkpoints.
+#[derive(Debug)]
+pub(crate) struct PdfDocumentFragments<G> {
+    fragments: Vec<PdfDocumentFragment<G>>,
     fingerprint: StateHashFragment,
 }
 
-impl Default for PdfDocumentFragments {
+impl<G> Clone for PdfDocumentFragments<G> {
+    fn clone(&self) -> Self {
+        Self {
+            fragments: self.fragments.clone(),
+            fingerprint: self.fingerprint,
+        }
+    }
+}
+
+impl<G> Default for PdfDocumentFragments<G> {
     fn default() -> Self {
         Self {
-            fragments: Arc::new(Vec::new()),
+            fragments: Vec::new(),
             fingerprint: StateHasher::new(PDF_DOCUMENT_FRAGMENTS_DOMAIN).finish_fragment(),
         }
     }
 }
 
-impl PdfDocumentFragments {
+impl<G> PdfDocumentFragments<G> {
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
         self.fragments.is_empty()
@@ -110,15 +125,15 @@ impl PdfDocumentFragments {
         self.fingerprint
     }
 
-    pub(crate) fn append(&mut self, kind: PdfDocumentFragmentKind, value: PdfTokenParameter) {
-        Arc::make_mut(&mut self.fragments).push(PdfDocumentFragment { kind, value });
+    pub(crate) fn append(&mut self, kind: PdfDocumentFragmentKind, value: PdfTokenParameter<G>) {
+        self.fragments.push(PdfDocumentFragment { kind, value });
         self.fingerprint = fingerprint(&self.fragments);
     }
 
     pub(crate) fn values(
         &self,
         kind: PdfDocumentFragmentKind,
-    ) -> impl Iterator<Item = crate::ids::TokenListId> + '_ {
+    ) -> impl Iterator<Item = crate::TokenListId<G>> + '_ {
         self.fragments
             .iter()
             .filter(move |fragment| fragment.kind == kind)
@@ -126,7 +141,7 @@ impl PdfDocumentFragments {
     }
 }
 
-fn fingerprint(fragments: &[PdfDocumentFragment]) -> StateHashFragment {
+fn fingerprint<G>(fragments: &[PdfDocumentFragment<G>]) -> StateHashFragment {
     let mut hasher = StateHasher::new(PDF_DOCUMENT_FRAGMENTS_DOMAIN);
     hasher.usize(fragments.len());
     for fragment in fragments {

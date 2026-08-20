@@ -1,26 +1,39 @@
-//! Typed PDF action specifications shared by catalog, link, and outline users.
+//! Generation-typed PDF action specifications.
 
+use crate::durable_arena::TokenListId;
 use crate::state_hash::{StateHashFragment, StateHasher};
-use crate::token_store::TokenListRef;
 
 const PDF_ACTION_DOMAIN: u64 = 0x7064_665f_6163_746e;
 
-/// A positive numeric identifier or an expanded PDF string token list.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum PdfActionIdentifier {
-    Name(TokenListRef),
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub enum PdfActionIdentifier<G> {
+    Name(TokenListId<G>),
     Number(u32),
-    Raw(TokenListRef),
+    Raw(TokenListId<G>),
 }
 
-/// The destination selected by a GoTo or Thread action.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum PdfActionTarget {
-    Page { number: u32, view: TokenListRef },
-    Destination(PdfActionIdentifier),
+impl<G> Copy for PdfActionIdentifier<G> {}
+
+impl<G> Clone for PdfActionIdentifier<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
-/// pdfTeX's tri-state remote-window preference.
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub enum PdfActionTarget<G> {
+    Page { number: u32, view: TokenListId<G> },
+    Destination(PdfActionIdentifier<G>),
+}
+
+impl<G> Copy for PdfActionTarget<G> {}
+
+impl<G> Clone for PdfActionTarget<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PdfActionWindow {
     Unspecified,
@@ -28,24 +41,38 @@ pub enum PdfActionWindow {
     Same,
 }
 
-/// One fully scanned non-user PDF action.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfActionDestination {
-    pub file: Option<TokenListRef>,
-    pub structure: Option<PdfActionIdentifier>,
-    pub target: PdfActionTarget,
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct PdfActionDestination<G> {
+    pub file: Option<TokenListId<G>>,
+    pub structure: Option<PdfActionIdentifier<G>>,
+    pub target: PdfActionTarget<G>,
     pub window: PdfActionWindow,
 }
 
-/// Shared engine-side representation of pdfTeX's action specification.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum PdfActionSpec {
-    User(TokenListRef),
-    GoTo(PdfActionDestination),
-    Thread(PdfActionDestination),
+impl<G> Copy for PdfActionDestination<G> {}
+
+impl<G> Clone for PdfActionDestination<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
-impl PdfActionSpec {
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub enum PdfActionSpec<G> {
+    User(TokenListId<G>),
+    GoTo(PdfActionDestination<G>),
+    Thread(PdfActionDestination<G>),
+}
+
+impl<G> Copy for PdfActionSpec<G> {}
+
+impl<G> Clone for PdfActionSpec<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> PdfActionSpec<G> {
     #[must_use]
     pub(crate) fn needs_target_object(&self) -> bool {
         matches!(
@@ -69,13 +96,13 @@ impl PdfActionSpec {
 
     pub(crate) fn fingerprint(
         &self,
-        mut semantic_id: impl FnMut(crate::ids::TokenListId) -> StateHashFragment,
+        mut semantic_id: impl FnMut(TokenListId<G>) -> StateHashFragment,
     ) -> StateHashFragment {
         let mut hasher = StateHasher::new(PDF_ACTION_DOMAIN);
         match self {
             Self::User(tokens) => {
                 hasher.u8(0);
-                hasher.bytes(&semantic_id(tokens.id()).bytes());
+                hash_tokens(*tokens, &mut hasher, &mut semantic_id);
             }
             Self::GoTo(action) => {
                 hasher.u8(1);
@@ -90,21 +117,24 @@ impl PdfActionSpec {
     }
 }
 
-fn hash_destination(
-    action: &PdfActionDestination,
+fn hash_destination<G>(
+    action: &PdfActionDestination<G>,
     hasher: &mut StateHasher,
-    semantic_id: &mut impl FnMut(crate::ids::TokenListId) -> StateHashFragment,
+    semantic_id: &mut impl FnMut(TokenListId<G>) -> StateHashFragment,
 ) {
-    hash_optional_tokens(&action.file, hasher, semantic_id);
+    hasher.bool(action.file.is_some());
+    if let Some(tokens) = action.file {
+        hash_tokens(tokens, hasher, semantic_id);
+    }
     hasher.bool(action.structure.is_some());
-    if let Some(identifier) = &action.structure {
+    if let Some(identifier) = action.structure {
         hash_identifier(identifier, hasher, semantic_id);
     }
-    match &action.target {
+    match action.target {
         PdfActionTarget::Page { number, view } => {
             hasher.u8(0);
-            hasher.u32(*number);
-            hasher.bytes(&semantic_id(view.id()).bytes());
+            hasher.u32(number);
+            hash_tokens(view, hasher, semantic_id);
         }
         PdfActionTarget::Destination(identifier) => {
             hasher.u8(1);
@@ -118,51 +148,55 @@ fn hash_destination(
     });
 }
 
-fn hash_identifier(
-    identifier: &PdfActionIdentifier,
+fn hash_identifier<G>(
+    identifier: PdfActionIdentifier<G>,
     hasher: &mut StateHasher,
-    semantic_id: &mut impl FnMut(crate::ids::TokenListId) -> StateHashFragment,
+    semantic_id: &mut impl FnMut(TokenListId<G>) -> StateHashFragment,
 ) {
     match identifier {
         PdfActionIdentifier::Name(tokens) => {
             hasher.u8(0);
-            hasher.bytes(&semantic_id(tokens.id()).bytes());
+            hash_tokens(tokens, hasher, semantic_id);
         }
         PdfActionIdentifier::Number(number) => {
             hasher.u8(1);
-            hasher.u32(*number);
+            hasher.u32(number);
         }
         PdfActionIdentifier::Raw(tokens) => {
             hasher.u8(2);
-            hasher.bytes(&semantic_id(tokens.id()).bytes());
+            hash_tokens(tokens, hasher, semantic_id);
         }
     }
 }
 
-fn hash_optional_tokens(
-    tokens: &Option<TokenListRef>,
+fn hash_tokens<G>(
+    tokens: TokenListId<G>,
     hasher: &mut StateHasher,
-    semantic_id: &mut impl FnMut(crate::ids::TokenListId) -> StateHashFragment,
+    semantic_id: &mut impl FnMut(TokenListId<G>) -> StateHashFragment,
 ) {
-    hasher.bool(tokens.is_some());
-    if let Some(tokens) = tokens {
-        hasher.bytes(&semantic_id(tokens.id()).bytes());
-    }
+    hasher.bytes(&semantic_id(tokens).bytes());
 }
 
-/// The indirect action object retained by the catalog.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfActionRecord {
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct PdfActionRecord<G> {
     id: u32,
-    spec: PdfActionSpec,
+    spec: PdfActionSpec<G>,
     target_object: Option<u32>,
     structure_object: Option<u32>,
 }
 
-impl PdfActionRecord {
+impl<G> Copy for PdfActionRecord<G> {}
+
+impl<G> Clone for PdfActionRecord<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> PdfActionRecord<G> {
     pub(crate) fn new(
         id: u32,
-        spec: PdfActionSpec,
+        spec: PdfActionSpec<G>,
         target_object: Option<u32>,
         structure_object: Option<u32>,
     ) -> Self {
@@ -173,22 +207,18 @@ impl PdfActionRecord {
             structure_object,
         }
     }
-
     #[must_use]
     pub const fn id(&self) -> u32 {
         self.id
     }
-
     #[must_use]
-    pub fn spec(&self) -> PdfActionSpec {
-        self.spec.clone()
+    pub const fn spec(&self) -> PdfActionSpec<G> {
+        self.spec
     }
-
     #[must_use]
     pub const fn target_object(&self) -> Option<u32> {
         self.target_object
     }
-
     #[must_use]
     pub const fn structure_object(&self) -> Option<u32> {
         self.structure_object

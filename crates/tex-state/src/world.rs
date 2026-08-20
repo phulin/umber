@@ -9,17 +9,16 @@
 use crate::dependency::{DependencyValue, DependencyWorldField};
 use crate::env::banks::IntParam;
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
+use crate::memo::{DetachedMemoValue, MemoValueKind};
 use crate::state_hash::{StateHashFragment, StateHasher};
-use crate::token::OriginId;
-use crate::token_store::TokenListRef;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Weak};
 #[cfg(feature = "profiling")]
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -66,6 +65,38 @@ pub enum WorldCommitMode {
     Exported,
 }
 
+/// Handle-free source recipe retained by a committed artifact.
+///
+/// The content identity is durable authority; path and byte range are owned
+/// presentation data. No source id, origin coordinate, or arena owner crosses
+/// the artifact boundary.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ArtifactSourceRecipe {
+    pub content: ContentHash,
+    pub logical_path: String,
+    pub start: u64,
+    pub end: u64,
+}
+
+/// DTO-local ordinal of an effect referenced by a committed artifact.
+///
+/// This is relative to the artifact's detached effect journal. It is not a
+/// live [`EffectPos`] cursor and carries no World timeline identity.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ArtifactEffectOrdinal(u32);
+
+impl ArtifactEffectOrdinal {
+    #[must_use]
+    pub const fn new(index: u32) -> Self {
+        Self(index)
+    }
+
+    #[must_use]
+    pub const fn index(self) -> u32 {
+        self.0
+    }
+}
+
 /// Exact bytes published by one successful page-artifact commit.
 ///
 /// Construction stays inside the aggregate shipout boundary, so downstream
@@ -75,217 +106,68 @@ pub enum WorldCommitMode {
 #[derive(Clone, Debug)]
 pub struct CommittedArtifact {
     hash: ContentHash,
-    bytes: Arc<[u8]>,
+    bytes: Vec<u8>,
     render_provenance: ArtifactRenderProvenance,
-    open_out_occurrences: Arc<[(usize, EffectPos)]>,
+    open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
 }
-
-const LIVE_RENDER_REF: u64 = 1 << 63;
-const UNKNOWN_RENDER_REF: u64 = u64::MAX;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ArtifactRenderProvenance {
-    ends: Arc<[u32]>,
-    sources: ArtifactRenderSources,
-}
-
-#[derive(Clone, Debug)]
-enum ArtifactRenderSources {
-    Live {
-        origins: Arc<[OriginId]>,
-        roots: Arc<[crate::provenance::OriginRef]>,
-    },
-    Deferred(crate::OutputProvenanceRecipe),
-    Mixed {
-        live: Arc<[OriginId]>,
-        roots: Arc<[crate::provenance::OriginRef]>,
-        refs: Arc<[u64]>,
-        recipes: Arc<[crate::OutputProvenanceRecipe]>,
-    },
+    ends: Vec<u32>,
+    sources: Vec<Option<ArtifactSourceRecipe>>,
 }
 
 impl ArtifactRenderProvenance {
-    fn live(ends: Vec<u32>, origins: Vec<OriginId>) -> Self {
+    fn live(ends: Vec<u32>, origins: Vec<ArtifactSourceRecipe>) -> Self {
         assert_valid_render_origins(&ends, origins.len());
         Self {
-            ends: ends.into(),
-            sources: ArtifactRenderSources::Live {
-                origins: origins.into(),
-                roots: Arc::from([]),
-            },
-        }
-    }
-
-    fn deferred(ends: Vec<u32>, recipe: crate::OutputProvenanceRecipe) -> Self {
-        assert_valid_render_origins(&ends, recipe.origin_slots.len());
-        Self {
-            ends: ends.into(),
-            sources: ArtifactRenderSources::Deferred(recipe),
+            ends,
+            sources: origins.into_iter().map(Some).collect(),
         }
     }
 
     fn built(ends: Vec<u32>, builder: RenderProvenanceBuilder) -> Self {
-        let (live, roots, refs, recipes) = builder.into_parts();
         let flat_len = ends.last().copied().unwrap_or(0) as usize;
-        let sources = if refs.is_empty() {
-            assert_eq!(flat_len, live.len());
-            ArtifactRenderSources::Live {
-                origins: live.into(),
-                roots: roots.into(),
-            }
-        } else {
-            assert_eq!(flat_len, refs.len());
-            ArtifactRenderSources::Mixed {
-                live: live.into(),
-                roots: roots.into(),
-                refs: refs.into(),
-                recipes: recipes.into(),
-            }
-        };
+        assert_eq!(flat_len, builder.sources.len());
         Self {
-            ends: ends.into(),
-            sources,
-        }
-    }
-
-    fn live_origins(&self) -> &[OriginId] {
-        match &self.sources {
-            ArtifactRenderSources::Live { origins, .. } => origins,
-            ArtifactRenderSources::Deferred(_) => &[],
-            ArtifactRenderSources::Mixed { live, .. } => live,
+            ends,
+            sources: builder.sources,
         }
     }
 
     fn is_deferred(&self) -> bool {
-        !matches!(self.sources, ArtifactRenderSources::Live { .. })
+        self.sources.iter().any(Option::is_none)
     }
 }
 
-/// Cheap artifact-provenance construction used by direct shipout. It stays in
-/// the old flat-OriginId mode until the first deferred source.
+/// Cold artifact-provenance construction selected by rendered-source demand.
 #[doc(hidden)]
 #[derive(Debug, Default)]
 pub struct RenderProvenanceBuilder {
-    live: Vec<OriginId>,
-    roots: Vec<crate::provenance::OriginRef>,
-    refs: Vec<u64>,
-    recipes: Vec<crate::OutputProvenanceRecipe>,
-    recipe_ids: ahash::AHashMap<usize, u32>,
-    stable_recipe_ids: ahash::AHashMap<crate::RootSpanId, u32>,
-    mixed: bool,
+    sources: Vec<Option<ArtifactSourceRecipe>>,
 }
 
 impl RenderProvenanceBuilder {
     #[doc(hidden)]
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.live.is_empty() && self.refs.is_empty()
+        self.sources.is_empty()
     }
 
-    fn push_live_id(&mut self, origin: OriginId) {
-        let index = self.live.len();
-        self.live.push(origin);
-        if self.mixed {
-            self.refs.push(
-                LIVE_RENDER_REF
-                    | u64::try_from(index).expect("artifact live provenance exceeds u63"),
-            );
-        }
+    pub fn push_source(&mut self, source: ArtifactSourceRecipe) {
+        self.sources.push(Some(source));
     }
 
-    pub fn push_root(&mut self, origin: crate::provenance::OriginRef) {
-        let id = origin.id();
-        self.push_live_id(id);
-        self.roots.push(origin);
-    }
-
-    pub fn push_deferred(
-        &mut self,
-        recipe: &crate::OutputProvenanceRecipe,
-        slots: std::ops::Range<usize>,
-    ) {
-        if !self.mixed {
-            self.refs.extend((0..self.live.len()).map(|index| {
-                LIVE_RENDER_REF
-                    | u64::try_from(index).expect("artifact live provenance exceeds u63")
-            }));
-            self.mixed = true;
-        }
-        let identity = std::ptr::from_ref(recipe).addr();
-        let recipe_index = if let Some(&index) = self.recipe_ids.get(&identity) {
-            index
-        } else {
-            let index = u32::try_from(self.recipes.len())
-                .expect("artifact deferred recipe count exceeds u32");
-            self.recipes.push(recipe.clone());
-            self.recipe_ids.insert(identity, index);
-            index
-        };
-        for slot in slots {
-            let Ok(slot) = u32::try_from(slot) else {
-                self.refs.push(UNKNOWN_RENDER_REF);
-                continue;
-            };
-            self.refs
-                .push((u64::from(recipe_index) << 32) | u64::from(slot));
-        }
-    }
-
-    /// Appends one editor-stable source recipe at the artifact boundary.
-    pub fn push_stable_span(&mut self, span: crate::RootSpanId) {
-        if !self.mixed {
-            self.refs.extend((0..self.live.len()).map(|index| {
-                LIVE_RENDER_REF
-                    | u64::try_from(index).expect("artifact live provenance exceeds u63")
-            }));
-            self.mixed = true;
-        }
-        let recipe_index = if let Some(&index) = self.stable_recipe_ids.get(&span) {
-            index
-        } else {
-            let index = u32::try_from(self.recipes.len())
-                .expect("artifact stable provenance recipe count exceeds u32");
-            self.recipes.push(crate::OutputProvenanceRecipe {
-                piece_anchors: Arc::from([span.start_anchor()]),
-                root_spans: Arc::from([crate::OutputProvenanceSpan {
-                    piece: 0,
-                    start: span.start(),
-                    end: span.end(),
-                }]),
-                origin_slots: Arc::from([0]),
-            });
-            self.stable_recipe_ids.insert(span, index);
-            index
-        };
-        self.refs.push(u64::from(recipe_index) << 32);
-    }
-
-    fn into_parts(
-        self,
-    ) -> (
-        Vec<OriginId>,
-        Vec<crate::provenance::OriginRef>,
-        Vec<u64>,
-        Vec<crate::OutputProvenanceRecipe>,
-    ) {
-        if self.mixed {
-            (self.live, self.roots, self.refs, self.recipes)
-        } else {
-            (self.live, self.roots, Vec::new(), Vec::new())
-        }
+    pub fn push_unknown(&mut self) {
+        self.sources.push(None);
     }
 }
 
 /// One artifact source reference, kept stable until diagnostic consumption.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ArtifactOrigin {
-    /// Structural root owned directly by the artifact. This is the production
-    /// form emitted for a selected rendered-source consumer.
-    Rooted(crate::provenance::OriginRef),
-    /// Compatibility form for explicitly constructed unrooted test/artifact
-    /// inputs. Production shipout does not rely on it.
-    Live(OriginId),
-    Stable(crate::RootSpanId),
+    /// Already-detached source presentation owned directly by the artifact.
+    Detached(ArtifactSourceRecipe),
     Unknown,
 }
 
@@ -293,7 +175,7 @@ pub enum ArtifactOrigin {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RenderOrigins<'a> {
     ends: &'a [u32],
-    origins: &'a [OriginId],
+    origins: &'a [Option<ArtifactSourceRecipe>],
 }
 
 impl<'a> RenderOrigins<'a> {
@@ -308,7 +190,7 @@ impl<'a> RenderOrigins<'a> {
     }
 
     #[must_use]
-    pub fn get(self, index: usize) -> Option<&'a [OriginId]> {
+    pub fn get(self, index: usize) -> Option<&'a [Option<ArtifactSourceRecipe>]> {
         let &end = self.ends.get(index)?;
         let start = index
             .checked_sub(1)
@@ -326,7 +208,7 @@ impl<'a> RenderOrigins<'a> {
 }
 
 impl<'a> IntoIterator for RenderOrigins<'a> {
-    type Item = &'a [OriginId];
+    type Item = &'a [Option<ArtifactSourceRecipe>];
     type IntoIter = RenderOriginIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -341,7 +223,7 @@ pub struct RenderOriginIter<'a> {
 }
 
 impl<'a> Iterator for RenderOriginIter<'a> {
-    type Item = &'a [OriginId];
+    type Item = &'a [Option<ArtifactSourceRecipe>];
 
     fn next(&mut self) -> Option<Self::Item> {
         let origins = self.origins.get(self.index)?;
@@ -366,7 +248,7 @@ pub struct VerifiedArtifact {
     hash: ContentHash,
     bytes: Vec<u8>,
     render_provenance: ArtifactRenderProvenance,
-    open_out_occurrences: Vec<(usize, EffectPos)>,
+    open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
 }
 
 impl VerifiedArtifact {
@@ -384,14 +266,17 @@ impl VerifiedArtifact {
     /// Attaches exact ordered World occurrences to OpenOut effects.
     #[doc(hidden)]
     #[must_use]
-    pub fn with_open_out_occurrences(mut self, occurrences: Vec<(usize, EffectPos)>) -> Self {
+    pub fn with_open_out_occurrences(
+        mut self,
+        occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
+    ) -> Self {
         self.open_out_occurrences = occurrences;
         self
     }
 
     /// Attaches diagnostic-only origins in artifact-node preorder.
     #[must_use]
-    pub fn with_render_origins(mut self, render_origins: Vec<Vec<OriginId>>) -> Self {
+    pub fn with_render_origins(mut self, render_origins: Vec<Vec<ArtifactSourceRecipe>>) -> Self {
         let mut ends = Vec::with_capacity(render_origins.len());
         let mut origins = Vec::with_capacity(render_origins.iter().map(Vec::len).sum());
         for node_origins in render_origins {
@@ -411,21 +296,9 @@ impl VerifiedArtifact {
     pub fn with_flat_render_origins(
         mut self,
         render_origin_ends: Vec<u32>,
-        render_origins: Vec<OriginId>,
+        render_origins: Vec<ArtifactSourceRecipe>,
     ) -> Self {
         self.render_provenance = ArtifactRenderProvenance::live(render_origin_ends, render_origins);
-        self
-    }
-
-    /// Attaches stable paragraph provenance without allocating live origins.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn with_deferred_render_origins(
-        mut self,
-        render_origin_ends: Vec<u32>,
-        provenance: crate::OutputProvenanceRecipe,
-    ) -> Self {
-        self.render_provenance = ArtifactRenderProvenance::deferred(render_origin_ends, provenance);
         self
     }
 
@@ -454,12 +327,9 @@ impl VerifiedArtifact {
     #[doc(hidden)]
     #[must_use]
     pub fn render_origins_for_memo(&self) -> RenderOrigins<'_> {
-        let ArtifactRenderSources::Live { origins, .. } = &self.render_provenance.sources else {
-            unreachable!("deferred artifacts are not memoized")
-        };
         RenderOrigins {
             ends: &self.render_provenance.ends,
-            origins,
+            origins: &self.render_provenance.sources,
         }
     }
 
@@ -475,15 +345,13 @@ impl VerifiedArtifact {
         self.render_provenance.is_deferred()
     }
 
-    /// Live origins which still require accepted-fork retention. Stable recipe
-    /// sources deliberately do not appear here.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn live_render_origins(&self) -> &[OriginId] {
-        self.render_provenance.live_origins()
-    }
-
-    pub(crate) fn into_parts(self) -> (Vec<u8>, ArtifactRenderProvenance, Vec<(usize, EffectPos)>) {
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Vec<u8>,
+        ArtifactRenderProvenance,
+        Vec<(usize, ArtifactEffectOrdinal)>,
+    ) {
         (
             self.bytes,
             self.render_provenance,
@@ -514,7 +382,7 @@ impl CommittedArtifact {
     }
 
     #[must_use]
-    pub fn open_out_occurrences(&self) -> &[(usize, EffectPos)] {
+    pub fn open_out_occurrences(&self) -> &[(usize, ArtifactEffectOrdinal)] {
         &self.open_out_occurrences
     }
 
@@ -525,29 +393,29 @@ impl CommittedArtifact {
         old_prefix: usize,
         new_prefix: usize,
     ) -> Result<(), WorldError> {
-        let old_prefix = u64::try_from(old_prefix).map_err(|_| {
+        let old_prefix = u32::try_from(old_prefix).map_err(|_| {
             WorldError::new(
                 "rebase artifact effects",
                 None,
                 "old effect prefix overflow",
             )
         })?;
-        let new_prefix = u64::try_from(new_prefix).map_err(|_| {
+        let new_prefix = u32::try_from(new_prefix).map_err(|_| {
             WorldError::new(
                 "rebase artifact effects",
                 None,
                 "new effect prefix overflow",
             )
         })?;
-        for (_, position) in Arc::make_mut(&mut self.open_out_occurrences) {
-            if position.raw() <= old_prefix {
+        for (_, position) in &mut self.open_out_occurrences {
+            if position.index() <= old_prefix {
                 continue;
             }
-            let suffix_offset = position.raw() - old_prefix;
+            let suffix_offset = position.index() - old_prefix;
             *position =
-                EffectPos::from_raw(new_prefix.checked_add(suffix_offset).ok_or_else(|| {
-                    WorldError::new("rebase artifact effects", None, "effect position overflow")
-                })?);
+                ArtifactEffectOrdinal::new(new_prefix.checked_add(suffix_offset).ok_or_else(
+                    || WorldError::new("rebase artifact effects", None, "effect position overflow"),
+                )?);
         }
         Ok(())
     }
@@ -572,19 +440,12 @@ impl CommittedArtifact {
         self
     }
 
-    /// Eager diagnostic origins aligned with artifact nodes in preorder.
-    ///
-    /// Deferred artifacts retain stable recipes instead. Call
-    /// [`Self::render_origin`] to query those sources without materializing
-    /// the complete sidecar.
+    /// Detached diagnostic sources aligned with artifact nodes in preorder.
     #[must_use]
     pub fn render_origins(&self) -> Option<RenderOrigins<'_>> {
-        let ArtifactRenderSources::Live { origins, .. } = &self.render_provenance.sources else {
-            return None;
-        };
         Some(RenderOrigins {
             ends: &self.render_provenance.ends,
-            origins,
+            origins: &self.render_provenance.sources,
         })
     }
 
@@ -598,14 +459,6 @@ impl CommittedArtifact {
     #[must_use]
     pub fn has_deferred_render_origins(&self) -> bool {
         self.render_provenance.is_deferred()
-    }
-
-    /// Live origins which still require accepted-fork retention. Stable recipe
-    /// sources deliberately do not appear here.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn live_render_origins(&self) -> &[OriginId] {
-        self.render_provenance.live_origins()
     }
 
     /// Returns one diagnostic source without materializing deferred origins.
@@ -624,45 +477,11 @@ impl CommittedArtifact {
         if flat >= end as usize {
             return ArtifactOrigin::Unknown;
         }
-        match &self.render_provenance.sources {
-            ArtifactRenderSources::Live { origins, roots } => roots
-                .get(flat)
-                .cloned()
-                .map(ArtifactOrigin::Rooted)
-                .or_else(|| origins.get(flat).copied().map(ArtifactOrigin::Live))
-                .unwrap_or(ArtifactOrigin::Unknown),
-            ArtifactRenderSources::Deferred(recipe) => recipe
-                .stable_span(flat)
-                .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Stable),
-            ArtifactRenderSources::Mixed {
-                live,
-                roots,
-                refs,
-                recipes,
-            } => {
-                let Some(&reference) = refs.get(flat) else {
-                    return ArtifactOrigin::Unknown;
-                };
-                if reference == UNKNOWN_RENDER_REF {
-                    return ArtifactOrigin::Unknown;
-                }
-                if reference & LIVE_RENDER_REF != 0 {
-                    let index = (reference & !LIVE_RENDER_REF) as usize;
-                    return roots
-                        .get(index)
-                        .cloned()
-                        .map(ArtifactOrigin::Rooted)
-                        .or_else(|| live.get(index).copied().map(ArtifactOrigin::Live))
-                        .unwrap_or(ArtifactOrigin::Unknown);
-                }
-                let recipe = (reference >> 32) as usize;
-                let slot = reference as u32 as usize;
-                recipes
-                    .get(recipe)
-                    .and_then(|recipe| recipe.stable_span(slot))
-                    .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Stable)
-            }
-        }
+        self.render_provenance
+            .sources
+            .get(flat)
+            .and_then(Clone::clone)
+            .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Detached)
     }
 
     /// Retained bytes used by the diagnostic-only provenance sidecar.
@@ -672,45 +491,33 @@ impl CommittedArtifact {
             .ends
             .len()
             .saturating_mul(std::mem::size_of::<u32>())
-            .saturating_add(match &self.render_provenance.sources {
-                ArtifactRenderSources::Live { origins, roots } => origins
+            .saturating_add(
+                self.render_provenance
+                    .sources
                     .len()
-                    .saturating_mul(std::mem::size_of::<OriginId>())
-                    .saturating_add(
-                        roots
-                            .len()
-                            .saturating_mul(std::mem::size_of::<crate::provenance::OriginRef>()),
-                    ),
-                ArtifactRenderSources::Deferred(recipe) => provenance_recipe_bytes(recipe),
-                ArtifactRenderSources::Mixed {
-                    live,
-                    roots,
-                    refs,
-                    recipes,
-                } => live
-                    .len()
-                    .saturating_mul(std::mem::size_of::<OriginId>())
-                    .saturating_add(
-                        roots
-                            .len()
-                            .saturating_mul(std::mem::size_of::<crate::provenance::OriginRef>()),
-                    )
-                    .saturating_add(refs.len().saturating_mul(std::mem::size_of::<u64>()))
-                    .saturating_add(recipes.iter().map(provenance_recipe_bytes).sum::<usize>()),
-            })
+                    .saturating_mul(std::mem::size_of::<Option<ArtifactSourceRecipe>>()),
+            )
+            .saturating_add(
+                self.render_provenance
+                    .sources
+                    .iter()
+                    .flatten()
+                    .map(|source| source.logical_path.len())
+                    .sum::<usize>(),
+            )
     }
 
     pub(crate) fn new(
         hash: ContentHash,
         bytes: Vec<u8>,
         render_provenance: ArtifactRenderProvenance,
-        open_out_occurrences: Vec<(usize, EffectPos)>,
+        open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
     ) -> Self {
         Self {
             hash,
-            bytes: bytes.into(),
+            bytes,
             render_provenance,
-            open_out_occurrences: open_out_occurrences.into(),
+            open_out_occurrences,
         }
     }
 }
@@ -725,25 +532,6 @@ fn assert_valid_render_origins(ends: &[u32], origin_len: usize) {
         origin_len,
         "artifact render-origin ends must cover the flat origin buffer"
     );
-}
-
-fn provenance_recipe_bytes(recipe: &crate::OutputProvenanceRecipe) -> usize {
-    recipe
-        .piece_anchors
-        .len()
-        .saturating_mul(std::mem::size_of::<crate::RootSpanId>())
-        .saturating_add(
-            recipe
-                .root_spans
-                .len()
-                .saturating_mul(std::mem::size_of::<crate::OutputProvenanceSpan>()),
-        )
-        .saturating_add(
-            recipe
-                .origin_slots
-                .len()
-                .saturating_mul(std::mem::size_of::<u32>()),
-        )
 }
 
 impl PartialEq for CommittedArtifact {
@@ -1207,7 +995,7 @@ pub enum EffectRecord {
     /// Deferred `\write` seam: the token list is intentionally unexpanded.
     DeferredWrite {
         stream: StreamSlot,
-        tokens: TokenListRef,
+        tokens: DetachedMemoValue,
     },
     Special {
         class: String,
@@ -1219,37 +1007,31 @@ pub enum EffectRecord {
     ShellEscape(ShellEscapeRecord),
 }
 
-/// Non-owning identity of one immutable effect-store root.
+/// Value identity of one immutable effect prefix.
 ///
-/// A durable [`WorldSnapshot`] is the strong owner of a displaced root. The
-/// live [`World`] records only weak mounts so observing the root cannot extend
-/// the snapshot's lifetime.
+/// The stamp neither owns nor upgrades a runtime root.
 #[doc(hidden)]
-#[derive(Clone, Debug)]
-pub struct EffectRootIdentity(Weak<Vec<EffectRecord>>);
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct EffectRootIdentity {
+    len: usize,
+    hash: u64,
+}
 
-impl PartialEq for EffectRootIdentity {
-    fn eq(&self, other: &Self) -> bool {
-        Weak::ptr_eq(&self.0, &other.0)
+impl EffectRootIdentity {
+    #[must_use]
+    pub fn is_mounted_in(&self, world: &World) -> bool {
+        *self == effect_root_identity_for(&world.effects)
+            || world.effect_root_ancestry.contains(self)
     }
 }
 
-impl Eq for EffectRootIdentity {}
-
-impl EffectRootIdentity {
-    fn upgrade(&self) -> Option<Arc<Vec<EffectRecord>>> {
-        self.0.upgrade()
-    }
-
-    #[must_use]
-    pub fn is_mounted_in(&self, world: &World) -> bool {
-        self.upgrade().is_some_and(|root| {
-            Arc::ptr_eq(&root, &world.effects)
-                || world
-                    .effect_root_ancestry
-                    .iter()
-                    .any(|mounted| self == mounted && mounted.upgrade().is_some())
-        })
+fn effect_root_identity_for(records: &[EffectRecord]) -> EffectRootIdentity {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    records.hash(&mut hasher);
+    EffectRootIdentity {
+        len: records.len(),
+        hash: hasher.finish(),
     }
 }
 
@@ -3573,7 +3355,7 @@ impl World {
         hash: ContentHash,
         bytes: Vec<u8>,
         render_provenance: ArtifactRenderProvenance,
-        open_out_occurrences: Vec<(usize, EffectPos)>,
+        open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
         reservation: ArtifactPublicationReservation,
     ) {
         Arc::make_mut(&mut self.artifact_commits).push(hash);
@@ -3615,7 +3397,7 @@ impl World {
     ) -> Result<ContentHash, WorldError> {
         let verified = VerifiedArtifact {
             hash: artifact.hash,
-            bytes: artifact.bytes.as_ref().to_vec(),
+            bytes: artifact.bytes.clone(),
             render_provenance: artifact.render_provenance.clone(),
             open_out_occurrences: artifact.open_out_occurrences.to_vec(),
         };
@@ -3904,7 +3686,8 @@ impl World {
     }
     /// Appends a deferred `\write` after the owning `Universe` validates the
     /// token-list capability against its live store timeline.
-    pub(crate) fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListRef) {
+    pub(crate) fn record_deferred_write(&mut self, stream: StreamSlot, tokens: DetachedMemoValue) {
+        assert_eq!(tokens.kind(), MemoValueKind::Tokens);
         self.append_effect(EffectRecord::DeferredWrite { stream, tokens });
     }
 
@@ -4484,7 +4267,7 @@ impl World {
     #[doc(hidden)]
     #[must_use]
     pub fn effect_root_identity(&self) -> EffectRootIdentity {
-        EffectRootIdentity(Arc::downgrade(&self.effects))
+        effect_root_identity_for(&self.effects)
     }
 
     /// Effects already accepted before a generation fork's restart anchor.
@@ -5110,13 +4893,7 @@ impl World {
             next_effect_semantic_record_ordinals: self.next_effect_semantic_record_ordinals.clone(),
             next_effect_placement_intra_order: self.next_effect_placement_intra_order,
             next_terminal_publication_identity: self.next_terminal_publication_identity,
-            effect_root_ancestry: Arc::new(
-                self.effect_root_ancestry
-                    .iter()
-                    .filter(|root| root.upgrade().is_some())
-                    .cloned()
-                    .collect(),
-            ),
+            effect_root_ancestry: Arc::new(self.effect_root_ancestry.iter().cloned().collect()),
             effect_pos: self.effect_pos(),
             stream_bufs: self.stream_bufs.clone(),
             rng: self.rng,
@@ -5207,14 +4984,8 @@ impl World {
             Arc::clone(&snapshot.provisional_page_output_receipts);
         self.active_artifact_publication_group = snapshot.active_artifact_publication_group;
         self.active_terminal_publication = snapshot.active_terminal_publication;
-        self.effect_root_ancestry = Arc::new(
-            snapshot
-                .effect_root_ancestry
-                .iter()
-                .filter(|root| root.upgrade().is_some())
-                .cloned()
-                .collect(),
-        );
+        self.effect_root_ancestry =
+            Arc::new(snapshot.effect_root_ancestry.iter().cloned().collect());
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
         self.pdf_rng = snapshot.pdf_rng.clone();
@@ -5345,10 +5116,9 @@ impl World {
         let mut ancestry = snapshot
             .effect_root_ancestry
             .iter()
-            .filter(|root| root.upgrade().is_some())
             .cloned()
             .collect::<Vec<_>>();
-        let snapshot_root = EffectRootIdentity(Arc::downgrade(&snapshot.effects));
+        let snapshot_root = effect_root_identity_for(&snapshot.effects);
         if !ancestry.iter().any(|root| root == &snapshot_root) {
             ancestry.push(snapshot_root);
         }
@@ -5503,10 +5273,9 @@ impl World {
     }
 
     fn effects_mut(&mut self) -> &mut Vec<EffectRecord> {
-        let current_root = EffectRootIdentity(Arc::downgrade(&self.effects));
+        let current_root = effect_root_identity_for(&self.effects);
         let shared = Arc::strong_count(&self.effects) > 1;
         let ancestry = Arc::make_mut(&mut self.effect_root_ancestry);
-        ancestry.retain(|root| root.upgrade().is_some());
         if shared && !ancestry.iter().any(|root| root == &current_root) {
             ancestry.push(current_root);
         }

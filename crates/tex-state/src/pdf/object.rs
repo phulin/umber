@@ -1,7 +1,5 @@
 //! Canonical raw-object records within the checkpointed PDF ledger.
 
-use std::sync::Arc;
-
 use crate::state_hash::{StateHashFragment, StateHasher};
 
 use super::PdfTokenParameter;
@@ -25,21 +23,29 @@ impl PdfRawObjectId {
 }
 
 /// Detached engine-side payload for an initialized `\pdfobj`.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfRawObjectData {
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct PdfRawObjectData<G> {
     stream: bool,
-    stream_attr: Option<PdfTokenParameter>,
+    stream_attr: Option<PdfTokenParameter<G>>,
     file: bool,
-    data: PdfTokenParameter,
+    data: PdfTokenParameter<G>,
 }
 
-impl PdfRawObjectData {
+impl<G> Copy for PdfRawObjectData<G> {}
+
+impl<G> Clone for PdfRawObjectData<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> PdfRawObjectData<G> {
     #[must_use]
     pub(crate) fn new(
         stream: bool,
-        stream_attr: Option<PdfTokenParameter>,
+        stream_attr: Option<PdfTokenParameter<G>>,
         file: bool,
-        data: PdfTokenParameter,
+        data: PdfTokenParameter<G>,
     ) -> Self {
         Self {
             stream,
@@ -55,7 +61,7 @@ impl PdfRawObjectData {
     }
 
     #[must_use]
-    pub fn stream_attr(&self) -> Option<crate::ids::TokenListId> {
+    pub fn stream_attr(&self) -> Option<crate::TokenListId<G>> {
         self.stream_attr.as_ref().map(PdfTokenParameter::id)
     }
 
@@ -65,28 +71,36 @@ impl PdfRawObjectData {
     }
 
     #[must_use]
-    pub fn data(&self) -> crate::ids::TokenListId {
+    pub fn data(&self) -> crate::TokenListId<G> {
         self.data.id()
     }
 }
 
 /// One reserved raw-object slot, initialized either now or by `useobjnum`.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfRawObjectRecord {
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct PdfRawObjectRecord<G> {
     id: PdfRawObjectId,
-    data: Option<PdfRawObjectData>,
+    data: Option<PdfRawObjectData<G>>,
     immediate: bool,
     referenced: bool,
 }
 
-impl PdfRawObjectRecord {
+impl<G> Copy for PdfRawObjectRecord<G> {}
+
+impl<G> Clone for PdfRawObjectRecord<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> PdfRawObjectRecord<G> {
     #[must_use]
     pub const fn id(&self) -> PdfRawObjectId {
         self.id
     }
 
     #[must_use]
-    pub fn data(&self) -> Option<PdfRawObjectData> {
+    pub fn data(&self) -> Option<PdfRawObjectData<G>> {
         self.data.clone()
     }
 
@@ -101,28 +115,44 @@ impl PdfRawObjectRecord {
     }
 }
 
-#[derive(Clone, Debug)]
-struct PdfRawObjectState {
-    records: Vec<PdfRawObjectRecord>,
+#[derive(Debug)]
+struct PdfRawObjectState<G> {
+    records: Vec<PdfRawObjectRecord<G>>,
     last_object: u32,
     fingerprint: StateHashFragment,
 }
 
-/// Copy-on-write raw-object table shared by PDF snapshots.
-#[derive(Clone, Debug)]
-pub(crate) struct PdfRawObjects(Arc<PdfRawObjectState>);
-
-impl Default for PdfRawObjects {
-    fn default() -> Self {
-        Self(Arc::new(PdfRawObjectState {
-            records: Vec::new(),
-            last_object: 0,
-            fingerprint: StateHasher::new(PDF_RAW_OBJECT_DOMAIN).finish_fragment(),
-        }))
+impl<G> Clone for PdfRawObjectState<G> {
+    fn clone(&self) -> Self {
+        Self {
+            records: self.records.clone(),
+            last_object: self.last_object,
+            fingerprint: self.fingerprint,
+        }
     }
 }
 
-impl PdfRawObjects {
+/// Owned raw-object table copied into explicit PDF checkpoints.
+#[derive(Debug)]
+pub(crate) struct PdfRawObjects<G>(PdfRawObjectState<G>);
+
+impl<G> Clone for PdfRawObjects<G> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<G> Default for PdfRawObjects<G> {
+    fn default() -> Self {
+        Self(PdfRawObjectState {
+            records: Vec::new(),
+            last_object: 0,
+            fingerprint: StateHasher::new(PDF_RAW_OBJECT_DOMAIN).finish_fragment(),
+        })
+    }
+}
+
+impl<G> PdfRawObjects<G> {
     #[must_use]
     pub(crate) fn fingerprint(&self) -> StateHashFragment {
         self.0.fingerprint
@@ -134,12 +164,12 @@ impl PdfRawObjects {
     }
 
     #[must_use]
-    pub(crate) fn records(&self) -> &[PdfRawObjectRecord] {
+    pub(crate) fn records(&self) -> &[PdfRawObjectRecord<G>] {
         &self.0.records
     }
 
     #[must_use]
-    pub(crate) fn record(&self, id: PdfRawObjectId) -> Option<PdfRawObjectRecord> {
+    pub(crate) fn record(&self, id: PdfRawObjectId) -> Option<PdfRawObjectRecord<G>> {
         self.0
             .records
             .binary_search_by_key(&id, |record| record.id)
@@ -148,7 +178,7 @@ impl PdfRawObjects {
     }
 
     pub(crate) fn reserve(&mut self, id: PdfRawObjectId) {
-        let state = Arc::make_mut(&mut self.0);
+        let state = &mut self.0;
         debug_assert!(state.records.last().is_none_or(|record| record.id < id));
         state.records.push(PdfRawObjectRecord {
             id,
@@ -163,10 +193,10 @@ impl PdfRawObjects {
     pub(crate) fn initialize(
         &mut self,
         id: PdfRawObjectId,
-        data: PdfRawObjectData,
+        data: PdfRawObjectData<G>,
         immediate: bool,
     ) -> Result<(), PdfRawObjectInitializeError> {
-        let state = Arc::make_mut(&mut self.0);
+        let state = &mut self.0;
         let index = state
             .records
             .binary_search_by_key(&id, |record| record.id)
@@ -185,7 +215,7 @@ impl PdfRawObjects {
         &mut self,
         id: PdfRawObjectId,
     ) -> Result<(), PdfRawObjectInitializeError> {
-        let state = Arc::make_mut(&mut self.0);
+        let state = &mut self.0;
         let index = state
             .records
             .binary_search_by_key(&id, |record| record.id)
@@ -202,7 +232,7 @@ pub enum PdfRawObjectInitializeError {
     AlreadyInitialized(PdfRawObjectId),
 }
 
-fn fingerprint(state: &PdfRawObjectState) -> StateHashFragment {
+fn fingerprint<G>(state: &PdfRawObjectState<G>) -> StateHashFragment {
     let mut hasher = StateHasher::new(PDF_RAW_OBJECT_DOMAIN);
     hasher.u32(state.last_object);
     hasher.usize(state.records.len());

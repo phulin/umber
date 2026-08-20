@@ -1,28 +1,34 @@
-use crate::token_store::TokenListRef;
-
 use super::PdfActionSpec;
+use crate::durable_arena::TokenListId;
 
-/// One immediately allocated pdfTeX outline entry.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfOutlineRecord {
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct PdfOutlineRecord<G> {
     action_object: u32,
     item_object: u32,
     title_object: u32,
-    attributes: TokenListRef,
-    action: PdfActionSpec,
+    attributes: TokenListId<G>,
+    action: PdfActionSpec<G>,
     count: i32,
-    title: TokenListRef,
+    title: TokenListId<G>,
 }
 
-impl PdfOutlineRecord {
-    pub(super) fn new(
+impl<G> Copy for PdfOutlineRecord<G> {}
+
+impl<G> Clone for PdfOutlineRecord<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> PdfOutlineRecord<G> {
+    pub(super) const fn new(
         action_object: u32,
         item_object: u32,
         title_object: u32,
-        attributes: TokenListRef,
-        action: PdfActionSpec,
+        attributes: TokenListId<G>,
+        action: PdfActionSpec<G>,
         count: i32,
-        title: TokenListRef,
+        title: TokenListId<G>,
     ) -> Self {
         Self {
             action_object,
@@ -34,7 +40,6 @@ impl PdfOutlineRecord {
             title,
         }
     }
-
     #[must_use]
     pub const fn action_object(&self) -> u32 {
         self.action_object
@@ -48,19 +53,19 @@ impl PdfOutlineRecord {
         self.title_object
     }
     #[must_use]
-    pub fn attributes(&self) -> crate::ids::TokenListId {
-        self.attributes.id()
+    pub const fn attributes(&self) -> TokenListId<G> {
+        self.attributes
     }
     #[must_use]
-    pub fn action(&self) -> PdfActionSpec {
-        self.action.clone()
+    pub const fn action(&self) -> PdfActionSpec<G> {
+        self.action
     }
     #[must_use]
     pub const fn count(&self) -> i32 {
         self.count
     }
     #[must_use]
-    pub fn title(&self) -> crate::ids::TokenListId {
-        self.title.id()
+    pub const fn title(&self) -> TokenListId<G> {
+        self.title
     }
 }
