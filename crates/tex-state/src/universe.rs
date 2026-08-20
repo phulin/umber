@@ -819,8 +819,8 @@ impl GenerationSubstrate {
             .map(|(fork, ())| fork)
     }
 
-    /// Clones a retained generation, prepares handle-free continuation data
-    /// from the still-complete clone, then rolls that clone to `checkpoint`.
+    /// Prepares handle-free continuation data from the complete retained
+    /// generation, then forks directly from `checkpoint`'s sealed roots.
     ///
     /// Preparation cannot mutate the source generation. This ordering is the
     /// atomic boundary required by clients whose retained continuation can
@@ -831,8 +831,9 @@ impl GenerationSubstrate {
         prepare: impl FnOnce(&Universe) -> T,
     ) -> Result<(Universe, T), GenerationForkError> {
         self.universe.validate_fork_snapshot(checkpoint)?;
-        let mut fork = self.universe.clone();
-        let prepared = prepare(&fork);
+        let prepared = prepare(&self.universe);
+        let stores = self.universe.stores.fork_at_snapshot(&checkpoint.store);
+        let mut fork = self.universe.clone_with_stores(stores);
         let checkpoint = fork.retarget_inherited_snapshot(checkpoint);
         fork.rollback_generation_fork(&checkpoint);
         fork.fork_origin = Some(ForkOrigin {
@@ -1404,6 +1405,16 @@ impl Clone for Universe {
             "a private revision allocation domain cannot be cloned"
         );
         let stores = self.stores.clone();
+        self.clone_with_stores(stores)
+    }
+}
+
+impl Universe {
+    fn clone_with_stores(&self, stores: Stores) -> Self {
+        assert!(
+            self.private_revision_domain.is_none(),
+            "a private revision allocation domain cannot be cloned"
+        );
         let state_hash_base = StateHashBase {
             store: stores.retarget_state_hash_cursor(&self.state_hash_base.store),
             world: self.state_hash_base.world.clone(),
@@ -1500,8 +1511,12 @@ impl Universe {
     /// active private domain rejects staging instead of panicking in `Clone`.
     #[doc(hidden)]
     #[must_use]
-    pub fn stage_detached_import(&self) -> Option<Self> {
-        self.private_revision_domain.is_none().then(|| self.clone())
+    pub fn stage_detached_import(&mut self) -> Option<Self> {
+        if self.private_revision_domain.is_some() {
+            return None;
+        }
+        self.stores.seal_runtime_value_regions();
+        Some(self.clone())
     }
 
     /// Applies the process-selected Web2C font-memory bound.
@@ -3260,8 +3275,10 @@ impl Universe {
             "scoped rollback belongs to a different Universe instance"
         );
         self.world.assert_snapshot_retained(&rollback.world);
-        let receipts = self.stores.rollback(&rollback.store);
-        self.consume_env_mutations(receipts);
+        // Restore every coordinate-bearing canonical consumer while the
+        // snapshot's region-root set still owns its sealed regions. Stores is
+        // deliberately last: its rollback restores Env/journal roots and then
+        // discards the rejected runtime-value suffix.
         self.world.rollback(&rollback.world);
         self.input_summary = rollback.input_summary;
         self.interaction_mode = rollback.interaction_mode;
@@ -3275,6 +3292,8 @@ impl Universe {
             .restore_tracker(&rollback.dependency_tracker);
         self.geometry_observations
             .truncate(rollback.geometry_observations_len);
+        let receipts = self.stores.rollback(&rollback.store);
+        self.consume_env_mutations(receipts);
     }
 
     fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase, exact: bool) -> Snapshot {
@@ -3377,8 +3396,9 @@ impl Universe {
     pub fn rollback(&mut self, snapshot: &Snapshot) {
         self.assert_valid_snapshot(snapshot);
         self.world.assert_snapshot_retained(&snapshot.world);
-        let receipts = self.stores.rollback(&snapshot.store);
-        self.consume_env_mutations(receipts);
+        // Page, PDF, effects, and input summaries carry only copy coordinates.
+        // Restore them before Stores replaces its canonical RegionRootSet and
+        // truncates the candidate/sealed suffix.
         self.world.rollback(&snapshot.world);
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
@@ -3392,6 +3412,8 @@ impl Universe {
             .restore_tracker(&snapshot.dependency_tracker);
         self.geometry_observations
             .truncate(snapshot.geometry_observations_len);
+        let receipts = self.stores.rollback(&snapshot.store);
+        self.consume_env_mutations(receipts);
     }
 
     fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {
@@ -3400,8 +3422,6 @@ impl Universe {
             self.world.snapshot_is_forkable(&snapshot.world),
             "World snapshot effect root is not a valid generation fork"
         );
-        let receipts = self.stores.rollback(&snapshot.store);
-        self.consume_env_mutations(receipts);
         self.world.rollback_generation_fork(&snapshot.world);
         self.input_summary = snapshot.input_summary.clone();
         self.interaction_mode = snapshot.interaction_mode;
@@ -3415,6 +3435,8 @@ impl Universe {
             .restore_tracker(&snapshot.dependency_tracker);
         self.geometry_observations
             .truncate(snapshot.geometry_observations_len);
+        let receipts = self.stores.rollback(&snapshot.store);
+        self.consume_env_mutations(receipts);
     }
 
     pub fn enable_geometry_observation(&mut self) {

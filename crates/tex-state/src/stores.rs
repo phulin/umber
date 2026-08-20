@@ -50,7 +50,7 @@ use crate::hot_core::arena::store::registry::{
     RuntimeTracedTokenValueInput, RuntimeValueRegistry, RuntimeValueRegistryMark,
 };
 use crate::hot_core::arena::store::{
-    RuntimeOriginEntry, RuntimeValueStore, RuntimeValueStorePublicationMark,
+    RuntimeOriginEntry, RuntimeValueRootSet,
 };
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
@@ -122,7 +122,7 @@ pub(crate) struct StoreSnapshot {
     provenance_mark: ProvenanceStoreMark,
     source_map_mark: SourceMapMark,
     runtime_value_mark: RuntimeValueRegistryMark,
-    runtime_value_roots_mark: RuntimeValueStorePublicationMark,
+    runtime_value_roots: RuntimeValueRootSet,
     runtime_values_inherited: bool,
     font_mark: FontStoreMark,
     code_tables_snapshot: CodeTablesSnapshot,
@@ -207,7 +207,7 @@ pub struct Stores {
     source_map: SourceMap,
     source_fragments: FragmentStore,
     runtime_values: RuntimeValueRegistry,
-    runtime_value_roots: RuntimeValueStore,
+    runtime_value_roots: RuntimeValueRootSet,
     fonts: FontStore,
     node_ref_index: NodeListWeakIndex,
     code_tables: CodeTables,
@@ -624,12 +624,22 @@ pub enum FontParameterError {
 
 impl Clone for Stores {
     fn clone(&self) -> Self {
-        let mut env = self.env.clone();
-        env.reset_snapshot_roots_for_fork();
         let runtime_values = self
             .runtime_values
             .fork()
             .expect("runtime value registry fork must remain representable");
+        self.clone_with_runtime_values(runtime_values, self.runtime_value_roots.clone())
+    }
+}
+
+impl Stores {
+    fn clone_with_runtime_values(
+        &self,
+        runtime_values: RuntimeValueRegistry,
+        runtime_value_roots: RuntimeValueRootSet,
+    ) -> Self {
+        let mut env = self.env.clone();
+        env.reset_snapshot_roots_for_fork();
         Self {
             owner: StoreOwner::new(),
             env,
@@ -640,7 +650,7 @@ impl Clone for Stores {
             source_map: self.source_map.clone(),
             source_fragments: self.source_fragments.clone(),
             runtime_values,
-            runtime_value_roots: self.runtime_value_roots.clone(),
+            runtime_value_roots,
             fonts: self.fonts.clone(),
             node_ref_index: NodeListWeakIndex::new(),
             code_tables: self.code_tables.clone(),
@@ -666,9 +676,22 @@ impl Clone for Stores {
             ),
         }
     }
-}
 
-impl Stores {
+    /// Forks directly at a retained checkpoint's sealed runtime-value roots.
+    /// The source generation's mutable value suffix is never copied.
+    pub(crate) fn fork_at_snapshot(&self, snapshot: &StoreSnapshot) -> Self {
+        assert_eq!(
+            snapshot.owner,
+            self.owner.snapshot_owner(),
+            "Stores snapshot belongs to a different Stores instance"
+        );
+        let runtime_values = self
+            .runtime_values
+            .fork_at(snapshot.runtime_value_mark, &snapshot.runtime_value_roots)
+            .expect("retained runtime value checkpoint must fork");
+        self.clone_with_runtime_values(runtime_values, snapshot.runtime_value_roots.clone())
+    }
+
     pub(crate) fn configure_provenance_budgets(
         &mut self,
         budgets: crate::provenance::ProvenanceBudgets,
@@ -1123,7 +1146,7 @@ impl Stores {
             provenance_budgets.live_origin_lists,
             provenance_budgets.origin_list_entries,
         );
-        let mut runtime_value_roots = runtime_values.empty_published_store();
+        let mut runtime_value_roots = runtime_values.empty_root_set();
         runtime_values
             .publish_into(&mut runtime_value_roots)
             .expect("canonical runtime values must publish");
@@ -4036,9 +4059,7 @@ impl Stores {
     #[must_use]
     pub(crate) fn checkpoint(&mut self) -> StoreSnapshot {
         self.synchronize_exact_env_identity();
-        self.runtime_values
-            .publish_into(&mut self.runtime_value_roots)
-            .expect("runtime values must publish before checkpoint");
+        self.seal_runtime_value_regions();
         StoreSnapshot {
             owner: self.owner.snapshot_owner(),
             env_snapshot: self.env.checkpoint(),
@@ -4051,10 +4072,7 @@ impl Stores {
                 .runtime_values
                 .mark()
                 .expect("runtime value mark must remain representable"),
-            runtime_value_roots_mark: self
-                .runtime_value_roots
-                .publication_mark()
-                .expect("runtime root mark must remain representable"),
+            runtime_value_roots: self.runtime_value_roots.clone(),
             runtime_values_inherited: false,
             font_mark: self.fonts.watermark(),
             code_tables_snapshot: self.code_tables.checkpoint(),
@@ -4064,6 +4082,15 @@ impl Stores {
             exact_env_identity: self.exact_env_identity.snapshot(),
             exact_projection_cache: self.semantic_hash_cache.projections.clone(),
         }
+    }
+
+    /// Seals the active runtime-value tail into the canonical root set without
+    /// copying payload rows. Cold forks and detached publication call this
+    /// before cloning the aggregate generation.
+    pub(crate) fn seal_runtime_value_regions(&mut self) {
+        self.runtime_values
+            .publish_into(&mut self.runtime_value_roots)
+            .expect("runtime values must publish at an owner barrier");
     }
 
     /// Retires direct-operation history when no group, checkpoint, or fork
@@ -4150,8 +4177,7 @@ impl Stores {
         }
         self.string_pool.rollback_to(snapshot.string_pool);
         self.runtime_value_roots
-            .restore_publication(snapshot.runtime_value_roots_mark)
-            .expect("snapshot runtime root mark belongs to this store");
+            .restore_from(&snapshot.runtime_value_roots);
         if snapshot.runtime_values_inherited {
             self.runtime_values
                 .rollback_inherited(snapshot.runtime_value_mark, &self.runtime_value_roots)

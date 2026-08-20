@@ -47,7 +47,7 @@ fn coordinates_are_copy_only_and_admission_borrows_exact_payloads() {
 
     let values = [token('a'), token('b')];
     let roots = [root(1, 7)];
-    let mut candidate = RuntimeValueStore::new(capacity(16))
+    let mut candidate = RuntimeValueRootSet::new(capacity(16))
         .candidate()
         .expect("candidate exists");
     let tokens = candidate
@@ -90,7 +90,7 @@ fn coordinates_are_copy_only_and_admission_borrows_exact_payloads() {
 #[test]
 fn oversized_token_bundle_stays_inside_one_region() {
     let values = (0..32).map(|_| token('x')).collect::<Vec<_>>();
-    let mut candidate = RuntimeValueStore::new(capacity(4))
+    let mut candidate = RuntimeValueRootSet::new(capacity(4))
         .candidate()
         .expect("candidate exists");
     let tokens = candidate
@@ -108,7 +108,7 @@ fn oversized_token_bundle_stays_inside_one_region() {
 fn sparse_provenance_must_be_sorted_unique_and_inside_the_token_span() {
     let values = [token('p')];
     let invalid = [root(1, 7)];
-    let mut candidate = RuntimeValueStore::new(capacity(4))
+    let mut candidate = RuntimeValueRootSet::new(capacity(4))
         .candidate()
         .expect("candidate exists");
     let before = candidate.accounting();
@@ -126,7 +126,7 @@ fn macro_record_root_and_provenance_rows_publish_as_one_composite() {
     let definition_origin = OriginId::UNKNOWN;
     let parameter_origins = [root(1, 8)];
     let replacement_origins = [root(0, 9)];
-    let mut candidate = RuntimeValueStore::new(capacity(64))
+    let mut candidate = RuntimeValueRootSet::new(capacity(64))
         .candidate()
         .expect("candidate exists");
     let parameter = candidate
@@ -178,7 +178,7 @@ fn macro_record_root_and_provenance_rows_publish_as_one_composite() {
 fn counted_macro_root_set_retains_and_releases_region_multiplicity() {
     let values = [token('q')];
     let unknown = OriginId::UNKNOWN;
-    let mut candidate = RuntimeValueStore::new(capacity(32))
+    let mut candidate = RuntimeValueRootSet::new(capacity(32))
         .candidate()
         .expect("candidate exists");
     let parameter = candidate
@@ -219,7 +219,7 @@ fn counted_macro_root_set_retains_and_releases_region_multiplicity() {
 fn macro_root_set_retains_token_children_across_region_boundaries() {
     let values = [token('s')];
     let unknown = OriginId::UNKNOWN;
-    let mut candidate = RuntimeValueStore::new(capacity(2))
+    let mut candidate = RuntimeValueRootSet::new(capacity(2))
         .candidate()
         .expect("candidate exists");
     let parameter = candidate
@@ -266,7 +266,7 @@ fn macro_root_set_retains_token_children_across_region_boundaries() {
 #[test]
 fn rollback_rejects_published_coordinates_before_slot_reuse() {
     let values = [token('r')];
-    let mut candidate = RuntimeValueStore::new(capacity(8))
+    let mut candidate = RuntimeValueRootSet::new(capacity(8))
         .candidate()
         .expect("candidate exists");
     let mark = candidate.mark().expect("mark exists");

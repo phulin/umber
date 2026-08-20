@@ -525,29 +525,23 @@ pub(crate) struct RuntimeMacroInput<'a> {
 
 /// Accepted region owners and their local use counts.
 ///
-/// A full store, Env roots, a journal frame, or an input continuation can all
+/// Env roots, a journal frame, an input continuation, or a checkpoint can all
 /// use this same root-set representation. Cloning retains once per region.
 #[derive(Clone)]
-pub(crate) struct RuntimeValueStore {
+pub(crate) struct RuntimeValueRootSet {
     regions: ConcreteRegions,
 }
 
-impl fmt::Debug for RuntimeValueStore {
+impl fmt::Debug for RuntimeValueRootSet {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("RuntimeValueStore")
+            .debug_struct("RuntimeValueRootSet")
             .field("accounting", &self.accounting())
             .finish()
     }
 }
 
-/// Fixed-size restoration point for a canonical published-region root set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RuntimeValueStorePublicationMark {
-    regions: u32,
-}
-
-impl RuntimeValueStore {
+impl RuntimeValueRootSet {
     pub(crate) const fn new(initial_region_capacity: NonZeroU32) -> Self {
         Self {
             regions: ConcreteRegions::new(initial_region_capacity),
@@ -567,25 +561,12 @@ impl RuntimeValueStore {
         }
     }
 
-    pub(crate) fn publication_mark(
-        &self,
-    ) -> Result<RuntimeValueStorePublicationMark, RegionArenaError> {
-        Ok(RuntimeValueStorePublicationMark {
-            regions: u32::try_from(self.regions.regions.len())
-                .map_err(|_| RegionArenaError::SlotCapacityExhausted)?,
-        })
-    }
-
-    /// Restores roots before the owning candidate rolls back its sealed suffix.
-    pub(crate) fn restore_publication(
-        &mut self,
-        mark: RuntimeValueStorePublicationMark,
-    ) -> Result<(), RegionArenaError> {
-        if mark.regions as usize > self.regions.regions.len() {
-            return Err(RegionArenaError::InvalidMark);
-        }
-        self.regions.regions.truncate(mark.regions as usize);
-        Ok(())
+    /// Restores a canonical owner set with retain-before-release ordering.
+    ///
+    /// The clone is evaluated before assignment drops the displaced set, so a
+    /// region named by both timelines never has an ownerless interval.
+    pub(crate) fn restore_from(&mut self, source: &Self) {
+        *self = source.clone();
     }
 
     pub(crate) fn admit_token_list(
@@ -730,13 +711,13 @@ impl RuntimeValueStore {
     }
 }
 
-/// Mutable rollback-owned suffix over an accepted [`RuntimeValueStore`].
+/// Mutable rollback-owned suffix over an accepted [`RuntimeValueRootSet`].
 pub(crate) struct RuntimeValueCandidate {
     arena: ConcreteArena,
 }
 
 impl RuntimeValueCandidate {
-    fn from_store(store: RuntimeValueStore) -> Result<Self, RegionArenaError> {
+    fn from_store(store: RuntimeValueRootSet) -> Result<Self, RegionArenaError> {
         Ok(Self {
             arena: RuntimeValueRegionArena::new(store.regions)?,
         })
@@ -744,8 +725,8 @@ impl RuntimeValueCandidate {
 
     /// Shares every immutable region while leaving the private active suffix
     /// for the cold fork path to copy into its own namespace.
-    fn sealed_store(&self) -> RuntimeValueStore {
-        RuntimeValueStore {
+    fn sealed_store(&self) -> RuntimeValueRootSet {
+        RuntimeValueRootSet {
             regions: clone_sealed_regions(&self.arena),
         }
     }
@@ -991,18 +972,18 @@ impl RuntimeValueCandidate {
     /// Publishes only region owners absent from `destination` and stays live.
     pub(crate) fn publish_into(
         &mut self,
-        destination: &mut RuntimeValueStore,
+        destination: &mut RuntimeValueRootSet,
     ) -> Result<(), RegionArenaError> {
-        let mark = destination.publication_mark()?;
+        let previous = destination.clone();
         if let Err(error) = publish_candidate_regions(&mut self.arena, &mut destination.regions) {
-            destination.restore_publication(mark)?;
+            destination.restore_from(&previous);
             return Err(error);
         }
         Ok(())
     }
 
-    pub(crate) fn accept(self) -> Result<RuntimeValueStore, RegionArenaError> {
-        Ok(RuntimeValueStore {
+    pub(crate) fn accept(self) -> Result<RuntimeValueRootSet, RegionArenaError> {
+        Ok(RuntimeValueRootSet {
             regions: self.arena.accept()?,
         })
     }

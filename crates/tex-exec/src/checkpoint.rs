@@ -169,9 +169,13 @@ impl EngineCheckpoint {
             .map_err(CheckpointRestoreError::CommandProfile)?;
         let restored_modes =
             ModeNest::from_summary(self.modes.clone()).map_err(CheckpointRestoreError::Mode)?;
-        universe.rollback(&self.universe);
+        // Command input and mode state contain copy-only runtime-value
+        // coordinates. Install those consumers while the checkpoint still
+        // owns its sealed RegionRootSet, then let Universe restore its own
+        // consumers and discard the rejected suffix.
         *command = restored_command;
         *nest = restored_modes;
+        universe.rollback(&self.universe);
         Ok(())
     }
 

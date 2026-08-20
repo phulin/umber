@@ -4,7 +4,7 @@ use crate::env::banks::{DimenParam, GlueParam, IntParam};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{ArenaRef, NodeListId};
+use crate::ids::{ArenaRef, NodeListId, TokenListId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
@@ -1674,6 +1674,33 @@ fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
         stores.macro_definition(reused.id()).replacement_text(),
         reused_body
     );
+}
+
+#[test]
+fn older_checkpoint_rollback_releases_newer_candidate_owner_without_dropping_snapshot_storage() {
+    let mut stores = Stores::new();
+    let old = stores.checkpoint();
+    let newer = stores.intern_token_list(&[Token::Char {
+        ch: 'n',
+        cat: Catcode::Other,
+    }]);
+    stores.set_toks_global(0, newer);
+    let retained_newer_checkpoint = stores.checkpoint();
+
+    stores.rollback(&old);
+    assert_eq!(stores.toks(0), TokenListId::EMPTY);
+    assert!(!stores.runtime_values.contains_token(newer));
+
+    // The newer checkpoint's RegionRootSet may outlive its invalidated mark;
+    // candidate rollback must not require unique Arc ownership to discard the
+    // whole suffix from the live generation.
+    drop(retained_newer_checkpoint);
+    let replacement = stores.intern_token_list(&[Token::Char {
+        ch: 'r',
+        cat: Catcode::Other,
+    }]);
+    assert_eq!(replacement.raw(), newer.raw());
+    assert_ne!(replacement, newer);
 }
 
 #[test]

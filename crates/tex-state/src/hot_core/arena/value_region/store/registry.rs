@@ -18,7 +18,7 @@ use super::{
     RuntimeMacroInput, RuntimeMacroView, RuntimeOriginEntry, RuntimeOriginListCoordinate,
     RuntimeOriginListView, RuntimeTokenListCoordinate, RuntimeTokenListInput, RuntimeTokenListView,
     RuntimeTracedTokenListInput, RuntimeValueCandidate, RuntimeValueRegionAccounting,
-    RuntimeValueRegionMark, RuntimeValueStore,
+    RuntimeValueRegionMark, RuntimeValueRootSet,
 };
 
 /// A rejected live-registry operation.
@@ -142,7 +142,7 @@ impl RuntimeValueRegistry {
         initial_region_capacity: NonZeroU32,
         empty_token_semantic_id: TokenSemanticId,
     ) -> Result<Self, RuntimeValueRegistryError> {
-        let mut candidate = RuntimeValueStore::new(initial_region_capacity).candidate()?;
+        let mut candidate = RuntimeValueRootSet::new(initial_region_capacity).candidate()?;
         let empty = candidate.append_token_list(RuntimeTokenListInput {
             id: TokenListId::EMPTY,
             semantic_id: empty_token_semantic_id,
@@ -581,7 +581,7 @@ impl RuntimeValueRegistry {
     /// Adds only region owners absent from the current canonical root set.
     pub(crate) fn publish_into(
         &mut self,
-        destination: &mut RuntimeValueStore,
+        destination: &mut RuntimeValueRootSet,
     ) -> Result<(), RuntimeValueRegistryError> {
         self.candidate.publish_into(destination)?;
         Ok(())
@@ -596,7 +596,43 @@ impl RuntimeValueRegistry {
     pub(crate) fn rollback_inherited(
         &mut self,
         mark: RuntimeValueRegistryMark,
-        published: &RuntimeValueStore,
+        published: &RuntimeValueRootSet,
+    ) -> Result<(), RuntimeValueRegistryError> {
+        self.restore_inherited_prefix(mark, published)
+    }
+
+    /// Builds a generation fork directly from a checkpoint's sealed roots.
+    ///
+    /// Dense family coordinates and identity metadata are copy-only. The
+    /// mutable source suffix is neither copied nor admitted into the child.
+    pub(crate) fn fork_at(
+        &self,
+        mark: RuntimeValueRegistryMark,
+        published: &RuntimeValueRootSet,
+    ) -> Result<Self, RuntimeValueRegistryError> {
+        let mut child = Self {
+            candidate: RuntimeValueCandidate::from_store(published.clone())?,
+            token_identities: self.token_identities.fork(),
+            macro_identities: self.macro_identities.fork(),
+            glue_identities: self.glue_identities.fork(),
+            origin_list_identities: self.origin_list_identities.fork(),
+            token_locations: self.token_locations.clone(),
+            macro_locations: self.macro_locations.clone(),
+            glue_locations: self.glue_locations.clone(),
+            origin_list_locations: self.origin_list_locations.clone(),
+            origin_list_limit: self.origin_list_limit,
+            origin_list_entry_limit: self.origin_list_entry_limit,
+            next_macro_observation_operand: self.next_macro_observation_operand,
+            next_macro_allocation_serial: self.next_macro_allocation_serial,
+        };
+        child.restore_inherited_prefix(mark, published)?;
+        Ok(child)
+    }
+
+    fn restore_inherited_prefix(
+        &mut self,
+        mark: RuntimeValueRegistryMark,
+        published: &RuntimeValueRootSet,
     ) -> Result<(), RuntimeValueRegistryError> {
         let token_identities = self.token_identities.watermark_at(mark.token_locations)?;
         let macro_identities = self.macro_identities.watermark_at(mark.macro_locations)?;
@@ -723,8 +759,8 @@ impl RuntimeValueRegistry {
         Ok(child)
     }
 
-    pub(crate) fn empty_published_store(&self) -> RuntimeValueStore {
-        RuntimeValueStore {
+    pub(crate) fn empty_root_set(&self) -> RuntimeValueRootSet {
+        RuntimeValueRootSet {
             regions: self.candidate.arena.base.retain_regions(&[]),
         }
     }

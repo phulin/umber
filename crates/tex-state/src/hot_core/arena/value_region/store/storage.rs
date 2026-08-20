@@ -268,17 +268,7 @@ pub(super) fn validate_private_truncate(
     arena: &ConcreteArena,
     mark: RuntimeValueRegionMark,
 ) -> Result<(), RegionArenaError> {
-    arena.validate_mark(mark)?;
-    for owner in arena
-        .sealed_suffix
-        .iter()
-        .skip(mark.sealed_regions as usize)
-    {
-        if Arc::strong_count(owner) != 1 {
-            return Err(RegionArenaError::InvalidMark);
-        }
-    }
-    Ok(())
+    arena.validate_mark(mark)
 }
 
 pub(super) fn token_list_view_from_admission<'a>(

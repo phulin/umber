@@ -182,8 +182,8 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
     let mut registry =
         RuntimeValueRegistry::new(capacity(16), semantic(0)).expect("registry initializes");
     let unknown = OriginId::UNKNOWN;
-    let mut roots = registry.empty_published_store();
-    let roots_mark = roots.publication_mark().expect("root mark fits");
+    let mut roots = registry.empty_root_set();
+    let checkpoint_roots = roots.clone();
     let mark = registry.mark().expect("registry mark exists");
     let values = [token('x')];
     let rejected_tokens = registry
@@ -204,13 +204,7 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
         .publish_into(&mut roots)
         .expect("attempt publishes");
 
-    assert!(
-        registry.rollback(mark).is_err(),
-        "published owner must block unseal"
-    );
-    roots
-        .restore_publication(roots_mark)
-        .expect("destination roots restore first");
+    roots.restore_from(&checkpoint_roots);
     registry.rollback(mark).expect("attempt rejects");
 
     let replacement_tokens = registry
@@ -250,6 +244,43 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
     assert_eq!(
         registry.origin_list(rejected_origins).err(),
         Some(RuntimeValueRegistryError::UnknownOriginList)
+    );
+}
+
+#[test]
+fn rollback_to_old_checkpoint_discards_candidate_owner_while_newer_checkpoint_lives() {
+    let mut registry =
+        RuntimeValueRegistry::new(capacity(8), semantic(0)).expect("registry initializes");
+    let mut current_roots = registry.empty_root_set();
+    registry
+        .publish_into(&mut current_roots)
+        .expect("bootstrap roots publish");
+    let old_roots = current_roots.clone();
+    let old_mark = registry.mark().expect("old checkpoint mark exists");
+
+    let values = [token('n')];
+    let newer = registry
+        .allocate_token_list(token_input(40, &values))
+        .expect("newer value allocates");
+    let newer_coordinate = registry
+        .token_coordinate(newer)
+        .expect("newer coordinate resolves");
+    registry
+        .publish_into(&mut current_roots)
+        .expect("newer checkpoint publishes");
+    let newer_checkpoint_roots = current_roots.clone();
+
+    current_roots.restore_from(&old_roots);
+    registry
+        .rollback(old_mark)
+        .expect("old checkpoint rollback drops only the candidate owner");
+    assert!(!registry.contains_token(newer));
+    assert_eq!(
+        newer_checkpoint_roots
+            .admit_token_list(newer_coordinate)
+            .expect("newer checkpoint keeps sealed storage alive")
+            .tokens(),
+        values
     );
 }
 
@@ -334,6 +365,46 @@ fn fork_shares_inherited_rows_and_rejects_foreign_suffix_ids() {
     assert!(parent.token_list(child_only).is_err());
     assert!(child.origin_list(parent_only_origins).is_err());
     assert!(parent.origin_list(child_only_origins).is_err());
+}
+
+#[test]
+fn checkpoint_fork_shares_sealed_rows_and_omits_later_candidate_suffix() {
+    let mut parent =
+        RuntimeValueRegistry::new(capacity(16), semantic(0)).expect("registry initializes");
+    let inherited_values = [token('i')];
+    let inherited = parent
+        .allocate_token_list(token_input(30, &inherited_values))
+        .expect("inherited token allocates");
+    let mut checkpoint_roots = parent.empty_root_set();
+    parent
+        .publish_into(&mut checkpoint_roots)
+        .expect("checkpoint seals inherited region");
+    let checkpoint = parent.mark().expect("checkpoint mark exists");
+    let inherited_address = parent
+        .token_list(inherited)
+        .expect("parent resolves inherited row")
+        .tokens()
+        .as_ptr();
+
+    let later_values = [token('l')];
+    let later = parent
+        .allocate_token_list(token_input(31, &later_values))
+        .expect("later suffix allocates");
+    let child = parent
+        .fork_at(checkpoint, &checkpoint_roots)
+        .expect("checkpoint fork succeeds");
+
+    assert_eq!(
+        child
+            .token_list(inherited)
+            .expect("child resolves inherited row")
+            .tokens()
+            .as_ptr(),
+        inherited_address,
+        "checkpoint fork must share the sealed backing allocation"
+    );
+    assert!(!child.contains_token(later));
+    assert!(parent.contains_token(later));
 }
 
 #[test]

@@ -707,11 +707,15 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
         }
         while self.sealed_suffix.len() > mark.sealed_regions as usize {
             let sealed = self.sealed_suffix.pop().expect("suffix length was checked");
-            let mutable = unseal_private(sealed)?;
-            if Some(mutable.key) == target_key {
-                target = Some(mutable);
-            } else {
-                self.recycle_mutable(mutable);
+            let key = sealed.key;
+            match unseal_private(sealed) {
+                Some(mutable) if Some(mutable.key) == target_key => target = Some(mutable),
+                Some(mutable) => self.recycle_mutable(mutable),
+                None if Some(key) == target_key => return Err(RegionArenaError::InvalidMark),
+                // A newer checkpoint may still retain this discarded whole
+                // region. Drop the candidate's owner; the checkpoint releases
+                // the storage when it retires. Shared storage is never reused.
+                None => {}
             }
         }
         if let Some(mut active) = target {
@@ -1107,12 +1111,11 @@ fn checked_offset(len: usize) -> Result<u32, RegionArenaError> {
 
 fn unseal_private<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>(
     sealed: SealedOwner<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>,
-) -> Result<
+) -> Option<
     MutableRuntimeValueRegion<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>,
-    RegionArenaError,
 > {
-    let sealed = Arc::try_unwrap(sealed).map_err(|_| RegionArenaError::InvalidMark)?;
-    Ok(MutableRuntimeValueRegion {
+    let sealed = Arc::try_unwrap(sealed).ok()?;
+    Some(MutableRuntimeValueRegion {
         key: sealed.key,
         columns: sealed.columns,
         appendable: false,
