@@ -1,35 +1,57 @@
-//! Lazy diagnostic provenance rendering.
+//! Explicitly cold provenance detachment and diagnostic presentation.
 //!
-//! The resolver is intentionally display-only. Token movement stores compact
-//! `OriginId`s, while user-facing strings and source snippets are produced here
-//! at diagnostic formatting boundaries.
+//! Ordinary execution carries only generation-branded provenance coordinates.
+//! A caller must present a [`ColdProvenanceDemand`] before this module resolves
+//! those coordinates, reads source bytes, computes lines, or allocates strings.
+//! Returned values are owned, handle-free presentation DTOs.
 
-use std::fmt::{self, Write as _};
-use std::path::Path;
-use std::sync::Arc;
+use core::fmt::{self, Write as _};
 use unicode_width::UnicodeWidthChar;
 
-use crate::Universe;
-use crate::input::{InputFrameSummary, SourceId};
+use crate::durable_arena::ProvenanceId;
 use crate::provenance::{
-    DiagnosticSite, InsertedOriginKind, OriginRecord, OriginRef, SourceOrigin,
-    SynthesizedOriginKind, SyntheticOriginKind,
+    InsertedOriginKind, OriginRecord, RelatedLocationRole, SourceOrigin, SynthesizedOriginKind,
+    SyntheticOriginKind,
 };
-use crate::source_fragments::{
-    EditorLayout, FragmentStore, LayoutResolvedOrigin, direct_fragment_span, resolve_fragment_span,
-};
-use crate::source_map::{SourceBacking, SourceDescriptor, SourceRegistrationRef, SourceSpan};
-use crate::token::{OriginId, Token};
+use crate::token::Token;
+use crate::universe::Universe;
 
 const DEFAULT_TRACE_DEPTH: usize = 8;
 
-/// Resolves raw provenance ids into user-facing diagnostic text.
-pub struct ProvenanceResolver<'a> {
-    universe: &'a Universe,
-    trace_depth: usize,
+/// Capability proving that a consumer explicitly requested cold provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ColdProvenanceDemand {
+    Diagnostic,
+    RenderedSource,
 }
 
-/// Owned source range safe to return beyond the live provenance store.
+/// One generation-local live coordinate selected for cold resolution.
+#[derive(Clone, Copy, Debug)]
+pub struct DiagnosticProvenanceCoordinate<G> {
+    pub role: Option<RelatedLocationRole>,
+    pub coordinate: ProvenanceId<G>,
+}
+
+/// Explicit typed roots for one diagnostic presentation build.
+#[derive(Debug)]
+pub struct DiagnosticProvenanceRequest<'a, G> {
+    pub primary: Option<ProvenanceId<G>>,
+    pub related: &'a [DiagnosticProvenanceCoordinate<G>],
+    pub expansion: &'a [ProvenanceId<G>],
+}
+
+impl<G> DiagnosticProvenanceRequest<'_, G> {
+    #[must_use]
+    pub const fn primary(primary: ProvenanceId<G>) -> Self {
+        Self {
+            primary: Some(primary),
+            related: &[],
+            expansion: &[],
+        }
+    }
+}
+
+/// Owned physical source range. It contains no source id or engine owner.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedSourceLocation {
     pub path: String,
@@ -37,700 +59,253 @@ pub struct ResolvedSourceLocation {
     pub end: u64,
     pub line: u32,
     pub column: u32,
+    pub excerpt: String,
 }
 
-/// Arena-independent generated-source identity and normalized byte span.
+/// Handle-free source recipe for generated or already-detached bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DetachedGeneratedSourceSpan {
-    pub bytes: Arc<[u8]>,
+    pub logical_path: String,
+    pub bytes: Vec<u8>,
     pub start: u64,
     pub end: u64,
 }
 
-impl<'a> ProvenanceResolver<'a> {
-    /// Creates a resolver with the default bounded macro trace depth.
+/// One detached related diagnostic location.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DetachedRelatedLocation {
+    pub role: RelatedLocationRole,
+    pub location: Option<ResolvedSourceLocation>,
+    pub summary: String,
+}
+
+/// Complete handle-free diagnostic presentation evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DetachedDiagnosticPresentation {
+    pub primary: Option<ResolvedSourceLocation>,
+    pub primary_summary: String,
+    pub related: Vec<DetachedRelatedLocation>,
+    pub expansion: Vec<String>,
+}
+
+/// Resolver which allocates presentation only after explicit cold admission.
+pub struct ProvenanceResolver<'a, G> {
+    universe: &'a Universe<G>,
+    demand: ColdProvenanceDemand,
+    trace_depth: usize,
+}
+
+impl<'a, G> ProvenanceResolver<'a, G> {
     #[must_use]
-    pub const fn new(universe: &'a Universe) -> Self {
+    pub const fn new(universe: &'a Universe<G>, demand: ColdProvenanceDemand) -> Self {
         Self {
             universe,
+            demand,
             trace_depth: DEFAULT_TRACE_DEPTH,
         }
     }
 
-    /// Creates a resolver with an explicit macro trace depth.
     #[must_use]
-    pub const fn with_trace_depth(universe: &'a Universe, trace_depth: usize) -> Self {
+    pub const fn with_trace_depth(
+        universe: &'a Universe<G>,
+        demand: ColdProvenanceDemand,
+        trace_depth: usize,
+    ) -> Self {
         Self {
             universe,
+            demand,
             trace_depth,
         }
     }
 
-    /// Resolves one live origin to an owned physical source range.
     #[must_use]
-    pub fn resolve_origin(&self, origin: OriginId) -> Option<ResolvedSourceLocation> {
-        let resolved = self.resolve_to_source(origin)?;
-        let display = self.source_display(resolved.source);
-        let region = self.universe.source_region(resolved.source.source())?;
-        let path = match region.backing {
-            SourceBacking::World(record) => self
-                .universe
-                .world()
-                .input_record(record)?
-                .path()
-                .to_string_lossy()
-                .into_owned(),
-            SourceBacking::Generated(_) => self
-                .universe
-                .generated_source(region.backing)
-                .and_then(|source| source.logical_path())
-                .unwrap_or("<generated>")
-                .to_owned(),
-        };
-        Some(ResolvedSourceLocation {
-            path,
-            start: resolved.source.byte_offset(),
-            end: resolved.hi,
-            line: display.line_number,
-            column: display.column,
-        })
+    pub const fn demand(&self) -> ColdProvenanceDemand {
+        self.demand
     }
 
-    /// Resolves a structural origin directly from the consumer-owned root.
-    ///
-    /// Unlike [`Self::resolve_origin`], this path does not require the origin
-    /// coordinate to remain indexed by the current Universe.
+    /// Detaches one live coordinate to an owned source presentation.
     #[must_use]
-    pub fn resolve_origin_ref(&self, origin: &OriginRef) -> Option<ResolvedSourceLocation> {
-        if origin.record().is_none() && origin.source_registration().is_none() {
-            return self.resolve_origin(origin.id());
-        }
-        let mut current = origin;
-        for _ in 0..self.trace_depth.saturating_add(4) {
-            if let Some(registration) = current.source_registration() {
-                return self.resolve_registered_root(current, registration);
-            }
-            match current.record()? {
-                OriginRecord::MacroInvocation(_)
-                | OriginRecord::Inserted(_)
-                | OriginRecord::Synthesized(_) => current = current.children().first()?,
-                OriginRecord::Source(_)
-                | OriginRecord::SourceSpan(_)
-                | OriginRecord::UnknownBootstrap
-                | OriginRecord::Synthetic(_) => return None,
-            }
-        }
-        None
-    }
-
-    /// Resolves a consumer-owned structural root against the current editor
-    /// layout without importing it into the accepted provenance store.
-    #[must_use]
-    pub fn resolve_layout_origin_ref(
+    pub fn resolve_coordinate(
         &self,
-        origin: &OriginRef,
-        fragments: &FragmentStore,
-        layout: &EditorLayout,
-    ) -> LayoutResolvedOrigin {
-        if origin.record().is_none() && origin.source_registration().is_none() {
-            return self.resolve_layout_origin(origin.id(), fragments, layout);
-        }
-        let mut current = origin;
-        for _ in 0..self.trace_depth.saturating_add(4) {
-            if let Some(span) = fragments
-                .direct_root_span_id(current.id())
-                .and_then(|span| fragments.source_span_for_root(span))
-                .or_else(|| direct_fragment_span(current.id(), fragments))
-            {
-                return resolve_fragment_span(span, fragments, layout)
-                    .unwrap_or(LayoutResolvedOrigin::Unknown);
-            }
-            match current.record() {
-                Some(OriginRecord::SourceSpan(span)) => {
-                    if let Some(resolved) = resolve_fragment_span(span, fragments, layout) {
-                        return resolved;
-                    }
-                    return self
-                        .resolve_origin_ref(current)
-                        .map_or(LayoutResolvedOrigin::Unknown, |_| {
-                            LayoutResolvedOrigin::Foreign
-                        });
-                }
-                Some(OriginRecord::Source(_)) => return LayoutResolvedOrigin::Foreign,
-                Some(
-                    OriginRecord::MacroInvocation(_)
-                    | OriginRecord::Inserted(_)
-                    | OriginRecord::Synthesized(_),
-                ) => {
-                    let Some(parent) = current.children().first() else {
-                        return LayoutResolvedOrigin::Unknown;
-                    };
-                    current = parent;
-                }
-                Some(OriginRecord::UnknownBootstrap | OriginRecord::Synthetic(_)) | None => {
-                    return self
-                        .resolve_origin_ref(current)
-                        .map_or(LayoutResolvedOrigin::Unknown, |_| {
-                            LayoutResolvedOrigin::Foreign
-                        });
-                }
-            }
-        }
-        LayoutResolvedOrigin::Unknown
-    }
-
-    fn resolve_registered_root(
-        &self,
-        origin: &OriginRef,
-        registration: &SourceRegistrationRef,
+        coordinate: ProvenanceId<G>,
     ) -> Option<ResolvedSourceLocation> {
-        let region = registration.region();
-        let (lo, hi) = match origin.record() {
-            Some(OriginRecord::SourceSpan(span)) => registered_offsets(region.start.raw(), span)?,
-            _ => {
-                let crate::token::OriginEncoding::DirectSource(position) = origin.id().decode()
-                else {
-                    return None;
-                };
-                let lo = position.raw().checked_sub(region.start.raw())?;
-                let bytes = self.registration_bytes(registration)?;
-                let width =
-                    u64::try_from(utf8_scalar_len_at(bytes, usize::try_from(lo).ok()?)?).ok()?;
-                (lo, lo.checked_add(width)?)
-            }
-        };
-        if hi > region.byte_len {
-            return None;
-        }
-        let bytes = self.registration_bytes(registration)?;
-        let (line, column, _) =
-            physical_line_at(bytes, registration.line_starts(), usize::try_from(lo).ok()?)?;
-        Some(ResolvedSourceLocation {
-            path: self.registration_path(registration)?,
-            start: lo,
-            end: hi,
-            line,
-            column,
-        })
+        let record = self.record(coordinate)?;
+        self.resolve_record(record)
     }
 
-    fn registration_bytes<'b>(
-        &'b self,
-        registration: &'b SourceRegistrationRef,
-    ) -> Option<&'b [u8]> {
-        match registration.descriptor() {
-            SourceDescriptor::Generated(source) => Some(source.bytes()),
-            SourceDescriptor::World { input_record, .. } => {
-                let record = self.universe.world().input_record(*input_record)?;
-                self.universe.world().input_content(record.hash())
-            }
-        }
-    }
-
-    fn registration_path(&self, registration: &SourceRegistrationRef) -> Option<String> {
-        match registration.descriptor() {
-            SourceDescriptor::Generated(source) => {
-                Some(source.logical_path().unwrap_or("<generated>").to_owned())
-            }
-            SourceDescriptor::World { input_record, .. } => Some(
-                self.universe
-                    .world()
-                    .input_record(*input_record)?
-                    .path()
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-        }
-    }
-
-    /// Detaches generated backing identity before speculative provenance is
-    /// rolled back, allowing an editor layout to rematch the immutable bytes.
+    /// Resolves an already handle-free generated-source recipe.
     #[must_use]
-    pub fn detach_generated_origin(&self, origin: OriginId) -> Option<DetachedGeneratedSourceSpan> {
-        let resolved = self.resolve_to_source(origin)?;
-        let region = self.universe.source_region(resolved.source.source())?;
-        let source = self.universe.generated_source(region.backing)?;
-        Some(DetachedGeneratedSourceSpan {
-            bytes: Arc::from(source.bytes()),
-            start: resolved.source.byte_offset(),
-            end: resolved.hi,
-        })
-    }
-
-    /// Resolves an origin against the current editor piece table before
-    /// falling through to the rollback-coupled engine source map.
-    #[must_use]
-    pub fn resolve_layout_origin(
+    pub fn resolve_generated(
         &self,
-        origin: OriginId,
-        fragments: &FragmentStore,
-        layout: &EditorLayout,
-    ) -> LayoutResolvedOrigin {
-        let mut current = origin;
-        for _ in 0..self.trace_depth.saturating_add(4) {
-            if let Some(span) = fragments
-                .direct_root_span_id(current)
-                .and_then(|span| fragments.source_span_for_root(span))
-                .or_else(|| direct_fragment_span(current, fragments))
-            {
-                return resolve_fragment_span(span, fragments, layout)
-                    .unwrap_or(LayoutResolvedOrigin::Unknown);
-            }
-            match self.record(current) {
-                Some(OriginRecord::SourceSpan(span)) => {
-                    if let Some(resolved) = resolve_fragment_span(span, fragments, layout) {
-                        return resolved;
-                    }
-                    return self
-                        .resolve_origin(current)
-                        .map_or(LayoutResolvedOrigin::Unknown, |_| {
-                            LayoutResolvedOrigin::Foreign
-                        });
-                }
-                Some(OriginRecord::Source(_)) => return LayoutResolvedOrigin::Foreign,
-                Some(OriginRecord::MacroInvocation(invocation)) => {
-                    current = invocation.invocation();
-                }
-                Some(OriginRecord::Inserted(inserted)) => current = inserted.parent(),
-                Some(OriginRecord::Synthesized(synthesized)) => current = synthesized.parent(),
-                Some(OriginRecord::UnknownBootstrap | OriginRecord::Synthetic(_)) | None => {
-                    return self
-                        .resolve_origin(current)
-                        .map_or(LayoutResolvedOrigin::Unknown, |_| {
-                            LayoutResolvedOrigin::Foreign
-                        });
-                }
-            }
-        }
-        LayoutResolvedOrigin::Unknown
+        source: &DetachedGeneratedSourceSpan,
+    ) -> Option<ResolvedSourceLocation> {
+        resolve_owned_bytes(
+            &source.logical_path,
+            &source.bytes,
+            source.start,
+            source.end,
+        )
     }
 
-    /// Renders a complete diagnostic message with optional primary origin.
+    /// Builds complete structural/presentation evidence only at this call.
     #[must_use]
-    pub fn render_diagnostic(&self, message: &str, primary: Option<OriginId>) -> String {
-        let site = DiagnosticSite::new(primary, [], self.live_macro_invocation_head());
-        self.render_diagnostic_site(message, &site)
-    }
-
-    /// Renders a diagnostic from origins captured when the error was created.
-    #[must_use]
-    pub fn render_diagnostic_site(&self, message: &str, site: &DiagnosticSite) -> String {
-        let mut out = String::new();
-        out.push_str(message);
-        out.push('\n');
-
-        match site.primary_origin() {
-            Some(origin) => self.render_primary_origin(&mut out, origin),
-            None => out.push_str(" --> unknown origin\n"),
-        }
-
-        for related in site.related() {
-            let prefix = format!("     {}", related.role().label());
-            if let Some(source) = self.resolve_to_source(related.origin()) {
-                self.render_source_context(&mut out, &prefix, source);
-            } else {
-                let _ = writeln!(out, "{prefix}: {}", self.origin_summary(related.origin()));
-            }
-        }
-        self.render_captured_macro_trace(&mut out, site);
-        out
-    }
-
-    fn render_primary_origin(&self, out: &mut String, origin: OriginId) {
-        let resolved = self.resolve_to_source(origin);
-        match resolved {
-            Some(source) => self.render_source_context(out, " -->", source),
-            None => {
-                let _ = writeln!(out, " --> {}", self.origin_summary(origin));
-            }
-        }
-
-        if let Some((invocation, definition)) = self.macro_invocation_pair(origin) {
-            out.push_str("     macro invocation:\n");
-            if let Some(source) = self.resolve_to_source(invocation) {
-                self.render_source_context(out, "      invoked at", source);
-            } else {
-                let _ = writeln!(out, "      invoked at {}", self.origin_summary(invocation));
-            }
-            if let Some(source) = self.resolve_to_source(definition) {
-                self.render_source_context(out, "      defined at", source);
-            } else {
-                let _ = writeln!(out, "      defined at {}", self.origin_summary(definition));
-            }
-        }
-    }
-
-    fn render_captured_macro_trace(&self, out: &mut String, site: &DiagnosticSite) {
-        let mut rendered = 0;
-        let mut current = site.expansion_head();
-        while let Some(origin) = current {
-            let parent = match self.record(origin) {
-                Some(OriginRecord::MacroInvocation(invocation)) => (invocation.parent_invocation()
-                    != OriginId::UNKNOWN)
-                    .then_some(invocation.parent_invocation()),
-                _ => None,
-            };
-            if site.primary_origin() == Some(origin) {
-                current = parent;
-                continue;
-            }
-            if rendered == 0 {
-                out.push_str("     expansion trace:\n");
-            }
-            if rendered >= self.trace_depth {
-                out.push_str("      ...\n");
-                break;
-            }
-
-            if let Some((invocation, definition)) = self.macro_invocation_pair(origin) {
-                if let Some(source) = self.resolve_to_source(invocation) {
-                    self.render_source_context(out, "      invoked at", source);
-                } else {
-                    let _ = writeln!(out, "      invoked at {}", self.origin_summary(invocation));
-                }
-                if let Some(source) = self.resolve_to_source(definition) {
-                    self.render_source_context(out, "      defined at", source);
-                }
-            } else {
-                let _ = writeln!(out, "      {}", self.origin_summary(origin));
-            }
-            rendered += 1;
-            current = parent;
-        }
-    }
-
-    fn live_macro_invocation_head(&self) -> Option<OriginId> {
-        self.universe
-            .input_summary()
-            .frames()
+    pub fn detach_diagnostic(
+        &self,
+        request: &DiagnosticProvenanceRequest<'_, G>,
+    ) -> DetachedDiagnosticPresentation {
+        let primary_record = request.primary.and_then(|id| self.record(id));
+        let primary = request.primary.and_then(|id| self.resolve_coordinate(id));
+        let primary_summary = primary_record.map_or_else(
+            || "unknown origin".to_owned(),
+            |record| self.record_summary(record),
+        );
+        let related = request
+            .related
             .iter()
-            .rev()
-            .find_map(|frame| match frame {
-                InputFrameSummary::TokenList {
-                    macro_invocation, ..
+            .map(|entry| {
+                let record = self.record(entry.coordinate);
+                DetachedRelatedLocation {
+                    role: entry.role.unwrap_or(RelatedLocationRole::SecondarySpelling),
+                    location: self.resolve_coordinate(entry.coordinate),
+                    summary: record.map_or_else(
+                        || "unknown origin".to_owned(),
+                        |record| self.record_summary(record),
+                    ),
                 }
-                | InputFrameSummary::TransientTokenList {
-                    macro_invocation, ..
-                } if *macro_invocation != OriginId::UNKNOWN => Some(*macro_invocation),
-                _ => None,
             })
-    }
-
-    fn macro_invocation_pair(&self, origin: OriginId) -> Option<(OriginId, OriginId)> {
-        match self.record(origin)? {
-            OriginRecord::MacroInvocation(invocation) => {
-                Some((invocation.invocation(), invocation.definition_origin()))
-            }
-            _ => None,
+            .collect();
+        let expansion = request
+            .expansion
+            .iter()
+            .take(self.trace_depth)
+            .map(|&id| {
+                self.record(id).map_or_else(
+                    || "unknown origin".to_owned(),
+                    |record| self.record_summary(record),
+                )
+            })
+            .collect();
+        DetachedDiagnosticPresentation {
+            primary,
+            primary_summary,
+            related,
+            expansion,
         }
     }
 
-    fn resolve_to_source(&self, origin: OriginId) -> Option<ResolvedSource> {
-        if let Some(source) = self.universe.direct_source_origin(origin) {
-            let hi = source
-                .byte_offset()
-                .checked_add(self.source_scalar_len(source).unwrap_or(1))?;
-            return Some(ResolvedSource { source, hi });
-        }
-        let mut origin = origin;
-        for _ in 0..self.trace_depth.saturating_add(4) {
-            match self.record(origin)? {
-                OriginRecord::Source(source) => {
-                    let hi = source
-                        .byte_offset()
-                        .checked_add(self.source_scalar_len(source).unwrap_or(1))?;
-                    return Some(ResolvedSource { source, hi });
-                }
-                OriginRecord::SourceSpan(span) => {
-                    let source =
-                        self.universe
-                            .source_origin_at_position(span.lo())
-                            .or_else(|| {
-                                self.universe
-                                    .source_region_at_position(span.lo())
-                                    .map(|region| {
-                                        SourceOrigin::new(region.source, region.byte_len, 0, 0)
-                                    })
-                            })?;
-                    let region = self.universe.source_region(source.source())?;
-                    let hi = span.hi().raw().checked_sub(region.start.raw())?;
-                    return Some(ResolvedSource { source, hi });
-                }
-                OriginRecord::MacroInvocation(invocation) => {
-                    origin = invocation.invocation();
-                }
-                OriginRecord::Inserted(inserted) => {
-                    origin = inserted.parent();
-                }
-                OriginRecord::Synthesized(synthesized) => {
-                    origin = synthesized.parent();
-                }
-                OriginRecord::UnknownBootstrap | OriginRecord::Synthetic(_) => return None,
-            }
-        }
-        None
-    }
-
-    fn render_source_context(&self, out: &mut String, prefix: &str, source: ResolvedSource) {
-        let display = self.source_display(source.source);
-        let label = display.label;
-        let line_number = display.line_number;
-        let column = display.column;
-        let _ = writeln!(out, "{prefix} {label}:{line_number}:{column}");
-
-        let Some(region) = self.universe.source_region(source.source.source()) else {
-            if let Some(line) = display.line {
-                let gutter = line_number.to_string();
-                let _ = writeln!(out, "  {gutter} | {line}");
-                let padding = caret_padding(&line, column as usize);
-                let _ = writeln!(out, "  {} | {padding}^", " ".repeat(gutter.len()));
-            }
-            return;
-        };
-        let Some(bytes) = self.universe.source_backing_bytes(region) else {
-            return;
-        };
-        let Some(line_starts) = self.universe.source_line_starts(region) else {
-            return;
-        };
-        self.render_range_lines(
-            out,
-            bytes,
-            line_starts,
-            source.source.byte_offset(),
-            source.hi,
-        );
-    }
-
-    fn source_scalar_len(&self, source: SourceOrigin) -> Option<u64> {
-        let region = self.universe.source_region(source.source())?;
-        let bytes = self.universe.source_backing_bytes(region)?;
-        let offset = usize::try_from(source.byte_offset()).ok()?;
-        u64::try_from(utf8_scalar_len_at(bytes, offset)?).ok()
-    }
-
-    fn render_range_lines(
+    /// Renders a detached presentation without returning to live state.
+    #[must_use]
+    pub fn render_diagnostic(
         &self,
-        out: &mut String,
-        bytes: &[u8],
-        starts: &[usize],
-        lo: u64,
-        hi: u64,
-    ) {
-        let (Ok(lo), Ok(hi)) = (usize::try_from(lo), usize::try_from(hi)) else {
-            return;
-        };
-        if lo > bytes.len() || hi < lo || hi > bytes.len() {
-            return;
-        }
-        let first = line_index_at(starts, lo);
-        let last_probe = if hi > lo { hi - 1 } else { lo };
-        let last = line_index_at(starts, last_probe.min(bytes.len()));
-        self.render_one_range_line(out, bytes, starts, first, lo..hi, true);
-        if last > first {
-            if last > first + 1 {
-                out.push_str("    | ...\n");
-            }
-            self.render_one_range_line(out, bytes, starts, last, lo..hi, false);
-        }
-    }
-
-    fn render_one_range_line(
-        &self,
-        out: &mut String,
-        bytes: &[u8],
-        starts: &[usize],
-        index: usize,
-        range: std::ops::Range<usize>,
-        first: bool,
-    ) {
-        let Some(line) = physical_line(bytes, starts, index) else {
-            return;
-        };
-        let mark_lo = if first {
-            range.start.clamp(line.start, line.content_end)
-        } else {
-            line.start
-        };
-        let mark_hi = if range.is_empty() {
-            mark_lo
-        } else {
-            range.end.clamp(mark_lo, line.content_end)
-        };
-        let text = String::from_utf8_lossy(&bytes[line.start..line.content_end]);
-        let prefix = String::from_utf8_lossy(&bytes[line.start..mark_lo]);
-        let marked = String::from_utf8_lossy(&bytes[mark_lo..mark_hi]);
-        let column = display_width(&prefix, 0);
-        let width = display_width(&marked, column).saturating_sub(column).max(1);
-        let number = index.saturating_add(1);
-        let gutter = number.to_string();
-        let _ = writeln!(out, "  {gutter} | {text}");
-        let _ = writeln!(
-            out,
-            "  {} | {}{}",
-            " ".repeat(gutter.len()),
-            " ".repeat(column),
-            "^".repeat(width)
-        );
-    }
-
-    fn source_label_for_record(
-        &self,
-        source: SourceId,
-        input_record: Option<crate::InputRecordId>,
+        message: &str,
+        request: &DiagnosticProvenanceRequest<'_, G>,
     ) -> String {
-        if let Some(region) = self.universe.source_region(source) {
-            return match region.backing {
-                SourceBacking::World(record) => {
-                    self.universe.world().input_record(record).map_or_else(
-                        || format!("<source {}>", source.raw()),
-                        |record| display_path(record.path()),
-                    )
-                }
-                SourceBacking::Generated(_) => format!("<source {}>", source.raw()),
-            };
-        }
-        let record = match input_record {
-            Some(record) => self.universe.world().input_record(record),
-            None => self
-                .universe
-                .world()
-                .input_records()
-                .get(source.raw() as usize),
-        };
-        if let Some(record) = record {
-            return display_path(record.path());
-        }
-        format!("<source {}>", source.raw())
+        render_detached_diagnostic(message, &self.detach_diagnostic(request))
     }
 
-    fn source_line(&self, source: SourceOrigin) -> Option<String> {
-        if let Some(region) = self.universe.source_region(source.source()) {
-            let bytes = self.universe.source_backing_bytes(region)?;
-            let line_starts = self.universe.source_line_starts(region)?;
-            let offset = usize::try_from(source.byte_offset()).ok()?;
-            return physical_line_at(bytes, line_starts, offset).map(|(_, _, line)| line);
+    fn record(&self, coordinate: ProvenanceId<G>) -> Option<OriginRecord> {
+        self.universe
+            .command_context()
+            .ok()
+            .map(|context| context.provenance(coordinate))
+    }
+
+    fn resolve_record(&self, record: OriginRecord) -> Option<ResolvedSourceLocation> {
+        match record {
+            OriginRecord::Source(source) => self.resolve_source(source),
+            OriginRecord::UnknownBootstrap
+            | OriginRecord::SourceSpan(_)
+            | OriginRecord::MacroInvocation(_)
+            | OriginRecord::Inserted(_)
+            | OriginRecord::Synthesized(_)
+            | OriginRecord::Synthetic(_) => None,
         }
-        let record = match source.input_record() {
-            Some(record) => self.universe.world().input_record(record)?,
-            None => self
-                .universe
-                .world()
-                .input_records()
-                .get(source.source().raw() as usize)?,
-        };
+    }
+
+    fn resolve_source(&self, source: SourceOrigin) -> Option<ResolvedSourceLocation> {
+        let record = self.universe.world().input_record(source.input_record()?)?;
         let bytes = self.universe.world().input_content(record.hash())?;
-        let text = String::from_utf8_lossy(bytes);
-        line_at(&text, source.line())
+        let start = source.byte_offset();
+        let start_usize = usize::try_from(start).ok()?;
+        let width = utf8_scalar_len_at(bytes, start_usize).unwrap_or(1);
+        let end = start.checked_add(u64::try_from(width).ok()?)?;
+        resolve_owned_bytes(&record.path().to_string_lossy(), bytes, start, end)
     }
 
-    fn source_display(&self, source: SourceOrigin) -> DisplaySource {
-        let label = self.source_label_for_record(source.source(), source.input_record());
-        if let Some(region) = self.universe.source_region(source.source())
-            && source.byte_offset() <= region.byte_len
-            && let Some(bytes) = self.universe.source_backing_bytes(region)
-            && let Some(line_starts) = self.universe.source_line_starts(region)
-            && let Ok(offset) = usize::try_from(source.byte_offset())
-            && let Some((line_number, column, line)) = physical_line_at(bytes, line_starts, offset)
-        {
-            return DisplaySource {
-                label,
-                line_number,
-                column,
-                line: Some(line),
-            };
-        }
-        DisplaySource {
-            label,
-            line_number: source.line().max(1),
-            column: source.column().saturating_add(1).max(1),
-            line: self.source_line(source),
-        }
-    }
-
-    fn origin_summary(&self, origin: OriginId) -> String {
-        match self.record(origin) {
-            Some(OriginRecord::UnknownBootstrap) | None => "unknown origin".to_owned(),
-            Some(OriginRecord::Source(source)) => {
-                let label = self.source_label_for_record(source.source(), source.input_record());
-                format!(
-                    "{label}:{}:{}",
-                    source.line().max(1),
-                    source.column().saturating_add(1).max(1)
-                )
-            }
-            Some(OriginRecord::SourceSpan(_)) => "source location".to_owned(),
-            Some(OriginRecord::MacroInvocation(_)) => "macro expansion".to_owned(),
-            Some(OriginRecord::Inserted(inserted)) => {
-                format!(
-                    "inserted {} token {}",
-                    inserted_kind_label(inserted.kind()),
-                    self.token_summary(inserted.token())
-                )
-            }
-            Some(OriginRecord::Synthesized(synthesized)) => {
+    fn record_summary(&self, record: OriginRecord) -> String {
+        match record {
+            OriginRecord::UnknownBootstrap => "unknown origin".to_owned(),
+            OriginRecord::Source(source) => self.resolve_source(source).map_or_else(
+                || "source location".to_owned(),
+                |location| format!("{}:{}:{}", location.path, location.line, location.column),
+            ),
+            OriginRecord::SourceSpan(_) => "source range".to_owned(),
+            OriginRecord::MacroInvocation(_) => "macro expansion".to_owned(),
+            OriginRecord::Inserted(inserted) => format!(
+                "inserted {} token {}",
+                inserted_kind_label(inserted.kind()),
+                token_summary(inserted.token())
+            ),
+            OriginRecord::Synthesized(synthesized) => {
                 format!(
                     "synthesized {} token",
                     synthesized_kind_label(synthesized.kind())
                 )
             }
-            Some(OriginRecord::Synthetic(synthetic)) => {
+            OriginRecord::Synthetic(synthetic) => {
                 format!("{} origin", synthetic_kind_label(synthetic.kind()))
             }
         }
     }
+}
 
-    fn record(&self, origin: OriginId) -> Option<OriginRecord> {
-        self.universe.origin_if_live(origin)
+/// Renders a handle-free DTO without any live-state access.
+#[must_use]
+pub fn render_detached_diagnostic(
+    message: &str,
+    presentation: &DetachedDiagnosticPresentation,
+) -> String {
+    let mut out = String::new();
+    out.push_str(message);
+    out.push('\n');
+    if let Some(location) = &presentation.primary {
+        render_location(&mut out, " -->", location);
+    } else {
+        let _ = writeln!(out, " --> {}", presentation.primary_summary);
     }
-
-    fn token_summary(&self, token: Token) -> String {
-        match token {
-            Token::Cs(symbol) => format!("\\{}", self.universe.resolve(symbol)),
-            Token::Param(slot) => format!("#{slot}"),
-            _ => format!("{token:?}"),
+    for related in &presentation.related {
+        let prefix = format!("     {}", related.role.label());
+        if let Some(location) = &related.location {
+            render_location(&mut out, &prefix, location);
+        } else {
+            let _ = writeln!(out, "{prefix}: {}", related.summary);
         }
     }
+    if !presentation.expansion.is_empty() {
+        out.push_str("     expansion trace:\n");
+        for row in &presentation.expansion {
+            let _ = writeln!(out, "      {row}");
+        }
+    }
+    out
 }
 
-struct DisplaySource {
-    label: String,
-    line_number: u32,
-    column: u32,
-    line: Option<String>,
-}
-
-#[derive(Clone, Copy)]
-struct ResolvedSource {
-    source: SourceOrigin,
-    hi: u64,
-}
-
-#[derive(Clone, Copy)]
-struct PhysicalLine {
-    start: usize,
-    content_end: usize,
-}
-
-fn display_path(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
-}
-
-fn line_at(text: &str, line: u32) -> Option<String> {
-    let index = usize::try_from(line.saturating_sub(1)).ok()?;
-    text.lines()
-        .nth(index)
-        .map(|line| line.trim_end_matches('\r').to_owned())
-}
-
-fn physical_line_at(bytes: &[u8], starts: &[usize], offset: usize) -> Option<(u32, u32, String)> {
-    if offset > bytes.len() {
+fn resolve_owned_bytes(
+    path: &str,
+    bytes: &[u8],
+    start: u64,
+    end: u64,
+) -> Option<ResolvedSourceLocation> {
+    let start_usize = usize::try_from(start).ok()?;
+    let end_usize = usize::try_from(end).ok()?;
+    if start_usize > end_usize || end_usize > bytes.len() {
         return None;
     }
-    let line_index = starts
-        .partition_point(|&start| start <= offset)
+    let starts = line_starts(bytes);
+    let index = starts
+        .partition_point(|&line_start| line_start <= start_usize)
         .saturating_sub(1);
-    let line_start = starts[line_index];
+    let line_start = starts[index];
     let raw_end = bytes[line_start..]
         .iter()
         .position(|&byte| byte == b'\n')
@@ -739,20 +314,41 @@ fn physical_line_at(bytes: &[u8], starts: &[usize], offset: usize) -> Option<(u3
         .checked_sub(1)
         .filter(|&end| bytes.get(end) == Some(&b'\r'))
         .unwrap_or(raw_end);
-    let text = String::from_utf8_lossy(&bytes[line_start..content_end]);
-    let column_end = offset.min(content_end);
-    let prefix = String::from_utf8_lossy(&bytes[line_start..column_end]);
-    Some((
-        u32::try_from(line_index + 1).unwrap_or(u32::MAX),
-        u32::try_from(display_width(&prefix, 0).saturating_add(1)).unwrap_or(u32::MAX),
-        text.into_owned(),
-    ))
+    let excerpt = String::from_utf8_lossy(&bytes[line_start..content_end]).into_owned();
+    let prefix_end = start_usize.min(content_end);
+    let prefix = String::from_utf8_lossy(&bytes[line_start..prefix_end]);
+    Some(ResolvedSourceLocation {
+        path: path.to_owned(),
+        start,
+        end,
+        line: u32::try_from(index + 1).unwrap_or(u32::MAX),
+        column: u32::try_from(display_width(&prefix, 0) + 1).unwrap_or(u32::MAX),
+        excerpt,
+    })
 }
 
-fn line_index_at(starts: &[usize], offset: usize) -> usize {
+fn render_location(out: &mut String, prefix: &str, location: &ResolvedSourceLocation) {
+    let _ = writeln!(
+        out,
+        "{prefix} {}:{}:{}",
+        location.path, location.line, location.column
+    );
+    let gutter = location.line.to_string();
+    let _ = writeln!(out, "  {gutter} | {}", location.excerpt);
+    let _ = writeln!(
+        out,
+        "  {} | {}^",
+        " ".repeat(gutter.len()),
+        " ".repeat(location.column.saturating_sub(1) as usize)
+    );
+}
+
+fn line_starts(bytes: &[u8]) -> Vec<usize> {
+    let mut starts = vec![0];
+    starts.extend(bytes.iter().enumerate().filter_map(|(index, &byte)| {
+        (byte == b'\n' && index + 1 <= bytes.len()).then_some(index + 1)
+    }));
     starts
-        .partition_point(|&start| start <= offset)
-        .saturating_sub(1)
 }
 
 fn utf8_scalar_len_at(bytes: &[u8], offset: usize) -> Option<usize> {
@@ -764,27 +360,8 @@ fn utf8_scalar_len_at(bytes: &[u8], offset: usize) -> Option<usize> {
         _ => return None,
     };
     let end = offset.checked_add(width)?;
-    let scalar = std::str::from_utf8(bytes.get(offset..end)?).ok()?;
+    let scalar = core::str::from_utf8(bytes.get(offset..end)?).ok()?;
     (scalar.chars().count() == 1).then_some(width)
-}
-
-fn registered_offsets(region_start: u64, span: SourceSpan) -> Option<(u64, u64)> {
-    Some((
-        span.lo().raw().checked_sub(region_start)?,
-        span.hi().raw().checked_sub(region_start)?,
-    ))
-}
-
-fn physical_line(bytes: &[u8], starts: &[usize], index: usize) -> Option<PhysicalLine> {
-    let start = *starts.get(index)?;
-    let raw_end = starts
-        .get(index + 1)
-        .map_or(bytes.len(), |next| next.saturating_sub(1));
-    let content_end = raw_end
-        .checked_sub(1)
-        .filter(|&end| bytes.get(end) == Some(&b'\r'))
-        .unwrap_or(raw_end);
-    Some(PhysicalLine { start, content_end })
 }
 
 fn display_width(text: &str, initial: usize) -> usize {
@@ -797,17 +374,11 @@ fn display_width(text: &str, initial: usize) -> usize {
     })
 }
 
-fn caret_padding(line: &str, one_based_column: usize) -> String {
-    let spaces = one_based_column.saturating_sub(1);
-    let mut padding = String::new();
-    for ch in line.chars().take(spaces) {
-        if ch == '\t' {
-            padding.push('\t');
-        } else {
-            padding.push(' ');
-        }
+fn token_summary(token: Token) -> String {
+    match token {
+        Token::Param(slot) => format!("#{slot}"),
+        _ => format!("{token:?}"),
     }
-    padding
 }
 
 fn inserted_kind_label(kind: InsertedOriginKind) -> &'static str {
@@ -845,9 +416,11 @@ fn synthetic_kind_label(kind: SyntheticOriginKind) -> &'static str {
     }
 }
 
-impl fmt::Debug for ProvenanceResolver<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProvenanceResolver")
+impl<G> fmt::Debug for ProvenanceResolver<'_, G> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProvenanceResolver")
+            .field("demand", &self.demand)
             .field("trace_depth", &self.trace_depth)
             .finish_non_exhaustive()
     }

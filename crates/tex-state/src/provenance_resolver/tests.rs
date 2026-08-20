@@ -1,445 +1,135 @@
-use crate::input::{InputFrameSummary, InputSummary, MacroArguments, TokenListReplayKind};
-use crate::macro_store::MacroMeaning;
-use crate::meaning::MeaningFlags;
-use crate::provenance::OriginListRef;
-use crate::provenance::{
-    DiagnosticSite, InsertedOriginKind, RelatedLocation, RelatedLocationRole, SourceOrigin,
-};
-use crate::source_map::SourceDescriptor;
-use crate::token::{OriginId, Token};
-use crate::{
-    EditorLayout, FragmentStore, LayoutGeneration, LayoutResolvedOrigin, Piece, ProvenanceResolver,
-    Universe, World,
-};
-use std::sync::Arc;
+use super::*;
+use crate::input::SourceId;
+use crate::interner::InternerBudget;
+use crate::provenance::{RelatedLocationRole, SourceOrigin, SyntheticOrigin};
+use crate::universe::with_universe;
 
-#[test]
-fn inserted_control_sequence_diagnostic_uses_its_resolved_name() {
-    let mut universe = Universe::new();
-    let symbol = universe.intern("hook_name:");
-    let origin = universe.inserted_origin(
-        InsertedOriginKind::ExpandAfter,
-        Token::Cs(symbol.symbol()),
-        OriginId::UNKNOWN,
-    );
-
-    let rendered = ProvenanceResolver::new(&universe).render_diagnostic("failure", Some(origin));
-
-    assert!(rendered.contains("inserted expandafter token \\hook_name:"));
-    assert!(!rendered.contains("Symbol("));
+fn budget() -> InternerBudget {
+    InternerBudget::new(128, 256, 4096).unwrap()
 }
 
 #[test]
-fn layout_resolver_checks_fragments_before_engine_sources() {
-    let mut fragments = FragmentStore::new();
-    let (fragment, registration) = fragments
-        .append(Arc::from(&b"alpha\nbeta"[..]), 11)
-        .expect("fragment appends");
-    let origin = registration.direct_origin(6, 7).expect("direct origin");
-    let layout = EditorLayout::new(
-        "editor.tex",
-        LayoutGeneration::new(4),
-        vec![Piece::new(fragment, 0, 10)],
-        &fragments,
-    )
-    .expect("layout is valid");
-    let universe = Universe::new();
-
-    assert_eq!(
-        ProvenanceResolver::new(&universe).resolve_layout_origin(origin, &fragments, &layout),
-        LayoutResolvedOrigin::Current {
-            path: "editor.tex".into(),
-            doc_offset_lo: 6,
-            doc_offset_hi: 7,
-            line: 2,
-            column: 1,
-        }
-    );
-
-    let engine_registration = universe_with_registered_source(b"engine");
-    let (universe, engine_origin) = engine_registration;
-    assert_eq!(
-        ProvenanceResolver::new(&universe).resolve_layout_origin(
-            engine_origin,
-            &fragments,
-            &layout
-        ),
-        LayoutResolvedOrigin::Foreign
-    );
-}
-
-#[test]
-fn layout_resolver_resolves_arena_span_beyond_direct_fragment_space() {
-    let mut fragments = FragmentStore::new();
-    let (fragment, registration) = fragments
-        .testing_append_at(Arc::from(&b"ab"[..]), 9, 0x7fff_fffe)
-        .expect("boundary-crossing fragment appends");
-    let layout = EditorLayout::new(
-        "editor.tex",
-        LayoutGeneration::new(3),
-        vec![Piece::new(fragment, 0, 2)],
-        &fragments,
-    )
-    .expect("layout is valid");
-    let mut universe = Universe::new();
-    let span = registration.span(1, 2).expect("wide fragment span");
-    let origin = universe.source_span_origin(span);
-
-    assert!(
+fn source_presentation_is_built_only_after_explicit_cold_demand() {
+    with_universe(budget(), |universe| {
         universe
-            .source_position(crate::SourceId::new(0), 1)
-            .is_err(),
-        "the stable editor source id must remain absent from the source map"
-    );
-    assert_eq!(
-        ProvenanceResolver::new(&universe).resolve_layout_origin(origin, &fragments, &layout),
-        LayoutResolvedOrigin::Current {
-            path: "editor.tex".into(),
-            doc_offset_lo: 1,
-            doc_offset_hi: 2,
-            line: 1,
-            column: 2,
-        }
-    );
-}
+            .world_mut()
+            .set_memory_file("utf8.tex", "α\r\nbéta".as_bytes().to_vec())
+            .unwrap();
+        let content = universe.world_mut().read_file("utf8.tex").unwrap();
+        let source =
+            SourceOrigin::new(SourceId::new(7), 5, 99, 99).with_input_record(content.record());
+        let coordinate = universe
+            .allocate_provenance(OriginRecord::Source(source))
+            .unwrap();
 
-fn universe_with_registered_source(bytes: &[u8]) -> (Universe, OriginId) {
-    let mut universe = Universe::new();
-    let registration = universe
-        .register_input_source(
-            crate::SourceId::new(0),
-            SourceDescriptor::generated(Arc::from(bytes)),
-        )
-        .expect("engine source registers");
-    let origin = registration.direct_origin(0, 1).expect("direct origin");
-    (universe, origin)
+        let resolver = ProvenanceResolver::new(universe, ColdProvenanceDemand::Diagnostic);
+        assert_eq!(resolver.demand(), ColdProvenanceDemand::Diagnostic);
+        let location = resolver.resolve_coordinate(coordinate).unwrap();
+        assert_eq!(location.path, "utf8.tex");
+        assert_eq!((location.line, location.column), (2, 2));
+        assert_eq!(location.excerpt, "béta");
+    })
+    .unwrap();
 }
 
 #[test]
-fn resolver_renders_source_line_and_caret() {
-    let mut stores = stores_with_input("main.tex", b"alpha\nbeta\n");
-    let origin = stores.source_origin(crate::SourceId::new(0), 6, 2, 1);
+fn detached_presentation_survives_without_live_coordinates() {
+    let detached = with_universe(budget(), |universe| {
+        universe
+            .world_mut()
+            .set_memory_file("main.tex", b"first\nsecond".to_vec())
+            .unwrap();
+        let content = universe.world_mut().read_file("main.tex").unwrap();
+        let primary = universe
+            .allocate_provenance(OriginRecord::Source(
+                SourceOrigin::new(SourceId::new(1), 6, 0, 0).with_input_record(content.record()),
+            ))
+            .unwrap();
+        let related_id = universe
+            .allocate_provenance(OriginRecord::Synthetic(SyntheticOrigin::new(
+                SyntheticOriginKind::Engine,
+            )))
+            .unwrap();
+        let related = [DiagnosticProvenanceCoordinate {
+            role: Some(RelatedLocationRole::RecoveryFrontier),
+            coordinate: related_id,
+        }];
+        let request = DiagnosticProvenanceRequest {
+            primary: Some(primary),
+            related: &related,
+            expansion: &[],
+        };
+        ProvenanceResolver::new(universe, ColdProvenanceDemand::Diagnostic)
+            .detach_diagnostic(&request)
+    })
+    .unwrap();
 
-    let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(origin));
-
-    assert!(rendered.contains("boom\n"));
-    assert!(rendered.contains("main.tex:2:2"));
-    assert!(rendered.contains("  2 | beta"));
-    assert!(rendered.contains("    |  ^"));
+    assert_eq!(detached.primary.as_ref().unwrap().excerpt, "second");
+    assert_eq!(detached.related[0].summary, "engine origin");
+    let rendered = render_detached_diagnostic("boom", &detached);
+    assert!(rendered.contains("main.tex:2:1"));
+    assert!(rendered.contains("recovery begins here: engine origin"));
 }
 
 #[test]
-fn resolver_treats_rolled_back_origin_as_unknown() {
-    let mut stores = stores_with_input("main.tex", b"alpha\n");
-    let snapshot = stores.snapshot();
-    let stale = stores.source_origin(crate::SourceId::new(0), 0, 1, 0);
-    stores.rollback(&snapshot);
-
-    let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(stale));
-
-    assert!(rendered.contains("unknown origin"));
+fn generated_source_recipes_are_handle_free_owned_values() {
+    with_universe(budget(), |universe| {
+        let recipe = DetachedGeneratedSourceSpan {
+            logical_path: "editor/root.tex".into(),
+            bytes: b"left\tright".to_vec(),
+            start: 5,
+            end: 6,
+        };
+        let location = ProvenanceResolver::new(universe, ColdProvenanceDemand::RenderedSource)
+            .resolve_generated(&recipe)
+            .unwrap();
+        assert_eq!(location.path, "editor/root.tex");
+        assert_eq!(location.column, 9);
+    })
+    .unwrap();
 }
 
 #[test]
-fn resolver_treats_registered_span_from_rolled_back_source_as_unknown() {
-    let mut stores = Universe::new();
-    let snapshot = stores.snapshot();
-    let registration = stores
-        .register_input_source(
-            crate::SourceId::new(0),
-            SourceDescriptor::generated(Arc::from(&b"alpha\n"[..])),
-        )
-        .expect("source registration");
-    let span = registration.span(0, 5).expect("registered span");
-    let stale = stores.source_span_origin(span);
-
-    stores.rollback(&snapshot);
-    let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(stale));
-
-    assert!(rendered.contains("unknown origin"));
+fn expansion_rows_are_bounded_by_the_explicit_resolver_budget() {
+    with_universe(budget(), |universe| {
+        let one = universe
+            .allocate_provenance(OriginRecord::Synthetic(SyntheticOrigin::new(
+                SyntheticOriginKind::Primitive,
+            )))
+            .unwrap();
+        let two = universe
+            .allocate_provenance(OriginRecord::Synthetic(SyntheticOrigin::new(
+                SyntheticOriginKind::Format,
+            )))
+            .unwrap();
+        let expansion = [one, two];
+        let request = DiagnosticProvenanceRequest {
+            primary: None,
+            related: &[],
+            expansion: &expansion,
+        };
+        let detached =
+            ProvenanceResolver::with_trace_depth(universe, ColdProvenanceDemand::Diagnostic, 1)
+                .detach_diagnostic(&request);
+        assert_eq!(detached.expansion, ["primitive origin"]);
+    })
+    .unwrap();
 }
 
 #[test]
-fn resolver_does_not_revive_a_rolled_back_input_record() {
-    let mut world = World::memory();
-    world
-        .set_memory_file("old.tex", b"old".to_vec())
-        .expect("seed old input");
-    world
-        .set_memory_file("new.tex", b"new".to_vec())
-        .expect("seed replacement input");
-    let snapshot = world.snapshot();
-    let stale = world.read_file("old.tex").expect("read old input").record();
-    world.rollback(&snapshot);
-    world
-        .read_file("new.tex")
-        .expect("reuse the rolled-back input slot");
-
-    let mut stores = Universe::with_world(world);
-    let origin =
-        stores.source_origin_with_input_record(crate::SourceId::new(0), Some(stale), 0, 1, 0);
-    let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(origin));
-
-    assert!(rendered.contains("<source 0>:1:1"));
-    assert!(!rendered.contains("new.tex"));
-    assert!(!rendered.contains("  1 | new"));
-}
-
-#[test]
-fn resolver_renders_bounded_live_macro_trace() {
-    let mut stores = stores_with_input("main.tex", b"\\def\\a{\\endgroup}\\a\n");
-    let definition_origin = stores.source_origin(crate::SourceId::new(0), 0, 1, 0);
-    let invocation_origin = stores.source_origin(crate::SourceId::new(0), 18, 1, 18);
-    let parameter_text = stores.intern_token_list(&[]);
-    let endgroup = stores.intern("endgroup");
-    let replacement_text = stores.intern_token_list(&[Token::Cs(endgroup.symbol())]);
-    let definition = stores.intern_macro(MacroMeaning::new(
-        MeaningFlags::from_bits(0),
-        parameter_text,
-        replacement_text,
-    ));
-    let macro_origin = stores.macro_invocation_origin(
-        definition.id(),
-        invocation_origin,
-        definition_origin,
-        OriginId::UNKNOWN,
-    );
-    stores.set_input_summary(InputSummary::new(
-        vec![InputFrameSummary::TokenList {
-            token_list: stores.token_list_ref(replacement_text),
-            origin_list: OriginListRef::empty(),
-            replay_kind: TokenListReplayKind::MacroBody,
-            index: 0,
-            macro_arguments: MacroArguments::new(),
-            macro_invocation: macro_origin,
-            parent_macro_invocation: OriginId::UNKNOWN,
-        }],
-        None,
-        None,
-    ));
-
-    let rendered = ProvenanceResolver::with_trace_depth(&stores, 1)
-        .render_diagnostic("boom", Some(OriginId::UNKNOWN));
-
-    assert!(rendered.contains("expansion trace:"));
-    assert!(rendered.contains("invoked at main.tex:1:19"));
-    assert!(rendered.contains("defined at main.tex:1:1"));
-}
-
-fn stores_with_input(path: &str, bytes: &[u8]) -> Universe {
-    let mut world = World::memory();
-    world
-        .set_memory_file(path, bytes.to_vec())
-        .expect("memory world accepts files");
-    let mut stores = Universe::with_world(world);
-    stores
-        .world_mut()
-        .read_file(path)
-        .expect("memory input can be read");
-    stores
-}
-
-#[test]
-fn source_origin_accessors_are_covered_for_resolver_inputs() {
-    let source = SourceOrigin::new(crate::SourceId::new(7), 3, 2, 1);
-    assert_eq!(source.source(), crate::SourceId::new(7));
-    assert_eq!(source.byte_offset(), 3);
-    assert_eq!(source.line(), 2);
-    assert_eq!(source.column(), 1);
-}
-
-#[test]
-fn resolver_derives_utf8_crlf_and_missing_final_newline_coordinates_from_world_backing() {
-    let mut stores = stores_with_input("utf8.tex", "α\r\nbéta".as_bytes());
-    let content = stores
-        .world_mut()
-        .read_file("utf8.tex")
-        .expect("source-map input can be reread");
-    let record_id = content.record();
-    let record = stores
-        .world()
-        .input_record(record_id)
-        .expect("source-map operation succeeds");
-    stores
-        .register_source(
-            crate::SourceId::new(9),
-            SourceDescriptor::world(record_id, record.len() as u64),
-        )
-        .expect("source-map operation succeeds");
-    // Deliberately-wrong legacy line/column proves rendering uses the source map.
-    let origin = stores.source_origin(crate::SourceId::new(9), 5, 99, 99);
-
-    let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(origin));
-
-    assert!(rendered.contains("utf8.tex:2:2"));
-    assert!(rendered.contains("  2 | béta"));
-    assert!(rendered.contains("    |  ^"));
-}
-
-#[test]
-fn generated_and_empty_sources_remain_renderable_without_an_input_frame() {
-    let mut stores = Universe::new();
-    stores
-        .register_source(
-            crate::SourceId::new(0),
-            SourceDescriptor::generated(Arc::from(&b"memory line"[..])),
-        )
-        .expect("source-map operation succeeds");
-    stores
-        .register_source(
-            crate::SourceId::new(1),
-            SourceDescriptor::generated(Arc::from(&b""[..])),
-        )
-        .expect("source-map operation succeeds");
-    let text = stores.source_origin(crate::SourceId::new(0), 7, 40, 40);
-    let empty_anchor = stores.source_origin(crate::SourceId::new(1), 0, 1, 0);
-
-    let text_rendered = ProvenanceResolver::new(&stores).render_diagnostic("text", Some(text));
-    let empty_rendered =
-        ProvenanceResolver::new(&stores).render_diagnostic("empty", Some(empty_anchor));
-    assert!(text_rendered.contains("<source 0>:1:8"));
-    assert!(text_rendered.contains("memory line"));
-    assert!(empty_rendered.contains("<source 1>:1:1"));
-}
-
-#[test]
-fn generated_sources_resolve_only_their_descriptor_paths() {
-    let mut stores = Universe::new();
-    stores
-        .register_source(
-            crate::SourceId::new(0),
-            SourceDescriptor::named_generated("editor/root.tex", Arc::from(&b"root"[..])),
-        )
-        .expect("named root source registers");
-    stores
-        .register_source(
-            crate::SourceId::new(1),
-            SourceDescriptor::generated(Arc::from(&b"generated"[..])),
-        )
-        .expect("anonymous generated source registers");
-
-    let root = stores.source_origin(crate::SourceId::new(0), 0, 1, 0);
-    let generated = stores.source_origin(crate::SourceId::new(1), 0, 1, 0);
-    let resolver = ProvenanceResolver::new(&stores);
-
-    assert_eq!(
-        resolver.resolve_origin(root).expect("root resolves").path,
-        "editor/root.tex"
-    );
-    assert_eq!(
-        resolver
-            .resolve_origin(generated)
-            .expect("generated source resolves")
-            .path,
-        "<generated>"
-    );
-}
-
-#[test]
-fn missing_source_byte_degrades_without_a_secondary_failure() {
-    let mut stores = Universe::new();
-    stores
-        .register_source(
-            crate::SourceId::new(0),
-            SourceDescriptor::generated(Arc::from(&b"x"[..])),
-        )
-        .expect("source-map operation succeeds");
-    let origin = stores.source_origin(crate::SourceId::new(0), 99, 7, 3);
-
-    let rendered = ProvenanceResolver::new(&stores).render_diagnostic("boom", Some(origin));
-
-    assert!(rendered.contains("<source 0>:7:4"));
-}
-
-#[test]
-fn exact_ranges_use_unicode_cells_tab_stops_zero_width_and_multiline_edges() {
-    let bytes = "\tα中x\nlast".as_bytes();
-    let mut stores = Universe::new();
-    stores
-        .register_source(
-            crate::SourceId::new(0),
-            SourceDescriptor::generated(Arc::from(bytes)),
-        )
-        .expect("source registration");
-
-    let wide = stores.source_range_origin(crate::SourceId::new(0), 1, 6);
-    let zero = stores.source_range_origin(crate::SourceId::new(0), 6, 6);
-    let multiline = stores.source_range_origin(crate::SourceId::new(0), 3, bytes.len() as u64);
-
-    let wide = ProvenanceResolver::new(&stores).render_diagnostic("wide", Some(wide));
-    assert!(wide.contains("<source 0>:1:9"), "{wide}");
-    assert!(wide.contains("^^^"), "{wide}");
-
-    let zero = ProvenanceResolver::new(&stores).render_diagnostic("zero", Some(zero));
-    assert!(zero.lines().any(|line| line.ends_with('^')), "{zero}");
-
-    let multiline = ProvenanceResolver::new(&stores).render_diagnostic("multi", Some(multiline));
-    assert!(multiline.contains("  1 | \tα中x"), "{multiline}");
-    assert!(multiline.contains("  2 | last"), "{multiline}");
-}
-
-#[test]
-fn captured_site_renders_related_locations_and_trace_after_frames_are_gone() {
-    let mut stores = stores_with_input("main.tex", b"call definition\n");
-    let invocation = stores.source_origin(crate::SourceId::new(0), 0, 1, 0);
-    let definition_origin = stores.source_origin(crate::SourceId::new(0), 5, 1, 5);
-    let parameter_text = stores.intern_token_list(&[]);
-    let replacement_text = stores.intern_token_list(&[]);
-    let definition = stores.intern_macro(MacroMeaning::new(
-        MeaningFlags::from_bits(0),
-        parameter_text,
-        replacement_text,
-    ));
-    let macro_origin = stores.macro_invocation_origin(
-        definition.id(),
-        invocation,
-        definition_origin,
-        OriginId::UNKNOWN,
-    );
-    let site = DiagnosticSite::new(
-        Some(invocation),
-        [RelatedLocation::new(
-            RelatedLocationRole::Definition,
-            definition_origin,
-        )],
-        Some(macro_origin),
-    );
-    stores.set_input_summary(InputSummary::new(vec![], None, None));
-
-    let rendered = ProvenanceResolver::new(&stores).render_diagnostic_site("boom", &site);
-    assert!(rendered.contains("defined here"), "{rendered}");
-    assert!(rendered.contains("expansion trace:"), "{rendered}");
-    assert!(rendered.contains("invoked at main.tex:1:1"), "{rendered}");
-}
-
-#[test]
-fn captured_macro_chain_honors_renderer_depth_beyond_the_default() {
-    let mut stores = stores_with_input("main.tex", b"abcdefghijkl\n");
-    let parameter_text = stores.intern_token_list(&[]);
-    let replacement_text = stores.intern_token_list(&[]);
-    let definition = stores.intern_macro(MacroMeaning::new(
-        MeaningFlags::from_bits(0),
-        parameter_text,
-        replacement_text,
-    ));
-    let definition_origin = stores.source_origin(crate::SourceId::new(0), 0, 1, 0);
-    let mut head = OriginId::UNKNOWN;
-    for offset in 0..12 {
-        let invocation = stores.source_origin(crate::SourceId::new(0), offset, 1, offset as u32);
-        head = stores.macro_invocation_origin(definition.id(), invocation, definition_origin, head);
-    }
-    let site = DiagnosticSite::new(None, [], Some(head));
-
-    let truncated =
-        ProvenanceResolver::with_trace_depth(&stores, 8).render_diagnostic_site("boom", &site);
-    assert!(truncated.contains("      ..."), "{truncated}");
-
-    let complete =
-        ProvenanceResolver::with_trace_depth(&stores, 12).render_diagnostic_site("boom", &site);
-    assert!(!complete.contains("      ..."), "{complete}");
-    assert_eq!(
-        complete.matches("      invoked at").count(),
-        12,
-        "{complete}"
-    );
+fn invalid_generated_ranges_degrade_to_unknown_without_live_lookup() {
+    with_universe(budget(), |universe| {
+        let recipe = DetachedGeneratedSourceSpan {
+            logical_path: "memory".into(),
+            bytes: b"x".to_vec(),
+            start: 2,
+            end: 3,
+        };
+        assert!(
+            ProvenanceResolver::new(universe, ColdProvenanceDemand::RenderedSource)
+                .resolve_generated(&recipe)
+                .is_none()
+        );
+    })
+    .unwrap();
 }
