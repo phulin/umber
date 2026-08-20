@@ -150,5 +150,4 @@ pub use state::{
     CommandState, RunawayPrelude, UnknownRegisteredSource,
 };
 pub use tex_state::SourceId;
-pub use tex_state::TracedTokenList;
 pub use tex_state::token::Catcode;
