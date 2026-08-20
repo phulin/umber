@@ -2,6 +2,13 @@
 
 Status: normative end-state architecture contract.
 
+Implementation boundary: the legacy runtime-value region registry, per-value
+root facades, reachability search, node-list strong/weak ownership, provenance
+archive ownership, and their snapshot/private-revision/profiling adapters were
+deleted together by `umber2-66p0.2`. The branch is intentionally compiler-red
+until children `.3` through `.7` install the lifetime owners defined here; no
+compatibility storage path is available during that interval.
+
 This document defines the ownership and lifetime model for Umber's live TeX
 runtime. It is the authority when another architecture document discusses a
 different runtime storage lifetime. It does not define a wire format or a

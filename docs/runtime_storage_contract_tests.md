@@ -80,3 +80,8 @@ These deletions intentionally leave no requirement to recreate the outgoing
 `Arc`/`Weak`, region, census, generation-number, or fixed-layout substrate.
 Performance and bounded-memory requirements belong to architecture-specific
 post-rewrite gates, not to compatibility assertions about the old mechanism.
+
+The corresponding implementation substrate was removed in one compiler-red
+strike by `umber2-66p0.2`. Retained semantic and external-contract callers are
+deliberately left as the build inventory for children `.3` through `.7`; this
+boundary contains no deprecated facade, emulation layer, or dual storage path.
