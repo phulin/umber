@@ -1111,9 +1111,8 @@ fn checked_offset(len: usize) -> Result<u32, RegionArenaError> {
 
 fn unseal_private<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>(
     sealed: SealedOwner<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>,
-) -> Option<
-    MutableRuntimeValueRegion<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>,
-> {
+) -> Option<MutableRuntimeValueRegion<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>>
+{
     let sealed = Arc::try_unwrap(sealed).ok()?;
     Some(MutableRuntimeValueRegion {
         key: sealed.key,

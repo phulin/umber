@@ -49,9 +49,7 @@ use crate::hot_core::arena::store::registry::{
     RuntimeMacroValueInput, RuntimeOriginListValueInput, RuntimeTokenValueInput,
     RuntimeTracedTokenValueInput, RuntimeValueRegistry, RuntimeValueRegistryMark,
 };
-use crate::hot_core::arena::store::{
-    RuntimeOriginEntry, RuntimeValueRootSet,
-};
+use crate::hot_core::arena::store::{RuntimeOriginEntry, RuntimeValueRootSet};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
