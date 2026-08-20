@@ -22,9 +22,10 @@ The substrate has two physical parts:
   values.
 
 An operation mark records the candidate suffix. Rollback restores semantic
-destinations first and then discards the whole candidate suffix. Acceptance
-seals selected region storage and publishes a canonical counted root set; it
-does not walk individual values to infer reachability.
+destinations and their retained root sets first and then discards the whole
+candidate suffix. Acceptance seals selected region storage and publishes a
+canonical counted root set; it does not walk individual values to infer
+reachability.
 
 ## Coordinates and views
 
@@ -59,11 +60,13 @@ Environment cells, journals, command input, macro activations, mode state,
 nodes, page state, PDF state, effects, snapshots, and checkpoints store only
 copyable family ids or refs. They do not carry a hidden payload owner.
 
-These consumers keep accepted storage live through the aggregate generation's
-canonical region roots. Private candidate storage is instead bounded by the
-active revision and its rollback marks. The important distinction is between
-aggregate region lifetime and per-value reachability: removing one cell or
-node does not perform object collection, while discarding a suffix or a whole
+These consumers keep accepted storage live through deduplicated canonical
+region-root sets. A durable store checkpoint owns a clone of the sealed root
+set admitted at its barrier rather than a scalar publication length. Private
+candidate storage is instead bounded
+by the active revision and its rollback marks. The important distinction is
+between region lifetime and per-value reachability: removing one cell or node
+does not perform object collection, while discarding a suffix or a whole
 generation reclaims its storage at once.
 
 Command-owned packed token buffers are replay storage, not a value allocator.
@@ -105,18 +108,23 @@ Typed state mutation follows this order:
 
 Rollback reverses the order:
 
-1. Restore environment, command, mode, page, PDF, and effect destinations.
-2. Restore family identity allocators and dense coordinate maps.
-3. Truncate the candidate to the saved region mark.
+1. Validate and construct the command and mode restoration without mutation.
+2. Install command, mode, environment, input, page, PDF, and effect
+   destinations while the checkpoint still owns its sealed root set.
+3. Replace the live canonical root set with retain-before-release ordering.
+4. Restore family identity allocators and dense coordinate maps.
+5. Truncate the candidate to the saved region mark.
 
 This ordering prevents a restored destination from temporarily pointing into
 discarded storage. Raw-slot reuse increments the family generation, so an old
 coordinate cannot resolve to the replacement row.
 
-Generation forks share sealed region roots and copy the private active suffix
-into destination-local storage. Runtime handles retain their exact generation
-when that coordinate is part of the forked generation; values materialized
-from detached content receive destination-local coordinates.
+Generation forks built from a durable checkpoint start directly from that
+checkpoint's sealed root set. They copy only dense identity/location metadata
+and do not first clone the source generation's later mutable suffix. Runtime
+handles retain their exact generation when that coordinate is part of the
+forked generation; values materialized from detached content receive
+destination-local coordinates.
 
 An inherited fork rollback first restores the canonical published root set,
 then rebuilds its private candidate from that accepted prefix before applying
@@ -124,6 +132,13 @@ the saved family watermarks. The operation mark stores compact coordinate
 lengths and the arena generation mark; identity rollback watermarks are
 derived only after that generation validates. It does not retain per-family
 owner marks or publish roots from private operations.
+
+A checkpoint newer than the selected rollback target may retain a whole
+sealed suffix region after its mark has become invalid. Rolling back the live
+candidate drops only that candidate owner. Shared sealed storage is neither
+unsealed nor recycled; it is released when the newer checkpoint retires. A
+recycled slot therefore never aliases a region still owned by an invalidated
+checkpoint.
 
 ## Formats, memos, and detached continuations
 

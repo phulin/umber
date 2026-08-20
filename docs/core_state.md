@@ -20,23 +20,23 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 
 `Universe` owns the complete live engine substrate:
 
-| Store                | Contents                                            | History model             |
-| -------------------- | --------------------------------------------------- | ------------------------- |
-| Interner             | control-sequence names and semantic atoms           | append-only watermark     |
-| String pool          | TeX/Web2C allocation coordinates and recycled names | append-only position      |
-| Environment          | meanings, parameters, registers, current fonts      | journaled writes          |
-| Sparse registers     | e-TeX register overflow                             | journaled map/page roots  |
-| Code tables          | cat/lc/uc/sf/math/del codes                         | copy-on-write pages       |
-| Token store          | exact immutable token lists and semantic identities | strong roots + weak slots |
-| Provenance           | rooted origins, frames, source ranges, and lists    | strong roots + weak slots |
-| Source fragments/map | immutable bytes and current editor layout           | roots + watermarks        |
-| Glue store           | canonical immutable glue specs                      | frozen + watermark        |
-| Node payloads        | compact node words, sidecars, semantic identities   | structural `NodeListRef`  |
-| Fonts                | immutable TFM/OpenType selections                   | frozen + watermark        |
-| Hyphenation          | patterns, exceptions, language state                | snapshot-owned roots      |
-| Page state           | contribution queue, marks, insertions, best break   | copy-on-write roots       |
-| Journal              | undo entries, group and checkpoint markers          | append-only position      |
-| World/effects        | inputs, streams, output, clock, randomness          | snapshot/effect log       |
+| Store                 | Contents                                            | History model            |
+| --------------------- | --------------------------------------------------- | ------------------------ |
+| Interner              | control-sequence names and semantic atoms           | append-only watermark    |
+| String pool           | TeX/Web2C allocation coordinates and recycled names | append-only position     |
+| Environment           | meanings, parameters, registers, current fonts      | journaled writes         |
+| Sparse registers      | e-TeX register overflow                             | journaled map/page roots |
+| Code tables           | cat/lc/uc/sf/math/del codes                         | copy-on-write pages      |
+| Runtime value regions | token lists, macros, glue, and exact origin lists   | sealed region root sets  |
+| Provenance            | origins, frames, source ranges, and sparse entries  | roots + watermarks       |
+| Source fragments/map  | immutable bytes and current editor layout           | roots + watermarks       |
+| Glue store            | canonical immutable glue specs                      | frozen + watermark       |
+| Node payloads         | compact node words, sidecars, semantic identities   | structural `NodeListRef` |
+| Fonts                 | immutable TFM/OpenType selections                   | frozen + watermark       |
+| Hyphenation           | patterns, exceptions, language state                | snapshot-owned roots     |
+| Page state            | contribution queue, marks, insertions, best break   | copy-on-write roots      |
+| Journal               | undo entries, group and checkpoint markers          | append-only position     |
+| World/effects         | inputs, streams, output, clock, randomness          | snapshot/effect log      |
 
 Only aggregate APIs on `Universe` and its owned `Stores` facade may coordinate
 changes across these stores.
@@ -331,16 +331,17 @@ Immutable content follows builder-then-freeze. Builders are private to the
 owning boundary, validate all child handles, compute canonical identity, and
 publish only complete values.
 
-Durable token lists are exact immutable values and carry one canonical semantic
-identity. Control sequences contribute interner semantic atoms, so allocation
-order does not affect identity. Strong typed roots own each live value; the
-candidate index and reusable slot table hold only weak references. Candidate
-hash matches are followed by exact token comparison, so a collision may cost
-lookup work but cannot alias token content. Token semantic identities and node
-semantic identities remain versioned and domain-separated; their compact hash
+Durable token lists, macro definitions, glue, and exact origin lists are exact
+immutable rows in one runtime value-region registry. Control sequences
+contribute interner semantic atoms, so allocation order does not affect
+identity. Copy-only generation coordinates select rows; canonical root sets
+own sealed regions, and admitted registry views borrow payload. Cold exact
+matches are followed by content comparison, so a collision may cost lookup
+work but cannot alias content. Token semantic identities and node semantic
+identities remain versioned and domain-separated; their compact hash
 projections are convergence evidence rather than an external cryptographic
 content-verification contract. Execution-transient token flows stay in pooled
-lexer buffers and enter the token store only when crossing a durable boundary.
+lexer buffers and enter a value region only when crossing a durable boundary.
 
 An immutable store entry does not become semantic state merely because it was
 allocated. A live environment cell, input frame, page root, node edge, PDF
@@ -352,13 +353,14 @@ and derived identity caches are physical retention or acceleration metadata.
 
 Schema-11 format loading installs names, token lists, macro definitions, glue,
 fonts, sparse code-table roots, and hyphenation tries as validated frozen
-bases. Every loaded token row has an explicit strong immutable root. Loading
-attaches fresh runtime identity tags and builds ordinary weak lookup and
-semantic-hash indexes in bulk rather than replaying semantic interning or
-assignment APIs. Dense record indices remain the canonical raw ids.
-Job-created token content uses reusable generation-safe dynamic slots while
-code-table/hyphenation mutations extend their bases; both follow the same
-snapshot and rollback rules as a cold store, and no format byte is mutated.
+bases. Loading reserves destination-local value-region rows, attaches fresh
+runtime identity tags, validates every dense record and reference, and seals
+the complete root set only after the image is valid. It does not build a weak
+runtime liveness index or replay assignment APIs. Dense record indices remain
+the canonical raw ids. Job-created value content uses reusable
+generation-safe dynamic slots while code-table/hyphenation mutations extend
+their bases; both follow the same snapshot and rollback rules as a cold store,
+and no format byte is mutated.
 
 Schema-11 kind 528 installs validated environment cells directly as an
 immutable format base, including references into kind 512's frozen node arena.
@@ -606,7 +608,7 @@ Every engine/session lookup structure has one of these authorities:
 
 | Structure                                                                                                                               | Authority and lifetime                                                                                                                                                                                                                                                                |
 | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Token, macro, glue, and structural-provenance candidate indexes                                                                         | Weak, collision-checked, reusable, and independently bounded; strong semantic owners alone keep values live.                                                                                                                                                                          |
+| Token, macro, glue, and structural-provenance cold exact lookup                                                                         | Collision-checked borrowed comparison over the runtime value registry. It owns no candidate, weak entry, or per-value liveness marker; sealed `RegionRootSet` values are the ownership boundary.                                                                                      |
 | State-hash projections, page-tree projections, font/hash fragments, hyphenation dependency fingerprints, and editor line/layout indexes | Rebuildable values keyed by exact immutable roots or the current layout generation. They are absent from semantic identity; a miss recomputes the same projection. Fixed-size root projections may travel with a checkpoint, while variable query indexes are charged to their owner. |
 | Pretolerance, page, and shipout pure memos                                                                                              | Detached, handle-free results under explicit entry and retained-byte limits. CLOCK eviction and explicit full eviction change only operational counters and future hit rate. Eviction-key telemetry is bounded by both limits.                                                        |
 | Incremental boundary history                                                                                                            | Explicitly charged to the checkpoint/history byte budget. `JobStart` and the newest restart root are protected and report any unavoidable overage; optional paragraph and shipout boundaries are pruned deterministically. History is never copied into published output.             |
