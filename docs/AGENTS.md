@@ -54,10 +54,9 @@ legacy execution golden area, the exact reasons retained integration cases do
 not belong in command-semantic, and the property-scoped replacements for
 retired duplicates.
 
-`frozen_format.md` defines the portable format-image container ABI,
-compatibility fingerprints, deterministic literal lookup-table representation,
-validation and checksum coverage, immutable/job-local split, and migration
-from schema 9.
+`frozen_format.md` defines the portable format-image container ABI, exact
+fingerprints, deterministic lookup-table representation, validation and
+checksum coverage, immutable/job-local split, and migration from schema 9.
 
 `format_cache.md` defines generated-format cache identity, validated atomic
 native entries, corruption recovery, and the browser portability boundary.

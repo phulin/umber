@@ -209,7 +209,10 @@ At episode admission, `tex-command` receives a borrowed view of the generation
 which matches the dense state it will execute. A meaning lookup returns a
 `DefinitionId`; macro entry resolves that id by direct indexing. Expansion may
 hold the returned `DefinitionView` only for the lexical operation which reads
-the parameter program or replacement span.
+the parameter program or replacement span. Admission acquires one guard for
+the episode, not one lock or owner per lookup. Cloning a coarse generation
+owner pins retirement but does not freeze append-only allocation into that
+generation.
 
 No borrow crosses an executor barrier. A suspended scanner, macro expansion,
 or resource request stores the generation owner plus ids and integer cursors:
@@ -419,7 +422,10 @@ Materialization validates the complete DTO, reserves destination storage,
 interns names into the destination session epoch, constructs destination-local
 definition and durable ids, rewrites DTO-local indices with dense relocation
 vectors, and publishes only after the full object is valid. Failure drops
-staging and leaves the destination unchanged.
+staging and leaves the destination unchanged. Staging is stamped for exactly
+one destination; publication rejects a foreign destination before moving any
+staged graph, and successful publication moves the validated graph once rather
+than cloning live values.
 
 An in-process resource-pending continuation may retain an owned
 `AttemptArena`, generation owner, and cursor as described above. Before that

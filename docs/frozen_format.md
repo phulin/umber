@@ -49,9 +49,8 @@ The header is exactly 80 bytes:
 Every integer is little-endian. The ABI fingerprint is FNV-1a-64 of the
 literal contract string in `format_container.rs`; the lookup fingerprint is
 the same operation over the literal lookup-configuration string. A decoder
-requires the current values, except that it recognizes the previous
-uncompressed/literal-token-lookup pair for schema-11 migration. The strings,
-not a compiler's struct layout, define the values.
+requires both current values exactly. The strings, not a compiler's struct
+layout, define the values; there is no compatibility fingerprint fallback.
 
 The directory immediately follows the header. Each record is exactly 40
 bytes:
@@ -72,11 +71,11 @@ possible aligned offset after the preceding directory or section; alignment
 bytes are zero, and no bytes follow the last section. These rules make one
 canonical byte layout and rule out aliases, overlaps, hidden data, and
 platform-dependent padding. New images compress every section independently
-with deterministic raw DEFLATE level 6. The decoder bounds each logical
-section at 512 MiB, limits decompression to the declared logical length plus
-one byte, and requires the result to have exactly that length. It retains the
-container-v1 fingerprint and zero-flag decode path only to read already
-published uncompressed schema-11 images.
+with deterministic raw DEFLATE level 6. Every section must carry the raw
+DEFLATE flag. The decoder bounds each logical section at 512 MiB, limits
+decompression to the declared logical length plus one byte, and requires the
+result to have exactly that length. Uncompressed and unknown section flags are
+rejected before publication.
 
 The checksum is FNV-1a-64 over the exact complete file with header bytes
 56..64 treated as zero. It therefore covers header fields, compatibility
@@ -440,8 +439,7 @@ The hash consumes each canonical `u32` token word incrementally in
 little-endian byte order. Lookup follows the linear-probe sequence, compares
 each candidate exactly against the authoritative runtime token arena, and
 stops at an empty bucket. Hash collisions therefore cannot return a false
-match. Older version-1 token sections retain their literal-key lookup only on
-the compatibility load path.
+match. Literal-key token sections are not a supported compatibility load path.
 
 The lookup-configuration fingerprint covers the algorithm, algorithm version,
 seed, capacity/load policy, empty sentinel, and probe strategy. Exact
