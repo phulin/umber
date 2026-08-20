@@ -65,7 +65,7 @@ fn stored_token_replay() {
         .collect::<Vec<_>>();
     let stored = universe.finish_traced_token_list(&words);
     let mut command = CommandState::default();
-    command.push_everyjob(stored);
+    command.push_everyjob(&universe.command_context(), stored);
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = processor(&mut universe, &mut command, &mut capabilities);
     for _ in 0..3 {

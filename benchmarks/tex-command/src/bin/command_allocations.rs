@@ -424,7 +424,8 @@ fn build_case(workload: Workload) -> Case {
             .into_iter()
             .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
             .collect::<Vec<_>>();
-        command.push_everyjob(universe.finish_traced_token_list(&traced));
+        let tokens = universe.finish_traced_token_list(&traced);
+        command.push_everyjob(&universe.command_context(), tokens);
     } else {
         let registered = command
             .register_source(SourceRegistration::new(
