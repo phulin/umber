@@ -142,12 +142,20 @@ impl ArtifactRenderProvenance {
 
 /// Cold artifact-provenance construction selected by rendered-source demand.
 #[doc(hidden)]
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RenderProvenanceBuilder {
     sources: Vec<Option<ArtifactSourceRecipe>>,
 }
 
 impl RenderProvenanceBuilder {
+    /// Opens artifact presentation staging only for a rendered-source job.
+    #[must_use]
+    pub fn for_demand(demand: crate::ProvenanceDemand) -> Option<Self> {
+        demand.rendered_source().then(|| Self {
+            sources: Vec::new(),
+        })
+    }
+
     #[doc(hidden)]
     #[must_use]
     pub fn is_empty(&self) -> bool {

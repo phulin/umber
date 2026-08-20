@@ -56,8 +56,12 @@ fn artifact_identity_excludes_owned_render_presentation() {
 
 #[test]
 fn cold_render_builder_records_only_detached_sources_or_unknowns() {
+    assert!(RenderProvenanceBuilder::for_demand(crate::ProvenanceDemand::DIAGNOSTICS).is_none());
     let recipe = source("chapter.tex", 7, 11);
-    let mut builder = RenderProvenanceBuilder::default();
+    let mut builder = RenderProvenanceBuilder::for_demand(
+        crate::ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
+    )
+    .unwrap();
     builder.push_source(recipe.clone());
     builder.push_unknown();
     let artifact =
