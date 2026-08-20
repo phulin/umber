@@ -13,6 +13,7 @@ use crate::interner::{
 };
 use crate::journal::JournalCursor;
 use crate::meaning::MeaningWord;
+use crate::node_arena::{DurableListId, NodeArenaError, NodeList};
 use crate::scaled::Scaled;
 use crate::stores::{StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
@@ -28,6 +29,7 @@ pub enum UniverseError {
     InternerAccess(InternerAccessError),
     DefinitionAllocation(DefinitionAllocationError),
     DurableAllocation(DurableAllocationError),
+    NodeArena(NodeArenaError),
     State(StateError),
     Retired,
 }
@@ -59,6 +61,12 @@ impl From<DefinitionAllocationError> for UniverseError {
 impl From<DurableAllocationError> for UniverseError {
     fn from(error: DurableAllocationError) -> Self {
         Self::DurableAllocation(error)
+    }
+}
+
+impl From<NodeArenaError> for UniverseError {
+    fn from(error: NodeArenaError) -> Self {
+        Self::NodeArena(error)
     }
 }
 
@@ -185,6 +193,39 @@ impl<G> Universe<G> {
         Ok(())
     }
 
+    pub fn assign_box_register(
+        &mut self,
+        index: u16,
+        value: Option<DurableListId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), UniverseError> {
+        self.live_state_mut()?
+            .assign_box_register(index, value, scope)?;
+        Ok(())
+    }
+
+    pub fn box_register(&self, index: u16) -> Result<Option<DurableListId<G>>, UniverseError> {
+        Ok(self
+            .core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .admit()
+            .state()
+            .box_register(index)?)
+    }
+
+    pub fn node_list(
+        &self,
+        id: DurableListId<G>,
+    ) -> Result<NodeList<'_, G, crate::GlueId<G>, crate::TokenListId<G>>, UniverseError> {
+        Ok(self
+            .core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .admit()
+            .node_list(id)?)
+    }
+
     pub fn assign_code(
         &mut self,
         kind: CodeTableKind,
@@ -286,6 +327,11 @@ impl UniverseRetirement {
     #[must_use]
     pub const fn provenance_rows(self) -> usize {
         self.state.generation.provenance_records
+    }
+
+    #[must_use]
+    pub const fn durable_node_lists(self) -> usize {
+        self.state.durable_node_lists
     }
 
     #[must_use]

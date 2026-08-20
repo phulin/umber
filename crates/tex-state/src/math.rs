@@ -1,6 +1,6 @@
 //! Math-list node payloads.
 
-use crate::node_arena::NodeListRef;
+use crate::node_arena::PageListId;
 use crate::scaled::Scaled;
 use crate::token::OriginId;
 use std::hash::{Hash, Hasher};
@@ -63,7 +63,7 @@ impl Hash for MathChar {
 
 /// A noad field as described by tex.web.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum MathField<List = NodeListRef> {
+pub enum MathField<List = PageListId> {
     Empty,
     MathChar(MathChar),
     MathTextChar(MathChar),
@@ -120,7 +120,7 @@ pub enum NoadKind {
 
 /// A TeX noad with nucleus, subscript, and superscript fields.
 #[derive(Clone, Debug, PartialEq)]
-pub struct MathNoad<List = NodeListRef> {
+pub struct MathNoad<List = PageListId> {
     pub kind: NoadKind,
     pub nucleus: MathField<List>,
     pub subscript: MathField<List>,
@@ -162,7 +162,7 @@ impl<List> MathField<List> {
 
 /// Generalized fraction noad payload.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MathFraction<List = NodeListRef> {
+pub struct MathFraction<List = PageListId> {
     pub numerator: List,
     pub denominator: List,
     pub thickness: FractionThickness,
@@ -194,7 +194,7 @@ pub enum FractionThickness {
 
 /// A four-way math choice.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MathChoice<List = NodeListRef> {
+pub struct MathChoice<List = PageListId> {
     pub display: List,
     pub text: List,
     pub script: List,
@@ -214,7 +214,7 @@ impl<List> MathChoice<List> {
 
 /// A completed math list appended to the enclosing list.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MathListNode<List = NodeListRef> {
+pub struct MathListNode<List = PageListId> {
     pub display: bool,
     pub content: List,
 }

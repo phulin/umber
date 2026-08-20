@@ -1,225 +1,49 @@
 use crate::node::Node;
-use crate::state_hash::StateHashFragment;
-use std::sync::{Arc, OnceLock};
 
-pub(super) const PAGE_NODE_CHUNK_LEN: usize = 64;
-
-/// Canonical persistent sequence for the growing current page.
+/// Current-page suffix owned directly by the page lifetime.
 ///
-/// Full 64-node leaves form a binary forest whose shape is the binary
-/// decomposition of the full-leaf count. Appending a full leaf merges only the
-/// carry path, while snapshots share every unaffected subtree. A bounded tail
-/// holds fewer than 64 nodes. Shape depends only on content position, and the
-/// representation carries only lazy derived hash memoization on immutable
-/// tree nodes; ordinary mutation never computes or updates a fingerprint.
-#[derive(Clone, Debug, Default)]
+/// The page builder restores its canonical length before truncating rejected
+/// page-arena rows. It does not retain persistent COW roots per operation.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct PageNodeSequence {
-    pub(super) forest: Arc<Vec<Arc<PageNodeTree>>>,
-    pub(super) tail: Arc<Vec<PageTailNode>>,
-    pub(super) len: usize,
-}
-
-/// One node in the bounded mutable tail, with its lazy checkpoint projection.
-///
-/// Keeping the fragment beside the node makes prefix reuse structural: a
-/// checkpoint initializes it once, and copy-on-write page mutation carries it
-/// forward without a second node buffer or an equality scan.
-#[derive(Clone, Debug)]
-pub(super) struct PageTailNode {
-    pub(super) node: Node,
-    pub(super) projection: OnceLock<StateHashFragment>,
+    nodes: Vec<Node>,
 }
 
 impl PageNodeSequence {
     pub(super) fn retained_bytes(&self) -> usize {
-        fn tree_bytes(tree: &PageNodeTree) -> usize {
-            match tree {
-                PageNodeTree::Leaf { nodes, .. } => std::mem::size_of::<PageNodeTree>()
-                    .saturating_add(nodes.capacity().saturating_mul(std::mem::size_of::<Node>())),
-                PageNodeTree::Branch { left, right, .. } => std::mem::size_of::<PageNodeTree>()
-                    .saturating_add(tree_bytes(left))
-                    .saturating_add(tree_bytes(right)),
-            }
-        }
-        self.forest
+        self.nodes
             .capacity()
-            .saturating_mul(std::mem::size_of::<Arc<PageNodeTree>>())
-            .saturating_add(
-                self.forest
-                    .iter()
-                    .map(|tree| tree_bytes(tree))
-                    .sum::<usize>(),
-            )
-            .saturating_add(
-                self.tail
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<PageTailNode>()),
-            )
-    }
-}
-
-#[derive(Debug)]
-pub(super) enum PageNodeTree {
-    Leaf {
-        nodes: Vec<Node>,
-        projection: OnceLock<StateHashFragment>,
-    },
-    Branch {
-        height: u8,
-        len: usize,
-        left: Arc<PageNodeTree>,
-        right: Arc<PageNodeTree>,
-        projection: OnceLock<StateHashFragment>,
-    },
-}
-
-impl PageNodeTree {
-    pub(super) fn height(&self) -> u8 {
-        match self {
-            Self::Leaf { .. } => 0,
-            Self::Branch { height, .. } => *height,
-        }
+            .saturating_mul(std::mem::size_of::<Node>())
     }
 
-    pub(super) fn len(&self) -> usize {
-        match self {
-            Self::Leaf { nodes, .. } => nodes.len(),
-            Self::Branch { len, .. } => *len,
-        }
+    pub(super) fn iter(&self) -> impl DoubleEndedIterator<Item = &Node> {
+        self.nodes.iter()
     }
 
-    fn get(&self, index: usize) -> Option<&Node> {
-        match self {
-            Self::Leaf { nodes, .. } => nodes.get(index),
-            Self::Branch { left, right, .. } => {
-                let left_len = left.len();
-                if index < left_len {
-                    left.get(index)
-                } else {
-                    right.get(index - left_len)
-                }
-            }
-        }
-    }
-}
-
-pub(super) struct PageNodeIter<'a> {
-    nodes: &'a PageNodeSequence,
-    front: usize,
-    back: usize,
-}
-
-impl<'a> Iterator for PageNodeIter<'a> {
-    type Item = &'a Node;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.front == self.back {
-            return None;
-        }
-        let node = self.nodes.get(self.front);
-        self.front += 1;
-        node
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.back - self.front;
-        (remaining, Some(remaining))
-    }
-}
-
-impl DoubleEndedIterator for PageNodeIter<'_> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        if self.front == self.back {
-            return None;
-        }
-        self.back -= 1;
-        self.nodes.get(self.back)
-    }
-}
-
-impl ExactSizeIterator for PageNodeIter<'_> {}
-
-impl PartialEq for PageNodeSequence {
-    fn eq(&self, other: &Self) -> bool {
-        self.len == other.len && self.iter().eq(other.iter())
-    }
-}
-
-impl PageNodeSequence {
-    pub(super) fn iter(&self) -> PageNodeIter<'_> {
-        PageNodeIter {
-            nodes: self,
-            front: 0,
-            back: self.len,
-        }
+    pub(super) fn as_slice(&self) -> &[Node] {
+        &self.nodes
     }
 
     pub(super) fn last(&self) -> Option<&Node> {
-        self.get(self.len.checked_sub(1)?)
+        self.nodes.last()
     }
 
     pub(super) const fn len(&self) -> usize {
-        self.len
+        self.nodes.len()
     }
 
     pub(super) fn push(&mut self, node: Node) {
-        let tail = Arc::make_mut(&mut self.tail);
-        tail.push(PageTailNode {
-            node,
-            projection: OnceLock::new(),
-        });
-        self.len += 1;
-        if tail.len() != PAGE_NODE_CHUNK_LEN {
-            return;
-        }
-
-        let leaf = Arc::new(PageNodeTree::Leaf {
-            nodes: std::mem::take(tail)
-                .into_iter()
-                .map(|tail_node| tail_node.node)
-                .collect(),
-            projection: OnceLock::new(),
-        });
-        let forest = Arc::make_mut(&mut self.forest);
-        let mut carry = leaf;
-        while forest
-            .last()
-            .is_some_and(|root| root.height() == carry.height())
-        {
-            let left = forest.pop().expect("equal-height forest root exists");
-            carry = Arc::new(PageNodeTree::Branch {
-                height: carry.height() + 1,
-                len: left.len() + carry.len(),
-                left,
-                right: carry,
-                projection: OnceLock::new(),
-            });
-        }
-        forest.push(carry);
+        self.nodes.push(node);
     }
 
     pub(super) fn clear(&mut self) {
-        *self = Self::default();
+        self.nodes.clear();
     }
 
     pub(super) fn take_prefix(&mut self, split_index: usize) -> (Vec<Node>, Vec<Node>) {
-        let split_index = split_index.min(self.len);
-        let mut nodes = self.iter().cloned().collect::<Vec<_>>();
-        let after = nodes.split_off(split_index);
-        self.clear();
-        (nodes, after)
-    }
-
-    fn get(&self, mut index: usize) -> Option<&Node> {
-        if index >= self.len {
-            return None;
-        }
-        for root in self.forest.iter() {
-            if index < root.len() {
-                return root.get(index);
-            }
-            index -= root.len();
-        }
-        self.tail.get(index).map(|tail_node| &tail_node.node)
+        let split_index = split_index.min(self.nodes.len());
+        let after = self.nodes.split_off(split_index);
+        let before = std::mem::take(&mut self.nodes);
+        (before, after)
     }
 }

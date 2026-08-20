@@ -15,6 +15,7 @@ use crate::ids::FontId;
 use crate::interner::Symbol;
 use crate::journal::{JournalCursor, JournalEntry, Mutation, MutationKind, SaveJournal};
 use crate::meaning::{MeaningWord, ResolvedMeaning};
+use crate::node_arena::DurableListId;
 use crate::scaled::Scaled;
 
 #[cfg(test)]
@@ -50,6 +51,7 @@ pub(crate) enum StateCell {
     Dimension(u16),
     TokenRegister(u16),
     GlueRegister(u16),
+    BoxRegister(u16),
     MuGlueRegister(u16),
     IntegerParameter(u16),
     DimensionParameter(u16),
@@ -67,6 +69,7 @@ pub(crate) enum StateWord<G> {
     Dimension(Scaled),
     TokenList(Option<TokenListId<G>>),
     Glue(Option<GlueId<G>>),
+    NodeList(Option<DurableListId<G>>),
     Font(FontId),
     Code(i64),
 }
@@ -89,6 +92,8 @@ impl<G> core::fmt::Debug for StateWord<G> {
             Self::TokenList(Some(_)) => formatter.write_str("TokenList(Some(..))"),
             Self::Glue(None) => formatter.write_str("Glue(None)"),
             Self::Glue(Some(_)) => formatter.write_str("Glue(Some(..))"),
+            Self::NodeList(None) => formatter.write_str("NodeList(None)"),
+            Self::NodeList(Some(_)) => formatter.write_str("NodeList(Some(..))"),
             Self::Font(value) => value.fmt(formatter),
             Self::Code(value) => value.fmt(formatter),
         }
@@ -103,6 +108,7 @@ impl<G> PartialEq for StateWord<G> {
             (Self::Dimension(left), Self::Dimension(right)) => left == right,
             (Self::TokenList(left), Self::TokenList(right)) => left == right,
             (Self::Glue(left), Self::Glue(right)) => left == right,
+            (Self::NodeList(left), Self::NodeList(right)) => left == right,
             (Self::Font(left), Self::Font(right)) => left == right,
             (Self::Code(left), Self::Code(right)) => left == right,
             _ => false,
@@ -137,6 +143,7 @@ pub(crate) struct DenseState<G> {
     dimensions: RegisterBank<Scaled>,
     token_registers: RegisterBank<Option<TokenListId<G>>>,
     glue_registers: RegisterBank<Option<GlueId<G>>>,
+    box_registers: RegisterBank<Option<DurableListId<G>>>,
     mu_glue_registers: RegisterBank<Option<GlueId<G>>>,
     integer_parameters: DenseBank<i32>,
     dimension_parameters: DenseBank<Scaled>,
@@ -163,6 +170,7 @@ impl<G> DenseState<G> {
             dimensions: RegisterBank::new(zero_scaled)?,
             token_registers: RegisterBank::new(no_token_list::<G>)?,
             glue_registers: RegisterBank::new(no_glue::<G>)?,
+            box_registers: RegisterBank::new(no_node_list::<G>)?,
             mu_glue_registers: RegisterBank::new(no_glue::<G>)?,
             integer_parameters: DenseBank::fixed(PARAMETER_COUNT, 0, LEVEL_ONE)?,
             dimension_parameters: DenseBank::fixed(
@@ -274,6 +282,24 @@ impl<G> DenseState<G> {
         self.assign(
             StateCell::GlueRegister(index),
             StateWord::Glue(value),
+            scope,
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) fn box_register(&self, index: u16) -> Result<Option<DurableListId<G>>, StateError> {
+        Ok(self.box_registers.get(index)?.value)
+    }
+
+    pub(crate) fn assign_box_register(
+        &mut self,
+        index: u16,
+        value: Option<DurableListId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(
+            StateCell::BoxRegister(index),
+            StateWord::NodeList(value),
             scope,
         )
     }
@@ -418,6 +444,7 @@ impl<G> DenseState<G> {
             + self.dimensions.allocated_overflow_pages()
             + self.token_registers.allocated_overflow_pages()
             + self.glue_registers.allocated_overflow_pages()
+            + self.box_registers.allocated_overflow_pages()
             + self.mu_glue_registers.allocated_overflow_pages()
     }
 
@@ -472,6 +499,9 @@ impl<G> DenseState<G> {
                 self.token_registers.get(index)?.map(StateWord::TokenList)
             }
             StateCell::GlueRegister(index) => self.glue_registers.get(index)?.map(StateWord::Glue),
+            StateCell::BoxRegister(index) => {
+                self.box_registers.get(index)?.map(StateWord::NodeList)
+            }
             StateCell::MuGlueRegister(index) => {
                 self.mu_glue_registers.get(index)?.map(StateWord::Glue)
             }
@@ -521,6 +551,9 @@ impl<G> DenseState<G> {
             }
             (StateCell::GlueRegister(index), StateWord::Glue(word)) => {
                 self.glue_registers.write(index, value.map_value(word))?
+            }
+            (StateCell::BoxRegister(index), StateWord::NodeList(word)) => {
+                self.box_registers.write(index, value.map_value(word))?
             }
             (StateCell::MuGlueRegister(index), StateWord::Glue(word)) => {
                 self.mu_glue_registers.write(index, value.map_value(word))?
@@ -628,6 +661,7 @@ fn word_matches<G>(cell: StateCell, word: StateWord<G>) -> bool {
             | (StateCell::Dimension(_), StateWord::Dimension(_))
             | (StateCell::TokenRegister(_), StateWord::TokenList(_))
             | (StateCell::GlueRegister(_), StateWord::Glue(_))
+            | (StateCell::BoxRegister(_), StateWord::NodeList(_))
             | (StateCell::MuGlueRegister(_), StateWord::Glue(_))
             | (StateCell::IntegerParameter(_), StateWord::Integer(_))
             | (StateCell::DimensionParameter(_), StateWord::Dimension(_))
@@ -698,5 +732,9 @@ fn no_token_list<G>(_: u32) -> Option<TokenListId<G>> {
 }
 
 fn no_glue<G>(_: u32) -> Option<GlueId<G>> {
+    None
+}
+
+fn no_node_list<G>(_: u32) -> Option<DurableListId<G>> {
     None
 }

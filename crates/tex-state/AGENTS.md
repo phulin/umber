@@ -94,30 +94,31 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `profiling-allocator/`: isolated profiling-only `GlobalAlloc` forwarding
   shim used by executable profiling builds to attribute allocation calls and
   requested bytes to nested hot-core owner scopes.
-- `src/node.rs`: Immutable TeX node, box, strongly rooted character/ligature provenance and glue, kern, penalty, rule, strongly token-rooted whatsit/mark/PDF payloads, math-list, discretionary, and list-field model.
+- `src/node.rs`: Storage-independent TeX node and box values with copy-only
+  provenance, directly owned glue, arena-owned token payloads, and typed list
+  coordinates.
 - `src/node_sequence.rs`: Paired semantic and TeX-physical projections over
   the sole mutable `NodeListBuilder`, barrier-frozen immutable sidecars,
   TeX-cell lineage metadata, and semantic-only equality.
-- `src/node_arena.rs`: Compact-node module boundary and deliberately narrow re-exports.
-- `src/node_arena/builder.rs`: Sole mutable native-node builder shared by mode
-  construction and packed episodes; freeze derives direct-child reachability
-  before publishing one immutable graph.
-- `src/node_arena/copy.rs`: Test-only compact-copy and child-patch machinery retained for node-storage measurement coverage; production freeze does not copy immutable child payloads.
-- `src/node_arena/mutation.rs`: Test-only shape-preserving compact-row replacement support for compact-copy measurement coverage.
-- `src/node_arena/schema.rs`: Exhaustive allocation-free logical node descriptors, typed handle policies, origins, and ordered child traversal.
-- `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
-- `src/node_arena/storage.rs`: Canonical node words, aligned provenance plus copy-only token/glue coordinate sidecars, and immutable payload encoding.
-- `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.
-- `src/node_arena/view.rs`: Zero-allocation node references, list spans, raw tag predicates, character runs, and iterators.
-- `src/page.rs`: Snapshot-owned page-builder state with copy-only last-glue and scalar/class mark coordinates, page dimensions/integers, contribution/current-page queues, and fire-up records.
-- `src/pdf.rs`: Checkpointed pdfTeX document mode with copy-only token coordinates in catalog/page/form collections, deterministic object allocation, snapshots, suffix transfer, and committed-page ledger.
+- `src/node_arena.rs`: Scratch, page, and generation-branded durable node-list
+  arenas; copy-only typed coordinates; owner-checked suffix cursors; borrowed
+  resolution; and exact-root dense relocation between lifetimes.
+- `src/node_arena/tests.rs`: Exact escaping-closure relocation, owner-checked
+  rollback, and invalid-publication controls.
+- `src/page.rs`: Page-lifetime builder state with directly owned contribution,
+  current-page, discard, insertion, and mark buffers plus page-arena list
+  publication, dimensions/integers, and fire-up records.
+- `src/pdf.rs`: Checkpointed pdfTeX document mode with copy-only token
+  coordinates in catalog/page collections, deterministic object allocation,
+  durable form-list coordinates, suffix transfer, and committed-page ledger.
 - `src/pdf/action.rs`: Typed, checkpointed PDF action model carrying copy-only token coordinates shared by catalog, link, and outline scanners.
 - `src/pdf/annotation.rs`: Checkpointed general-annotation reservations with copy-only token coordinates, running dimension specs, and logical/open-link records.
 - `src/pdf/outline.rs`: Immediately allocated, checkpointed PDF outline entries owning their attributes, title, action, and action/item/title identities.
 - `src/pdf/object.rs`: Copy-on-write raw PDF object reservations, coordinate-valued initialization payloads, and last-object state.
 - `src/pdf/document.rs`: Copy-on-write coordinate-valued raw document dictionary and trailer fragments in source order.
-- `src/page/sequence.rs`: Canonical persistent binary-forest sequence for growing current-page nodes.
-- `src/page/state_hash.rs`: Page semantic cursors, bounded derived projection caches, and component framing.
+- `src/page/sequence.rs`: Direct page-lifetime current-page suffix buffer.
+- `src/page/state_hash.rs`: Handle-free bounded page semantic cursors and direct
+  component framing; no page COW root is retained for hash reuse.
 - `src/page/tests.rs`: Page snapshot value isolation, mark-value, and semantic
   hash rollback tests.
 - `src/print.rs`: tex.web §54's print `selector`, §§57--65's print primitives, §73's `print_err`, and §82's `error` report channel.

@@ -1,13 +1,36 @@
 //! Immutable TeX node model.
 
-use crate::glue::{GlueSpecRef, Order};
+use crate::glue::{GlueSpec, Order};
 use crate::ids::FontId;
 use crate::math::{MathChoice, MathFraction, MathListNode, MathNoad, MathStyle};
-use crate::node_arena::NodeListRef;
-use crate::provenance::OriginRef;
+use crate::node_arena::PageListId;
 use crate::scaled::{GlueSetRatio, Scaled};
-use crate::token_store::TokenListRef;
+use crate::token::{OriginId, TokenWord};
 use crate::world::{PrintSink, StreamSlot};
+
+/// Node-owned token payload used before and inside node arenas.
+///
+/// The words are copied into the node's semantic-lifetime arena. No token
+/// payload carries a runtime owner or reference count.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct NodeTokenList(Box<[TokenWord]>);
+
+impl NodeTokenList {
+    #[must_use]
+    pub fn new(words: impl Into<Box<[TokenWord]>>) -> Self {
+        Self(words.into())
+    }
+
+    #[must_use]
+    pub fn words(&self) -> &[TokenWord] {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
 
 /// Stable logical node kinds shared by owned and compact node views.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -69,18 +92,39 @@ impl NodeKind {
 
     #[must_use]
     pub const fn etex_type(self) -> i32 {
-        self.descriptor().etex_type
+        match self {
+            Self::Char => 0,
+            Self::HList => 1,
+            Self::VList => 2,
+            Self::Rule => 3,
+            Self::Ins => 4,
+            Self::Mark => 5,
+            Self::Adjust => 6,
+            Self::Lig => 7,
+            Self::Disc => 8,
+            Self::Whatsit => 9,
+            Self::MathOn | Self::MathOff | Self::Direction => 10,
+            Self::Glue | Self::Nonscript => 11,
+            Self::Kern | Self::MarginKern => 12,
+            Self::Penalty => 13,
+            Self::Unset => 14,
+            Self::MathNoad
+            | Self::FractionNoad
+            | Self::MathStyle
+            | Self::MathChoice
+            | Self::MathList => 15,
+        }
     }
 }
 
 /// A frozen TeX node.
-#[derive(Clone, Debug)]
-pub enum Node<List = NodeListRef> {
+#[derive(Clone, Debug, PartialEq)]
+pub enum Node<List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
     Char {
         font: FontId,
         ch: char,
         /// Diagnostic-only source provenance; excluded from semantic identity.
-        origin: OriginRef,
+        origin: OriginId,
     },
     Lig {
         font: FontId,
@@ -89,7 +133,7 @@ pub enum Node<List = NodeListRef> {
         left_hit: bool,
         right_hit: bool,
         /// One origin per original character consumed by the ligature.
-        origins: Vec<OriginRef>,
+        origins: Vec<OriginId>,
     },
     Kern {
         amount: Scaled,
@@ -103,7 +147,7 @@ pub enum Node<List = NodeListRef> {
         ch: u8,
     },
     Glue {
-        spec: GlueSpecRef,
+        spec: Glue,
         kind: GlueKind,
         leader: Option<LeaderPayload<List>>,
     },
@@ -126,17 +170,17 @@ pub enum Node<List = NodeListRef> {
     },
     Mark {
         class: u16,
-        tokens: TokenListRef,
+        tokens: Tokens,
     },
     Ins {
         class: u16,
         size: Scaled,
-        split_top_skip: GlueSpecRef,
+        split_top_skip: Glue,
         split_max_depth: Scaled,
         floating_penalty: i32,
         content: List,
     },
-    Whatsit(Whatsit),
+    Whatsit(Whatsit<Glue, Tokens>),
     MathOn(Scaled),
     MathOff(Scaled),
     Direction(Direction),
@@ -149,9 +193,23 @@ pub enum Node<List = NodeListRef> {
     Adjust(AdjustNode<List>),
 }
 
-impl Node<NodeListRef> {
-    fn visit_semantic_node_lists(&self, mut visit: impl FnMut(&NodeListRef)) {
-        fn field(field: &crate::math::MathField, visit: &mut impl FnMut(&NodeListRef)) {
+impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
+    pub fn visit_payloads(
+        &self,
+        mut visit_glue: impl FnMut(&Glue),
+        mut visit_tokens: impl FnMut(&Tokens),
+    ) {
+        match self {
+            Self::Glue { spec, .. } => visit_glue(spec),
+            Self::Mark { tokens, .. } => visit_tokens(tokens),
+            Self::Ins { split_top_skip, .. } => visit_glue(split_top_skip),
+            Self::Whatsit(whatsit) => whatsit.visit_payloads(visit_glue, visit_tokens),
+            _ => {}
+        }
+    }
+
+    pub fn visit_semantic_node_lists(&self, mut visit: impl FnMut(&List)) {
+        fn field<List>(field: &crate::math::MathField<List>, visit: &mut impl FnMut(&List)) {
             if let crate::math::MathField::SubBox(list) | crate::math::MathField::SubMlist(list) =
                 field
             {
@@ -209,8 +267,8 @@ impl Node<NodeListRef> {
     }
 
     /// Visits every direct structurally owned child list.
-    pub fn visit_node_lists(&self, mut visit: impl FnMut(&NodeListRef)) {
-        fn field(field: &crate::math::MathField, visit: &mut impl FnMut(&NodeListRef)) {
+    pub fn visit_node_lists(&self, mut visit: impl FnMut(&List)) {
+        fn field<List>(field: &crate::math::MathField<List>, visit: &mut impl FnMut(&List)) {
             if let crate::math::MathField::SubBox(list) | crate::math::MathField::SubMlist(list) =
                 field
             {
@@ -281,8 +339,11 @@ impl Node<NodeListRef> {
     ///
     /// The visitor does not recurse into frozen lists.  It is the typed root
     /// projection used when an operation publishes its still-owned nodes.
-    fn visit_node_lists_mut(&mut self, mut visit: impl FnMut(&mut NodeListRef)) {
-        fn field(field: &mut crate::math::MathField, visit: &mut impl FnMut(&mut NodeListRef)) {
+    pub fn visit_node_lists_mut(&mut self, mut visit: impl FnMut(&mut List)) {
+        fn field<List>(
+            field: &mut crate::math::MathField<List>,
+            visit: &mut impl FnMut(&mut List),
+        ) {
             if let crate::math::MathField::SubBox(list) | crate::math::MathField::SubMlist(list) =
                 field
             {
@@ -350,8 +411,11 @@ impl Node<NodeListRef> {
     }
 }
 
-impl<List> Node<List> {
-    pub(crate) fn map_lists<Other>(self, mut map: impl FnMut(List) -> Other) -> Node<Other> {
+impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
+    pub(crate) fn map_lists<Other>(
+        self,
+        mut map: impl FnMut(List) -> Other,
+    ) -> Node<Other, Glue, Tokens> {
         match self {
             Self::Char { font, ch, origin } => Node::Char { font, ch, origin },
             Self::Lig {
@@ -441,26 +505,103 @@ impl<List> Node<List> {
             Self::Adjust(value) => Node::Adjust(value.map_list(map)),
         }
     }
-}
 
-impl PartialEq for Node {
-    fn eq(&self, other: &Self) -> bool {
-        let empty = NodeListRef::empty();
-        let mut left_shape = self.clone();
-        left_shape.visit_node_lists_mut(|list| *list = empty.clone());
-        let mut right_shape = other.clone();
-        right_shape.visit_node_lists_mut(|list| *list = empty.clone());
-        if crate::node_arena::NodeRef::from(&left_shape)
-            != crate::node_arena::NodeRef::from(&right_shape)
-        {
-            return false;
+    pub(crate) fn map_payloads<OtherGlue, OtherTokens>(
+        self,
+        mut map_glue: impl FnMut(Glue) -> OtherGlue,
+        mut map_tokens: impl FnMut(Tokens) -> OtherTokens,
+    ) -> Node<List, OtherGlue, OtherTokens> {
+        match self {
+            Self::Char { font, ch, origin } => Node::Char { font, ch, origin },
+            Self::Lig {
+                font,
+                ch,
+                orig,
+                left_hit,
+                right_hit,
+                origins,
+            } => Node::Lig {
+                font,
+                ch,
+                orig,
+                left_hit,
+                right_hit,
+                origins,
+            },
+            Self::Kern { amount, kind } => Node::Kern { amount, kind },
+            Self::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => Node::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            },
+            Self::Glue { spec, kind, leader } => Node::Glue {
+                spec: map_glue(spec),
+                kind,
+                leader,
+            },
+            Self::Penalty(value) => Node::Penalty(value),
+            Self::Rule {
+                width,
+                height,
+                depth,
+            } => Node::Rule {
+                width,
+                height,
+                depth,
+            },
+            Self::HList(value) => Node::HList(value),
+            Self::VList(value) => Node::VList(value),
+            Self::Unset(value) => Node::Unset(value),
+            Self::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            } => Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            },
+            Self::Mark { class, tokens } => Node::Mark {
+                class,
+                tokens: map_tokens(tokens),
+            },
+            Self::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => Node::Ins {
+                class,
+                size,
+                split_top_skip: map_glue(split_top_skip),
+                split_max_depth,
+                floating_penalty,
+                content,
+            },
+            Self::Whatsit(value) => Node::Whatsit(value.map_payloads(map_glue, map_tokens)),
+            Self::MathOn(value) => Node::MathOn(value),
+            Self::MathOff(value) => Node::MathOff(value),
+            Self::Direction(value) => Node::Direction(value),
+            Self::MathNoad(value) => Node::MathNoad(value),
+            Self::FractionNoad(value) => Node::FractionNoad(value),
+            Self::MathStyle(value) => Node::MathStyle(value),
+            Self::MathChoice(value) => Node::MathChoice(value),
+            Self::MathList(value) => Node::MathList(value),
+            Self::Nonscript => Node::Nonscript,
+            Self::Adjust(value) => Node::Adjust(value),
         }
-
-        let mut left_children = Vec::new();
-        self.visit_semantic_node_lists(|list| left_children.push(list.clone()));
-        let mut right_children = Vec::new();
-        other.visit_semantic_node_lists(|list| right_children.push(list.clone()));
-        left_children == right_children
     }
 }
 
@@ -469,7 +610,7 @@ impl PartialEq for Node {
 /// Ordinary TeX adjustments migrate after their containing horizontal box;
 /// pdfTeX's `pre` form migrates before it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AdjustNode<List = NodeListRef> {
+pub struct AdjustNode<List = PageListId> {
     pub content: List,
     pub pre: bool,
 }
@@ -493,7 +634,7 @@ impl<List> AdjustNode<List> {
 
 /// A TeX box node payload shared by hlist and vlist nodes.
 #[derive(Clone, Copy, Debug)]
-pub struct BoxNode<List = NodeListRef> {
+pub struct BoxNode<List = PageListId> {
     pub width: Scaled,
     pub height: Scaled,
     pub depth: Scaled,
@@ -564,7 +705,7 @@ impl<List: PartialEq> PartialEq for BoxNode<List> {
 
 /// Construction fields for a TeX box node payload.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BoxNodeFields<List = NodeListRef> {
+pub struct BoxNodeFields<List = PageListId> {
     pub width: Scaled,
     pub height: Scaled,
     pub depth: Scaled,
@@ -593,7 +734,7 @@ pub enum BoxLr {
 
 /// Repeated material attached to a leader glue node.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LeaderPayload<List = NodeListRef> {
+pub enum LeaderPayload<List = PageListId> {
     HList(BoxNode<List>),
     VList(BoxNode<List>),
     Rule {
@@ -623,7 +764,7 @@ impl<List> LeaderPayload<List> {
 
 /// A TeX unset box used while alignments are being measured and resolved.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct UnsetNode<List = NodeListRef> {
+pub struct UnsetNode<List = PageListId> {
     pub kind: UnsetKind,
     pub width: Scaled,
     pub height: Scaled,
@@ -673,7 +814,7 @@ impl<List> UnsetNode<List> {
 
 /// Construction fields for an unset alignment box.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct UnsetNodeFields<List = NodeListRef> {
+pub struct UnsetNodeFields<List = PageListId> {
     pub kind: UnsetKind,
     pub width: Scaled,
     pub height: Scaled,
@@ -832,7 +973,7 @@ pub enum Sign {
 
 /// Extension nodes whose effects are interpreted by later subsystems.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum Whatsit {
+pub enum Whatsit<Glue = GlueSpec, Tokens = NodeTokenList> {
     OpenOut {
         slot: StreamSlot,
         path: String,
@@ -843,7 +984,7 @@ pub enum Whatsit {
     },
     DeferredWrite {
         sink: PrintSink,
-        tokens: TokenListRef,
+        tokens: Tokens,
     },
     Special {
         class: String,
@@ -851,7 +992,7 @@ pub enum Whatsit {
     },
     DeferredSpecial {
         class: String,
-        tokens: TokenListRef,
+        tokens: Tokens,
     },
     PdfReferenceObject {
         object: u32,
@@ -873,7 +1014,7 @@ pub enum Whatsit {
     },
     DeferredPdfLiteral {
         mode: PdfLiteralMode,
-        tokens: TokenListRef,
+        tokens: Tokens,
     },
     PdfSetMatrix {
         payload: Vec<u8>,
@@ -887,7 +1028,7 @@ pub enum Whatsit {
     PdfSavePos,
     PdfSnapRefPoint,
     PdfSnapY {
-        glue: GlueSpecRef,
+        glue: Glue,
     },
     PdfSnapYComp {
         ratio: u16,
@@ -905,7 +1046,7 @@ pub enum Whatsit {
         depth: Scaled,
     },
     PdfDestination(Box<PdfDestinationNode>),
-    PdfThread(Box<PdfThreadNode>),
+    PdfThread(Box<PdfThreadNode<Tokens>>),
     PdfEndThread,
     Language {
         language: u8,
@@ -914,12 +1055,109 @@ pub enum Whatsit {
     },
 }
 
+impl<Glue, Tokens> Whatsit<Glue, Tokens> {
+    fn visit_payloads(
+        &self,
+        mut visit_glue: impl FnMut(&Glue),
+        mut visit_tokens: impl FnMut(&Tokens),
+    ) {
+        match self {
+            Self::DeferredWrite { tokens, .. }
+            | Self::DeferredSpecial { tokens, .. }
+            | Self::DeferredPdfLiteral { tokens, .. } => visit_tokens(tokens),
+            Self::PdfSnapY { glue } => visit_glue(glue),
+            Self::PdfThread(thread) => visit_tokens(&thread.attributes),
+            _ => {}
+        }
+    }
+
+    fn map_payloads<OtherGlue, OtherTokens>(
+        self,
+        mut map_glue: impl FnMut(Glue) -> OtherGlue,
+        mut map_tokens: impl FnMut(Tokens) -> OtherTokens,
+    ) -> Whatsit<OtherGlue, OtherTokens> {
+        match self {
+            Self::OpenOut { slot, path } => Whatsit::OpenOut { slot, path },
+            Self::CloseOut { slot } => Whatsit::CloseOut { slot },
+            Self::DeferredWrite { sink, tokens } => Whatsit::DeferredWrite {
+                sink,
+                tokens: map_tokens(tokens),
+            },
+            Self::Special { class, payload } => Whatsit::Special { class, payload },
+            Self::DeferredSpecial { class, tokens } => Whatsit::DeferredSpecial {
+                class,
+                tokens: map_tokens(tokens),
+            },
+            Self::PdfReferenceObject { object } => Whatsit::PdfReferenceObject { object },
+            Self::PdfAccessibility(value) => Whatsit::PdfAccessibility(value),
+            Self::PdfAnnotation { object } => Whatsit::PdfAnnotation { object },
+            Self::PdfLinkStart { object } => Whatsit::PdfLinkStart { object },
+            Self::PdfLinkEnd { object } => Whatsit::PdfLinkEnd { object },
+            Self::PdfRunningLink(value) => Whatsit::PdfRunningLink(value),
+            Self::PdfLiteral { mode, payload } => Whatsit::PdfLiteral { mode, payload },
+            Self::DeferredPdfLiteral { mode, tokens } => Whatsit::DeferredPdfLiteral {
+                mode,
+                tokens: map_tokens(tokens),
+            },
+            Self::PdfSetMatrix { payload } => Whatsit::PdfSetMatrix { payload },
+            Self::PdfSave => Whatsit::PdfSave,
+            Self::PdfRestore => Whatsit::PdfRestore,
+            Self::PdfColorStack { id, action } => Whatsit::PdfColorStack { id, action },
+            Self::PdfSavePos => Whatsit::PdfSavePos,
+            Self::PdfSnapRefPoint => Whatsit::PdfSnapRefPoint,
+            Self::PdfSnapY { glue } => Whatsit::PdfSnapY {
+                glue: map_glue(glue),
+            },
+            Self::PdfSnapYComp { ratio } => Whatsit::PdfSnapYComp { ratio },
+            Self::PdfRefXForm {
+                object,
+                width,
+                height,
+                depth,
+            } => Whatsit::PdfRefXForm {
+                object,
+                width,
+                height,
+                depth,
+            },
+            Self::PdfRefXImage {
+                object,
+                width,
+                height,
+                depth,
+            } => Whatsit::PdfRefXImage {
+                object,
+                width,
+                height,
+                depth,
+            },
+            Self::PdfDestination(value) => Whatsit::PdfDestination(value),
+            Self::PdfThread(value) => Whatsit::PdfThread(Box::new(PdfThreadNode {
+                identifier: value.identifier,
+                dimensions: value.dimensions,
+                attributes: map_tokens(value.attributes),
+                running: value.running,
+            })),
+            Self::PdfEndThread => Whatsit::PdfEndThread,
+            Self::Language {
+                language,
+                left_hyphen_min,
+                right_hyphen_min,
+            } => Whatsit::Language {
+                language,
+                left_hyphen_min,
+                right_hyphen_min,
+            },
+        }
+    }
+}
+
 /// Rare article-thread marker kept out of the hot inline node representation.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfThreadNode {
+pub struct PdfThreadNode<Tokens = NodeTokenList> {
     pub identifier: crate::PdfActionIdentifier,
     pub dimensions: crate::PdfAnnotationDimensions,
-    pub attributes: TokenListRef,
+    pub attributes: Tokens,
     pub running: bool,
 }
 
@@ -958,11 +1196,36 @@ pub enum PdfLiteralMode {
     Direct,
 }
 
-impl Node {
+impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
     /// Returns this node's source-independent logical kind.
     #[must_use]
     pub fn kind(&self) -> NodeKind {
-        crate::node_arena::NodeRef::from(self).kind()
+        match self {
+            Self::Char { .. } => NodeKind::Char,
+            Self::Lig { .. } => NodeKind::Lig,
+            Self::Kern { .. } => NodeKind::Kern,
+            Self::MarginKern { .. } => NodeKind::MarginKern,
+            Self::Glue { .. } => NodeKind::Glue,
+            Self::Penalty(_) => NodeKind::Penalty,
+            Self::Rule { .. } => NodeKind::Rule,
+            Self::HList(_) => NodeKind::HList,
+            Self::VList(_) => NodeKind::VList,
+            Self::Unset(_) => NodeKind::Unset,
+            Self::Disc { .. } => NodeKind::Disc,
+            Self::Mark { .. } => NodeKind::Mark,
+            Self::Ins { .. } => NodeKind::Ins,
+            Self::Whatsit(_) => NodeKind::Whatsit,
+            Self::MathOn(_) => NodeKind::MathOn,
+            Self::MathOff(_) => NodeKind::MathOff,
+            Self::Direction(_) => NodeKind::Direction,
+            Self::MathNoad(_) => NodeKind::MathNoad,
+            Self::FractionNoad(_) => NodeKind::FractionNoad,
+            Self::MathStyle(_) => NodeKind::MathStyle,
+            Self::MathChoice(_) => NodeKind::MathChoice,
+            Self::MathList(_) => NodeKind::MathList,
+            Self::Nonscript => NodeKind::Nonscript,
+            Self::Adjust(_) => NodeKind::Adjust,
+        }
     }
 
     /// e-TeX `\lastnodetype` code for this node.

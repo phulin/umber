@@ -6,6 +6,7 @@ use crate::env::{CodeTableKind, DenseState, StateError};
 use crate::glue::GlueSpec;
 use crate::interner::{Interner, InternerAccessError, SymbolId};
 use crate::meaning::ResolvedMeaning;
+use crate::node_arena::{DurableListId, NodeArenaError, NodeList};
 use crate::scaled::Scaled;
 use crate::stores::AdmittedState;
 use crate::token::TokenWord;
@@ -71,6 +72,19 @@ impl<'a, G> CommandContext<'a, G> {
     #[inline(always)]
     pub fn glue_register(&self, index: u16) -> Result<Option<GlueId<G>>, StateError> {
         self.admitted.state().glue_register(index)
+    }
+
+    #[inline(always)]
+    pub fn box_register(&self, index: u16) -> Result<Option<DurableListId<G>>, StateError> {
+        self.admitted.state().box_register(index)
+    }
+
+    #[inline(always)]
+    pub fn node_list(
+        &self,
+        id: DurableListId<G>,
+    ) -> Result<NodeList<'a, G, GlueId<G>, TokenListId<G>>, NodeArenaError> {
+        self.admitted.node_list(id)
     }
 
     #[inline(always)]

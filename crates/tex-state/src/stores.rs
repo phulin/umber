@@ -5,6 +5,7 @@ use crate::durable_arena::{DurableAllocationError, GlueId, TokenListId};
 use crate::env::{DenseState, StateError};
 use crate::generation::{Generation, GenerationRetirement};
 use crate::glue::GlueSpec;
+use crate::node_arena::{DurableListId, DurableNodeArena, NodeArenaError, NodeList};
 use crate::token::TokenWord;
 
 #[cfg(test)]
@@ -14,6 +15,7 @@ mod tests;
 /// Every mutable and immutable state owner for one revision generation.
 pub(crate) struct StateCore<G> {
     generation: Generation<G>,
+    nodes: DurableNodeArena<G>,
     state: DenseState<G>,
 }
 
@@ -21,6 +23,7 @@ impl<G> StateCore<G> {
     pub(crate) fn new(generation: Generation<G>) -> Result<Self, StateError> {
         Ok(Self {
             generation,
+            nodes: DurableNodeArena::new(),
             state: DenseState::new()?,
         })
     }
@@ -31,6 +34,7 @@ impl<G> StateCore<G> {
     pub(crate) const fn admit(&self) -> AdmittedState<'_, G> {
         AdmittedState {
             generation: &self.generation,
+            nodes: &self.nodes,
             state: &self.state,
         }
     }
@@ -41,6 +45,7 @@ impl<G> StateCore<G> {
     pub(crate) const fn admit_mut(&mut self) -> AdmittedStateMut<'_, G> {
         AdmittedStateMut {
             generation: &mut self.generation,
+            nodes: &mut self.nodes,
             state: &mut self.state,
         }
     }
@@ -54,9 +59,11 @@ impl<G> StateCore<G> {
     pub(crate) fn retire(self) -> StateCoreRetirement {
         let journal_entries = self.state.journal_len();
         let allocated_overflow_pages = self.state.allocated_overflow_pages();
+        let durable_node_lists = self.nodes.len();
         let generation = self.generation.retire();
         StateCoreRetirement {
             generation,
+            durable_node_lists,
             journal_entries,
             allocated_overflow_pages,
         }
@@ -66,6 +73,7 @@ impl<G> StateCore<G> {
 /// Immutable, already-admitted hot view.
 pub(crate) struct AdmittedState<'a, G> {
     generation: &'a Generation<G>,
+    nodes: &'a DurableNodeArena<G>,
     state: &'a DenseState<G>,
 }
 
@@ -89,17 +97,30 @@ impl<'a, G> AdmittedState<'a, G> {
     pub(crate) fn glue(&self, id: GlueId<G>) -> GlueSpec {
         self.generation.glue().get(id)
     }
+
+    #[inline(always)]
+    pub(crate) fn node_list(
+        &self,
+        id: DurableListId<G>,
+    ) -> Result<NodeList<'a, G, GlueId<G>, TokenListId<G>>, NodeArenaError> {
+        self.nodes.get(id)
+    }
 }
 
 /// Unique admitted view used for assignment and commit publication.
 pub(crate) struct AdmittedStateMut<'a, G> {
     generation: &'a mut Generation<G>,
+    nodes: &'a mut DurableNodeArena<G>,
     state: &'a mut DenseState<G>,
 }
 
 impl<'a, G> AdmittedStateMut<'a, G> {
     pub(crate) fn state(&mut self) -> &mut DenseState<G> {
         self.state
+    }
+
+    pub(crate) fn nodes_mut(&mut self) -> &mut DurableNodeArena<G> {
+        self.nodes
     }
 
     pub(crate) fn allocate_definition(
@@ -125,12 +146,20 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     ) -> Result<GlueId<G>, DurableAllocationError> {
         self.generation.glue_mut().allocate(value)
     }
+
+    pub(crate) fn node_list(
+        &self,
+        id: DurableListId<G>,
+    ) -> Result<NodeList<'_, G, GlueId<G>, TokenListId<G>>, NodeArenaError> {
+        self.nodes.get(id)
+    }
 }
 
 /// Evidence returned when a whole generation bundle is released.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StateCoreRetirement {
     pub(crate) generation: GenerationRetirement,
+    pub(crate) durable_node_lists: usize,
     pub(crate) journal_entries: usize,
     pub(crate) allocated_overflow_pages: usize,
 }

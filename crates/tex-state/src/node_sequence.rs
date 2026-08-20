@@ -1,7 +1,7 @@
 //! Paired semantic and TeX-physical node sequences.
 
 use crate::node::Node;
-use crate::node_arena::NodeListBuilder;
+use crate::node_arena::{NodeArenaError, PageListId, PageNodeArena};
 
 /// Allocation identity for one direct TeX82 high-memory cell.
 ///
@@ -13,7 +13,7 @@ pub enum DirectHighCellLineage {
     Sequence { row: u32, unit: u32 },
     /// A direct row copied from one exact frozen discretionary branch.
     Frozen {
-        list: crate::node_arena::NodeListRef,
+        list: PageListId,
         row: u32,
         unit: u32,
         role: FrozenListRole,
@@ -50,10 +50,10 @@ pub fn direct_high_cell_overlap(
 /// channel preserves TeX's linked-list topology for diagnostics.
 #[derive(Clone, Debug)]
 pub struct NodeSequence {
-    semantic: NodeListBuilder,
-    physical: NodeListBuilder,
-    frozen_semantic: Option<crate::node_arena::NodeListRef>,
-    frozen_physical: Option<crate::node_arena::NodeListRef>,
+    semantic: Vec<Node>,
+    physical: Vec<Node>,
+    frozen_semantic: Option<PageListId>,
+    frozen_physical: Option<PageListId>,
     physical_boundaries: Vec<usize>,
     semantic_high_cell_lineages: Vec<Vec<DirectHighCellLineage>>,
     physical_high_cell_lineages: Vec<Vec<DirectHighCellLineage>>,
@@ -103,8 +103,8 @@ impl NodeSequence {
         let (semantic_high_cell_lineages, physical_high_cell_lineages, next_sequence_lineage_row) =
             projected_high_cell_lineages(&semantic, &physical, &physical_boundaries);
         Self {
-            semantic: builder_from_nodes(semantic),
-            physical: builder_from_nodes(physical),
+            semantic,
+            physical,
             frozen_semantic: None,
             frozen_physical: None,
             physical_boundaries,
@@ -137,12 +137,12 @@ impl NodeSequence {
 
     #[must_use]
     pub fn semantic(&self) -> &[Node] {
-        self.semantic.as_slice()
+        &self.semantic
     }
 
     #[must_use]
     pub fn physical(&self) -> &[Node] {
-        self.physical.as_slice()
+        &self.physical
     }
 
     #[must_use]
@@ -161,7 +161,7 @@ impl NodeSequence {
     }
 
     pub fn take(self) -> (Vec<Node>, Vec<Node>) {
-        (self.semantic.into_nodes(), self.physical.into_nodes())
+        (self.semantic, self.physical)
     }
 
     pub fn into_parts(self) -> (Vec<Node>, Vec<Node>, Vec<usize>) {
@@ -171,11 +171,7 @@ impl NodeSequence {
             physical_boundaries,
             ..
         } = self;
-        (
-            semantic.into_nodes(),
-            physical.into_nodes(),
-            physical_boundaries,
-        )
+        (semantic, physical, physical_boundaries)
     }
 
     pub fn push_mirrored(&mut self, node: Node) {
@@ -209,14 +205,11 @@ impl NodeSequence {
     /// replace both channels explicitly instead.
     pub fn mutate_semantic<R>(&mut self, mutate: impl FnOnce(&mut Vec<Node>) -> R) -> R {
         self.invalidate_frozen_sidecars();
-        let result = mutate(self.semantic.as_mut_vec());
+        let result = mutate(&mut self.semantic);
         self.physical = self.semantic.clone();
         self.physical_boundaries = (0..=self.semantic.len()).collect();
-        let (semantic, physical, next_sequence_lineage_row) = projected_high_cell_lineages(
-            self.semantic.as_slice(),
-            self.physical.as_slice(),
-            &self.physical_boundaries,
-        );
+        let (semantic, physical, next_sequence_lineage_row) =
+            projected_high_cell_lineages(&self.semantic, &self.physical, &self.physical_boundaries);
         self.semantic_high_cell_lineages = semantic;
         self.physical_high_cell_lineages = physical;
         self.next_sequence_lineage_row = next_sequence_lineage_row;
@@ -235,41 +228,25 @@ impl NodeSequence {
     /// Materializes immutable node/reachability/provenance sidecars at an
     /// externally visible episode boundary while retaining this builder as
     /// the sole mutable continuation.
-    pub fn freeze_sidecars(&mut self, stores: &mut crate::Universe) {
+    pub fn freeze_sidecars(&mut self, arena: &mut PageNodeArena) -> Result<(), NodeArenaError> {
         if self.frozen_semantic.is_none() {
-            self.frozen_semantic = Some(stores.freeze_node_list(self.semantic()));
+            self.frozen_semantic = Some(arena.publish(self.semantic.clone())?);
         }
         if self.frozen_physical.is_none() {
-            self.frozen_physical = Some(stores.freeze_node_list(self.physical()));
+            self.frozen_physical = Some(arena.publish(self.physical.clone())?);
         }
+        Ok(())
     }
 
     #[must_use]
-    pub fn frozen_sidecars(
-        &self,
-    ) -> Option<(
-        &crate::node_arena::NodeListRef,
-        &crate::node_arena::NodeListRef,
-    )> {
-        Some((
-            self.frozen_semantic.as_ref()?,
-            self.frozen_physical.as_ref()?,
-        ))
+    pub fn frozen_sidecars(&self) -> Option<(PageListId, PageListId)> {
+        Some((self.frozen_semantic?, self.frozen_physical?))
     }
 
     fn invalidate_frozen_sidecars(&mut self) {
         self.frozen_semantic = None;
         self.frozen_physical = None;
     }
-}
-
-fn builder_from_nodes(nodes: Vec<Node>) -> NodeListBuilder {
-    let mut builder = NodeListBuilder::default();
-    builder.reserve(nodes.len());
-    for node in nodes {
-        builder.push(node);
-    }
-    builder
 }
 
 fn projected_high_cell_lineages(
@@ -324,13 +301,13 @@ fn direct_high_cell_lineages(node: &Node, row: u32) -> Vec<DirectHighCellLineage
 mod tests {
     use super::*;
     use crate::font::NULL_FONT;
-    use crate::provenance::OriginRef;
+    use crate::token::OriginId;
 
     fn char_node(ch: char) -> Node {
         Node::Char {
             font: NULL_FONT,
             ch,
-            origin: OriginRef::unknown(),
+            origin: OriginId::UNKNOWN,
         }
     }
 
@@ -341,7 +318,7 @@ mod tests {
             orig: orig.to_vec(),
             left_hit: false,
             right_hit: false,
-            origins: vec![OriginRef::unknown(); orig.len()],
+            origins: vec![OriginId::UNKNOWN; orig.len()],
         }
     }
 
@@ -377,7 +354,7 @@ mod tests {
                     orig: vec!['a', 'b', 'c'],
                     left_hit: false,
                     right_hit: false,
-                    origins: vec![crate::provenance::OriginRef::unknown(); 3],
+                    origins: vec![crate::token::OriginId::UNKNOWN; 3],
                 },
                 Node::Penalty(0),
             ],

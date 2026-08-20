@@ -1,178 +1,127 @@
-# Structurally Owned Compact Node Lists
+# Arena-owned node lists
 
 ## Status
 
-All production node-list lifetimes are represented by `NodeListRef`. Page,
-mode, command, alignment, box, PDF, checkpoint, generation, retry, revision,
-and shipout aggregates store `NodeListRef` directly, either as fields or inside
-owned `Node` values. There is no epoch arena, survivor arena, promotion table,
-pin journal, root slot, refcount ledger, or raw-coordinate lifetime API.
+This document defines the node-specific implementation of
+[Runtime storage lifetimes](runtime_storage_lifetimes.md). The former
+structural `NodeListRef` payload-owner model is deleted. Runtime lists are now
+copy-only coordinates whose storage is owned by operation, page, or revision
+generation arenas.
 
-## Representation
+The logical row representation is not a format ABI. It may be compacted into
+words and sidecars without changing the lifetime contract below, provided that
+ordinary resolution remains direct, safe Rust and allocation-free.
 
-A `NodeListRef` is a strong reference to one immutable `NodeListPayload` plus a
-compact span inside that payload. The payload contains canonical node words,
-typed sidecars, semantic spans, and a sorted, deduplicated set of strong
-`NodeListRef` owners for the payloads named directly by those rows. Each child
-payload owns its own direct children in turn. Cloning the reference clones
-structural ownership; dropping the final root clone releases that closure when
-no independently held child reference remains. Final-owner release drains that
-closure with an explicit payload stack. A shared child stops the drain at that
-edge and remains owned by its independent reference, while uniquely owned
-descendants are reclaimed iteratively in work proportional to the released
-closure rather than through Rust's recursive field destruction.
+## Lifetime-specific coordinates
 
-`NodeListId` is not an owner. It is a private compact coordinate used while a
-`NodeListRef` is borrowed and in packed node sidecars. Detached codecs use a
-separate `FormatListKey` vocabulary whose canonical form is the dense
-bottom-up list ordinal plus its validated node count. Resolving a runtime child
-coordinate requires the enclosing `NodeListRef`, which resolves its own spans
-or delegates to the one direct child owner with the coordinate's payload root.
-It does not scan descendants or consult a registry, and a coordinate cannot
-upgrade or rediscover a dropped payload.
+`NodeListId<L>` is a private-construction dense row coordinate branded by its
+semantic lifetime. Row zero is the canonical empty list and resolves without
+storage. The public lifetime families are:
 
-The canonical empty list is also a `NodeListRef`. Empty child coordinates
-resolve without consulting global state. Detachment normalizes every
-zero-length compact projection to that one empty DTO row before dense-key
-assignment, so an enclosing payload's private zero span cannot leak into
-format or memo bytes.
+- `ScratchListId` for unfinished shaping, transforms, packing probes, and
+  speculative operation material;
+- `PageListId` for open modes, alignments, insertions, and page-builder
+  material; and
+- `DurableListId<G>` for lists retained by box registers or revision
+  checkpoints.
 
-## Construction
+A coordinate is not an owner. It contains no `Arc`, `Weak`, root slot,
+registry key, reference count, or drop-driven reachability action. Resolution
+borrows the one matching `NodeArena` and indexes its row directly. Arena
+constructors and coordinate constructors remain private to the storage layer,
+so a caller cannot resolve a coordinate against an unrelated arena of the same
+semantic class.
 
-`NodeListBuilder` is the sole mutable native-node builder. Ordinary mode
-construction and packed command episodes append `Node` values directly to it;
-there is no persistent per-command node vector or packed-only page-node
-builder. General and mixed material uses native rows. Character/kern-only
-episodes use an eight-byte inline row in the same builder and promote in place
-if another node family arrives. Freezing performs these steps atomically:
+## Payload placement
 
-1. collect and deduplicate direct child owners, materializing the reachability
-   sidecar once;
-2. validate non-node handles and direct child ownership;
-3. compute allocation-independent semantic identity;
-4. move-encode the root rows into one new immutable compact payload and attach
-   the sorted distinct direct child-payload owners;
-5. return one `NodeListRef` for the root span.
+Scratch and page rows carry glue and token payloads owned by that same
+semantic lifetime. A durable row carries `GlueId<G>` and `TokenListId<G>`
+instead. Those ids resolve only through the matching coarse generation owner;
+the node or list never retains an individual glue or token owner.
 
-The newly owned root rows are move-encoded directly into their final payload
-once. Preexisting immutable child payloads retain their existing coordinates
-and allocation boundaries; freeze copies neither their compact words nor their
-transitive descendants.
+Diagnostic origins are copy-only coordinates and remain excluded from TeX
+node equality and artifact bytes. A selected shipout provenance consumer
+detaches stable source recipes while the page arena is still borrowed.
 
-Validation failure publishes nothing. A weak, bounded candidate index may
-reuse an exactly equal live payload, but weak entries neither retain payloads
-nor recover dead ones.
+## Construction and rollback
 
-Mode lists retain TeX's distinct semantic and physical diagnostic projections
-as two uses of this same builder type. Their projection boundary/allocator
-lineage vectors are nonsemantic sidecars, not a second node authority. Page,
-shipout, named checkpoint, effect, observer/diagnostic, format,
-state-identity/incremental, and terminal barriers cache immutable semantic and
-physical `NodeListRef` sidecars. The next mutation invalidates only the
-affected cache. Main-control rollback truncates the mutable builders through
-its existing mode-journal marks and drops rejected frozen roots; it creates no
-node-specific transaction or store.
+An arena publishes a list only after validating every declared child
+coordinate. Validation failure leaves the arena unchanged. The arena owns the
+complete immutable row; nested node fields contain only coordinates back into
+that same arena.
 
-## Aggregate transitions
+`NodeArenaCursor<L>` records the arena identity and row count. Operation and
+page restore follows this order:
 
-Every transition follows ordinary structural ownership:
+1. validate the state journal, mode/page roots, and arena cursor without
+   mutation;
+2. restore all canonical mode, page, alignment, insertion, and box roots;
+3. truncate only the rejected arena suffix; and
+4. release replaced coarse owners after no restored root can name them.
 
-- success moves a reference into the destination aggregate;
-- committed failure keeps references already present in the canonical partial
-  state and drops failed scratch values;
-- rollback replaces the live aggregate with its cloned snapshot, dropping the
-  rejected references;
-- retry restores the same cloned aggregate while retaining only the separately
-  specified provenance identities;
-- rejection drops the candidate aggregate;
-- checkpoint and generation fork clone aggregate references;
-- shipout borrows or moves its page root until the detached artifact is
-  verified, then drops operation-local references.
+A foreign cursor or a cursor beyond the current suffix is rejected without
+mutation. Reusing an arena object assigns a fresh owner identity before any new
+coordinate can be issued.
 
-No transition scans a graph to establish liveness, promotes a coordinate,
-maintains a history registry, or records a pin. Serialization and TeX82 memory
-accounting may traverse a graph already owned by an explicit `NodeListRef`;
-that traversal produces detached data or diagnostics and has no lifetime role.
+## Exact promotion
 
-## Nested lists
+Promotion starts from explicit typed escape roots. The source arena performs a
+postorder walk over only schema-declared child fields and records one dense
+source-row-to-destination-row relocation vector. Shared children are copied
+once. Rows unrelated to the roots are not visited.
 
-Public `Node` fields such as box children, discretionary parts, leaders, math
-choices, math lists, fractions, insertions, adjustments, and replay boxes are
-`NodeListRef`. Compact `NodeRef` projections expose `NodeListId` only while the
-enclosing payload is borrowed. Algorithms that descend through compact nodes
-must resolve each coordinate through that same owner, then use the returned
-child owner for the next level. A root owner deliberately cannot resolve an
-arbitrary grandchild coordinate that is absent from its direct owner set.
-Iterative traversals therefore carry the current `NodeListRef` in every stack
-frame rather than retaining one root owner beside a stack of bare cursors.
+Page glue and token payloads found during that same ordered traversal are
+batched through the generation's atomic `promote_values` seam. Durable node
+rows are then staged with the returned `GlueId<G>` and `TokenListId<G>` values
+and rewritten child coordinates. Destination list roots are returned only
+after the complete closure is initialized. A failure publishes no box
+register, checkpoint, mode, or page root.
 
-## Semantic identity
+There is no content lookup, weak-candidate search, liveness scan, attempt-wide
+scan, in-place rewrite, forwarding pointer, or partially relocated visible
+graph.
 
-Node-list identity is allocation independent. It hashes semantic node content,
-resolved child semantic identities, and referenced semantic values. Origins
-remain diagnostic. Strong references and payload coordinates do not
-participate in equality or checkpoint state hashes. The sorted owner set is a
-lifetime and lookup structure only; its allocation order does not enter format
-or memo bytes.
+## Boxes and generation ownership
 
-## Format and memo boundaries
+The dense box-register bank stores `Option<DurableListId<G>>`. TeX assignment
+and group restoration journal that copy-only value exactly like other dense
+state cells. The current revision, retained checkpoint, or in-session
+continuation owns the complete generation bundle which contains the durable
+node, token, glue, definition, and provenance arenas.
 
-Format capture and detached memo encoding begin from explicit structural
-roots. Their bottom-up codecs assign dense keys to lists, erase process-local
-payload coordinates, and validate children before parents during import.
-Memo import first validates canonical key order, every detached content
-reference, and every recomputed list semantic identity in private scratch
-stores. Destination materialization then reconstructs `NodeListRef` owners
-bottom-up and returns the root only after the complete graph validates. Frozen
-format load validates the complete fresh store tuple before publishing it.
+Moving a durable box into page storage copies its exact closure when the page
+lifetime cannot borrow the durable arena through the operation. TeX `\copy`
+may reuse the same durable coordinate while the same coarse generation owner
+remains live. Neither operation adds per-list or per-node ownership.
 
-Frozen Env box cells store a packed coordinate for TeX-compatible raw-word
-projection and an aligned `NodeListRef` as the actual lifetime owner. The raw
-word never authorizes lookup on its own. A local assignment of the same owner
-at a newly entered group depth still journals that owner: TeX82 §283 must
-restore it at the save position. Only a repeated assignment already owned by
-the current depth is an unchanged write.
+## Shipout boundary
 
-## Accounting
+A completed page is one page-arena root plus its page-lifetime owner. Shipout
+walks that root once and builds a handle-free page plan, artifact data, effects,
+and any requested stable source recipes. `tex-out` receives no node id, arena
+cursor, arena owner, generation owner, runtime handle, or engine borrow.
 
-Logical and retained payload bytes report the storage, semantic spans, and
-direct-owner slots allocated by that payload, without recursively charging a
-shared child payload again.
-Process-wide peak instrumentation observes allocations without retaining them.
-There is deliberately no all-live node registry: aggregate memory is accounted
-from the roots already in scope. Its derived accounting cache survives
-ordinary executor-operation boundaries, applies meaning and token-list Env
-deltas at their existing write barriers, and refreshes the glue watermark on
-the next observation. The cache is discarded when a box-root handoff cannot be
-updated without adding lifetime metadata, including a box restoration during
-aggregate rollback. Non-box rollback applies its root receipts before rejected
-immutable-store suffixes are truncated.
-The optional node candidate index reports its weak-entry count and retained
-capacity to testing censuses only. Bounded-live controls require both values to
-plateau; all-live controls sum exact logical and allocator-retained bytes over
-the intentionally retained distinct payload references.
+Only after detachment and artifact validation succeed does execution remove
+the page root and release or reset the bounded page storage. Failed detachment
+keeps the canonical page root and arena together so operation rollback can
+restore them atomically.
 
-TeX82 memory reporting remains a projection of physical TeX allocation
-lifetimes, not host payload coordinates. In particular, a detached diagnostic
-branch contributes its complete historical high-memory subtree even when weak
-interning gives it the same immutable host payload as a live semantic branch.
-Allocator-overlap metadata removes only cells whose TeX lifetimes actually
-overlap; equal semantic content never suppresses an independent allocation.
+## Semantic identity and detached boundaries
 
-## Final raw-coordinate audit
+Node semantic equality hashes logical node kind, semantic scalar and payload
+values, and recursively resolved child content. Arena row number, allocation
+order, cursor, capacity, diagnostic origin, and coarse owner identity are not
+semantic.
 
-Every production `NodeListId` site is one of these non-owning classes:
+Formats, memos, output DTOs, and process or thread messages use their own dense
+local indices. Cold detachment assigns those indices from explicit roots;
+materialization validates the complete schema and allocates destination-local
+generation rows before publication. A runtime `NodeListId` is never serialized.
 
-| Site                                                                  | Classification                                                                                                                                        |
-| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `node_arena::{storage,tables,view,copy,mutation,schema,owned}`        | Payload-internal coordinate or borrow-scoped traversal/copy frame under an enclosing `NodeListRef`.                                                   |
-| `Env`, box-bank raw words, state hashing, and TeX82 memory projection | Parallel compact projection whose box slot or projection call borrows the structural owner.                                                           |
-| node semantic composition and handle validation                       | Operation-local callback operand resolved through the builder or enclosing payload.                                                                   |
-| shipout and alignment compact adapters                                | Borrow-scoped `BoxNode<NodeListId>` or `UnsetNode<NodeListId>` consumed before the page/form owner borrow ends.                                       |
-| format and memo implementation                                        | Capture-local runtime key before canonical remapping, decode-local span while constructing one unpublished payload, or dense `FormatListKey` DTO key. |
-| PDF `box_list()`                                                      | Read-only coordinate projection paired with the record's authoritative `box_list_ref()` owner.                                                        |
+## Validation
 
-No page, mode, command, checkpoint, revision, PDF, DVI, HTML, or published
-artifact value owns one of these coordinates. `tex-out` has no `tex-state`
-dependency and its page, DVI, PDF, positioned, and HTML models retain semantic
-data only.
+The focused node-arena tests prove exact escaping-closure relocation, shared
+child relocation once, exclusion of unrelated rows, owner-checked suffix
+rollback, invalid-child atomic rejection, and page-prefix preservation. Mode,
+box, paragraph, alignment, page-builder, shipout, DVI, PDF, and aggregate
+rollback suites remain the semantic acceptance authority.
