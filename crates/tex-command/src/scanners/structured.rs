@@ -1042,28 +1042,41 @@ pub enum AlignmentCellOpening {
     Omit,
 }
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Expands a frozen whatsit payload at output traversal time.
     ///
     /// The caller decides how the resulting token spellings are rendered;
     /// this operation owns only canonical replay/expansion state.
     pub fn expand_output_replay(
         &mut self,
-        tokens: TracedTokenList,
-    ) -> Result<TracedTokenList, CommandError> {
+        tokens: tex_state::TokenListId<G>,
+    ) -> Result<crate::attempt::AttemptTokenListId, CommandError> {
         let episode = self.command.push_output_replay_episode(&self.state, tokens);
-        let mut expanded = self.traced_token_scratch();
+        let expanded = self
+            .command
+            .attempt
+            .arena_mut()
+            .allocate_token_buffer()
+            .map_err(|_| CommandError::input_invariant())?;
         loop {
             match self.get_x_or_protected_with_replay_completion()? {
                 Some(CommandReplayDelivery::Command(command)) => {
-                    expanded.push(command.rooted_spelling());
+                    self.command
+                        .attempt
+                        .arena_mut()
+                        .push_buffer_token(expanded, command.spelling())
+                        .map_err(|_| CommandError::input_invariant())?;
                 }
                 Some(CommandReplayDelivery::Completed(completed)) if completed == episode => break,
                 Some(CommandReplayDelivery::Completed(_)) => continue,
                 None => return Err(CommandError::input_invariant()),
             }
         }
-        Ok(self.state.finish_rooted_traced_token_list(&expanded))
+        self.command
+            .attempt
+            .arena_mut()
+            .finish_token_buffer(expanded)
+            .map_err(|_| CommandError::input_invariant())
     }
 
     /// TeX82 §1215's `get_r_token`, including its restart after inserting

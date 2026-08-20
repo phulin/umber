@@ -1,9 +1,8 @@
 //! Future-relevant state and discardable scratch allocation ownership.
 
 use std::hash::{Hash, Hasher};
-use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use tex_state::CommandContext;
 
@@ -2275,79 +2274,6 @@ pub(crate) struct TransientState {
 pub(crate) struct LiveTokenBuilder {
     pub(crate) identity: u64,
     pub(crate) tokens: tex_state::token::RootedTracedTokenBuffer,
-}
-
-const TRACED_TOKEN_POOL_SLOTS: usize = 2;
-const MAX_RETAINED_TRACED_TOKEN_CAPACITY: usize = 4_096;
-
-#[derive(Debug, Default)]
-struct TracedTokenBufferPool {
-    buffers: Mutex<[Option<tex_state::token::RootedTracedTokenBuffer>; TRACED_TOKEN_POOL_SLOTS]>,
-}
-
-pub(crate) struct TracedTokenScratch {
-    pool: Arc<TracedTokenBufferPool>,
-    buffer: Option<tex_state::token::RootedTracedTokenBuffer>,
-}
-
-impl Deref for TracedTokenScratch {
-    type Target = tex_state::token::RootedTracedTokenBuffer;
-
-    fn deref(&self) -> &Self::Target {
-        self.buffer.as_ref().expect("checked-out buffer is present")
-    }
-}
-
-impl DerefMut for TracedTokenScratch {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.buffer.as_mut().expect("checked-out buffer is present")
-    }
-}
-
-impl Drop for TracedTokenScratch {
-    fn drop(&mut self) {
-        let mut buffer = self.buffer.take().expect("checked-out buffer is present");
-        if buffer.capacity() > MAX_RETAINED_TRACED_TOKEN_CAPACITY {
-            return;
-        }
-        buffer.clear();
-        if let Some(slot) = self
-            .pool
-            .buffers
-            .lock()
-            .expect("traced-token pool lock is not poisoned")
-            .iter_mut()
-            .find(|slot| slot.is_none())
-        {
-            *slot = Some(buffer);
-        }
-    }
-}
-
-/// Checks out one process-local, discardable traced-token scratch buffer.
-///
-/// The pool contains only empty allocations and is deliberately outside
-/// semantic command state. This keeps allocation reuse without requiring a
-/// zero-behavior runtime capability to be threaded through every processor
-/// construction.
-pub(crate) fn traced_token_scratch() -> TracedTokenScratch {
-    static POOL: OnceLock<Arc<TracedTokenBufferPool>> = OnceLock::new();
-    let pool = Arc::clone(POOL.get_or_init(|| Arc::new(TracedTokenBufferPool::default())));
-    traced_token_scratch_from(pool)
-}
-
-fn traced_token_scratch_from(pool: Arc<TracedTokenBufferPool>) -> TracedTokenScratch {
-    let buffer = pool
-        .buffers
-        .lock()
-        .expect("traced-token pool lock is not poisoned")
-        .iter_mut()
-        .find_map(Option::take)
-        .unwrap_or_default();
-    TracedTokenScratch {
-        pool,
-        buffer: Some(buffer),
-    }
 }
 
 #[cfg(test)]

@@ -510,10 +510,6 @@ impl<'a, G> CommandProcessor<'a, G> {
         self.fuel.fuel_mut().record_write_expansion();
     }
 
-    pub(crate) fn traced_token_scratch(&self) -> crate::state::TracedTokenScratch {
-        crate::state::traced_token_scratch()
-    }
-
     /// Claims command-owned semantic diagnostics in detection order.
     pub fn take_semantic_diagnostics(&mut self) -> Vec<crate::CommandSemanticDiagnostic> {
         self.command.take_semantic_diagnostics()
