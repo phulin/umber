@@ -2746,12 +2746,12 @@ fn scanner_test_box(
     width: Scaled,
     height: Scaled,
     depth: Scaled,
-) -> tex_state::node_arena::NodeListRef {
+) -> tex_state::node_arena::PageListId {
     use tex_state::glue::Order;
     use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
     use tex_state::scaled::GlueSetRatio;
 
-    let children = universe.freeze_node_list(&[]);
+    let children = universe.publish_page_nodes(&[]);
     let node = BoxNode::new(BoxNodeFields {
         width,
         height,
@@ -2763,7 +2763,7 @@ fn scanner_test_box(
         glue_order: Order::Normal,
         children,
     });
-    universe.freeze_node_list(&[Node::HList(node)])
+    universe.publish_page_nodes(&[Node::HList(node)])
 }
 
 #[test]
@@ -3663,7 +3663,7 @@ fn internal_page_shape_box_sources_cover_empty_active_and_register_boundaries() 
         Scaled::from_raw(22),
         Scaled::from_raw(33),
     );
-    universe.set_box_reg_ref(255, box_node);
+    universe.assign_page_box_global(255, box_node);
     for (primitive, expected) in [(P::Wd, 11), (P::Ht, 22), (P::Dp, 33)] {
         let token = internal_primitive(&mut universe, "boxdim", primitive);
         let mut tokens = vec![token];

@@ -496,7 +496,7 @@ fn set_margin_kern_test_box(
     use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
     use tex_state::scaled::GlueSetRatio;
 
-    let children = universe.freeze_node_list(&children);
+    let children = universe.publish_page_nodes(&children);
     let boxed = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
@@ -508,12 +508,12 @@ fn set_margin_kern_test_box(
         glue_order: Order::Normal,
         children,
     });
-    let root = universe.freeze_node_list(&[if horizontal {
+    let root = universe.publish_page_nodes(&[if horizontal {
         Node::HList(boxed)
     } else {
         Node::VList(boxed)
     }]);
-    universe.set_box_reg_ref(index, root);
+    universe.assign_page_box_global(index, root);
 }
 
 #[test]
