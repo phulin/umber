@@ -527,39 +527,6 @@ cell's write epoch. None of these per-entry representations contains `Arc`,
 `Weak`, a hash, or a serialized handle. Checkpoint sealing and command-state
 adoption remain later migration work.
 
-### Fixed-size HotCore aggregate contract
-
-The storage-only aggregate in `tex-state::hot_core::snapshot` now composes four
-typed arena families, six independently owned POD stacks, one dense packed-word
-bank and inverse journal, and six external-ledger cursors. It deliberately
-assigns no TeX command meaning to those values. MainControl, format DTOs, and
-incremental DTOs do not consume this substrate yet.
-
-`HotSnapshot` is a 152-byte copy-only runtime value. It contains the candidate
-and accepted-base identities, four arena watermarks, six stack lengths, the
-dense-bank journal mark, and the page/PDF/effect/output/source/resource
-cursors. Its retained-byte contribution is zero regardless of live-state size.
-Opening a mark performs fixed shallow work; after the inline journal-mark stack
-warms, it performs no heap allocation.
-
-Restore first validates both aggregate identities, the active inverse-journal
-frame and every inverse coordinate, every arena watermark, every stack length,
-and every external cursor. Only after all checks pass does it restore dense
-values backward and truncate arena, stack, and ledger suffixes. A stale,
-foreign, cross-generation, or non-ancestor mark therefore rejects before any
-component changes. Accepted arena layers remain readable through sibling
-candidates; rejecting a candidate drops only its overlay, while retry rollback
-reuses warmed arena, stack, and journal capacity.
-
-The assertion-bearing `benchmarks/hot-core-snapshot` gate performs 10,000
-aggregate accept/reject/retry cycles after warmup and requires exactly zero
-allocation calls, zero requested bytes, and byte-for-byte identical aggregate
-accounting at the end. Crate tests separately pin the 152-byte layout, zero
-snapshot retention, exact all-live logical growth, accepted-base visibility,
-nested commit transfer, and atomic stale/foreign rejection. Runtime marks and
-coordinates derive no serialization and remain absent from format and detached
-incremental values.
-
 ## Snapshot and rollback model
 
 ### Fixed-size mark

@@ -19,7 +19,3 @@ path = "src/bin/command_allocations.rs"
 [[bin]]
 name = "packed_cutover_gate"
 path = "src/bin/packed_cutover_gate.rs"
-
-[[bench]]
-name = "source_descriptor"
-harness = false

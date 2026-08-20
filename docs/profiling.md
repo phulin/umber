@@ -74,29 +74,6 @@ followed by the engine-owned `DviPagePlan::clone` at 19.06% inclusive and
 7.92% self. The largest `tex-command-stream`-owned kernels were
 `events_match` at 0.25% self and `translate_observation` at 0.23% self.
 
-Issue `umber2-johp.296` attributed that content hashing through a DWARF-stack
-capture to `SourceDescriptor::generated` below canonical raw source delivery.
-The command source registry already retained the immutable backing, but rebuilt
-its generated descriptor before every token and therefore rehashed the complete
-source. A registered command source now retains the mechanically identical
-descriptor, including its domain-separated identity, and clones it for
-rollback-coupled source-map registration. This does not cache by digest or
-accept a caller-supplied identity: `GeneratedSource` still computes the exact
-versioned input-domain identity once when the source is registered, so
-collision safety and descriptor equality remain unchanged.
-
-The bounded focused benchmark is:
-
-```bash
-cargo bench --manifest-path benchmarks/tex-command/Cargo.toml \
-  --bench source_descriptor -- --noplot
-```
-
-It compares rebuilding a descriptor for one shared 1 MiB generated backing
-against cloning the descriptor retained at registration. Full Plain, Story,
-and Gentle traces remain manual profiling and exact-report validation inputs,
-not benchmark fixtures.
-
 Those tool-owned ceilings are too small to support a credible end-to-end
 optimization, so no tracer change was promoted. On the measured base, the
 current exhaustive signature was 23 divergences in 9 root sites with
@@ -591,30 +568,6 @@ with five pairs favoring the candidate. The prototype was removed. Per-word
 tag dispatch is not the promotion roofline; reducing the 3,057 promotions and
 202,149 source words copied by a cold Gentle run is the higher-leverage target.
 
-## Survivor promotion escape census
-
-Issue `umber2-eeka` attributed the promotion volume before attempting
-cross-root structural sharing. One cold Gentle run performed 3,057 promotions
-(1,872 fresh and 1,185 recycled), visited 16,798 source lists, and copied
-202,149 compact words in 4.22 ms of feature-gated promotion timers. Only 11,875
-words and 3,548 lists came from existing survivor roots; 190,274 words (94.1%)
-and 13,250 lists came directly from the epoch arena. Avoiding copies of
-already-immutable survivor subgraphs therefore has a ceiling of roughly 5.9%
-of promotion volume, well below a consequential whole-run gain.
-
-A stronger lazy-escape prototype exposed the governing representation
-constraint before benchmarking: environment box slots and their unified
-rollback journal intentionally encode a survivor span in one 64-bit word. A
-live epoch handle includes timeline identity and cannot be stored in that word;
-accepted shipout also reclaims the post-mark epoch suffix. Supporting borrowed
-epoch values would require widening/redesigning every box slot and undo record,
-then promoting or pinning all live references at each reclamation boundary.
-That broad state-layout change is not justified by the measured promotion
-ceiling, so the prototype was removed. The retained census separates epoch and
-survivor source words/lists for future profiles. Directly constructing a
-survivor from the owned box payload, while keeping the existing register and
-rollback representation, is the narrower higher-value follow-up.
-
 ## Non-macro decoded-meaning cache experiment
 
 The feature-gated local-write, global-write, group-exit, and rollback
@@ -640,42 +593,6 @@ with only one pair favoring the cache. The prototype was removed. At this
 working-set locality, decoding the packed meaning is cheaper than probing a
 second cache; future expansion gains should eliminate higher-level token or
 meaning requests rather than memoize this leaf.
-
-## Dense survivor-promotion remap experiment
-
-Issue `umber2-2plv` tested whether the epoch-heavy promotion workload should
-use direct slot indexing instead of hashing every source list. A cold Gentle
-run copies 94.1% of its promoted words and 78.9% of its source lists from the
-epoch arena, so the candidate kept a reusable dense epoch-slot remap and used
-the hash table only for survivor sources. In a matched native sample,
-`BuildHasher::hash_one` fell from 23 of 7,630 main-thread samples (0.30%) to 12
-of 6,712 (0.18%), while the inclusive promotion share fell from 2.33% to
-2.07%. This confirms that the data structure removed the intended local work.
-
-It was nevertheless slower end to end. Twelve alternating ten-run Gentle
-pairs had medians of 85.938 ms/run for the baseline and 86.366 ms/run for the
-candidate, a 0.50% regression, with only three pairs favoring the dense map.
-Growing, clearing, and touching the extra vectors costs more than hashing the
-roughly 16,798 source lists at this scale, so the prototype was removed.
-
-The profiling runner now reports a feature-gated compact-node append census to
-guide larger storage changes. One measured Gentle run performs 33,339 append
-calls for 419,797 words, appends rows to 10 of the 14 sidecar tables, triggers
-10,608 retained-vector capacity growth events, and grows retained payload
-capacity by 9,512,080 bytes. Per-column attribution assigns 3,662 events each
-to words and origins and 2,543 to packed box rows; every other sidecar column
-combined accounts for only 741 events (7.0%). This rules out the 14-table shape
-as the principal allocation cause.
-
-Path attribution then assigns 3,646 word growths, 3,646 origin growths, and
-2,531 box growths to survivor compact copy. In other words, nearly all of the
-visible growth is the cost of fresh per-root survivor buffers. However, the
-matched whole-run sample places complete promotion at only about 2.3% of
-Gentle, so even a zero-cost promotion redesign cannot be a large end-to-end
-swing. Chunked or detachable storage remains the principled fix if promotion
-becomes a larger workload, but the current optimization loop should first
-reduce expansion, line-breaking, and allocator call volume with higher sampled
-ceilings.
 
 ## Invariant-fast traced-token decoding
 
@@ -852,41 +769,6 @@ reported rather than guessed.
 Compiler inlining can make broad frames such as `main` or `run` dominate an
 inclusive ranking. Self time is unaffected; use a named subtree when comparing
 the internal costs of a subsystem.
-
-## Reachability-owned lookup
-
-Issue `umber2-3v8z.26` re-profiled token-list and macro-body lookup after the
-TeX82 diagnostic projection lifecycle fix. The production `pdflatex` capture
-used the pinned distribution, format, source, and cache at exactly 12,000,000
-command-fuel units; it reached the canonical fuel limit, collected 2,356 cycle
-samples, and lost none. The evidence is under
-`target/umber2-3v8z.26/prod-record-fuel-12000000/`.
-
-On the preceding post-projection capture, `MacroStore::owner` accounted for
-1.72% self samples, `TokenStore::owner` 0.88%, `MacroStore::get` 0.69%,
-`TokenStore::resolve_stored` 0.42%, `MacroStore::contains` 0.28%, and
-`MacroStore::resolve_stored` 0.27%. After consolidating stored/live resolution,
-the repeated `owner`, token `resolve_stored`, and macro `contains` leaves no
-longer appeared as separate hot work. The new direct leaves were
-`MacroStore::resolve_stored` 0.96%, `MacroStore::get` 0.50%,
-`TokenStore::owner` 0.45%, `MacroStore::resolved_owner` 0.16%, and
-`TokenStore::resolved_owner` 0.09%. Interpret these flat samples as attribution
-evidence, not an additive inclusive total: inlining and the new single lookup
-boundary redistribute samples among symbols.
-
-The focused standalone benchmark exercises live hits, dead weak slots,
-generation mismatches, format holes, and collision-safe lookup for both value
-families:
-
-```bash
-CARGO_BUILD_JOBS=1 cargo bench \
-  --manifest-path benchmarks/reachability-lookup/Cargo.toml \
-  --bench lookup -- --noplot
-```
-
-Criterion timings remain diagnostic only. The routine regression is the
-deterministic primitive-work test in `tex-state`; acceptance depends on its
-operation counts and semantic outcomes, not a wall-clock guard.
 
 ## Scalar command delivery and scanning
 

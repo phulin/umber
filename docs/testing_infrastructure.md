@@ -762,23 +762,6 @@ default cargo-test tier because its workload deliberately materializes large
 input, page, mode, stream, hyphenation, provenance, and Unicode code-table
 state.
 
-The storage-only HotCore aggregate has its own fixed-mark and rollback tier:
-
-```bash
-cargo run --manifest-path benchmarks/hot-core-snapshot/Cargo.toml
-cargo bench --manifest-path benchmarks/hot-core-snapshot/Cargo.toml \
-  --bench snapshots
-```
-
-The first command is assertion-bearing. After one warm rollback, it executes
-10,000 aggregate accept/reject/retry cycles and fails unless allocation calls
-and requested bytes both remain zero, retained accounting returns to the exact
-warm plateau, the runtime mark remains 152 bytes, and the mark itself retains
-zero bytes. The Criterion rows compare empty, 1,024-word, and 65,536-word live
-states and time the all-family bounded rollback. These substrate controls do
-not exercise MainControl or authorize format/checkpoint serialization of live
-coordinates.
-
 Macro-invocation provenance has an assertion-bearing state performance tier:
 
 ```bash
