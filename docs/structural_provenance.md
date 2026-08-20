@@ -1,6 +1,14 @@
 # Structural and demand-driven provenance
 
-Status: ownership contract for Beads issue `umber2-3v8z.4`.
+Status: historical ownership contract for Beads issue `umber2-3v8z.4`.
+
+The runtime ownership portions of this document are superseded by
+[Runtime storage lifetimes](runtime_storage_lifetimes.md). The current
+`tex-state` cold boundary accepts explicit diagnostic or rendered-source
+demand, starts from generation-typed `ProvenanceId<G>` coordinates, and emits
+owned source locations, summaries, strings, byte ranges, and artifact source
+recipes. Those DTOs contain no runtime origin/source id, owner, reference, or
+arena coordinate. Ordinary execution does not invoke this presentation build.
 
 This document replaces append-history ownership of diagnostic provenance. It
 refines [Compact Source Spans and Token Provenance](source_spans_and_provenance.md)

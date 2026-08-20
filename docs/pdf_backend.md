@@ -58,11 +58,18 @@ handle-free semantic codecs, so loaded objects keep their observable numbers
 without embedding process-local handles. Any committed PDF page or other
 job-only document state still makes the format ineligible.
 
+Within the live ledger, token-bearing page, action, annotation, outline,
+catalog, raw-object, and form fields carry `TokenListId<G>` coordinates branded
+for the admitted generation. Checkpoints clone only the ledger's owned vectors
+and maps plus those copy-only coordinates; they do not retain per-value owners.
+The format and finalization boundaries lower token payloads through handle-free
+semantic codecs before they can escape that generation.
+
 Raw `\pdfobj stream file` payloads cross the same accepted-resource barrier as
 other output resources. Once engine execution completes, PDF closure discovery
 normalizes each file spelling as a typed TeX-input request. Acceptance retains
 a separate receipt keyed by raw-object identity with the exact source spelling,
-VFS path, content identity, and immutable shared bytes. Detached finalization
+VFS path, content identity, and owned bytes. Detached finalization
 requires that receipt and verifies its spelling and content identity; it never
 reconstructs or reopens a host filename. An unavailable payload fails PDF
 closure before the candidate and its effects are accepted. This receipt is

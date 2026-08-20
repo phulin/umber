@@ -95,8 +95,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/meaning.rs`: Static packed TeX meanings plus generation-typed macro
   meaning words; raw integers never materialize runtime definition ids.
 - `src/meaning/tests.rs`: Static codec, primitive, and typed macro-meaning tests.
-- `src/memo.rs`: Opaque schema-versioned detached memo envelopes, handle-free transition/effect/result DTOs, and aggregate token/glue/macro/node/font import APIs.
-- `src/memo/tests.rs`: Cold/fork/rollback Cross-Universe memo import, provenance stripping, corruption, bounds, kind, and semantic round-trip tests.
+- `src/memo.rs`: Opaque schema-versioned detached memo envelopes, handle-free
+  transition/effect/result DTOs, explicit validation staging, and
+  generation-local token/glue/macro publication.
+- `src/memo/tests.rs`: Cross-generation spelling/value import, corruption,
+  bounds, staging-before-publication, and semantic round-trip tests.
 - `profiling-allocator/`: isolated profiling-only `GlobalAlloc` forwarding
   shim used by executable profiling builds to attribute allocation calls and
   requested bytes to nested hot-core owner scopes.
@@ -117,7 +120,16 @@ All production mutation of live TeX state should pass through `Universe` or simi
   owns immutable page-list publication and rollback cursors.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with copy-only token
   coordinates in catalog/page collections, deterministic object allocation,
-  durable form-list coordinates, suffix transfer, and committed-page ledger.
+  durable form-list coordinates, owned checkpoint collections, owned external
+  resource bytes, suffix transfer, and committed-page ledger.
+- `src/pdf/tests.rs`: Generation-typed page/action/object coordinates, owned
+  image payloads, and atomic PDF checkpoint rollback tests.
+- `src/provenance_resolver.rs`: Explicit cold-demand admission from
+  generation-typed provenance coordinates to owned handle-free diagnostic and
+  generated-source presentation DTOs.
+- `src/provenance_resolver/tests.rs`: Cold source resolution, detached
+  presentation survival, owned generated recipes, bounded traces, and invalid
+  range tests.
 - `src/pdf/action.rs`: Typed, checkpointed PDF action model carrying copy-only token coordinates shared by catalog, link, and outline scanners.
 - `src/pdf/annotation.rs`: Checkpointed general-annotation reservations with copy-only token coordinates, running dimension specs, and logical/open-link records.
 - `src/pdf/outline.rs`: Immediately allocated, checkpointed PDF outline entries owning their attributes, title, action, and action/item/title identities.
@@ -172,11 +184,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
   interning, foreign-session rejection, and retirement tests.
 - `src/world.rs`: External-effect boundary for files, atomic downstream
   file-set publication, streams, clocks, randomness, shell policy, printing,
-  coordinate-valued deferred-write effects, artifact-owned rendered-source
-  roots/recipes, weak snapshot-root mounts, and field/key-specific
+  handle-free deferred-write memos, artifact-owned detached rendered-source
+  recipes, value-stamped snapshot-root mounts, and field/key-specific
   allocation-independent dependency projections.
-- `src/world/tests.rs`: Unit tests for world snapshots, file records, streams,
-  printing, randomness, shell escape, deferred-write values, and effect replay.
+- `src/world/tests.rs`: Focused detached effect, owned artifact/provenance,
+  input cloning, snapshot rollback, and effect-root tests.
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
 - `tests/structural_node_lifecycle.rs`: Focused success, committed-failure, rollback, retry, rejection, checkpoint, and generation-fork controls for structural node-list ownership.
 - `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted input and transaction capabilities fail to compile.
