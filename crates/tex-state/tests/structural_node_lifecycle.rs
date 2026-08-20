@@ -1,12 +1,12 @@
 use tex_state::Universe;
 use tex_state::glue::Order;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
-fn boxed_penalty(universe: &mut Universe, penalty: i32) -> NodeListRef {
-    let children = universe.freeze_node_list(&[Node::Penalty(penalty)]);
-    universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+fn boxed_penalty(universe: &mut Universe, penalty: i32) -> PageListId {
+    let children = universe.publish_page_nodes(&[Node::Penalty(penalty)]);
+    universe.publish_page_nodes(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(0),
@@ -19,77 +19,60 @@ fn boxed_penalty(universe: &mut Universe, penalty: i32) -> NodeListRef {
     }))])
 }
 
-fn boxed_penalty_value(root: &NodeListRef) -> i32 {
-    let Some(tex_state::node_arena::NodeRef::HList(box_node)) = root.nodes().first() else {
+fn boxed_penalty_value(universe: &Universe, root: PageListId) -> i32 {
+    let root = universe
+        .page_node_list(root)
+        .expect("page root remains readable");
+    let Some(Node::HList(box_node)) = root.nodes().first() else {
         panic!("root must contain one hbox")
     };
-    let children = root
-        .resolve(box_node.children)
+    let children = universe
+        .page_node_list(box_node.children)
         .expect("box child remains readable");
-    let Some(tex_state::node_arena::NodeRef::Penalty(value)) = children.nodes().first() else {
+    let Some(Node::Penalty(value)) = children.nodes().first() else {
         panic!("hbox must contain one penalty")
     };
-    value
+    *value
 }
 
-fn box_register_penalty(universe: &Universe) -> i32 {
+fn box_register_penalty(universe: &mut Universe) -> i32 {
     let root = universe
-        .box_reg_ref(0)
+        .copy_box_to_page(0)
         .expect("box register 0 remains populated");
-    boxed_penalty_value(&root)
+    boxed_penalty_value(universe, root)
 }
 
 #[test]
-fn checkpoint_and_direct_transitions_preserve_box_values() {
+fn page_rollback_and_durable_promotion_preserve_box_values() {
     let mut universe = Universe::default();
     let baseline = boxed_penalty(&mut universe, 10);
-    universe.set_box_reg_ref(0, baseline);
+    universe.assign_page_box_local(0, baseline);
 
     let rollback = universe.snapshot();
     let replacement = boxed_penalty(&mut universe, 20);
-    universe.set_box_reg_ref(0, replacement);
-    assert_eq!(box_register_penalty(&universe), 20);
+    universe.assign_page_box_local(0, replacement);
+    assert_eq!(box_register_penalty(&mut universe), 20);
     universe.rollback(&rollback);
-    assert_eq!(box_register_penalty(&universe), 10);
+    assert_eq!(box_register_penalty(&mut universe), 10);
 
-    let committed = universe.begin_direct_operation();
-    let partial = boxed_penalty(&mut universe, 40);
-    universe.set_box_reg_ref(0, partial);
-    universe.commit_direct_operation(committed);
-    assert_eq!(box_register_penalty(&universe), 40);
-
-    {
-        let mut rejected = universe.begin_box_build();
-        let _scratch = boxed_penalty(&mut rejected, 50);
-    }
-    assert_eq!(box_register_penalty(&universe), 40);
-
-    let mut accepted = universe.begin_box_build();
-    let installed = boxed_penalty(&mut accepted, 60);
-    accepted.finish(0, Some(installed), false);
-    assert_eq!(box_register_penalty(&universe), 60);
-
-    universe.begin_private_revision();
-    let rejected = universe.begin_direct_operation();
-    let scratch = boxed_penalty(&mut universe, 70);
-    universe.discard_direct_operation_allocations(rejected);
-    assert_eq!(boxed_penalty_value(&scratch), 70);
-    assert_eq!(box_register_penalty(&universe), 60);
+    let cursor = universe.page_node_cursor();
+    let rejected = boxed_penalty(&mut universe, 40);
+    assert_eq!(boxed_penalty_value(&universe, rejected), 40);
+    universe
+        .truncate_page_nodes(cursor)
+        .expect("speculative page suffix rolls back");
+    assert!(universe.page_node_list(rejected).is_err());
+    assert_eq!(box_register_penalty(&mut universe), 10);
 }
 
 #[test]
-fn checkpoint_fork_restores_the_selected_box_value() {
+fn durable_box_survives_format_round_trip() {
     let mut universe = Universe::default();
-    let checkpoint_root = boxed_penalty(&mut universe, 70);
-    universe.set_box_reg_ref(0, checkpoint_root);
-    let checkpoint = universe.snapshot();
+    let root = boxed_penalty(&mut universe, 70);
+    universe.assign_page_box_global(0, root);
 
-    let later = boxed_penalty(&mut universe, 80);
-    universe.set_box_reg_ref(0, later);
-    let substrate = universe.freeze_generation();
-    let fork = substrate
-        .fork_at(&checkpoint)
-        .expect("checkpoint can seed a fork");
-
-    assert_eq!(box_register_penalty(&fork), 70);
+    let format = universe.dump_format().expect("box graph format dumps");
+    let mut restored = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("box graph format restores");
+    assert_eq!(box_register_penalty(&mut restored), 70);
 }

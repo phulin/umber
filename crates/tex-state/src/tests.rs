@@ -55,17 +55,32 @@ fn margin_kern_glyph_provenance_survives_snapshot_and_format_round_trips() {
         ch: b'.',
     };
     let mut universe = Universe::new();
-    let list = universe.freeze_node_list(std::slice::from_ref(&expected));
-    universe.set_box_reg_ref_global(17, list);
+    let list = universe.publish_page_nodes(std::slice::from_ref(&expected));
+    universe.assign_page_box_global(17, list);
     let snapshot = universe.snapshot();
-    let root = universe.box_reg_ref(17).expect("box survives snapshot");
-    assert_eq!(root.nodes(), std::slice::from_ref(&expected));
+    let root = universe
+        .copy_box_to_page(17)
+        .expect("box survives snapshot");
+    assert_eq!(
+        universe
+            .page_node_list(root)
+            .expect("copied box belongs to the page arena")
+            .nodes(),
+        std::slice::from_ref(&expected)
+    );
     universe.rollback(&snapshot);
 
     let bytes = universe.dump_format().expect("margin-kern format dumps");
-    let loaded = Universe::from_format(World::default(), &bytes).expect("margin-kern format loads");
-    let root = loaded.box_reg_ref(17).expect("box survives format");
-    assert_eq!(root.nodes(), std::slice::from_ref(&expected));
+    let mut loaded =
+        Universe::from_format(World::default(), &bytes).expect("margin-kern format loads");
+    let root = loaded.copy_box_to_page(17).expect("box survives format");
+    assert_eq!(
+        loaded
+            .page_node_list(root)
+            .expect("restored box belongs to the page arena")
+            .nodes(),
+        std::slice::from_ref(&expected)
+    );
 }
 
 #[test]

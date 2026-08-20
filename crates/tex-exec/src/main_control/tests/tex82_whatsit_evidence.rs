@@ -377,7 +377,7 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
     );
     run_to_end(&mut control, &mut stores);
 
-    let nodes = box_child_nodes(&stores, 1);
+    let nodes = box_child_nodes(&mut stores, 1);
     assert!(
         matches!(
             nodes.as_slice(),
@@ -402,17 +402,14 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
         ),
         "constructed nodes: {nodes:#?}"
     );
-    assert!(box_child_nodes(&stores, 0).is_empty());
+    assert!(box_child_nodes(&mut stores, 0).is_empty());
     assert!(
         stores.copy_box_to_page(2).is_some(),
         "nested copy survives original replacement"
     );
     for (register, vertical) in [(1, false), (2, true)] {
-        let root = first_published_node(
-            &stores,
-            stores.copy_box_to_page(register).expect("box exists"),
-        )
-        .expect("box has a root");
+        let list = stores.copy_box_to_page(register).expect("box exists");
+        let root = first_published_node(&stores, list).expect("box has a root");
         let boxed = match (vertical, root) {
             (false, Node::HList(boxed)) | (true, Node::VList(boxed)) => boxed,
             (_, other) => panic!("box {register} has the expected orientation: {other:?}"),
@@ -454,7 +451,7 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
     );
     assert!(terminal_text(&malformed).contains("Missing { inserted"));
     assert!(matches!(
-        box_child_nodes(&malformed, 0).as_slice(),
+        box_child_nodes(&mut malformed, 0).as_slice(),
         [Node::Whatsit(Whatsit::DeferredWrite { .. })]
     ));
 }

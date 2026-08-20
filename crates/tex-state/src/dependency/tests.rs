@@ -924,7 +924,7 @@ fn equal_environment_writes_and_restores_do_not_advance_stamps() {
     let symbol = universe.intern("receipt-equal-meaning");
     universe.track_dependency(cell(BankTag::Meaning, symbol.symbol().raw()));
     universe.set_meaning(symbol, crate::meaning::Meaning::Undefined);
-    universe.clear_box_reg_global(300);
+    universe.clear_box_global(300);
     universe.set_current_font(universe.current_font());
     universe.set_font_hyphen_char(
         crate::font::NULL_FONT,

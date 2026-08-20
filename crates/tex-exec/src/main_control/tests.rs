@@ -2272,13 +2272,12 @@ fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
         .find_map(|node| match node {
             Node::Disc {
                 pre, post, replace, ..
-            } => Some((pre.clone(), post.clone(), replace.clone())),
+            } => Some((*pre, *post, *replace)),
             _ => None,
         })
         .expect("completed discretionary node");
     assert_eq!(
-        disc.0
-            .to_vec()
+        page_vec(&stores, disc.0)
             .iter()
             .filter(|node| matches!(
                 node,
@@ -2334,8 +2333,14 @@ fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
         pre.is_empty(),
         "the forbidden nested discretionary and its suffix were pruned"
     );
-    assert!(matches!(post.to_vec().as_slice(), [Node::Kern { .. }]));
-    assert!(matches!(replace.to_vec().as_slice(), [Node::Kern { .. }]));
+    assert!(matches!(
+        page_vec(&stores, *post).as_slice(),
+        [Node::Kern { .. }]
+    ));
+    assert!(matches!(
+        page_vec(&stores, *replace).as_slice(),
+        [Node::Kern { .. }]
+    ));
     assert!(terminal_text(&stores).contains("Improper discretionary list"));
     assert!(
         !terminal_text(&stores).contains("Missing { inserted"),
@@ -2484,16 +2489,20 @@ fn alignment_v_template_continues_the_pending_ligkern_run() {
 
     run_to_end(&mut control, &mut stores);
 
-    fn collect_ligatures(nodes: &tex_state::node_arena::PageListId, found: &mut Vec<Vec<char>>) {
-        for node in nodes.nodes() {
+    fn collect_ligatures(
+        stores: &Universe,
+        root: tex_state::node_arena::PageListId,
+        found: &mut Vec<Vec<char>>,
+    ) {
+        for node in stores
+            .page_node_list(root)
+            .expect("test list belongs to the page arena")
+            .nodes()
+        {
             match node {
-                tex_state::node_arena::NodeRef::Lig { orig, .. } => found.push(orig.to_vec()),
-                tex_state::node_arena::NodeRef::HList(boxed)
-                | tex_state::node_arena::NodeRef::VList(boxed) => {
-                    let children = nodes
-                        .resolve(boxed.children)
-                        .expect("box children belong to the traversed owner");
-                    collect_ligatures(&children, found);
+                Node::Lig { orig, .. } => found.push(orig.clone()),
+                Node::HList(boxed) | Node::VList(boxed) => {
+                    collect_ligatures(stores, boxed.children, found);
                 }
                 _ => {}
             }
@@ -2502,7 +2511,7 @@ fn alignment_v_template_continues_the_pending_ligkern_run() {
 
     let root = stores.copy_box_to_page(0).expect("vbox is assigned");
     let mut ligatures = Vec::new();
-    collect_ligatures(&root, &mut ligatures);
+    collect_ligatures(&stores, root, &mut ligatures);
     assert_eq!(ligatures, [vec!['f', 'i']]);
 }
 
@@ -2900,7 +2909,7 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
             .collect::<Vec<_>>();
         assert_eq!(boxed_rows.len(), 2, "register {register}: {rows:?}");
         for row in boxed_rows {
-            let first = row.children.to_vec().into_iter().next();
+            let first = page_vec(&stores, row.children).into_iter().next();
             let Some(Node::Glue { spec, kind, .. }) = first else {
                 panic!("row begins with tabskip glue: {rows:?}");
             };
@@ -5357,7 +5366,7 @@ fn recursive_owned_node_signature(
 ) -> String {
     use tex_state::node::{LeaderPayload, Node};
 
-    list.to_vec()
+    page_vec(stores, *list)
         .iter()
         .map(|node| match node {
             Node::HList(box_node) | Node::VList(box_node) => format!(
@@ -5462,10 +5471,10 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\setbox1=\copy0");
     run_to_end(&mut control, &mut stores);
+    let source_after_copy = stores.copy_box_to_page(0).expect("copy retains its source");
     assert_eq!(
-        stores.copy_box_to_page(0).as_ref(),
-        Some(&source),
-        "copy retains its source"
+        recursive_node_signature(&stores, &source_after_copy),
+        recursive_node_signature(&stores, &source)
     );
 
     let copied = stores.copy_box_to_page(1).expect("copied register");
@@ -5475,11 +5484,11 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
         expected,
         "copy retains the exact recursive structure"
     );
-    let copied_nodes = copied.to_vec();
+    let copied_nodes = page_vec(&stores, copied);
     let [Node::HList(root)] = copied_nodes.as_slice() else {
         panic!("fixture root should be an hbox")
     };
-    let children = root.children.to_vec();
+    let children = page_vec(&stores, root.children);
     assert_eq!(children.len(), 13, "every payload remains in child order");
     assert!(
         matches!(&children[1], Node::Glue { spec, leader: Some(_), .. } if spec.width.raw() == 301)
@@ -5498,11 +5507,10 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
         stores.copy_box_to_page(0).is_none(),
         "box consumes its source"
     );
-    assert_eq!(
-        stores.copy_box_to_page(1),
-        Some(copied.clone()),
-        "copy survives source release"
-    );
+    let surviving_copy = stores
+        .copy_box_to_page(1)
+        .expect("copy survives source release");
+    assert_eq!(recursive_node_signature(&stores, &surviving_copy), expected);
     let consumed = stores.copy_box_to_page(2).expect("consumed destination");
     assert_eq!(
         recursive_node_signature(&stores, &consumed),
@@ -5511,12 +5519,18 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
     );
 
     stores.rollback(&baseline);
-    assert_eq!(stores.copy_box_to_page(0).as_ref(), Some(&source));
+    let rolled_back_source = stores
+        .copy_box_to_page(0)
+        .expect("rollback restores source");
+    assert_eq!(
+        recursive_node_signature(&stores, &rolled_back_source),
+        recursive_node_signature(&stores, &source)
+    );
     assert!(stores.copy_box_to_page(1).is_none());
 
     stores.assign_page_box_local(1, source);
     let format = stores.dump_format().expect("recursive graph format dumps");
-    let restored = Universe::from_format(tex_state::World::memory(), &format)
+    let mut restored = Universe::from_format(tex_state::World::memory(), &format)
         .expect("recursive graph format restores");
     let restored_graph = restored
         .copy_box_to_page(1)
@@ -5542,11 +5556,11 @@ fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
     run_to_end(&mut control, &mut stores);
 
     let box1 = stores.copy_box_to_page(1).expect("outer vbox exists");
-    let box1_nodes = box1.to_vec();
+    let box1_nodes = page_vec(&stores, box1);
     let [tex_state::node::Node::VList(outer)] = box1_nodes.as_slice() else {
         panic!("register 1 should hold a vbox");
     };
-    let children = outer.children.to_vec();
+    let children = page_vec(&stores, outer.children);
     assert!(
         children
             .iter()
@@ -5603,8 +5617,14 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
         br"\setbox0=\vbox{\hbox{}}\setbox1=\hbox{\kern1pt}",
     );
     run_to_end(&mut control, &mut stores);
-    let vbox = stores.copy_box_to_page(0);
-    let hbox = stores.copy_box_to_page(1);
+    let vbox_root = stores
+        .copy_box_to_page(0)
+        .expect("vbox register is nonvoid");
+    let hbox_root = stores
+        .copy_box_to_page(1)
+        .expect("hbox register is nonvoid");
+    let vbox = recursive_node_signature(&stores, &vbox_root);
+    let hbox = recursive_node_signature(&stores, &hbox_root);
     let source = "\\unhbox0\\par\\unhcopy0\\par\\unvbox1\\unvcopy1";
 
     let mut control = MainControl::tex82_initex(&mut stores);
@@ -5617,16 +5637,20 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
         )
         .expect("incompatible unbox source checkpoints");
     run_to_end(&mut control, &mut stores);
-    assert_eq!(stores.copy_box_to_page(0), vbox);
-    assert_eq!(stores.copy_box_to_page(1), hbox);
+    let current_vbox = stores.copy_box_to_page(0).expect("vbox remains nonvoid");
+    let current_hbox = stores.copy_box_to_page(1).expect("hbox remains nonvoid");
+    assert_eq!(recursive_node_signature(&stores, &current_vbox), vbox);
+    assert_eq!(recursive_node_signature(&stores, &current_hbox), hbox);
     let first_output = terminal_text(&stores);
 
     control
         .restore_checkpoint(&checkpoint, &mut stores)
         .expect("incompatible unbox source restores");
     run_to_end(&mut control, &mut stores);
-    assert_eq!(stores.copy_box_to_page(0), vbox);
-    assert_eq!(stores.copy_box_to_page(1), hbox);
+    let replayed_vbox = stores.copy_box_to_page(0).expect("vbox remains nonvoid");
+    let replayed_hbox = stores.copy_box_to_page(1).expect("hbox remains nonvoid");
+    assert_eq!(recursive_node_signature(&stores, &replayed_vbox), vbox);
+    assert_eq!(recursive_node_signature(&stores, &replayed_hbox), hbox);
     assert_eq!(terminal_text(&stores), first_output);
 }
 
@@ -10482,16 +10506,14 @@ fn final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly() {
 }
 
 /// Collects every `\setlanguage` whatsit inside box register zero.
-fn language_whatsits(stores: &Universe) -> Vec<(u8, u8, u8)> {
+fn language_whatsits(stores: &mut Universe) -> Vec<(u8, u8, u8)> {
     let outer = stores
         .copy_box_to_page(0)
         .expect("box 0 holds the constructed hbox");
     let Some(Node::HList(boxed)) = first_published_node(stores, outer) else {
         panic!("box 0 holds an hlist");
     };
-    boxed
-        .children
-        .to_vec()
+    page_vec(stores, boxed.children)
         .iter()
         .filter_map(|node| match node {
             Node::Whatsit(tex_state::node::Whatsit::Language {
@@ -10520,7 +10542,7 @@ fn language_normalization_and_same_language_append_boundaries_match_tex82() {
     );
     run_to_end(&mut control, &mut stores);
     assert_eq!(
-        language_whatsits(&stores),
+        language_whatsits(&mut stores),
         vec![(7, 2, 63), (7, 2, 63), (255, 2, 63), (0, 2, 63), (0, 2, 63)]
     );
 }
@@ -10547,9 +10569,7 @@ fn paragraph_entry_snapshots_language_before_first_character() {
     let Some(Node::VList(vbox)) = first_published_node(&stores, outer) else {
         panic!("box 0 holds a vlist");
     };
-    let lines = vbox
-        .children
-        .to_vec()
+    let lines = page_vec(&stores, vbox.children)
         .iter()
         .filter_map(|node| match node {
             Node::HList(line) => Some(line.clone()),
@@ -10560,8 +10580,7 @@ fn paragraph_entry_snapshots_language_before_first_character() {
     let languages = lines
         .iter()
         .map(|line| {
-            line.children
-                .to_vec()
+            page_vec(&stores, line.children)
                 .iter()
                 .filter_map(|node| match node {
                     Node::Whatsit(tex_state::node::Whatsit::Language {
@@ -10602,9 +10621,7 @@ fn setlanguage_illegal_mode_recovers_without_scan_or_append() {
         panic!("box 0 holds a vlist");
     };
     assert!(
-        !boxed
-            .children
-            .to_vec()
+        !page_vec(&stores, boxed.children)
             .iter()
             .any(|node| matches!(node, Node::Whatsit(_))),
         "no whatsit is appended when the mode test fails"
