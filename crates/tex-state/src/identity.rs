@@ -370,6 +370,19 @@ impl IdentityAllocator {
         }
     }
 
+    /// Reconstructs an ancestor mark after the aggregate arena mark has
+    /// validated the shared allocation boundary.
+    pub(crate) fn watermark_at(&self, len: u32) -> Result<IdentityMark, IdentityError> {
+        let len = len as usize;
+        if len < self.builtin_slots as usize || len > self.slots.len() {
+            return Err(IdentityError::InvalidatedMark);
+        }
+        Ok(IdentityMark {
+            len,
+            frontier: len.checked_sub(1).map(|index| self.slots[index]),
+        })
+    }
+
     /// Preflights an ancestor rollback without changing liveness or generation.
     ///
     /// The active generation is intentionally absent from `IdentityMark` and

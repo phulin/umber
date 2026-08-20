@@ -30,7 +30,6 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
     let mut stores = Universe::new();
     let displaced_register = stores.intern_token_list_ref(&[token('a')]);
     stores.set_toks_global(0, displaced_register.id());
-    drop(displaced_register);
     let replacement_register = stores.intern_token_list_ref(&[token('b')]);
 
     AssignmentCommitter::new(&mut stores).toks(
@@ -44,7 +43,6 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
     let parameter = TokParam::EVERY_PAR;
     let displaced_parameter = stores.intern_token_list_ref(&[token('c')]);
     stores.set_tok_param_option_global(parameter, Some(displaced_parameter.id()));
-    drop(displaced_parameter);
     let replacement_parameter = stores.intern_token_list_ref(&[token('d')]);
 
     AssignmentCommitter::new(&mut stores).token_parameter(
@@ -67,7 +65,6 @@ fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
     let mut stores = Universe::new();
     let displaced = stores.intern_token_list_ref(&[token('a')]);
     stores.set_toks_global(0, displaced.id());
-    drop(displaced);
     stores.enter_group();
     let replacement = stores.intern_token_list_ref(&[token('b')]);
 
@@ -90,20 +87,17 @@ fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
 
     let displaced_skip = stores.intern_glue(glue(1));
     stores.set_skip_global(0, &displaced_skip);
-    drop(displaced_skip);
     AssignmentCommitter::new(&mut stores).skip(0, glue(2), true, false, false, false);
     assert_eq!(stores.glue(stores.skip(0)), glue(2));
 
     let displaced_muskip = stores.intern_glue(glue(3));
     stores.set_muskip_global(0, &displaced_muskip);
-    drop(displaced_muskip);
     AssignmentCommitter::new(&mut stores).skip(0, glue(4), true, true, false, false);
     assert_eq!(stores.glue(stores.muskip(0)), glue(4));
 
     let parameter = GlueParam::BASELINE_SKIP;
     let displaced_parameter = stores.intern_glue(glue(5));
     stores.set_glue_param_global(parameter, &displaced_parameter);
-    drop(displaced_parameter);
     AssignmentCommitter::new(&mut stores).glue_parameter(
         parameter.raw(),
         glue(6),
@@ -119,7 +113,6 @@ fn local_glue_write_undo_is_the_assignment_trace_liveness_negative_control() {
     stores.set_int_param_global(IntParam::TRACING_ASSIGNS, 1);
     let displaced = stores.intern_glue(glue(1));
     stores.set_skip_global(0, &displaced);
-    drop(displaced);
     stores.enter_group();
 
     AssignmentCommitter::new(&mut stores).skip(0, glue(2), false, false, false, false);

@@ -218,7 +218,7 @@ fn journal_retirement_preserves_the_named_checkpoint_hash_schedule() {
 }
 
 #[test]
-fn journal_retirement_releases_superseded_reachability_owned_values() {
+fn journal_retirement_keeps_committed_region_coordinates_until_rollback() {
     let mut universe = Universe::new();
 
     let old_tokens_root = universe.intern_token_list_ref(&[Token::Char {
@@ -245,8 +245,6 @@ fn journal_retirement_releases_superseded_reachability_owned_values() {
             definition: old_macro_id,
         },
     );
-    drop(old_tokens_root);
-    drop(old_macro);
     universe.commit_direct_operation(first);
 
     let new_tokens_root = universe.intern_token_list_ref(&[Token::Char {
@@ -270,17 +268,19 @@ fn journal_retirement_releases_superseded_reachability_owned_values() {
             definition: new_macro.id(),
         },
     );
-    drop(new_tokens_root);
-    drop(new_macro);
     universe.commit_direct_operation(second);
 
-    assert!(catch_unwind(AssertUnwindSafe(|| universe.tokens(old_tokens))).is_err());
-    assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(old_glue_id))).is_err());
-    assert!(
-        catch_unwind(AssertUnwindSafe(|| {
-            universe.macro_definition(old_macro_id)
-        }))
-        .is_err()
+    assert_eq!(
+        universe.tokens(old_tokens).as_ref(),
+        &[Token::Char {
+            ch: 'a',
+            cat: Catcode::Other,
+        }]
+    );
+    assert_eq!(universe.glue(old_glue_id), glue(71));
+    assert_eq!(
+        universe.macro_definition(old_macro_id).replacement_text(),
+        TokenListId::EMPTY
     );
 }
 
@@ -301,7 +301,7 @@ fn private_token_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
     let retained_stats = universe
         .testing_private_revision_domain_stats()
         .expect("private domain is live");
-    assert_eq!(retained_stats.0, 1);
+    assert_eq!(retained_stats.0, 0);
 
     let failed_operation = universe.begin_direct_operation();
     let failed = universe.intern_token_list(&[
@@ -327,7 +327,7 @@ fn private_token_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
 
     universe
         .accept_private_revision()
-        .expect("typed compatibility root transfers");
+        .expect("committed region suffix transfers");
     assert!(universe.testing_private_revision_domain_stats().is_none());
     assert_eq!(
         universe.tokens(retained)[0],
@@ -351,7 +351,7 @@ fn private_glue_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
     let retained_stats = universe
         .testing_private_revision_domain_stats()
         .expect("private glue domain is live");
-    assert_eq!(retained_stats.0, 1);
+    assert_eq!(retained_stats.0, 0);
 
     let failed_operation = universe.begin_direct_operation();
     let failed = universe.intern_glue(glue(102));
@@ -376,15 +376,15 @@ fn private_glue_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
             .testing_private_revision_domain_stats()
             .expect("private glue domain remains live")
             .0,
-        2
+        0
     );
 
     universe
         .accept_private_revision()
-        .expect("only the Env-owned glue allocation transfers");
+        .expect("the committed region suffix transfers");
     assert!(universe.testing_private_revision_domain_stats().is_none());
     assert_eq!(universe.glue(universe.skip(7)), glue(101));
-    assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(unselected_id))).is_err());
+    assert_eq!(universe.glue(unselected_id), glue(103));
 }
 
 #[test]
@@ -403,8 +403,8 @@ fn glue_current_undo_page_and_checkpoint_edges_are_structural_roots() {
     universe.set_skip(0, local);
     assert_eq!(universe.stores.testing_glue_live_totals().0, 3);
     let _ = universe.leave_group();
-    assert_eq!(universe.stores.testing_glue_live_totals().0, 2);
-    assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(local_id))).is_err());
+    assert_eq!(universe.stores.testing_glue_live_totals().0, 3);
+    assert_eq!(universe.glue(local_id), glue(202));
 
     let checkpoint = universe.snapshot();
     let page = universe.intern_glue(glue(203));
@@ -414,10 +414,10 @@ fn glue_current_undo_page_and_checkpoint_edges_are_structural_roots() {
         kind: GlueKind::Normal,
         leader: None,
     });
-    assert_eq!(universe.stores.testing_glue_live_totals().0, 3);
+    assert_eq!(universe.stores.testing_glue_live_totals().0, 4);
 
     universe.rollback(&checkpoint);
-    assert_eq!(universe.stores.testing_glue_live_totals().0, 2);
+    assert_eq!(universe.stores.testing_glue_live_totals().0, 3);
     assert!(catch_unwind(AssertUnwindSafe(|| universe.glue(page_id))).is_err());
     assert_eq!(universe.glue(universe.skip(0)), glue(201));
 }
@@ -465,8 +465,8 @@ fn private_macro_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
         .testing_private_revision_domain_stats()
         .expect("private macro domain is live");
     assert_eq!(
-        retained_stats.0, 4,
-        "token, body, and two occurrences are private"
+        retained_stats.0, 0,
+        "runtime values use the rollback-owned region suffix"
     );
 
     let failed_operation = universe.begin_direct_operation();
@@ -503,7 +503,7 @@ fn private_macro_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
     let mut substrate = universe.freeze_generation();
     substrate
         .accept_private_revision()
-        .expect("typed macro roots transfer");
+        .expect("the committed region suffix transfers");
     assert!(substrate.testing_private_revision_domain_stats().is_none());
     assert_eq!(
         substrate
@@ -2067,6 +2067,59 @@ fn traced_list_finish_uses_fresh_runtime_coordinates_with_equal_semantics() {
     let empty = universe.finish_traced_token_list(&[]);
     assert_eq!(empty.token_list(), crate::ids::TokenListId::EMPTY);
     assert_eq!(empty.origin_list(), crate::ids::OriginListId::EMPTY);
+
+    let rooted_empty =
+        universe.finish_rooted_traced_token_list(&RootedTracedTokenBuffer::default());
+    assert_eq!(rooted_empty.token_list(), crate::ids::TokenListId::EMPTY);
+    assert_eq!(rooted_empty.origin_list(), crate::ids::OriginListId::EMPTY);
+}
+
+#[test]
+fn restored_token_parameter_words_rebind_non_builtin_runtime_coordinates() {
+    let mut universe = Universe::new();
+    let original = universe.intern_token_list(&[Token::param(3)]);
+    let replacement = universe.intern_token_list(&[Token::param(7)]);
+    universe.set_tok_param_global(TokParam::EVERY_PAR, original);
+    universe.enter_group();
+    universe.set_tok_param(TokParam::EVERY_PAR, replacement);
+
+    let stored = u64::from(original.raw()) + 1;
+    let restored = super::restored_tok_param_tokens(&universe, stored)
+        .expect("saved non-null token parameter resolves");
+
+    assert_eq!(restored.id(), original);
+    assert_eq!(restored.as_ref(), &[Token::param(3)]);
+    assert_eq!(universe.tok_param(TokParam::EVERY_PAR), replacement);
+    assert_eq!(universe.tokens(replacement).as_ref(), &[Token::param(7)]);
+
+    let _ = universe.leave_group();
+    assert_eq!(universe.tok_param(TokParam::EVERY_PAR), original);
+}
+
+#[test]
+fn restore_token_formatting_rebinds_register_slots_and_preserves_null() {
+    let mut universe = Universe::new();
+    let live = universe.intern_token_list(&[Token::Char {
+        ch: 'q',
+        cat: Catcode::Other,
+    }]);
+    let stored = TokenListId::testing_new(live.raw());
+
+    assert_eq!(
+        super::format_restore_tokens(&universe, Some(stored), b'\\'.into()),
+        "q"
+    );
+    assert_eq!(
+        super::format_restore_tokens(&universe, None, b'\\'.into()),
+        ""
+    );
+    assert_eq!(
+        universe.tokens(live).as_ref(),
+        &[Token::Char {
+            ch: 'q',
+            cat: Catcode::Other,
+        }]
+    );
 }
 
 #[test]
@@ -2134,11 +2187,16 @@ fn detached_format_strips_structural_origin_lists_without_retaining_runtime_ids(
         ch: 'x',
         cat: Catcode::Letter,
     }]);
-    let definition = source.intern_macro(MacroMeaning::new(
-        MeaningFlags::EMPTY,
-        TokenListId::EMPTY,
-        body,
-    ));
+    let origin = source.synthetic_origin_ref(SyntheticOriginKind::Format);
+    let replacement = source.allocate_origin_list_ref(std::slice::from_ref(&origin));
+    let definition = source.intern_macro_with_provenance(
+        MacroMeaning::new(MeaningFlags::EMPTY, TokenListId::EMPTY, body),
+        MacroDefinitionProvenance::new(
+            origin,
+            crate::provenance::OriginListRef::empty(),
+            replacement,
+        ),
+    );
     source.set_meaning(
         name,
         Meaning::Macro {
@@ -2146,18 +2204,6 @@ fn detached_format_strips_structural_origin_lists_without_retaining_runtime_ids(
             definition: definition.id(),
         },
     );
-    let origin = source.synthetic_origin_ref(SyntheticOriginKind::Format);
-    let repeated: [crate::provenance::OriginRef; 32] = std::array::from_fn(|_| origin.clone());
-    let replacement = source.allocate_origin_list_ref(&repeated);
-    source.set_macro_definition_provenance(
-        definition.id(),
-        MacroDefinitionProvenance::new(
-            origin,
-            crate::provenance::OriginListRef::empty(),
-            replacement,
-        ),
-    );
-
     let image = source
         .dump_format()
         .expect("format with live provenance dumps");
@@ -2705,7 +2751,8 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
             .raw(),
         base_tokens.raw()
     );
-    let restored_glue = crate::ids::GlueId::testing_new(base_glue.raw());
+    let restored_glue = loaded.skip(0);
+    assert_eq!(restored_glue.raw(), base_glue.raw());
     assert_eq!(
         loaded.intern_glue(loaded.glue(restored_glue)).raw(),
         base_glue.raw()

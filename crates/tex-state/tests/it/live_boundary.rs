@@ -46,13 +46,11 @@ fn downstream_crate_cannot_construct_or_mutate_raw_content_stores() {
         "content-store-boundary-forbidden",
         &[
             "E0624",
-            "TokenStore::new",
+            "no `TokenStore` in `token_store`",
             "TokenListBuilder::new",
-            "GlueStore::new",
+            "no `GlueStore` in `glue`",
             "NodeListBuilder::new",
-            "no method named `intern`",
             "no method named `finish`",
-            "method `get` is private",
         ],
     );
 }

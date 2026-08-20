@@ -4,7 +4,7 @@ use core::fmt;
 use core::num::NonZeroU32;
 
 use crate::glue::GlueSpec;
-use crate::identity::{IdentityAllocator, IdentityError, IdentityMark};
+use crate::identity::{IdentityAllocator, IdentityError};
 use crate::ids::{GlueId, MacroDefinitionId, TokenListId};
 use crate::macro_store::MacroParameterPattern;
 use crate::meaning::MeaningFlags;
@@ -47,9 +47,6 @@ impl From<IdentityError> for RuntimeValueRegistryError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RuntimeValueRegistryMark {
     arena: RuntimeValueRegionMark,
-    token_identities: IdentityMark,
-    macro_identities: IdentityMark,
-    glue_identities: IdentityMark,
     token_locations: u32,
     macro_locations: u32,
     glue_locations: u32,
@@ -145,9 +142,6 @@ impl RuntimeValueRegistry {
     pub(crate) fn mark(&self) -> Result<RuntimeValueRegistryMark, RuntimeValueRegistryError> {
         Ok(RuntimeValueRegistryMark {
             arena: self.candidate.mark()?,
-            token_identities: self.token_identities.watermark(),
-            macro_identities: self.macro_identities.watermark(),
-            glue_identities: self.glue_identities.watermark(),
             token_locations: checked_location_len(self.token_locations.len())?,
             macro_locations: checked_location_len(self.macro_locations.len())?,
             glue_locations: checked_location_len(self.glue_locations.len())?,
@@ -161,12 +155,12 @@ impl RuntimeValueRegistry {
         mark: RuntimeValueRegistryMark,
     ) -> Result<(), RuntimeValueRegistryError> {
         self.candidate.validate_truncate(mark.arena)?;
-        self.token_identities
-            .validate_rollback(mark.token_identities)?;
-        self.macro_identities
-            .validate_rollback(mark.macro_identities)?;
-        self.glue_identities
-            .validate_rollback(mark.glue_identities)?;
+        let token_identities = self.token_identities.watermark_at(mark.token_locations)?;
+        let macro_identities = self.macro_identities.watermark_at(mark.macro_locations)?;
+        let glue_identities = self.glue_identities.watermark_at(mark.glue_locations)?;
+        self.token_identities.validate_rollback(token_identities)?;
+        self.macro_identities.validate_rollback(macro_identities)?;
+        self.glue_identities.validate_rollback(glue_identities)?;
         validate_location_mark(self.token_locations.len(), mark.token_locations)?;
         validate_location_mark(self.macro_locations.len(), mark.macro_locations)?;
         validate_location_mark(self.glue_locations.len(), mark.glue_locations)?;
@@ -180,12 +174,15 @@ impl RuntimeValueRegistry {
         mark: RuntimeValueRegistryMark,
     ) -> Result<(), RuntimeValueRegistryError> {
         self.validate_rollback(mark)?;
+        let token_identities = self.token_identities.watermark_at(mark.token_locations)?;
+        let macro_identities = self.macro_identities.watermark_at(mark.macro_locations)?;
+        let glue_identities = self.glue_identities.watermark_at(mark.glue_locations)?;
         self.token_locations.truncate(mark.token_locations as usize);
         self.macro_locations.truncate(mark.macro_locations as usize);
         self.glue_locations.truncate(mark.glue_locations as usize);
-        self.token_identities.rollback(mark.token_identities)?;
-        self.macro_identities.rollback(mark.macro_identities)?;
-        self.glue_identities.rollback(mark.glue_identities)?;
+        self.token_identities.rollback(token_identities)?;
+        self.macro_identities.rollback(macro_identities)?;
+        self.glue_identities.rollback(glue_identities)?;
         self.next_macro_observation_operand = mark.next_macro_observation_operand;
         self.next_macro_allocation_serial = mark.next_macro_allocation_serial;
         self.candidate.truncate(mark.arena)?;
@@ -273,7 +270,7 @@ impl RuntimeValueRegistry {
         let allocation_serial = self.next_macro_allocation_serial;
         let next_macro_observation_operand = self
             .next_macro_observation_operand
-            .checked_add(i64::from(input.observation_width))
+            .checked_sub(i64::from(input.observation_width))
             .ok_or(RuntimeValueRegistryError::LocationCapacityExhausted)?;
         let next_macro_allocation_serial = self
             .next_macro_allocation_serial
@@ -469,6 +466,49 @@ impl RuntimeValueRegistry {
         destination: &mut RuntimeValueStore,
     ) -> Result<(), RuntimeValueRegistryError> {
         self.candidate.publish_into(destination)?;
+        Ok(())
+    }
+
+    /// Rebuilds a generation fork at an inherited published checkpoint.
+    ///
+    /// The parent arena mark names the source candidate namespace and cannot
+    /// be replayed in the child's fresh suffix namespace. The retained
+    /// location and identity prefixes remain exact, while `published` owns
+    /// precisely the sealed regions accepted at that checkpoint.
+    pub(crate) fn rollback_inherited(
+        &mut self,
+        mark: RuntimeValueRegistryMark,
+        published: &RuntimeValueStore,
+    ) -> Result<(), RuntimeValueRegistryError> {
+        let token_identities = self.token_identities.watermark_at(mark.token_locations)?;
+        let macro_identities = self.macro_identities.watermark_at(mark.macro_locations)?;
+        let glue_identities = self.glue_identities.watermark_at(mark.glue_locations)?;
+        self.token_identities.validate_rollback(token_identities)?;
+        self.macro_identities.validate_rollback(macro_identities)?;
+        self.glue_identities.validate_rollback(glue_identities)?;
+        validate_location_mark(self.token_locations.len(), mark.token_locations)?;
+        validate_location_mark(self.macro_locations.len(), mark.macro_locations)?;
+        validate_location_mark(self.glue_locations.len(), mark.glue_locations)?;
+
+        self.token_locations.truncate(mark.token_locations as usize);
+        self.macro_locations.truncate(mark.macro_locations as usize);
+        self.glue_locations.truncate(mark.glue_locations as usize);
+        self.token_identities.rollback(token_identities)?;
+        self.macro_identities.rollback(macro_identities)?;
+        self.glue_identities.rollback(glue_identities)?;
+        self.next_macro_observation_operand = mark.next_macro_observation_operand;
+        self.next_macro_allocation_serial = mark.next_macro_allocation_serial;
+        self.candidate = RuntimeValueCandidate::from_store(published.clone())?;
+
+        for coordinate in self.token_locations.iter().copied() {
+            self.candidate.admit_token_list(coordinate)?;
+        }
+        for coordinate in self.macro_locations.iter().copied() {
+            self.candidate.admit_macro(coordinate)?;
+        }
+        for coordinate in self.glue_locations.iter().copied() {
+            self.candidate.admit_glue(coordinate)?;
+        }
         Ok(())
     }
 

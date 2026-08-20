@@ -9,10 +9,15 @@ complements [Core Engine State](core_state.md) and
 
 ## Invariant
 
-Runtime token, macro, glue, and sparse provenance payloads live in one typed
-value-region substrate. The runtime has no weak value references, per-value
-`Arc` marker, refcount garbage collector, liveness index, graph scan, or
-parallel allocation authority.
+Runtime token, macro, glue, and their sparse traced-provenance payloads live in
+one typed value-region substrate. This region-managed path has no weak value
+references, per-value `Arc` marker, refcount garbage collector, liveness index,
+graph scan, or parallel allocation authority.
+
+Structural `OriginListRef` values still use a transitional weak-slot store.
+Issue `umber2-awgc.6.2.2.2` blocks completion of this cutover until those lists
+also become region coordinates; the statements below describe the target
+contract and the family rows that have already crossed that boundary.
 
 The substrate has two physical parts:
 
@@ -71,6 +76,12 @@ Active macro records keep only the admitted macro coordinate and command-arena
 argument ranges. Replacement and parameter inspection always goes back
 through a live `CommandContext` view.
 
+Compact environment and save-stack words are stored keys rather than live
+capabilities. A read first rebinds the stored family slot through the current
+registry generation and then admits the resulting coordinate. Format glue
+maps use the same boundary. Raw reconstruction of a live coordinate from a
+stored slot is forbidden because it could bypass stale or foreign rejection.
+
 ## Atomic composite publication
 
 A macro row and all data required to interpret it are one region transaction.
@@ -107,6 +118,13 @@ Generation forks share sealed region roots and copy the private active suffix
 into destination-local storage. Runtime handles retain their exact generation
 when that coordinate is part of the forked generation; values materialized
 from detached content receive destination-local coordinates.
+
+An inherited fork rollback first restores the canonical published root set,
+then rebuilds its private candidate from that accepted prefix before applying
+the saved family watermarks. The operation mark stores compact coordinate
+lengths and the arena generation mark; identity rollback watermarks are
+derived only after that generation validates. It does not retain per-family
+owner marks or publish roots from private operations.
 
 ## Formats, memos, and detached continuations
 
@@ -147,4 +165,6 @@ Tests for this boundary must establish all of the following:
 
 The source audit rejects reintroduction of `ReachableValueRef`, packed macro
 owners, weak token/macro/glue stores, or per-value liveness markers in the
-runtime value path.
+region-managed runtime value path. The remaining structural origin-list weak
+store is explicitly tracked by `umber2-awgc.6.2.2.2`, not accepted as part of
+this architecture.

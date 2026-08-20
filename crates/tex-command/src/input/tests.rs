@@ -63,7 +63,7 @@ fn macro_context_reads_the_admitted_chunk_after_definition_retirement() {
 
     let second = universe.begin_direct_operation();
     universe.set_meaning(name, tex_state::meaning::Meaning::Relax);
-    drop(root);
+    let _ = root;
     universe.commit_direct_operation(second);
 
     let context = command.output_open_context(&universe.command_context());

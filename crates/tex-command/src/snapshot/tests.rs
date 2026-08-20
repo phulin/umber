@@ -158,13 +158,12 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
     let parameter_tokens = universe.intern_token_list_ref(&[]);
     let macro_name = universe.intern("detached-macro").symbol();
     let replacement_tokens = universe.intern_token_list_ref(&[Token::Cs(macro_name)]);
-    let macro_root = universe.intern_macro(MacroMeaning::new(
-        MeaningFlags::from_bits(0),
-        parameter_tokens.id(),
-        replacement_tokens.id(),
-    ));
-    universe.set_macro_definition_provenance(
-        macro_root.id(),
+    let macro_root = universe.intern_macro_with_provenance(
+        MacroMeaning::new(
+            MeaningFlags::from_bits(0),
+            parameter_tokens.id(),
+            replacement_tokens.id(),
+        ),
         MacroDefinitionProvenance::new(definition.clone(), parameter_origins, replacement_origins),
     );
     let frame = universe.macro_invocation_frame(

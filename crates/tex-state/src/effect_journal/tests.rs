@@ -140,7 +140,6 @@ fn splice_transfers_deferred_write_token_roots_with_selected_records() {
     let live = journal(write("live suffix"), 2);
     let selected = EffectJournal::splice_prefix(&accepted, &live, 1);
     drop(accepted);
-    drop(root);
 
     assert!(matches!(
         selected.records(),

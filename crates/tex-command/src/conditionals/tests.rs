@@ -2568,9 +2568,8 @@ fn if_ifcat_and_ifx_complete_operand_matrix() {
 #[test]
 fn ifx_compares_macro_tokens_after_candidate_index_churn() {
     // TeX82 §507 compares the parameter and replacement token lists. Their
-    // allocator coordinates are deliberately different here: the bounded
-    // candidate index is operational metadata, not semantic authority, and
-    // must not change `\ifx`'s result after it rolls over.
+    // semantic identities remain canonical after the bounded candidate index
+    // rolls over; that operational metadata must not change `\ifx`'s result.
     let mut command = CommandState::default();
     let mut universe = crate::test_harness::universe();
     let first = macro_token(
@@ -2620,7 +2619,7 @@ fn ifx_compares_macro_tokens_after_candidate_index_churn() {
     };
     let first_replacement = replacement(first);
     let equal_replacement = replacement(equal);
-    assert_ne!(first_replacement, equal_replacement);
+    assert_eq!(first_replacement, equal_replacement);
     assert_eq!(
         universe.tokens(first_replacement).tokens(),
         universe.tokens(equal_replacement).tokens()

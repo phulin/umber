@@ -303,7 +303,7 @@ impl<'a> MacroDefinitionView<'a> {
 
     #[must_use]
     pub fn parameter_traced_word(&self, index: usize) -> Option<TracedTokenWord> {
-        self.inner.parameter_text().traced_word(index)
+        self.inner.parameter_traced_word(index)
     }
 
     #[must_use]
@@ -318,7 +318,7 @@ impl<'a> MacroDefinitionView<'a> {
 
     #[must_use]
     pub fn replacement_traced_word(&self, index: usize) -> Option<TracedTokenWord> {
-        self.inner.replacement_text().traced_word(index)
+        self.inner.replacement_traced_word(index)
     }
 
     #[must_use]
@@ -333,6 +333,10 @@ impl<'a> MacroDefinitionView<'a> {
     #[must_use]
     pub const fn definition_origin(&self) -> OriginId {
         self.inner.definition_origin()
+    }
+
+    pub(crate) fn has_provenance(&self) -> bool {
+        self.inner.has_provenance()
     }
 
     #[must_use]

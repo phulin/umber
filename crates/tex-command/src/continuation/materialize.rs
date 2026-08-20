@@ -211,8 +211,8 @@ impl<'a> Materializer<'a> {
                 let invocation = self.origin(invocation);
                 let definition_origin = self.origin(definition_origin);
                 let parent = self.origin(parent);
+                let definition = definition.and_then(|definition| self.macros[definition.0]);
                 let id = if let Some(definition) = definition {
-                    let definition = self.macro_definition(definition);
                     self.universe.macro_invocation_origin(
                         definition.id(),
                         invocation.id(),
@@ -257,23 +257,18 @@ impl<'a> Materializer<'a> {
         let recipe = self.owned.macros[id.0].clone();
         let parameters = self.token_list(recipe.parameters);
         let replacement = self.token_list(recipe.replacement);
-        let root = self.universe.intern_macro(MacroMeaning::new(
-            recipe.flags,
-            parameters.id(),
-            replacement.id(),
-        ));
-        self.macros[id.0] = Some(root.clone());
         let definition = self.origin(recipe.definition_origin);
         let parameter_origins = self.origin_list(recipe.parameter_origins);
         let replacement_origins = self.origin_list(recipe.replacement_origins);
-        self.universe.set_macro_definition_provenance(
-            root.id(),
+        let root = self.universe.intern_macro_with_provenance(
+            MacroMeaning::new(recipe.flags, parameters.id(), replacement.id()),
             tex_state::macro_store::MacroDefinitionProvenance::new(
                 definition,
                 parameter_origins,
                 replacement_origins,
             ),
         );
+        self.macros[id.0] = Some(root);
         root
     }
 

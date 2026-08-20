@@ -521,7 +521,7 @@ fn node_semantic_ids_exclude_token_provenance() {
         class: 0,
         tokens: second_tokens.token_ref().clone(),
     }]);
-    assert!(first.shares_payload(&second));
+    assert!(!first.shares_payload(&second));
     assert_eq!(first.semantic_id(), second.semantic_id());
 }
 
@@ -1580,7 +1580,7 @@ fn identical_macro_definitions_get_distinct_definition_identity() {
     );
     assert_eq!(
         stores.macro_definition_observation_operand(second.id()),
-        249_983
+        249_982
     );
 }
 
@@ -1657,7 +1657,6 @@ fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
     let stale_body = stores.intern_token_list(&[Token::param(2)]);
     let stale = stores.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, params, stale_body));
     let stale_id = stale.id();
-    drop(stale);
 
     stores.rollback(&snapshot);
     let reused_body = stores.intern_token_list(&[Token::Cs(symbol.symbol())]);
@@ -2051,7 +2050,6 @@ fn stale_rolled_back_macro_definition_cannot_mutate_meaning() {
     let body = stores.intern_token_list(&[Token::param(1)]);
     let stale = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
     let stale_id = stale.id();
-    drop(stale);
 
     stores.rollback(&snapshot);
     stores.set_meaning(

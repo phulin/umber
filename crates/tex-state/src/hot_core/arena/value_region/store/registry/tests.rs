@@ -301,7 +301,7 @@ fn all_live_growth_is_exact_in_locations_identities_and_region_values() {
     assert_eq!(after.identity_slots - before.identity_slots, 96);
     assert_eq!(
         after.regions.logical_values - before.regions.logical_values,
-        192
+        160
     );
 }
 

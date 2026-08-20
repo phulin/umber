@@ -274,13 +274,13 @@ impl Stores {
             self.resolve_stored_symbol(symbol.stored_key().expect("symbol reference kind"))
         }
     }
-    pub(super) fn resolve_stored_token_list(&self, id: TokenListId) -> TokenListId {
+    pub(crate) fn resolve_stored_token_list(&self, id: TokenListId) -> TokenListId {
         self.runtime_values
             .token_id_at(id.raw())
             .expect("stored token-list slot is not live")
     }
 
-    pub(super) fn resolve_stored_glue(&self, id: GlueId) -> GlueId {
+    pub(crate) fn resolve_stored_glue(&self, id: GlueId) -> GlueId {
         self.runtime_values
             .glue_id_at(id.raw())
             .expect("stored glue slot is not live")

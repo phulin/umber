@@ -1476,7 +1476,10 @@ impl Stores {
             })
             .collect();
         let glue = (0..self.runtime_values.glue_len())
-            .map(|raw| FormatGlue::capture(self.glue(GlueId::new(raw))))
+            .map(|raw| {
+                let id = self.resolve_stored_glue(GlueId::new(raw));
+                FormatGlue::capture(self.glue(id))
+            })
             .collect();
         let font_mark = self.fonts.watermark();
         let fonts = (0..font_mark.len)
@@ -1535,7 +1538,10 @@ impl Stores {
             })
             .collect();
         let glue = (0..self.runtime_values.glue_len())
-            .map(|raw| FormatGlue::capture(self.glue(GlueId::new(raw))))
+            .map(|raw| {
+                let id = self.resolve_stored_glue(GlueId::new(raw));
+                FormatGlue::capture(self.glue(id))
+            })
             .collect();
         let font_mark = self.fonts.watermark();
         let fonts = (0..font_mark.len)
@@ -2169,7 +2175,10 @@ impl ImmutableStoreIdentity {
             })
             .collect();
         let glue = (0..stores.runtime_values.glue_len())
-            .map(|raw| FormatGlue::capture(stores.glue(GlueId::new(raw))))
+            .map(|raw| {
+                let id = stores.resolve_stored_glue(GlueId::new(raw));
+                FormatGlue::capture(stores.glue(id))
+            })
             .collect();
         let font_mark = stores.fonts.watermark();
         let fonts = (0..font_mark.len)
@@ -2302,6 +2311,14 @@ fn install_frozen_sections(
         .env
         .install_empty_token_root(crate::token_store::TokenListRef::new(TokenListId::EMPTY));
     for (raw, value) in frozen.macros.iter().enumerate() {
+        let parameter_text = stores
+            .runtime_values
+            .token_id_at(value.meaning.parameter_text().raw())
+            .ok_or(StoreFormatError::Invalid("frozen macro parameter slot"))?;
+        let replacement_text = stores
+            .runtime_values
+            .token_id_at(value.meaning.replacement_text().raw())
+            .ok_or(StoreFormatError::Invalid("frozen macro replacement slot"))?;
         stores
             .runtime_values
             .install_frozen_macro(
@@ -2309,8 +2326,8 @@ fn install_frozen_sections(
                 crate::hot_core::arena::store::registry::RuntimeMacroValueInput {
                     flags: value.meaning.flags(),
                     parameter_pattern: value.pattern,
-                    parameter_text: value.meaning.parameter_text(),
-                    replacement_text: value.meaning.replacement_text(),
+                    parameter_text,
+                    replacement_text,
                     definition_origin: crate::token::OriginId::UNKNOWN,
                     parameter_origins: &[],
                     replacement_origins: &[],
@@ -2482,7 +2499,7 @@ fn install_frozen_sections(
                 | crate::cell::BankTag::Muskip
                 | crate::cell::BankTag::GlueParam
         ) {
-            Some(stores.glue_ref(GlueId::new(word as u32)))
+            Some(stores.glue_ref(stores.resolve_stored_glue(GlueId::new(word as u32))))
         } else {
             None
         };

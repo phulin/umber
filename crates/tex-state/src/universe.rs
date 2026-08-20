@@ -1169,7 +1169,10 @@ fn format_restore_tokens(
     escape_char: i32,
 ) -> String {
     let mut value = String::new();
-    if let Some(tokens) = token_list.map(|id| universe.tokens(id)) {
+    if let Some(tokens) = token_list.map(|id| {
+        let id = universe.stores.resolve_stored_token_list(id);
+        universe.tokens(id)
+    }) {
         let mut shown = 0;
         while shown < tokens.len() && value.chars().count() < 32 {
             crate::token_show::append_token_show_text(universe, tokens[shown], &mut value);
@@ -1187,7 +1190,10 @@ fn format_restore_tokens(
 fn restored_tok_param_tokens(universe: &Universe, stored: u64) -> Option<TokenListView<'_>> {
     use crate::env::banks::{BankCodec, OptionalTokenListIdCodec};
 
-    OptionalTokenListIdCodec::decode(stored).map(|id| universe.tokens(id))
+    OptionalTokenListIdCodec::decode(stored).map(|id| {
+        let id = universe.stores.resolve_stored_token_list(id);
+        universe.tokens(id)
+    })
 }
 
 /// Merged etex.web [17.233]'s `show_eqtb` representation for one of the four
@@ -5493,18 +5499,6 @@ impl Universe {
         self.stores.macro_definition_provenance_roots(id)
     }
 
-    /// Attaches provenance after a definition's semantic body has been interned.
-    ///
-    /// Detached continuation import uses this two-phase operation to break the
-    /// legitimate definition -> provenance -> invocation -> definition cycle.
-    pub fn set_macro_definition_provenance(
-        &mut self,
-        id: MacroDefinitionId,
-        provenance: MacroDefinitionProvenance,
-    ) {
-        self.stores.set_macro_definition_provenance(id, provenance);
-    }
-
     pub fn set_macro_meaning(
         &mut self,
         symbol: impl crate::interner::SymbolReference,
@@ -7029,7 +7023,9 @@ impl Universe {
                     true,
                 ),
                 BankTag::Skip => {
-                    let id = GlueId::new(record.old() as u32);
+                    let id = self
+                        .stores
+                        .resolve_stored_glue(GlueId::new(record.old() as u32));
                     (
                         format!("skip{}", cell.index()),
                         format_restore_glue(self.glue(id), "pt"),
@@ -7037,7 +7033,9 @@ impl Universe {
                     )
                 }
                 BankTag::Muskip => {
-                    let id = GlueId::new(record.old() as u32);
+                    let id = self
+                        .stores
+                        .resolve_stored_glue(GlueId::new(record.old() as u32));
                     (
                         format!("muskip{}", cell.index()),
                         format_restore_glue(self.glue(id), "mu"),
@@ -7091,7 +7089,9 @@ impl Universe {
                     else {
                         continue;
                     };
-                    let id = GlueId::new(record.old() as u32);
+                    let id = self
+                        .stores
+                        .resolve_stored_glue(GlueId::new(record.old() as u32));
                     (
                         name.to_owned(),
                         format_restore_glue(self.glue(id), "pt"),

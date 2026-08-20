@@ -49,7 +49,9 @@ use crate::hot_core::arena::store::registry::{
     RuntimeMacroValueInput, RuntimeTokenValueInput, RuntimeTracedTokenValueInput,
     RuntimeValueRegistry, RuntimeValueRegistryMark,
 };
-use crate::hot_core::arena::store::{RuntimeValueStore, RuntimeValueStorePublicationMark};
+use crate::hot_core::arena::store::{
+    RuntimeOriginEntry, RuntimeValueStore, RuntimeValueStorePublicationMark,
+};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
@@ -121,6 +123,7 @@ pub(crate) struct StoreSnapshot {
     source_map_mark: SourceMapMark,
     runtime_value_mark: RuntimeValueRegistryMark,
     runtime_value_roots_mark: RuntimeValueStorePublicationMark,
+    runtime_values_inherited: bool,
     font_mark: FontStoreMark,
     code_tables_snapshot: CodeTablesSnapshot,
     hyphenation: Arc<HyphenationTable>,
@@ -143,7 +146,6 @@ pub(crate) struct DirectStoreOperationMark {
 #[derive(Debug)]
 pub(crate) struct StorePatchOperationMark {
     runtime_values: RuntimeValueRegistryMark,
-    runtime_value_roots: RuntimeValueStorePublicationMark,
 }
 
 #[derive(Clone, Debug)]
@@ -1088,6 +1090,7 @@ impl Stores {
         let mut snapshot = snapshot.clone();
         snapshot.owner = self.owner.snapshot_owner();
         snapshot.env_snapshot = self.env.retarget_snapshot(&snapshot.env_snapshot);
+        snapshot.runtime_values_inherited = true;
         snapshot
     }
 
@@ -1612,13 +1615,19 @@ impl Stores {
         let parameter = self.tokens(macro_meaning.parameter_text());
         let replacement = self.tokens(macro_meaning.replacement_text());
         let parameter_pattern = MacroParameterPattern::from_tokens(&parameter);
-        let observation_width = u32::try_from(1_usize + parameter.len() + replacement.len())
+        let observation_width = u32::try_from(2_usize + parameter.len() + replacement.len())
             .expect("macro token list length exceeds u32");
         let definition_origin = provenance
             .as_ref()
             .map_or(crate::token::OriginId::UNKNOWN, |value| {
                 value.definition_origin()
             });
+        let parameter_origins = provenance.as_ref().map_or_else(Vec::new, |value| {
+            runtime_origin_entries(value.parameter_ref())
+        });
+        let replacement_origins = provenance.as_ref().map_or_else(Vec::new, |value| {
+            runtime_origin_entries(value.replacement_ref())
+        });
         let _ = domain;
         let id = self
             .runtime_values
@@ -1628,8 +1637,8 @@ impl Stores {
                 parameter_text: macro_meaning.parameter_text(),
                 replacement_text: macro_meaning.replacement_text(),
                 definition_origin,
-                parameter_origins: &[],
-                replacement_origins: &[],
+                parameter_origins: &parameter_origins,
+                replacement_origins: &replacement_origins,
                 observation_width,
             })
             .expect("runtime macro allocation must remain representable");
@@ -1686,21 +1695,22 @@ impl Stores {
         id: MacroDefinitionId,
     ) -> MacroDefinitionProvenance {
         let definition = self.macro_definition(id);
+        if !definition.has_provenance() {
+            return MacroDefinitionProvenance::unknown();
+        }
         let definition_origin = definition.definition_origin();
-        let parameter_text = definition.parameter_text();
-        let replacement_text = definition.replacement_text();
-        let parameter_origins = (0..self.tokens(parameter_text).len())
+        let parameter_origins = (0..definition.parameter_len())
             .map(|index| {
-                self.tokens(parameter_text)
-                    .traced_word(index)
+                definition
+                    .parameter_traced_word(index)
                     .expect("parameter token index was bounded")
                     .origin()
             })
             .collect::<Vec<_>>();
-        let replacement_origins = (0..self.tokens(replacement_text).len())
+        let replacement_origins = (0..definition.replacement_len())
             .map(|index| {
-                self.tokens(replacement_text)
-                    .traced_word(index)
+                definition
+                    .replacement_traced_word(index)
                     .expect("replacement token index was bounded")
                     .origin()
             })
@@ -1739,18 +1749,6 @@ impl Stores {
             provenance.parameter_ref().clone(),
             provenance.replacement_ref().clone(),
         ))
-    }
-
-    pub(crate) fn set_macro_definition_provenance(
-        &mut self,
-        id: MacroDefinitionId,
-        provenance: MacroDefinitionProvenance,
-    ) {
-        assert_eq!(
-            self.macro_definition(id).definition_origin(),
-            provenance.definition_origin(),
-            "runtime macro provenance is immutable after publication"
-        );
     }
 
     /// Sets a local macro meaning by freezing its public aggregate first.
@@ -1822,7 +1820,7 @@ impl Stores {
         );
         let meaning = MacroMeaning::new(flags, parameter_root.id(), replacement_root.id());
         let parameter_pattern = MacroParameterPattern::from_tokens(&parameter);
-        let observation_width = u32::try_from(1_usize + parameter.len() + replacement.len())
+        let observation_width = u32::try_from(2_usize + parameter.len() + replacement.len())
             .expect("macro token list length exceeds u32");
         let definition = MacroDefinitionRef::new(
             self.runtime_values
@@ -1857,23 +1855,29 @@ impl Stores {
         self.assert_live_origin(definition_origin.id());
         let parameter_semantic_id = self.traced_token_list_semantic_id(parameter_text.words());
         let replacement_semantic_id = self.traced_token_list_semantic_id(replacement_text.words());
-        let parameter = self
-            .runtime_values
-            .allocate_traced_token_list(RuntimeTracedTokenValueInput {
-                semantic_id: parameter_semantic_id,
-                words: parameter_text.words(),
-            })
-            .expect("runtime parameter token-list allocation must remain representable");
-        let replacement = self
-            .runtime_values
-            .allocate_traced_token_list(RuntimeTracedTokenValueInput {
-                semantic_id: replacement_semantic_id,
-                words: replacement_text.words(),
-            })
-            .expect("runtime replacement token-list allocation must remain representable");
+        let parameter = if parameter_text.is_empty() {
+            TokenListId::EMPTY
+        } else {
+            self.runtime_values
+                .allocate_traced_token_list(RuntimeTracedTokenValueInput {
+                    semantic_id: parameter_semantic_id,
+                    words: parameter_text.words(),
+                })
+                .expect("runtime parameter token-list allocation must remain representable")
+        };
+        let replacement = if replacement_text.is_empty() {
+            TokenListId::EMPTY
+        } else {
+            self.runtime_values
+                .allocate_traced_token_list(RuntimeTracedTokenValueInput {
+                    semantic_id: replacement_semantic_id,
+                    words: replacement_text.words(),
+                })
+                .expect("runtime replacement token-list allocation must remain representable")
+        };
         let parameter_pattern = MacroParameterPattern::from_traced_words(parameter_text.words());
         let observation_width =
-            u32::try_from(1_usize + parameter_text.len() + replacement_text.len())
+            u32::try_from(2_usize + parameter_text.len() + replacement_text.len())
                 .expect("macro token list length exceeds u32");
         let definition = MacroDefinitionRef::new(
             self.runtime_values
@@ -2140,14 +2144,18 @@ impl Stores {
     ) -> TracedTokenList {
         let semantic_id = self.traced_token_list_semantic_id(traced);
         let _ = domain;
-        let token_list = TokenListRef::new(
-            self.runtime_values
-                .allocate_traced_token_list(RuntimeTracedTokenValueInput {
-                    semantic_id,
-                    words: traced,
-                })
-                .expect("runtime traced token-list allocation must remain representable"),
-        );
+        let token_list = if traced.is_empty() {
+            TokenListRef::new(TokenListId::EMPTY)
+        } else {
+            TokenListRef::new(
+                self.runtime_values
+                    .allocate_traced_token_list(RuntimeTracedTokenValueInput {
+                        semantic_id,
+                        words: traced,
+                    })
+                    .expect("runtime traced token-list allocation must remain representable"),
+            )
+        };
         #[cfg(feature = "profiling")]
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
         let origin_list = self
@@ -2164,11 +2172,15 @@ impl Stores {
         let words = traced.words();
         let semantic_id = self.traced_token_list_semantic_id(words);
         let _ = domain;
-        let token_list = TokenListRef::new(
-            self.runtime_values
-                .allocate_traced_token_list(RuntimeTracedTokenValueInput { semantic_id, words })
-                .expect("runtime rooted token-list allocation must remain representable"),
-        );
+        let token_list = if words.is_empty() {
+            TokenListRef::new(TokenListId::EMPTY)
+        } else {
+            TokenListRef::new(
+                self.runtime_values
+                    .allocate_traced_token_list(RuntimeTracedTokenValueInput { semantic_id, words })
+                    .expect("runtime rooted token-list allocation must remain representable"),
+            )
+        };
         #[cfg(feature = "profiling")]
         crate::measurement::record_traced_list_finish(words.len(), 0, 0);
         let origin_list = self
@@ -2236,17 +2248,10 @@ impl Stores {
                 .runtime_values
                 .mark()
                 .expect("runtime value mark must remain representable"),
-            runtime_value_roots: self
-                .runtime_value_roots
-                .publication_mark()
-                .expect("runtime root mark must remain representable"),
         }
     }
 
     pub(crate) fn discard_patch_operation_allocations(&mut self, mark: StorePatchOperationMark) {
-        self.runtime_value_roots
-            .restore_publication(mark.runtime_value_roots)
-            .expect("patch runtime root mark belongs to this store");
         self.runtime_values
             .rollback(mark.runtime_values)
             .expect("patch runtime value mark belongs to this store");
@@ -2821,7 +2826,6 @@ impl Stores {
     }
 
     pub(crate) fn glue_ref(&self, id: GlueId) -> GlueSpecRef {
-        let id = self.resolve_stored_glue(id);
         self.runtime_values
             .glue(id)
             .expect("glue id is not live in the runtime registry");
@@ -2833,8 +2837,8 @@ impl Stores {
     pub fn glue(&self, id: GlueId) -> GlueSpec {
         *self
             .runtime_values
-            .glue(self.resolve_stored_glue(id))
-            .expect("stored glue slot is not live in the runtime registry")
+            .glue(id)
+            .expect("glue id is not live in the runtime registry")
             .spec()
     }
 
@@ -3995,6 +3999,7 @@ impl Stores {
                 .runtime_value_roots
                 .publication_mark()
                 .expect("runtime root mark must remain representable"),
+            runtime_values_inherited: false,
             font_mark: self.fonts.watermark(),
             code_tables_snapshot: self.code_tables.checkpoint(),
             hyphenation: self.hyphenation.clone(),
@@ -4091,9 +4096,15 @@ impl Stores {
         self.runtime_value_roots
             .restore_publication(snapshot.runtime_value_roots_mark)
             .expect("snapshot runtime root mark belongs to this store");
-        self.runtime_values
-            .rollback(snapshot.runtime_value_mark)
-            .expect("snapshot runtime value mark belongs to this store");
+        if snapshot.runtime_values_inherited {
+            self.runtime_values
+                .rollback_inherited(snapshot.runtime_value_mark, &self.runtime_value_roots)
+                .expect("inherited runtime value prefix belongs to this store");
+        } else {
+            self.runtime_values
+                .rollback(snapshot.runtime_value_mark)
+                .expect("snapshot runtime value mark belongs to this store");
+        }
         self.provenance.truncate_to(snapshot.provenance_mark);
         self.source_map.truncate_to(snapshot.source_map_mark);
         self.fonts.truncate_to(snapshot.font_mark);
@@ -4232,6 +4243,22 @@ impl Default for Stores {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn runtime_origin_entries(origins: &OriginListRef) -> Vec<RuntimeOriginEntry> {
+    origins
+        .origins()
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, origin)| *origin != OriginId::UNKNOWN)
+        .map(|(index, origin)| {
+            RuntimeOriginEntry::new(
+                u32::try_from(index).expect("origin-list offset exceeds u32"),
+                origin,
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -640,7 +640,7 @@ fn active_macro_delivery_keeps_original_replacement_after_redefinition() {
             definition: original_definition_id,
         },
     );
-    drop(original_definition);
+    let _ = original_definition;
     let mut capabilities = CommandHostCapabilities::default();
     {
         let mut processor = CommandProcessor::new(

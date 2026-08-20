@@ -353,6 +353,22 @@ impl<'a> RuntimeMacroView<'a> {
         self.replacement_origins
     }
 
+    pub(crate) fn has_provenance(&self) -> bool {
+        self.definition_origin != OriginId::UNKNOWN
+            || !self.parameter_origins.is_empty()
+            || !self.replacement_origins.is_empty()
+            || !self.parameter_text.provenance().is_empty()
+            || !self.replacement_text.provenance().is_empty()
+    }
+
+    pub(crate) fn parameter_traced_word(&self, index: usize) -> Option<TracedTokenWord> {
+        traced_word_with_overrides(&self.parameter_text, self.parameter_origins, index)
+    }
+
+    pub(crate) fn replacement_traced_word(&self, index: usize) -> Option<TracedTokenWord> {
+        traced_word_with_overrides(&self.replacement_text, self.replacement_origins, index)
+    }
+
     pub(crate) const fn observation_operand(&self) -> i64 {
         self.record.observation_operand
     }
@@ -360,6 +376,26 @@ impl<'a> RuntimeMacroView<'a> {
     pub(crate) const fn allocation_serial(&self) -> u64 {
         self.record.allocation_serial
     }
+}
+
+fn traced_word_with_overrides(
+    tokens: &RuntimeTokenListView<'_>,
+    provenance: &[RuntimeOriginEntry],
+    index: usize,
+) -> Option<TracedTokenWord> {
+    let token = *tokens.tokens().get(index)?;
+    let origin = provenance
+        .binary_search_by_key(&(index as u32), RuntimeOriginEntry::token_offset)
+        .map_or_else(
+            |_| {
+                tokens
+                    .traced_word(index)
+                    .expect("token index was already bounded")
+                    .origin()
+            },
+            |entry| provenance[entry].origin(),
+        );
+    Some(TracedTokenWord::pack(token, origin))
 }
 
 /// Copy-only glue identity and physical row coordinate.

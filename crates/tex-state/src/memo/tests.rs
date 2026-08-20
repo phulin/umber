@@ -182,7 +182,6 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
     let detached_box = source.detach_box(&root).expect("box detachment");
     let source_hash = source.engine_boundary_hash(77, |hash| hash.node_list_ref(&root));
     let source_box_hash = source.engine_boundary_hash(78, |hash| hash.node_list_ref(&root));
-    drop(tokens);
     drop(source);
 
     let mut target = Universe::new();
