@@ -316,14 +316,14 @@ pub(in crate::main_control) fn capture_replay_alignment_cell(
         let material =
             crate::math::finish_math_lists_owned(stores, cell.list_mutation().take_nodes(), false);
         let (retained, mut pre_migrated, migrated) =
-            crate::box_runtime::split_hpack_migrations(material);
+            crate::box_runtime::split_hpack_migrations(stores, material);
         pre_migrated.extend(migrated);
         active.row_migrations.extend(pre_migrated);
         retained
     } else {
         cell.list_mutation().take_nodes()
     };
-    let material = stores.freeze_node_list(&material);
+    let material = stores.publish_page_nodes(&material);
     active
         .captured_rows
         .last_mut()
@@ -364,7 +364,7 @@ pub(in crate::main_control) fn finish_replay_alignment_row(
     }
 
     let mut row = crate::box_runtime::commit_current_list(modes, stores, fuel)?;
-    let children = stores.freeze_node_list(&row.list_mutation().take_nodes());
+    let children = stores.publish_page_nodes(&row.list_mutation().take_nodes());
     let row = crate::align::packaging::make_unset_node(
         stores,
         children,
@@ -452,12 +452,23 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin(
         .columns
         .iter()
         .map(|templates| AlignColumn {
-            u_template: templates
-                .u_template
-                .as_ref()
-                .expect("alignment columns retain u templates")
-                .token_ref(),
-            v_template: templates.v_template.token_ref(),
+            u_template: tex_state::node::NodeTokenList::new(
+                stores
+                    .tokens(
+                        templates
+                            .u_template
+                            .as_ref()
+                            .expect("alignment columns retain u templates")
+                            .token_ref()
+                            .id(),
+                    )
+                    .to_vec(),
+            ),
+            v_template: tex_state::node::NodeTokenList::new(
+                stores
+                    .tokens(templates.v_template.token_ref().id())
+                    .to_vec(),
+            ),
         })
         .collect();
     let state = AlignState::new(

@@ -19,11 +19,11 @@ fn rule(height: i32) -> Node {
 }
 
 fn insertion(stores: &mut Universe, class: u16, height: i32) -> Node {
-    let content = stores.freeze_node_list(&[rule(height)]);
+    let content = stores.publish_page_nodes(&[rule(height)]);
     Node::Ins {
         class,
         size: Scaled::from_raw(height),
-        split_top_skip: stores.intern_glue(GlueSpec::ZERO),
+        split_top_skip: GlueSpec::ZERO,
         split_max_depth: Scaled::MAX_DIMEN,
         floating_penalty: 0,
         content,
@@ -52,7 +52,7 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
     stores.upsert_page_insertion(record);
     stores.record_best_page_break(page_nodes.len(), Scaled::from_raw(0), 0);
 
-    let children = stores.freeze_node_list(&[rule(99)]);
+    let children = stores.publish_page_nodes(&[rule(99)]);
     let hbox = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
         height: Scaled::from_raw(99),
@@ -64,8 +64,8 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
         glue_order: Order::Normal,
         children,
     });
-    let register = stores.freeze_node_list(&[Node::HList(hbox)]);
-    stores.set_box_reg_ref(class, register);
+    let register = stores.publish_page_nodes(&[Node::HList(hbox)]);
+    stores.assign_page_box_local(class, register);
 
     let distributed = distribute_insertions(&mut stores, page_nodes, Some("fire-up context"))
         .expect("hbox recovery is nonfatal");
@@ -74,9 +74,12 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
     assert_eq!(distributed.heldover, [unrelated, later]);
     assert_eq!(distributed.heldover_count, 2);
     let register = stores
-        .box_reg_ref(class)
+        .copy_box_to_page(class)
         .expect("accepted inserts are repackaged");
-    let Node::VList(box_node) = register
+    let Node::VList(box_node) = stores
+        .page_node_list(register)
+        .expect("register belongs to the page arena")
+        .nodes()
         .to_vec()
         .into_iter()
         .next()
@@ -84,7 +87,13 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
     else {
         panic!("insertion register must become a vbox");
     };
-    assert_eq!(box_node.children.to_vec(), [rule(11), rule(13)]);
+    assert_eq!(
+        stores
+            .page_node_list(box_node.children)
+            .expect("register children belong to the page arena")
+            .nodes(),
+        [rule(11), rule(13)]
+    );
     let effects = format!("{:?}", stores.world().effect_records());
     assert!(effects.contains("Insertions can only be added to a vbox"));
     assert!(effects.contains("The following box has been deleted:"));
@@ -102,7 +111,7 @@ fn input_free_box255_recovery_uses_the_published_context() {
         "published output continuation",
         "published ".len(),
     );
-    let deleted = stores.freeze_node_list(&[rule(7)]);
+    let deleted = stores.publish_page_nodes(&[rule(7)]);
 
     report_box255_not_void(&mut stores, deleted, None).expect("recovery is nonfatal");
 
@@ -127,9 +136,9 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
         insertion_box_nodes(&mut stores, 2, None).expect("void box is valid"),
         []
     );
-    assert!(stores.box_reg_ref(2).is_none());
+    assert!(stores.copy_box_to_page(2).is_none());
 
-    let children = stores.freeze_node_list(&[rule(17), Node::Penalty(23)]);
+    let children = stores.publish_page_nodes(&[rule(17), Node::Penalty(23)]);
     let vbox = BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(1),
         height: Scaled::from_raw(17),
@@ -141,19 +150,23 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
         glue_order: Order::Normal,
         children,
     });
-    let register = stores.freeze_node_list(&[Node::VList(vbox)]);
-    stores.set_box_reg_ref(2, register);
+    let register = stores.publish_page_nodes(&[Node::VList(vbox)]);
+    stores.assign_page_box_local(2, register);
 
     assert_eq!(
         insertion_box_nodes(&mut stores, 2, None).expect("vbox is valid"),
         [rule(17), Node::Penalty(23)]
     );
     let retained = stores
-        .box_reg_ref(2)
+        .copy_box_to_page(2)
         .expect("vbox register remains populated");
     assert!(matches!(
-        retained.nodes().first(),
-        Some(tex_state::node_arena::NodeRef::VList(_))
+        stores
+            .page_node_list(retained)
+            .expect("retained register belongs to the page arena")
+            .nodes()
+            .first(),
+        Some(Node::VList(_))
     ));
 }
 
@@ -161,13 +174,13 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
 fn earlier_break_preserves_unrelated_pending_penalty() {
     let mut stores = Universe::new();
     stores.append_page_contribution(Node::Penalty(EJECT_PENALTY));
-    let glue = stores.intern_glue(GlueSpec {
+    let glue = GlueSpec {
         width: Scaled::from_raw(0),
         stretch: Scaled::from_raw(0),
         stretch_order: Order::Normal,
         shrink: Scaled::from_raw(0),
         shrink_order: Order::Normal,
-    });
+    };
     let chosen_break = Node::Glue {
         spec: glue,
         kind: GlueKind::Normal,
@@ -228,7 +241,7 @@ fn job_is_all_over_only_when_page_and_contributions_are_empty() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: tex_state::node_arena::NodeListRef::empty(),
+        children: tex_state::node_arena::PageListId::empty(),
     }));
     stores.append_page_contribution(residual);
     assert!(!job_is_all_over(&stores));

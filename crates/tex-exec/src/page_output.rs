@@ -6,7 +6,7 @@ use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 use tex_state::page::{
     AWFUL_BAD, INF_PENALTY, PageFireUp, PageInsertionStatus, PageInteger, PageMark,
 };
@@ -64,8 +64,8 @@ pub(crate) fn resume_page_builder_after_output(
     output_nodes: Vec<Node>,
     error_context: String,
 ) -> Result<(), ExecError> {
-    if let Some(box255) = stores.box_reg_ref(255) {
-        stores.clear_box_reg_same_level(255);
+    if let Some(box255) = stores.copy_box_to_page(255) {
+        stores.clear_box_preserving_level(255);
         report_box255_not_emptied(stores, box255, error_context.clone())?;
     }
     stores.clear_page_discards();
@@ -78,8 +78,8 @@ pub(crate) fn prepare_box255(
     fire_up: PageFireUp,
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
-    if let Some(box255) = stores.box_reg_ref(255) {
-        stores.clear_box_reg_same_level(255);
+    if let Some(box255) = stores.copy_box_to_page(255) {
+        stores.clear_box_preserving_level(255);
         report_box255_not_void(stores, box255, error_context)?;
     }
 
@@ -92,7 +92,7 @@ pub(crate) fn prepare_box255(
     let distributed = distribute_insertions(stores, page_nodes, error_context)?;
     update_page_marks_at_fire_up(stores, &distributed.page_nodes);
 
-    let page_list = stores.freeze_node_list(&distributed.page_nodes);
+    let page_list = stores.publish_page_nodes(&distributed.page_nodes);
     let packed = vpack(
         stores,
         page_list,
@@ -103,8 +103,8 @@ pub(crate) fn prepare_box255(
             box_max_depth: page_max_depth,
         },
     );
-    let box255 = stores.freeze_node_list(&[Node::VList(packed.node)]);
-    stores.set_box_reg_ref_global(255, box255);
+    let box255 = stores.publish_page_nodes(&[Node::VList(packed.node)]);
+    stores.assign_page_box_global(255, box255);
     stores.start_page_after_output();
     for node in distributed.heldover {
         stores.push_current_page_node(node);
@@ -139,7 +139,7 @@ fn update_page_marks_at_fire_up(stores: &mut Universe, page_nodes: &[Node]) {
         let top = if class == 0 {
             old_bot
         } else {
-            old_bot.filter(|tokens| *tokens != tex_state::ids::TokenListId::EMPTY)
+            old_bot.filter(|tokens| !tokens.is_empty())
         };
         match top {
             Some(top) => stores.set_page_mark_class(PageMark::Top, class, top),
@@ -156,9 +156,9 @@ fn update_page_marks_at_fire_up(stores: &mut Universe, page_nodes: &[Node]) {
                 && *node_class == class
             {
                 if first.is_none() {
-                    first = Some(tokens.id());
+                    first = Some(tokens.clone());
                 }
-                bot = Some(tokens.id());
+                bot = Some(tokens.clone());
             }
         }
 
@@ -199,7 +199,7 @@ struct SplitInsertionContext {
     insertion_start: usize,
     page_index: usize,
     class: u16,
-    split_top_skip: tex_state::glue::GlueSpecRef,
+    split_top_skip: tex_state::glue::GlueSpec,
     split_max_depth: Scaled,
     floating_penalty: i32,
 }
@@ -259,7 +259,14 @@ fn distribute_insertions(
                 {
                     wait = None;
                     let start = queue.nodes.len();
-                    queue.nodes.extend(content.to_vec());
+                    queue.nodes.extend(
+                        stores
+                            .page_node_list(content)
+                            .expect("insertion content belongs to the live page arena")
+                            .nodes()
+                            .iter()
+                            .cloned(),
+                    );
                     if queue.best_ins_index == index {
                         if let Some(remainder) = split_insertion_remainder(
                             stores,
@@ -308,11 +315,20 @@ fn insertion_box_nodes(
     else {
         return Ok(Vec::new());
     };
-    let Some(node) = list.get(0) else {
+    let Some(node) = stores
+        .page_node_list(list)
+        .expect("insertion box belongs to the live page arena")
+        .nodes()
+        .first()
+    else {
         return Ok(Vec::new());
     };
     match node {
-        Node::VList(box_node) => Ok(box_node.children.to_vec()),
+        Node::VList(box_node) => Ok(stores
+            .page_node_list(box_node.children)
+            .expect("insertion box children belong to the live page arena")
+            .nodes()
+            .to_vec()),
         Node::HList(_) => unreachable!("ensure_insertion_vbox rejected the hbox"),
         _ => Ok(Vec::new()),
     }
@@ -344,7 +360,7 @@ fn split_insertion_remainder(
     if pruned.is_empty() {
         return Ok(None);
     }
-    let content = stores.freeze_node_list(&pruned);
+    let content = stores.publish_page_nodes(&pruned);
     let size = natural_vlist_size(stores, content.clone())?;
     Ok(Some(Node::Ins {
         class: context.class,
@@ -357,10 +373,10 @@ fn split_insertion_remainder(
 }
 
 fn package_insertion_box(stores: &mut Universe, class: u16, nodes: Vec<Node>) {
-    let list = stores.freeze_node_list(&nodes);
+    let list = stores.publish_page_nodes(&nodes);
     let packed = vpack_natural(stores, list);
-    let boxed = stores.freeze_node_list(&[Node::VList(packed)]);
-    stores.set_box_reg_ref_global(class, boxed);
+    let boxed = stores.publish_page_nodes(&[Node::VList(packed)]);
+    stores.assign_page_box_global(class, boxed);
 }
 
 pub(crate) fn prepend_output_heldover(
@@ -447,7 +463,7 @@ pub(crate) fn report_output_loop(
 /// TeX.web §1015's `<Ensure that box 255 is empty before output>`.
 fn report_box255_not_void(
     stores: &mut Universe,
-    deleted: NodeListRef,
+    deleted: PageListId,
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
     let context = error_context.map_or_else(
@@ -471,7 +487,7 @@ fn report_box255_not_void(
 /// TeX.web §1028's `<Ensure that box 255 is empty after output>`.
 pub(crate) fn report_box255_not_emptied(
     stores: &mut Universe,
-    deleted: NodeListRef,
+    deleted: PageListId,
     context: String,
 ) -> Result<(), ExecError> {
     let mut report = stores.print_err("Output routine didn't use all of ");
@@ -490,10 +506,10 @@ pub(crate) fn report_box255_not_emptied(
 }
 
 /// TeX82 §199's `box_error` tail after the caller's recoverable error.
-fn report_deleted_box(stores: &mut Universe, deleted: NodeListRef) {
-    let dump = crate::node_dump::dump_node_list_ref(
+fn report_deleted_box(stores: &mut Universe, deleted: PageListId) {
+    let dump = crate::node_dump::dump_page_list(
         stores,
-        &deleted,
+        deleted,
         crate::node_dump::DumpConfig::read(stores),
     );
     let mut diagnostic = stores.begin_diagnostic();
@@ -506,10 +522,13 @@ fn report_deleted_box(stores: &mut Universe, deleted: NodeListRef) {
 
 pub(crate) fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError> {
     let owner = stores
-        .take_box_reg_ref_same_level(255)
+        .take_box_to_page(255)
         .ok_or(ExecError::MissingToken { context: "box" })?;
-    owner
+    stores
+        .page_node_list(owner)
+        .expect("box 255 was copied into the live page arena")
         .get(0)
+        .cloned()
         .ok_or(ExecError::MissingToken { context: "box" })
 }
 
@@ -520,7 +539,7 @@ pub(crate) fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError>
 /// `tail_append` is a plain list append, so none of §679's `append_to_vlist`
 /// baselineskip interposition applies and `prev_depth` is left alone.
 pub(crate) fn append_end_job_contributions(stores: &mut Universe) {
-    let empty = tex_state::node_arena::NodeListRef::empty();
+    let empty = tex_state::node_arena::PageListId::empty();
     stores.append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
         width: stores.dimen_param(DimenParam::H_SIZE),
         height: Scaled::from_raw(0),
@@ -532,13 +551,13 @@ pub(crate) fn append_end_job_contributions(stores: &mut Universe) {
         glue_order: Order::Normal,
         children: empty,
     })));
-    let fill = stores.intern_glue(GlueSpec {
+    let fill = GlueSpec {
         width: Scaled::from_raw(0),
         stretch: Scaled::from_raw(Scaled::UNITY),
         stretch_order: Order::Fill,
         shrink: Scaled::from_raw(0),
         shrink_order: Order::Normal,
-    });
+    };
     stores.append_page_contribution(Node::Glue {
         spec: fill,
         kind: GlueKind::Normal,

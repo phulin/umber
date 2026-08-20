@@ -167,10 +167,10 @@ fn page_episode_key(stores: &Universe) -> PureMemoKey {
             hash.i32(stores.count(*class));
             hash.i32(stores.dimen(*class).raw());
             hash.glue(stores.skip(*class));
-            match stores.box_reg_ref(*class) {
+            match stores.copy_box_to_page(*class) {
                 Some(list) => {
                     hash.u32(1);
-                    hash.node_list_ref(&list);
+                    hash.page_node_list(stores, list);
                 }
                 None => hash.u32(0),
             }
@@ -371,11 +371,16 @@ fn insertion_box_size(
     let Some(list) = ensure_insertion_vbox(stores, class, error_context)? else {
         return Ok(Scaled::from_raw(0));
     };
-    let Some(node) = list.nodes().first() else {
+    let Some(node) = stores
+        .page_node_list(list)
+        .expect("insertion box was copied into the live page arena")
+        .nodes()
+        .first()
+    else {
         return Ok(Scaled::from_raw(0));
     };
     match node {
-        tex_state::node_arena::NodeRef::VList(box_node) => add(box_node.height, box_node.depth),
+        Node::VList(box_node) => add(box_node.height, box_node.depth),
         _ => Ok(Scaled::from_raw(0)),
     }
 }
@@ -386,13 +391,17 @@ pub(crate) fn ensure_insertion_vbox(
     stores: &mut Universe,
     class: u16,
     error_context: Option<&str>,
-) -> Result<Option<tex_state::node_arena::NodeListRef>, ExecError> {
-    let Some(list) = stores.box_reg_ref(class) else {
+) -> Result<Option<tex_state::node_arena::PageListId>, ExecError> {
+    let Some(list) = stores.copy_box_to_page(class) else {
         return Ok(None);
     };
     if !matches!(
-        list.nodes().first(),
-        Some(tex_state::node_arena::NodeRef::HList(_))
+        stores
+            .page_node_list(list)
+            .expect("box was copied into the live page arena")
+            .nodes()
+            .first(),
+        Some(Node::HList(_))
     ) {
         return Ok(Some(list));
     }
@@ -417,11 +426,8 @@ pub(crate) fn ensure_insertion_vbox(
     // TeX82 §993's `box_error` continues after `error`: it enters a diagnostic
     // scope, identifies the rejected box, and applies `show_box` before
     // flushing the register. `show_box` starts with §182's structural newline.
-    let text = crate::node_dump::dump_node_list_ref(
-        stores,
-        &list,
-        crate::node_dump::DumpConfig::read(stores),
-    );
+    let text =
+        crate::node_dump::dump_page_list(stores, list, crate::node_dump::DumpConfig::read(stores));
     let mut diagnostic = stores.begin_diagnostic();
     diagnostic
         .print_nl("The following box has been deleted:")
@@ -431,7 +437,7 @@ pub(crate) fn ensure_insertion_vbox(
     // TeX82 §993 flushes the list and then assigns `box(n):=null` directly;
     // it does not call §275's `eq_define` or create a local save-stack entry.
     // Preserve the register's existing eq level while voiding its value.
-    stores.clear_box_reg_same_level(class);
+    stores.clear_box_preserving_level(class);
     Ok(None)
 }
 
@@ -449,7 +455,7 @@ fn split_page_insertion(
     insertion: &mut PageInsertion,
     current_index: usize,
     node: &Node,
-    content: tex_state::node_arena::NodeListRef,
+    content: tex_state::node_arena::PageListId,
     split_max_depth: Scaled,
     error_context: Option<&str>,
 ) -> Result<Option<Node>, ExecError> {
@@ -472,7 +478,11 @@ fn split_page_insertion(
         capacity = remaining_cap;
     }
 
-    let mut content_nodes = content.to_vec();
+    let mut content_nodes = stores
+        .page_node_list(content)
+        .expect("insertion content belongs to the live page arena")
+        .nodes()
+        .to_vec();
     let split = vert_break(stores, &content_nodes, capacity, split_max_depth)
         .map_err(vertical_break_error)?;
     if stores.int_param(IntParam::TRACING_PAGES) > 0 {
@@ -575,7 +585,7 @@ fn initialize_page_with_topskip(stores: &mut Universe, node: &Node) -> Result<()
         shrink: top_skip.shrink,
         shrink_order: top_skip.shrink_order,
     };
-    let spec = stores.intern_glue(adjusted);
+    let spec = adjusted;
     stores.prepend_page_contribution(Node::Glue {
         spec,
         kind: GlueKind::TopSkip,
@@ -604,11 +614,10 @@ fn update_glue_or_kern(
     let width = match node {
         Node::Kern { amount, .. } => *amount,
         Node::Glue { spec, kind, leader } => {
-            let spec = stores.glue_spec(*spec);
+            let spec = *spec;
             let spec = finite_page_shrink(stores, spec, error_context)?;
-            let finite_id = stores.intern_glue(spec);
             replacement = Some(Node::Glue {
-                spec: finite_id,
+                spec,
                 kind: *kind,
                 leader: leader.clone(),
             });
@@ -657,14 +666,14 @@ fn normalize_insert_content_shrink(
         let Some(Node::Glue { spec, kind, leader }) = content_nodes.get(index) else {
             continue;
         };
-        let mut finite = stores.glue_spec(*spec);
+        let mut finite = *spec;
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
         diagnostics::report_split_infinite_shrinkage(stores, error_context)?;
         finite.shrink_order = Order::Normal;
         content_nodes[index] = Node::Glue {
-            spec: stores.intern_glue(finite),
+            spec: finite,
             kind: *kind,
             leader: leader.clone(),
         };
@@ -685,7 +694,7 @@ fn normalize_insert_content_shrink(
     else {
         return Ok(None);
     };
-    let content = stores.freeze_node_list(content_nodes);
+    let content = stores.publish_page_nodes(content_nodes);
     Ok(Some(Node::Ins {
         class: *class,
         size: *size,

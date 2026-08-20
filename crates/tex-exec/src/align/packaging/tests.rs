@@ -10,21 +10,21 @@ fn sp(raw: i32) -> Scaled {
 #[test]
 fn package_unset_cell_records_natural_extent_and_glue_orders() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let fil = stores.intern_glue(GlueSpec {
+    let fil = GlueSpec {
         width: sp(3),
         stretch: sp(7),
         stretch_order: Order::Fil,
         shrink: sp(4),
         shrink_order: Order::Fill,
-    });
-    let fill = stores.intern_glue(GlueSpec {
+    };
+    let fill = GlueSpec {
         width: sp(2),
         stretch: sp(9),
         stretch_order: Order::Fill,
         shrink: sp(6),
         shrink_order: Order::Fil,
-    });
-    let children = stores.freeze_node_list(&[
+    };
+    let children = stores.publish_page_nodes(&[
         Node::Rule {
             width: Some(sp(5)),
             height: Some(sp(2)),
@@ -81,7 +81,7 @@ fn span_record_256_limit_and_merge_fields() {
     // largest legal cell therefore spans 256 columns; one more succumbs with
     // the canonical confusion, without losing the packed metric fields.
     let mut stores = Universe::new_with_plain_catcodes();
-    let children = stores.freeze_node_list(&[Node::Rule {
+    let children = stores.publish_page_nodes(&[Node::Rule {
         width: Some(sp(9)),
         height: Some(sp(2)),
         depth: Some(sp(1)),

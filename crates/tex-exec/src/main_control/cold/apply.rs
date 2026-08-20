@@ -280,7 +280,7 @@ pub(in crate::main_control) fn apply(
             }
             crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             modes.current_list_mutation().push(Node::Glue {
-                spec: stores.intern_glue(value),
+                spec: value,
                 kind: GlueKind::Normal,
                 leader: None,
             });
@@ -449,9 +449,8 @@ pub(in crate::main_control) fn apply(
         }
         ColdOperation::NonScript => {
             // TeX82 §1171: a zero glue with the `cond_math_glue` subtype.
-            let spec = stores.intern_glue(GlueSpec::ZERO);
             modes.current_list_mutation().push(Node::Glue {
-                spec,
+                spec: GlueSpec::ZERO,
                 kind: GlueKind::NonScript,
                 leader: None,
             });
@@ -505,7 +504,7 @@ pub(in crate::main_control) fn apply(
                     // an ordinary `mmode+spacer`, which §1045 makes a no-op.
                     let spec = crate::box_runtime::control_space_glue_spec(stores);
                     modes.current_list_mutation().push(Node::Glue {
-                        spec: stores.intern_glue(spec),
+                        spec,
                         kind: GlueKind::Normal,
                         leader: None,
                     });
@@ -632,7 +631,7 @@ pub(in crate::main_control) fn apply(
             }
             crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             modes.current_list_mutation().push(Node::Glue {
-                spec: stores.intern_glue(crate::box_runtime::fixed_infinite_glue(primitive)),
+                spec: crate::box_runtime::fixed_infinite_glue(primitive),
                 kind: GlueKind::Normal,
                 leader: None,
             });
@@ -647,12 +646,11 @@ pub(in crate::main_control) fn apply(
             // itself ("it is used in at least one place where that would be
             // a mistake"), unlike `append_penalty` (§1103); no page build
             // follows here.
-            let spec = stores.intern_glue(value);
             crate::box_runtime::append_node_to_current_list(
                 modes,
                 stores,
                 Node::Glue {
-                    spec,
+                    spec: value,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
@@ -663,7 +661,7 @@ pub(in crate::main_control) fn apply(
         ColdOperation::FixedVerticalGlue { primitive } => {
             // See `ColdOperation::VerticalSkip` above: same §1054/§1057
             // `append_glue`, no paragraph start, no page build.
-            let spec = stores.intern_glue(crate::box_runtime::fixed_infinite_glue(primitive));
+            let spec = crate::box_runtime::fixed_infinite_glue(primitive);
             crate::box_runtime::append_node_to_current_list(
                 modes,
                 stores,
@@ -1665,7 +1663,9 @@ pub(in crate::main_control) fn apply(
                 command.fuel,
                 Whatsit::DeferredWrite {
                     sink: replay_write_sink(stream),
-                    tokens: tokens.token_ref(),
+                    tokens: tex_state::node::NodeTokenList::new(
+                        stores.tokens(tokens.token_ref().id()).to_vec(),
+                    ),
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -1680,7 +1680,9 @@ pub(in crate::main_control) fn apply(
                 command.fuel,
                 Whatsit::DeferredSpecial {
                     class: "dvi".to_owned(),
-                    tokens: tokens.token_ref(),
+                    tokens: tex_state::node::NodeTokenList::new(
+                        stores.tokens(tokens.token_ref().id()).to_vec(),
+                    ),
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -2139,7 +2141,7 @@ pub(in crate::main_control) fn apply(
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
                         let id = read_box_register(index, copy, stores, command);
-                        let node = crate::box_runtime::first_box_node(id);
+                        let node = crate::box_runtime::first_box_node(stores, id);
                         let context = boxes.take_box_context(false);
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
                     }
@@ -2199,7 +2201,7 @@ pub(in crate::main_control) fn apply(
             ships_out,
         } => {
             let id = read_box_register(index, copy, stores, command);
-            let node = crate::box_runtime::first_box_node(id);
+            let node = crate::box_runtime::first_box_node(stores, id);
             let context = boxes.take_box_context(ships_out);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
@@ -2241,14 +2243,13 @@ pub(in crate::main_control) fn apply(
             glue,
         } => {
             boxes.pending_leader = None;
-            let spec = stores.intern_glue(glue);
             let error_context = command.state.output_open_context(&stores.command_context());
             crate::box_runtime::append_leader_contribution(
                 modes,
                 stores,
                 kind,
                 payload,
-                spec,
+                glue,
                 command.fuel,
                 &error_context,
             )?;
@@ -2260,18 +2261,17 @@ pub(in crate::main_control) fn apply(
             copy,
             glue,
         } => {
-            if copy && let Some(root) = stores.box_reg_ref(index) {
+            if copy && let Some(root) = stores.copy_box_to_page(index) {
                 stores.observe_box_copy_ref(&root, command.state.transient_dynamic_words());
             }
             if let Some(payload) = crate::box_runtime::take_register_payload(stores, index, copy) {
-                let spec = stores.intern_glue(glue);
                 let error_context = command.state.output_open_context(&stores.command_context());
                 crate::box_runtime::append_leader_contribution(
                     modes,
                     stores,
                     kind,
                     payload,
-                    spec,
+                    glue,
                     command.fuel,
                     &error_context,
                 )?;
@@ -2442,7 +2442,9 @@ pub(in crate::main_control) fn apply(
                 stores,
                 Node::Mark {
                     class,
-                    tokens: tokens.token_ref(),
+                    tokens: tex_state::node::NodeTokenList::new(
+                        stores.tokens(tokens.token_ref().id()).to_vec(),
+                    ),
                 },
             );
             Ok(ReplayStep::Continue)
@@ -2774,7 +2776,7 @@ pub(in crate::main_control) fn apply(
             // becoming node.
 
             let level = crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
-            let children = stores.freeze_node_list(level.list().nodes());
+            let children = stores.publish_page_nodes(level.list().nodes());
             // TeX82 §1086 snapshots `d:=box_max_depth` before `unsave`.
             // The box body may assign a local, signed `\boxmaxdepth`; that
             // value governs this package operation even though the assignment
@@ -2822,7 +2824,7 @@ pub(in crate::main_control) fn apply(
                     ),
                 })
             };
-            let boxed = stores.freeze_node_list(std::slice::from_ref(&node));
+            let boxed = stores.publish_page_nodes(std::slice::from_ref(&node));
             // TeX82 §1168's `vcenter_group` case of `handle_right_brace`:
             //
             //     vcenter_group: begin end_graf; unsave; save_ptr:=save_ptr-2;
@@ -2969,8 +2971,8 @@ pub(in crate::main_control) fn apply(
                 align_peek_after_noalign: false,
                 noalign_open: false,
                 captured_rows: Vec::new(),
-                tabskips: vec![stores.glue_ref(stores.glue_param(GlueParam::TAB_SKIP))],
-                default_tabskip: stores.glue_ref(stores.glue_param(GlueParam::TAB_SKIP)),
+                tabskips: vec![*stores.glue(stores.glue_param(GlueParam::TAB_SKIP))],
+                default_tabskip: *stores.glue(stores.glue_param(GlueParam::TAB_SKIP)),
                 row_migrations: Vec::new(),
                 cell_span: 1,
                 row_open: false,
@@ -3047,12 +3049,8 @@ pub(in crate::main_control) fn apply(
                 && active.identity == alignment
             {
                 active.columns = preamble.columns;
-                active.tabskips = preamble
-                    .tabskips
-                    .into_iter()
-                    .map(|spec| stores.intern_glue(spec))
-                    .collect();
-                active.default_tabskip = stores.intern_glue(preamble.default_tabskip);
+                active.tabskips = preamble.tabskips;
+                active.default_tabskip = preamble.default_tabskip;
                 active.repeat_start = preamble.repeat_start;
                 active.column = 0;
                 active.preamble_start_pending = false;

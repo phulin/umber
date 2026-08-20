@@ -9,15 +9,15 @@ use tex_out::{
 };
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::Order;
-use tex_state::ids::{FontId, NodeListId, TokenListId};
+use tex_state::ids::FontId;
 use tex_state::node::{
     BoxNode as StateBoxNode, Direction, DiscKind as StateDiscKind, GlueKind as StateGlueKind,
     KernKind as StateKernKind, LeaderPayload as StateLeaderPayload,
     MarginKernSide as StateMarginKernSide, Node, Sign, Whatsit,
 };
-use tex_state::node_arena::{NodeList, NodeListRef, NodeRef};
-use tex_state::provenance::OriginRef;
-use tex_state::token::{Catcode, Token};
+use tex_state::node_arena::{NodeRef, PageListId};
+use tex_state::token::OriginId;
+use tex_state::token::{Catcode, Token, TokenWord};
 use tex_state::{EffectRecord, PrintSink, Universe, VerifiedArtifact};
 
 use crate::ExecError;
@@ -25,7 +25,11 @@ use crate::diagnostics;
 
 const MAX_SHIPOUT_DEPTH: usize = 4096;
 
-pub(crate) type WriteExpander<'a> = dyn FnMut(&mut Universe, PrintSink, TokenListId) -> Result<crate::shipout::ExpandedWrite, ExecError>
+pub(crate) type WriteExpander<'a> = dyn FnMut(
+        &mut Universe,
+        PrintSink,
+        &[TokenWord],
+    ) -> Result<crate::shipout::ExpandedWrite, ExecError>
     + 'a;
 
 pub(crate) use crate::shipout::ReplayTextKind;
@@ -33,7 +37,7 @@ pub(crate) use crate::shipout::ReplayTextKind;
 pub(crate) type ReplayTextExpander<'a> = dyn FnMut(
         &mut Universe,
         ReplayTextKind,
-        TokenListId,
+        &[TokenWord],
     ) -> Result<crate::shipout::ExpandedReplayText, ExecError>
     + 'a;
 
@@ -72,10 +76,14 @@ pub(crate) fn stage_form(
     replay_expander: &mut ReplayTextExpander<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
     let color_rollback = stores.pdf_form_color_rollback();
+    let page_cursor = stores.page_node_cursor();
     let result = stage_form_inner(form, stores, write_expander, replay_expander);
     if result.is_err() {
         stores.rollback_pdf_form_colors(color_rollback);
     }
+    stores
+        .truncate_page_nodes(page_cursor)
+        .expect("form staging restores its page-arena scratch suffix");
     result
 }
 
@@ -85,9 +93,15 @@ fn stage_form_inner(
     write_expander: &mut WriteExpander<'_>,
     replay_expander: &mut ReplayTextExpander<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    let root_node = form
-        .box_list_ref()
-        .get(0)
+    let form_root = stores
+        .copy_durable_page_nodes(form.box_list())
+        .expect("captured PDF form belongs to the admitted durable generation");
+    let root_node = stores
+        .page_node_list(form_root)
+        .expect("copied PDF form belongs to the live page arena")
+        .nodes()
+        .first()
+        .cloned()
         .ok_or(ExecError::PdfXFormVoidBox)?;
     let (root, children, vertical, box_lr) = match root_node {
         Node::HList(node) => (lower_box_header(&node), node.children, false, node.box_lr),
@@ -95,7 +109,7 @@ fn stage_form_inner(
         _ => return Err(ExecError::PdfXFormVoidBox),
     };
     let overlay = normalize_page(
-        children.clone(),
+        children,
         (vertical, box_lr),
         (
             PendingPageEffects {
@@ -504,16 +518,16 @@ impl EmissionState {
         }
     }
 
-    fn node(&mut self, stores: &Universe, origins: impl IntoIterator<Item = OriginRef>) {
+    fn node(&mut self, stores: &Universe, origins: impl IntoIterator<Item = OriginId>) {
         let Some(ends) = &mut self.render_origin_ends else {
             return;
         };
         let mut len = 0_u32;
         for origin in origins {
-            if let Some(span) = stores.root_span_for_origin(origin.id()) {
+            if let Some(span) = stores.root_span_for_origin(origin) {
                 self.render_origins.push_stable_span(span);
             } else {
-                self.render_origins.push_root(origin);
+                stores.push_render_origin(&mut self.render_origins, origin);
             }
             len = len
                 .checked_add(1)
@@ -528,9 +542,9 @@ impl EmissionState {
         );
     }
 
-    fn character_node(&mut self, stores: &Universe, origin: &OriginRef) {
+    fn character_node(&mut self, stores: &Universe, origin: OriginId) {
         if self.render_origin_ends.is_some() {
-            self.node(stores, [origin.clone()]);
+            self.node(stores, [origin]);
         }
     }
 
@@ -554,7 +568,7 @@ impl EmissionState {
 fn emit_node_list(
     stores: &Universe,
     overlay: &PageOverlay,
-    list: &NodeListRef,
+    list: &PageListId,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,
@@ -579,7 +593,9 @@ fn emit_node_list(
         return Ok(());
     }
 
-    let nodes = list.nodes();
+    let nodes = stores
+        .page_node_list(*list)
+        .expect("shipout list belongs to the live page arena");
     let unmodified = overlay.math.is_empty()
         && overlay.directions.is_empty()
         && overlay.omitted_whatsits.is_empty();
@@ -635,7 +651,7 @@ fn emit_char_run(
         (font_id, letterspaced)
     };
     if !letterspaced {
-        for (code, origin) in run.codes().zip(run.origin_roots()) {
+        for (code, origin) in run.codes().zip(run.origins()) {
             let width = if let Some((cached_font, cached_code, width)) = emission.direct_glyph
                 && cached_font == font
                 && cached_code == code
@@ -660,7 +676,7 @@ fn emit_char_run(
         return Ok(());
     }
 
-    for (code, origin) in run.codes().zip(run.origin_roots()) {
+    for (code, origin) in run.codes().zip(run.origins()) {
         let width = stores
             .font_character_metrics(font, char::from(code))
             .map(|metrics| metrics.width)
@@ -672,7 +688,7 @@ fn emit_char_run(
             font,
             u32::from(code),
             width,
-            [origin.clone()],
+            [origin],
             output,
             dvi,
             emission,
@@ -685,7 +701,7 @@ fn emit_char_run(
 fn emit_index(
     stores: &Universe,
     overlay: &PageOverlay,
-    list: &NodeListRef,
+    list: &PageListId,
     index: usize,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
@@ -708,34 +724,21 @@ fn emit_index(
             depth + 1,
         );
     }
-    let node = list
-        .nodes()
+    let node = stores
+        .page_node_list(*list)
+        .expect("shipout list belongs to the live page arena")
         .get(index)
         .expect("emission index belongs to the frozen list");
     match node {
-        NodeRef::Char {
-            font,
-            ch,
-            origin_root,
-            ..
-        } => {
+        NodeRef::Char { font, ch, origin } => {
             let (code, width) = glyph(stores, font, ch)?;
-            emit_glyph(
-                stores,
-                font,
-                code,
-                width,
-                [origin_root.clone()],
-                output,
-                dvi,
-                emission,
-            )?;
+            emit_glyph(stores, font, code, width, [origin], output, dvi, emission)?;
         }
         NodeRef::Lig {
             font,
             ch,
             orig,
-            origin_roots,
+            origins,
             ..
         } => {
             let (code, width) = glyph(stores, font, ch)?;
@@ -745,7 +748,7 @@ fn emit_index(
                 code,
                 orig,
                 width,
-                origin_roots.iter().cloned(),
+                origins.iter().copied(),
                 output,
                 dvi,
                 emission,
@@ -769,10 +772,10 @@ fn emit_index(
             dvi.kern(amount).map_err(invalid_artifact)?;
         }
         NodeRef::Glue { spec, kind, leader } => {
-            let spec = lower_glue(stores.glue_spec(*spec));
+            let spec = lower_glue(*spec);
             let kind = lower_glue_kind(kind);
             emit_glue(
-                stores, overlay, output, dvi, emission, spec, kind, leader, list, depth,
+                stores, overlay, output, dvi, emission, spec, kind, leader, depth,
             )?;
         }
         NodeRef::Penalty(value) => {
@@ -797,7 +800,6 @@ fn emit_index(
                 dvi,
                 emission,
                 box_node,
-                list,
                 vertical,
                 suppress_deferred_streams,
                 depth,
@@ -823,9 +825,7 @@ fn emit_index(
                     emit_node_list(
                         stores,
                         overlay,
-                        &list
-                            .resolve(pre)
-                            .expect("discretionary pre-break list belongs to its owner"),
+                        &pre,
                         nodes,
                         &mut ignored_dvi,
                         emission,
@@ -837,9 +837,7 @@ fn emit_index(
                     emit_node_list(
                         stores,
                         overlay,
-                        &list
-                            .resolve(post)
-                            .expect("discretionary post-break list belongs to its owner"),
+                        &post,
                         nodes,
                         &mut ignored_dvi,
                         emission,
@@ -851,9 +849,7 @@ fn emit_index(
                     emit_node_list(
                         stores,
                         overlay,
-                        &list
-                            .resolve(replace)
-                            .expect("discretionary replacement list belongs to its owner"),
+                        &replace,
                         nodes,
                         &mut ignored_dvi,
                         emission,
@@ -867,7 +863,7 @@ fn emit_index(
         NodeRef::Mark { class, tokens } => {
             emission.node(stores, []);
             output.mark_stream(class, |tokens_out| {
-                for &token in stores.tokens(tokens.id()).iter() {
+                for token in tokens.words().iter().map(|word| word.semantic_token()) {
                     match token {
                         Token::Char { ch, cat } => {
                             tokens_out.char(ch as u32, lower_token_catcode(cat))?;
@@ -892,9 +888,7 @@ fn emit_index(
                 emit_node_list(
                     stores,
                     overlay,
-                    &list
-                        .resolve(content)
-                        .expect("insertion content belongs to its enclosing owner"),
+                    &content,
                     nodes,
                     &mut ignored_dvi,
                     emission,
@@ -933,9 +927,7 @@ fn emit_index(
                 emit_node_list(
                     stores,
                     overlay,
-                    &list
-                        .resolve(content.content)
-                        .expect("adjustment content belongs to its enclosing owner"),
+                    &content.content,
                     nodes,
                     &mut ignored_dvi,
                     emission,
@@ -964,17 +956,18 @@ fn emit_box(
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,
-    box_node: StateBoxNode<NodeListId>,
-    owner: &NodeListRef,
+    box_node: StateBoxNode<PageListId>,
     vertical: bool,
     suppress_deferred_streams: bool,
     depth: usize,
 ) -> Result<(), ExecError> {
     let fields = lower_box_header(&box_node);
-    let children = owner
-        .resolve(box_node.children)
-        .expect("box children belong to their enclosing owner");
-    dvi.begin_box(&fields, vertical, children.is_empty())
+    let children = box_node.children;
+    let children_empty = stores
+        .page_node_list(children)
+        .expect("box children belong to the live page arena")
+        .is_empty();
+    dvi.begin_box(&fields, vertical, children_empty)
         .map_err(invalid_artifact)?;
     emission.node_empty();
     output.box_node(vertical, &fields, |nodes| {
@@ -989,7 +982,7 @@ fn emit_box(
             depth + 1,
         )
     })?;
-    if !children.is_empty() {
+    if !children_empty {
         dvi.end_box().map_err(invalid_artifact)?;
     }
     Ok(())
@@ -1004,8 +997,7 @@ fn emit_glue(
     emission: &mut EmissionState,
     spec: PageGlueSpec,
     kind: PageGlueKind,
-    leader: Option<StateLeaderPayload<NodeListId>>,
-    owner: &NodeListRef,
+    leader: Option<StateLeaderPayload<PageListId>>,
     depth: usize,
 ) -> Result<(), ExecError> {
     let vertical_leader = matches!(&leader, Some(StateLeaderPayload::VList(_)));
@@ -1033,9 +1025,7 @@ fn emit_glue(
                 emit_node_list(
                     stores,
                     overlay,
-                    &owner
-                        .resolve(box_node.children)
-                        .expect("leader children belong to their enclosing owner"),
+                    &box_node.children,
                     nodes,
                     dvi,
                     emission,
@@ -1092,7 +1082,7 @@ fn whatsit_is_anchored(whatsit: &Whatsit, suppress_deferred_streams: bool) -> bo
     }
 }
 
-fn permutation_for<'a>(overlay: &'a PageOverlay, list: &NodeListRef) -> Option<&'a [usize]> {
+fn permutation_for<'a>(overlay: &'a PageOverlay, list: &PageListId) -> Option<&'a [usize]> {
     overlay
         .directions
         .iter()
@@ -1100,11 +1090,7 @@ fn permutation_for<'a>(overlay: &'a PageOverlay, list: &NodeListRef) -> Option<&
         .map(|entry| entry.order.as_slice())
 }
 
-fn math_substitution(
-    overlay: &PageOverlay,
-    list: &NodeListRef,
-    index: usize,
-) -> Option<NodeListRef> {
+fn math_substitution(overlay: &PageOverlay, list: &PageListId, index: usize) -> Option<PageListId> {
     overlay
         .math
         .iter()
@@ -1112,7 +1098,7 @@ fn math_substitution(
         .map(|entry| entry.replacement.clone())
 }
 
-fn omitted_whatsit(overlay: &PageOverlay, list: &NodeListRef, index: usize) -> bool {
+fn omitted_whatsit(overlay: &PageOverlay, list: &PageListId, index: usize) -> bool {
     overlay
         .omitted_whatsits
         .iter()
@@ -1192,7 +1178,7 @@ fn emit_glyph(
     font: FontId,
     ch: u32,
     logical_width: tex_state::scaled::Scaled,
-    origins: impl IntoIterator<Item = OriginRef>,
+    origins: impl IntoIterator<Item = OriginId>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,
@@ -1214,7 +1200,7 @@ fn emit_ligature(
     ch: u32,
     source: &[char],
     logical_width: tex_state::scaled::Scaled,
-    origins: impl IntoIterator<Item = OriginRef>,
+    origins: impl IntoIterator<Item = OriginId>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState,

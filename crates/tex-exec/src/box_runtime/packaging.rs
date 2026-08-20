@@ -1,7 +1,7 @@
 //! Source-free horizontal packing and box-register lookup.
 
 use tex_state::node::Node;
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 use tex_state::{GeometryObservation, Universe};
 use tex_typeset::{PackDiagnostic, PackSpec, plan_hpack_nodes};
 
@@ -101,7 +101,7 @@ fn report_cannot_take_last_box(
 
 pub(crate) fn hpack_with_overfull_rule(
     stores: &mut Universe,
-    children: tex_state::node_arena::NodeListRef,
+    children: tex_state::node_arena::PageListId,
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
     let params = hpack_params(stores);
@@ -116,13 +116,17 @@ pub(crate) fn hpack_with_overfull_rule(
                 matches!(diagnostic, PackDiagnostic::Overfull { excess } if *excess > params.hfuzz)
             })
     {
-        let mut nodes = packed.node.children.to_vec();
+        let mut nodes = stores
+            .page_node_list(packed.node.children)
+            .expect("packed box belongs to the live page arena")
+            .nodes()
+            .to_vec();
         nodes.push(Node::Rule {
             width: Some(params.overfull_rule),
             height: None,
             depth: None,
         });
-        let children = stores.freeze_node_list(&nodes);
+        let children = stores.publish_page_nodes(&nodes);
         packed.node.children = children;
     }
     // TeX82 §§115/162 stores a discretionary's replacement as the
@@ -140,9 +144,13 @@ pub(crate) fn hpack_with_overfull_rule(
 
 fn physical_discretionary_projection(
     stores: &mut Universe,
-    children: tex_state::node_arena::NodeListRef,
-) -> Option<tex_state::node_arena::NodeListRef> {
-    let nodes = children.to_vec();
+    children: tex_state::node_arena::PageListId,
+) -> Option<tex_state::node_arena::PageListId> {
+    let nodes = stores
+        .page_node_list(children)
+        .expect("packed box belongs to the live page arena")
+        .nodes()
+        .to_vec();
     if !nodes.iter().any(|node| {
         matches!(
             node,
@@ -157,7 +165,13 @@ fn physical_discretionary_projection(
     let mut physical = Vec::with_capacity(nodes.len());
     for node in nodes {
         let replace = match &node {
-            Node::Disc { replace, .. } => Some(replace.to_vec()),
+            Node::Disc { replace, .. } => Some(
+                stores
+                    .page_node_list(*replace)
+                    .expect("discretionary replacement belongs to the live page arena")
+                    .nodes()
+                    .to_vec(),
+            ),
             _ => None,
         };
         physical.push(node);
@@ -165,7 +179,7 @@ fn physical_discretionary_projection(
             physical.extend(replace);
         }
     }
-    let physical = stores.freeze_node_list_owned(&mut physical);
+    let physical = stores.publish_page_nodes_owned(&mut physical);
     Some(physical)
 }
 
@@ -212,7 +226,7 @@ pub(crate) fn hpack_owned_with_overfull_rule(
     } else {
         crate::pack_report::DiagnosticListLayout::FrozenList
     };
-    let children = stores.freeze_node_list_owned(nodes);
+    let children = stores.publish_page_nodes_owned(nodes);
     let mut packed = plan.finish(children);
     packed.node.allocator_high_cell_overlap = if diagnostic_nodes.is_some() {
         allocator_high_cell_overlap
@@ -228,8 +242,8 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         source: stores.current_input_source(),
     });
     let diagnostic_box = if let Some(nodes) = diagnostic_nodes {
-        let diagnostic_children = stores.freeze_node_list(nodes);
-        let children = stores.freeze_node_list(
+        let diagnostic_children = stores.publish_page_nodes(nodes);
+        let children = stores.publish_page_nodes(
             short_diagnostic_nodes
                 .as_deref()
                 .expect("physical diagnostics have a short-display projection"),
@@ -292,8 +306,11 @@ pub(crate) fn project_short_diagnostic_discs(physical: &[Node], semantic: &[Node
         .collect()
 }
 
-pub(crate) fn first_box_node(owner: Option<NodeListRef>) -> Option<Node> {
-    owner?
+pub(crate) fn first_box_node(stores: &Universe, owner: Option<PageListId>) -> Option<Node> {
+    stores
+        .page_node_list(owner?)
+        .ok()?
         .get(0)
+        .cloned()
         .filter(|node| matches!(node, Node::HList(_) | Node::VList(_)))
 }

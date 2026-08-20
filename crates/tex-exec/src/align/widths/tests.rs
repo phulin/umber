@@ -1,17 +1,15 @@
 use super::*;
 use crate::mode::AlignColumn;
-use tex_state::glue::{GlueSpec, GlueSpecRef, Order};
-use tex_state::ids::TokenListId;
-use tex_state::node::{UnsetKind, UnsetNodeFields};
-use tex_state::node_arena::NodeListRef;
+use tex_state::glue::{GlueSpec, Order};
+use tex_state::node::{NodeTokenList, UnsetKind, UnsetNodeFields};
+use tex_state::node_arena::PageListId;
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw * Scaled::UNITY)
 }
 
 fn columns(count: usize) -> Vec<AlignColumn> {
-    let universe = Universe::new();
-    let empty = universe.token_list_ref(TokenListId::EMPTY);
+    let empty = NodeTokenList::default();
     vec![
         AlignColumn {
             u_template: empty,
@@ -21,19 +19,19 @@ fn columns(count: usize) -> Vec<AlignColumn> {
     ]
 }
 
-fn state(kind: AlignmentKind, spec: AlignmentPackSpec, tabskips: Vec<GlueSpecRef>) -> AlignState {
+fn state(kind: AlignmentKind, spec: AlignmentPackSpec, tabskips: Vec<GlueSpec>) -> AlignState {
     AlignState::new(
         kind,
         spec,
         columns(tabskips.len() - 1),
         tabskips,
-        tex_state::glue::testing_zero_glue_ref(),
+        tex_state::glue::GlueSpec::ZERO,
         None,
     )
 }
 
 fn unset(kind: UnsetKind, natural: i32, span_count: u16) -> Node {
-    let empty = NodeListRef::empty();
+    let empty = PageListId::empty();
     let (width, height) = match kind {
         UnsetKind::HBox => (sp(natural), sp(1)),
         UnsetKind::VBox => (sp(1), sp(natural)),
@@ -56,18 +54,18 @@ fn unset(kind: UnsetKind, natural: i32, span_count: u16) -> Node {
 fn pack_alignment_prototype_applies_spec_in_both_modes() {
     for kind in [AlignmentKind::HAlign, AlignmentKind::VAlign] {
         let mut stores = Universe::new_with_plain_catcodes();
-        let flexible = stores.intern_glue(GlueSpec {
+        let flexible = GlueSpec {
             width: sp(1),
             stretch: sp(1),
             stretch_order: Order::Fil,
             shrink: Scaled::from_raw(0),
             shrink_order: Order::Normal,
-        });
+        };
         let resolved = ResolvedWidths {
             columns: vec![sp(4), sp(5)],
-            tabskips: vec![flexible, tex_state::glue::testing_zero_glue_ref(), flexible],
+            tabskips: vec![flexible, tex_state::glue::GlueSpec::ZERO, flexible],
         };
-        let empty = NodeListRef::empty();
+        let empty = PageListId::empty();
 
         let exact = pack_prototype(
             &state(
@@ -129,11 +127,11 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
         let resolved = ResolvedWidths {
             columns: vec![sp(4)],
             tabskips: vec![
-                tex_state::glue::testing_zero_glue_ref(),
-                tex_state::glue::testing_zero_glue_ref(),
+                tex_state::glue::GlueSpec::ZERO,
+                tex_state::glue::GlueSpec::ZERO,
             ],
         };
-        let empty = NodeListRef::empty();
+        let empty = PageListId::empty();
         let prototype = pack_prototype(
             &state(kind, AlignmentPackSpec::Natural, resolved.tabskips.clone()),
             &resolved,
@@ -143,7 +141,10 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
 
         let dump = crate::node_dump::dump_node_slice(
             &stores,
-            &prototype.box_node.children.to_vec(),
+            stores
+                .page_node_list(prototype.box_node.children)
+                .expect("prototype children belong to the page arena")
+                .nodes(),
             crate::node_dump::DumpConfig {
                 breadth: 10,
                 depth: 10,
@@ -159,12 +160,12 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
     let mut stores = Universe::new_with_plain_catcodes();
     let first = unset(UnsetKind::HBox, 4, 1);
     let second = unset(UnsetKind::HBox, 6, 1);
-    let row_children = stores.freeze_node_list(&[
-        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
+    let row_children = stores.publish_page_nodes(&[
+        tabskip_node(tex_state::glue::GlueSpec::ZERO),
         first,
-        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
+        tabskip_node(tex_state::glue::GlueSpec::ZERO),
         second,
-        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
+        tabskip_node(tex_state::glue::GlueSpec::ZERO),
     ]);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
@@ -182,9 +183,9 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
         AlignmentKind::HAlign,
         AlignmentPackSpec::Exactly(sp(12)),
         vec![
-            tex_state::glue::testing_zero_glue_ref(),
-            tex_state::glue::testing_zero_glue_ref(),
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
+            tex_state::glue::GlueSpec::ZERO,
+            tex_state::glue::GlueSpec::ZERO,
         ],
     );
 
@@ -196,8 +197,10 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
     };
     assert_eq!(row.width, sp(12));
     assert!(
-        row.children
-            .to_vec()
+        stores
+            .page_node_list(row.children)
+            .expect("row children belong to the page arena")
+            .nodes()
             .iter()
             .all(|node| !matches!(node, Node::Unset(_)))
     );

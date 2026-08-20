@@ -25,7 +25,7 @@ fn log_text(stores: &Universe) -> String {
 fn ordinary_hpack_reports_once_without_decorating_its_list() {
     let mut stores = Universe::new();
     stores.set_interaction_mode(tex_state::InteractionMode::Batch);
-    let list = stores.freeze_node_list(&[Node::Kern {
+    let list = stores.publish_page_nodes(&[Node::Kern {
         amount: Scaled::from_raw(2 * Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
@@ -57,11 +57,11 @@ fn vtop_observes_vpackage_before_readjusting_height_and_depth() {
     let mut stores = Universe::new();
     stores.enable_geometry_observation();
     stores.set_current_input_position(330, Some(SourceId::new(7)));
-    let glue = stores.intern_glue(GlueSpec {
+    let glue = GlueSpec {
         width: NEGATIVE_THREE_MM,
         ..GlueSpec::ZERO
-    });
-    let list = stores.freeze_node_list(&[Node::Glue {
+    };
+    let list = stores.publish_page_nodes(&[Node::Glue {
         spec: glue,
         kind: GlueKind::Normal,
         leader: None,

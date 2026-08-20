@@ -43,7 +43,7 @@ fn execute_scanned_unbox_impl(
     } else {
         UnboxKind::Vertical
     };
-    let Some(register) = stores.box_reg_ref(index) else {
+    let Some(register) = stores.copy_box_to_page(index) else {
         return Ok(());
     };
     // TeX82 §1110 first returns for a void register, then refuses every
@@ -63,7 +63,7 @@ fn execute_scanned_unbox_impl(
             TakeUnboxResult::Children(children) => Some(children),
         }
     } else {
-        let Some(node) = first_box_node(Some(register)) else {
+        let Some(node) = first_box_node(stores, Some(register)) else {
             report_incompatible_unbox(stores, error_context)?;
             return Ok(());
         };
@@ -247,7 +247,7 @@ pub(crate) fn append_box_node_to_current_list(
             (Vec::new(), Vec::new())
         };
     let node = if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
-        let nucleus = stores.freeze_node_list(std::slice::from_ref(&node));
+        let nucleus = stores.publish_page_nodes(std::slice::from_ref(&node));
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::SubBox(nucleus),
@@ -275,10 +275,14 @@ fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> (Vec<Node>,
     let Node::HList(boxed) = node else {
         return (Vec::new(), Vec::new());
     };
-    let children = boxed.children.to_vec();
-    let (retained, pre_migrated, migrated) = split_hpack_migrations(children);
+    let children = stores
+        .page_node_list(boxed.children)
+        .expect("hbox children belong to the live page arena")
+        .nodes()
+        .to_vec();
+    let (retained, pre_migrated, migrated) = split_hpack_migrations(stores, children);
     if !pre_migrated.is_empty() || !migrated.is_empty() {
-        let retained = stores.freeze_node_list(&retained);
+        let retained = stores.publish_page_nodes(&retained);
         boxed.children = retained;
     }
     (pre_migrated, migrated)
@@ -293,7 +297,10 @@ fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> (Vec<Node>,
 /// caller that packs a horizontal list with `adjust_tail` non-null -- §1076's
 /// `\hbox` contribution to a vertical list, §796's alignment column -- performs
 /// exactly this split, and differs only in where the migrated material lands.
-pub(crate) fn split_hpack_migrations(nodes: Vec<Node>) -> (Vec<Node>, Vec<Node>, Vec<Node>) {
+pub(crate) fn split_hpack_migrations(
+    stores: &Universe,
+    nodes: Vec<Node>,
+) -> (Vec<Node>, Vec<Node>, Vec<Node>) {
     let mut retained = Vec::with_capacity(nodes.len());
     let mut pre_migrated = Vec::new();
     let mut migrated = Vec::new();
@@ -306,7 +313,14 @@ pub(crate) fn split_hpack_migrations(nodes: Vec<Node>) -> (Vec<Node>, Vec<Node>,
                 } else {
                     &mut migrated
                 };
-                target.extend(adjust.content.to_vec());
+                target.extend(
+                    stores
+                        .page_node_list(adjust.content)
+                        .expect("adjustment content belongs to the live page arena")
+                        .nodes()
+                        .iter()
+                        .cloned(),
+                );
             }
             node => retained.push(node),
         }
@@ -317,7 +331,7 @@ pub(crate) fn split_hpack_migrations(nodes: Vec<Node>) -> (Vec<Node>, Vec<Node>,
 fn append_unboxed(
     nest: &mut ModeNest,
     stores: &mut Universe,
-    source: Option<tex_state::node_arena::NodeListRef>,
+    source: Option<tex_state::node_arena::PageListId>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let Some(children) = source else {
@@ -328,7 +342,10 @@ fn append_unboxed(
     // containing packed line. Copying the box preserves them, but either
     // unboxing primitive removes them while splicing the remaining children;
     // the frozen source list itself must remain immutable for `\unhcopy`.
-    for node in children
+    for node in stores
+        .page_node_list(children)
+        .expect("unboxed children belong to the live page arena")
+        .nodes()
         .to_vec()
         .into_iter()
         .filter(|node| {

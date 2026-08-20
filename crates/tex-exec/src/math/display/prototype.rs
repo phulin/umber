@@ -22,7 +22,7 @@ pub(crate) fn display_line_prototype(stores: &mut Universe, last_line: BoxNode) 
             }
         } else {
             Node::Glue {
-                spec: stores.glue_ref(spec),
+                spec: *stores.glue(spec),
                 kind,
                 leader: None,
             }
@@ -32,7 +32,7 @@ pub(crate) fn display_line_prototype(stores: &mut Universe, last_line: BoxNode) 
         boundary(stores, GlueParam::LEFT_SKIP, GlueKind::LeftSkip),
         boundary(stores, GlueParam::RIGHT_SKIP, GlueKind::RightSkip),
     ];
-    let children = stores.freeze_node_list(&children);
+    let children = stores.publish_page_nodes(&children);
     BoxNode::new(BoxNodeFields {
         width: last_line.width,
         height: Scaled::from_raw(0),
@@ -71,7 +71,11 @@ pub(super) fn package_directed_display_line(
     let mut payload = if display_line.box_lr == BoxLr::DList {
         vec![Node::HList(display_line.clone())]
     } else {
-        let mut children = display_line.children.to_vec();
+        let mut children = stores
+            .page_node_list(display_line.children)
+            .expect("display line belongs to the live page arena")
+            .nodes()
+            .to_vec();
         if pre_display_direction < 0 {
             children.reverse();
         }
@@ -90,8 +94,10 @@ pub(super) fn package_directed_display_line(
             end_displacement,
             scaled_sub(scaled_sub(prototype.width, display_width), display_indent),
         );
-        let [left, right] = prototype
-            .children
+        let [left, right] = stores
+            .page_node_list(prototype.children)
+            .expect("display prototype belongs to the live page arena")
+            .nodes()
             .to_vec()
             .try_into()
             .unwrap_or_else(|_| panic!("e-TeX display prototype has exactly two boundaries"));
@@ -143,7 +149,7 @@ pub(super) fn package_directed_display_line(
             }
             _ => panic!("e-TeX display prototype right boundary is glue or kern"),
         }
-        let children = stores.freeze_node_list_owned(&mut children);
+        let children = stores.publish_page_nodes_owned(&mut children);
         prototype.children = children;
         return prototype;
     }
@@ -160,7 +166,7 @@ pub(super) fn package_directed_display_line(
         kind: KernKind::Font,
     });
     children.push(Node::Direction(tex_state::node::Direction::EndM));
-    let list = stores.freeze_node_list(&children);
+    let list = stores.publish_page_nodes(&children);
     let mut boxed = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
     boxed.shift = display_indent;
     boxed
@@ -168,12 +174,12 @@ pub(super) fn package_directed_display_line(
 
 fn cancel_display_skip(
     stores: &mut Universe,
-    original: &tex_state::glue::GlueSpecRef,
+    original: &tex_state::glue::GlueSpec,
     kind: GlueKind,
     displacement: Scaled,
 ) -> Node {
-    let original = stores.glue_spec(*original);
-    let spec = stores.intern_glue(GlueSpec {
+    let original = *original;
+    let spec = GlueSpec {
         width: scaled_sub(displacement, original.width),
         stretch: original
             .stretch
@@ -185,7 +191,7 @@ fn cancel_display_skip(
             .checked_neg()
             .expect("e-TeX display skip shrink negation is in range"),
         shrink_order: original.shrink_order,
-    });
+    };
     Node::Glue {
         spec,
         kind,

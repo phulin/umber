@@ -14,9 +14,9 @@ impl ParagraphBreakResult {
 
 pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> LineDimensions {
     let params = ParagraphParams {
-        left_skip: stores.glue_ref(stores.glue_param(GlueParam::LEFT_SKIP)),
-        right_skip: stores.glue_ref(stores.glue_param(GlueParam::RIGHT_SKIP)),
-        par_fill_skip: stores.glue_ref(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
+        left_skip: *stores.glue(stores.glue_param(GlueParam::LEFT_SKIP)),
+        right_skip: *stores.glue(stores.glue_param(GlueParam::RIGHT_SKIP)),
+        par_fill_skip: *stores.glue(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
         par_shape: stores.paragraph_shape(),
         prev_graf: nest.enclosing_vertical_prev_graf(),
         hang_indent: stores.dimen_param(DimenParam::HANG_INDENT),
@@ -103,10 +103,9 @@ pub(crate) fn break_current_paragraph(
         }
     }
     if let Some(spec) = decisions.last_line_fill {
-        let spec = stores.intern_glue(spec);
         decisions.tape.replace_last_par_fill(spec);
     }
-    let empty_list = tex_state::node_arena::NodeListRef::empty();
+    let empty_list = tex_state::node_arena::PageListId::empty();
     let post_params = post_line_break_params(&params, widow_penalty_selector, empty_list.clone());
     let mut line_count = 0i32;
     let mut last_line = None;
@@ -135,6 +134,7 @@ pub(crate) fn break_current_paragraph(
             protrudes_chars,
         )?;
         extract_migrating_material(
+            stores,
             &mut broken.nodes,
             &mut pre_migrated,
             &mut migrated,
@@ -289,8 +289,8 @@ fn normalize_paragraph_infinite_shrink(
     mut error_context: Option<String>,
 ) -> Result<(), ExecError> {
     let mut reported = false;
-    let mut normalize = |spec: &mut tex_state::glue::GlueSpecRef| -> Result<(), ExecError> {
-        let mut glue = stores.glue_spec(*spec);
+    let mut normalize = |spec: &mut tex_state::glue::GlueSpec| -> Result<(), ExecError> {
+        let mut glue = *spec;
         if glue.shrink.raw() == 0 || glue.shrink_order == Order::Normal {
             return Ok(());
         }
@@ -311,7 +311,7 @@ fn normalize_paragraph_infinite_shrink(
             reported = true;
         }
         glue.shrink_order = Order::Normal;
-        *spec = stores.intern_glue(glue);
+        *spec = glue;
         Ok(())
     };
 
@@ -823,6 +823,7 @@ fn encode_glue_spec(spec: tex_state::glue::GlueSpec, out: &mut Vec<u8>) {
 }
 
 fn extract_migrating_material(
+    stores: &Universe,
     nodes: &mut Vec<Node>,
     pre_migrated: &mut Vec<Node>,
     migrated: &mut Vec<Node>,
@@ -845,7 +846,14 @@ fn extract_migrating_material(
                 } else {
                     &mut *migrated
                 };
-                target.extend(adjust.content.to_vec());
+                target.extend(
+                    stores
+                        .page_node_list(adjust.content)
+                        .expect("adjustment content belongs to the live page arena")
+                        .nodes()
+                        .iter()
+                        .cloned(),
+                );
                 retained.push(Node::Adjust(adjust));
             }
             _ => unreachable!("extract predicate restricts migrating node kinds"),
@@ -936,9 +944,9 @@ fn snapshot_paragraph_params(nest: &ModeNest, stores: &mut Universe) -> Paragrap
     stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::ParShape));
     stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::PenaltyArrays));
     ParagraphParams {
-        left_skip: stores.glue_ref(stores.glue_param(GlueParam::LEFT_SKIP)),
-        right_skip: stores.glue_ref(stores.glue_param(GlueParam::RIGHT_SKIP)),
-        par_fill_skip: stores.glue_ref(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
+        left_skip: *stores.glue(stores.glue_param(GlueParam::LEFT_SKIP)),
+        right_skip: *stores.glue(stores.glue_param(GlueParam::RIGHT_SKIP)),
+        par_fill_skip: *stores.glue(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
         par_shape: stores.paragraph_shape(),
         prev_graf: nest.enclosing_vertical_prev_graf(),
         hang_indent: stores.dimen_param(DimenParam::HANG_INDENT),
@@ -983,9 +991,9 @@ fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakPa
         pdf_protrude_chars: stores.int_param(IntParam::PDF_PROTRUDE_CHARS),
         emergency_stretch: params.emergency_stretch,
         looseness: params.looseness,
-        left_skip: stores.glue_spec(params.left_skip),
-        right_skip: stores.glue_spec(params.right_skip),
-        par_fill_skip: stores.glue_spec(params.par_fill_skip),
+        left_skip: params.left_skip,
+        right_skip: params.right_skip,
+        par_fill_skip: params.par_fill_skip,
         shape: line_shape(params),
     }
 }
@@ -993,7 +1001,7 @@ fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakPa
 fn post_line_break_params(
     params: &ParagraphParams,
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
-    empty_list: tex_state::node_arena::NodeListRef,
+    empty_list: tex_state::node_arena::PageListId,
 ) -> PostLineBreakParams {
     PostLineBreakParams {
         empty_list,
@@ -1084,7 +1092,7 @@ pub(crate) fn start_paragraph(
                     nest,
                     stores,
                     Node::Glue {
-                        spec: stores.glue_ref(parskip),
+                        spec: *stores.glue(parskip),
                         kind: GlueKind::ParSkip,
                         leader: None,
                     },

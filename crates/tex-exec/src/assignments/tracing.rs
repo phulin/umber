@@ -349,7 +349,7 @@ pub(crate) fn trace_box_write(
     stores: &mut Universe,
     index: u16,
     global: bool,
-    new: Option<&tex_state::node_arena::NodeListRef>,
+    new: Option<&tex_state::node_arena::PageListId>,
     write: impl FnOnce(&mut Universe),
 ) {
     fn print_box_trace(stores: &mut Universe, label: &str, name: &str, value: &str) {
@@ -374,7 +374,7 @@ pub(crate) fn trace_box_write(
         write(stores);
         return;
     }
-    let old = stores.box_reg_ref(index);
+    let old = stores.copy_box_to_page(index);
     let name = escaped(stores, &format!("box{index}"));
     let old_text = stores.box_assignment_trace_text(old.as_ref());
     write(stores);

@@ -1,6 +1,6 @@
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::{Node, NodeKind};
-use tex_state::node_arena::NodeRef;
+use tex_state::node_arena::{NodeRef, PageListId};
 use tex_state::{
     ContentHash, DetachedArtifact, GeometryObservation, MemoTimingPhase, MemoValueLimits,
     PrintSink, PureMemoKey, PureMemoLayer, PureShipoutEntry, Universe,
@@ -86,6 +86,9 @@ pub(crate) fn shipout_node_with_input_summary(
 ) -> Result<Option<CommittedPagePublication>, ExecError> {
     let pending_end = origin.pending_end;
     prepare_pdf_output_policy(stores)?;
+    let page_before_shipout = stores.page_node_cursor();
+    let page_root = stores.publish_page_nodes(std::slice::from_ref(&node));
+    let shipout_scratch = stores.page_node_cursor();
     let geometry = shipout_geometry(&node, stores);
     if huge_shipout_box(&node, stores) {
         // TeX.web §641 drops the page rather than emitting it, so the report
@@ -96,7 +99,7 @@ pub(crate) fn shipout_node_with_input_summary(
         // later by successful artifact staging and can still name an older
         // input position here.
         let context = shipout_error_context(stores, &input_summary, &origin);
-        crate::error_report::report_error(
+        let reported = crate::error_report::report_error(
             stores,
             "Huge page cannot be shipped out",
             &[
@@ -104,8 +107,21 @@ pub(crate) fn shipout_node_with_input_summary(
                 "more than 18 feet wide, so I suspect something went wrong.",
             ],
             context,
-        )?;
-        report_huge_page_deleted_box(stores, &node, stores.int_param(IntParam::TRACING_OUTPUT));
+        );
+        if let Err(error) = reported {
+            stores
+                .truncate_page_nodes(page_before_shipout)
+                .expect("aborted huge-page report restores its speculative root");
+            return Err(error);
+        }
+        report_huge_page_deleted_box(
+            stores,
+            page_root,
+            stores.int_param(IntParam::TRACING_OUTPUT),
+        );
+        stores
+            .release_completed_page(page_root)
+            .expect("discarded page root is exclusively owned");
         return Ok(None);
     }
     let memo_enabled = stores
@@ -122,7 +138,7 @@ pub(crate) fn shipout_node_with_input_summary(
         && stores.world().effect_records()[..pending_end].is_empty()
         && (1..=32_768).contains(&stores.int_param(IntParam::MAG));
     let validation_started = crate::timing::TelemetryTimer::start();
-    let key = cacheable.then(|| shipout_key(stores, &node));
+    let key = cacheable.then(|| shipout_key(stores, page_root));
     if cacheable {
         stores.with_pure_memo(|memo| {
             memo.record_timing(
@@ -144,12 +160,21 @@ pub(crate) fn shipout_node_with_input_summary(
         let detached = entry.artifact.artifact(MemoValueLimits::default());
         if let Ok(detached) = detached {
             let imported_bytes = entry.artifact.retained_bytes();
-            let (hash, artifact, publication) = stores.commit_replayed_artifact(
+            let replayed = stores.commit_replayed_artifact(
                 detached.payload,
                 entry.render_origin_ends,
                 entry.render_provenance,
                 None,
-            )?;
+            );
+            let (hash, artifact, publication) = match replayed {
+                Ok(replayed) => replayed,
+                Err(error) => {
+                    stores
+                        .truncate_page_nodes(page_before_shipout)
+                        .expect("failed memo replay restores its speculative page root");
+                    return Err(error);
+                }
+            };
             stores.with_pure_memo(|memo| {
                 memo.record_timing(
                     PureMemoLayer::Shipout,
@@ -165,6 +190,9 @@ pub(crate) fn shipout_node_with_input_summary(
             if let Some(geometry) = geometry {
                 stores.record_geometry_observation(geometry);
             }
+            stores
+                .release_completed_page(page_root)
+                .expect("memo-replayed page root is exclusively owned");
             let plan = direct::compile_dvi_plan(
                 stores
                     .world()
@@ -210,7 +238,17 @@ pub(crate) fn shipout_node_with_input_summary(
         emit_dvi,
         write_expander,
         replay_expander,
-    )?;
+    );
+    let staged = match staged {
+        Ok(staged) => staged,
+        Err(error) => {
+            drop(transaction);
+            stores
+                .truncate_page_nodes(page_before_shipout)
+                .expect("failed shipout restores its entire speculative suffix");
+            return Err(error);
+        }
+    };
     let committed_effects = transaction.world().effect_records()[effect_start..]
         .to_vec()
         .into_boxed_slice();
@@ -231,8 +269,22 @@ pub(crate) fn shipout_node_with_input_summary(
         .world_mut()
         .reserve_active_artifact_publication_at(effect_start, None);
     let effect_end = transaction.world().effect_records().len();
-    let (hash, publication) =
-        transaction.commit(staged.artifact, staged.effect_pos, reservation)?;
+    let committed = transaction.commit(staged.artifact, staged.effect_pos, reservation);
+    let (hash, publication) = match committed {
+        Ok(committed) => committed,
+        Err(error) => {
+            stores
+                .truncate_page_nodes(page_before_shipout)
+                .expect("rejected shipout restores its entire speculative suffix");
+            return Err(error);
+        }
+    };
+    stores
+        .truncate_page_nodes(shipout_scratch)
+        .expect("shipout normalization restores its scratch suffix");
+    stores
+        .release_completed_page(page_root)
+        .expect("committed page root is exclusively owned");
     let effect_publication = stores.world_mut().reserve_effect_publication();
     stores
         .world_mut()
@@ -289,14 +341,13 @@ pub(crate) fn shipout_node_with_input_summary(
 /// Positive `\tracingoutput` has already displayed the page at §638. At
 /// zero or below, `ship_out` must identify and display the rejected box here
 /// before its caller prints the closing page marker.
-fn report_huge_page_deleted_box(stores: &mut Universe, node: &Node, tracing_output: i32) {
+fn report_huge_page_deleted_box(stores: &mut Universe, page_root: PageListId, tracing_output: i32) {
     if tracing_output > 0 {
         return;
     }
-    let frozen = stores.freeze_node_list(std::slice::from_ref(node));
-    let dump = crate::node_dump::dump_node_list(
+    let dump = crate::node_dump::dump_page_list(
         stores,
-        frozen,
+        page_root,
         crate::node_dump::DumpConfig::read(stores),
     );
     let mut diagnostic = stores.begin_diagnostic();
@@ -446,10 +497,9 @@ fn report_invalid_pdf_version(
     Ok(())
 }
 
-fn shipout_key(stores: &mut Universe, node: &Node) -> PureMemoKey {
-    let root = stores.freeze_node_list(std::slice::from_ref(node));
+fn shipout_key(stores: &mut Universe, root: PageListId) -> PureMemoKey {
     let environment = stores.engine_boundary_hash(SHIPOUT_ENV_HASH_DOMAIN, |hash| {
-        hash.node_list_ref(&root);
+        hash.page_node_list(stores, root);
         hash.i32(stores.int_param(IntParam::MAG));
         hash.i32(stores.dimen_param(DimenParam::H_OFFSET).raw());
         hash.i32(stores.dimen_param(DimenParam::V_OFFSET).raw());
@@ -467,7 +517,7 @@ fn shipout_key(stores: &mut Universe, node: &Node) -> PureMemoKey {
     )
 }
 
-fn effect_free_shipout_graph(_stores: &Universe, root: &Node) -> bool {
+fn effect_free_shipout_graph(stores: &Universe, root: &Node) -> bool {
     let mut nodes = vec![root.clone()];
     while let Some(node) = nodes.pop() {
         let view = NodeRef::from(&node);
@@ -487,7 +537,16 @@ fn effect_free_shipout_graph(_stores: &Universe, root: &Node) -> bool {
         ) {
             return false;
         }
-        node.visit_node_lists(|children| nodes.extend(children.to_vec()));
+        node.visit_node_lists(|children| {
+            nodes.extend(
+                stores
+                    .page_node_list(*children)
+                    .expect("shipout child belongs to the live page arena")
+                    .nodes()
+                    .iter()
+                    .cloned(),
+            );
+        });
     }
     true
 }

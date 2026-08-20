@@ -262,18 +262,15 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
             Node::Kern { amount, kind } => Shape::Kern(amount.raw(), *kind),
             Node::Glue {
                 spec, kind, leader, ..
-            } => {
-                let spec = stores.glue(spec);
-                Shape::Glue {
-                    width: spec.width.raw(),
-                    stretch: spec.stretch.raw(),
-                    stretch_order: spec.stretch_order,
-                    shrink: spec.shrink.raw(),
-                    shrink_order: spec.shrink_order,
-                    kind: *kind,
-                    leader: leader.is_some(),
-                }
-            }
+            } => Shape::Glue {
+                width: spec.width.raw(),
+                stretch: spec.stretch.raw(),
+                stretch_order: spec.stretch_order,
+                shrink: spec.shrink.raw(),
+                shrink_order: spec.shrink_order,
+                kind: *kind,
+                leader: leader.is_some(),
+            },
             Node::Penalty(value) => Shape::Penalty(*value),
             Node::Rule {
                 width,
@@ -309,7 +306,7 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
             } => Shape::Insert {
                 class: *class,
                 size: size.raw(),
-                split_top_skip: stores.glue(split_top_skip).width.raw(),
+                split_top_skip: split_top_skip.width.raw(),
                 split_max_depth: split_max_depth.raw(),
                 floating_penalty: *floating_penalty,
                 content: shapes(stores, &content.to_vec()),
@@ -338,13 +335,13 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
 }
 
 fn register_shapes(stores: &Universe, register: u16) -> Option<Vec<Shape>> {
-    let root = stores.box_reg_ref(register)?;
+    let root = stores.copy_box_to_page(register)?;
     Some(shapes(stores, &root.to_vec()))
 }
 
 fn boxed_children(stores: &Universe, register: u16) -> Vec<Node> {
     let root = stores
-        .box_reg_ref(register)
+        .copy_box_to_page(register)
         .expect("box register is nonvoid");
     let nodes = root.to_vec();
     let [Node::HList(boxed) | Node::VList(boxed)] = nodes.as_slice() else {
@@ -1000,7 +997,7 @@ fn text_outer_vertical_math_illegal_meaning_and_trigger_provenance_matrix() {
 }
 
 fn register_box(stores: &Universe, register: u16) -> tex_state::node::BoxNode {
-    let root = stores.box_reg_ref(register).expect("box register");
+    let root = stores.copy_box_to_page(register).expect("box register");
     let nodes = root.to_vec();
     match nodes.as_slice() {
         [Node::HList(boxed) | Node::VList(boxed)] => boxed.clone(),

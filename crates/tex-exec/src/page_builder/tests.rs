@@ -2,7 +2,7 @@ use super::*;
 
 use tex_command::FatalError;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
-use tex_state::glue::{GlueSpecRef, Order};
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
 use tex_state::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
@@ -20,20 +20,20 @@ fn s(raw: i32) -> Scaled {
 }
 
 fn glue(
-    stores: &mut Universe,
+    _stores: &mut Universe,
     width: i32,
     stretch: i32,
     stretch_order: Order,
     shrink: i32,
     shrink_order: Order,
-) -> GlueSpecRef {
-    stores.intern_glue(GlueSpec {
+) -> GlueSpec {
+    GlueSpec {
         width: s(width),
         stretch: s(stretch),
         stretch_order,
         shrink: s(shrink),
         shrink_order,
-    })
+    }
 }
 
 fn params(stores: &mut Universe, goal: i32, max_depth: i32, top_skip: i32) {
@@ -52,7 +52,7 @@ fn rule(height: i32, depth: i32) -> Node {
 }
 
 fn boxed(stores: &mut Universe, height: i32, depth: i32, vertical: bool) -> Node {
-    let children = stores.freeze_node_list(&[]);
+    let children = stores.publish_page_nodes(&[]);
     let payload = BoxNode::new(BoxNodeFields {
         width: s(1),
         height: s(height),
@@ -78,11 +78,11 @@ fn ins(
     floating_penalty: i32,
     nodes: &[Node],
 ) -> Node {
-    let content = stores.freeze_node_list(nodes);
+    let content = stores.publish_page_nodes(nodes);
     Node::Ins {
         class,
         size: s(size),
-        split_top_skip: stores.glue_ref(stores.glue_param(GlueParam::SPLIT_TOP_SKIP)),
+        split_top_skip: *stores.glue(stores.glue_param(GlueParam::SPLIT_TOP_SKIP)),
         split_max_depth: Scaled::MAX_DIMEN,
         floating_penalty,
         content,
@@ -108,10 +108,10 @@ fn pdftex_page_top_discards_snapy_but_preserves_other_whatsits() {
     let mut stores = Universe::new();
     params(&mut stores, 1_000, 0, 0);
     stores.set_int_param(IntParam::SAVING_V_DISCARDS, 1);
-    let snap_glue = stores.intern_glue(GlueSpec {
+    let snap_glue = GlueSpec {
         width: s(7),
         ..GlueSpec::ZERO
-    });
+    };
     let snap = Node::Whatsit(Whatsit::PdfSnapY { glue: snap_glue });
     let reference = Node::Whatsit(Whatsit::PdfSnapRefPoint);
     let first_box = boxed(&mut stores, 4, 0, false);
@@ -127,7 +127,7 @@ fn pdftex_page_top_discards_snapy_but_preserves_other_whatsits() {
         [
             reference,
             Node::Glue {
-                spec: stores.glue_ref(stores.glue_param(GlueParam::TOP_SKIP)),
+                spec: *stores.glue(stores.glue_param(GlueParam::TOP_SKIP)),
                 kind: GlueKind::TopSkip,
                 leader: None,
             },
@@ -301,21 +301,21 @@ fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
         s(0)
     );
     let node = boxed(&mut stores, 11, 3, true);
-    let list = stores.freeze_node_list(&[node]);
-    stores.set_box_reg_ref(4, list);
+    let list = stores.publish_page_nodes(&[node]);
+    stores.assign_page_box_local(4, list);
     assert_eq!(
         insertion_box_size(&mut stores, 4, None).expect("white-box operation succeeds"),
         s(14)
     );
-    assert!(stores.box_reg_ref(4).is_some());
+    assert!(stores.copy_box_to_page(4).is_some());
     let node = boxed(&mut stores, 9, 2, false);
-    let list = stores.freeze_node_list(&[node]);
-    stores.set_box_reg_ref(5, list);
+    let list = stores.publish_page_nodes(&[node]);
+    stores.assign_page_box_local(5, list);
     assert_eq!(
         insertion_box_size(&mut stores, 5, None).expect("white-box operation succeeds"),
         s(0)
     );
-    assert!(stores.box_reg_ref(5).is_none());
+    assert!(stores.copy_box_to_page(5).is_none());
     assert!(effects(&stores).contains("Insertions can only be added to a vbox"));
 }
 
@@ -323,8 +323,8 @@ fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
 fn box_error_voids_the_register_without_creating_local_assignment_history() {
     fn install_box(stores: &mut Universe, register: u16, vertical: bool) {
         let node = boxed(stores, 9, 2, vertical);
-        let list = stores.freeze_node_list(&[node]);
-        stores.set_box_reg_ref_global(register, list);
+        let list = stores.publish_page_nodes(&[node]);
+        stores.assign_page_box_global(register, list);
     }
 
     fn log_text(stores: &Universe) -> String {
@@ -361,7 +361,7 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
         !recovered_effects.contains("retaining \\box5="),
         "section 993 direct mutation must not create a restore record: {recovered_effects}"
     );
-    assert!(recovered.box_reg_ref(register).is_some());
+    assert!(recovered.copy_box_to_page(register).is_some());
 
     // Negative control: the ordinary local assignment barrier must still
     // save and report the retained global value under TeX82 §§275/283.
@@ -369,7 +369,7 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
     assigned.set_int_param(IntParam::TRACING_RESTORES, 1);
     install_box(&mut assigned, register, false);
     assigned.enter_group();
-    assigned.clear_box_reg(register);
+    assigned.clear_box_local(register);
     install_box(&mut assigned, register, true);
     assert!(assigned.leave_group().is_empty());
 
@@ -387,7 +387,7 @@ fn outer_vertical_contribution_routes_every_node_kind_canonically() {
     stores.set_int_param(IntParam::SAVING_V_DISCARDS, 1);
     let leading = glue(&mut stores, 2, 0, Order::Normal, 0, Order::Normal);
     let mark = stores.intern_token_list(&[]);
-    let mark = stores.token_list_ref(mark);
+    let mark = tex_state::node::NodeTokenList::new(stores.tokens(mark).to_vec());
     stores.append_page_contribution(Node::Glue {
         spec: leading,
         kind: GlueKind::Normal,
@@ -424,7 +424,7 @@ fn outer_vertical_contribution_routes_every_node_kind_canonically() {
 
 #[test]
 fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
-    let empty = tex_state::node_arena::NodeListRef::empty();
+    let empty = tex_state::node_arena::PageListId::empty();
     let impossible = [
         Node::Char {
             font: FontId::testing_new(0),
@@ -587,7 +587,7 @@ fn page_contribution_last_items_and_max_depth_matrix() {
     assert_eq!(stores.page_dimension(PageDimension::Total), s(23));
 
     let mark = stores.intern_token_list(&[]);
-    let mark = stores.token_list_ref(mark);
+    let mark = tex_state::node::NodeTokenList::new(stores.tokens(mark).to_vec());
     stores.append_page_contribution(Node::Mark {
         class: 4,
         tokens: mark,
@@ -630,7 +630,7 @@ fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
                 spec,
                 kind: GlueKind::Normal,
                 ..
-            } => Some(stores.glue(spec)),
+            } => Some(spec),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -770,11 +770,11 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
     assert_eq!(stores.insert_penalties(), before + 17);
     ins_class(&mut stores, 8, 1_000, 100, 0, 0);
     let hbox = boxed(&mut stores, 4, 2, false);
-    let list = stores.freeze_node_list(&[hbox]);
-    stores.set_box_reg_ref(8, list);
+    let list = stores.publish_page_nodes(&[hbox]);
+    stores.assign_page_box_local(8, list);
     let invalid = ins(&mut stores, 8, 0, 0, &[]);
     prepare_insertion(&mut stores, &invalid, None).expect("white-box operation succeeds");
-    assert!(stores.box_reg_ref(8).is_none());
+    assert!(stores.copy_box_to_page(8).is_none());
     assert!(effects(&stores).contains("Insertions can only be added to a vbox"));
 }
 

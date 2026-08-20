@@ -6,7 +6,6 @@ use tex_command::CommandProfile;
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::TokenListId;
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathListNode,
     MathNoad, MathStyle, NoadClass, NoadKind,
@@ -14,7 +13,7 @@ use tex_state::math::{
 use tex_state::node::{
     BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind, UnsetNode, Whatsit,
 };
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
 use tex_state::token_show::append_tex_print_char;
@@ -49,19 +48,14 @@ impl DumpConfig {
     }
 }
 
-pub(crate) fn dump_node_list(stores: &Universe, owner: NodeListRef, config: DumpConfig) -> String {
-    dump_node_list_ref(stores, &owner, config)
-}
-
-pub(crate) fn dump_node_list_ref(
-    stores: &Universe,
-    owner: &NodeListRef,
-    config: DumpConfig,
-) -> String {
+pub(crate) fn dump_page_list(stores: &Universe, owner: PageListId, config: DumpConfig) -> String {
     let mut out = String::new();
+    let list = stores
+        .page_node_list(owner)
+        .expect("diagnostic root belongs to the live page arena");
     dump_nodes(
         stores,
-        &owner.to_vec(),
+        list.nodes(),
         &config,
         -1,
         ListContext::Neutral,
@@ -122,7 +116,7 @@ trait DumpListProjection {
     );
 }
 
-impl DumpListProjection for NodeListRef {
+impl DumpListProjection for PageListId {
     fn is_empty(&self, _stores: &Universe) -> bool {
         self.is_empty()
     }
@@ -136,9 +130,12 @@ impl DumpListProjection for NodeListRef {
         physical_replacement_spans: bool,
         out: &mut String,
     ) {
+        let list = stores
+            .page_node_list(*self)
+            .expect("diagnostic child belongs to the live page arena");
         dump_nodes(
             stores,
-            &self.to_vec(),
+            list.nodes(),
             config,
             depth,
             context,
@@ -286,16 +283,12 @@ fn dump_node(
         Node::Glue { spec, kind, leader } => {
             if let Some(leader) = leader {
                 kind.append_leader_dump_prefix(stores, out);
-                let _ = writeln!(
-                    out,
-                    "{}",
-                    format_glue(stores.glue_spec(*spec), kind.glue_unit())
-                );
+                let _ = writeln!(out, "{}", format_glue(*spec, kind.glue_unit()));
                 dump_leader_payload(stores, leader, config, depth + 1, context, out);
             } else {
                 kind.append_glue_dump_prefix(stores, out);
                 if kind.prints_glue_spec() {
-                    out.push_str(&format_glue(stores.glue_spec(*spec), kind.glue_unit()));
+                    out.push_str(&format_glue(*spec, kind.glue_unit()));
                 }
                 out.push('\n');
             }
@@ -357,7 +350,7 @@ fn dump_node(
             depth,
             out,
         ),
-        Node::Mark { class, tokens } => dump_mark(stores, *class, tokens.id(), out),
+        Node::Mark { class, tokens } => dump_mark(stores, *class, tokens.words(), out),
         Node::Adjust(adjust) => {
             out.push_str(if adjust.pre {
                 "\\vadjust pre\n"
@@ -411,7 +404,7 @@ fn dump_node(
                 out,
                 "\\insert{class}, natural size {}; split({},{}); float cost {floating_penalty}",
                 format_scaled_without_unit(*size),
-                format_glue(stores.glue_spec(*split_top_skip), ""),
+                format_glue(*split_top_skip, ""),
                 format_scaled_without_unit(*split_max_depth),
             );
             dump_projected_list(stores, content, config, depth + 1, ListContext::VList, out);
@@ -449,7 +442,7 @@ fn dump_whatsit(stores: &Universe, whatsit: &Whatsit, out: &mut String) {
                 }
                 tex_state::PrintSink::Log => out.push('-'),
             }
-            dump_token_list(stores, tokens.id(), out);
+            dump_token_words(stores, tokens.words(), out);
         }
         Whatsit::Special { payload, .. } => {
             append_escaped_name(stores, "special", out);
@@ -482,9 +475,9 @@ fn append_escaped_name(stores: &Universe, name: &str, out: &mut String) {
     out.push_str(name);
 }
 
-fn dump_token_list(stores: &Universe, tokens: TokenListId, out: &mut String) {
+fn dump_token_words(stores: &Universe, tokens: &[tex_state::token::TokenWord], out: &mut String) {
     out.push('{');
-    for &token in stores.tokens(tokens).iter() {
+    for &token in tokens {
         // §1356 delegates write-node contents to §262 `show_token_list`,
         // including `print_cs`'s control-word separator.
         append_token_show_text(stores, token, out);
@@ -898,7 +891,12 @@ fn dump_disc<List: DumpListProjection>(
     }
 }
 
-fn dump_mark(stores: &Universe, class: u16, tokens: TokenListId, out: &mut String) {
+fn dump_mark(
+    stores: &Universe,
+    class: u16,
+    tokens: &[tex_state::token::TokenWord],
+    out: &mut String,
+) {
     if class == 0 {
         // TeX82 §200 routes the mark-node name through §63's `print_esc`,
         // so the header observes the live `\escapechar`.
@@ -908,7 +906,7 @@ fn dump_mark(stores: &Universe, class: u16, tokens: TokenListId, out: &mut Strin
         append_escaped_name(stores, "marks", out);
         let _ = write!(out, "{class}{{");
     }
-    for &token in stores.tokens(tokens).iter() {
+    for &token in tokens {
         out.push_str(&token_text(stores, token));
     }
     out.push_str("}\n");
@@ -1338,7 +1336,7 @@ mod unset_diagnostic_tests {
     #[test]
     fn vertical_unset_node_uses_tex82_unsetbox_name() {
         let stores = Universe::new();
-        let children = NodeListRef::empty();
+        let children = PageListId::empty();
         let unset = Node::Unset(UnsetNode::new(UnsetNodeFields {
             kind: UnsetKind::VBox,
             width: Scaled::from_raw(0),
@@ -1370,7 +1368,7 @@ mod unset_diagnostic_tests {
     fn named_glue_node_uses_live_escape_character_for_both_names() {
         let mut stores = Universe::new();
         stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let spec = stores.intern_glue(GlueSpec::ZERO);
+        let spec = GlueSpec::ZERO;
 
         assert_eq!(
             dump_node_slice(
@@ -1438,7 +1436,7 @@ mod unset_diagnostic_tests {
         // leader rules use the same node display after their glue header.
         let mut stores = Universe::new();
         stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let glue = stores.intern_glue(GlueSpec::ZERO);
+        let glue = GlueSpec::ZERO;
         let nodes = [
             Node::Rule {
                 width: Some(Scaled::from_raw(3 * Scaled::UNITY)),
@@ -1509,7 +1507,7 @@ mod unset_diagnostic_tests {
             ch: 'x',
             cat: tex_state::token::Catcode::Letter,
         }]);
-        let tokens = stores.token_list_ref(tokens);
+        let tokens = tex_state::node::NodeTokenList::new(stores.tokens(tokens).to_vec());
         let nodes = [Node::Mark { class: 0, tokens }];
         let config = DumpConfig {
             breadth: 5,
@@ -1577,13 +1575,13 @@ mod unset_diagnostic_tests {
     fn math_noad_names_use_live_escape_character() {
         let mut stores = Universe::new();
         stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let list = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        let list = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
             NoadKind::Operator(LimitType::Limits),
             MathField::Empty,
         ))]);
 
         assert_eq!(
-            dump_node_list(
+            dump_page_list(
                 &stores,
                 list,
                 DumpConfig {
@@ -1602,7 +1600,7 @@ mod unset_diagnostic_tests {
     fn math_choice_and_family_names_use_live_escape_character() {
         let mut stores = Universe::new();
         stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let arm = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        let arm = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::MathChar(MathChar {
                 family: 1,
@@ -1610,7 +1608,7 @@ mod unset_diagnostic_tests {
                 origin: Default::default(),
             }),
         ))]);
-        let list = stores.freeze_node_list(&[Node::MathChoice(MathChoice {
+        let list = stores.publish_page_nodes(&[Node::MathChoice(MathChoice {
             display: arm.clone(),
             text: arm.clone(),
             script: arm.clone(),
@@ -1618,7 +1616,7 @@ mod unset_diagnostic_tests {
         })]);
 
         assert_eq!(
-            dump_node_list(
+            dump_page_list(
                 &stores,
                 list,
                 DumpConfig {
@@ -1643,15 +1641,15 @@ mod unset_diagnostic_tests {
     fn fraction_dump_uses_live_escape_character_inside_choice_arm() {
         let mut stores = Universe::new();
         stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let empty = NodeListRef::empty();
-        let fraction = stores.freeze_node_list(&[Node::FractionNoad(MathFraction {
+        let empty = PageListId::empty();
+        let fraction = stores.publish_page_nodes(&[Node::FractionNoad(MathFraction {
             numerator: empty.clone(),
             denominator: empty.clone(),
             thickness: FractionThickness::Default,
             left_delimiter: None,
             right_delimiter: None,
         })]);
-        let list = stores.freeze_node_list(&[Node::MathChoice(MathChoice {
+        let list = stores.publish_page_nodes(&[Node::MathChoice(MathChoice {
             display: empty.clone(),
             text: empty.clone(),
             script: fraction,
@@ -1659,7 +1657,7 @@ mod unset_diagnostic_tests {
         })]);
 
         assert_eq!(
-            dump_node_list(
+            dump_page_list(
                 &stores,
                 list,
                 DumpConfig {

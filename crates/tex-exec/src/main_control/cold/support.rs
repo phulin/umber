@@ -523,7 +523,7 @@ pub(in crate::main_control) fn apply_box_shift(
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
             let id = read_box_register(index, copy, stores, command);
-            let node = crate::box_runtime::first_box_node(id);
+            let node = crate::box_runtime::first_box_node(stores, id);
             append_shifted_box(modes, stores, node, shift.delta, command)?;
             Ok(ReplayStep::Continue)
         }
@@ -641,11 +641,11 @@ pub(in crate::main_control) fn read_box_register(
     copy: bool,
     stores: &mut Universe,
     command: &CommandMachine<'_>,
-) -> Option<tex_state::node_arena::NodeListRef> {
+) -> Option<tex_state::node_arena::PageListId> {
     if !copy {
-        return stores.take_box_reg_ref_same_level(index);
+        return stores.take_box_to_page(index);
     }
-    let root = stores.box_reg_ref(index)?;
+    let root = stores.copy_box_to_page(index)?;
     stores.observe_box_copy_ref(&root, command.state.transient_dynamic_words());
     Some(root)
 }
@@ -690,7 +690,7 @@ pub(in crate::main_control) fn box_end(
         // §1077 defines the register unconditionally: a void `cur_box` makes
         // the destination void, it does not leave the old value in place.
         BoxContext::SetBox(target) => {
-            let boxed = node.map(|node| stores.freeze_node_list(std::slice::from_ref(&node)));
+            let boxed = node.map(|node| stores.publish_page_nodes(std::slice::from_ref(&node)));
             commit_set_box_target(target, boxed, stores, command);
             Ok(())
         }
@@ -716,7 +716,7 @@ pub(in crate::main_control) fn box_end(
 /// covers immediate `\box`, `\copy`, `\lastbox`, and `\vsplit` operands.
 pub(in crate::main_control) fn commit_set_box_target(
     target: SetBoxTarget,
-    boxed: Option<tex_state::node_arena::NodeListRef>,
+    boxed: Option<tex_state::node_arena::PageListId>,
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
 ) {
@@ -726,10 +726,10 @@ pub(in crate::main_control) fn commit_set_box_target(
         traced_box.as_ref(),
         target.global,
         |stores| match (target.global, boxed) {
-            (false, Some(boxed)) => stores.set_box_reg_ref(target.index, boxed),
-            (true, Some(boxed)) => stores.set_box_reg_ref_global(target.index, boxed),
-            (false, None) => stores.clear_box_reg(target.index),
-            (true, None) => stores.clear_box_reg_global(target.index),
+            (false, Some(boxed)) => stores.assign_page_box_local(target.index, boxed),
+            (true, Some(boxed)) => stores.assign_page_box_global(target.index, boxed),
+            (false, None) => stores.clear_box_local(target.index),
+            (true, None) => stores.clear_box_global(target.index),
         },
     );
     command.retain_assignment_receipt(receipt);
@@ -895,7 +895,7 @@ pub(in crate::main_control) fn apply_accent_nodes(
     if base_metrics.height == accent_x_height {
         modes.current_list_mutation().push(accent_node);
     } else {
-        let children = stores.freeze_node_list(&[accent_node]);
+        let children = stores.publish_page_nodes(&[accent_node]);
         let mut boxed =
             crate::box_runtime::hpack_with_overfull_rule(stores, children, PackSpec::Natural);
         boxed.shift = accent_x_height
@@ -1055,7 +1055,7 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group(
     // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
     let page_error_context = command.state.output_open_context(&stores.command_context());
     crate::paragraph_end::end_paragraph_with_fuel(modes, stores, command.state, command.fuel)?;
-    let split_top_skip = stores.glue_ref(stores.glue_param(GlueParam::SPLIT_TOP_SKIP));
+    let split_top_skip = *stores.glue(stores.glue_param(GlueParam::SPLIT_TOP_SKIP));
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
     let aftergroup = stores
@@ -1065,7 +1065,7 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group(
         })?;
     schedule_aftergroup(command, stores, aftergroup)?;
     let level = crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
-    let content = stores.freeze_node_list(level.list().nodes());
+    let content = stores.publish_page_nodes(level.list().nodes());
     let params = tex_typeset::VpackParams {
         box_max_depth: Scaled::MAX_DIMEN,
         ..crate::packing_params::vpack_params(stores)

@@ -6,11 +6,11 @@ mod set;
 mod tests;
 
 use tex_state::Universe;
-use tex_state::glue::GlueSpecRef;
+use tex_state::glue::GlueSpec;
 use tex_state::node::{
     BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields,
 };
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_typeset::{HpackParams, PackSpec};
 
@@ -31,7 +31,7 @@ pub(crate) fn finish_alignment(
     stores: &mut Universe,
 ) -> Result<Vec<Node>, ExecError> {
     let resolved = resolution::resolve_widths(state, rows, stores)?;
-    let empty = NodeListRef::empty();
+    let empty = PageListId::empty();
     let prototype = pack_prototype(state, &resolved, &empty, stores);
     let finished = set::set_alignment_nodes(
         state.kind(),
@@ -49,7 +49,7 @@ pub(crate) fn finish_alignment(
 #[derive(Clone, Debug)]
 struct ResolvedWidths {
     columns: Vec<Scaled>,
-    tabskips: Vec<GlueSpecRef>,
+    tabskips: Vec<GlueSpec>,
 }
 
 #[derive(Clone, Debug)]
@@ -60,11 +60,11 @@ struct Prototype {
 fn pack_prototype(
     state: &AlignState,
     resolved: &ResolvedWidths,
-    empty: &NodeListRef,
+    empty: &PageListId,
     stores: &mut Universe,
 ) -> Prototype {
     let nodes = prototype_nodes(state.kind(), resolved, empty);
-    let list = stores.freeze_node_list(&nodes);
+    let list = stores.publish_page_nodes(&nodes);
     let spec = pack_spec(state.pack_spec());
     let box_node = match state.kind() {
         AlignmentKind::HAlign => hpack(stores, list, spec, hpack_params(stores)).node,
@@ -76,7 +76,7 @@ fn pack_prototype(
 fn prototype_nodes(
     kind: AlignmentKind,
     resolved: &ResolvedWidths,
-    empty: &NodeListRef,
+    empty: &PageListId,
 ) -> Vec<Node> {
     let capacity = resolved
         .columns
@@ -121,7 +121,7 @@ fn unset_axis_size<List>(
 /// packing the prototype.  The subtype is observable when §663 reports a
 /// loose prototype: `show_box` must therefore see the typed unset records,
 /// even though ordinary packing measures them like boxes.
-fn prototype_column(kind: AlignmentKind, size: Scaled, empty: NodeListRef) -> Node {
+fn prototype_column(kind: AlignmentKind, size: Scaled, empty: PageListId) -> Node {
     let (unset_kind, width, height) = match kind {
         AlignmentKind::HAlign => (UnsetKind::HBox, size, Scaled::from_raw(0)),
         AlignmentKind::VAlign => (UnsetKind::VBox, Scaled::from_raw(0), size),
@@ -140,7 +140,7 @@ fn prototype_column(kind: AlignmentKind, size: Scaled, empty: NodeListRef) -> No
     }))
 }
 
-fn empty_column_box(kind: AlignmentKind, size: Scaled, empty: NodeListRef) -> Node {
+fn empty_column_box(kind: AlignmentKind, size: Scaled, empty: PageListId) -> Node {
     let fields = match kind {
         AlignmentKind::HAlign => BoxNodeFields {
             width: size,
@@ -171,7 +171,7 @@ fn empty_column_box(kind: AlignmentKind, size: Scaled, empty: NodeListRef) -> No
     }
 }
 
-fn tabskip_node(spec: GlueSpecRef) -> Node {
+fn tabskip_node(spec: GlueSpec) -> Node {
     Node::Glue {
         spec,
         kind: GlueKind::TabSkip,

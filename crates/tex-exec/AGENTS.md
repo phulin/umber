@@ -60,7 +60,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   canonical artifact emission, normalization, lowering, fresh-shipout DVI
   plan co-emission in the same borrow-scoped traversal, canonical-byte replay
   for restored artifacts and leader pages, transactions, publication, and
-  demand-selected render-origin column controls.
+  demand-selected render-origin column controls. Successful page detachment
+  releases the exact page-arena closure; failed staging truncates only its
+  speculative suffix so aggregate rollback can restore the original roots.
 - `src/diagnostics.rs`, `src/error.rs`, and `src/error_report.rs`: canonical error identity, provenance, rendering, recovery reporting, and fatal propagation. `ExecError::Fatal` is TeX82 §81's non-local exit and only main control may catch it.
 - `src/align/`: source-free alignment completion, packaging, and width resolution.
 - `src/math/`: source-free math validation, mlist lowering, and display packaging.
@@ -77,10 +79,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   and consumed by the unified executor's optional append-bounded evidence
   publication seam; every allocating category closes before operation commit.
 - `src/mode.rs` and `src/mode/`: mode nest, mutable native semantic/physical
-  node builders, barrier-frozen node sidecars, strongly glue-rooted
-  paragraph/alignment metadata, strongly provenance-rooted pending horizontal
-  characters, summaries, and rollback journal. Alignment brace depth belongs
-  only to `tex-command`.
+  node buffers, barrier-published page-arena sidecars, direct-value
+  paragraph/alignment glue, copy-only pending-character provenance, summaries,
+  and rollback journal. Alignment brace depth belongs only to `tex-command`.
 - `src/job.rs` and `src/job_output.rs`: TeX job framing, terminal continuation, final cleanup, and lazy DVI/transcript output. See `docs/job_framing.md`.
 - `src/page_builder.rs`, `src/splitting.rs`, `src/vertical.rs`, `src/packing_params.rs`, and `src/pack_report.rs`: page accounting, vertical splitting/contribution, packing snapshots, and box diagnostics.
 - `src/host_api.rs`, `src/retained_resource.rs`, and `src/session_api.rs`: host resource contracts, retained fulfillment, execution budgets, cancellation, and interrupts.

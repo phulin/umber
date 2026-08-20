@@ -231,9 +231,8 @@ pub(crate) fn append_space_after_flush(
     if configuration.adjusts_interword_glue() {
         adjust_interword_glue(stores, nest.current_list().nodes(), &mut spec);
     }
-    let id = stores.intern_glue(spec);
     nest.current_list_mutation().push(Node::Glue {
-        spec: id,
+        spec,
         kind,
         leader: None,
     });
@@ -255,9 +254,8 @@ pub(crate) fn append_control_space_glue_after_flush(
     if stores.pdf_font_configuration().adjusts_interword_glue() {
         adjust_interword_glue(stores, nest.current_list().nodes(), &mut spec);
     }
-    let id = stores.intern_glue(spec);
     nest.current_list_mutation().push(Node::Glue {
-        spec: id,
+        spec,
         kind,
         leader: None,
     });
@@ -387,7 +385,7 @@ pub(crate) fn indent_in_hmode(
                 u32::from(tex_state::env::banks::DimenParam::PAR_INDENT.raw()),
             ),
         ));
-        let children = tex_state::node_arena::NodeListRef::empty();
+        let children = tex_state::node_arena::PageListId::empty();
         Node::HList(BoxNode::new(BoxNodeFields {
             width: stores.dimen_param(tex_state::env::banks::DimenParam::PAR_INDENT),
             height: Scaled::from_raw(0),
@@ -402,7 +400,7 @@ pub(crate) fn indent_in_hmode(
     }
     if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
         let indent_box = make_indent_box(stores);
-        let list = stores.freeze_node_list(&[indent_box]);
+        let list = stores.publish_page_nodes(&[indent_box]);
         nest.current_list_mutation()
             .push(Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
@@ -1158,7 +1156,7 @@ pub(crate) fn literal_hyphen_disc(
     {
         return None;
     }
-    let empty = tex_state::node_arena::NodeListRef::empty();
+    let empty = tex_state::node_arena::PageListId::empty();
     Some(Node::Disc {
         kind: DiscKind::ExplicitHyphen,
         pre: empty.clone(),

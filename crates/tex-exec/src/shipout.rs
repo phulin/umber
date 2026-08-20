@@ -1,7 +1,7 @@
 //! Source-free page and PDF-form staging transaction.
 
-use tex_state::ids::TokenListId;
 use tex_state::node::Node;
+use tex_state::token::TokenWord;
 use tex_state::{InputSummary, PdfFormArtifact, PdfFormRecord, PrintSink, Universe};
 
 use crate::ExecError;
@@ -47,8 +47,8 @@ impl ExpandedWrite {
 pub(crate) struct ExpandedReplayText(pub(crate) Vec<u8>);
 
 pub(crate) type WriteReplayHost<'a> =
-    dyn FnMut(&mut Universe, PrintSink, TokenListId) -> Result<ExpandedWrite, ExecError> + 'a;
-pub(crate) type TextReplayHost<'a> = dyn FnMut(&mut Universe, ReplayTextKind, TokenListId) -> Result<ExpandedReplayText, ExecError>
+    dyn FnMut(&mut Universe, PrintSink, &[TokenWord]) -> Result<ExpandedWrite, ExecError> + 'a;
+pub(crate) type TextReplayHost<'a> = dyn FnMut(&mut Universe, ReplayTextKind, &[TokenWord]) -> Result<ExpandedReplayText, ExecError>
     + 'a;
 
 /// Staging capabilities borrowed for one atomic page/form traversal.

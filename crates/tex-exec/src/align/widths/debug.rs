@@ -4,9 +4,9 @@ use tex_state::math::MathField;
 use tex_state::node::Node;
 
 #[cfg(debug_assertions)]
-pub(super) fn debug_assert_no_unset_nodes(_stores: &Universe, nodes: &[Node]) {
+pub(super) fn debug_assert_no_unset_nodes(stores: &Universe, nodes: &[Node]) {
     for node in nodes {
-        debug_assert_no_unset_node(node);
+        debug_assert_no_unset_node(stores, node);
     }
 }
 
@@ -14,37 +14,37 @@ pub(super) fn debug_assert_no_unset_nodes(_stores: &Universe, nodes: &[Node]) {
 pub(super) fn debug_assert_no_unset_nodes(_stores: &Universe, _nodes: &[Node]) {}
 
 #[cfg(debug_assertions)]
-fn debug_assert_no_unset_node(node: &Node) {
+fn debug_assert_no_unset_node(stores: &Universe, node: &Node) {
     match node {
         Node::Unset(_) => panic!("unset node escaped fin_align"),
         Node::HList(box_node) | Node::VList(box_node) => {
-            debug_assert_no_unset_nodes_in(&box_node.children)
+            debug_assert_no_unset_nodes_in(stores, box_node.children)
         }
         Node::Disc {
             pre, post, replace, ..
         } => {
-            debug_assert_no_unset_nodes_in(pre);
-            debug_assert_no_unset_nodes_in(post);
-            debug_assert_no_unset_nodes_in(replace);
+            debug_assert_no_unset_nodes_in(stores, *pre);
+            debug_assert_no_unset_nodes_in(stores, *post);
+            debug_assert_no_unset_nodes_in(stores, *replace);
         }
-        Node::Ins { content, .. } => debug_assert_no_unset_nodes_in(content),
-        Node::Adjust(adjust) => debug_assert_no_unset_nodes_in(&adjust.content),
+        Node::Ins { content, .. } => debug_assert_no_unset_nodes_in(stores, *content),
+        Node::Adjust(adjust) => debug_assert_no_unset_nodes_in(stores, adjust.content),
         Node::MathNoad(noad) => {
-            debug_assert_math_field(&noad.nucleus);
-            debug_assert_math_field(&noad.subscript);
-            debug_assert_math_field(&noad.superscript);
+            debug_assert_math_field(stores, &noad.nucleus);
+            debug_assert_math_field(stores, &noad.subscript);
+            debug_assert_math_field(stores, &noad.superscript);
         }
         Node::FractionNoad(fraction) => {
-            debug_assert_no_unset_nodes_in(&fraction.numerator);
-            debug_assert_no_unset_nodes_in(&fraction.denominator);
+            debug_assert_no_unset_nodes_in(stores, fraction.numerator);
+            debug_assert_no_unset_nodes_in(stores, fraction.denominator);
         }
         Node::MathChoice(choice) => {
-            debug_assert_no_unset_nodes_in(&choice.display);
-            debug_assert_no_unset_nodes_in(&choice.text);
-            debug_assert_no_unset_nodes_in(&choice.script);
-            debug_assert_no_unset_nodes_in(&choice.script_script);
+            debug_assert_no_unset_nodes_in(stores, choice.display);
+            debug_assert_no_unset_nodes_in(stores, choice.text);
+            debug_assert_no_unset_nodes_in(stores, choice.script);
+            debug_assert_no_unset_nodes_in(stores, choice.script_script);
         }
-        Node::MathList(list) => debug_assert_no_unset_nodes_in(&list.content),
+        Node::MathList(list) => debug_assert_no_unset_nodes_in(stores, list.content),
         Node::Char { .. }
         | Node::Lig { .. }
         | Node::Kern { .. }
@@ -63,16 +63,22 @@ fn debug_assert_no_unset_node(node: &Node) {
 }
 
 #[cfg(debug_assertions)]
-fn debug_assert_no_unset_nodes_in(list: &tex_state::node_arena::NodeListRef) {
-    for node in list.to_vec() {
-        debug_assert_no_unset_node(&node);
+fn debug_assert_no_unset_nodes_in(stores: &Universe, list: tex_state::node_arena::PageListId) {
+    for node in stores
+        .page_node_list(list)
+        .expect("alignment child belongs to the live page arena")
+        .nodes()
+    {
+        debug_assert_no_unset_node(stores, node);
     }
 }
 
 #[cfg(debug_assertions)]
-fn debug_assert_math_field(field: &MathField) {
+fn debug_assert_math_field(stores: &Universe, field: &MathField) {
     match field {
-        MathField::SubBox(list) | MathField::SubMlist(list) => debug_assert_no_unset_nodes_in(list),
+        MathField::SubBox(list) | MathField::SubMlist(list) => {
+            debug_assert_no_unset_nodes_in(stores, *list)
+        }
         MathField::Empty | MathField::MathChar(_) | MathField::MathTextChar(_) => {}
     }
 }

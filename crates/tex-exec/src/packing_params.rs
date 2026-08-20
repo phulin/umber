@@ -2,7 +2,7 @@
 
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::{Direction, KernKind, Node};
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 use tex_state::scaled::Scaled;
 use tex_state::{GeometryObservation, Universe};
 use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
@@ -32,7 +32,7 @@ pub(crate) fn vpack_params(stores: &Universe) -> VpackParams {
 
 pub(crate) fn hpack(
     stores: &mut Universe,
-    list: NodeListRef,
+    list: PageListId,
     spec: PackSpec,
     params: HpackParams,
 ) -> PackedBox {
@@ -48,14 +48,18 @@ pub(crate) fn hpack(
 /// [`report_hpack`]. Ordinary callers use [`hpack`], which reports once.
 pub(crate) fn hpack_unreported(
     stores: &mut Universe,
-    list: NodeListRef,
+    list: PageListId,
     spec: PackSpec,
     params: HpackParams,
 ) -> (PackedBox, Option<(usize, usize)>) {
-    let mut recovered = list.to_vec();
+    let mut recovered = stores
+        .page_node_list(list)
+        .expect("packing input belongs to the live page arena")
+        .nodes()
+        .to_vec();
     let lr_problems = recover_texxet_directions(stores, &mut recovered);
     let list = if lr_problems.is_some() {
-        stores.freeze_node_list(&recovered)
+        stores.publish_page_nodes(&recovered)
     } else {
         list
     };
@@ -132,7 +136,7 @@ pub(crate) fn recover_texxet_directions(
 
 pub(crate) fn vpack(
     stores: &mut Universe,
-    list: NodeListRef,
+    list: PageListId,
     spec: PackSpec,
     params: VpackParams,
 ) -> PackedBox {
@@ -157,7 +161,7 @@ pub(crate) fn vpack(
 
 pub(crate) fn vtop(
     stores: &mut Universe,
-    list: NodeListRef,
+    list: PageListId,
     spec: PackSpec,
     params: VpackParams,
 ) -> PackedBox {
@@ -165,6 +169,6 @@ pub(crate) fn vtop(
     // dimensions and diagnostics, before §1087 readjusts the returned vtop.
     let mut packed = vpack(stores, list, spec, params);
     let children = packed.node.children.clone();
-    tex_typeset::readjust_vtop(&children, &mut packed);
+    tex_typeset::readjust_vtop(stores, &children, &mut packed);
     packed
 }

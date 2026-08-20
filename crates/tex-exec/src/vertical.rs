@@ -42,18 +42,18 @@ pub(crate) fn append_node_to_vertical_list(
         let (spec, kind) =
             if requested.raw() < stores.dimen_param(DimenParam::LINE_SKIP_LIMIT).raw() {
                 (
-                    stores.glue_ref(stores.glue_param(GlueParam::LINE_SKIP)),
+                    stores.glue(stores.glue_param(GlueParam::LINE_SKIP)),
                     GlueKind::LineSkip,
                 )
             } else {
                 (
-                    stores.intern_glue(GlueSpec {
+                    GlueSpec {
                         width: requested,
                         stretch: baseline.stretch,
                         stretch_order: baseline.stretch_order,
                         shrink: baseline.shrink,
                         shrink_order: baseline.shrink_order,
-                    }),
+                    },
                     GlueKind::BaselineSkip,
                 )
             };

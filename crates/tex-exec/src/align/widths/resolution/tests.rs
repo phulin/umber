@@ -1,26 +1,25 @@
 use super::*;
 use crate::mode::{AlignColumn, AlignmentPackSpec};
-use tex_state::glue::{GlueSpec, GlueSpecRef, Order};
-use tex_state::ids::TokenListId;
-use tex_state::node::{UnsetKind, UnsetNode, UnsetNodeFields};
-use tex_state::node_arena::NodeListRef;
+use tex_state::glue::{GlueSpec, Order};
+use tex_state::node::{NodeTokenList, UnsetKind, UnsetNode, UnsetNodeFields};
+use tex_state::node_arena::PageListId;
 use tex_state::scaled::Scaled;
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw * Scaled::UNITY)
 }
 
-fn glue(stores: &mut Universe, width: i32) -> GlueSpecRef {
-    stores.intern_glue(GlueSpec {
+fn glue(_stores: &mut Universe, width: i32) -> GlueSpec {
+    GlueSpec {
         width: sp(width),
         stretch: Scaled::from_raw(0),
         stretch_order: Order::Normal,
         shrink: Scaled::from_raw(0),
         shrink_order: Order::Normal,
-    })
+    }
 }
 
-fn cell(empty: NodeListRef, width: i32, span_count: u16) -> Node {
+fn cell(empty: PageListId, width: i32, span_count: u16) -> Node {
     Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: sp(width),
@@ -36,7 +35,7 @@ fn cell(empty: NodeListRef, width: i32, span_count: u16) -> Node {
 }
 
 fn row(stores: &mut Universe, cells: &[Node]) -> Node {
-    let children = stores.freeze_node_list(cells);
+    let children = stores.publish_page_nodes(cells);
     Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: Scaled::from_raw(0),
@@ -51,9 +50,8 @@ fn row(stores: &mut Universe, cells: &[Node]) -> Node {
     }))
 }
 
-fn state(columns: usize, tabskips: Vec<GlueSpecRef>) -> AlignState {
-    let universe = Universe::new();
-    let empty = universe.token_list_ref(TokenListId::EMPTY);
+fn state(columns: usize, tabskips: Vec<GlueSpec>) -> AlignState {
+    let empty = NodeTokenList::default();
     AlignState::new(
         AlignmentKind::HAlign,
         AlignmentPackSpec::Natural,
@@ -65,7 +63,7 @@ fn state(columns: usize, tabskips: Vec<GlueSpecRef>) -> AlignState {
             columns
         ],
         tabskips,
-        tex_state::glue::testing_zero_glue_ref(),
+        tex_state::glue::GlueSpec::ZERO,
         None,
     )
 }
@@ -77,13 +75,13 @@ fn span_width_list_orders_counts_and_keeps_maximum() {
     let alignment = state(
         3,
         vec![
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
             middle,
             middle,
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
         ],
     );
-    let empty = NodeListRef::empty();
+    let empty = PageListId::empty();
     let rows = [
         row(
             &mut stores,
@@ -121,12 +119,12 @@ fn resolve_alignment_widths_applies_tex82_recurrence() {
     let state = state(
         2,
         vec![
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
             middle,
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
         ],
     );
-    let empty = NodeListRef::empty();
+    let empty = PageListId::empty();
     let rows = [
         row(
             &mut stores,
@@ -141,9 +139,9 @@ fn resolve_alignment_widths_applies_tex82_recurrence() {
     assert_eq!(
         resolved.tabskips,
         vec![
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
             middle,
-            tex_state::glue::testing_zero_glue_ref()
+            tex_state::glue::GlueSpec::ZERO
         ]
     );
 }
@@ -153,21 +151,15 @@ fn resolve_alignment_widths_zeroes_null_column_tabskip() {
     let mut stores = Universe::new_with_plain_catcodes();
     let middle = glue(&mut stores, 1);
     let trailing = glue(&mut stores, 2);
-    let state = state(
-        2,
-        vec![tex_state::glue::testing_zero_glue_ref(), middle, trailing],
-    );
-    let empty = NodeListRef::empty();
+    let state = state(2, vec![tex_state::glue::GlueSpec::ZERO, middle, trailing]);
+    let empty = PageListId::empty();
     let rows = [row(&mut stores, &[cell(empty, 4, 1)])];
 
     let resolved = resolve_widths(&state, &rows, &stores).expect("null columns resolve to zero");
 
     assert_eq!(resolved.columns, vec![sp(4), Scaled::from_raw(0)]);
     assert_eq!(resolved.tabskips[1], middle);
-    assert_eq!(
-        resolved.tabskips[2],
-        tex_state::glue::testing_zero_glue_ref()
-    );
+    assert_eq!(resolved.tabskips[2], tex_state::glue::GlueSpec::ZERO);
 }
 
 #[test]
@@ -179,13 +171,13 @@ fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
     let alignment = state(
         3,
         vec![
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
             middle,
             middle,
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
         ],
     );
-    let empty = NodeListRef::empty();
+    let empty = PageListId::empty();
     let rows = [
         row(&mut stores, &[cell(empty.clone(), 10, 1)]),
         row(&mut stores, &[cell(empty.clone(), 5, 2)]),
@@ -199,17 +191,14 @@ fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
     let empty_state = state(
         2,
         vec![
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
             middle,
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
         ],
     );
     let empty_rows = [row(&mut stores, &[cell(empty, -3, 2)])];
     let resolved = resolve_widths(&empty_state, &empty_rows, &stores)
         .expect("negative residual and null leading column resolve");
     assert_eq!(resolved.columns, vec![Scaled::from_raw(0), sp(-3)]);
-    assert_eq!(
-        resolved.tabskips[1],
-        tex_state::glue::testing_zero_glue_ref()
-    );
+    assert_eq!(resolved.tabskips[1], tex_state::glue::GlueSpec::ZERO);
 }

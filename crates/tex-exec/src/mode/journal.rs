@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use tex_state::node::Node;
 
 use super::{AlignState, ModeLevelSummary, ModeList, ModeNest};
@@ -273,11 +271,11 @@ impl ModeNest {
                 }
                 Inverse::Push { level_id } => {
                     let index = self.level_index(level_id);
-                    Arc::make_mut(&mut self.levels).remove(index);
+                    self.levels.remove(index);
                     self.journal.level_ids.remove(index);
                 }
                 Inverse::Pop { level_id, level } => {
-                    Arc::make_mut(&mut self.levels).push(*level);
+                    self.levels.push(*level);
                     self.journal.level_ids.push(level_id);
                 }
             }
@@ -319,6 +317,6 @@ impl ModeNest {
 
     fn level_by_id_mut(&mut self, id: u64) -> &mut ModeLevelSummary {
         let index = self.level_index(id);
-        &mut Arc::make_mut(&mut self.levels)[index]
+        &mut self.levels[index]
     }
 }

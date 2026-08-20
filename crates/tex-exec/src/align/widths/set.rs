@@ -4,7 +4,7 @@ mod tests;
 
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign, UnsetNode};
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use crate::ExecError;
@@ -20,7 +20,7 @@ struct SetConfig<'a> {
     kind: AlignmentKind,
     resolved: &'a ResolvedWidths,
     prototype: &'a Prototype,
-    empty: NodeListRef,
+    empty: PageListId,
     /// TeX82 §800's `o`: `display_indent` when the alignment is a display,
     /// zero otherwise. §807 shifts every row by it and §806 every rule.
     offset: Scaled,
@@ -31,7 +31,7 @@ pub(super) fn set_alignment_nodes(
     rows: &[Node],
     resolved: &ResolvedWidths,
     prototype: &Prototype,
-    empty: NodeListRef,
+    empty: PageListId,
     offset: Scaled,
     stores: &mut Universe,
 ) -> Result<Vec<Node>, ExecError> {
@@ -87,7 +87,7 @@ fn set_running_rule(config: &SetConfig<'_>, node: &Node, stores: &mut Universe) 
     if config.offset.raw() == 0 {
         return rule;
     }
-    let list = stores.freeze_node_list(std::slice::from_ref(&rule));
+    let list = stores.publish_page_nodes(std::slice::from_ref(&rule));
     let mut packed = crate::packing_params::hpack(
         stores,
         list,
@@ -105,7 +105,7 @@ fn set_row(
     stores: &mut Universe,
 ) -> Result<Node, ExecError> {
     let children = set_row_children(config, row, stores)?;
-    let children = stores.freeze_node_list(&children);
+    let children = stores.publish_page_nodes(&children);
     let fields = match config.kind {
         AlignmentKind::HAlign => BoxNodeFields {
             width: config.prototype.box_node.width,
@@ -143,7 +143,11 @@ fn set_row_children(
 ) -> Result<Vec<Node>, ExecError> {
     let mut out = Vec::new();
     let mut column = 0usize;
-    for child in row.children.nodes() {
+    for child in stores
+        .page_node_list(row.children)
+        .expect("alignment row belongs to the live page arena")
+        .iter()
+    {
         match child {
             tex_state::node_arena::NodeRef::Unset(cell) => {
                 let span = usize::from(cell.span_count) + 1;
@@ -159,11 +163,7 @@ fn set_row_children(
                 }
                 column += span;
             }
-            _ => out.push(child.to_owned_with(|nested| {
-                row.children
-                    .resolve(nested)
-                    .expect("alignment row child belongs to the row payload")
-            })),
+            _ => out.push(child.to_owned_with(core::convert::identity)),
         }
     }
     Ok(out)
@@ -172,7 +172,7 @@ fn set_row_children(
 fn set_cell(
     config: &SetConfig<'_>,
     row: &UnsetNode,
-    cell: &UnsetNode<tex_state::ids::NodeListId>,
+    cell: &UnsetNode<PageListId>,
     column: usize,
     span: usize,
     stores: &Universe,
@@ -190,10 +190,7 @@ fn set_cell(
             glue_set: glue.ratio,
             glue_sign: glue.sign,
             glue_order: glue.order,
-            children: row
-                .children
-                .resolve(cell.children)
-                .expect("alignment cell belongs to the row payload"),
+            children: cell.children,
         },
         AlignmentKind::VAlign => BoxNodeFields {
             width: row.width,
@@ -204,10 +201,7 @@ fn set_cell(
             glue_set: glue.ratio,
             glue_sign: glue.sign,
             glue_order: glue.order,
-            children: row
-                .children
-                .resolve(cell.children)
-                .expect("alignment cell belongs to the row payload"),
+            children: cell.children,
         },
     };
     Ok(match config.kind {
@@ -226,7 +220,7 @@ fn spanned_target(
     let mut target = resolved.columns[column];
     for offset in 1..span {
         let spanned_column = column + offset;
-        let glue = stores.glue_spec(resolved.tabskips[spanned_column]);
+        let glue = resolved.tabskips[spanned_column];
         target = add_scaled(target, glue.width)?;
         target = add_scaled(target, glue_adjustment(glue, prototype)?)?;
         target = add_scaled(target, resolved.columns[spanned_column])?;

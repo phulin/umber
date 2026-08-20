@@ -44,7 +44,7 @@ pub(crate) struct FinishedEqNo {
 pub(crate) fn finish_eq_no(
     stores: &mut Universe,
     side: EqNoSide,
-    content: tex_state::node_arena::NodeListRef,
+    content: tex_state::node_arena::PageListId,
     error_context: Option<&MathConversionErrorContext>,
 ) -> FinishedEqNo {
     let params = MathParams::read(stores);
@@ -56,7 +56,7 @@ pub(crate) fn finish_eq_no(
         &params,
         error_context,
     );
-    let list = stores.freeze_node_list(&nodes);
+    let list = stores.publish_page_nodes(&nodes);
     let mut boxed = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
     boxed.box_lr = tex_state::node::BoxLr::DList;
     FinishedEqNo { side, boxed }
@@ -65,7 +65,7 @@ pub(crate) fn finish_eq_no(
 pub(crate) fn finish_display_math(
     nest: &mut ModeNest,
     stores: &mut Universe,
-    content: tex_state::node_arena::NodeListRef,
+    content: tex_state::node_arena::PageListId,
     eq_no: Option<FinishedEqNo>,
     prototype: Option<BoxNode>,
     error_context: Option<&MathConversionErrorContext>,
@@ -89,9 +89,9 @@ pub(crate) fn finish_display_math(
     // adjustments before §663's `short_display` examines an overfull
     // formula. Keep the migrated material beside the display instead of
     // leaving zero-dimensional wrappers inside its packed hlist.
-    let (display_nodes, pre_migrated, migrated) = split_hpack_migrations(display_nodes);
+    let (display_nodes, pre_migrated, migrated) = split_hpack_migrations(stores, display_nodes);
     let shrink = hlist_shrink(stores, &display_nodes);
-    let display_list = stores.freeze_node_list(&display_nodes);
+    let display_list = stores.publish_page_nodes(&display_nodes);
     let mut display_box = hpack_nodes(
         stores,
         display_list.clone(),
@@ -175,7 +175,7 @@ pub(crate) fn finish_display_math(
             nest,
             stores,
             Node::Glue {
-                spec: stores.glue_ref(spec),
+                spec: *stores.glue(spec),
                 kind: above_display_glue_kind(above),
                 leader: None,
             },
@@ -196,7 +196,7 @@ pub(crate) fn finish_display_math(
         } else {
             vec![Node::HList(display_line), kern, Node::HList(eq_box)]
         };
-        let list = stores.freeze_node_list(&children);
+        let list = stores.publish_page_nodes(&children);
         display_line = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
     }
     let pre_display_direction = stores.int_param(IntParam::PRE_DISPLAY_DIRECTION);
@@ -249,7 +249,7 @@ pub(crate) fn finish_display_math(
             nest,
             stores,
             Node::Glue {
-                spec: stores.glue_ref(spec),
+                spec: *stores.glue(spec),
                 kind: below_display_glue_kind(below),
                 leader: None,
             },
@@ -276,7 +276,7 @@ pub(crate) fn finish_display_alignment(
         nest,
         stores,
         Node::Glue {
-            spec: stores.glue_ref(spec),
+            spec: *stores.glue(spec),
             kind: above_display_glue_kind(above),
             leader: None,
         },
@@ -303,7 +303,7 @@ pub(crate) fn finish_display_alignment(
         nest,
         stores,
         Node::Glue {
-            spec: stores.glue_ref(spec),
+            spec: *stores.glue(spec),
             kind: GlueKind::BelowDisplaySkip,
             leader: None,
         },
@@ -393,7 +393,7 @@ fn hlist_shrink(stores: &Universe, nodes: &[Node]) -> ShrinkTotals {
     let mut totals = [Scaled::from_raw(0); 4];
     for node in nodes {
         if let Node::Glue { spec, .. } = node {
-            let glue = stores.glue_spec(*spec);
+            let glue = *spec;
             totals[glue.shrink_order as usize] = totals[glue.shrink_order as usize] + glue.shrink;
         }
     }
@@ -409,7 +409,11 @@ pub(crate) fn pre_display_size(stores: &Universe, line: &BoxNode) -> Scaled {
     let quad = stores.font_parameter(stores.current_font(), 6);
     let mut v = line.shift + quad + quad;
     let mut w = Scaled::from_raw(-Scaled::MAX_DIMEN.raw());
-    for node in line.children.nodes() {
+    for node in stores
+        .page_node_list(line.children)
+        .expect("display line belongs to the live page arena")
+        .iter()
+    {
         let (d, visible, glue_depends_on_set) = pre_display_node_width(stores, line, node);
         if glue_depends_on_set {
             v = Scaled::MAX_DIMEN;
@@ -451,7 +455,7 @@ fn pre_display_node_width(
         | tex_state::node_arena::NodeRef::MathOn(amount)
         | tex_state::node_arena::NodeRef::MathOff(amount) => (amount, false, false),
         tex_state::node_arena::NodeRef::Glue { spec, .. } => {
-            let glue = stores.glue_spec(*spec);
+            let glue = *spec;
             let depends = match line.glue_sign {
                 Sign::Stretching => {
                     line.glue_order == glue.stretch_order && glue.stretch.raw() != 0

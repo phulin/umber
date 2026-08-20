@@ -18,7 +18,7 @@ fn empty_hbox(_stores: &mut Universe) -> Node {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: tex_state::node_arena::NodeListRef::empty(),
+        children: tex_state::node_arena::PageListId::empty(),
     }))
 }
 
@@ -51,15 +51,15 @@ fn sink_text(stores: &Universe, terminal: bool) -> String {
 #[test]
 fn short_display_skips_the_physical_discretionary_replacement_count() {
     let mut stores = Universe::new();
-    let empty = tex_state::node_arena::NodeListRef::empty();
-    let replacement = stores.freeze_node_list(&[Node::Kern {
+    let empty = tex_state::node_arena::PageListId::empty();
+    let replacement = stores.publish_page_nodes(&[Node::Kern {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
-    let space = stores.intern_glue(GlueSpec {
+    let space = GlueSpec {
         width: Scaled::from_raw(Scaled::UNITY),
         ..GlueSpec::ZERO
-    });
+    };
     let mut nodes = vec![
         empty_hbox(&mut stores),
         empty_hbox(&mut stores),
@@ -93,7 +93,7 @@ fn short_display_skips_the_physical_discretionary_replacement_count() {
         },
     ]);
 
-    let list = stores.freeze_node_list(&nodes);
+    let list = stores.publish_page_nodes(&nodes);
     assert_eq!(
         ShortDisplayRenderer::new().render_list(&stores, list),
         "[][][] [] [] []|"
@@ -108,15 +108,15 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
     // immutable replacement remains available, but no replacement node is
     // linked after the disc, and the following rule must print as `|`.
     let mut stores = Universe::new();
-    let empty = tex_state::node_arena::NodeListRef::empty();
-    let replacement = stores.freeze_node_list(&[Node::Kern {
+    let empty = tex_state::node_arena::PageListId::empty();
+    let replacement = stores.publish_page_nodes(&[Node::Kern {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
-    let space = stores.intern_glue(GlueSpec {
+    let space = GlueSpec {
         width: Scaled::from_raw(Scaled::UNITY),
         ..GlueSpec::ZERO
-    });
+    };
     let mut nodes = vec![
         empty_hbox(&mut stores),
         empty_hbox(&mut stores),
@@ -145,7 +145,7 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
         },
     ]);
 
-    let list = stores.freeze_node_list(&nodes);
+    let list = stores.publish_page_nodes(&nodes);
     assert_eq!(
         ShortDisplayRenderer::new().render_list(&stores, list),
         "[][][] [] [] []|"
@@ -158,7 +158,7 @@ fn short_display_physical_count_is_independent_of_empty_side_list() {
     // skipped even when this frozen representation no longer needs to retain
     // their source side list.
     let mut stores = Universe::new();
-    let empty = tex_state::node_arena::NodeListRef::empty();
+    let empty = tex_state::node_arena::PageListId::empty();
     let nodes = [
         Node::Disc {
             kind: DiscKind::Discretionary,
@@ -179,7 +179,7 @@ fn short_display_physical_count_is_independent_of_empty_side_list() {
         },
     ];
 
-    let list = stores.freeze_node_list(&nodes);
+    let list = stores.publish_page_nodes(&nodes);
     assert_eq!(ShortDisplayRenderer::new().render_list(&stores, list), "|");
 }
 
@@ -200,8 +200,8 @@ fn line_trace_projection_renders_detached_replacement_content() {
             })
             .collect::<Vec<_>>()
     };
-    let pre = stores.freeze_node_list(&chars("B-"));
-    let empty = tex_state::node_arena::NodeListRef::empty();
+    let pre = stores.publish_page_nodes(&chars("B-"));
+    let empty = tex_state::node_arena::PageListId::empty();
     let mut nodes = vec![Node::Disc {
         kind: DiscKind::Discretionary,
         pre,
@@ -234,9 +234,9 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
             })
             .collect::<Vec<_>>()
     };
-    let pre = stores.freeze_node_list(&chars("-"));
-    let post = stores.freeze_node_list(&chars("B-"));
-    let replacement = stores.freeze_node_list(&chars("X"));
+    let pre = stores.publish_page_nodes(&chars("-"));
+    let post = stores.publish_page_nodes(&chars("B-"));
+    let replacement = stores.publish_page_nodes(&chars("X"));
     let mut nodes = chars("BB");
     nodes.push(Node::Disc {
         kind: DiscKind::AutomaticHyphen,
@@ -246,7 +246,7 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
         physical_replace_count: 1,
     });
     nodes.extend(chars("XBBB"));
-    let list = stores.freeze_node_list(&nodes);
+    let list = stores.publish_page_nodes(&nodes);
 
     assert_eq!(
         ShortDisplayRenderer::new().render_list(&stores, list),
@@ -260,19 +260,19 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
 #[test]
 fn short_display_maps_all_node_classes() {
     let mut stores = Universe::new();
-    let empty = tex_state::node_arena::NodeListRef::empty();
-    let zero_glue = stores.intern_glue(GlueSpec::ZERO);
-    let nonzero_glue = stores.intern_glue(GlueSpec {
+    let empty = tex_state::node_arena::PageListId::empty();
+    let zero_glue = GlueSpec::ZERO;
+    let nonzero_glue = GlueSpec {
         width: Scaled::from_raw(Scaled::UNITY),
         ..GlueSpec::ZERO
-    });
+    };
     let mark_tokens = stores.intern_token_list(&[]);
-    let mark_tokens = stores.token_list_ref(mark_tokens);
-    let pre = stores.freeze_node_list(&[Node::Kern {
+    let mark_tokens = tex_state::node::NodeTokenList::new(stores.tokens(mark_tokens).to_vec());
+    let pre = stores.publish_page_nodes(&[Node::Kern {
         amount: Scaled::from_raw(Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);
-    let post = stores.freeze_node_list(&[Node::Kern {
+    let post = stores.publish_page_nodes(&[Node::Kern {
         amount: Scaled::from_raw(2 * Scaled::UNITY),
         kind: KernKind::Explicit,
     }]);

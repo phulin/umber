@@ -22,15 +22,20 @@ pub(crate) fn split_vbox_register(
     error_context: &str,
 ) -> Result<Option<Node>, ExecError> {
     stores.clear_split_discards();
-    let split_top_skip = stores.glue_ref(stores.glue_param(GlueParam::SPLIT_TOP_SKIP));
+    let split_top_skip = *stores.glue(stores.glue_param(GlueParam::SPLIT_TOP_SKIP));
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
-    let Some(source) = stores.box_reg_ref(index) else {
+    let Some(source) = stores.copy_box_to_page(index) else {
         clear_split_marks(stores);
         return Ok(None);
     };
-    let Some(source_node) = source.get(0) else {
+    let source_node = stores
+        .page_node_list(source)
+        .expect("copied box belongs to the live page arena")
+        .get(0)
+        .cloned();
+    let Some(source_node) = source_node else {
         clear_split_marks(stores);
-        stores.clear_box_reg_same_level(index);
+        stores.clear_box_preserving_level(index);
         return Ok(None);
     };
     let Node::VList(source_box) = source_node else {
@@ -49,7 +54,11 @@ pub(crate) fn split_vbox_register(
         return Ok(None);
     };
 
-    let mut split_nodes = source_box.children.to_vec();
+    let mut split_nodes = stores
+        .page_node_list(source_box.children)
+        .expect("vsplit source belongs to the live page arena")
+        .nodes()
+        .to_vec();
     let split =
         vert_break(stores, &split_nodes, height, split_max_depth).map_err(vertical_break_error)?;
     normalize_split_infinite_shrink(
@@ -66,7 +75,7 @@ pub(crate) fn split_vbox_register(
     update_split_marks(stores, &split_nodes);
     replace_split_source(stores, index, remainder, split_top_skip);
 
-    let split_list = stores.freeze_node_list(&split_nodes);
+    let split_list = stores.publish_page_nodes(&split_nodes);
     let mut params = vpack_params(stores);
     params.box_max_depth = split_max_depth;
     Ok(Some(Node::VList(
@@ -84,14 +93,14 @@ fn normalize_split_infinite_shrink(
         let Some(Node::Glue { spec, kind, leader }) = nodes.get(index) else {
             continue;
         };
-        let mut finite = stores.glue_spec(*spec);
+        let mut finite = *spec;
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
         diagnostics::report_split_infinite_shrinkage(stores, Some(error_context))?;
         finite.shrink_order = Order::Normal;
         nodes[index] = Node::Glue {
-            spec: stores.intern_glue(finite),
+            spec: finite,
             kind: *kind,
             leader: leader.clone(),
         };
@@ -103,21 +112,21 @@ fn replace_split_source(
     stores: &mut Universe,
     index: u16,
     remainder: Vec<Node>,
-    split_top_skip: tex_state::glue::GlueSpecRef,
+    split_top_skip: tex_state::glue::GlueSpec,
 ) {
     let (pruned, discarded) = prune_page_top_with_discards(stores, remainder, split_top_skip);
     if stores.int_param(tex_state::env::banks::IntParam::SAVING_V_DISCARDS) > 0 {
         stores.set_split_discards(discarded);
     }
     if pruned.is_empty() {
-        stores.clear_box_reg_same_level(index);
+        stores.clear_box_preserving_level(index);
         return;
     }
 
-    let remainder_list = stores.freeze_node_list(&pruned);
+    let remainder_list = stores.publish_page_nodes(&pruned);
     let packed = vpack_natural(stores, remainder_list);
-    let boxed = stores.freeze_node_list(&[Node::VList(packed)]);
-    stores.set_box_reg_same_level(index, boxed);
+    let boxed = stores.publish_page_nodes(&[Node::VList(packed)]);
+    stores.replace_page_box(index, boxed);
 }
 
 fn update_split_marks(stores: &mut Universe, nodes: &[Node]) {
@@ -127,22 +136,14 @@ fn update_split_marks(stores: &mut Universe, nodes: &[Node]) {
         if let Node::Mark { class, tokens } = node {
             let (first, bot) = classes.entry(*class).or_insert((None, None));
             if first.is_none() {
-                *first = Some(tokens.id());
+                *first = Some(tokens.clone());
             }
-            *bot = Some(tokens.id());
+            *bot = Some(tokens.clone());
         }
     }
     for (class, (first, bot)) in classes {
-        stores.set_page_mark_class(
-            PageMark::SplitFirst,
-            class,
-            first.unwrap_or(tex_state::ids::TokenListId::EMPTY),
-        );
-        stores.set_page_mark_class(
-            PageMark::SplitBot,
-            class,
-            bot.unwrap_or(tex_state::ids::TokenListId::EMPTY),
-        );
+        stores.set_page_mark_class(PageMark::SplitFirst, class, first.unwrap_or_default());
+        stores.set_page_mark_class(PageMark::SplitBot, class, bot.unwrap_or_default());
     }
 }
 

@@ -35,7 +35,7 @@ pub(crate) enum UnsetPackContext {
 /// every present and future §796 packaging site inherits it.
 pub(crate) fn make_unset_node(
     stores: &mut Universe,
-    children: tex_state::node_arena::NodeListRef,
+    children: tex_state::node_arena::PageListId,
     kind: UnsetKind,
     span_count: u16,
     context: UnsetPackContext,

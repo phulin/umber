@@ -441,9 +441,9 @@ struct ActiveReplayAlignment {
     noalign_open: bool,
     /// Frozen cell material retained for lifecycle diagnostics. The actual
     /// row records live on the alignment level, exactly as TeX82 §775 does.
-    captured_rows: Vec<Vec<tex_state::node_arena::NodeListRef>>,
-    tabskips: Vec<tex_state::glue::GlueSpecRef>,
-    default_tabskip: tex_state::glue::GlueSpecRef,
+    captured_rows: Vec<Vec<tex_state::node_arena::PageListId>>,
+    tabskips: Vec<tex_state::glue::GlueSpec>,
+    default_tabskip: tex_state::glue::GlueSpec,
     /// TeX82 §786's `cur_head`/`cur_tail` holding list: the insertions, marks,
     /// and `\vadjust` contents §796's `hpack` migrated out of this row's
     /// columns, waiting for §799 `fin_row` to append them after the row.
@@ -468,7 +468,7 @@ struct ReplayBoxes {
 
 #[derive(Clone, Debug)]
 struct ActiveDiscretionary {
-    parts: Vec<tex_state::node_arena::NodeListRef>,
+    parts: Vec<tex_state::node_arena::PageListId>,
     rejected: bool,
 }
 
@@ -1998,10 +1998,8 @@ impl MainControl {
                 spec,
                 kind: GlueKind::MuSkip,
                 ..
-            } => Some(tex_command::LastNodeItem::MuGlue(stores.glue_spec(*spec))),
-            Node::Glue { spec, .. } => {
-                Some(tex_command::LastNodeItem::Glue(stores.glue_spec(*spec)))
-            }
+            } => Some(tex_command::LastNodeItem::MuGlue(*spec)),
+            Node::Glue { spec, .. } => Some(tex_command::LastNodeItem::Glue(*spec)),
             // TeX82 keeps a discretionary's no-break replacement nodes in
             // the surrounding list (§1119), immediately after the disc node.
             // Umber freezes that physical suffix as the disc's `replace`
@@ -2009,7 +2007,10 @@ impl MainControl {
             // container to preserve TeX's physical-tail view.  This is
             // intentionally distinct from §1105 deletion, which refuses to
             // remove a discretionary replacement suffix.
-            Node::Disc { replace, .. } => replace
+            Node::Disc { replace, .. } => stores
+                .page_node_list(*replace)
+                .expect("discretionary replacement belongs to the live page arena")
+                .nodes()
                 .to_vec()
                 .pop()
                 .and_then(|node| Self::classify_last_node(stores, &node)),
@@ -2587,9 +2588,9 @@ impl MainControl {
             )
         });
         let prefix_end = first_forbidden.unwrap_or(level.list().nodes().len());
-        let nodes = stores.freeze_node_list(&level.list().nodes()[..prefix_end]);
+        let nodes = stores.publish_page_nodes(&level.list().nodes()[..prefix_end]);
         let deleted =
-            first_forbidden.map(|index| stores.freeze_node_list(&level.list().nodes()[index..]));
+            first_forbidden.map(|index| stores.publish_page_nodes(&level.list().nodes()[index..]));
         let aftergroup =
             stores
                 .leave_group_with_kind(GroupKind::Disc)
@@ -2656,7 +2657,7 @@ impl MainControl {
         if active.rejected {
             return Ok(ReplayStep::Continue);
         }
-        let [pre, post, mut replace]: [tex_state::node_arena::NodeListRef; 3] = active
+        let [pre, post, mut replace]: [tex_state::node_arena::PageListId; 3] = active
             .parts
             .try_into()
             .expect("discretionary completes after exactly three parts");
@@ -2677,7 +2678,7 @@ impl MainControl {
                 ],
                 context,
             )?;
-            replace = tex_state::node_arena::NodeListRef::empty();
+            replace = tex_state::node_arena::PageListId::empty();
         }
         let physical_replace_count = replace
             .len()
@@ -2713,7 +2714,7 @@ impl MainControl {
         let font = stores.current_font();
         let pre = match u8::try_from(stores.font_hyphen_char(font)) {
             Ok(hyphen) if stores.font_char_metrics(font, hyphen).is_some() => stores
-                .freeze_node_list(&[Node::Char {
+                .publish_page_nodes(&[Node::Char {
                     font,
                     ch: char::from(hyphen),
                     origin,
@@ -2728,11 +2729,11 @@ impl MainControl {
                     char::from(hyphen),
                     self.command_profile() == CommandProfile::ETEX26,
                 );
-                stores.freeze_node_list(&[])
+                stores.publish_page_nodes(&[])
             }
-            Err(_) => stores.freeze_node_list(&[]),
+            Err(_) => stores.publish_page_nodes(&[]),
         };
-        let empty = tex_state::node_arena::NodeListRef::empty();
+        let empty = tex_state::node_arena::PageListId::empty();
         self.modes.current_list_mutation().push(Node::Disc {
             kind: DiscKind::ExplicitHyphen,
             pre,
@@ -2931,7 +2932,7 @@ impl MainControl {
                         | crate::SemanticEpisodeBarrier::StateIdentity
                 )
         ) {
-            self.modes.freeze_node_sidecars(stores);
+            self.modes.publish_node_sidecars(stores);
         }
         self.episode_telemetry
             .record_commit(crate::EpisodeCommit::new(
@@ -4321,7 +4322,7 @@ impl MainControl {
         &mut self,
         kind: GroupKind,
         stores: &mut Universe,
-    ) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
+    ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         // The depth sampled before `push_math`, not the innermost group
         // kind, is what identifies this group's own closing brace: a nested
         // subformula opens another `math_group`, and any brace group inside
@@ -4354,7 +4355,7 @@ impl MainControl {
     fn finish_math_level(
         &mut self,
         stores: &mut Universe,
-    ) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
+    ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         self.main_loop_active = false;
         while left_group_open(&self.modes, stores) {
             // The `\right.` applied below is exactly the closer §1065 selects
@@ -4398,7 +4399,7 @@ impl MainControl {
     fn execute_math_choice_branch(
         &mut self,
         stores: &mut Universe,
-    ) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
+    ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         self.command_scan_math_choice_group(stores)?;
         self.execute_live_math_group(GroupKind::MathChoice, stores)
     }
@@ -4475,7 +4476,10 @@ impl MainControl {
                 // boxes.
                 if kind == MathTextFieldKind::Ord
                     && let MathField::SubMlist(ref list) = field
-                    && let [Node::MathNoad(accent)] = list.to_vec().as_slice()
+                    && let [Node::MathNoad(accent)] = stores
+                        .page_node_list(*list)
+                        .expect("math field belongs to the live page arena")
+                        .nodes()
                     && matches!(accent.kind, NoadKind::Accent { .. })
                 {
                     self.modes
@@ -4624,7 +4628,7 @@ impl MainControl {
             }
             MathRequest::MuMaterial(ScannedMathMuMaterial::Glue(glue)) => {
                 self.modes.current_list_mutation().push(Node::Glue {
-                    spec: stores.intern_glue(glue),
+                    spec: glue,
                     kind: GlueKind::MuSkip,
                     leader: None,
                 })
@@ -4801,12 +4805,12 @@ impl MainControl {
     fn prepare_math_list(
         &mut self,
         stores: &mut Universe,
-    ) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
+    ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         let math_font_context = self.command.output_open_context(&stores.command_context());
         let rejected = crate::math::reject_invalid_math_fonts(stores, math_font_context)?;
         let content = take_finished_math_list(&mut self.modes, stores)?;
         Ok(if rejected {
-            tex_state::node_arena::NodeListRef::empty()
+            tex_state::node_arena::PageListId::empty()
         } else {
             content
         })
@@ -4819,7 +4823,7 @@ impl MainControl {
         stores: &mut Universe,
     ) -> Result<
         (
-            tex_state::node_arena::NodeListRef,
+            tex_state::node_arena::PageListId,
             crate::mode::ModeLevelSummary,
         ),
         ExecError,
@@ -4936,7 +4940,7 @@ impl MainControl {
         );
         let math_font_context = self.command.output_open_context(&stores.command_context());
         if crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
-            content = tex_state::node_arena::NodeListRef::empty();
+            content = tex_state::node_arena::PageListId::empty();
         }
         let _ =
             crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
@@ -4982,10 +4986,10 @@ impl MainControl {
         &mut self,
         stores: &mut Universe,
         eq: crate::mode::DisplayEqNo,
-        content: tex_state::node_arena::NodeListRef,
+        content: tex_state::node_arena::PageListId,
     ) -> Result<
         (
-            tex_state::node_arena::NodeListRef,
+            tex_state::node_arena::PageListId,
             crate::math::display::FinishedEqNo,
         ),
         ExecError,
@@ -5046,7 +5050,7 @@ impl MainControl {
     fn finish_display_math_content(
         &mut self,
         stores: &mut Universe,
-        mut content: tex_state::node_arena::NodeListRef,
+        mut content: tex_state::node_arena::PageListId,
         eq_no: Option<crate::math::display::FinishedEqNo>,
         fonts_checked: bool,
         display_level: Option<crate::mode::ModeLevelSummary>,
@@ -5058,7 +5062,7 @@ impl MainControl {
         // including the saved outer mlist after an equation number.
         let math_font_context = self.command.output_open_context(&stores.command_context());
         if !fonts_checked && crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
-            content = tex_state::node_arena::NodeListRef::empty();
+            content = tex_state::node_arena::PageListId::empty();
         }
         let mut level = match display_level {
             Some(level) => level,
@@ -5266,7 +5270,11 @@ impl MainControl {
                             .unwrap_or(i32::MAX),
                     )?;
                     self.active_math_left_boundaries.push(true);
-                    let segment = content.to_vec();
+                    let segment = stores
+                        .page_node_list(content)
+                        .expect("math segment belongs to the live page arena")
+                        .nodes()
+                        .to_vec();
                     self.modes
                         .current_list_mutation()
                         .append(segment.into_iter().chain([Node::MathNoad(MathNoad::new(
@@ -5317,14 +5325,18 @@ impl MainControl {
                         })?;
                 self.active_math_left_boundaries.pop();
                 schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
-                let mut nodes = content.to_vec();
+                let mut nodes = stores
+                    .page_node_list(content)
+                    .expect("math segment belongs to the live page arena")
+                    .nodes()
+                    .to_vec();
                 nodes.push(Node::MathNoad(MathNoad::new(
                     NoadKind::RightDelimiter {
                         delimiter: boundary.delimiter.code,
                     },
                     MathField::Empty,
                 )));
-                let content = stores.freeze_node_list(&nodes);
+                let content = stores.publish_page_nodes(&nodes);
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -6776,10 +6788,10 @@ impl MainControl {
 /// `show_box` even though recovery rejects the enclosing discretionary.
 fn report_improper_discretionary(
     stores: &mut Universe,
-    deleted: tex_state::node_arena::NodeListRef,
+    deleted: tex_state::node_arena::PageListId,
     context: String,
 ) -> Result<(), ExecError> {
-    let text = crate::node_dump::dump_node_list(
+    let text = crate::node_dump::dump_page_list(
         stores,
         deleted,
         crate::node_dump::DumpConfig::read(stores),
@@ -7085,7 +7097,7 @@ fn start_fraction(
     if list.incomplete_fraction().is_some() {
         return false;
     }
-    let numerator = stores.freeze_node_list(&list.take_nodes());
+    let numerator = stores.publish_page_nodes(&list.take_nodes());
     list.set_incomplete_fraction(crate::mode::IncompleteFraction {
         numerator,
         thickness: match fraction.thickness {
@@ -7102,15 +7114,19 @@ fn finish_math_list(
     nodes: &[Node],
     incomplete: Option<&crate::mode::IncompleteFraction>,
     stores: &mut Universe,
-) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
+) -> Result<tex_state::node_arena::PageListId, ExecError> {
     let mut output = nodes.to_vec();
     if let Some(fraction) = incomplete {
-        let denominator = stores.freeze_node_list(&output);
+        let denominator = stores.publish_page_nodes(&output);
         // TeX82 §1185 and e-TeX [48.1185]: `delim_ptr` identifies the most
         // recent `\left` or `\middle` in a math-left group.  Completion moves
         // only the nodes after that boundary into the numerator, then links
         // the fraction noad immediately after the boundary.
-        let mut numerator_nodes = fraction.numerator.to_vec();
+        let mut numerator_nodes = stores
+            .page_node_list(fraction.numerator)
+            .expect("fraction numerator belongs to the live page arena")
+            .nodes()
+            .to_vec();
         let boundary = numerator_nodes.iter().rposition(|node| {
             matches!(
                 node,
@@ -7129,7 +7145,7 @@ fn finish_math_list(
         let numerator = if prefix.is_empty() {
             fraction.numerator.clone()
         } else {
-            stores.freeze_node_list(&numerator_nodes)
+            stores.publish_page_nodes(&numerator_nodes)
         };
         let fraction = Node::FractionNoad(MathFraction {
             numerator,
@@ -7140,7 +7156,7 @@ fn finish_math_list(
         });
         output = prefix.into_iter().chain([fraction]).collect();
     }
-    let output = stores.freeze_node_list(&output);
+    let output = stores.publish_page_nodes(&output);
     Ok(output)
 }
 
@@ -7151,10 +7167,13 @@ fn finish_math_list(
 /// noad by copying its nucleus field into the destination. This preserves an
 /// author box as `sub_box` instead of wrapping it in a second natural hpack.
 fn collapse_singleton_math_group(
-    _stores: &Universe,
-    list: tex_state::node_arena::NodeListRef,
+    stores: &Universe,
+    list: tex_state::node_arena::PageListId,
 ) -> MathField {
-    let nodes = list.to_vec();
+    let nodes = stores
+        .page_node_list(list)
+        .expect("math group belongs to the live page arena")
+        .nodes();
     if let [Node::MathNoad(noad)] = nodes.as_slice()
         && noad.kind == NoadKind::Normal(NoadClass::Ord)
         && matches!(noad.subscript, MathField::Empty)
@@ -7168,7 +7187,7 @@ fn collapse_singleton_math_group(
 fn take_finished_math_list(
     modes: &mut ModeNest,
     stores: &mut Universe,
-) -> Result<tex_state::node_arena::NodeListRef, ExecError> {
+) -> Result<tex_state::node_arena::PageListId, ExecError> {
     let (nodes, incomplete) = {
         let mut list = modes.current_list_mutation();
         (list.take_nodes(), list.take_incomplete_fraction())
@@ -7297,7 +7316,13 @@ fn left_group_open(modes: &ModeNest, stores: &Universe) -> bool {
         || modes
             .current_list()
             .incomplete_fraction()
-            .is_some_and(|fraction| starts_left_node(fraction.numerator.get(0).as_ref()))
+            .is_some_and(|fraction| {
+                stores
+                    .page_node_list(fraction.numerator)
+                    .ok()
+                    .and_then(|list| list.nodes().first())
+                    .is_some_and(|node| starts_left_node(Some(node)))
+            })
 }
 
 /// TeX82 §1030's parking decision for one scanned step, taken before the step

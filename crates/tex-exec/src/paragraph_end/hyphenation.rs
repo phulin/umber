@@ -6,7 +6,7 @@ pub(super) struct MissingHyphenDiagnostic {
 }
 
 struct HyphenationProjection<'a> {
-    physical_post_overrides: &'a mut Vec<(usize, tex_state::node_arena::NodeListRef)>,
+    physical_post_overrides: &'a mut Vec<(usize, tex_state::node_arena::PageListId)>,
     missing_hyphens: &'a mut Vec<MissingHyphenDiagnostic>,
 }
 
@@ -169,7 +169,9 @@ fn project_physical_pre_break_spans(
         else {
             continue;
         };
-        let replacement = replace.nodes();
+        let replacement = stores
+            .page_node_list(*replace)
+            .expect("discretionary replacement belongs to the live page arena");
         if replacement.len() != 1
             || !matches!(
                 replacement.first(),
@@ -209,7 +211,7 @@ fn project_physical_pre_break_spans(
         let pre =
             crate::box_runtime::hmode::reconstitute_with_fuel(stores, &pending, true, false, fuel)
                 .map_err(ExecError::Command)?;
-        let pre = stores.freeze_node_list(&pre);
+        let pre = stores.publish_page_nodes(&pre);
         let Node::Disc {
             pre: physical_pre, ..
         } = &mut nodes[index]
@@ -648,7 +650,7 @@ fn discretionary_through_node(
     following: &[Node],
     fuel: &mut tex_command::CommandFuel,
     missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
-) -> Result<(Node, tex_state::node_arena::NodeListRef), ExecError> {
+) -> Result<(Node, tex_state::node_arena::PageListId), ExecError> {
     let (span, node_index) = location;
     let (start, position, end) = span;
     let font = word[position - 1].font;
@@ -704,7 +706,7 @@ fn physical_discretionary_projection(
     replacement: &Node,
     following: &[Node],
     fuel: &mut tex_command::CommandFuel,
-) -> Result<(u8, tex_state::node_arena::NodeListRef), ExecError> {
+) -> Result<(u8, tex_state::node_arena::PageListId), ExecError> {
     let (start, position, end) = span;
     let mut major = Vec::with_capacity(following.len() + 1);
     major.push(replacement.clone());
@@ -730,7 +732,7 @@ fn physical_discretionary_projection(
         .expect("a TeX word has at most 127 physical replacement nodes");
     Ok((
         physical_replace_count,
-        stores.freeze_node_list(&minor[..minor_len]),
+        stores.publish_page_nodes(&minor[..minor_len]),
     ))
 }
 
@@ -782,9 +784,9 @@ fn automatic_discretionary_with_count(
     physical_replace_count: u8,
 ) -> Option<Node> {
     (physical_replace_count <= 127).then(|| {
-        let pre = stores.freeze_node_list(pre);
-        let post = stores.freeze_node_list(post);
-        let replace = stores.freeze_node_list(replace);
+        let pre = stores.publish_page_nodes(pre);
+        let post = stores.publish_page_nodes(post);
+        let replace = stores.publish_page_nodes(replace);
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
             pre,
@@ -829,11 +831,11 @@ fn discretionary_hyphen(
     node_index: usize,
     missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
 ) -> Node {
-    let empty = tex_state::node_arena::NodeListRef::empty();
+    let empty = tex_state::node_arena::PageListId::empty();
     let pre = automatic_hyphen_char(stores, font, node_index, missing_hyphens).map_or_else(
         || empty.clone(),
         |ch| {
-            stores.freeze_node_list(&[Node::Char {
+            stores.publish_page_nodes(&[Node::Char {
                 font,
                 ch,
                 origin: OriginRef::unknown(),
@@ -842,7 +844,7 @@ fn discretionary_hyphen(
     );
     let replace = replacement.as_ref().map_or_else(
         || empty.clone(),
-        |node| stores.freeze_node_list(std::slice::from_ref(node)),
+        |node| stores.publish_page_nodes(std::slice::from_ref(node)),
     );
     Node::Disc {
         kind: DiscKind::AutomaticHyphen,
@@ -1028,7 +1030,7 @@ mod tests {
             ch: 'w',
             cat: tex_state::token::Catcode::Letter,
         }]);
-        let tokens = stores.token_list_ref(tokens);
+        let tokens = tex_state::node::NodeTokenList::new(stores.tokens(tokens).to_vec());
         let nodes = vec![
             Node::Whatsit(tex_state::node::Whatsit::OpenOut {
                 slot: tex_state::StreamSlot::new(15),
@@ -1084,11 +1086,13 @@ mod tests {
             "the actual pre-hyphenation traversal applies the language node's state"
         );
         assert_eq!(
-            &*stores.tokens(tokens.id()),
-            [tex_state::token::Token::Char {
-                ch: 'w',
-                cat: tex_state::token::Catcode::Letter,
-            }]
+            tokens.words(),
+            [tex_state::token::TokenWord::pack(
+                tex_state::token::Token::Char {
+                    ch: 'w',
+                    cat: tex_state::token::Catcode::Letter,
+                }
+            )]
         );
         assert!(stores.world().effect_records().is_empty());
     }

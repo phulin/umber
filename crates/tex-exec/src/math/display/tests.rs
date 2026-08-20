@@ -1,13 +1,13 @@
 use tex_state::Universe;
 use tex_state::glue::Order;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Direction, KernKind, Node, Sign};
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use super::{display_line_prototype, package_directed_display_line};
 
 fn box_node(width: i32, height: i32, depth: i32, shift: i32, box_lr: BoxLr) -> BoxNode {
-    let children = NodeListRef::empty();
+    let children = PageListId::empty();
     BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(width),
         height: Scaled::from_raw(height),
@@ -50,7 +50,10 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
     );
     assert_eq!(reused.shift.raw(), 5);
     assert!(matches!(
-        reused.children.to_vec().as_slice(),
+        stores
+            .page_node_list(reused.children)
+            .expect("display children belong to the page arena")
+            .nodes(),
         [
             Node::Direction(Direction::BeginM),
             Node::Kern { amount: left, kind: KernKind::Font },

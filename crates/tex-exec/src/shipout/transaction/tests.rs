@@ -15,7 +15,7 @@ fn empty_vbox() -> Node {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: tex_state::node_arena::NodeListRef::empty(),
+        children: tex_state::node_arena::PageListId::empty(),
     }))
 }
 

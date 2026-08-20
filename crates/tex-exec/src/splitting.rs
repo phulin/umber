@@ -1,9 +1,9 @@
 //! Shared vertical-list splitting helpers for insertions and `\vsplit`.
 
 use tex_state::Universe;
-use tex_state::glue::{GlueSpec, GlueSpecRef};
+use tex_state::glue::GlueSpec;
 use tex_state::node::{BoxNode, GlueKind, Node, Whatsit};
-use tex_state::node_arena::{NodeListRef, NodeRef};
+use tex_state::node_arena::{NodeRef, PageListId};
 use tex_state::scaled::Scaled;
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
@@ -12,7 +12,7 @@ use crate::ExecError;
 pub(crate) fn prune_page_top(
     stores: &mut Universe,
     nodes: Vec<Node>,
-    split_top_skip: GlueSpecRef,
+    split_top_skip: GlueSpec,
 ) -> Vec<Node> {
     prune_page_top_with_discards(stores, nodes, split_top_skip).0
 }
@@ -20,7 +20,7 @@ pub(crate) fn prune_page_top(
 pub(crate) fn prune_page_top_with_discards(
     stores: &mut Universe,
     nodes: Vec<Node>,
-    split_top_skip: GlueSpecRef,
+    split_top_skip: GlueSpec,
 ) -> (Vec<Node>, Vec<Node>) {
     let mut out = Vec::new();
     let mut discarded = Vec::new();
@@ -28,7 +28,7 @@ pub(crate) fn prune_page_top_with_discards(
     for node in nodes {
         match &node {
             Node::HList(_) | Node::VList(_) | Node::Rule { .. } if !inserted_top_skip => {
-                let top_skip = stores.glue_spec(split_top_skip);
+                let top_skip = split_top_skip;
                 let adjusted = GlueSpec {
                     width: top_skip
                         .width
@@ -40,7 +40,7 @@ pub(crate) fn prune_page_top_with_discards(
                     shrink: top_skip.shrink,
                     shrink_order: top_skip.shrink_order,
                 };
-                let spec = stores.intern_glue(adjusted);
+                let spec = adjusted;
                 out.push(Node::Glue {
                     spec,
                     kind: GlueKind::SplitTopSkip,
@@ -71,7 +71,7 @@ pub(crate) fn is_page_top_discardable(node: &Node) -> bool {
 
 pub(crate) fn natural_vlist_size(
     stores: &mut Universe,
-    content: NodeListRef,
+    content: PageListId,
 ) -> Result<Scaled, ExecError> {
     let packed = vpack_natural(stores, content);
     packed
@@ -80,7 +80,7 @@ pub(crate) fn natural_vlist_size(
         .ok_or(ExecError::ArithmeticOverflow)
 }
 
-pub(crate) fn vpack_natural(stores: &mut Universe, content: NodeListRef) -> BoxNode {
+pub(crate) fn vpack_natural(stores: &mut Universe, content: PageListId) -> BoxNode {
     crate::packing_params::vpack(
         stores,
         content,

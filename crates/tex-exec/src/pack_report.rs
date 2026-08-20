@@ -227,7 +227,7 @@ fn origin_text(stores: &Universe) -> String {
 /// subtypes as `[]` instead of ordinary math `$` markers.
 fn short_display(
     stores: &Universe,
-    list: tex_state::node_arena::NodeListRef,
+    list: tex_state::node_arena::PageListId,
     list_layout: DiagnosticListLayout,
 ) -> String {
     ShortDisplayRenderer::new().render_list_with_layout(stores, list, list_layout)
@@ -270,7 +270,7 @@ impl ShortDisplayRenderer {
     pub(crate) fn render_line_break_trace_suffix(
         &mut self,
         stores: &Universe,
-        list: tex_state::node_arena::NodeListRef,
+        list: tex_state::node_arena::PageListId,
     ) -> String {
         self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
     }
@@ -279,7 +279,7 @@ impl ShortDisplayRenderer {
     fn render_list(
         &mut self,
         stores: &Universe,
-        list: tex_state::node_arena::NodeListRef,
+        list: tex_state::node_arena::PageListId,
     ) -> String {
         self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
     }
@@ -287,7 +287,7 @@ impl ShortDisplayRenderer {
     fn render_list_with_layout(
         &mut self,
         stores: &Universe,
-        list: tex_state::node_arena::NodeListRef,
+        list: tex_state::node_arena::PageListId,
         list_layout: DiagnosticListLayout,
     ) -> String {
         let mut out = String::new();
@@ -298,12 +298,16 @@ impl ShortDisplayRenderer {
 
 fn append_short_display(
     stores: &Universe,
-    list: tex_state::node_arena::NodeListRef,
+    list: tex_state::node_arena::PageListId,
     list_layout: DiagnosticListLayout,
     font_in_short_display: &mut Option<u32>,
     out: &mut String,
 ) {
-    let nodes = list.to_vec();
+    let nodes = stores
+        .page_node_list(list)
+        .expect("diagnostic list belongs to the live page arena")
+        .nodes()
+        .to_vec();
     append_short_display_nodes(
         stores,
         &nodes,
@@ -356,7 +360,7 @@ fn append_short_display_nodes(
             | Node::Adjust(_) => out.push_str("[]"),
             Node::Rule { .. } => out.push('|'),
             Node::Glue { spec, .. } => {
-                if stores.glue_spec(*spec) != tex_state::glue::GlueSpec::ZERO {
+                if *spec != tex_state::glue::GlueSpec::ZERO {
                     out.push(' ');
                 }
             }

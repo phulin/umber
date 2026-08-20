@@ -1,13 +1,11 @@
 use smallvec::{SmallVec, smallvec};
-use std::sync::Arc;
-use tex_state::glue::GlueSpecRef;
+use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::math::FractionThickness;
-use tex_state::node::{BoxNode, Node};
-use tex_state::node_arena::NodeListRef;
+use tex_state::node::{BoxNode, Node, NodeTokenList};
+use tex_state::node_arena::PageListId;
 use tex_state::provenance::OriginRef;
 use tex_state::scaled::Scaled;
-use tex_state::token_store::TokenListRef;
 use tex_state::{EngineBoundaryHasher, EngineMode, Universe};
 
 use crate::ExecError;
@@ -32,9 +30,9 @@ pub(crate) fn ignored_depth(stores: &Universe) -> Scaled {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParagraphParams {
-    pub left_skip: GlueSpecRef,
-    pub right_skip: GlueSpecRef,
-    pub par_fill_skip: GlueSpecRef,
+    pub left_skip: GlueSpec,
+    pub right_skip: GlueSpec,
+    pub par_fill_skip: GlueSpec,
     pub par_shape: Vec<tex_state::ParagraphShapeLine>,
     pub prev_graf: i32,
     pub hang_indent: Scaled,
@@ -625,8 +623,8 @@ pub enum AlignmentPackSpec {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AlignColumn {
-    pub u_template: TokenListRef,
-    pub v_template: TokenListRef,
+    pub u_template: NodeTokenList,
+    pub v_template: NodeTokenList,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -634,8 +632,8 @@ pub struct AlignState {
     kind: AlignmentKind,
     pack_spec: AlignmentPackSpec,
     columns: Vec<AlignColumn>,
-    tabskips: Vec<GlueSpecRef>,
-    default_tabskip: GlueSpecRef,
+    tabskips: Vec<GlueSpec>,
+    default_tabskip: GlueSpec,
     loop_start: Option<usize>,
     current_row: usize,
     current_col: usize,
@@ -649,8 +647,8 @@ impl AlignState {
         kind: AlignmentKind,
         pack_spec: AlignmentPackSpec,
         columns: Vec<AlignColumn>,
-        tabskips: Vec<GlueSpecRef>,
-        default_tabskip: GlueSpecRef,
+        tabskips: Vec<GlueSpec>,
+        default_tabskip: GlueSpec,
         loop_start: Option<usize>,
     ) -> Self {
         Self {
@@ -683,12 +681,12 @@ impl AlignState {
     }
 
     #[must_use]
-    pub fn tabskips(&self) -> &[GlueSpecRef] {
+    pub fn tabskips(&self) -> &[GlueSpec] {
         &self.tabskips
     }
 
     #[must_use]
-    pub fn default_tabskip(&self) -> &GlueSpecRef {
+    pub fn default_tabskip(&self) -> &GlueSpec {
         &self.default_tabskip
     }
 
@@ -736,7 +734,7 @@ impl AlignState {
     }
 
     #[must_use]
-    pub fn tabskip_for_boundary(&self, boundary: usize) -> &GlueSpecRef {
+    pub fn tabskip_for_boundary(&self, boundary: usize) -> &GlueSpec {
         if let Some(tabskip) = self.tabskips.get(boundary) {
             return tabskip;
         }
@@ -842,7 +840,7 @@ impl PendingHRunChar {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct IncompleteFraction {
-    pub numerator: NodeListRef,
+    pub numerator: PageListId,
     pub thickness: FractionThickness,
     pub left_delimiter: Option<u32>,
     pub right_delimiter: Option<u32>,
@@ -857,7 +855,7 @@ pub struct DisplayInterrupt {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DisplayEqNo {
     pub side: EqNoSide,
-    pub display: NodeListRef,
+    pub display: PageListId,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -921,7 +919,7 @@ impl ModeLevelSummary {
 /// Snapshot-coverable summary of the whole mode nest.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModeNestSummary {
-    levels: Arc<Vec<ModeLevelSummary>>,
+    levels: Vec<ModeLevelSummary>,
 }
 
 impl ModeNestSummary {
@@ -975,14 +973,14 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
             }
             projection.usize(align.columns.len());
             for column in &align.columns {
-                projection.token_list(column.u_template.id());
-                projection.token_list(column.v_template.id());
+                hash_node_tokens(&column.u_template, projection);
+                hash_node_tokens(&column.v_template, projection);
             }
             projection.usize(align.tabskips.len());
             for tabskip in &align.tabskips {
-                projection.glue(tabskip.id());
+                hash_node_glue(*tabskip, projection);
             }
-            projection.glue(align.default_tabskip.id());
+            hash_node_glue(align.default_tabskip, projection);
             hash_optional_usize(align.loop_start, projection);
             projection.usize(align.current_row);
             projection.usize(align.current_col);
@@ -1079,6 +1077,24 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
     projection.u8(list.right_hyphen_min);
 }
 
+fn hash_node_tokens(
+    tokens: &tex_state::node::NodeTokenList,
+    projection: &mut EngineBoundaryHasher<'_>,
+) {
+    projection.usize(tokens.words().len());
+    for token in tokens.words() {
+        projection.u32(token.raw());
+    }
+}
+
+fn hash_node_glue(glue: tex_state::glue::GlueSpec, projection: &mut EngineBoundaryHasher<'_>) {
+    projection.i32(glue.width.raw());
+    projection.i32(glue.stretch.raw());
+    projection.u8(glue.stretch_order as u8);
+    projection.i32(glue.shrink.raw());
+    projection.u8(glue.shrink_order as u8);
+}
+
 fn hash_optional_usize(value: Option<usize>, projection: &mut EngineBoundaryHasher<'_>) {
     match value {
         Some(value) => {
@@ -1101,7 +1117,7 @@ fn hash_optional_u32(value: Option<u32>, projection: &mut EngineBoundaryHasher<'
 
 /// Explicit stack of TeX mode levels.
 pub struct ModeNest {
-    levels: Arc<Vec<ModeLevelSummary>>,
+    levels: Vec<ModeLevelSummary>,
     journal: journal::ModeJournal,
     /// TeX82 §216's maximum pre-push `nest_ptr`. This runtime diagnostic is
     /// intentionally absent from summaries, semantic equality, and hashes.
@@ -1152,7 +1168,7 @@ impl ModeNest {
         let mut levels = Vec::with_capacity(Self::MAX_LIVE_LEVELS);
         levels.push(ModeLevelSummary::new(Mode::Vertical));
         Self {
-            levels: Arc::new(levels),
+            levels,
             journal: journal::ModeJournal::enabled(1),
             max_nest_stack: 0,
         }
@@ -1183,12 +1199,12 @@ impl ModeNest {
         }
     }
 
-    /// Freezes every live native node builder at an externally visible
-    /// episode boundary. The immutable roots are sidecars carried by the mode
+    /// Publishes every live native-node sidecar at an externally visible
+    /// episode boundary. The immutable page roots are carried by the mode
     /// summary; subsequent mutation invalidates only the affected sidecar.
-    pub(crate) fn freeze_node_sidecars(&mut self, stores: &mut Universe) {
-        for level in Arc::make_mut(&mut self.levels) {
-            level.list.sequence.freeze_sidecars(stores);
+    pub(crate) fn publish_node_sidecars(&mut self, stores: &mut Universe) {
+        for level in &mut self.levels {
+            level.list.sequence.publish_sidecars(stores);
         }
     }
 
@@ -1241,16 +1257,7 @@ impl ModeNest {
     }
 
     fn levels_mut_for_push(&mut self) -> &mut Vec<ModeLevelSummary> {
-        if Arc::get_mut(&mut self.levels).is_none() {
-            // `Arc::make_mut` clones a shared Vec at its exact length. A
-            // subsequent push would therefore allocate and copy that freshly
-            // detached buffer a second time. Detach directly with the slot
-            // that this operation is about to consume.
-            let mut levels = Vec::with_capacity(Self::MAX_LIVE_LEVELS);
-            levels.extend(self.levels.iter().cloned());
-            self.levels = Arc::new(levels);
-        }
-        Arc::get_mut(&mut self.levels).expect("mode nest root was made unique")
+        &mut self.levels
     }
 
     pub fn pop(&mut self) -> Result<ModeLevelSummary, ExecError> {
@@ -1260,7 +1267,8 @@ impl ModeNest {
         if self.current_list().pending_hchars().is_some() {
             return Err(ExecError::UncommittedPendingHchars);
         }
-        let popped = Arc::make_mut(&mut self.levels)
+        let popped = self
+            .levels
             .pop()
             .expect("length checked before popping mode level");
         self.journal.record_level_pop(popped.clone());
@@ -1283,7 +1291,7 @@ impl ModeNest {
     pub(crate) fn current_list_mutation(&mut self) -> ModeListMutation<'_> {
         let index = self.levels.len() - 1;
         let (levels, journal) = (&mut self.levels, &mut self.journal);
-        let level = Arc::make_mut(levels)
+        let level = levels
             .last_mut()
             .expect("ModeNest always has at least one level");
         ModeListMutation {
@@ -1294,12 +1302,10 @@ impl ModeNest {
 
     pub(crate) fn list_mutation(&mut self, index: usize) -> Option<ModeListMutation<'_>> {
         let (levels, journal) = (&mut self.levels, &mut self.journal);
-        Arc::make_mut(levels)
-            .get_mut(index)
-            .map(|level| ModeListMutation {
-                list: &mut level.list,
-                journal: journal.list(index),
-            })
+        levels.get_mut(index).map(|level| ModeListMutation {
+            list: &mut level.list,
+            journal: journal.list(index),
+        })
     }
 
     #[must_use]

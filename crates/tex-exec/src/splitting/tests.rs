@@ -10,15 +10,15 @@ fn sp(raw: i32) -> Scaled {
 #[test]
 fn tex82_prune_page_top_prefix_and_split_skip_matrix() {
     let mut stores = Universe::new();
-    let top = stores.intern_glue(GlueSpec {
+    let top = GlueSpec {
         width: sp(10),
         ..GlueSpec::ZERO
-    });
-    let discarded_glue = stores.intern_glue(GlueSpec {
+    };
+    let discarded_glue = GlueSpec {
         width: sp(2),
         ..GlueSpec::ZERO
-    });
-    let children = tex_state::node_arena::NodeListRef::empty();
+    };
+    let children = tex_state::node_arena::PageListId::empty();
     let box_node = Node::HList(BoxNode::new(BoxNodeFields {
         width: sp(1),
         height: sp(4),
@@ -56,7 +56,7 @@ fn tex82_prune_page_top_prefix_and_split_skip_matrix() {
     else {
         panic!("split top skip")
     };
-    assert_eq!(stores.glue(spec).width, sp(6));
+    assert_eq!(spec.width, sp(6));
     assert!(matches!(pruned[1], Node::HList(_)));
 }
 
@@ -65,11 +65,11 @@ fn pdftex_prune_page_top_discards_snapy_but_preserves_other_whatsits() {
     // pdftex.web §§1378-1379 adds `pdf_snapy_node` to `prune_page_top`'s
     // discardable prefix without making other whatsit subtypes discardable.
     let mut stores = Universe::new();
-    let top = stores.intern_glue(GlueSpec::ZERO);
-    let snap_glue = stores.intern_glue(GlueSpec {
+    let top = GlueSpec::ZERO;
+    let snap_glue = GlueSpec {
         width: sp(7),
         ..GlueSpec::ZERO
-    });
+    };
     let box_node = Node::HList(BoxNode::new(BoxNodeFields {
         width: sp(1),
         height: sp(2),
@@ -79,7 +79,7 @@ fn pdftex_prune_page_top_discards_snapy_but_preserves_other_whatsits() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: tex_state::node_arena::NodeListRef::empty(),
+        children: tex_state::node_arena::PageListId::empty(),
     }));
 
     let (pruned, discarded) = prune_page_top_with_discards(

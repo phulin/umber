@@ -1,7 +1,7 @@
 //! Source-free leader payload and contribution runtime.
 
 use tex_state::Universe;
-use tex_state::glue::GlueSpecRef;
+use tex_state::glue::GlueSpec;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, LeaderPayload, Node};
 
@@ -40,12 +40,12 @@ pub(crate) fn take_register_payload(
     copy: bool,
 ) -> Option<LeaderPayload> {
     let owner = if copy {
-        stores.box_reg_ref(index)
+        stores.copy_box_to_page(index)
     } else {
-        stores.take_box_reg_ref_same_level(index)
+        stores.take_box_to_page(index)
     };
     owner
-        .and_then(|owner| owner.get(0))
+        .and_then(|owner| stores.page_node_list(owner).ok()?.get(0).cloned())
         .and_then(payload_from_node)
 }
 
@@ -54,7 +54,7 @@ pub(crate) fn append_leader_contribution(
     stores: &mut Universe,
     kind: GlueKind,
     payload: LeaderPayload,
-    spec: GlueSpecRef,
+    spec: GlueSpec,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {

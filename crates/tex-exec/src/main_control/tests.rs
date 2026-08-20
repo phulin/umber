@@ -31,6 +31,14 @@ fn register_source(control: &mut MainControl, bytes: &[u8]) {
         .expect("source opens");
 }
 
+fn page_vec(stores: &Universe, root: tex_state::node_arena::PageListId) -> Vec<Node> {
+    stores
+        .page_node_list(root)
+        .expect("test list belongs to the page arena")
+        .nodes()
+        .to_vec()
+}
+
 #[test]
 fn private_box_construction_retains_only_committed_lists() {
     let mut stores = Universe::new_with_plain_catcodes();
@@ -40,17 +48,21 @@ fn private_box_construction_retains_only_committed_lists() {
 
     run_to_end(&mut control, &mut stores);
 
-    let boxed = stores.box_reg_ref(0).expect("completed box is committed");
-    let children = match boxed.nodes().first() {
-        Some(tex_state::node_arena::NodeRef::HList(node)) => boxed
-            .resolve(node.children)
-            .expect("hbox children belong to the committed owner"),
+    let boxed = stores
+        .copy_box_to_page(0)
+        .expect("completed box is committed");
+    let children = match stores
+        .page_node_list(boxed)
+        .expect("copied box belongs to the page arena")
+        .nodes()
+        .first()
+    {
+        Some(Node::HList(node)) => stores
+            .page_node_list(node.children)
+            .expect("hbox children belong to the page arena"),
         other => panic!("expected committed hbox, got {other:?}"),
     };
-    assert!(matches!(
-        children.nodes().first(),
-        Some(tex_state::node_arena::NodeRef::Kern { .. })
-    ));
+    assert!(matches!(children.nodes().first(), Some(Node::Kern { .. })));
 }
 
 #[test]
@@ -169,12 +181,11 @@ fn box_save_stack_projection_distinguishes_scan_spec_callers() {
     assert_eq!(ReplayBoxKind::Insert(7, false).save_stack_spec_words(), 0);
 }
 
-fn box_child_nodes(stores: &Universe, register: u16) -> Vec<Node> {
+fn box_child_nodes(stores: &mut Universe, register: u16) -> Vec<Node> {
     let list = stores
-        .box_reg_ref(register)
+        .copy_box_to_page(register)
         .unwrap_or_else(|| panic!("box register {register} is nonvoid"));
-    let boxed = list
-        .to_vec()
+    let boxed = page_vec(stores, list)
         .into_iter()
         .next()
         .unwrap_or_else(|| panic!("box register {register} has a root node"));
@@ -182,14 +193,14 @@ fn box_child_nodes(stores: &Universe, register: u16) -> Vec<Node> {
         Node::HList(boxed) | Node::VList(boxed) => boxed.children,
         other => panic!("box register {register} has a box root: {other:?}"),
     };
-    children.to_vec()
+    page_vec(stores, children)
 }
 
 fn first_published_node(
-    _stores: &Universe,
-    list: tex_state::node_arena::NodeListRef,
+    stores: &Universe,
+    list: tex_state::node_arena::PageListId,
 ) -> Option<Node> {
-    list.to_vec().into_iter().next()
+    page_vec(stores, list).into_iter().next()
 }
 
 fn tabskip_widths(stores: &Universe, nodes: &[Node], widths: &mut Vec<i32>) {
@@ -199,9 +210,9 @@ fn tabskip_widths(stores: &Universe, nodes: &[Node], widths: &mut Vec<i32>) {
                 spec,
                 kind: GlueKind::TabSkip,
                 ..
-            } => widths.push(stores.glue(spec).width.raw()),
+            } => widths.push(spec.width.raw()),
             Node::HList(boxed) | Node::VList(boxed) => {
-                tabskip_widths(stores, &boxed.children.to_vec(), widths);
+                tabskip_widths(stores, &page_vec(stores, boxed.children), widths);
             }
             _ => {}
         }
@@ -292,16 +303,16 @@ enum PackagedRowItem {
 }
 
 fn packaged_row_projection(stores: &Universe, row: &Node) -> Vec<PackagedRowItem> {
-    fn material_widths(stores: &Universe, nodes: &tex_state::node_arena::NodeListRef) -> Vec<i32> {
+    fn material_widths(stores: &Universe, nodes: &tex_state::node_arena::PageListId) -> Vec<i32> {
         let mut widths = Vec::new();
-        for node in nodes.to_vec() {
+        for node in page_vec(stores, *nodes) {
             match node {
                 Node::Kern { amount, .. } => widths.push(amount.raw()),
                 Node::Glue {
                     spec,
                     kind: GlueKind::Normal,
                     ..
-                } => widths.push(stores.glue(spec).width.raw()),
+                } => widths.push(spec.width.raw()),
                 Node::HList(boxed) | Node::VList(boxed) => {
                     widths.extend(material_widths(stores, &boxed.children));
                 }
@@ -312,7 +323,7 @@ fn packaged_row_projection(stores: &Universe, row: &Node) -> Vec<PackagedRowItem
     }
 
     let children = match row {
-        Node::HList(boxed) | Node::VList(boxed) => boxed.children.to_vec(),
+        Node::HList(boxed) | Node::VList(boxed) => page_vec(stores, boxed.children),
         other => panic!("alignment outcome is a packaged row: {other:?}"),
     };
     children
@@ -322,7 +333,7 @@ fn packaged_row_projection(stores: &Universe, row: &Node) -> Vec<PackagedRowItem
                 spec,
                 kind: GlueKind::TabSkip,
                 ..
-            } => Some(PackagedRowItem::TabSkip(stores.glue(spec).width.raw())),
+            } => Some(PackagedRowItem::TabSkip(spec.width.raw())),
             Node::HList(boxed) => Some(PackagedRowItem::HorizontalCell(material_widths(
                 stores,
                 &boxed.children,
@@ -337,13 +348,13 @@ fn packaged_row_projection(stores: &Universe, row: &Node) -> Vec<PackagedRowItem
 }
 
 fn alignment_node_projection(stores: &Universe, nodes: &[Node]) -> Vec<AlignmentNodeProjection> {
-    fn kerns(nodes: &tex_state::node_arena::NodeListRef) -> Vec<i32> {
+    fn kerns(stores: &Universe, nodes: tex_state::node_arena::PageListId) -> Vec<i32> {
         let mut out = Vec::new();
-        for node in nodes.to_vec() {
+        for node in page_vec(stores, nodes) {
             match node {
                 Node::Kern { amount, .. } => out.push(amount.raw()),
                 Node::HList(boxed) | Node::VList(boxed) => {
-                    out.extend(kerns(&boxed.children));
+                    out.extend(kerns(stores, boxed.children));
                 }
                 _ => {}
             }
@@ -358,36 +369,28 @@ fn alignment_node_projection(stores: &Universe, nodes: &[Node]) -> Vec<Alignment
                 spec,
                 kind: GlueKind::TabSkip,
                 ..
-            } => Some(AlignmentNodeProjection::TabSkip(
-                stores.glue(spec).width.raw(),
-            )),
+            } => Some(AlignmentNodeProjection::TabSkip(spec.width.raw())),
             Node::Glue {
                 spec,
                 kind: GlueKind::AboveDisplaySkip,
                 ..
-            } => Some(AlignmentNodeProjection::AboveDisplay(
-                stores.glue(spec).width.raw(),
-            )),
+            } => Some(AlignmentNodeProjection::AboveDisplay(spec.width.raw())),
             Node::Glue {
                 spec,
                 kind: GlueKind::BelowDisplaySkip,
                 ..
-            } => Some(AlignmentNodeProjection::BelowDisplay(
-                stores.glue(spec).width.raw(),
-            )),
+            } => Some(AlignmentNodeProjection::BelowDisplay(spec.width.raw())),
             Node::Glue {
                 spec,
                 kind: GlueKind::BaselineSkip,
                 ..
-            } => Some(AlignmentNodeProjection::Baseline(
-                stores.glue(spec).width.raw(),
-            )),
+            } => Some(AlignmentNodeProjection::Baseline(spec.width.raw())),
             Node::Unset(unset) => Some(AlignmentNodeProjection::Cell {
                 span_count: unset.span_count,
             }),
             Node::HList(boxed) | Node::VList(boxed) => Some(AlignmentNodeProjection::Box {
                 shift: boxed.shift.raw(),
-                kerns: kerns(&boxed.children),
+                kerns: kerns(stores, boxed.children),
             }),
             Node::Penalty(value) => Some(AlignmentNodeProjection::Penalty(*value)),
             Node::Kern { amount, .. } => Some(AlignmentNodeProjection::Kern(amount.raw())),
@@ -441,7 +444,7 @@ fn setbox_rejects_non_box_command_with_assignment_context_diagnostic() {
         !terminal.contains("A <box> was supposed to be here"),
         "{terminal}"
     );
-    assert!(stores.box_reg_ref(0).is_none());
+    assert!(stores.copy_box_to_page(0).is_none());
     assert_eq!(stores.count(0), 7);
     assert_eq!(stores.count(1), 9);
 }
@@ -463,7 +466,7 @@ fn forbidden_setbox_reports_before_reading_the_following_command() {
 
     let terminal = terminal_text(&stores);
     assert!(terminal.contains("Improper \\setbox"), "{terminal}");
-    assert!(stores.box_reg_ref(0).is_none());
+    assert!(stores.copy_box_to_page(0).is_none());
     assert_eq!(stores.count(0), 7);
 }
 
@@ -935,7 +938,7 @@ fn leaders_skip_section_404_filler_and_preserve_non_glue_recovery() {
 
     run_to_end(&mut control, &mut stores);
 
-    let children = box_child_nodes(&stores, 0);
+    let children = box_child_nodes(&mut stores, 0);
     assert_eq!(
         children
             .iter()
@@ -964,7 +967,7 @@ fn leaders_skip_section_404_filler_and_preserve_non_glue_recovery() {
 
     run_to_end(&mut recovery, &mut recovery_stores);
 
-    let recovered = box_child_nodes(&recovery_stores, 0);
+    let recovered = box_child_nodes(&mut recovery_stores, 0);
     assert_eq!(
         pending_sink_text(&recovery_stores, true)
             .matches("Leaders not followed by proper glue")
@@ -1400,7 +1403,7 @@ fn consuming_current_group_box_preserves_original_void_restore() {
         pending_sink_text(&stores, true),
         "{restoring \\box3=void}\n{restoring \\box2=void}\n"
     );
-    assert!(stores.box_reg_ref(2).is_none());
+    assert!(stores.copy_box_to_page(2).is_none());
 }
 
 #[test]
@@ -2391,7 +2394,9 @@ fn vtop_resets_inherited_parshape_before_display_line_measurement() {
 
     run_to_end(&mut control, &mut stores);
 
-    let root = stores.box_reg_ref(0).expect("vtop is assigned to box 0");
+    let root = stores
+        .copy_box_to_page(0)
+        .expect("vtop is assigned to box 0");
     let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
@@ -2418,7 +2423,7 @@ fn preamble_span_expands_one_token_and_preserves_later_template_meaning() {
 
     run_to_end(&mut control, &mut stores);
 
-    let root = stores.box_reg_ref(0).expect("vbox is assigned");
+    let root = stores.copy_box_to_page(0).expect("vbox is assigned");
     let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
@@ -2446,13 +2451,14 @@ fn span_delimiter_ends_the_pending_ligkern_run() {
 
     run_to_end(&mut control, &mut stores);
 
-    let root = stores.box_reg_ref(0).expect("vbox is assigned");
+    let root = stores.copy_box_to_page(0).expect("vbox is assigned");
     let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
     assert_eq!(boxed.width.raw(), 983_042, "natural width is 15.00003pt");
+    let children = box_child_nodes(&mut stores, 0);
     assert_eq!(
-        alignment_node_projection(&stores, &box_child_nodes(&stores, 0)),
+        alignment_node_projection(&stores, &children),
         vec![AlignmentNodeProjection::Box {
             shift: 0,
             kerns: Vec::new(),
@@ -2478,7 +2484,7 @@ fn alignment_v_template_continues_the_pending_ligkern_run() {
 
     run_to_end(&mut control, &mut stores);
 
-    fn collect_ligatures(nodes: &tex_state::node_arena::NodeListRef, found: &mut Vec<Vec<char>>) {
+    fn collect_ligatures(nodes: &tex_state::node_arena::PageListId, found: &mut Vec<Vec<char>>) {
         for node in nodes.nodes() {
             match node {
                 tex_state::node_arena::NodeRef::Lig { orig, .. } => found.push(orig.to_vec()),
@@ -2494,7 +2500,7 @@ fn alignment_v_template_continues_the_pending_ligkern_run() {
         }
     }
 
-    let root = stores.box_reg_ref(0).expect("vbox is assigned");
+    let root = stores.copy_box_to_page(0).expect("vbox is assigned");
     let mut ligatures = Vec::new();
     collect_ligatures(&root, &mut ligatures);
     assert_eq!(ligatures, [vec!['f', 'i']]);
@@ -2519,7 +2525,7 @@ fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
 
     run_to_end(&mut control, &mut stores);
 
-    let root = stores.box_reg_ref(0).expect("outer vbox is assigned");
+    let root = stores.copy_box_to_page(0).expect("outer vbox is assigned");
     let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
         panic!("box 0 holds a vlist");
     };
@@ -2884,7 +2890,7 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
         "valign first/later rows reset paragraph aux in internal vmode"
     );
     for register in [0, 1] {
-        let rows = box_child_nodes(&stores, register);
+        let rows = box_child_nodes(&mut stores, register);
         let boxed_rows = rows
             .iter()
             .filter_map(|node| match node {
@@ -2899,7 +2905,7 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
                 panic!("row begins with tabskip glue: {rows:?}");
             };
             assert_eq!(kind, GlueKind::TabSkip);
-            assert_eq!(stores.glue(spec).width.raw(), 2 * Scaled::UNITY);
+            assert_eq!(spec.width.raw(), 2 * Scaled::UNITY);
         }
     }
     assert!(
@@ -3111,7 +3117,8 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
         "periodic v-template selection is exact"
     );
     let mut widths = Vec::new();
-    tabskip_widths(&stores, &box_child_nodes(&stores, 0), &mut widths);
+    let children = box_child_nodes(&mut stores, 0);
+    tabskip_widths(&stores, &children, &mut widths);
     widths.sort_unstable();
     assert_eq!(
         widths,
@@ -3127,7 +3134,7 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
         ],
         "periodic copies retain the repeated column's following tabskip"
     );
-    let halign_rows = box_child_nodes(&stores, 0)
+    let halign_rows = box_child_nodes(&mut stores, 0)
         .into_iter()
         .filter(|node| matches!(node, Node::HList(_)))
         .collect::<Vec<_>>();
@@ -3158,7 +3165,7 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
         ],
         "brace-depth recovery still packages the corrected tab branch as a complete row"
     );
-    let valign_rows = box_child_nodes(&stores, 1)
+    let valign_rows = box_child_nodes(&mut stores, 1)
         .into_iter()
         .filter(|node| matches!(node, Node::VList(_)))
         .collect::<Vec<_>>();
@@ -3242,7 +3249,7 @@ fn display_alignment_finish_complete_content_delimiter_and_spacing_matrix() {
         );
         let terminal = terminal_text(&stores);
         assert!(!terminal.contains("Display math should end"), "{terminal}");
-        let nodes = box_child_nodes(&stores, 0);
+        let nodes = box_child_nodes(&mut stores, 0);
         let projection = alignment_node_projection(&stores, &nodes);
         let pre = projection
             .iter()
@@ -3364,9 +3371,11 @@ fn vsplit_kernel_separates_result_remainder_and_split_marks() {
 
     run_to_end(&mut control, &mut stores);
 
-    let split = stores.box_reg_ref(1).expect("split prefix is assigned");
+    let split = stores
+        .copy_box_to_page(1)
+        .expect("split prefix is assigned");
     let remainder = stores
-        .box_reg_ref(0)
+        .copy_box_to_page(0)
         .expect("split remainder replaces source");
     assert_ne!(
         split, remainder,
@@ -3427,7 +3436,7 @@ fn text_material_preserves_ligature_space_factor_and_font_glue() {
 
     run_to_end(&mut control, &mut stores);
 
-    let ordinary = box_child_nodes(&stores, 0);
+    let ordinary = box_child_nodes(&mut stores, 0);
     assert!(matches!(
         ordinary.as_slice(),
         [
@@ -3438,7 +3447,7 @@ fn text_material_preserves_ligature_space_factor_and_font_glue() {
             Node::Char { ch: 'B', .. },
         ] if orig.as_slice() == ['f', 'i']
     ));
-    let sentence = box_child_nodes(&stores, 1);
+    let sentence = box_child_nodes(&mut stores, 1);
     let [
         Node::Char { ch: 'A', .. },
         Node::Glue { spec, .. },
@@ -3447,7 +3456,7 @@ fn text_material_preserves_ligature_space_factor_and_font_glue() {
     else {
         panic!("sentence-space fixture has character/glue/character: {sentence:?}");
     };
-    let sentence = stores.glue(spec);
+    let sentence = spec;
     assert_eq!(sentence.width.raw(), 291_271);
     assert_eq!(sentence.stretch.raw(), 327_678);
     assert_eq!(sentence.shrink.raw(), 24_272);
@@ -3466,7 +3475,7 @@ fn direct_material_appends_typed_nodes_in_source_order() {
 
     run_to_end(&mut control, &mut stores);
 
-    let nodes = box_child_nodes(&stores, 0);
+    let nodes = box_child_nodes(&mut stores, 0);
     let [
         Node::Kern { amount, kind },
         Node::Glue { spec, .. },
@@ -3481,7 +3490,7 @@ fn direct_material_appends_typed_nodes_in_source_order() {
     };
     assert_eq!(*kind, tex_state::node::KernKind::Explicit);
     assert_eq!(amount.raw(), Scaled::UNITY);
-    assert_eq!(stores.glue(spec).width.raw(), 2 * Scaled::UNITY);
+    assert_eq!(spec.width.raw(), 2 * Scaled::UNITY);
     assert_eq!(width.map(Scaled::raw), Some(3 * Scaled::UNITY));
     assert_eq!(height.map(Scaled::raw), Some(4 * Scaled::UNITY));
     assert_eq!(depth.map(Scaled::raw), Some(5 * Scaled::UNITY));
@@ -3505,7 +3514,7 @@ fn paragraph_boundaries_run_everypar_in_outer_and_internal_vertical_modes() {
 
     assert_eq!(stores.count(0), 2);
     assert_eq!(control.current_mode(), Mode::Vertical);
-    assert!(stores.box_reg_ref(0).is_some());
+    assert!(stores.copy_box_to_page(0).is_some());
     assert_eq!(stores.world().artifact_commits().len(), 1);
 }
 
@@ -3525,7 +3534,7 @@ fn base_whatsits_preserve_scan_timing_normalization_and_payload_ownership() {
 
     run_to_end(&mut control, &mut stores);
 
-    let nodes = box_child_nodes(&stores, 0);
+    let nodes = box_child_nodes(&mut stores, 0);
     let [
         Node::Whatsit(tex_state::node::Whatsit::OpenOut { slot, path }),
         Node::Whatsit(tex_state::node::Whatsit::DeferredWrite { sink, tokens }),
@@ -3541,8 +3550,10 @@ fn base_whatsits_preserve_scan_timing_normalization_and_payload_ownership() {
     assert_eq!(*sink, PrintSink::Log);
     let payload_symbol = stores.symbol("payload").expect("payload remains defined");
     assert_eq!(
-        &*stores.tokens(tokens.id()),
-        [Token::Cs(payload_symbol.symbol())]
+        tokens.words(),
+        [tex_state::token::TokenWord::pack(Token::Cs(
+            payload_symbol.symbol()
+        ))]
     );
     assert_eq!(*close_slot, None);
     assert_eq!(class, "dvi");
@@ -5210,7 +5221,7 @@ fn stray_endv_in_math_inserts_shift_then_replays_for_off_save() {
     }
 }
 
-fn recursive_test_box(stores: &mut Universe) -> tex_state::node_arena::NodeListRef {
+fn recursive_test_box(stores: &mut Universe) -> tex_state::node_arena::PageListId {
     use tex_state::font::NULL_FONT;
     use tex_state::glue::Order;
     use tex_state::node::{
@@ -5219,7 +5230,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::node_arena::NodeListR
     };
     use tex_state::scaled::GlueSetRatio;
 
-    let leaf = stores.freeze_node_list(&[
+    let leaf = stores.publish_page_nodes(&[
         Node::Penalty(19),
         Node::Rule {
             width: Some(Scaled::from_raw(101)),
@@ -5240,13 +5251,13 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::node_arena::NodeListR
             children,
         })
     };
-    let glue = stores.intern_glue(GlueSpec {
+    let glue = GlueSpec {
         width: Scaled::from_raw(301),
         stretch: Scaled::from_raw(302),
         stretch_order: Order::Fil,
         shrink: Scaled::from_raw(303),
         shrink_order: Order::Filll,
-    });
+    };
     let tokens = stores.intern_token_list(&[
         Token::Char {
             ch: 'm',
@@ -5257,17 +5268,17 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::node_arena::NodeListR
             cat: Catcode::Other,
         },
     ]);
-    let tokens = stores.token_list_ref(tokens);
-    let pre = stores.freeze_node_list(&[Node::Char {
+    let tokens = tex_state::node::NodeTokenList::new(stores.tokens(tokens).to_vec());
+    let pre = stores.publish_page_nodes(&[Node::Char {
         font: NULL_FONT,
         ch: 'p',
         origin: tex_state::provenance::OriginRef::unknown(),
     }]);
-    let post = stores.freeze_node_list(&[Node::Kern {
+    let post = stores.publish_page_nodes(&[Node::Kern {
         amount: Scaled::from_raw(401),
         kind: tex_state::node::KernKind::Explicit,
     }]);
-    let replace = stores.freeze_node_list(&[Node::Lig {
+    let replace = stores.publish_page_nodes(&[Node::Lig {
         font: NULL_FONT,
         ch: 'L',
         orig: vec!['f', 'i'],
@@ -5276,7 +5287,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::node_arena::NodeListR
         right_hit: false,
     }]);
 
-    let children = stores.freeze_node_list(&[
+    let children = stores.publish_page_nodes(&[
         Node::Rule {
             width: Some(Scaled::from_raw(1)),
             height: None,
@@ -5333,19 +5344,16 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::node_arena::NodeListR
             children: replace,
         })),
     ]);
-    stores.freeze_node_list(&[Node::HList(box_node(children))])
+    stores.publish_page_nodes(&[Node::HList(box_node(children))])
 }
 
-fn recursive_node_signature(
-    stores: &Universe,
-    list: &tex_state::node_arena::NodeListRef,
-) -> String {
+fn recursive_node_signature(stores: &Universe, list: &tex_state::node_arena::PageListId) -> String {
     recursive_owned_node_signature(stores, list)
 }
 
 fn recursive_owned_node_signature(
     stores: &Universe,
-    list: &tex_state::node_arena::NodeListRef,
+    list: &tex_state::node_arena::PageListId,
 ) -> String {
     use tex_state::node::{LeaderPayload, Node};
 
@@ -5403,7 +5411,7 @@ fn recursive_owned_node_signature(
                     ),
                     LeaderPayload::Rule { .. } => format!("{leader:?}"),
                 });
-                format!("glue={:?}/leader={leader:?}", stores.glue(spec))
+                format!("glue={spec:?}/leader={leader:?}")
             }
             Node::Disc {
                 pre,
@@ -5418,7 +5426,7 @@ fn recursive_owned_node_signature(
                 recursive_owned_node_signature(stores, replace)
             ),
             Node::Mark { class, tokens } => {
-                format!("mark={class}/tokens={:?}", &*stores.tokens(tokens.id()))
+                format!("mark={class}/tokens={:?}", tokens.words())
             }
             Node::Ins {
                 class,
@@ -5429,7 +5437,7 @@ fn recursive_owned_node_signature(
                 content,
             } => format!(
                 "ins={class}/{size:?}/{:?}/{split_max_depth:?}/{floating_penalty}/content={}",
-                stores.glue(split_top_skip),
+                split_top_skip,
                 recursive_owned_node_signature(stores, content)
             ),
             Node::Adjust(adjust) => format!(
@@ -5447,20 +5455,20 @@ fn recursive_owned_node_signature(
 fn copy_preserves_every_recursive_node_payload_and_source_register() {
     let mut stores = Universe::new_with_plain_catcodes();
     let graph = recursive_test_box(&mut stores);
-    stores.set_box_reg_ref(0, graph);
-    let source = stores.box_reg_ref(0).expect("promoted source graph");
+    stores.assign_page_box_local(0, graph);
+    let source = stores.copy_box_to_page(0).expect("promoted source graph");
     let baseline = stores.snapshot();
 
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\setbox1=\copy0");
     run_to_end(&mut control, &mut stores);
     assert_eq!(
-        stores.box_reg_ref(0).as_ref(),
+        stores.copy_box_to_page(0).as_ref(),
         Some(&source),
         "copy retains its source"
     );
 
-    let copied = stores.box_reg_ref(1).expect("copied register");
+    let copied = stores.copy_box_to_page(1).expect("copied register");
     let expected = recursive_node_signature(&stores, &copied);
     assert_eq!(
         recursive_node_signature(&stores, &source),
@@ -5474,22 +5482,28 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
     let children = root.children.to_vec();
     assert_eq!(children.len(), 13, "every payload remains in child order");
     assert!(
-        matches!(&children[1], Node::Glue { spec, leader: Some(_), .. } if stores.glue(spec).width.raw() == 301)
+        matches!(&children[1], Node::Glue { spec, leader: Some(_), .. } if spec.width.raw() == 301)
     );
     assert!(
-        matches!(&children[3], Node::Mark { tokens, .. } if *stores.tokens(tokens.id()) == [Token::Char { ch: 'm', cat: Catcode::Letter }, Token::Char { ch: '!', cat: Catcode::Other }])
+        matches!(&children[3], Node::Mark { tokens, .. } if tokens.words() == [
+            tex_state::token::TokenWord::pack(Token::Char { ch: 'm', cat: Catcode::Letter }),
+            tex_state::token::TokenWord::pack(Token::Char { ch: '!', cat: Catcode::Other }),
+        ])
     );
 
     let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\setbox2=\box0");
     run_to_end(&mut control, &mut stores);
-    assert!(stores.box_reg_ref(0).is_none(), "box consumes its source");
+    assert!(
+        stores.copy_box_to_page(0).is_none(),
+        "box consumes its source"
+    );
     assert_eq!(
-        stores.box_reg_ref(1),
+        stores.copy_box_to_page(1),
         Some(copied.clone()),
         "copy survives source release"
     );
-    let consumed = stores.box_reg_ref(2).expect("consumed destination");
+    let consumed = stores.copy_box_to_page(2).expect("consumed destination");
     assert_eq!(
         recursive_node_signature(&stores, &consumed),
         expected,
@@ -5497,14 +5511,16 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
     );
 
     stores.rollback(&baseline);
-    assert_eq!(stores.box_reg_ref(0).as_ref(), Some(&source));
-    assert!(stores.box_reg_ref(1).is_none());
+    assert_eq!(stores.copy_box_to_page(0).as_ref(), Some(&source));
+    assert!(stores.copy_box_to_page(1).is_none());
 
-    stores.set_box_reg_ref(1, source);
+    stores.assign_page_box_local(1, source);
     let format = stores.dump_format().expect("recursive graph format dumps");
     let restored = Universe::from_format(tex_state::World::memory(), &format)
         .expect("recursive graph format restores");
-    let restored_graph = restored.box_reg_ref(1).expect("restored recursive graph");
+    let restored_graph = restored
+        .copy_box_to_page(1)
+        .expect("restored recursive graph");
     assert_eq!(
         recursive_node_signature(&restored, &restored_graph),
         expected
@@ -5525,7 +5541,7 @@ fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
     );
     run_to_end(&mut control, &mut stores);
 
-    let box1 = stores.box_reg_ref(1).expect("outer vbox exists");
+    let box1 = stores.copy_box_to_page(1).expect("outer vbox exists");
     let box1_nodes = box1.to_vec();
     let [tex_state::node::Node::VList(outer)] = box1_nodes.as_slice() else {
         panic!("register 1 should hold a vbox");
@@ -5540,7 +5556,7 @@ fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
         "the paragraph line and unboxed vertical child remain sibling vlist nodes"
     );
     assert!(
-        stores.box_reg_ref(0).is_none(),
+        stores.copy_box_to_page(0).is_none(),
         "the retried unvbox is destructive"
     );
 }
@@ -5562,10 +5578,10 @@ fn destructive_unbox_transfers_nested_structural_children() {
     );
     run_to_end(&mut control, &mut stores);
 
-    assert!(stores.box_reg_ref(0).is_none());
-    assert!(stores.box_reg_ref(1).is_none());
-    assert!(stores.box_reg_ref(2).is_some());
-    assert!(stores.box_reg_ref(3).is_some());
+    assert!(stores.copy_box_to_page(0).is_none());
+    assert!(stores.copy_box_to_page(1).is_none());
+    assert!(stores.copy_box_to_page(2).is_some());
+    assert!(stores.copy_box_to_page(3).is_some());
 }
 
 #[test]
@@ -5575,7 +5591,7 @@ fn grouped_copy_keeps_structural_children() {
     register_source(&mut control, br"{\setbox0\hbox{X}\copy0}");
     run_to_end(&mut control, &mut stores);
 
-    assert_eq!(stores.box_reg_ref(0), None);
+    assert_eq!(stores.copy_box_to_page(0), None);
 }
 
 #[test]
@@ -5587,8 +5603,8 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
         br"\setbox0=\vbox{\hbox{}}\setbox1=\hbox{\kern1pt}",
     );
     run_to_end(&mut control, &mut stores);
-    let vbox = stores.box_reg_ref(0);
-    let hbox = stores.box_reg_ref(1);
+    let vbox = stores.copy_box_to_page(0);
+    let hbox = stores.copy_box_to_page(1);
     let source = "\\unhbox0\\par\\unhcopy0\\par\\unvbox1\\unvcopy1";
 
     let mut control = MainControl::tex82_initex(&mut stores);
@@ -5601,16 +5617,16 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
         )
         .expect("incompatible unbox source checkpoints");
     run_to_end(&mut control, &mut stores);
-    assert_eq!(stores.box_reg_ref(0), vbox);
-    assert_eq!(stores.box_reg_ref(1), hbox);
+    assert_eq!(stores.copy_box_to_page(0), vbox);
+    assert_eq!(stores.copy_box_to_page(1), hbox);
     let first_output = terminal_text(&stores);
 
     control
         .restore_checkpoint(&checkpoint, &mut stores)
         .expect("incompatible unbox source restores");
     run_to_end(&mut control, &mut stores);
-    assert_eq!(stores.box_reg_ref(0), vbox);
-    assert_eq!(stores.box_reg_ref(1), hbox);
+    assert_eq!(stores.copy_box_to_page(0), vbox);
+    assert_eq!(stores.copy_box_to_page(1), hbox);
     assert_eq!(terminal_text(&stores), first_output);
 }
 
@@ -5853,12 +5869,12 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
                 class: 32_767,
                 tokens,
             } => Some(
-                stores
-                    .tokens(tokens.id())
+                tokens
+                    .words()
                     .iter()
-                    .filter_map(|token| match token {
-                        Token::Char { ch, .. } => Some(*ch),
-                        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
+                    .filter_map(|token| match token.token() {
+                        Some(Token::Char { ch, .. }) => Some(ch),
+                        Some(Token::Cs(_) | Token::Param(_) | Token::Frozen(_)) | None => None,
                     })
                     .collect::<String>(),
             ),
@@ -6373,8 +6389,8 @@ fn test_pdf_image_source() -> tex_state::PdfExternalImageSource {
 }
 
 fn install_test_hbox(stores: &mut Universe, register: u16, width: Scaled) {
-    let children = tex_state::node_arena::NodeListRef::empty();
-    let list = stores.freeze_node_list(&[Node::HList(tex_state::node::BoxNode::new(
+    let children = tex_state::node_arena::PageListId::empty();
+    let list = stores.publish_page_nodes(&[Node::HList(tex_state::node::BoxNode::new(
         tex_state::node::BoxNodeFields {
             width,
             height: Scaled::from_raw(2),
@@ -6387,14 +6403,12 @@ fn install_test_hbox(stores: &mut Universe, register: u16, width: Scaled) {
             children,
         },
     ))]);
-    stores.set_box_reg_ref(register, list);
+    stores.assign_page_box_local(register, list);
 }
 
 fn install_test_form(stores: &mut Universe) {
     install_test_hbox(stores, 0, Scaled::from_raw(11));
-    let list = stores
-        .take_box_reg_ref_same_level(0)
-        .expect("test form box");
+    let list = stores.take_box_to_page(0).expect("test form box");
     let identity = stores.reserve_pdf_form().expect("reserve test form");
     stores
         .initialize_pdf_form(
@@ -6655,7 +6669,7 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
         Err(ExecError::PdfExtensionInDviMode("pdfxform"))
     ));
     assert_eq!(create_stores.snapshot().state_hash(), state_before);
-    assert!(create_stores.box_reg_ref(7).is_some());
+    assert!(create_stores.copy_box_to_page(7).is_some());
     assert!(create_stores.pdf_forms().next().is_none());
     assert_eq!(create_stores.pdf_last_form(), 0);
     assert!(create.modes.current_list().nodes().is_empty());
@@ -6667,7 +6681,7 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
             .expect("PDF retry preserves all form options and the register"),
         MainControlStep::Continue
     );
-    assert!(create_stores.box_reg_ref(7).is_none());
+    assert!(create_stores.copy_box_to_page(7).is_none());
     let form = create_stores
         .pdf_form(1)
         .expect("retried form is allocated");
@@ -6732,7 +6746,7 @@ fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
         Err(ExecError::PdfExtensionInDviMode("pdfxform"))
     ));
     assert_eq!(stores.snapshot().state_hash(), state_before);
-    assert!(stores.box_reg_ref(9).is_some());
+    assert!(stores.copy_box_to_page(9).is_some());
     assert!(stores.pdf_forms().next().is_none());
 
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
@@ -6742,7 +6756,7 @@ fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
             .expect("immediate PDF retry preserves every form operand"),
         MainControlStep::Continue
     );
-    assert!(stores.box_reg_ref(9).is_none());
+    assert!(stores.copy_box_to_page(9).is_none());
     let form = stores.pdf_form(1).expect("immediate form is allocated");
     assert!(form.immediate());
     assert_eq!(form.width(), Scaled::from_raw(19));
@@ -8730,10 +8744,10 @@ fn etex_sparse_setbox_observes_delayed_and_immediate_commits() {
             (Some("box:302"), Some("void"), false),
         ]
     );
-    assert!(stores.box_reg_ref(20).is_none());
-    assert!(stores.box_reg_ref(300).is_none());
-    assert!(stores.box_reg_ref(301).is_some());
-    assert!(stores.box_reg_ref(302).is_none());
+    assert!(stores.copy_box_to_page(20).is_none());
+    assert!(stores.copy_box_to_page(300).is_none());
+    assert!(stores.copy_box_to_page(301).is_some());
+    assert!(stores.copy_box_to_page(302).is_none());
 }
 
 #[test]
@@ -8765,8 +8779,8 @@ fn etex_sparse_copy_keeps_a_nested_constructed_source_box() {
         })
         .collect::<Vec<_>>();
     assert_eq!(mutations, ["occupied", "occupied"]);
-    assert!(stores.box_reg_ref(32101).is_some());
-    assert!(stores.box_reg_ref(32103).is_some());
+    assert!(stores.copy_box_to_page(32101).is_some());
+    assert!(stores.copy_box_to_page(32103).is_some());
 }
 
 #[test]
@@ -10470,7 +10484,7 @@ fn final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly() {
 /// Collects every `\setlanguage` whatsit inside box register zero.
 fn language_whatsits(stores: &Universe) -> Vec<(u8, u8, u8)> {
     let outer = stores
-        .box_reg_ref(0)
+        .copy_box_to_page(0)
         .expect("box 0 holds the constructed hbox");
     let Some(Node::HList(boxed)) = first_published_node(stores, outer) else {
         panic!("box 0 holds an hlist");
@@ -10528,7 +10542,7 @@ fn paragraph_entry_snapshots_language_before_first_character() {
     run_to_end(&mut control, &mut stores);
 
     let outer = stores
-        .box_reg_ref(0)
+        .copy_box_to_page(0)
         .expect("box 0 holds the paragraph vbox");
     let Some(Node::VList(vbox)) = first_published_node(&stores, outer) else {
         panic!("box 0 holds a vlist");
@@ -10582,7 +10596,7 @@ fn setlanguage_illegal_mode_recovers_without_scan_or_append() {
         "{text}"
     );
     let outer = stores
-        .box_reg_ref(0)
+        .copy_box_to_page(0)
         .expect("box 0 holds the constructed vbox");
     let Some(Node::VList(boxed)) = first_published_node(&stores, outer) else {
         panic!("box 0 holds a vlist");
@@ -10738,11 +10752,11 @@ fn setbox_scope_is_globaldefs_adjusted_before_the_box_is_scanned() {
     run_to_end(&mut control, &mut stores);
 
     assert!(
-        stores.box_reg_ref(0).is_some(),
+        stores.copy_box_to_page(0).is_some(),
         "positive globaldefs is global"
     );
     assert!(
-        stores.box_reg_ref(1).is_none(),
+        stores.copy_box_to_page(1).is_none(),
         "negative globaldefs is local"
     );
 }
@@ -11991,7 +12005,7 @@ fn misplaced_tab_reports_once_and_drops_only_the_delimiter() {
 #[test]
 fn math_group_collapses_only_one_undecorated_ord_nucleus() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let empty_list = tex_state::node_arena::NodeListRef::empty();
+    let empty_list = tex_state::node_arena::PageListId::empty();
     let ch = MathChar {
         family: 0,
         character: 'x',
@@ -12003,24 +12017,24 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
         MathField::SubBox(empty_list.clone()),
         MathField::SubMlist(empty_list),
     ] {
-        let list = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        let list = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             nucleus.clone(),
         ))]);
         assert_eq!(collapse_singleton_math_group(&stores, list), nucleus);
     }
 
-    let scripted = stores.freeze_node_list(&[Node::MathNoad(MathNoad {
+    let scripted = stores.publish_page_nodes(&[Node::MathNoad(MathNoad {
         kind: NoadKind::Normal(NoadClass::Ord),
         nucleus: MathField::MathChar(ch),
         subscript: MathField::MathChar(ch),
         superscript: MathField::Empty,
     })]);
-    let non_ord = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+    let non_ord = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Open),
         MathField::MathChar(ch),
     ))]);
-    let multiple = stores.freeze_node_list(&[
+    let multiple = stores.publish_page_nodes(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::MathChar(ch),

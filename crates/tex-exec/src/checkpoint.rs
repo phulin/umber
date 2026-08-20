@@ -91,7 +91,7 @@ impl EngineCheckpoint {
         let command = command.publish_summary()?;
         let root_anchor = command.root_source_anchor().unwrap_or(0);
         let root_content_hash = universe.explicit_root_editor_content_hash();
-        nest.freeze_node_sidecars(universe);
+        nest.publish_node_sidecars(universe);
         let modes = nest.summary();
         let mode_hash = modes.semantic_fingerprint(universe);
         let effect_prefix = usize::try_from(universe.world().effect_pos().raw())

@@ -335,15 +335,15 @@ pub(crate) fn execute_showbox(
     // and `print_nl("> \box"); print_int; print_char("=")`, then `show_box`
     // or `"void"`.
     let mut text = format!("> \\box{index}=");
-    if let Some(owner) = stores.box_reg_ref(index) {
+    if let Some(owner) = stores.copy_box_to_page(index) {
         // TeX82 §198's `show_box` enters `show_node_list`, whose first
         // visible node is opened by `print_ln`; the structural break belongs
         // only to this branch. Section 1296 prints `"void"` directly after
         // the equals sign when the register is null.
         text.push('\n');
-        text.push_str(&crate::node_dump::dump_node_list_ref(
+        text.push_str(&crate::node_dump::dump_page_list(
             stores,
-            &owner,
+            owner,
             DumpConfig::read(stores).for_profile(profile),
         ));
     } else {
@@ -487,7 +487,7 @@ pub(crate) fn execute_showlists(
                     DumpConfig::read(stores).for_profile(profile),
                 ));
             }
-        } else if let Some(nodes) = showlists_level_nodes(summary.levels(), index) {
+        } else if let Some(nodes) = showlists_level_nodes(stores, summary.levels(), index) {
             if index == 0 {
                 text.push_str("### recent contributions:\n");
             }
@@ -557,6 +557,7 @@ pub(crate) fn execute_showlists(
 /// project Umber's typed `DisplayEqNo` owner back onto that level instead of
 /// displaying the now-empty construction list.
 fn showlists_level_nodes(
+    stores: &Universe,
     levels: &[crate::mode::ModeLevelSummary],
     index: usize,
 ) -> Option<Vec<tex_state::node::Node>> {
@@ -566,7 +567,13 @@ fn showlists_level_nodes(
             .get(index + 1)
             .and_then(|inner| inner.list().display_eq_no())
     {
-        return Some(eq_no.display.to_vec());
+        return Some(
+            stores
+                .page_node_list(eq_no.display)
+                .expect("display equation belongs to the live page arena")
+                .nodes()
+                .to_vec(),
+        );
     }
     (!level.list().physical_nodes().is_empty()).then(|| level.list().physical_nodes().to_vec())
 }

@@ -76,27 +76,37 @@ fn episode_boundary_freezes_builder_sidecars_and_mutation_invalidates_them() {
     nest.current_list_mutation().push(kern(11));
     assert!(nest.levels[0].list.sequence.frozen_sidecars().is_none());
 
-    nest.freeze_node_sidecars(&mut stores);
+    nest.publish_node_sidecars(&mut stores);
     let (semantic, physical) = nest.levels[0]
         .list
         .sequence
         .frozen_sidecars()
         .expect("boundary materializes both projections");
-    assert_eq!(semantic.to_vec(), vec![kern(11)]);
-    assert_eq!(physical.to_vec(), vec![kern(11)]);
+    let nodes = |root| {
+        stores
+            .page_node_list(root)
+            .expect("mode sidecar belongs to the page arena")
+            .nodes()
+            .to_vec()
+    };
+    assert_eq!(nodes(semantic), vec![kern(11)]);
+    assert_eq!(nodes(physical), vec![kern(11)]);
 
     nest.current_list_mutation().push(kern(13));
     assert!(nest.levels[0].list.sequence.frozen_sidecars().is_none());
-    nest.freeze_node_sidecars(&mut stores);
+    nest.publish_node_sidecars(&mut stores);
+    let semantic = nest.levels[0]
+        .list
+        .sequence
+        .frozen_sidecars()
+        .expect("next boundary refreezes the changed builder")
+        .0;
     assert_eq!(
-        nest.levels[0]
-            .list
-            .sequence
-            .frozen_sidecars()
-            .expect("next boundary refreezes the changed builder")
-            .0
-            .to_vec(),
-        vec![kern(11), kern(13)]
+        stores
+            .page_node_list(semantic)
+            .expect("mode sidecar belongs to the page arena")
+            .nodes(),
+        [kern(11), kern(13)]
     );
 }
 
@@ -341,8 +351,8 @@ fn align_state() -> AlignState {
         AlignmentKind::HAlign,
         AlignmentPackSpec::Natural,
         Vec::new(),
-        vec![tex_state::glue::testing_zero_glue_ref()],
-        tex_state::glue::testing_zero_glue_ref(),
+        vec![tex_state::glue::GlueSpec::ZERO],
+        tex_state::glue::GlueSpec::ZERO,
         None,
     )
 }
@@ -372,7 +382,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
         );
         list.set_align_state(align_state());
         list.set_incomplete_fraction(IncompleteFraction {
-            numerator: tex_state::node_arena::NodeListRef::empty(),
+            numerator: tex_state::node_arena::PageListId::empty(),
             thickness: FractionThickness::Explicit(Scaled::from_raw(4)),
             left_delimiter: Some(5),
             right_delimiter: Some(6),
@@ -383,7 +393,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
         });
         list.set_display_eq_no(DisplayEqNo {
             side: EqNoSide::Right,
-            display: tex_state::node_arena::NodeListRef::empty(),
+            display: tex_state::node_arena::PageListId::empty(),
         });
     }
 
@@ -428,42 +438,35 @@ fn journal_destructive_node_reconstitution_alignment_and_transfers_restore() {
 
 #[test]
 fn alignment_template_coordinates_survive_destructive_journal_rollback() {
-    let mut universe = Universe::new();
-    let u_template = universe.intern_token_list_ref(&[tex_state::token::Token::Char {
-        ch: 'u',
-        cat: tex_state::token::Catcode::Other,
-    }]);
-    let v_template = universe.intern_token_list_ref(&[tex_state::token::Token::Char {
-        ch: 'v',
-        cat: tex_state::token::Catcode::Other,
-    }]);
-    let u_id = u_template.id();
-    let v_id = v_template.id();
+    let u_template = tex_state::node::NodeTokenList::new([tex_state::token::TokenWord::pack(
+        tex_state::token::Token::Char {
+            ch: 'u',
+            cat: tex_state::token::Catcode::Other,
+        },
+    )]);
+    let v_template = tex_state::node::NodeTokenList::new([tex_state::token::TokenWord::pack(
+        tex_state::token::Token::Char {
+            ch: 'v',
+            cat: tex_state::token::Catcode::Other,
+        },
+    )]);
     let mut nest = ModeNest::new();
     nest.current_list_mutation()
         .set_align_state(AlignState::new(
             AlignmentKind::HAlign,
             AlignmentPackSpec::Natural,
             vec![super::AlignColumn {
-                u_template,
-                v_template,
+                u_template: u_template.clone(),
+                v_template: v_template.clone(),
             }],
-            vec![tex_state::glue::testing_zero_glue_ref()],
-            tex_state::glue::testing_zero_glue_ref(),
+            vec![tex_state::glue::GlueSpec::ZERO],
+            tex_state::glue::GlueSpec::ZERO,
             None,
         ));
     nest.reset_journal_for_test();
     let cursor = nest.begin_journal();
 
     let _ = nest.current_list_mutation().take_align_state();
-    assert_eq!(
-        universe.tokens(u_id).tokens(),
-        &[tex_state::token::Token::Char {
-            ch: 'u',
-            cat: tex_state::token::Catcode::Other,
-        }]
-    );
-    drop(universe);
     nest.rollback_journal(cursor).expect("alignment rollback");
 
     let column = &nest
@@ -471,8 +474,8 @@ fn alignment_template_coordinates_survive_destructive_journal_rollback() {
         .align_state()
         .expect("alignment restored")
         .columns()[0];
-    assert_eq!(column.u_template.id(), u_id);
-    assert_eq!(column.v_template.id(), v_id);
+    assert_eq!(column.u_template, u_template);
+    assert_eq!(column.v_template, v_template);
 }
 
 #[test]
@@ -481,7 +484,7 @@ fn journal_math_and_display_ownership_transfers_restore() {
     {
         let mut list = nest.current_list_mutation();
         list.set_incomplete_fraction(IncompleteFraction {
-            numerator: tex_state::node_arena::NodeListRef::empty(),
+            numerator: tex_state::node_arena::PageListId::empty(),
             thickness: FractionThickness::Default,
             left_delimiter: None,
             right_delimiter: Some(9),
@@ -492,7 +495,7 @@ fn journal_math_and_display_ownership_transfers_restore() {
         });
         list.set_display_eq_no(DisplayEqNo {
             side: EqNoSide::Left,
-            display: tex_state::node_arena::NodeListRef::empty(),
+            display: tex_state::node_arena::PageListId::empty(),
         });
     }
     let before = nest.summary();

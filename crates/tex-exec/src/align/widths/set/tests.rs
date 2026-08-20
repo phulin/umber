@@ -1,13 +1,13 @@
 use super::*;
 use tex_state::glue::Order;
 use tex_state::node::{GlueKind, UnsetKind, UnsetNodeFields};
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw * Scaled::UNITY)
 }
 
-fn box_node(width: i32, height: i32, empty: NodeListRef) -> BoxNode {
+fn box_node(width: i32, height: i32, empty: PageListId) -> BoxNode {
     BoxNode::new(BoxNodeFields {
         width: sp(width),
         height: sp(height),
@@ -57,7 +57,7 @@ fn unset_cell<List>(
 #[test]
 fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let empty = NodeListRef::empty();
+    let empty = PageListId::empty();
 
     let horizontal = set_alignment_nodes(
         AlignmentKind::HAlign,
@@ -76,8 +76,8 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
         &ResolvedWidths {
             columns: vec![sp(11)],
             tabskips: vec![
-                tex_state::glue::testing_zero_glue_ref(),
-                tex_state::glue::testing_zero_glue_ref(),
+                tex_state::glue::GlueSpec::ZERO,
+                tex_state::glue::GlueSpec::ZERO,
             ],
         },
         &Prototype {
@@ -111,8 +111,8 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
         &ResolvedWidths {
             columns: vec![sp(13)],
             tabskips: vec![
-                tex_state::glue::testing_zero_glue_ref(),
-                tex_state::glue::testing_zero_glue_ref(),
+                tex_state::glue::GlueSpec::ZERO,
+                tex_state::glue::GlueSpec::ZERO,
             ],
         },
         &Prototype {
@@ -145,8 +145,8 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
         &ResolvedWidths {
             columns: vec![sp(11)],
             tabskips: vec![
-                tex_state::glue::testing_zero_glue_ref(),
-                tex_state::glue::testing_zero_glue_ref(),
+                tex_state::glue::GlueSpec::ZERO,
+                tex_state::glue::GlueSpec::ZERO,
             ],
         },
         &Prototype {
@@ -162,7 +162,11 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
     };
     assert_eq!(wrapper.shift, sp(5));
     assert_eq!(wrapper.width, sp(11));
-    let children = wrapper.children.to_vec();
+    let children = stores
+        .page_node_list(wrapper.children)
+        .expect("wrapper children belong to the page arena")
+        .nodes()
+        .to_vec();
     let [
         Node::Rule {
             width: Some(width), ..
@@ -177,14 +181,14 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
 #[test]
 fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let empty = NodeListRef::empty();
-    let middle = stores.intern_glue(GlueSpec {
+    let empty = PageListId::empty();
+    let middle = GlueSpec {
         width: sp(1),
         stretch: Scaled::from_raw(0),
         stretch_order: Order::Normal,
         shrink: Scaled::from_raw(0),
         shrink_order: Order::Normal,
-    });
+    };
     let cell = unset_cell(
         UnsetKind::HBox,
         10,
@@ -197,10 +201,10 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
         },
         empty.clone(),
     );
-    let row_children = stores.freeze_node_list(&[
-        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
+    let row_children = stores.publish_page_nodes(&[
+        tabskip_node(tex_state::glue::GlueSpec::ZERO),
         Node::Unset(cell),
-        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
+        tabskip_node(tex_state::glue::GlueSpec::ZERO),
     ]);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
@@ -217,9 +221,9 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
     let resolved = ResolvedWidths {
         columns: vec![sp(4), sp(5)],
         tabskips: vec![
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
             middle,
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
         ],
     };
     let prototype = Prototype {
@@ -242,7 +246,11 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
     // TeX82 §807 closes with `shift_amount(q):=o`, the same §800 offset §806
     // gives a running rule.
     assert_eq!(row.shift, sp(5));
-    let children = row.children.to_vec();
+    let children = stores
+        .page_node_list(row.children)
+        .expect("row children belong to the page arena")
+        .nodes()
+        .to_vec();
     let [
         Node::Glue {
             kind: GlueKind::TabSkip,
@@ -264,7 +272,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
         panic!("span must add one tabskip/empty-box pair, got {children:?}");
     };
     assert_eq!(first.width, sp(4));
-    assert_eq!(stores.glue(spec).width, sp(1));
+    assert_eq!(spec.width, sp(1));
     assert_eq!(blank.width, sp(5));
     assert!(blank.children.is_empty());
 }
@@ -275,7 +283,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
     // retain their relative positions, running rules use prototype dimensions,
     // and each unset row becomes a set box at that same position.
     let mut stores = Universe::new_with_plain_catcodes();
-    let empty = NodeListRef::empty();
+    let empty = PageListId::empty();
     let cell = Node::Unset(unset_cell(
         UnsetKind::HBox,
         4,
@@ -288,10 +296,10 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
         },
         empty.clone(),
     ));
-    let children = stores.freeze_node_list(&[
-        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
+    let children = stores.publish_page_nodes(&[
+        tabskip_node(tex_state::glue::GlueSpec::ZERO),
         cell,
-        tabskip_node(tex_state::glue::testing_zero_glue_ref()),
+        tabskip_node(tex_state::glue::GlueSpec::ZERO),
     ]);
     let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
@@ -320,7 +328,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
         ],
         &ResolvedWidths {
             columns: vec![sp(4)],
-            tabskips: vec![tex_state::glue::testing_zero_glue_ref(); 2],
+            tabskips: vec![tex_state::glue::GlueSpec::ZERO; 2],
         },
         &Prototype {
             box_node: box_node(9, 2, empty.clone()),
@@ -337,7 +345,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
 
 #[test]
 fn convert_unset_cell_computes_tex82_glue_ratio_matrix() {
-    let empty = tex_state::node_arena::NodeListRef::empty();
+    let empty = tex_state::node_arena::PageListId::empty();
     let ordinary = unset_cell(
         UnsetKind::HBox,
         5,

@@ -17,7 +17,7 @@ pub(super) fn resolve_widths(
     rows: &[Node],
     stores: &Universe,
 ) -> Result<ResolvedWidths, ExecError> {
-    let requirements = collect_width_requirements(state.kind(), rows)?;
+    let requirements = collect_width_requirements(state.kind(), rows, stores)?;
     let column_count = requirements
         .iter()
         .map(|requirement| requirement.first_column + requirement.span)
@@ -25,14 +25,11 @@ pub(super) fn resolve_widths(
         .unwrap_or(state.columns().len())
         .max(state.columns().len());
     let mut tabskips = initial_tabskips(state, column_count);
-    let tabskip_widths = tabskips
-        .iter()
-        .map(|root| stores.glue_spec(*root).width)
-        .collect::<Vec<_>>();
+    let tabskip_widths = tabskips.iter().map(|root| root.width).collect::<Vec<_>>();
     let plan = plan_alignment_widths(state.columns().len(), &tabskip_widths, requirements)
         .map_err(map_plan_error)?;
     for boundary in plan.zero_tabskip_boundaries {
-        tabskips[boundary] = stores.glue_ref(tex_state::ids::GlueId::ZERO);
+        tabskips[boundary] = tex_state::glue::GlueSpec::ZERO;
     }
 
     Ok(ResolvedWidths {
@@ -41,7 +38,7 @@ pub(super) fn resolve_widths(
     })
 }
 
-fn initial_tabskips(state: &AlignState, columns: usize) -> Vec<tex_state::glue::GlueSpecRef> {
+fn initial_tabskips(state: &AlignState, columns: usize) -> Vec<tex_state::glue::GlueSpec> {
     (0..=columns)
         .map(|boundary| *state.tabskip_for_boundary(boundary))
         .collect()
@@ -50,6 +47,7 @@ fn initial_tabskips(state: &AlignState, columns: usize) -> Vec<tex_state::glue::
 fn collect_width_requirements(
     kind: AlignmentKind,
     rows: &[Node],
+    stores: &Universe,
 ) -> Result<Vec<AlignmentWidthRequirement>, ExecError> {
     let mut requirements = Vec::new();
     for node in rows {
@@ -57,7 +55,11 @@ fn collect_width_requirements(
             continue;
         };
         let mut column = 0usize;
-        for child in row.children.nodes() {
+        for child in stores
+            .page_node_list(row.children)
+            .expect("alignment row belongs to the live page arena")
+            .iter()
+        {
             let tex_state::node_arena::NodeRef::Unset(cell) = child else {
                 continue;
             };

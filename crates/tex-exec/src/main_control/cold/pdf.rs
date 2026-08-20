@@ -60,6 +60,27 @@ pub(in crate::main_control) fn pdf_navigation_identity(
     }
 }
 
+fn node_pdf_navigation_identifier(
+    stores: &Universe,
+    identifier: tex_state::PdfActionIdentifier,
+) -> tex_state::node::NodePdfActionIdentifier {
+    match identifier {
+        tex_state::PdfActionIdentifier::Name(tokens) => {
+            tex_state::node::NodePdfActionIdentifier::Name(tex_state::node::NodeTokenList::new(
+                stores.tokens(tokens.id()).to_vec(),
+            ))
+        }
+        tex_state::PdfActionIdentifier::Number(number) => {
+            tex_state::node::NodePdfActionIdentifier::Number(number)
+        }
+        tex_state::PdfActionIdentifier::Raw(tokens) => {
+            tex_state::node::NodePdfActionIdentifier::Raw(tex_state::node::NodeTokenList::new(
+                stores.tokens(tokens.id()).to_vec(),
+            ))
+        }
+    }
+}
+
 pub(in crate::main_control) fn apply_pdf_navigation_request(
     request: PdfNavigationRequest,
     stores: &mut Universe,
@@ -206,7 +227,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request(
                 stores,
                 fuel,
                 Whatsit::PdfDestination(Box::new(tex_state::node::PdfDestinationNode {
-                    identifier,
+                    identifier: node_pdf_navigation_identifier(stores, identifier),
                     structure,
                     kind,
                 })),
@@ -231,11 +252,15 @@ pub(in crate::main_control) fn apply_pdf_navigation_request(
                 stores,
                 fuel,
                 Whatsit::PdfThread(Box::new(tex_state::node::PdfThreadNode {
-                    identifier,
+                    identifier: node_pdf_navigation_identifier(stores, identifier),
                     dimensions,
                     attributes: attributes.map_or_else(
-                        || stores.token_list_ref(TokenListId::EMPTY),
-                        |value| value.tokens.token_ref(),
+                        tex_state::node::NodeTokenList::default,
+                        |value| {
+                            tex_state::node::NodeTokenList::new(
+                                stores.tokens(value.tokens.token_ref().id()).to_vec(),
+                            )
+                        },
                     ),
                     running,
                 })),
@@ -340,7 +365,9 @@ pub(in crate::main_control) fn apply_pdf_graphics_request(
             text,
         } => Node::Whatsit(Whatsit::DeferredPdfLiteral {
             mode,
-            tokens: text.tokens.token_ref(),
+            tokens: tex_state::node::NodeTokenList::new(
+                stores.tokens(text.tokens.token_ref().id()).to_vec(),
+            ),
         }),
         PdfGraphicsRequest::Literal { mode, text, .. } => Node::Whatsit(Whatsit::PdfLiteral {
             mode,
@@ -359,9 +386,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request(
                     "pdfTeX error (ext1): negative snap glue",
                 ));
             }
-            Node::Whatsit(Whatsit::PdfSnapY {
-                glue: stores.intern_glue(glue),
-            })
+            Node::Whatsit(Whatsit::PdfSnapY { glue })
         }
         PdfGraphicsRequest::SnapYComp { ratio } => Node::Whatsit(Whatsit::PdfSnapYComp { ratio }),
         PdfGraphicsRequest::ColorStack { id, action } => {
@@ -531,9 +556,13 @@ pub(in crate::main_control) fn apply_pdf_form_request(
                 .reserve_pdf_form()
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             let list = stores
-                .take_box_reg_ref_same_level(box_register)
+                .take_box_to_page(box_register)
                 .ok_or(ExecError::PdfXFormVoidBox)?;
-            let dimensions = match list.get(0) {
+            let dimensions = match stores
+                .page_node_list(list)
+                .expect("form source belongs to the live page arena")
+                .get(0)
+            {
                 Some(Node::HList(node) | Node::VList(node)) => {
                     (node.width, node.height, node.depth)
                 }
@@ -556,12 +585,12 @@ pub(in crate::main_control) fn apply_pdf_form_request(
                 // graphics, saved positions, colors, and nested forms have
                 // one ledger/artifact owner.
                 let command = std::cell::RefCell::new(command);
-                let mut write = |stores: &mut Universe, _: PrintSink, tokens: TokenListId| {
+                let mut write = |stores: &mut Universe, _: PrintSink, tokens: &[TokenWord]| {
                     replay_write(&mut command.borrow_mut(), stores, tokens, &mut Vec::new())
                 };
                 let mut replay = |stores: &mut Universe,
                                   kind: crate::shipout::ReplayTextKind,
-                                  tokens: TokenListId| {
+                                  tokens: &[TokenWord]| {
                     replay_text(
                         &mut command.borrow_mut(),
                         stores,
@@ -588,7 +617,7 @@ pub(in crate::main_control) fn replay_text(
     command: &mut CommandMachine<'_>,
     stores: &mut Universe,
     kind: crate::shipout::ReplayTextKind,
-    tokens: TokenListId,
+    tokens: &[TokenWord],
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<Vec<u8>, ExecError> {
     // Output replay is an isolated nested input transaction. Its synthetic
@@ -597,8 +626,7 @@ pub(in crate::main_control) fn replay_text(
     // cursor. This also gives a failing nested form replay an exact command
     // rollback boundary independent of the artifact/resource transaction.
     let input_snapshot = command.state.snapshot();
-    let traced = stores
-        .tokens(tokens)
+    let traced = tokens
         .iter()
         .copied()
         .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
@@ -651,12 +679,11 @@ pub(in crate::main_control) fn replay_text(
 pub(in crate::main_control) fn replay_write(
     command: &mut CommandMachine<'_>,
     stores: &mut Universe,
-    tokens: TokenListId,
+    tokens: &[TokenWord],
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<crate::shipout::ExpandedWrite, ExecError> {
     let input_snapshot = command.state.snapshot();
-    let traced = stores
-        .tokens(tokens)
+    let traced = tokens
         .iter()
         .copied()
         .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
@@ -1087,8 +1114,8 @@ pub(in crate::main_control) fn print_ship_out_marker_open(
     }
     if let Some(node) = traced_node {
         stores.printer().print_char(']');
-        let frozen = stores.freeze_node_list(std::slice::from_ref(node));
-        let text = crate::node_dump::dump_node_list(
+        let frozen = stores.publish_page_nodes(std::slice::from_ref(node));
+        let text = crate::node_dump::dump_page_list(
             stores,
             frozen,
             crate::node_dump::DumpConfig::read(stores),
@@ -1189,104 +1216,102 @@ pub(in crate::main_control) fn shipout_replay_box(
         .emit_dvi_override
         .unwrap_or(!supports_pdftex_profile);
     let command_cell = std::cell::RefCell::new(command);
-    let mut expand_write =
-        |stores: &mut Universe, sink: PrintSink, tokens: tex_state::ids::TokenListId| {
-            let mut command = command_cell.borrow_mut();
-            let input_snapshot = command.state.snapshot();
-            // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
-            // before moving to the next whatsit. A following write expands only
-            // after those effects have happened, so publish the committed prefix
-            // before its nested command episode contributes observations.
-            if let Some(observations) = command.observations.as_mut() {
-                observations.extend(
-                    stores.world().effect_records()[effect_cursor.get()..]
-                        .iter()
-                        .filter_map(stream_effect_observation)
-                        .map(CommandObservation::Effect),
-                );
+    let mut expand_write = |stores: &mut Universe, sink: PrintSink, tokens: &[TokenWord]| {
+        let mut command = command_cell.borrow_mut();
+        let input_snapshot = command.state.snapshot();
+        // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
+        // before moving to the next whatsit. A following write expands only
+        // after those effects have happened, so publish the committed prefix
+        // before its nested command episode contributes observations.
+        if let Some(observations) = command.observations.as_mut() {
+            observations.extend(
+                stores.world().effect_records()[effect_cursor.get()..]
+                    .iter()
+                    .filter_map(stream_effect_observation)
+                    .map(CommandObservation::Effect),
+            );
+        }
+        effect_cursor.set(stores.world().effect_records().len());
+        let traced = tokens
+            .iter()
+            .copied()
+            .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
+            .collect::<Vec<_>>();
+        let traced = stores.finish_traced_token_list(&traced);
+        let expanded = {
+            // TeX82 §1370 temporarily sets `mode:=0` while deferred
+            // write text expands. §299 names that value "no mode", and
+            // §367 updates `shown_mode` if it traces an expandable
+            // command during the scan.
+            let mode_prefix = command.shown_mode.is_some().then(|| "no mode".to_owned());
+            let mut processor = command.processor(stores);
+            processor.set_command_trace_mode_prefix(mode_prefix);
+            let result = processor.expand_write_text(traced).map_err(command_error);
+            let command_trace_printed = processor.command_trace_printed();
+            let diagnostics = processor
+                .take_semantic_diagnostics()
+                .into_iter()
+                .map(PendingDiagnostic::Command)
+                .collect();
+            drop(processor);
+            // TeX82 §1370 performs expansion and then writes the
+            // resulting token list on one live `write_out` call stack.
+            // Publish §367 traces and scanner diagnostics into the
+            // shipout transaction now, before normalization appends the
+            // payload's stream effect.
+            report_pending_diagnostics(stores, diagnostics)?;
+            if command_trace_printed {
+                *command.shown_mode = None;
             }
-            effect_cursor.set(stores.world().effect_records().len());
-            let traced = stores
-                .tokens(tokens)
-                .iter()
-                .copied()
-                .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
-                .collect::<Vec<_>>();
-            let traced = stores.finish_traced_token_list(&traced);
-            let expanded = {
-                // TeX82 §1370 temporarily sets `mode:=0` while deferred
-                // write text expands. §299 names that value "no mode", and
-                // §367 updates `shown_mode` if it traces an expandable
-                // command during the scan.
-                let mode_prefix = command.shown_mode.is_some().then(|| "no mode".to_owned());
-                let mut processor = command.processor(stores);
-                processor.set_command_trace_mode_prefix(mode_prefix);
-                let result = processor.expand_write_text(traced).map_err(command_error);
-                let command_trace_printed = processor.command_trace_printed();
-                let diagnostics = processor
-                    .take_semantic_diagnostics()
-                    .into_iter()
-                    .map(PendingDiagnostic::Command)
-                    .collect();
-                drop(processor);
-                // TeX82 §1370 performs expansion and then writes the
-                // resulting token list on one live `write_out` call stack.
-                // Publish §367 traces and scanner diagnostics into the
-                // shipout transaction now, before normalization appends the
-                // payload's stream effect.
-                report_pending_diagnostics(stores, diagnostics)?;
-                if command_trace_printed {
-                    *command.shown_mode = None;
-                }
-                result
-            };
-            command
-                .state
-                .rollback_nested_input_preserving_conditions(input_snapshot)
-                .expect("shipout write replay preserves the command profile");
-            let expanded = expanded?;
-            if let Some(observations) = command.observations.as_mut() {
-                observations.committed(CommandObservation::Effect(EffectRecord {
-                    kind: ObservationEffectKind::Write,
-                    channel: write_effect_channel(sink),
-                    value: ObservationValue::Tokens(
-                        stores
-                            .tokens(expanded.tokens.token_ref().id())
-                            .iter()
-                            .copied()
-                            .map(|token| observed_macro_token(token, stores))
-                            .collect(),
-                    ),
-                    source: None,
-                }));
-            }
-            if expanded.unbalanced {
-                // TeX82 §1372's `<Recover from an unbalanced write command>`.
-                // Expansion diagnostics above, this report, and the recovered
-                // payload all remain in their live-call order inside the
-                // atomic page transaction.
-                crate::error_report::report_error(
-                    stores,
-                    "Unbalanced write command",
-                    &[
-                        "On this page there's a \\write with fewer real {'s than }'s.",
-                        "I can't handle that very well; good luck.",
-                    ],
-                    expanded
-                        .error_context
-                        .expect("unbalanced write retains its live input context"),
-                )?;
-            }
-            let mut text = String::new();
-            for &token in stores.tokens(expanded.tokens.token_ref().id()).iter() {
-                tex_state::token_show::append_token_string_text(stores, token, &mut text);
-            }
-            let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
-            text.push('\n');
-            Ok(crate::shipout::ExpandedWrite::transactional(text))
+            result
         };
+        command
+            .state
+            .rollback_nested_input_preserving_conditions(input_snapshot)
+            .expect("shipout write replay preserves the command profile");
+        let expanded = expanded?;
+        if let Some(observations) = command.observations.as_mut() {
+            observations.committed(CommandObservation::Effect(EffectRecord {
+                kind: ObservationEffectKind::Write,
+                channel: write_effect_channel(sink),
+                value: ObservationValue::Tokens(
+                    stores
+                        .tokens(expanded.tokens.token_ref().id())
+                        .iter()
+                        .copied()
+                        .map(|token| observed_macro_token(token, stores))
+                        .collect(),
+                ),
+                source: None,
+            }));
+        }
+        if expanded.unbalanced {
+            // TeX82 §1372's `<Recover from an unbalanced write command>`.
+            // Expansion diagnostics above, this report, and the recovered
+            // payload all remain in their live-call order inside the
+            // atomic page transaction.
+            crate::error_report::report_error(
+                stores,
+                "Unbalanced write command",
+                &[
+                    "On this page there's a \\write with fewer real {'s than }'s.",
+                    "I can't handle that very well; good luck.",
+                ],
+                expanded
+                    .error_context
+                    .expect("unbalanced write retains its live input context"),
+            )?;
+        }
+        let mut text = String::new();
+        for &token in stores.tokens(expanded.tokens.token_ref().id()).iter() {
+            tex_state::token_show::append_token_string_text(stores, token, &mut text);
+        }
+        let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
+        text.push('\n');
+        Ok(crate::shipout::ExpandedWrite::transactional(text))
+    };
     let mut expand_replay =
-        |stores: &mut Universe, kind: crate::shipout::ReplayTextKind, tokens: TokenListId| {
+        |stores: &mut Universe, kind: crate::shipout::ReplayTextKind, tokens: &[TokenWord]| {
             let mut command = command_cell.borrow_mut();
             let mut diagnostics = Vec::new();
             let result = replay_text(&mut command, stores, kind, tokens, &mut diagnostics)

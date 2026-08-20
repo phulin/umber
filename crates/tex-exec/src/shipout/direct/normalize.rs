@@ -7,7 +7,7 @@ pub(super) struct PageOverlay {
     pub(super) open_out_occurrences: Vec<(usize, tex_state::EffectPos)>,
     pub(super) math: Vec<MathSubstitution>,
     pub(super) directions: Vec<DirectionPermutation>,
-    pub(super) omitted_whatsits: Vec<(tex_state::node_arena::NodeListRef, usize)>,
+    pub(super) omitted_whatsits: Vec<(tex_state::node_arena::PageListId, usize)>,
     pub(super) diagnostics: Vec<(PrintSink, String)>,
     #[cfg(test)]
     pub(super) base_whatsit_visits: Vec<BaseWhatsitVisit>,
@@ -18,13 +18,13 @@ pub(super) struct PageOverlay {
 }
 
 pub(super) struct MathSubstitution {
-    pub(super) list: tex_state::node_arena::NodeListRef,
+    pub(super) list: tex_state::node_arena::PageListId,
     pub(super) index: usize,
-    pub(super) replacement: tex_state::node_arena::NodeListRef,
+    pub(super) replacement: tex_state::node_arena::PageListId,
 }
 
 pub(super) struct DirectionPermutation {
-    pub(super) list: tex_state::node_arena::NodeListRef,
+    pub(super) list: tex_state::node_arena::PageListId,
     pub(super) order: Vec<usize>,
 }
 
@@ -35,7 +35,7 @@ struct NormalizeExpansion<'a> {
 
 #[allow(clippy::too_many_arguments)] // Output traversal keeps independent immutable/replay inputs.
 pub(super) fn normalize_page(
-    root: tex_state::node_arena::NodeListRef,
+    root: tex_state::node_arena::PageListId,
     root_box: (bool, tex_state::node::BoxLr),
     effects_and_context: (PendingPageEffects, String, bool),
     stores: &mut Universe,
@@ -116,12 +116,12 @@ pub(super) fn normalize_page(
 enum NormalizeNode {
     Leaf,
     List(
-        tex_state::node_arena::NodeListRef,
+        tex_state::node_arena::PageListId,
         bool,
         bool,
         tex_state::node::BoxLr,
     ),
-    Lists([tex_state::node_arena::NodeListRef; 3]),
+    Lists([tex_state::node_arena::PageListId; 3]),
     Whatsit(Whatsit),
     Math(tex_state::math::MathListNode),
     Unsupported(&'static str),
@@ -144,7 +144,7 @@ struct NormalizeListContext {
 fn normalize_list(
     stores: &mut Universe,
     expansion: &mut NormalizeExpansion<'_>,
-    list: tex_state::node_arena::NodeListRef,
+    list: tex_state::node_arena::PageListId,
     context: NormalizeListContext,
     overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
@@ -156,7 +156,9 @@ fn normalize_list(
     } = context;
     check_depth(depth)?;
     let (active_indices, permutation) = {
-        let nodes = list.nodes();
+        let nodes = stores
+            .page_node_list(list)
+            .expect("shipout root belongs to the live page arena");
         if !nodes.requires_shipout_normalization() {
             return Ok(());
         }
@@ -178,16 +180,15 @@ fn normalize_list(
         (active_indices, permutation)
     };
     if let Some(order) = permutation {
-        overlay.directions.push(DirectionPermutation {
-            list: list.clone(),
-            order,
-        });
+        overlay
+            .directions
+            .push(DirectionPermutation { list, order });
     }
     for index in active_indices {
         normalize_index(
             stores,
             expansion,
-            list.clone(),
+            list,
             index,
             suppress_deferred_streams,
             NormalizeLocation { in_hlist, depth },
@@ -200,7 +201,7 @@ fn normalize_list(
 fn normalize_index(
     stores: &mut Universe,
     expansion: &mut NormalizeExpansion<'_>,
-    list: tex_state::node_arena::NodeListRef,
+    list: tex_state::node_arena::PageListId,
     index: usize,
     suppress_deferred_streams: bool,
     location: NormalizeLocation,
@@ -208,8 +209,12 @@ fn normalize_index(
 ) -> Result<(), ExecError> {
     let NormalizeLocation { in_hlist, depth } = location;
     let action = {
-        let node = list
+        let node = stores
+            .page_node_list(list)
+            .expect("shipout root belongs to the live page arena")
+            .nodes()
             .get(index)
+            .cloned()
             .expect("normalization index belongs to the frozen list");
         match node {
             Node::HList(box_node) => NormalizeNode::List(
@@ -325,7 +330,7 @@ fn normalize_index(
         }
         NormalizeNode::Math(math) => {
             let mut nodes = crate::math::finish_math_list_node(stores, math, false);
-            let replacement = stores.freeze_node_list_owned(&mut nodes);
+            let replacement = stores.publish_page_nodes_owned(&mut nodes);
             overlay.math.push(MathSubstitution {
                 list: list.clone(),
                 index,
@@ -409,7 +414,7 @@ fn append_whatsit_effect(
             }
         }
         Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
-            let expanded = (expansion.write_expander)(stores, sink, tokens.id())?;
+            let expanded = (expansion.write_expander)(stores, sink, tokens.words())?;
             let text = expanded.text;
             if let Some(sink) = deferred_write_sink(stores, sink) {
                 // TeX82 §1370's `write_out` frames the expansion as
@@ -432,8 +437,11 @@ fn append_whatsit_effect(
             effects.push(PageEffect::Special { class, payload });
         }
         Whatsit::DeferredSpecial { class, tokens } => {
-            let crate::shipout::ExpandedReplayText(payload) =
-                (expansion.replay_expander)(stores, super::ReplayTextKind::Special, tokens.id())?;
+            let crate::shipout::ExpandedReplayText(payload) = (expansion.replay_expander)(
+                stores,
+                super::ReplayTextKind::Special,
+                tokens.words(),
+            )?;
             effects.push(PageEffect::Special { class, payload });
         }
         Whatsit::PdfReferenceObject { object } => {
@@ -482,7 +490,7 @@ fn append_whatsit_effect(
             let crate::shipout::ExpandedReplayText(payload) = (expansion.replay_expander)(
                 stores,
                 super::ReplayTextKind::PdfLiteral,
-                tokens.id(),
+                tokens.words(),
             )?;
             effects.push(PageEffect::PdfLiteral {
                 mode: lower_pdf_literal_mode(mode),
@@ -520,7 +528,7 @@ fn append_whatsit_effect(
         Whatsit::PdfSavePos => effects.push(PageEffect::PdfSavePosition),
         Whatsit::PdfSnapRefPoint => effects.push(PageEffect::PdfSnapRefPoint),
         Whatsit::PdfSnapY { glue } => effects.push(PageEffect::PdfSnapY {
-            spec: super::lower_glue(stores.glue_spec(glue)),
+            spec: super::lower_glue(*glue),
         }),
         Whatsit::PdfSnapYComp { ratio } => effects.push(PageEffect::PdfSnapYComp { ratio }),
         Whatsit::PdfRefXForm {
@@ -576,17 +584,17 @@ fn append_whatsit_effect(
                 return Err(ExecError::PdfDestinationInForm);
             }
             let identity = match identifier {
-                tex_state::PdfActionIdentifier::Name(tokens) => {
+                tex_state::node::NodePdfActionIdentifier::Name(tokens) => {
                     let mut text = String::new();
-                    for &token in stores.tokens(tokens.id()).iter() {
+                    for &token in tokens.words() {
                         tex_state::token_show::append_token_string_text(stores, token, &mut text);
                     }
                     tex_state::PdfDestinationIdentity::Name(text.into_bytes())
                 }
-                tex_state::PdfActionIdentifier::Number(number) => {
+                tex_state::node::NodePdfActionIdentifier::Number(number) => {
                     tex_state::PdfDestinationIdentity::Number(number)
                 }
-                tex_state::PdfActionIdentifier::Raw(_) => {
+                tex_state::node::NodePdfActionIdentifier::Raw(_) => {
                     unreachable!("destination scanner uses typed identifiers")
                 }
             };
@@ -665,17 +673,17 @@ fn append_whatsit_effect(
                 return Err(ExecError::PdfThreadInForm);
             }
             let identity = match identifier {
-                tex_state::PdfActionIdentifier::Name(tokens) => {
+                tex_state::node::NodePdfActionIdentifier::Name(tokens) => {
                     let mut text = String::new();
-                    for &token in stores.tokens(tokens.id()).iter() {
+                    for &token in tokens.words() {
                         tex_state::token_show::append_token_string_text(stores, token, &mut text);
                     }
                     tex_state::PdfDestinationIdentity::Name(text.into_bytes())
                 }
-                tex_state::PdfActionIdentifier::Number(number) => {
+                tex_state::node::NodePdfActionIdentifier::Number(number) => {
                     tex_state::PdfDestinationIdentity::Number(number)
                 }
-                tex_state::PdfActionIdentifier::Raw(_) => {
+                tex_state::node::NodePdfActionIdentifier::Raw(_) => {
                     unreachable!("thread scanner uses typed identifiers")
                 }
             };
@@ -691,7 +699,7 @@ fn append_whatsit_effect(
                 }
             };
             let mut attribute_bytes = String::new();
-            for &token in stores.tokens(attributes.id()).iter() {
+            for &token in attributes.words() {
                 tex_state::token_show::append_token_string_text(
                     stores,
                     token,

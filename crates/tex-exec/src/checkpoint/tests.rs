@@ -16,14 +16,16 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
         ch: 'c',
         cat: Catcode::Other,
     }]);
-    let u_template = universe.intern_token_list_ref(&[Token::Char {
-        ch: 'u',
-        cat: Catcode::Other,
-    }]);
-    let v_template = universe.intern_token_list_ref(&[Token::Char {
-        ch: 'v',
-        cat: Catcode::Other,
-    }]);
+    let u_template =
+        tex_state::node::NodeTokenList::new([tex_state::token::TokenWord::pack(Token::Char {
+            ch: 'u',
+            cat: Catcode::Other,
+        })]);
+    let v_template =
+        tex_state::node::NodeTokenList::new([tex_state::token::TokenWord::pack(Token::Char {
+            ch: 'v',
+            cat: Catcode::Other,
+        })]);
     let mut command = CommandState::default();
     command.push_everypar(
         &universe.command_context(),
@@ -44,7 +46,7 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
                 v_template,
             }],
             Vec::new(),
-            tex_state::glue::testing_zero_glue_ref(),
+            tex_state::glue::GlueSpec::ZERO,
             None,
         ));
     let checkpoint = EngineCheckpoint::capture_checkpoint(
@@ -88,17 +90,17 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
         .expect("restored alignment")
         .columns()[0];
     assert_eq!(
-        &*universe.tokens(column.u_template.id()),
-        &[Token::Char {
+        column.u_template.words(),
+        &[tex_state::token::TokenWord::pack(Token::Char {
             ch: 'u',
             cat: Catcode::Other,
-        }]
+        })]
     );
     assert_eq!(
-        &*universe.tokens(column.v_template.id()),
-        &[Token::Char {
+        column.v_template.words(),
+        &[tex_state::token::TokenWord::pack(Token::Char {
             ch: 'v',
             cat: Catcode::Other,
-        }]
+        })]
     );
 }
