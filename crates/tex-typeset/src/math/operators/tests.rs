@@ -124,8 +124,8 @@ fn displayed_limits_use_shared_rebox_completion() {
 fn boxed_operator_nucleus_is_not_character_axis_centered() {
     let mut stores = setup_universe();
     let children = stores.publish_page_nodes(&[]);
-    let source_box = stores.publish_page_nodes(&[Node::HList(
-        tex_state::node::BoxNode::new(tex_state::node::BoxNodeFields {
+    let source_box = stores.publish_page_nodes(&[Node::HList(tex_state::node::BoxNode::new(
+        tex_state::node::BoxNodeFields {
             width: sc(0),
             height: sc(0),
             depth: sc(0),
@@ -135,8 +135,8 @@ fn boxed_operator_nucleus_is_not_character_axis_centered() {
             glue_sign: tex_state::node::Sign::Normal,
             glue_order: tex_state::glue::Order::Normal,
             children,
-        }),
-    )]);
+        },
+    ))]);
     let params = MathParams::read(&stores);
     for limit_type in [LimitType::NoLimits, LimitType::Limits] {
         let input = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
@@ -212,10 +212,8 @@ fn tex82_noad_constructor_clearance_and_italic_matrix() {
         [MathNode::Char { ch: 'a', .. }, MathNode::VList(_)]
     ));
 
-    let numerator =
-        stores.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
-    let denominator =
-        stores.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
+    let numerator = stores.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+    let denominator = stores.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
     let constructors = [
         Node::FractionNoad(MathFraction {
             numerator,
@@ -333,8 +331,7 @@ fn fraction_rule_delimiter_style_and_rebox_matrix() {
     // TeX.web §§743--748 (tex.web:14579--14662): rule 15 covers all style,
     // thickness, delimiter-target, clearance, and unequal-width rebox paths.
     let mut stores = setup_universe();
-    let numerator =
-        stores.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+    let numerator = stores.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
     let denominator = stores.publish_page_nodes(&[
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
         Node::MathNoad(noad(NoadClass::Ord, 'c')),

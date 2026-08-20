@@ -229,10 +229,8 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
             universe.set_math_family_font(size, family, font, false);
         }
     }
-    let numerator =
-        universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'A'))]);
-    let denominator =
-        universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'B'))]);
+    let numerator = universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'A'))]);
+    let denominator = universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'B'))]);
     let mut scripted = noad(NoadClass::Ord, 'f');
     scripted.superscript = MathField::MathChar(math_char('A'));
     scripted.subscript = MathField::MathChar(math_char('B'));
@@ -1170,10 +1168,8 @@ fn clean_box_physically_removes_only_a_trailing_italic_kern_after_packing() {
     // TeX82 §720: the simplification recognizes exactly character+kern,
     // retains hpack's width, and unlinks the kern from the box's owned list.
     let mut universe = setup_universe();
-    let numerator =
-        universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
-    let denominator =
-        universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
+    let numerator = universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+    let denominator = universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
     let input = universe.publish_page_nodes(&[Node::FractionNoad(MathFraction {
         numerator,
         denominator,
@@ -1311,10 +1307,8 @@ fn scripts_observe_noncharacter_nucleus_measurement_hpack() {
 #[test]
 fn make_fraction_uses_default_rule_and_delimiter_target() {
     let mut universe = setup_universe();
-    let numerator =
-        universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
-    let denominator =
-        universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
+    let numerator = universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+    let denominator = universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
     let input = universe.publish_page_nodes(&[Node::FractionNoad(MathFraction {
         numerator,
         denominator,
@@ -1378,8 +1372,7 @@ fn make_fraction_uses_default_rule_and_delimiter_target() {
 #[test]
 fn fraction_rebox_keeps_an_empty_denominator_structurally_empty() {
     let mut universe = setup_universe();
-    let numerator =
-        universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+    let numerator = universe.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
     let denominator = universe.publish_page_nodes(&[]);
     let input = universe.publish_page_nodes(&[Node::FractionNoad(MathFraction {
         numerator,
@@ -1468,18 +1461,17 @@ fn fraction_reuses_single_explicit_numerator_box() {
 fn direct_sub_box_nucleus_does_not_republish_its_source_pack() {
     let mut universe = setup_universe();
     let children = universe.publish_page_nodes(&[]);
-    let explicit =
-        universe.publish_page_nodes(&[Node::HList(BoxNode::new(BoxNodeFields {
-            width: sc(120),
-            height: sc(7),
-            depth: sc(1),
-            shift: sc(0),
-            box_lr: tex_state::node::BoxLr::Normal,
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: Sign::Normal,
-            glue_order: Order::Normal,
-            children,
-        }))]);
+    let explicit = universe.publish_page_nodes(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: sc(120),
+        height: sc(7),
+        depth: sc(1),
+        shift: sc(0),
+        box_lr: tex_state::node::BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    }))]);
     let input = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::SubBox(explicit.clone()),
