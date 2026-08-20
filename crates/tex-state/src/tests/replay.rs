@@ -328,7 +328,7 @@ fn build_nodes(
     seed: &NodeSeed,
 ) -> BuiltList {
     let glue_ref = &glue_ids[seed.glue_slot % glue_ids.len()];
-    let glue = glue_ref.spec();
+    let glue = stores.glue(glue_ref.id());
     let mut nodes = vec![
         Node::Char {
             font: FontId::testing_new(0),

@@ -4,9 +4,8 @@ use core::num::NonZeroU32;
 use crate::glue::GlueSpec;
 use crate::macro_store::MacroParameterPattern;
 use crate::meaning::MeaningFlags;
-use crate::provenance::OriginRef;
 use crate::scaled::Scaled;
-use crate::token::{Catcode, Token};
+use crate::token::{Catcode, OriginId, Token};
 use crate::token_store::TokenSemanticId;
 
 use super::*;
@@ -37,14 +36,14 @@ fn token_input<'a>(value: u64, tokens: &'a [Token]) -> RuntimeTokenValueInput<'a
     RuntimeTokenValueInput {
         semantic_id: semantic(value),
         tokens,
-        provenance_roots: &[],
+        provenance: &[],
     }
 }
 
 fn macro_input<'a>(
     parameter_text: TokenListId,
     replacement_text: TokenListId,
-    definition_origin: &'a OriginRef,
+    definition_origin: OriginId,
 ) -> RuntimeMacroValueInput<'a> {
     RuntimeMacroValueInput {
         flags: MeaningFlags::EMPTY,
@@ -54,9 +53,71 @@ fn macro_input<'a>(
         definition_origin,
         parameter_origins: &[],
         replacement_origins: &[],
-        observation_operand: 7,
-        allocation_serial: 11,
+        observation_width: 7,
     }
+}
+
+#[test]
+fn migrated_value_families_have_no_per_value_ownership_compatibility() {
+    let sources = [
+        include_str!("../../../../../token_store.rs"),
+        include_str!("../../../../../macro_store.rs"),
+        include_str!("../../../../../glue.rs"),
+        include_str!("../registry.rs"),
+        include_str!("../../store.rs"),
+    ];
+    for forbidden in [
+        "Weak<",
+        "Arc<()>",
+        "_liveness",
+        "allocation_events",
+        "ReachableValueRef",
+        "ReachableValuePool",
+        "PackedTokenPair",
+        "PackedMacroChunkOwner",
+    ] {
+        assert!(
+            sources.iter().all(|source| !source.contains(forbidden)),
+            "migrated family source contains forbidden compatibility {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn cold_exact_lookup_is_collision_safe_without_owning_candidates() {
+    let mut registry =
+        RuntimeValueRegistry::new(capacity(32), semantic(0)).expect("registry initializes");
+    let left = [token('a')];
+    let right = [token('b')];
+    let left_id = registry
+        .intern_token_list(RuntimeTokenValueInput {
+            semantic_id: semantic(99),
+            tokens: &left,
+            provenance: &[],
+        })
+        .expect("left token list interns");
+    let same_id = registry
+        .intern_token_list(RuntimeTokenValueInput {
+            semantic_id: semantic(99),
+            tokens: &left,
+            provenance: &[],
+        })
+        .expect("exact token list reuses identity");
+    let collision_id = registry
+        .intern_token_list(RuntimeTokenValueInput {
+            semantic_id: semantic(99),
+            tokens: &right,
+            provenance: &[],
+        })
+        .expect("semantic collision remains distinct");
+    assert_eq!(same_id, left_id);
+    assert_ne!(collision_id, left_id);
+
+    let first_glue = registry.intern_glue(glue(17)).expect("glue interns");
+    let same_glue = registry.intern_glue(glue(17)).expect("glue reuses");
+    let distinct_glue = registry.intern_glue(glue(18)).expect("glue differs");
+    assert_eq!(same_glue, first_glue);
+    assert_ne!(distinct_glue, first_glue);
 }
 
 #[test]
@@ -64,13 +125,13 @@ fn fixed_mark_is_copy_only_and_all_families_allocate_and_read() {
     assert!(!needs_drop::<RuntimeValueRegistryMark>());
     let mut registry =
         RuntimeValueRegistry::new(capacity(32), semantic(0)).expect("registry initializes");
-    let unknown = OriginRef::unknown();
+    let unknown = OriginId::UNKNOWN;
     let values = [token('a'), token('b')];
     let tokens = registry
         .allocate_token_list(token_input(1, &values))
         .expect("token list allocates");
     let definition = registry
-        .allocate_macro(macro_input(TokenListId::EMPTY, tokens, &unknown))
+        .allocate_macro(macro_input(TokenListId::EMPTY, tokens, unknown))
         .expect("macro allocates");
     let glue = registry
         .allocate_glue(GlueSpec {
@@ -101,7 +162,7 @@ fn fixed_mark_is_copy_only_and_all_families_allocate_and_read() {
 fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
     let mut registry =
         RuntimeValueRegistry::new(capacity(16), semantic(0)).expect("registry initializes");
-    let unknown = OriginRef::unknown();
+    let unknown = OriginId::UNKNOWN;
     let mut roots = registry.empty_published_store();
     let roots_mark = roots.publication_mark().expect("root mark fits");
     let mark = registry.mark().expect("registry mark exists");
@@ -110,7 +171,7 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
         .allocate_token_list(token_input(2, &values))
         .expect("attempt token allocates");
     let rejected_macro = registry
-        .allocate_macro(macro_input(TokenListId::EMPTY, rejected_tokens, &unknown))
+        .allocate_macro(macro_input(TokenListId::EMPTY, rejected_tokens, unknown))
         .expect("attempt macro allocates");
     let rejected_glue = registry
         .allocate_glue(GlueSpec::ZERO)
@@ -132,11 +193,7 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
         .allocate_token_list(token_input(3, &values))
         .expect("replacement token allocates");
     let replacement_macro = registry
-        .allocate_macro(macro_input(
-            TokenListId::EMPTY,
-            replacement_tokens,
-            &unknown,
-        ))
+        .allocate_macro(macro_input(TokenListId::EMPTY, replacement_tokens, unknown))
         .expect("replacement macro allocates");
     let replacement_glue = registry
         .allocate_glue(GlueSpec::ZERO)
@@ -169,9 +226,9 @@ fn fork_shares_inherited_rows_and_rejects_foreign_suffix_ids() {
     let inherited = parent
         .allocate_token_list(token_input(4, &inherited_values))
         .expect("inherited token allocates");
-    let unknown = OriginRef::unknown();
+    let unknown = OriginId::UNKNOWN;
     let inherited_macro = parent
-        .allocate_macro(macro_input(TokenListId::EMPTY, inherited, &unknown))
+        .allocate_macro(macro_input(TokenListId::EMPTY, inherited, unknown))
         .expect("inherited macro allocates");
     let inherited_glue = parent
         .allocate_glue(glue(17))
@@ -223,7 +280,7 @@ fn fork_shares_inherited_rows_and_rejects_foreign_suffix_ids() {
 fn all_live_growth_is_exact_in_locations_identities_and_region_values() {
     let mut registry =
         RuntimeValueRegistry::new(capacity(256), semantic(0)).expect("registry initializes");
-    let unknown = OriginRef::unknown();
+    let unknown = OriginId::UNKNOWN;
     let before = registry.accounting();
     for cycle in 0..32_u64 {
         let values = [token('g')];
@@ -231,7 +288,7 @@ fn all_live_growth_is_exact_in_locations_identities_and_region_values() {
             .allocate_token_list(token_input(10 + cycle, &values))
             .expect("token allocates");
         registry
-            .allocate_macro(macro_input(TokenListId::EMPTY, tokens, &unknown))
+            .allocate_macro(macro_input(TokenListId::EMPTY, tokens, unknown))
             .expect("macro allocates");
         registry
             .allocate_glue(GlueSpec::ZERO)
@@ -252,14 +309,14 @@ fn all_live_growth_is_exact_in_locations_identities_and_region_values() {
 fn ten_thousand_bounded_retries_reuse_retained_storage() {
     let mut registry =
         RuntimeValueRegistry::new(capacity(16), semantic(0)).expect("registry initializes");
-    let unknown = OriginRef::unknown();
+    let unknown = OriginId::UNKNOWN;
     let mark = registry.mark().expect("retry mark exists");
     let values = [token('r')];
     let warm_tokens = registry
         .allocate_token_list(token_input(20, &values))
         .expect("warm token allocates");
     registry
-        .allocate_macro(macro_input(TokenListId::EMPTY, warm_tokens, &unknown))
+        .allocate_macro(macro_input(TokenListId::EMPTY, warm_tokens, unknown))
         .expect("warm macro allocates");
     registry
         .allocate_glue(GlueSpec::ZERO)
@@ -269,7 +326,7 @@ fn ten_thousand_bounded_retries_reuse_retained_storage() {
         .allocate_token_list(token_input(21, &values))
         .expect("second warm token allocates");
     registry
-        .allocate_macro(macro_input(TokenListId::EMPTY, warm_tokens, &unknown))
+        .allocate_macro(macro_input(TokenListId::EMPTY, warm_tokens, unknown))
         .expect("second warm macro allocates");
     registry
         .allocate_glue(GlueSpec::ZERO)
@@ -282,7 +339,7 @@ fn ten_thousand_bounded_retries_reuse_retained_storage() {
             .allocate_token_list(token_input(100 + cycle, &values))
             .expect("retry token allocates");
         registry
-            .allocate_macro(macro_input(TokenListId::EMPTY, tokens, &unknown))
+            .allocate_macro(macro_input(TokenListId::EMPTY, tokens, unknown))
             .expect("retry macro allocates");
         registry
             .allocate_glue(GlueSpec::ZERO)

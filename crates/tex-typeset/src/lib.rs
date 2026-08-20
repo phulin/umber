@@ -56,7 +56,7 @@ pub const OVERFULL_BADNESS: i32 = 1_000_000;
 /// Immutable state access needed by the packing kernels.
 pub trait TypesetState {
     fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec;
-    fn glue_ref(&self, id: tex_state::ids::GlueId) -> tex_state::glue::GlueSpecRef;
+    fn glue_spec(&self, reference: tex_state::glue::GlueSpecRef) -> GlueSpec;
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;
     fn font_character_metrics(&self, font: FontId, ch: char) -> Option<tex_fonts::CharMetrics> {
         self.font_char_metrics(font, u8::try_from(ch as u32).ok()?)
@@ -85,8 +85,8 @@ impl TypesetState for Universe {
         Universe::glue(self, id)
     }
 
-    fn glue_ref(&self, id: tex_state::ids::GlueId) -> tex_state::glue::GlueSpecRef {
-        Universe::glue_ref(self, id)
+    fn glue_spec(&self, reference: tex_state::glue::GlueSpecRef) -> GlueSpec {
+        Universe::glue_spec(self, reference)
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {

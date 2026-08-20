@@ -520,7 +520,7 @@ fn append_whatsit_effect(
         Whatsit::PdfSavePos => effects.push(PageEffect::PdfSavePosition),
         Whatsit::PdfSnapRefPoint => effects.push(PageEffect::PdfSnapRefPoint),
         Whatsit::PdfSnapY { glue } => effects.push(PageEffect::PdfSnapY {
-            spec: super::lower_glue(glue.spec()),
+            spec: super::lower_glue(stores.glue_spec(glue)),
         }),
         Whatsit::PdfSnapYComp { ratio } => effects.push(PageEffect::PdfSnapYComp { ratio }),
         Whatsit::PdfRefXForm {

@@ -290,7 +290,7 @@ fn normalize_paragraph_infinite_shrink(
 ) -> Result<(), ExecError> {
     let mut reported = false;
     let mut normalize = |spec: &mut tex_state::glue::GlueSpecRef| -> Result<(), ExecError> {
-        let mut glue = spec.spec();
+        let mut glue = stores.glue_spec(*spec);
         if glue.shrink.raw() == 0 || glue.shrink_order == Order::Normal {
             return Ok(());
         }
@@ -983,9 +983,9 @@ fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakPa
         pdf_protrude_chars: stores.int_param(IntParam::PDF_PROTRUDE_CHARS),
         emergency_stretch: params.emergency_stretch,
         looseness: params.looseness,
-        left_skip: params.left_skip.spec(),
-        right_skip: params.right_skip.spec(),
-        par_fill_skip: params.par_fill_skip.spec(),
+        left_skip: stores.glue_spec(params.left_skip),
+        right_skip: stores.glue_spec(params.right_skip),
+        par_fill_skip: stores.glue_spec(params.par_fill_skip),
         shape: line_shape(params),
     }
 }

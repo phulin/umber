@@ -28,7 +28,7 @@ pub(crate) fn prune_page_top_with_discards(
     for node in nodes {
         match &node {
             Node::HList(_) | Node::VList(_) | Node::Rule { .. } if !inserted_top_skip => {
-                let top_skip = split_top_skip.spec();
+                let top_skip = stores.glue_spec(split_top_skip);
                 let adjusted = GlueSpec {
                     width: top_skip
                         .width

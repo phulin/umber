@@ -2613,7 +2613,10 @@ fn ifx_compares_macro_tokens_after_candidate_index_churn() {
         let Meaning::Macro { definition, .. } = universe.meaning(symbol) else {
             panic!("macro operand has a macro meaning");
         };
-        universe.macro_definition(definition).replacement_text()
+        universe
+            .macro_definition(definition)
+            .meaning()
+            .replacement_text()
     };
     let first_replacement = replacement(first);
     let equal_replacement = replacement(equal);

@@ -8,7 +8,6 @@ use tex_state::provenance::{OriginListRef, OriginRef};
 use tex_state::token::{
     OriginId, RootedTracedTokenBuffer, RootedTracedTokenWord, Token, TracedTokenWord,
 };
-use tex_state::token_store::TokenListRef;
 
 use crate::macro_call::{MacroActivationId, MacroArgumentRange};
 
@@ -218,22 +217,17 @@ enum PackedTokenOwnership {
 }
 
 impl PackedTokenChunk {
-    fn from_stored(tokens: TokenListRef, origins: OriginListRef) -> Self {
-        let words = tokens
-            .tokens()
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(index, token)| {
-                TracedTokenWord::pack(
-                    token,
-                    origins
-                        .origins()
-                        .get(index)
-                        .copied()
-                        .unwrap_or(OriginId::UNKNOWN),
-                )
-            });
+    fn from_stored(tokens: &[Token], origins: OriginListRef) -> Self {
+        let words = tokens.iter().copied().enumerate().map(|(index, token)| {
+            TracedTokenWord::pack(
+                token,
+                origins
+                    .origins()
+                    .get(index)
+                    .copied()
+                    .unwrap_or(OriginId::UNKNOWN),
+            )
+        });
         Self {
             words: RootedTracedTokenBuffer::with_archived_origins(words),
             source_provenance: SmallVec::new(),
@@ -288,7 +282,7 @@ impl TokenPayload {
         Self::transient_rooted(buffer.rooted_words())
     }
 
-    pub(crate) fn stored(tokens: TokenListRef, origins: OriginListRef) -> Self {
+    pub(crate) fn stored(tokens: &[Token], origins: OriginListRef) -> Self {
         Self::Packed(PackedTokenChunk::from_stored(tokens, origins))
     }
 

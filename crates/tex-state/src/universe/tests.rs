@@ -356,7 +356,7 @@ fn private_glue_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
     let failed_operation = universe.begin_direct_operation();
     let failed = universe.intern_glue(glue(102));
     let failed_id = failed.id();
-    drop(failed);
+    let _ = failed;
     universe.discard_direct_operation_allocations(failed_operation);
     assert_eq!(universe.skip(7), retained_id);
     assert_eq!(universe.glue(retained_id), glue(101));
@@ -369,7 +369,7 @@ fn private_glue_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
     let unselected_operation = universe.begin_direct_operation();
     let unselected = universe.intern_glue(glue(103));
     let unselected_id = unselected.id();
-    drop(unselected);
+    let _ = unselected;
     universe.commit_direct_operation(unselected_operation);
     assert_eq!(
         universe
@@ -394,7 +394,7 @@ fn glue_current_undo_page_and_checkpoint_edges_are_structural_roots() {
 
     let outer = universe.intern_glue(glue(201));
     universe.set_skip(0, &outer);
-    drop(outer);
+    let _ = outer;
     assert_eq!(universe.stores.testing_glue_live_totals().0, 2);
 
     universe.enter_group();
@@ -445,7 +445,7 @@ fn private_macro_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
             definition: retained.id(),
         },
     );
-    drop(retained);
+    let _ = retained;
     let retained = universe.intern_macro(MacroMeaning::new(
         MeaningFlags::LONG,
         TokenListId::EMPTY,
@@ -459,7 +459,7 @@ fn private_macro_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
             definition: retained_id,
         },
     );
-    drop(retained);
+    let _ = retained;
     universe.commit_direct_operation(retained_operation);
     let retained_stats = universe
         .testing_private_revision_domain_stats()
@@ -480,7 +480,7 @@ fn private_macro_roots_accept_and_rejected_direct_suffixes_do_not_publish() {
         failed_body,
     ));
     let failed_id = failed.id();
-    drop(failed);
+    let _ = failed;
     universe.discard_direct_operation_allocations(failed_operation);
     assert_eq!(
         universe.testing_private_revision_domain_stats(),
@@ -2161,7 +2161,7 @@ fn detached_format_strips_structural_origin_lists_without_retaining_runtime_ids(
     let image = source
         .dump_format()
         .expect("format with live provenance dumps");
-    let loaded = Universe::from_format(World::memory(), &image).expect("detached format loads");
+    let mut loaded = Universe::from_format(World::memory(), &image).expect("detached format loads");
     let restored_name = loaded
         .symbol("format-provenance-negative")
         .expect("macro name is restored");
@@ -3620,14 +3620,13 @@ fn frozen_generation_forks_once_at_an_owner_exact_snapshot() {
 fn generation_fork_retargets_page_pdf_and_effect_token_roots() {
     let mut universe = Universe::new();
     let root = universe.intern_token_list_ref(&[Token::param(8)]);
-    let retained = root.clone();
     let id = root.id();
     universe.set_page_mark(PageMark::Bot, id);
     universe.set_page_mark_class(PageMark::SplitBot, 11, id);
     universe.record_deferred_write(StreamSlot::new(4), id);
     universe.append_pdf_document_fragment(PdfDocumentFragmentKind::Names, id);
     let checkpoint = universe.snapshot();
-    drop(root);
+    let _ = root;
 
     universe.clear_page_mark(PageMark::Bot);
     universe.clear_page_mark_class(PageMark::SplitBot, 11);
@@ -3648,7 +3647,7 @@ fn generation_fork_retargets_page_pdf_and_effect_token_roots() {
             .iter()
             .any(|effect| matches!(
                 effect,
-                EffectRecord::DeferredWrite { tokens, .. } if tokens.tokens() == [Token::param(8)]
+                EffectRecord::DeferredWrite { tokens, .. } if tokens.id() == id
             )),
         "{:?}",
         fork.world().page_effect_prefix()
@@ -3658,10 +3657,9 @@ fn generation_fork_retargets_page_pdf_and_effect_token_roots() {
             .collect::<Vec<_>>(),
         vec![id]
     );
-    assert!(retained.strong_count() > 1);
+    assert_eq!(fork.tokens(id).tokens(), &[Token::param(8)]);
     drop(fork);
     drop(checkpoint);
-    assert_eq!(retained.strong_count(), 1);
 }
 
 #[test]
@@ -5647,7 +5645,7 @@ fn format_dump_preserves_names_but_compacts_macro_token_and_glue_closure() {
         dead_tokens,
     ));
     let dead_glue = universe.intern_glue(glue(901));
-    drop(dead_glue);
+    let _ = dead_glue;
 
     let live_name = universe.intern("live-format-root");
     let live_tokens = universe.intern_token_list(&[Token::Cs(live_name.symbol())]);

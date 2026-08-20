@@ -5,7 +5,6 @@ use crate::glue::{GlueSpec, Order};
 use crate::ids::{GlueId, MacroDefinitionId, TokenListId};
 use crate::macro_store::MacroParameterPattern;
 use crate::meaning::MeaningFlags;
-use crate::provenance::OriginRef;
 use crate::scaled::Scaled;
 use crate::token::{Catcode, OriginId, Token};
 use crate::token_store::TokenSemanticId;
@@ -23,20 +22,20 @@ fn token(ch: char) -> Token {
     }
 }
 
-fn root(token_offset: u32, origin: u32) -> RuntimeOriginRoot {
-    RuntimeOriginRoot::new(token_offset, OriginRef::direct(OriginId::from_raw(origin)))
+fn root(token_offset: u32, origin: u32) -> RuntimeOriginEntry {
+    RuntimeOriginEntry::new(token_offset, OriginId::from_raw(origin))
 }
 
 fn token_input<'a>(
     id: u32,
     tokens: &'a [Token],
-    roots: &'a [RuntimeOriginRoot],
+    roots: &'a [RuntimeOriginEntry],
 ) -> RuntimeTokenListInput<'a> {
     RuntimeTokenListInput {
         id: TokenListId::testing_new(id),
         semantic_id: TokenSemanticId::testing(u64::from(id)),
         tokens,
-        provenance_roots: roots,
+        provenance: roots,
     }
 }
 
@@ -74,7 +73,7 @@ fn coordinates_are_copy_only_and_admission_borrows_exact_payloads() {
     assert_eq!(token_view.coordinate(), tokens);
     assert_eq!(token_view.semantic_id(), TokenSemanticId::testing(4));
     assert_eq!(token_view.tokens(), values);
-    assert_eq!(token_view.provenance_roots().len(), 1);
+    assert_eq!(token_view.provenance().len(), 1);
     assert_eq!(
         token_view.traced_word(0).expect("word exists").origin(),
         OriginId::UNKNOWN
@@ -124,7 +123,7 @@ fn sparse_provenance_must_be_sorted_unique_and_inside_the_token_span() {
 fn macro_record_root_and_provenance_rows_publish_as_one_composite() {
     let parameter_tokens = [token('#'), Token::param(1)];
     let replacement_tokens = [token('z')];
-    let definition_origin = OriginRef::unknown();
+    let definition_origin = OriginId::UNKNOWN;
     let parameter_origins = [root(1, 8)];
     let replacement_origins = [root(0, 9)];
     let mut candidate = RuntimeValueStore::new(capacity(64))
@@ -150,7 +149,7 @@ fn macro_record_root_and_provenance_rows_publish_as_one_composite() {
             ]),
             parameter_text: parameter,
             replacement_text: replacement,
-            definition_origin: &definition_origin,
+            definition_origin,
             parameter_origins: &parameter_origins,
             replacement_origins: &replacement_origins,
             observation_operand: -19,
@@ -168,7 +167,7 @@ fn macro_record_root_and_provenance_rows_publish_as_one_composite() {
     assert_eq!(view.meaning().replacement_text(), replacement.id());
     assert_eq!(view.parameter_text().tokens(), parameter_tokens);
     assert_eq!(view.replacement_text().tokens(), replacement_tokens);
-    assert_eq!(view.definition_origin().id(), OriginId::UNKNOWN);
+    assert_eq!(view.definition_origin(), OriginId::UNKNOWN);
     assert_eq!(view.parameter_origins().len(), 1);
     assert_eq!(view.replacement_origins().len(), 1);
     assert_eq!(view.observation_operand(), -19);
@@ -178,7 +177,7 @@ fn macro_record_root_and_provenance_rows_publish_as_one_composite() {
 #[test]
 fn counted_macro_root_set_retains_and_releases_region_multiplicity() {
     let values = [token('q')];
-    let unknown = OriginRef::unknown();
+    let unknown = OriginId::UNKNOWN;
     let mut candidate = RuntimeValueStore::new(capacity(32))
         .candidate()
         .expect("candidate exists");
@@ -195,7 +194,7 @@ fn counted_macro_root_set_retains_and_releases_region_multiplicity() {
             parameter_pattern: MacroParameterPattern::from_tokens(&[]),
             parameter_text: parameter,
             replacement_text: replacement,
-            definition_origin: &unknown,
+            definition_origin: unknown,
             parameter_origins: &[],
             replacement_origins: &[],
             observation_operand: 2,
@@ -219,7 +218,7 @@ fn counted_macro_root_set_retains_and_releases_region_multiplicity() {
 #[test]
 fn macro_root_set_retains_token_children_across_region_boundaries() {
     let values = [token('s')];
-    let unknown = OriginRef::unknown();
+    let unknown = OriginId::UNKNOWN;
     let mut candidate = RuntimeValueStore::new(capacity(2))
         .candidate()
         .expect("candidate exists");
@@ -236,7 +235,7 @@ fn macro_root_set_retains_token_children_across_region_boundaries() {
             parameter_pattern: MacroParameterPattern::from_tokens(&[]),
             parameter_text: parameter,
             replacement_text: replacement,
-            definition_origin: &unknown,
+            definition_origin: unknown,
             parameter_origins: &[],
             replacement_origins: &[],
             observation_operand: 5,

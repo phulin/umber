@@ -223,12 +223,12 @@ fn spanned_target(
     span: usize,
     resolved: &ResolvedWidths,
     prototype: &Prototype,
-    _stores: &Universe,
+    stores: &Universe,
 ) -> Result<Scaled, ExecError> {
     let mut target = resolved.columns[column];
     for offset in 1..span {
         let spanned_column = column + offset;
-        let glue = resolved.tabskips[spanned_column].spec();
+        let glue = stores.glue_spec(resolved.tabskips[spanned_column]);
         target = add_scaled(target, glue.width)?;
         target = add_scaled(target, glue_adjustment(glue, prototype)?)?;
         target = add_scaled(target, resolved.columns[spanned_column])?;

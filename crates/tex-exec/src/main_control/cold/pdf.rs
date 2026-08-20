@@ -7,9 +7,9 @@ use super::super::*;
 use super::operation::*;
 use super::support::*;
 
-pub(in crate::main_control) fn write_text(tokens: &[Token], stores: &Universe) -> String {
+pub(in crate::main_control) fn write_text(tokens: TokenListId, stores: &Universe) -> String {
     let mut text = String::new();
-    for &token in tokens {
+    for &token in stores.tokens(tokens).iter() {
         tex_state::token_show::append_token_string_text(stores, token, &mut text);
     }
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
@@ -37,7 +37,7 @@ pub(in crate::main_control) fn pdf_graphics_text(
     stores: &Universe,
 ) -> Vec<u8> {
     let mut text = String::new();
-    for &token in tokens.token_ref().tokens() {
+    for &token in stores.tokens(tokens.token_ref().id()).iter() {
         tex_state::token_show::append_token_string_text(stores, token, &mut text);
     }
     tex_byte_text(&text)
@@ -623,7 +623,7 @@ pub(in crate::main_control) fn replay_text(
         .expect("shipout replay preserves the command profile");
     let expanded = expanded?;
     let mut text = String::new();
-    for &token in expanded.token_ref().tokens() {
+    for &token in stores.tokens(expanded.token_ref().id()).iter() {
         match kind {
             crate::shipout::ReplayTextKind::Special => {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
@@ -692,7 +692,7 @@ pub(in crate::main_control) fn replay_write(
         )?;
     }
     let mut text = String::new();
-    for &token in expanded.tokens.token_ref().tokens() {
+    for &token in stores.tokens(expanded.tokens.token_ref().id()).iter() {
         tex_state::token_show::append_token_string_text(stores, token, &mut text);
     }
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
@@ -956,7 +956,7 @@ pub(in crate::main_control) fn applied_effect_observation(
             // spelling and separator.
             channel: "terminal".into(),
             value: ObservationValue::Bytes(
-                message_tokens_text(stores, tokens.token_ref().tokens()).into_bytes(),
+                message_tokens_text(stores, tokens.token_ref().id()).into_bytes(),
             ),
             source: None,
         }),
@@ -964,9 +964,8 @@ pub(in crate::main_control) fn applied_effect_observation(
             kind: ObservationEffectKind::ShowTokens,
             channel: "showtokens".into(),
             value: ObservationValue::Tokens(
-                tokens
-                    .token_ref()
-                    .tokens()
+                stores
+                    .tokens(tokens.token_ref().id())
                     .iter()
                     .copied()
                     .map(|token| observed_macro_token(token, stores))
@@ -994,9 +993,8 @@ pub(in crate::main_control) fn applied_effect_observation(
                 kind: ObservationEffectKind::Write,
                 channel: format!("stream:{}", stream.normalized_number()),
                 value: ObservationValue::Tokens(
-                    tokens
-                        .token_ref()
-                        .tokens()
+                    stores
+                        .tokens(tokens.token_ref().id())
                         .iter()
                         .copied()
                         .map(|token| observed_macro_token(token, stores))
@@ -1252,10 +1250,8 @@ pub(in crate::main_control) fn shipout_replay_box(
                     kind: ObservationEffectKind::Write,
                     channel: write_effect_channel(sink),
                     value: ObservationValue::Tokens(
-                        expanded
-                            .tokens
-                            .token_ref()
-                            .tokens()
+                        stores
+                            .tokens(expanded.tokens.token_ref().id())
                             .iter()
                             .copied()
                             .map(|token| observed_macro_token(token, stores))
@@ -1282,7 +1278,7 @@ pub(in crate::main_control) fn shipout_replay_box(
                 )?;
             }
             let mut text = String::new();
-            for &token in expanded.tokens.token_ref().tokens() {
+            for &token in stores.tokens(expanded.tokens.token_ref().id()).iter() {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
             let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
@@ -1390,7 +1386,7 @@ pub(in crate::main_control) fn meaning_mutation_value(
 ) -> ObservationValue {
     match meaning {
         Meaning::Macro { definition, flags } => {
-            let macro_meaning = stores.macro_definition(definition);
+            let macro_meaning = stores.macro_definition(definition).meaning();
             ObservationValue::Tokens(observed_stored_macro_body(
                 flags,
                 macro_meaning.parameter_text(),

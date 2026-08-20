@@ -1272,8 +1272,9 @@ impl CommandProcessor<'_> {
             crate::InternalValue::Font(symbol) => {
                 vec![TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN)]
             }
-            crate::InternalValue::Tokens { tokens, .. } => tokens
-                .tokens()
+            crate::InternalValue::Tokens { tokens, .. } => self
+                .state
+                .tokens(tokens.id())
                 .iter()
                 .copied()
                 .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
@@ -1377,9 +1378,9 @@ impl CommandProcessor<'_> {
         let scanned = self.scan_toks(ScanToksMode::GeneralText {
             purpose: "detokenize",
         })?;
-        let text = crate::processor::expand::token_slice_string_text(
+        let text = crate::processor::expand::stored_token_list_string_text(
             &mut self.state,
-            scanned.replacement_text.token_ref().tokens(),
+            scanned.replacement_text.token_ref(),
         );
         let tokens = text
             .chars()
@@ -1425,24 +1426,18 @@ impl CommandProcessor<'_> {
         let scanned = self.scan_toks(ScanToksMode::GeneralText {
             purpose: "unexpanded",
         })?;
-        let first = scanned
-            .replacement_text
-            .token_ref()
-            .tokens()
-            .first()
-            .copied();
+        let first = scanned.replacement_text.token_ref();
+        let words = self.state.tokens(first.id());
+        let first = words.first().copied();
         self.insert_expansion_list(
-            TokenPayload::stored(
-                scanned.replacement_text.token_ref().clone(),
-                scanned.replacement_text.origin_ref().clone(),
-            ),
+            TokenPayload::stored(&words, scanned.replacement_text.origin_ref().clone()),
             first,
         );
         Ok(())
     }
 
     fn rooted_words(&self, list: TracedTokenList) -> Vec<RootedTracedTokenWord> {
-        let tokens = list.token_ref().tokens();
+        let tokens = self.state.tokens(list.token_ref().id());
         tokens
             .iter()
             .copied()

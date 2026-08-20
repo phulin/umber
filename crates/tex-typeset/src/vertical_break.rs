@@ -179,7 +179,7 @@ impl std::ops::DerefMut for VerticalBreakAccum {
 }
 
 fn update_spacing_node(
-    _state: &impl TypesetState,
+    state: &impl TypesetState,
     node: Option<&Node>,
     acc: &mut VerticalBreakAccum,
     index: usize,
@@ -187,7 +187,7 @@ fn update_spacing_node(
     let width = match node {
         Some(Node::Kern { amount, .. }) => *amount,
         Some(Node::Glue { spec, .. }) => {
-            let spec = spec.spec();
+            let spec = state.glue_spec(*spec);
             let order = spec.stretch_order as usize;
             acc.stretch[order] = add(acc.stretch[order], spec.stretch)?;
             acc.shrink = add(acc.shrink, spec.shrink)?;

@@ -17,52 +17,6 @@ pub(crate) struct FrozenLookup {
     keys: Vec<Vec<u8>>,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct DirectFrozenLookup {
-    buckets: Vec<u32>,
-}
-
-impl DirectFrozenLookup {
-    #[must_use]
-    pub(crate) fn empty() -> Self {
-        Self {
-            buckets: vec![EMPTY; 8],
-        }
-    }
-
-    pub(crate) fn candidates(&self, hash: u64) -> DirectCandidates<'_> {
-        DirectCandidates {
-            lookup: self,
-            bucket: hash as usize & (self.buckets.len() - 1),
-            remaining: self.buckets.len(),
-        }
-    }
-}
-
-pub(crate) struct DirectCandidates<'a> {
-    lookup: &'a DirectFrozenLookup,
-    bucket: usize,
-    remaining: usize,
-}
-
-impl Iterator for DirectCandidates<'_> {
-    type Item = u32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
-            return None;
-        }
-        let target = self.lookup.buckets[self.bucket];
-        if target == EMPTY {
-            self.remaining = 0;
-            return None;
-        }
-        self.bucket = (self.bucket + 1) & (self.lookup.buckets.len() - 1);
-        self.remaining -= 1;
-        Some(target)
-    }
-}
-
 pub(crate) struct FrozenWordHasher(u64);
 
 impl FrozenWordHasher {
@@ -113,10 +67,7 @@ pub(crate) fn encode_direct(hashes: &[u64]) -> Result<Vec<u8>, &'static str> {
     Ok(out)
 }
 
-pub(crate) fn decode_direct(
-    bytes: &[u8],
-    hashes: &[u64],
-) -> Result<DirectFrozenLookup, &'static str> {
+pub(crate) fn decode_direct(bytes: &[u8], hashes: &[u64]) -> Result<(), &'static str> {
     if bytes.len() < HEADER_LEN
         || read_u32(bytes, 0) != DIRECT_ALGORITHM
         || read_u32(bytes, 4) != DIRECT_VERSION
@@ -137,11 +88,7 @@ pub(crate) fn decode_direct(
     if expected != bytes {
         return Err("non-canonical direct lookup structure");
     }
-    Ok(DirectFrozenLookup {
-        buckets: (0..bucket_count)
-            .map(|index| read_u32(bytes, HEADER_LEN + index * 4))
-            .collect(),
-    })
+    Ok(())
 }
 
 impl FrozenLookup {

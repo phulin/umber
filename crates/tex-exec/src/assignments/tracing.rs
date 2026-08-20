@@ -304,8 +304,8 @@ pub(crate) fn trace_tok_param(
         return;
     }
     let name = escaped(stores, &tok_param_name(index));
-    let old_text = tokens_text(stores, old.tokens());
-    let new_text = tokens_text(stores, new.tokens());
+    let old_text = tokens_text(stores, old.id());
+    let new_text = tokens_text(stores, new.id());
     trace_scalar(
         stores,
         tracing_before,
@@ -329,8 +329,8 @@ pub(crate) fn trace_toks_register(
         return;
     }
     let name = escaped(stores, &format!("toks{index}"));
-    let old_text = tokens_text(stores, old.tokens());
-    let new_text = tokens_text(stores, new.tokens());
+    let old_text = tokens_text(stores, old.id());
+    let new_text = tokens_text(stores, new.id());
     trace_scalar(
         stores,
         tracing_before,
@@ -451,9 +451,9 @@ pub(crate) fn trace_penalty_array(
     );
 }
 
-fn tokens_text(stores: &Universe, tokens: &[Token]) -> String {
+fn tokens_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
     let mut text = String::new();
-    for &token in tokens {
+    for &token in stores.tokens(tokens).iter() {
         crate::diagnostics::append_token_show_text(stores, token, &mut text);
     }
     text
@@ -591,7 +591,7 @@ fn meaning_value_text(stores: &mut Universe, meaning: Meaning) -> String {
         Meaning::MuskipRegister(index) => escaped(stores, &format!("muskip{index}")),
         Meaning::ToksRegister(index) => escaped(stores, &format!("toks{index}")),
         Meaning::Macro { flags, definition } => {
-            let definition = stores.macro_definition(definition);
+            let definition = stores.macro_definition(definition).meaning();
             let parameter_text = stores.tokens(definition.parameter_text()).to_vec();
             let replacement_text = stores.tokens(definition.replacement_text()).to_vec();
             let mut text = String::new();

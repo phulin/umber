@@ -100,7 +100,10 @@ fn scalar_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement {
             }
             NodeRef::Kern { amount, .. } => out.width = add(out.width, amount),
             NodeRef::Glue { spec, .. } => {
-                out.observe_horizontal(MetricEvent::Glue(spec.spec()), MetricOverflow::PACKING);
+                out.observe_horizontal(
+                    MetricEvent::Glue(state.glue_spec(*spec)),
+                    MetricOverflow::PACKING,
+                );
             }
             NodeRef::MathOn(width) | NodeRef::MathOff(width) => out.width = add(out.width, width),
             NodeRef::Penalty(_) => {}

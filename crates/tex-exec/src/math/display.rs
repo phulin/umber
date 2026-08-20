@@ -389,11 +389,11 @@ struct ShrinkTotals {
     filll: Scaled,
 }
 
-fn hlist_shrink(_stores: &Universe, nodes: &[Node]) -> ShrinkTotals {
+fn hlist_shrink(stores: &Universe, nodes: &[Node]) -> ShrinkTotals {
     let mut totals = [Scaled::from_raw(0); 4];
     for node in nodes {
         if let Node::Glue { spec, .. } = node {
-            let glue = spec.spec();
+            let glue = stores.glue_spec(*spec);
             totals[glue.shrink_order as usize] = totals[glue.shrink_order as usize] + glue.shrink;
         }
     }
@@ -451,7 +451,7 @@ fn pre_display_node_width(
         | tex_state::node_arena::NodeRef::MathOn(amount)
         | tex_state::node_arena::NodeRef::MathOff(amount) => (amount, false, false),
         tex_state::node_arena::NodeRef::Glue { spec, .. } => {
-            let glue = spec.spec();
+            let glue = stores.glue_spec(*spec);
             let depends = match line.glue_sign {
                 Sign::Stretching => {
                     line.glue_order == glue.stretch_order && glue.stretch.raw() != 0

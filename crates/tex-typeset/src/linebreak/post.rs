@@ -200,7 +200,7 @@ fn materialize_channel<S: TypesetState>(
     line.clear();
     lineages.clear();
     line.reserve(required);
-    if params.left_skip.spec() != GlueSpec::ZERO {
+    if state.glue_spec(params.left_skip) != GlueSpec::ZERO {
         line.push(Node::Glue {
             spec: params.left_skip.clone(),
             kind: GlueKind::LeftSkip,

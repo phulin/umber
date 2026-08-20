@@ -487,9 +487,8 @@ impl<'a> Materializer<'a> {
         let mut state = ParameterState::default();
         for activation in &parameters.activations {
             let definition = self.macro_definition(activation.definition).id();
-            let owner = self.universe.packed_macro_owner(definition);
-            let meaning = self.universe.macro_definition(definition);
-            state.admit_macro(definition, meaning, || owner);
+            let meaning = self.universe.macro_definition(definition).meaning();
+            state.admit_macro(definition, meaning);
             let arguments = state.store_arguments(
                 tex_state::token::RootedTracedTokenBuffer::new(
                     activation.arguments.iter().map(|word| self.word(word)),

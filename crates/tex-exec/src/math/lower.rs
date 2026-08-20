@@ -238,8 +238,8 @@ impl TypesetState for LoweredMathSink<'_> {
         self.stores.glue(id)
     }
 
-    fn glue_ref(&self, id: GlueId) -> tex_state::glue::GlueSpecRef {
-        self.stores.glue_ref(id)
+    fn glue_spec(&self, reference: tex_state::glue::GlueSpecRef) -> GlueSpec {
+        self.stores.glue_spec(reference)
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {

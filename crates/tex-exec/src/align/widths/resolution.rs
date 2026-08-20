@@ -27,7 +27,7 @@ pub(super) fn resolve_widths(
     let mut tabskips = initial_tabskips(state, column_count);
     let tabskip_widths = tabskips
         .iter()
-        .map(|root| root.spec().width)
+        .map(|root| stores.glue_spec(*root).width)
         .collect::<Vec<_>>();
     let plan = plan_alignment_widths(state.columns().len(), &tabskip_widths, requirements)
         .map_err(map_plan_error)?;

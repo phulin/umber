@@ -431,7 +431,7 @@ fn journal_destructive_node_reconstitution_alignment_and_transfers_restore() {
 }
 
 #[test]
-fn alignment_template_roots_survive_destructive_journal_rollback() {
+fn alignment_template_coordinates_survive_destructive_journal_rollback() {
     let mut universe = Universe::new();
     let u_template = universe.intern_token_list_ref(&[tex_state::token::Token::Char {
         ch: 'u',
@@ -441,6 +441,8 @@ fn alignment_template_roots_survive_destructive_journal_rollback() {
         ch: 'v',
         cat: tex_state::token::Catcode::Other,
     }]);
+    let u_id = u_template.id();
+    let v_id = v_template.id();
     let mut nest = ModeNest::new();
     nest.current_list_mutation()
         .set_align_state(AlignState::new(
@@ -457,7 +459,14 @@ fn alignment_template_roots_survive_destructive_journal_rollback() {
     nest.reset_journal_for_test();
     let cursor = nest.begin_journal();
 
-    drop(nest.current_list_mutation().take_align_state());
+    let _ = nest.current_list_mutation().take_align_state();
+    assert_eq!(
+        universe.tokens(u_id).tokens(),
+        &[tex_state::token::Token::Char {
+            ch: 'u',
+            cat: tex_state::token::Catcode::Other,
+        }]
+    );
     drop(universe);
     nest.rollback_journal(cursor).expect("alignment rollback");
 
@@ -466,20 +475,8 @@ fn alignment_template_roots_survive_destructive_journal_rollback() {
         .align_state()
         .expect("alignment restored")
         .columns()[0];
-    assert_eq!(
-        column.u_template.tokens(),
-        &[tex_state::token::Token::Char {
-            ch: 'u',
-            cat: tex_state::token::Catcode::Other,
-        }]
-    );
-    assert_eq!(
-        column.v_template.tokens(),
-        &[tex_state::token::Token::Char {
-            ch: 'v',
-            cat: tex_state::token::Catcode::Other,
-        }]
-    );
+    assert_eq!(column.u_template.id(), u_id);
+    assert_eq!(column.v_template.id(), v_id);
 }
 
 #[test]

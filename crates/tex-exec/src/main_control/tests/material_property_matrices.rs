@@ -236,9 +236,9 @@ fn text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
         .collect()
 }
 
-fn rooted_text(tokens: &tex_state::token_store::TokenListRef) -> String {
-    tokens
-        .tokens()
+fn rooted_text(stores: &Universe, tokens: &tex_state::token_store::TokenListRef) -> String {
+    stores
+        .tokens(tokens.id())
         .iter()
         .filter_map(|token| match token {
             Token::Char { ch, .. } => Some(*ch),
@@ -298,7 +298,7 @@ fn shapes(stores: &Universe, nodes: &[Node]) -> Vec<Shape> {
                 shift: boxed.shift.raw(),
                 children: shapes(stores, &boxed.children.to_vec()),
             },
-            Node::Mark { class, tokens } => Shape::Mark(*class, rooted_text(tokens)),
+            Node::Mark { class, tokens } => Shape::Mark(*class, rooted_text(stores, tokens)),
             Node::Ins {
                 class,
                 size,

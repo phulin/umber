@@ -15,7 +15,7 @@ use crate::{
     ids::{MacroDefinitionId, TokenListId},
     interner::{Symbol, SymbolId},
     macro_store::{
-        MacroDefinitionProvenance, MacroDefinitionRef, MacroMeaning, MacroParameterPattern,
+        MacroDefinitionProvenance, MacroDefinitionRef, MacroDefinitionView, MacroParameterPattern,
     },
     math::MathFontSize,
     meaning::{InternalInteger, Meaning},
@@ -23,7 +23,7 @@ use crate::{
     provenance::SynthesizedOriginKind,
     source_map::{SourceDescriptor, SourceMapError, SourcePos},
     token::{Catcode, OriginId, Token, TracedTokenWord},
-    token_store::TokenListRef,
+    token_store::{TokenListRef, TokenListView},
 };
 
 /// Borrow-scoped aggregate access to live TeX state.
@@ -459,14 +459,23 @@ impl CommandContext<'_> {
 
     /// Returns the immutable semantic words of one stored token list.
     #[must_use]
-    pub fn tokens(&self, id: TokenListId) -> TokenListRef {
+    pub fn tokens(&self, id: TokenListId) -> TokenListView<'_> {
         self.universe.tokens(id)
     }
 
-    /// Clones the strong owner for a token list crossing the processor borrow.
+    /// Returns the copy-only identity for a live token list.
     #[must_use]
     pub fn token_list_ref(&self, id: TokenListId) -> TokenListRef {
         self.universe.token_list_ref(id)
+    }
+
+    /// Materializes one cold structural token origin from the provenance archive.
+    pub fn materialize_token_word(
+        &mut self,
+        id: TokenListId,
+        index: usize,
+    ) -> Option<crate::token::RootedTracedTokenWord> {
+        self.universe.materialize_token_word(id, index)
     }
 
     /// Returns TeX82's inaccessible frozen end-v sentinel for canonical
@@ -655,6 +664,12 @@ impl CommandContext<'_> {
         self.universe.glue(id)
     }
 
+    /// Resolves a copy-only glue reference while this context is borrowed.
+    #[must_use]
+    pub fn glue_spec(&self, root: crate::glue::GlueSpecRef) -> crate::glue::GlueSpec {
+        self.universe.glue_spec(root)
+    }
+
     /// Reads one skip register through the aggregate boundary.
     #[must_use]
     pub fn skip(&mut self, index: u16) -> GlueId {
@@ -736,7 +751,7 @@ impl CommandContext<'_> {
     /// or granting allocation authority to the command processor.
     #[must_use]
     pub fn pdf_external_image(
-        &self,
+        &mut self,
         id: crate::PdfExternalImageId,
     ) -> Option<crate::PdfExternalImageMetadata> {
         self.universe.pdf_external_image(id)
@@ -1241,7 +1256,7 @@ impl CommandContext<'_> {
     /// semantic token lists.
     #[must_use]
     pub fn macro_definition_provenance(
-        &self,
+        &mut self,
         definition: MacroDefinitionId,
     ) -> MacroDefinitionProvenance {
         self.universe.macro_definition_provenance(definition)
@@ -1249,30 +1264,24 @@ impl CommandContext<'_> {
 
     /// Reads one immutable macro definition through the command-state boundary.
     #[must_use]
-    pub fn macro_definition(&self, definition: MacroDefinitionId) -> MacroMeaning {
+    pub fn macro_definition(&self, definition: MacroDefinitionId) -> MacroDefinitionView<'_> {
         self.universe.macro_definition(definition)
     }
 
-    /// Clones the strong owner for one live definition occurrence.
+    /// Returns the copy-only identity for one live definition occurrence.
     #[must_use]
     pub fn macro_definition_ref(&self, definition: MacroDefinitionId) -> MacroDefinitionRef {
         self.universe.macro_definition_ref(definition)
     }
 
-    /// Admits one immutable macro chunk into command-owned replay state.
-    #[must_use]
-    pub fn packed_macro_owner(
-        &self,
+    /// Materializes one cold replacement origin from the provenance archive.
+    pub fn materialize_macro_replacement_word(
+        &mut self,
         definition: MacroDefinitionId,
-    ) -> crate::macro_store::PackedMacroChunkOwner {
-        self.universe.packed_macro_owner(definition)
-    }
-
-    /// Reads the current packed meaning for a definition already rooted by
-    /// this command without entering the weak value index.
-    #[must_use]
-    pub fn packed_macro_meaning(&self, definition: MacroDefinitionId) -> Option<MacroMeaning> {
-        self.universe.packed_macro_meaning(definition)
+        index: usize,
+    ) -> Option<crate::token::RootedTracedTokenWord> {
+        self.universe
+            .materialize_macro_replacement_word(definition, index)
     }
 
     /// Returns TeX82's definition-head identity for detached observation.
@@ -1280,13 +1289,6 @@ impl CommandContext<'_> {
     pub fn macro_definition_observation_operand(&self, definition: MacroDefinitionId) -> i64 {
         self.universe
             .macro_definition_observation_operand(definition)
-    }
-
-    /// Reads the observation coordinate already admitted beside a live macro
-    /// meaning without resolving its reachability owner again.
-    #[must_use]
-    pub fn packed_macro_observation_operand(&self, definition: MacroDefinitionId) -> Option<i64> {
-        self.universe.packed_macro_observation_operand(definition)
     }
 
     /// Reads the prevalidated parameter-marker layout for one macro definition.

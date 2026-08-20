@@ -142,7 +142,7 @@ fn token_cursor_classifies_orthogonal_ownership_domains() {
     }
     let cursor = TokenCursor {
         payload: TokenPayload::stored(
-            universe.token_list_ref(TokenListId::EMPTY),
+            universe.tokens(TokenListId::EMPTY).tokens(),
             tex_state::provenance::OriginListRef::empty(),
         ),
         behavior,

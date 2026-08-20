@@ -1946,7 +1946,7 @@ impl MainControl {
             return match crate::effective_tail::EffectiveTail::find(
                 stores.page_contributions().iter(),
             ) {
-                Some(tail) => Self::classify_last_node(tail.node()),
+                Some(tail) => Self::classify_last_node(stores, tail.node()),
                 None => match stores.page_last_node_type() {
                     11 => Some(tex_command::LastNodeItem::Glue(stores.page_last_skip())),
                     12 => Some(tex_command::LastNodeItem::Kern(stores.page_last_kern())),
@@ -1961,7 +1961,7 @@ impl MainControl {
             return None;
         }
         crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes().iter())
-            .and_then(|tail| Self::classify_last_node(tail.node()))
+            .and_then(|tail| Self::classify_last_node(stores, tail.node()))
     }
 
     /// e-TeX 2.6 `etex.ch` [26.424]'s `find_effective_tail` result for
@@ -1990,7 +1990,7 @@ impl MainControl {
     /// other node shape (including a character, which tex.web excludes via
     /// `is_char_node`) has no matching case, exactly like tex.web's
     /// `case cur_chr of ... end {there are no other cases}`.
-    fn classify_last_node(node: &Node) -> Option<tex_command::LastNodeItem> {
+    fn classify_last_node(stores: &Universe, node: &Node) -> Option<tex_command::LastNodeItem> {
         match node {
             Node::Penalty(value) => Some(tex_command::LastNodeItem::Penalty(*value)),
             Node::Kern { amount, .. } => Some(tex_command::LastNodeItem::Kern(*amount)),
@@ -1998,8 +1998,10 @@ impl MainControl {
                 spec,
                 kind: GlueKind::MuSkip,
                 ..
-            } => Some(tex_command::LastNodeItem::MuGlue(spec.spec())),
-            Node::Glue { spec, .. } => Some(tex_command::LastNodeItem::Glue(spec.spec())),
+            } => Some(tex_command::LastNodeItem::MuGlue(stores.glue_spec(*spec))),
+            Node::Glue { spec, .. } => {
+                Some(tex_command::LastNodeItem::Glue(stores.glue_spec(*spec)))
+            }
             // TeX82 keeps a discretionary's no-break replacement nodes in
             // the surrounding list (§1119), immediately after the disc node.
             // Umber freezes that physical suffix as the disc's `replace`
@@ -2010,7 +2012,7 @@ impl MainControl {
             Node::Disc { replace, .. } => replace
                 .to_vec()
                 .pop()
-                .and_then(|node| Self::classify_last_node(&node)),
+                .and_then(|node| Self::classify_last_node(stores, &node)),
             _ => None,
         }
     }
@@ -2239,7 +2241,11 @@ impl MainControl {
     ///
     /// The request contains no token spelling, so this cannot create another
     /// delimiter-classification or source-consumption path.
-    pub fn apply_alignment_request(&mut self, request: AlignmentRequest) -> Result<(), ExecError> {
+    pub fn apply_alignment_request(
+        &mut self,
+        stores: &mut Universe,
+        request: AlignmentRequest,
+    ) -> Result<(), ExecError> {
         let finished = matches!(request, AlignmentRequest::Finish(_));
         let preamble = matches!(request, AlignmentRequest::Preamble(_));
         let identity = match request {
@@ -2256,7 +2262,7 @@ impl MainControl {
             AlignmentRequest::BeginCell { alignment, .. } => alignment,
         };
         self.command
-            .apply_alignment_request(request)
+            .apply_alignment_request(&stores.command_context(), request)
             .map(|_| ())
             .map_err(|_| ExecError::MissingToken {
                 context: "alignment lifecycle",
@@ -2267,7 +2273,10 @@ impl MainControl {
             self.active_alignment = None;
             if let Some(outer) = self.boxes.suspended_alignments.pop() {
                 self.command
-                    .apply_alignment_request(AlignmentRequest::Resume(outer.identity))
+                    .apply_alignment_request(
+                        &stores.command_context(),
+                        AlignmentRequest::Resume(outer.identity),
+                    )
                     .map_err(|_| ExecError::MissingToken {
                         context: "nested alignment resumption",
                     })?;

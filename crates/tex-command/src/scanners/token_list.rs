@@ -175,7 +175,7 @@ impl CommandProcessor<'_> {
                 .replacement_text
             }
         };
-        if collected.token_ref().tokens().is_empty() {
+        if self.state.tokens(collected.token_ref().id()).is_empty() {
             return Ok(ScannedTokenListRightHandSide {
                 tokens: collected,
                 pointer_present: false,
@@ -196,9 +196,8 @@ impl CommandProcessor<'_> {
             OriginId::UNKNOWN,
         ));
         tokens.extend(
-            collected
-                .token_ref()
-                .tokens()
+            self.state
+                .tokens(collected.token_ref().id())
                 .iter()
                 .copied()
                 .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),

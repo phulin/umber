@@ -1051,7 +1051,7 @@ impl CommandProcessor<'_> {
         &mut self,
         tokens: TracedTokenList,
     ) -> Result<TracedTokenList, CommandError> {
-        let episode = self.command.push_output_replay_episode(tokens);
+        let episode = self.command.push_output_replay_episode(&self.state, tokens);
         let mut expanded = self.traced_token_scratch();
         loop {
             match self.get_x_or_protected_with_replay_completion()? {
@@ -2280,9 +2280,9 @@ impl CommandProcessor<'_> {
         let page = if self.scan_keyword("named")?.value {
             let tokens = self.scan_balanced_text(true)?.tokens;
             PdfImagePageSelection::Named(
-                crate::processor::token_slice_string_text(
+                crate::processor::expand::stored_token_list_string_text(
                     &mut self.state,
-                    tokens.token_ref().tokens(),
+                    tokens.token_ref(),
                 )
                 .into_bytes(),
             )
@@ -2563,7 +2563,7 @@ impl CommandProcessor<'_> {
         &mut self,
         tokens: TracedTokenList,
     ) -> Result<ExpandedWriteText, CommandError> {
-        let write_words = tokens.token_ref().tokens().len();
+        let write_words = self.state.tokens(tokens.token_ref().id()).len();
         let endwrite = self
             .state
             .primitive_token("endwrite")
@@ -2581,8 +2581,9 @@ impl CommandProcessor<'_> {
         // by frozen outer `\\endwrite`; the write list and opening brace sit
         // above it exactly as TeX82's three `ins_list` calls do.
         let stopper_level = self.push_write_recovery([right_brace, endwrite], right_brace);
+        let words = self.state.tokens(tokens.token_ref().id());
         let write_level = self.command.push_token_level(
-            TokenPayload::stored(tokens.token_ref().clone(), tokens.origin_ref().clone()),
+            TokenPayload::stored(&words, tokens.origin_ref().clone()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::Write),
@@ -2600,7 +2601,9 @@ impl CommandProcessor<'_> {
             let mut text = String::new();
             crate::processor::expand::append_print_esc_text(&self.state, "write", &mut text);
             text.push_str("->");
-            for token in tokens.token_ref().tokens().iter().copied() {
+            let token_count = self.state.tokens(tokens.token_ref().id()).len();
+            for index in 0..token_count {
+                let token = self.state.tokens(tokens.token_ref().id())[index];
                 crate::processor::expand::append_token_list_token_text(
                     &self.state,
                     token,
@@ -2620,7 +2623,7 @@ impl CommandProcessor<'_> {
         self.outer_recovered_while_absorbing = false;
         let expanded = self.scan_balanced_text(true)?.tokens;
         let transient_words = self.command.transient_dynamic_words();
-        let expanded_words = expanded.token_ref().tokens().len();
+        let expanded_words = self.state.tokens(expanded.token_ref().id()).len();
         // TeX82 §1370 keeps the original write list, its expanded scan result,
         // the command-owned transient input nodes, and the three artificial
         // brace/`endwrite` nodes live on the same `write_out` call stack. The
@@ -2817,7 +2820,9 @@ impl CommandProcessor<'_> {
             InternalValue::Font(symbol) => print_cs_text(&mut self.state, symbol),
             InternalValue::Tokens { tokens, .. } => {
                 let mut text = String::new();
-                for &token in tokens.tokens() {
+                let token_count = self.state.tokens(tokens.id()).len();
+                for index in 0..token_count {
+                    let token = self.state.tokens(tokens.id())[index];
                     self.state.append_token_selector_text(token, &mut text);
                 }
                 text
@@ -3600,13 +3605,13 @@ impl CommandProcessor<'_> {
         // and leaves the `cmd` alone; a zero `\uccode`/`\lccode` entry means
         // "no change".  Multiletter control sequences and frozen tokens are
         // above that bound and are never rewritten.
-        let token_count = scanned.token_ref().tokens().len();
+        let token_count = self.state.tokens(scanned.token_ref().id()).len();
         let mut shifted = Vec::with_capacity(token_count);
         for index in 0..token_count {
             // Copy one immutable word at a time so the source interned lists
             // remain in place while the case-code lookup records its mutable
             // dependency read. Only the rewritten backup list needs storage.
-            let token = scanned.token_ref().tokens()[index];
+            let token = self.state.tokens(scanned.token_ref().id())[index];
             let origin = scanned
                 .origin_ref()
                 .origins()

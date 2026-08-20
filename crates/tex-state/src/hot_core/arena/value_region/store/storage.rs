@@ -37,7 +37,7 @@ pub(super) fn prepare_bundle(
         RuntimeMacroRecord,
         RuntimeMacroRootRow,
         GlueSpec,
-        RuntimeOriginRoot,
+        RuntimeOriginEntry,
     >,
     RegionArenaError,
 > {
@@ -148,7 +148,7 @@ pub(super) fn candidate_token_list_view<'a>(
         coordinate,
         semantic_id: row.semantic_id,
         tokens: resolve_local_span(&columns.token_words, row.tokens)?,
-        provenance_roots: resolve_local_span(&columns.provenance_roots, row.provenance_roots)?,
+        provenance: resolve_local_span(&columns.provenance_roots, row.provenance)?,
     })
 }
 
@@ -169,10 +169,7 @@ pub(super) fn candidate_macro_view<'a>(
     validate_macro_identity(coordinate, record, roots)?;
     let parameter_text = candidate_token_list_view(arena, roots.parameter_text)?;
     let replacement_text = candidate_token_list_view(arena, roots.replacement_text)?;
-    let definition_origin = columns
-        .provenance_roots
-        .get(roots.definition_origin as usize)
-        .ok_or(RegionArenaError::OffsetOutOfBounds)?;
+    let definition_origin = roots.definition_origin;
     let parameter_origins = resolve_local_span(&columns.provenance_roots, roots.parameter_origins)?;
     let replacement_origins =
         resolve_local_span(&columns.provenance_roots, roots.replacement_origins)?;
@@ -243,7 +240,7 @@ fn retain_root_if_absent(
         RuntimeMacroRecord,
         RuntimeMacroRootRow,
         GlueSpec,
-        RuntimeOriginRoot,
+        RuntimeOriginEntry,
     >,
 ) -> Result<(), RegionArenaError> {
     match destination.root_position(key) {
@@ -306,7 +303,7 @@ fn token_list_view_in<'a>(
         coordinate,
         semantic_id: row.semantic_id,
         tokens: token_span(admitted, row.tokens)?,
-        provenance_roots: provenance_span(admitted, row.provenance_roots)?,
+        provenance: provenance_span(admitted, row.provenance)?,
     })
 }
 
@@ -336,27 +333,15 @@ fn token_span<'a>(
     resolve_local_span(&admitted.region.columns.token_words, span)
 }
 
-pub(super) fn provenance_at<'a>(
-    admitted: &ConcreteAdmission<'a>,
-    offset: u32,
-) -> Result<&'a RuntimeOriginRoot, RegionArenaError> {
-    admitted
-        .region
-        .columns
-        .provenance_roots
-        .get(offset as usize)
-        .ok_or(RegionArenaError::OffsetOutOfBounds)
-}
-
 pub(super) fn provenance_span<'a>(
     admitted: &ConcreteAdmission<'a>,
-    span: LocalSpan<RuntimeOriginRoot>,
-) -> Result<&'a [RuntimeOriginRoot], RegionArenaError> {
+    span: LocalSpan<RuntimeOriginEntry>,
+) -> Result<&'a [RuntimeOriginEntry], RegionArenaError> {
     resolve_local_span(&admitted.region.columns.provenance_roots, span)
 }
 
 pub(super) fn validate_sparse_origins(
-    roots: &[RuntimeOriginRoot],
+    roots: &[RuntimeOriginEntry],
     token_len: usize,
 ) -> Result<(), RegionArenaError> {
     let token_len =

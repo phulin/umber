@@ -233,11 +233,9 @@ impl CurrentCommand {
             ),
         };
         let macro_observation_operand = match meaning {
-            Meaning::Macro { definition, .. } => Some(
-                state
-                    .packed_macro_observation_operand(definition)
-                    .expect("live macro meaning has a packed observation record"),
-            ),
+            Meaning::Macro { definition, .. } => {
+                Some(state.macro_definition_observation_operand(definition))
+            }
             _ => None,
         };
         Self {

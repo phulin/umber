@@ -3486,12 +3486,12 @@ mod tests {
     }
 
     #[test]
-    fn pdf_records_snapshots_and_page_suffixes_own_every_token_parameter() {
+    fn pdf_records_snapshots_and_page_suffixes_preserve_token_coordinates() {
         let mut state = PdfState::default();
         state.enable();
         let initial = state.snapshot();
         let root = owned_test_token_ref(6);
-        let retained = root.clone();
+        let root_id = root.id();
         let parameter = PdfTokenParameter {
             tokens: root.clone(),
             semantic_id: test_identity(6),
@@ -3548,18 +3548,12 @@ mod tests {
             .expect("catalog action reservation");
         drop(action);
         drop(parameter);
-        drop(root);
-        assert!(retained.strong_count() > 1);
+        assert_eq!(root.id(), root_id);
 
         state.rollback(initial.clone());
-        assert_eq!(
-            retained.strong_count(),
-            1,
-            "collection rollback must release every typed PDF owner"
-        );
 
         let page_root = owned_test_token_ref(7);
-        let page_retained = page_root.clone();
+        let page_id = page_root.id();
         let page_parameter = PdfTokenParameter {
             tokens: page_root.clone(),
             semantic_id: test_identity(10),
@@ -3595,14 +3589,12 @@ mod tests {
             },
             page_parameter,
         );
-        drop(page_root);
         let suffix = state.take_page_suffix(0);
         assert!(state.pages().is_empty());
-        assert_eq!(suffix[0].parameters.page_attr.id(), page_retained.id());
-        assert_eq!(page_retained.strong_count(), 4);
+        assert_eq!(suffix[0].parameters.page_attr.id(), page_id);
         state.restore_page_suffix(suffix);
         state.rollback(initial);
-        assert_eq!(page_retained.strong_count(), 1);
+        assert!(state.pages().is_empty());
     }
 
     #[test]

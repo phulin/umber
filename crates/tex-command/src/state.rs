@@ -614,8 +614,16 @@ impl CommandState {
     /// input stack: macro expansion, recovery, provenance, and retirement all
     /// remain command-owned while the stomach supplies the restricted hmode
     /// lifecycle.
-    pub fn push_discretionary_episode(&mut self, tokens: TracedTokenList) -> CommandReplayEpisode {
-        self.push_stored_episode(tokens, crate::input::StoredReplayReason::Discretionary)
+    pub fn push_discretionary_episode(
+        &mut self,
+        stores: &tex_state::CommandContext<'_>,
+        tokens: TracedTokenList,
+    ) -> CommandReplayEpisode {
+        self.push_stored_episode(
+            stores,
+            tokens,
+            crate::input::StoredReplayReason::Discretionary,
+        )
     }
 
     /// Schedules one source-isolated output-text expansion episode.
@@ -623,17 +631,23 @@ impl CommandState {
     /// Completion is delivered before the surrounding source resumes, so a
     /// shipout host cannot accidentally consume the command following the
     /// page or PDF form it is staging.
-    pub fn push_output_replay_episode(&mut self, tokens: TracedTokenList) -> CommandReplayEpisode {
-        self.push_stored_episode(tokens, crate::input::StoredReplayReason::Write)
+    pub fn push_output_replay_episode(
+        &mut self,
+        stores: &tex_state::CommandContext<'_>,
+        tokens: TracedTokenList,
+    ) -> CommandReplayEpisode {
+        self.push_stored_episode(stores, tokens, crate::input::StoredReplayReason::Write)
     }
 
     fn push_stored_episode(
         &mut self,
+        stores: &tex_state::CommandContext<'_>,
         tokens: TracedTokenList,
         reason: StoredReplayReason,
     ) -> CommandReplayEpisode {
+        let words = stores.tokens(tokens.token_list());
         let identity = self.push_token_level(
-            TokenPayload::stored(tokens.token_ref().clone(), tokens.origin_ref().clone()),
+            TokenPayload::stored(&words, tokens.origin_ref().clone()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -708,15 +722,25 @@ impl CommandState {
     /// completed TeX82's `new_graf` state transition.  Source ownership stays
     /// entirely inside command state; executor control never fabricates an
     /// input stack for token-list replay.
-    pub fn push_everypar(&mut self, tokens: TracedTokenList) {
-        self.push_named_token_list(tokens, StoredReplayReason::EveryPar);
+    pub fn push_everypar(
+        &mut self,
+        stores: &tex_state::CommandContext<'_>,
+        tokens: TracedTokenList,
+    ) {
+        self.push_named_token_list(stores, tokens, StoredReplayReason::EveryPar);
     }
 
     /// Schedules the immutable math-entry hook after the stomach has entered
     /// the matching math-shift group.  The command machine owns this replay
     /// so macro expansion, origins, and retirement stay canonical.
-    pub fn push_everymath(&mut self, tokens: TracedTokenList, display: bool) {
+    pub fn push_everymath(
+        &mut self,
+        stores: &tex_state::CommandContext<'_>,
+        tokens: TracedTokenList,
+        display: bool,
+    ) {
         self.push_named_token_list(
+            stores,
             tokens,
             if display {
                 StoredReplayReason::EveryDisplay
@@ -728,8 +752,14 @@ impl CommandState {
 
     /// Schedules the immutable `\everyhbox` or `\everyvbox` payload after
     /// canonical replay has entered the corresponding box group and mode.
-    pub fn push_everybox(&mut self, tokens: TracedTokenList, horizontal: bool) {
+    pub fn push_everybox(
+        &mut self,
+        stores: &tex_state::CommandContext<'_>,
+        tokens: TracedTokenList,
+        horizontal: bool,
+    ) {
         self.push_named_token_list(
+            stores,
             tokens,
             if horizontal {
                 StoredReplayReason::EveryHBox
@@ -743,16 +773,24 @@ impl CommandState {
     /// `init_align`'s and §799 `fin_row`'s shared
     /// `if every_cr<>null then begin_token_list(every_cr,every_cr_text)`,
     /// which both run immediately before `align_peek`.
-    pub fn push_everycr(&mut self, tokens: TracedTokenList) {
-        self.push_named_token_list(tokens, StoredReplayReason::EveryCr);
+    pub fn push_everycr(
+        &mut self,
+        stores: &tex_state::CommandContext<'_>,
+        tokens: TracedTokenList,
+    ) {
+        self.push_named_token_list(stores, tokens, StoredReplayReason::EveryCr);
     }
 
     /// Schedules the immutable `\everyjob` payload for tex.web §1030
     /// `main_control`'s prologue,
     /// `if every_job<>null then begin_token_list(every_job,every_job_text)`,
     /// which runs once before the first `big_switch` fetch.
-    pub fn push_everyjob(&mut self, tokens: TracedTokenList) {
-        self.push_named_token_list(tokens, StoredReplayReason::EveryJob);
+    pub fn push_everyjob(
+        &mut self,
+        stores: &tex_state::CommandContext<'_>,
+        tokens: TracedTokenList,
+    ) {
+        self.push_named_token_list(stores, tokens, StoredReplayReason::EveryJob);
     }
 
     /// Installs one tex.web §307-named token list and records its push.
@@ -761,10 +799,16 @@ impl CommandState {
     /// carries the §307 `token_type` it was installed under, so both its push
     /// and its eventual retirement report that identity rather than the one
     /// token-list class every stored level used to share.
-    fn push_named_token_list(&mut self, tokens: TracedTokenList, reason: StoredReplayReason) {
-        let token_root = tokens.token_ref().clone();
+    fn push_named_token_list(
+        &mut self,
+        stores: &tex_state::CommandContext<'_>,
+        tokens: TracedTokenList,
+        reason: StoredReplayReason,
+    ) {
+        let token_root = tokens.token_ref();
+        let words = stores.tokens(token_root.id());
         let level = self.push_token_level(
-            TokenPayload::stored(token_root.clone(), tokens.origin_ref().clone()),
+            TokenPayload::stored(&words, tokens.origin_ref().clone()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -799,7 +843,9 @@ impl CommandState {
                         &mut text,
                     );
                     text.push_str("->");
-                    for token in tokens.tokens().to_vec() {
+                    let token_count = state.tokens(tokens.id()).len();
+                    for index in 0..token_count {
+                        let token = state.tokens(tokens.id())[index];
                         crate::processor::expand::append_token_list_token_text(
                             state, token, &mut text,
                         );
@@ -984,6 +1030,7 @@ impl CommandState {
     /// by [`crate::CommandProcessor`].
     pub fn apply_alignment_request(
         &mut self,
+        stores: &tex_state::CommandContext<'_>,
         request: AlignmentRequest,
     ) -> Result<AlignmentRequestResult, AlignmentLifecycleError> {
         match request {
@@ -1010,7 +1057,7 @@ impl CommandState {
                 Ok(AlignmentRequestResult::Applied)
             }
             AlignmentRequest::InstallCellTemplate(alignment) => {
-                self.install_alignment_cell_template(alignment)?;
+                self.install_alignment_cell_template(stores, alignment)?;
                 Ok(AlignmentRequestResult::Applied)
             }
             AlignmentRequest::InstallOmitCellTemplate(alignment) => {
@@ -1071,11 +1118,13 @@ impl CommandState {
     /// typed opener phase has completed command-owned brace replay.
     pub fn install_alignment_cell_template(
         &mut self,
+        stores: &tex_state::CommandContext<'_>,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
         let template = self.alignment.active_cell_template(alignment)?;
         if let Some(template) = template {
             let level = self.push_alignment_template(
+                stores,
                 template,
                 TokenBehavior::UTemplate,
                 RetirementBehavior::Pop,
@@ -1215,6 +1264,7 @@ impl CommandState {
     /// the canonical raw-delivery loop.
     pub fn begin_alignment_v_template(
         &mut self,
+        stores: &tex_state::CommandContext<'_>,
         alignment: AlignmentIdentity,
         delimiter: AlignmentCellDelimiter,
         empty: tex_state::token_store::TokenListRef,
@@ -1226,6 +1276,7 @@ impl CommandState {
         // that is what names the level in the pinned observer's trace.
         let omit = self.alignment.active_cell_is_omit(alignment);
         let level = self.push_alignment_template(
+            stores,
             template,
             TokenBehavior::VTemplate,
             RetirementBehavior::RetainExhaustedVTemplate,
@@ -1645,7 +1696,11 @@ impl CommandState {
     }
 
     /// Pushes e-TeX §24.362's `\everyeof` above its exhausted pseudo-file.
-    pub(crate) fn begin_pending_every_eof(&mut self, source: InputLevelId) -> Option<InputLevelId> {
+    pub(crate) fn begin_pending_every_eof(
+        &mut self,
+        stores: &tex_state::CommandContext<'_>,
+        source: InputLevelId,
+    ) -> Option<InputLevelId> {
         let InputLevel::Source(level) = self.input.levels.last_mut()? else {
             return None;
         };
@@ -1656,11 +1711,9 @@ impl CommandState {
         if matches!(level.name_class, SourceNameClass::Scantokens(_)) {
             level.cursor.install_scantokens_eof_context_line();
         }
+        let words = stores.tokens(every_eof.token_list());
         Some(self.push_token_level(
-            TokenPayload::stored(
-                every_eof.token_ref().clone(),
-                every_eof.origin_ref().clone(),
-            ),
+            TokenPayload::stored(&words, every_eof.origin_ref().clone()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::EveryEof),
@@ -1785,13 +1838,15 @@ impl CommandState {
 
     fn push_alignment_template(
         &mut self,
+        stores: &tex_state::CommandContext<'_>,
         template: TracedTokenList,
         behavior: TokenBehavior,
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> InputLevelId {
+        let words = stores.tokens(template.token_list());
         self.push_token_level(
-            TokenPayload::stored(template.token_ref().clone(), template.origin_ref().clone()),
+            TokenPayload::stored(&words, template.origin_ref().clone()),
             behavior,
             retirement,
             trace,

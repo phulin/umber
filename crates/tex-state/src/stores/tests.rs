@@ -4,7 +4,7 @@ use crate::env::banks::{DimenParam, GlueParam, IntParam};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{ArenaRef, MacroDefinitionId, NodeListId};
+use crate::ids::{ArenaRef, NodeListId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
@@ -456,7 +456,7 @@ fn node_semantic_ids_and_owners_survive_store_rollback() {
 }
 
 #[test]
-fn compact_and_survivor_nodes_own_mark_tokens_until_rollback() {
+fn compact_and_survivor_nodes_preserve_mark_coordinates_until_rollback() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let tokens = stores.intern_token_list_ref_in_domain(&[Token::param(1)], None);
@@ -468,7 +468,6 @@ fn compact_and_survivor_nodes_own_mark_tokens_until_rollback() {
 
     let compact = stores.freeze_node_list_owned(&mut nodes);
     assert!(nodes.is_empty(), "owned freeze must move the token root");
-    drop(tokens);
     let crate::node_arena::NodeRef::Mark { class, tokens } =
         compact.nodes().first().expect("compact mark")
     else {
@@ -478,25 +477,22 @@ fn compact_and_survivor_nodes_own_mark_tokens_until_rollback() {
     assert_eq!(tokens.id(), token_id);
 
     stores.install_box(0, compact);
-    let expected_tokens = stores.tokens.owner(token_id).expect("survivor node root");
+    assert!(stores.runtime_values.contains_token(token_id));
     let survivor_node = stores
         .box_reg_ref(0)
         .expect("box assignment owns the list")
         .get(0)
         .expect("survivor mark");
-    assert_eq!(
+    assert!(matches!(
         survivor_node,
-        Node::Mark {
-            class: 7,
-            tokens: expected_tokens,
-        }
-    );
+        Node::Mark { class: 7, tokens } if tokens.id() == token_id
+    ));
     drop(survivor_node);
 
     stores.rollback(&snapshot);
     assert!(
-        stores.tokens.owner(token_id).is_none(),
-        "final typed node owner must release the token value"
+        !stores.runtime_values.contains_token(token_id),
+        "rollback must reject the discarded token coordinate"
     );
 }
 
@@ -934,7 +930,7 @@ fn exact_environment_identity_ignores_intern_allocation_order() {
 }
 
 #[test]
-fn env_token_roots_follow_save_stack_rollback_and_generation_fork() {
+fn env_token_coordinates_follow_save_stack_rollback_and_generation_fork() {
     let mut stores = Stores::new();
     let outer = stores.intern_token_list(&[Token::Char {
         ch: 'o',
@@ -948,104 +944,70 @@ fn env_token_roots_follow_save_stack_rollback_and_generation_fork() {
         ch: 'g',
         cat: Catcode::Other,
     }]);
-    let outer_root = stores.tokens.owner(outer).expect("outer root");
-    let local_root = stores.tokens.owner(local).expect("local root");
-    let global_root = stores.tokens.owner(global).expect("global root");
-
     stores.set_toks_global(0, outer);
-    let outer_current = outer_root.strong_count();
     stores.enter_group();
     stores.set_toks(0, local);
     assert_eq!(stores.toks(0), local);
-    assert_eq!(
-        outer_root.strong_count(),
-        outer_current,
-        "open-group undo replaces the displaced current owner exactly"
-    );
-    let local_current_and_redo = local_root.strong_count();
 
-    // An equal local assignment still creates a save-stack edge at the new
-    // epoch. Its old/new owners must be real even though the word is equal.
+    // An equal local assignment still creates a save-stack edge at the new epoch.
     stores.enter_group();
     stores.set_toks(0, local);
-    assert_eq!(local_root.strong_count(), local_current_and_redo + 2);
     let _ = stores.leave_group();
-    assert_eq!(local_root.strong_count(), local_current_and_redo);
+    assert_eq!(stores.toks(0), local);
 
-    // A later global supersession refiles the first outer owner and keeps the
-    // surviving global owner when the group journal is compacted.
+    // A later global supersession refiles the first outer coordinate when the
+    // group journal is compacted.
     stores.set_toks_global(0, global);
-    let global_live = global_root.strong_count();
     let _ = stores.leave_group();
     assert_eq!(stores.toks(0), global);
-    assert_eq!(global_root.strong_count(), global_live);
-    assert_eq!(
-        local_root.strong_count(),
-        local_current_and_redo - 2,
-        "superseded current and redo owners are released at group exit"
-    );
 
     let snapshot = stores.checkpoint();
-    let outer_before_rollback_write = outer_root.strong_count();
     stores.set_toks(0, outer);
     assert_eq!(stores.toks(0), outer);
-    assert_eq!(
-        outer_root.strong_count(),
-        outer_before_rollback_write + 2,
-        "current cell and undo redo edge both own the post-checkpoint value"
-    );
     stores.rollback(&snapshot);
     assert_eq!(stores.toks(0), global);
-    assert_eq!(
-        outer_root.strong_count(),
-        outer_before_rollback_write,
-        "journal truncation releases the rolled-back current and redo roots"
-    );
 
     let fork = stores.clone();
     assert_eq!(fork.toks(0), global);
-    assert!(
+    assert_eq!(
         fork.env
             .token_root(CellId::new(BankTag::Toks, 0))
-            .expect("forked Env token root")
-            .ptr_eq(&global_root),
-        "generation forks share exact immutable payloads"
+            .expect("forked Env token coordinate")
+            .id(),
+        global
     );
+    assert_eq!(fork.tokens(global).tokens(), stores.tokens(global).tokens());
 }
 
 #[test]
-fn macro_definitions_own_parameter_and_replacement_token_children() {
+fn macro_definitions_preserve_parameter_and_replacement_coordinates() {
     let mut stores = Stores::new();
     let parameter = stores.intern_token_list(&[Token::param(1)]);
     let replacement = stores.intern_token_list(&[Token::Char {
         ch: 'r',
         cat: Catcode::Other,
     }]);
-    let parameter_root = stores.tokens.owner(parameter).expect("parameter root");
-    let replacement_root = stores.tokens.owner(replacement).expect("replacement root");
-    let parameter_before = parameter_root.strong_count();
-    let replacement_before = replacement_root.strong_count();
-
     let definition = stores.intern_macro(MacroMeaning::new(
         MeaningFlags::from_bits(0),
         parameter,
         replacement,
     ));
-    let (stored_parameter, stored_replacement) = stores.macros.testing_token_roots(definition.id());
-    assert!(stored_parameter.ptr_eq(&parameter_root));
-    assert!(stored_replacement.ptr_eq(&replacement_root));
-    drop((stored_parameter, stored_replacement));
-    assert_eq!(parameter_root.strong_count(), parameter_before + 2);
-    assert_eq!(replacement_root.strong_count(), replacement_before + 2);
+    let stored = stores.macro_definition(definition.id());
+    assert_eq!(stored.parameter_text(), parameter);
+    assert_eq!(stored.replacement_text(), replacement);
 
     let fork = stores.clone();
-    let fork_definition = fork
-        .macros
-        .resolve_stored(MacroDefinitionId::new(definition.raw()))
-        .expect("forked macro definition");
-    let (fork_parameter, fork_replacement) = fork.macros.testing_token_roots(fork_definition);
-    assert!(fork_parameter.ptr_eq(&parameter_root));
-    assert!(fork_replacement.ptr_eq(&replacement_root));
+    let fork_definition = fork.macro_definition(definition.id());
+    assert_eq!(fork_definition.parameter_text(), parameter);
+    assert_eq!(fork_definition.replacement_text(), replacement);
+    assert_eq!(
+        fork.tokens(parameter).tokens(),
+        stores.tokens(parameter).tokens()
+    );
+    assert_eq!(
+        fork.tokens(replacement).tokens(),
+        stores.tokens(replacement).tokens()
+    );
 }
 
 #[test]
@@ -1378,8 +1340,8 @@ fn builder_and_bulk_token_list_identities_match() {
 
     assert_eq!(built, bulk);
     assert_eq!(
-        stores.tokens.semantic_id(built),
-        stores.tokens.semantic_id(bulk)
+        stores.testing_token_semantic_id(built),
+        stores.testing_token_semantic_id(bulk)
     );
 }
 
@@ -1711,7 +1673,7 @@ fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
     );
     assert_eq!(reused.raw(), stale_id.raw());
     assert_ne!(reused.id(), stale_id);
-    assert!(!stores.macros.contains(stale_id));
+    assert!(!stores.runtime_values.contains_macro(stale_id));
     assert_eq!(
         stores.macro_definition(reused.id()).replacement_text(),
         reused_body
@@ -1729,7 +1691,7 @@ fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
 
     assert_eq!(reused.raw(), stale.raw());
     assert_ne!(reused, stale);
-    assert!(!stores.glue.contains(stale));
+    assert!(!stores.runtime_values.contains_glue(stale));
     assert_eq!(stores.glue(reused), glue_spec(2));
     assert_eq!(stores.glue(crate::ids::GlueId::ZERO), GlueSpec::ZERO);
 }

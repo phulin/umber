@@ -1,11 +1,11 @@
 use super::{FormatGlue, FormatMacro, FormatName, FormatToken, StoreFormat, StoreFormatError};
 use crate::ContentHash;
-use crate::glue::{GlueSpec, GlueStore, Order};
+use crate::glue::{GlueSpec, Order};
 use crate::interner::{ControlSequenceKind, Interner, named_kind, semantic_atom};
-use crate::macro_store::{MacroMeaning, MacroParameterPattern, MacroStore};
+use crate::macro_store::{MacroMeaning, MacroParameterPattern};
 use crate::scaled::Scaled;
 use crate::token::{Catcode, FrozenToken, Token};
-use crate::token_store::{TokenSemanticIdBuilder, TokenStore};
+use crate::token_store::{TokenSemanticId, TokenSemanticIdBuilder};
 
 pub(crate) const NAMES_SECTION: u32 = 256;
 pub(crate) const NAMES_LOOKUP_SECTION: u32 = 257;
@@ -44,9 +44,20 @@ pub(crate) struct FrozenCoreSections<'a> {
 
 pub(crate) struct DecodedFrozenCore {
     pub interner: Interner,
-    pub tokens: TokenStore,
-    pub macros: MacroStore,
-    pub glue: GlueStore,
+    pub tokens: Vec<DecodedFrozenTokenList>,
+    pub macros: Vec<DecodedFrozenMacro>,
+    pub glue: Vec<GlueSpec>,
+}
+
+pub(crate) struct DecodedFrozenTokenList {
+    pub tokens: Vec<Token>,
+    pub semantic_id: TokenSemanticId,
+}
+
+pub(crate) struct DecodedFrozenMacro {
+    pub meaning: MacroMeaning,
+    pub pattern: MacroParameterPattern,
+    pub observation_width: u32,
 }
 
 pub(crate) fn encode(format: &StoreFormat) -> Result<EncodedFrozenCore, StoreFormatError> {
@@ -285,7 +296,7 @@ fn decode_tokens(
     bytes: &[u8],
     interner: &Interner,
     checksum: u64,
-) -> Result<TokenStore, StoreFormatError> {
+) -> Result<Vec<DecodedFrozenTokenList>, StoreFormatError> {
     if bytes.len() < TOKENS_HEADER {
         return Err(StoreFormatError::Invalid("frozen token lists"));
     }
@@ -353,15 +364,9 @@ fn decode_tokens(
     if cursor as usize != word_count {
         return Err(StoreFormatError::Invalid("unused frozen token words"));
     }
-    let lookup = crate::frozen_lookup::decode_direct(&bytes[words_end..], &hashes)
+    crate::frozen_lookup::decode_direct(&bytes[words_end..], &hashes)
         .map_err(StoreFormatError::Invalid)?;
-    let tokens = TokenStore::from_frozen(
-        arena,
-        spans,
-        semantic_ids,
-        crate::token_store::FrozenTokenLookup::Direct(lookup),
-    )
-    .map_err(StoreFormatError::Invalid)?;
+    let tokens = decoded_token_lists(&arena, &spans, semantic_ids)?;
     #[cfg(feature = "profiling")]
     {
         crate::measurement::record_format_restore_entries(word_count, 0, 0, 0);
@@ -374,7 +379,7 @@ fn decode_tokens_v1(
     bytes: &[u8],
     interner: &Interner,
     checksum: u64,
-) -> Result<TokenStore, StoreFormatError> {
+) -> Result<Vec<DecodedFrozenTokenList>, StoreFormatError> {
     let (count, words_offset, word_count) = read_header(
         bytes,
         TOKENS_HEADER,
@@ -436,19 +441,40 @@ fn decode_tokens_v1(
             Ok(lookup)
         })
         .map_err(StoreFormatError::Invalid)?;
-    let tokens = TokenStore::from_frozen(
-        arena,
-        spans,
-        semantic_ids,
-        crate::token_store::FrozenTokenLookup::Legacy(lookup),
-    )
-    .map_err(StoreFormatError::Invalid)?;
+    let _ = lookup;
+    let tokens = decoded_token_lists(&arena, &spans, semantic_ids)?;
     #[cfg(feature = "profiling")]
     {
         crate::measurement::record_format_restore_entries(word_count, 0, 0, 0);
         crate::measurement::record_format_restore_work(1, 0, 5 + count);
     }
     Ok(tokens)
+}
+
+fn decoded_token_lists(
+    arena: &[Token],
+    spans: &[(u32, u32)],
+    semantic_ids: Vec<TokenSemanticId>,
+) -> Result<Vec<DecodedFrozenTokenList>, StoreFormatError> {
+    spans
+        .iter()
+        .copied()
+        .zip(semantic_ids)
+        .map(|((start, len), semantic_id)| {
+            let start = start as usize;
+            let end = start
+                .checked_add(len as usize)
+                .ok_or(StoreFormatError::Invalid("frozen token span overflow"))?;
+            let tokens = arena
+                .get(start..end)
+                .ok_or(StoreFormatError::Invalid("frozen token span out of bounds"))?
+                .to_vec();
+            Ok(DecodedFrozenTokenList {
+                tokens,
+                semantic_id,
+            })
+        })
+        .collect()
 }
 
 type SemanticAtom = (u64, ContentHash);
@@ -633,7 +659,10 @@ fn encode_macros(macros: &[FormatMacro]) -> Result<Vec<u8>, StoreFormatError> {
     Ok(out)
 }
 
-fn decode_macros(bytes: &[u8], tokens: &TokenStore) -> Result<MacroStore, StoreFormatError> {
+fn decode_macros(
+    bytes: &[u8],
+    tokens: &[DecodedFrozenTokenList],
+) -> Result<Vec<DecodedFrozenMacro>, StoreFormatError> {
     if bytes.len() < MACROS_HEADER
         || read_u32(bytes, 0) != SECTION_VERSION
         || read_u32(bytes, 8) != MACROS_HEADER as u32
@@ -649,12 +678,6 @@ fn decode_macros(bytes: &[u8], tokens: &TokenStore) -> Result<MacroStore, StoreF
         return Err(StoreFormatError::Invalid("frozen macro section length"));
     }
     let mut definitions = Vec::with_capacity(count);
-    let mut parameter_roots = Vec::with_capacity(count);
-    let mut replacement_roots = Vec::with_capacity(count);
-    let mut patterns = Vec::with_capacity(count);
-    let mut parameter_semantic_ids = Vec::with_capacity(count);
-    let mut replacement_semantic_ids = Vec::with_capacity(count);
-    let mut observation_widths = Vec::with_capacity(count);
     for index in 0..count {
         let record = MACROS_HEADER + index * MACRO_RECORD;
         if bytes[record] & !0x0f != 0
@@ -668,61 +691,41 @@ fn decode_macros(bytes: &[u8], tokens: &TokenStore) -> Result<MacroStore, StoreF
             parameter_text: read_u32(bytes, record + 4),
             replacement_text: read_u32(bytes, record + 8),
         };
-        let parameter_text = tokens
-            .resolve_stored(crate::ids::TokenListId::new(row.parameter_text))
-            .ok_or(StoreFormatError::Invalid(
-                "frozen macro parameter reference",
-            ))?;
-        let replacement_text = tokens
-            .resolve_stored(crate::ids::TokenListId::new(row.replacement_text))
-            .ok_or(StoreFormatError::Invalid(
-                "frozen macro replacement reference",
-            ))?;
-        definitions.push(MacroMeaning::new(
+        let parameter =
+            tokens
+                .get(row.parameter_text as usize)
+                .ok_or(StoreFormatError::Invalid(
+                    "frozen macro parameter reference",
+                ))?;
+        let replacement =
+            tokens
+                .get(row.replacement_text as usize)
+                .ok_or(StoreFormatError::Invalid(
+                    "frozen macro replacement reference",
+                ))?;
+        let meaning = MacroMeaning::new(
             crate::meaning::MeaningFlags::from_bits(row.flags),
-            parameter_text,
-            replacement_text,
-        ));
-        parameter_roots.push(
-            tokens
-                .owner(parameter_text)
-                .ok_or(StoreFormatError::Invalid("frozen macro parameter owner"))?,
+            crate::ids::TokenListId::new(row.parameter_text),
+            crate::ids::TokenListId::new(row.replacement_text),
         );
-        replacement_roots.push(
-            tokens
-                .owner(replacement_text)
-                .ok_or(StoreFormatError::Invalid("frozen macro replacement owner"))?,
-        );
-        let parameter_tokens = tokens.get(parameter_text);
-        patterns.push(MacroParameterPattern::from_tokens(&parameter_tokens));
-        parameter_semantic_ids.push(tokens.semantic_id(parameter_text));
-        replacement_semantic_ids.push(tokens.semantic_id(replacement_text));
         // TeX82 §§289/294/473 store one `end_match` word between parameter
         // and replacement text. Umber represents that separator structurally,
         // but §341's observed `def_ref` still advances across its memory word.
-        observation_widths.push(
-            u32::try_from(
-                2_usize + tokens.get(parameter_text).len() + tokens.get(replacement_text).len(),
-            )
-            .map_err(|_| StoreFormatError::Invalid("frozen macro observation width"))?,
-        );
+        let observation_width =
+            u32::try_from(2_usize + parameter.tokens.len() + replacement.tokens.len())
+                .map_err(|_| StoreFormatError::Invalid("frozen macro observation width"))?;
+        definitions.push(DecodedFrozenMacro {
+            meaning,
+            pattern: MacroParameterPattern::from_tokens(&parameter.tokens),
+            observation_width,
+        });
     }
-    let macros = MacroStore::from_frozen(
-        definitions,
-        parameter_roots,
-        replacement_roots,
-        patterns,
-        parameter_semantic_ids,
-        replacement_semantic_ids,
-        observation_widths,
-    )
-    .map_err(StoreFormatError::Invalid)?;
     #[cfg(feature = "profiling")]
     {
         crate::measurement::record_format_restore_entries(0, count, 0, 0);
         crate::measurement::record_format_restore_work(1, 0, 7);
     }
-    Ok(macros)
+    Ok(definitions)
 }
 
 fn encode_glue(glue: &[FormatGlue]) -> Result<Vec<u8>, StoreFormatError> {
@@ -751,7 +754,7 @@ fn encode_glue(glue: &[FormatGlue]) -> Result<Vec<u8>, StoreFormatError> {
     Ok(out)
 }
 
-fn decode_glue(bytes: &[u8], checksum: u64) -> Result<GlueStore, StoreFormatError> {
+fn decode_glue(bytes: &[u8], checksum: u64) -> Result<Vec<GlueSpec>, StoreFormatError> {
     if bytes.len() < GLUE_HEADER
         || read_u32(bytes, 0) != SECTION_VERSION
         || read_u32(bytes, 8) != GLUE_HEADER as u32
@@ -801,13 +804,13 @@ fn decode_glue(bytes: &[u8], checksum: u64) -> Result<GlueStore, StoreFormatErro
             Ok(lookup)
         })
         .map_err(StoreFormatError::Invalid)?;
-    let glue = GlueStore::from_frozen(specs, lookup).map_err(StoreFormatError::Invalid)?;
+    let _ = lookup;
     #[cfg(feature = "profiling")]
     {
         crate::measurement::record_format_restore_entries(0, 0, count, 0);
         crate::measurement::record_format_restore_work(1, 0, 2 + count);
     }
-    Ok(glue)
+    Ok(specs)
 }
 
 fn write_header(

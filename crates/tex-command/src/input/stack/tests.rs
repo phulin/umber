@@ -63,7 +63,6 @@ fn push_activation(
 #[test]
 fn transient_dynamic_words_count_owned_buffers_once() {
     let mut state = CommandState::default();
-    let mut universe = Universe::new();
     let arguments = Arc::from([traced('a'), traced('b'), traced('c')]);
     push_activation(
         &mut state,
@@ -99,12 +98,10 @@ fn transient_dynamic_words_count_owned_buffers_once() {
     );
     state.push_token_level(
         TokenPayload::stored(
-            universe.intern_token_list_ref(
-                &[Token::Char {
-                    ch: 's',
-                    cat: Catcode::Other,
-                }; 4],
-            ),
+            &[Token::Char {
+                ch: 's',
+                cat: Catcode::Other,
+            }; 4],
             tex_state::provenance::OriginListRef::empty(),
         ),
         TokenBehavior::Ordinary,
@@ -125,7 +122,7 @@ fn each_popped_level_retires_exactly_once_with_its_trace() {
     let universe = Universe::new();
     let identity = state.push_token_level(
         TokenPayload::stored(
-            universe.token_list_ref(TokenListId::EMPTY),
+            universe.tokens(TokenListId::EMPTY).tokens(),
             tex_state::provenance::OriginListRef::empty(),
         ),
         TokenBehavior::Ordinary,
@@ -627,7 +624,10 @@ fn stored_token_reference_lifetime_survives_redefinition_and_replay() {
     let list = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
     let mut state = CommandState::default();
     let level = state.push_token_level(
-        TokenPayload::stored(list, tex_state::provenance::OriginListRef::empty()),
+        TokenPayload::stored(
+            universe.tokens(list.id()).tokens(),
+            tex_state::provenance::OriginListRef::empty(),
+        ),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Stored(StoredReplayReason::Mark),
@@ -669,7 +669,10 @@ fn snapshot_restores_strong_stored_root_after_live_cursor_retires() {
     }]);
     let mut state = CommandState::default();
     let level = state.push_token_level(
-        TokenPayload::stored(root, tex_state::provenance::OriginListRef::empty()),
+        TokenPayload::stored(
+            universe.tokens(root.id()).tokens(),
+            tex_state::provenance::OriginListRef::empty(),
+        ),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Stored(StoredReplayReason::Mark),
@@ -853,7 +856,7 @@ fn token_list_kind_reference_and_parameter_stack_lifecycle_matrix() {
         let mut state = CommandState::default();
         let identity = state.push_token_level(
             TokenPayload::stored(
-                universe.token_list_ref(TokenListId::EMPTY),
+                universe.tokens(TokenListId::EMPTY).tokens(),
                 tex_state::provenance::OriginListRef::empty(),
             ),
             behavior,

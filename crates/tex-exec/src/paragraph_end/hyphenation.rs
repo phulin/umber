@@ -1084,7 +1084,7 @@ mod tests {
             "the actual pre-hyphenation traversal applies the language node's state"
         );
         assert_eq!(
-            tokens.tokens(),
+            &*stores.tokens(tokens.id()),
             [tex_state::token::Token::Char {
                 ch: 'w',
                 cat: tex_state::token::Catcode::Letter,

@@ -108,10 +108,10 @@ impl TracedTokenList {
         self.token_list.id()
     }
 
-    /// Borrows the strong exact-content token owner.
+    /// Borrows the copy-only token-list identity.
     #[must_use]
-    pub fn token_ref(&self) -> &TokenListRef {
-        &self.token_list
+    pub const fn token_ref(&self) -> TokenListRef {
+        self.token_list
     }
 
     #[must_use]
@@ -728,7 +728,7 @@ impl InputSummary {
                     index,
                     ..
                 } => {
-                    let tokens = token_list.tokens();
+                    let tokens = stores.tokens(token_list.id());
                     let split = (*index).min(tokens.len());
                     let exhausted = split >= tokens.len();
                     if position != 0 && exhausted && backed_up(*replay_kind) {

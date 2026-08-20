@@ -25,7 +25,10 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
         cat: Catcode::Other,
     }]);
     let mut command = CommandState::default();
-    command.push_everypar(TracedTokenList::synthetic(command_root));
+    command.push_everypar(
+        &universe.command_context(),
+        TracedTokenList::synthetic(command_root),
+    );
     {
         let mut context = universe.command_context();
         drop(command.publish_named_token_list_pushes(&mut context));
@@ -85,14 +88,14 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
         .expect("restored alignment")
         .columns()[0];
     assert_eq!(
-        column.u_template.tokens(),
+        &*universe.tokens(column.u_template.id()),
         &[Token::Char {
             ch: 'u',
             cat: Catcode::Other,
         }]
     );
     assert_eq!(
-        column.v_template.tokens(),
+        &*universe.tokens(column.v_template.id()),
         &[Token::Char {
             ch: 'v',
             cat: Catcode::Other,

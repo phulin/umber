@@ -1009,7 +1009,8 @@ pub(in crate::main_control) fn start_paragraph(
             .copied()
             .map(|token| tex_state::token::TracedTokenWord::pack(token, origin))
             .collect();
-        command.push_everypar(stores.finish_traced_token_list(&traced));
+        let tokens = stores.finish_traced_token_list(&traced);
+        command.push_everypar(&stores.command_context(), tokens);
     }
     Ok(())
 }
@@ -1128,7 +1129,8 @@ pub(in crate::main_control) fn schedule_everybox(
         );
         traced.extend_archived([tex_state::token::TracedTokenWord::pack(token, origin)]);
     }
-    command.push_everybox(stores.finish_rooted_traced_token_list(&traced), horizontal);
+    let tokens = stores.finish_rooted_traced_token_list(&traced);
+    command.push_everybox(&stores.command_context(), tokens, horizontal);
 }
 
 /// Runs TeX82 §774 `init_align`'s and §799 `fin_row`'s shared
@@ -1156,7 +1158,8 @@ pub(in crate::main_control) fn schedule_everycr(command: &mut CommandState, stor
         );
         traced.extend_archived([tex_state::token::TracedTokenWord::pack(token, origin)]);
     }
-    command.push_everycr(stores.finish_rooted_traced_token_list(&traced));
+    let tokens = stores.finish_rooted_traced_token_list(&traced);
+    command.push_everycr(&stores.command_context(), tokens);
 }
 
 /// Runs TeX82 §1030 `main_control`'s prologue,
@@ -1188,7 +1191,8 @@ pub(in crate::main_control) fn schedule_everyjob(
         );
         traced.extend_archived([tex_state::token::TracedTokenWord::pack(token, origin)]);
     }
-    command.push_everyjob(stores.finish_rooted_traced_token_list(&traced));
+    let tokens = stores.finish_rooted_traced_token_list(&traced);
+    command.push_everyjob(&stores.command_context(), tokens);
 }
 
 pub(in crate::main_control) fn schedule_everymath(
@@ -1212,7 +1216,8 @@ pub(in crate::main_control) fn schedule_everymath(
         .copied()
         .map(|token| tex_state::token::TracedTokenWord::pack(token, origin))
         .collect();
-    command.push_everymath(stores.finish_traced_token_list(&traced), display);
+    let tokens = stores.finish_traced_token_list(&traced);
+    command.push_everymath(&stores.command_context(), tokens, display);
 }
 
 /// A tex.web recoverable-error report that scanning detects but only the
@@ -1429,12 +1434,15 @@ pub(in crate::main_control) fn message_text(
     stores: &Universe,
     tokens: tex_state::ids::TokenListId,
 ) -> String {
-    message_tokens_text(stores, &stores.tokens(tokens))
+    message_tokens_text(stores, tokens)
 }
 
-pub(in crate::main_control) fn message_tokens_text(stores: &Universe, tokens: &[Token]) -> String {
+pub(in crate::main_control) fn message_tokens_text(
+    stores: &Universe,
+    tokens: tex_state::ids::TokenListId,
+) -> String {
     let mut text = String::new();
-    for &token in tokens {
+    for &token in stores.tokens(tokens).iter() {
         tex_state::token_show::append_token_string_text(stores, token, &mut text);
     }
     text
@@ -1446,19 +1454,19 @@ pub(in crate::main_control) fn show_tokens_text(
     stores: &Universe,
     tokens: tex_state::ids::TokenListId,
 ) -> String {
-    show_tokens_tokens_text(stores, &stores.tokens(tokens))
+    show_tokens_tokens_text(stores, tokens)
 }
 
 pub(in crate::main_control) fn show_tokens_tokens_text(
     stores: &Universe,
-    tokens: &[Token],
+    tokens: tex_state::ids::TokenListId,
 ) -> String {
     let newlinechar = u32::try_from(stores.int_param(IntParam::NEWLINE_CHAR))
         .ok()
         .filter(|&code| code <= u8::MAX.into())
         .and_then(char::from_u32);
     let mut text = String::new();
-    for &token in tokens {
+    for &token in stores.tokens(tokens).iter() {
         tex_state::token_show::append_token_selector_text(stores, token, newlinechar, &mut text);
     }
     text

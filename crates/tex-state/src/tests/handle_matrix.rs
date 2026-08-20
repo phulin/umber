@@ -89,7 +89,7 @@ fn page_ingress_rejects_post_rollback_reuse() {
     let snapshot = universe.snapshot();
     let stale = universe.intern_glue(glue(9));
     let stale_id = stale.id();
-    drop(stale);
+    let _ = stale;
     universe.rollback(&snapshot);
     let replacement = universe.intern_glue(glue(10));
     assert_eq!(stale_id.raw(), replacement.raw());
@@ -130,7 +130,7 @@ fn exercise_rollback_reallocate(class: HandleClass) {
             let snapshot = universe.snapshot();
             let stale = universe.intern_macro(empty_macro(MeaningFlags::LONG));
             let stale_id = stale.id();
-            drop(stale);
+            let _ = stale;
             universe.rollback(&snapshot);
             let replacement = universe.intern_macro(empty_macro(MeaningFlags::OUTER));
             assert_eq!(stale_id.raw(), replacement.raw(), "{class:?}");
@@ -142,7 +142,7 @@ fn exercise_rollback_reallocate(class: HandleClass) {
             let snapshot = universe.snapshot();
             let stale = universe.intern_glue(glue(1));
             let stale_id = stale.id();
-            drop(stale);
+            let _ = stale;
             universe.rollback(&snapshot);
             let replacement = universe.intern_glue(glue(2));
             assert_eq!(stale_id.raw(), replacement.raw(), "{class:?}");
@@ -245,7 +245,7 @@ fn exercise_fork(class: HandleClass) {
                     definition: inherited_id,
                 },
             );
-            drop(inherited);
+            let _ = inherited;
             let mut child = parent.clone();
             assert_eq!(
                 parent.macro_definition(inherited_id),

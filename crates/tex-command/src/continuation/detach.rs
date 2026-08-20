@@ -190,10 +190,12 @@ impl<'a> Detacher<'a> {
         let recipe = TokenListRecipeId(self.token_lists.len());
         self.token_list_ids.insert(root.id(), recipe);
         self.token_lists.push(Vec::new());
-        let tokens = root
-            .tokens()
-            .iter()
-            .map(|token| self.token(*token))
+        let token_count = self.universe.tokens(root.id()).len();
+        let tokens = (0..token_count)
+            .map(|index| {
+                let token = self.universe.tokens(root.id())[index];
+                self.token(token)
+            })
             .collect();
         self.token_lists[recipe.0] = tokens;
         recipe
@@ -302,6 +304,13 @@ impl<'a> Detacher<'a> {
         }
     }
 
+    fn traced_word(&mut self, word: tex_state::token::TracedTokenWord) -> OwnedWord {
+        OwnedWord {
+            token: self.token(word.semantic_token()),
+            origin: self.origin_id(word.origin()),
+        }
+    }
+
     fn source_provenance(&mut self, provenance: SourceProvenance) -> OwnedSourceProvenance {
         let range = provenance.range();
         OwnedSourceProvenance {
@@ -350,12 +359,32 @@ impl<'a> Detacher<'a> {
         let recipe = MacroRecipeId(self.macros.len());
         self.macro_ids.insert(definition, recipe);
         let owner = parameters.macro_owner(definition);
-        self.macro_operands.insert(
-            owner
-                .observation_operand(definition)
-                .expect("admitted macro has an observation operand") as u64,
-            recipe,
-        );
+        debug_assert_eq!(owner, definition);
+        let (operand, meaning, definition_origin, parameter_origin_ids, replacement_origin_ids) = {
+            let definition = self.universe.macro_definition(definition);
+            let parameter_origin_ids = (0..definition.parameter_len())
+                .filter_map(|index| {
+                    definition
+                        .parameter_traced_word(index)
+                        .map(|word| word.origin())
+                })
+                .collect::<Vec<_>>();
+            let replacement_origin_ids = (0..definition.replacement_len())
+                .filter_map(|index| {
+                    definition
+                        .replacement_traced_word(index)
+                        .map(|word| word.origin())
+                })
+                .collect::<Vec<_>>();
+            (
+                definition.observation_operand(),
+                definition.meaning(),
+                definition.definition_origin(),
+                parameter_origin_ids,
+                replacement_origin_ids,
+            )
+        };
+        self.macro_operands.insert(operand as u64, recipe);
         self.macros.push(OwnedMacro {
             flags: tex_state::meaning::MeaningFlags::from_bits(0),
             parameters: TokenListRecipeId(0),
@@ -364,31 +393,12 @@ impl<'a> Detacher<'a> {
             parameter_origins: OriginListRecipeId(0),
             replacement_origins: OriginListRecipeId(0),
         });
-        let meaning = owner
-            .meaning(definition)
-            .expect("admitted macro has a packed meaning");
         let parameters = self.token_list(&self.universe.token_list_ref(meaning.parameter_text()));
         let replacement =
             self.token_list(&self.universe.token_list_ref(meaning.replacement_text()));
-        let definition_origin = self.origin_id(
-            owner
-                .definition_origin(definition)
-                .unwrap_or(OriginId::UNKNOWN),
-        );
-        let parameter_origins = self.origin_words(
-            (0..owner.parameter_len(definition).unwrap_or(0)).filter_map(|index| {
-                owner
-                    .parameter_traced_word(definition, index)
-                    .map(|word| word.origin())
-            }),
-        );
-        let replacement_origins = self.origin_words(
-            (0..owner.replacement_len(definition).unwrap_or(0)).filter_map(|index| {
-                owner
-                    .replacement_traced_word(definition, index)
-                    .map(|word| word.origin())
-            }),
-        );
+        let definition_origin = self.origin_id(definition_origin);
+        let parameter_origins = self.origin_words(parameter_origin_ids);
+        let replacement_origins = self.origin_words(replacement_origin_ids);
         self.macros[recipe.0] = OwnedMacro {
             flags: meaning.flags(),
             parameters,
@@ -445,7 +455,7 @@ impl<'a> Detacher<'a> {
                 retirement: source.retirement,
                 every_eof: source.every_eof.as_ref().map(|list| {
                     (
-                        self.token_list(list.token_ref()),
+                        self.token_list(&list.token_ref()),
                         self.origin_list(list.origin_ref()),
                     )
                 }),
@@ -494,17 +504,17 @@ impl<'a> Detacher<'a> {
                 chunk.rooted_words().map(|word| self.word(word)).collect(),
             ),
             TokenPayload::MacroReplacement {
-                admitted,
+                admitted: _,
                 definition,
                 len,
             } => OwnedTokenPayload::Transient(
                 (0..*len as usize)
                     .filter_map(|index| {
-                        parameters
-                            .admitted_macro(*admitted)
-                            .replacement_word(*definition, index)
+                        self.universe
+                            .macro_definition(*definition)
+                            .replacement_traced_word(index)
                     })
-                    .map(|word| self.word(word))
+                    .map(|word| self.traced_word(word))
                     .collect(),
             ),
             TokenPayload::ArgumentRange { arguments, range } => OwnedTokenPayload::ArgumentRange {

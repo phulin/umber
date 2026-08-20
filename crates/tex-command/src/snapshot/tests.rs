@@ -93,7 +93,10 @@ fn durable_continuation_materializes_canonical_stored_content_into_new_roots() {
     let source_root = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
     let mut state = CommandState::default();
     state.push_token_level(
-        TokenPayload::stored(source_root, tex_state::provenance::OriginListRef::empty()),
+        TokenPayload::stored(
+            universe.tokens(source_root.id()).tokens(),
+            tex_state::provenance::OriginListRef::empty(),
+        ),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Inserted,
@@ -175,11 +178,10 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
         Token::Cs(macro_name),
         frame.as_origin().clone(),
     );
-    state
-        .parameters
-        .admit_macro(macro_root.id(), macro_root.meaning(), || {
-            universe.packed_macro_owner(macro_root.id())
-        });
+    state.parameters.admit_macro(
+        macro_root.id(),
+        universe.macro_definition(macro_root.id()).meaning(),
+    );
     let arguments = state.parameters.store_arguments(
         tex_state::token::RootedTracedTokenBuffer::new([
             tex_state::token::RootedTracedTokenWord::new(Token::Cs(macro_name), inserted.clone()),
@@ -206,7 +208,10 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
     state.parameters.next_activation_identity = 11;
     let stored_origins = universe.allocate_origin_list_ref(&[inserted]);
     state.push_token_level(
-        TokenPayload::stored(replacement_tokens, stored_origins),
+        TokenPayload::stored(
+            universe.tokens(replacement_tokens.id()).tokens(),
+            stored_origins,
+        ),
         TokenBehavior::MacroBody(MacroActivationId(7)),
         RetirementBehavior::Pop,
         ReplayTrace::MacroReplacement,
@@ -254,11 +259,11 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
     let restored_owner = restored
         .parameters
         .macro_owner(restored_activation.definition);
-    let restored_macro = restored_owner
-        .meaning(restored_activation.definition)
-        .expect("restored activation has a packed macro record");
+    let restored_macro = destination.macro_definition(restored_owner);
     assert_eq!(
-        destination.tokens(restored_macro.replacement_text()),
+        destination
+            .tokens(restored_macro.replacement_text())
+            .tokens(),
         [Token::Cs(restored_activation.name)]
     );
     let tex_state::provenance::OriginRecord::MacroInvocation(restored_frame) =
@@ -268,9 +273,7 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
     };
     assert_eq!(
         restored_frame.definition_operand(),
-        restored_owner
-            .observation_operand(restored_activation.definition)
-            .expect("restored activation has an observation operand") as u64,
+        destination.macro_definition_observation_operand(restored_activation.definition) as u64,
         "frame definition operand must be destination-local"
     );
     let resolved = tex_state::ProvenanceResolver::new(&destination)
@@ -316,7 +319,10 @@ fn invalid_continuation_recipe_rejects_before_publishing_roots() {
     let tokens = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
     let mut state = CommandState::default();
     state.push_token_level(
-        TokenPayload::stored(tokens, tex_state::provenance::OriginListRef::empty()),
+        TokenPayload::stored(
+            universe.tokens(tokens.id()).tokens(),
+            tex_state::provenance::OriginListRef::empty(),
+        ),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Inserted,

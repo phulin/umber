@@ -2781,19 +2781,20 @@ impl CommandProcessor<'_> {
             InternalValue::Font(symbol) => {
                 ObservationValue::Name(self.state.resolve(symbol).to_owned())
             }
-            InternalValue::Tokens { tokens, .. } => ObservationValue::Tokens(
-                tokens
-                    .tokens()
-                    .iter()
-                    .copied()
-                    .map(|token| {
-                        self.observed_token(tex_state::token::TracedTokenWord::pack(
-                            token,
-                            OriginId::UNKNOWN,
-                        ))
-                    })
-                    .collect(),
-            ),
+            InternalValue::Tokens { tokens, .. } => {
+                let token_count = self.state.tokens(tokens.id()).len();
+                ObservationValue::Tokens(
+                    (0..token_count)
+                        .map(|index| {
+                            let token = self.state.tokens(tokens.id())[index];
+                            self.observed_token(tex_state::token::TracedTokenWord::pack(
+                                token,
+                                OriginId::UNKNOWN,
+                            ))
+                        })
+                        .collect(),
+                )
+            }
         };
         self.observe(CommandObservation::Scanner(ScannerRecord {
             kind: "internal",

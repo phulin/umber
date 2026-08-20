@@ -888,15 +888,15 @@ impl CommandProcessor<'_> {
         if first_flags != second_flags {
             return false;
         }
-        let first = self.state.macro_definition(first_definition);
-        let second = self.state.macro_definition(second_definition);
+        let first = self.state.macro_definition(first_definition).meaning();
+        let second = self.state.macro_definition(second_definition).meaning();
         let first_parameters = self.state.tokens(first.parameter_text());
         let second_parameters = self.state.tokens(second.parameter_text());
         let first_replacement = self.state.tokens(first.replacement_text());
         let second_replacement = self.state.tokens(second.replacement_text());
         first.flags() == second.flags()
-            && first_parameters.tokens() == second_parameters.tokens()
-            && first_replacement.tokens() == second_replacement.tokens()
+            && &*first_parameters == &*second_parameters
+            && &*first_replacement == &*second_replacement
     }
 
     fn evaluate_numeric_comparison(&mut self) -> Result<bool, CommandError> {

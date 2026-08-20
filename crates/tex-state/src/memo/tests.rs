@@ -206,7 +206,7 @@ fn nested_node_graph_round_trips_across_owners_and_respects_budget_atomically() 
         })
         .expect("imported graph lost its rooted mark");
     assert_eq!(
-        imported_mark.tokens(),
+        target.tokens(imported_mark.id()).tokens(),
         &[Token::Char {
             ch: 'm',
             cat: Catcode::Letter,
@@ -422,7 +422,6 @@ fn detached_values_survive_target_rollback_and_generation_fork() {
     let imported = target
         .import_memo_token_list(&detached, MemoValueLimits::default())
         .expect("post-rollback target import");
-    assert!(!stale.ptr_eq(&imported));
     assert_eq!(stale.id().raw(), imported.id().raw());
     assert_ne!(stale.id(), imported.id());
     assert_eq!(

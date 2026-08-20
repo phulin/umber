@@ -3,7 +3,7 @@
 use tex_state::env::banks::IntParam;
 use tex_state::ids::MacroDefinitionId;
 use tex_state::interner::Symbol;
-use tex_state::macro_store::{MacroMeaning, PackedMacroChunkOwner, PackedMacroPattern};
+use tex_state::macro_store::{MacroMeaning, MacroParameterPattern};
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, RootedTracedTokenBuffer, Token, TracedTokenWord};
 
@@ -28,18 +28,9 @@ pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
 pub(crate) struct ParameterState {
     pub(crate) activations: Vec<MacroActivation>,
     pub(crate) next_activation_identity: u64,
-    admitted_macros: Vec<PackedMacroChunkOwner>,
-    /// Latest admitted owner by the definition's dense 64-record chunk.
-    ///
-    /// Entries contain `owner index + 1`; zero is the vacant sentinel.  The
-    /// owner still validates the complete generation-bearing definition id,
-    /// while old owners remain in `admitted_macros` for active replacement
-    /// levels and detached-continuation publication.
-    admitted_macro_chunks: Vec<u32>,
-    /// Head entry plus one for each recyclable dense definition slot.
-    admitted_macro_definition_heads: Vec<u32>,
-    /// Exact-generation owner coordinates chained within each dense slot.
-    admitted_macro_definitions: Vec<AdmittedMacroDefinition>,
+    /// Copy-only definitions referenced by live replacement levels.
+    /// Payload liveness belongs to the command/universe region roots.
+    admitted_macros: Vec<MacroDefinitionId>,
     argument_chunks: Vec<std::sync::Arc<ArgumentChunk>>,
     argument_chunk_cursor: u32,
     argument_scratch: RootedTracedTokenBuffer,
@@ -47,13 +38,6 @@ pub(crate) struct ParameterState {
 
 const ARGUMENT_CHUNK_WORDS: usize = 4096;
 const ARGUMENT_CHUNK_RECORDS: usize = 256;
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct AdmittedMacroDefinition {
-    definition: MacroDefinitionId,
-    owner: u32,
-    next: u32,
-}
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 struct ArgumentChunk {
@@ -330,123 +314,33 @@ impl Default for MacroArguments {
 }
 
 impl ParameterState {
-    fn indexed_macro_owner(
-        &self,
-        definition: MacroDefinitionId,
-        meaning: MacroMeaning,
-    ) -> Option<(usize, &PackedMacroChunkOwner)> {
-        let mut encoded = self
-            .admitted_macro_definition_heads
-            .get(definition.raw() as usize)
-            .copied()
-            .unwrap_or(0);
-        while let Some(index) = encoded.checked_sub(1) {
-            let entry = self.admitted_macro_definitions[index as usize];
-            if entry.definition == definition {
-                let owner = entry.owner as usize;
-                let owner = &self.admitted_macros[owner];
-                if owner.contains_meaning(definition, meaning) {
-                    return Some((entry.owner as usize, owner));
-                }
-            }
-            encoded = entry.next;
-        }
-        None
-    }
-
-    fn index_macro_chunk(&mut self, definition: MacroDefinitionId, index: usize) {
-        let chunk = PackedMacroChunkOwner::chunk_index(definition) as usize;
-        if self.admitted_macro_chunks.len() <= chunk {
-            self.admitted_macro_chunks.resize(chunk + 1, 0);
-        }
-        if self.admitted_macro_chunks[chunk] == 0 {
-            self.admitted_macro_chunks[chunk] =
-                u32::try_from(index + 1).expect("admitted macro chunks exceed u32");
-        }
-    }
-
-    fn index_macro_definition(&mut self, definition: MacroDefinitionId, index: usize) {
-        let slot = definition.raw() as usize;
-        if self.admitted_macro_definition_heads.len() <= slot {
-            self.admitted_macro_definition_heads.resize(slot + 1, 0);
-        }
-        let mut encoded = self.admitted_macro_definition_heads[slot];
-        while let Some(entry_index) = encoded.checked_sub(1) {
-            let entry = self.admitted_macro_definitions[entry_index as usize];
-            if entry.definition == definition {
-                self.admitted_macro_definitions[entry_index as usize].owner =
-                    u32::try_from(index).expect("admitted macro chunks exceed u32");
-                return;
-            }
-            encoded = entry.next;
-        }
-        let entry_index = self.admitted_macro_definitions.len();
-        let entry = AdmittedMacroDefinition {
-            definition,
-            owner: u32::try_from(index).expect("admitted macro chunks exceed u32"),
-            next: self.admitted_macro_definition_heads[slot],
-        };
-        self.admitted_macro_definitions.push(entry);
-        self.admitted_macro_definition_heads[slot] =
-            u32::try_from(entry_index + 1).expect("admitted macro definitions exceed u32");
-    }
-
     pub(crate) fn admit_macro(
         &mut self,
         definition: MacroDefinitionId,
-        meaning: MacroMeaning,
-        owner: impl FnOnce() -> PackedMacroChunkOwner,
+        _meaning: MacroMeaning,
     ) -> u32 {
-        if let Some((index, _)) = self.indexed_macro_owner(definition, meaning) {
-            return u32::try_from(index).expect("admitted macro chunks exceed u32");
-        }
-        // A definition generation retained by an active replacement level can
-        // outlive a newer generation in the same dense slot. Recover that old
-        // owner without asking the live store to reconstruct an overwritten
-        // packed record, then make it the next direct hit.
         if let Some(index) = self
             .admitted_macros
             .iter()
-            .position(|candidate| candidate.contains_meaning(definition, meaning))
+            .position(|candidate| *candidate == definition)
         {
-            self.index_macro_definition(definition, index);
             return u32::try_from(index).expect("admitted macro chunks exceed u32");
         }
-        if self.activations.is_empty()
-            && let Some(encoded) = self
-                .admitted_macro_chunks
-                .get(PackedMacroChunkOwner::chunk_index(definition) as usize)
-                .copied()
-            && let Some(index) = encoded.checked_sub(1).map(|index| index as usize)
-            && self
-                .admitted_macros
-                .get(index)
-                .is_some_and(|candidate| candidate.owns_definition_slot(definition))
-        {
-            self.admitted_macros[index] = owner();
-            self.index_macro_definition(definition, index);
-            return u32::try_from(index).expect("admitted macro chunks exceed u32");
-        }
-        self.admitted_macros.push(owner());
+        self.admitted_macros.push(definition);
         let index = self.admitted_macros.len() - 1;
-        self.index_macro_chunk(definition, index);
-        self.index_macro_definition(definition, index);
         u32::try_from(index).expect("admitted macro chunks exceed u32")
     }
 
-    pub(crate) fn admitted_macro(&self, index: u32) -> &PackedMacroChunkOwner {
-        &self.admitted_macros[index as usize]
+    pub(crate) fn admitted_macro(&self, index: u32) -> MacroDefinitionId {
+        self.admitted_macros[index as usize]
     }
 
-    pub(crate) fn macro_owner(&self, definition: MacroDefinitionId) -> &PackedMacroChunkOwner {
-        // A newer generation can occupy the chunk cache while an older macro
-        // body is still active. This cold search is required only for
-        // detachment and diagnostics of that retained generation; ordinary
-        // expansion always resolves through the exact indexed owner above.
+    pub(crate) fn macro_owner(&self, definition: MacroDefinitionId) -> MacroDefinitionId {
         self.admitted_macros
             .iter()
-            .find(|owner| owner.contains(definition))
-            .expect("active macro definition has an admitted chunk owner")
+            .copied()
+            .find(|candidate| *candidate == definition)
+            .expect("active macro definition is admitted")
     }
 
     fn take_argument_builder(&mut self) -> MacroArgumentBuilder {
@@ -595,7 +489,9 @@ impl CommandProcessor<'_> {
         let mut text = String::new();
         crate::processor::expand::append_print_esc_text(&self.state, name, &mut text);
         text.push_str("->");
-        for token in self.state.tokens(tokens).to_vec() {
+        let token_count = self.state.tokens(tokens).len();
+        for index in 0..token_count {
+            let token = self.state.tokens(tokens)[index];
             crate::processor::expand::append_token_list_token_text(&self.state, token, &mut text);
         }
         // §323 uses `print_nl`, unlike §389's unconditional `print_ln` for
@@ -622,25 +518,11 @@ impl CommandProcessor<'_> {
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
         self.command.parameters.prepare_argument_build();
-        let admitted = self.command.parameters.admit_macro(
-            definition,
-            self.state
-                .packed_macro_meaning(definition)
-                .unwrap_or_else(|| self.state.macro_definition(definition)),
-            || self.state.packed_macro_owner(definition),
-        );
-        let meaning = self
-            .command
-            .parameters
-            .admitted_macro(admitted)
-            .meaning(definition)
-            .ok_or(CommandError::input_invariant())?;
-        let pattern = self
-            .command
-            .parameters
-            .admitted_macro(admitted)
-            .pattern(definition)
-            .ok_or(CommandError::input_invariant())?;
+        let definition_view = self.state.macro_definition(definition);
+        let meaning = definition_view.meaning();
+        let pattern = definition_view.parameter_pattern();
+        let parameter_len = definition_view.parameter_tokens().len();
+        let admitted = self.command.parameters.admit_macro(definition, meaning);
         self.trace_macro_invocation(
             macro_name,
             meaning.parameter_text(),
@@ -651,7 +533,8 @@ impl CommandProcessor<'_> {
         // macro therefore feeds its replacement directly, without a transient
         // `matching` scanner episode. Literal leading tokens still need the
         // matcher even when there are no numbered parameters.
-        let needs_matching = pattern.leading_end() != 0 || pattern.parameter_count() != 0;
+        let needs_matching =
+            pattern.leading_end(parameter_len) != 0 || pattern.parameter_count() != 0;
         let episode = if needs_matching {
             let builder = ArgumentBuilderId(self.command.transient.next_builder_identity);
             self.command.transient.next_builder_identity =
@@ -670,8 +553,13 @@ impl CommandProcessor<'_> {
         };
         self.outer_recovered_while_matching = false;
         self.eof_recovered_while_matching = false;
-        let arguments = match self.macro_call_scalar(admitted, definition, meaning.flags(), pattern)
-        {
+        let arguments = match self.macro_call_scalar(
+            admitted,
+            definition,
+            meaning.flags(),
+            pattern,
+            parameter_len,
+        ) {
             Ok(arguments) => arguments,
             Err(CommandError::MacroPrefixMismatch) => {
                 // TeX82 §391 reports the mismatch through `error` and returns
@@ -747,9 +635,10 @@ impl CommandProcessor<'_> {
         admitted: u32,
         definition: MacroDefinitionId,
         flags: MeaningFlags,
-        pattern: PackedMacroPattern,
+        pattern: MacroParameterPattern,
+        parameter_len: usize,
     ) -> Result<MacroArguments, CommandError> {
-        for index in 0..pattern.leading_end() {
+        for index in 0..pattern.leading_end(parameter_len) {
             let expected = self.macro_parameter_token(admitted, definition, index)?;
             let actual = self.get_token()?.ok_or(CommandError::MacroPrefixMismatch)?;
             if actual.spelling().semantic_token() != expected {
@@ -769,11 +658,11 @@ impl CommandProcessor<'_> {
         // `align_state`. With no numbered parameters the brace lives in the
         // compulsory leading pattern rather than an argument delimiter.
         if pattern.parameter_count() == 0
-            && pattern.leading_end() != 0
+            && pattern.leading_end(parameter_len) != 0
             && is_begin_group(self.macro_parameter_token(
                 admitted,
                 definition,
-                pattern.leading_end() - 1,
+                pattern.leading_end(parameter_len) - 1,
             )?)
         {
             self.undo_delimiter_begin_group_delivery();
@@ -781,12 +670,6 @@ impl CommandProcessor<'_> {
 
         let mut arguments = self.command.parameters.take_argument_builder();
         for parameter in 0..pattern.parameter_count() {
-            let parameter_len = self
-                .command
-                .parameters
-                .admitted_macro(admitted)
-                .parameter_len(definition)
-                .ok_or(CommandError::input_invariant())?;
             let (start, end) = pattern.delimiter_bounds(parameter, parameter_len);
             let delimiter = MacroDelimiter {
                 admitted,
@@ -846,10 +729,10 @@ impl CommandProcessor<'_> {
         definition: MacroDefinitionId,
         index: usize,
     ) -> Result<Token, CommandError> {
-        self.command
-            .parameters
-            .admitted_macro(admitted)
-            .parameter_token(definition, index)
+        debug_assert_eq!(self.command.parameters.admitted_macro(admitted), definition);
+        self.state
+            .macro_definition(definition)
+            .parameter_token(index)
             .ok_or(CommandError::input_invariant())
     }
 
@@ -883,7 +766,9 @@ impl CommandProcessor<'_> {
         crate::processor::expand::append_print_cs_text(&mut self.state, macro_name, &mut text);
         crate::processor::expand::append_token_list_text(&self.state, parameters, &mut text);
         text.push_str("->");
-        for token in self.state.tokens(replacement).to_vec() {
+        let token_count = self.state.tokens(replacement).len();
+        for index in 0..token_count {
+            let token = self.state.tokens(replacement)[index];
             crate::processor::expand::append_token_list_token_text(&self.state, token, &mut text);
         }
         self.print_macro_trace(text, true);

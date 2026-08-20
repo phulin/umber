@@ -2,29 +2,27 @@ use super::*;
 use crate::token::Token;
 
 #[test]
-fn deferred_write_roots_survive_world_clone_rollback_and_journal_detachment() {
+fn deferred_write_coordinates_survive_world_clone_rollback_and_journal_detachment() {
     let mut universe = crate::Universe::new();
     let root = universe.intern_token_list_ref(&[Token::param(5)]);
-    let retained = root.clone();
+    let id = root.id();
     drop(universe);
     let mut world = World::memory();
     world.record_deferred_write(StreamSlot::new(3), root.clone());
     let snapshot = world.snapshot();
     world.record_special("suffix", b"discarded".to_vec());
     world.rollback(&snapshot);
-    drop(root);
+    let _ = root;
 
     let detached = world.effect_journal();
     assert!(matches!(
         detached.records(),
         [EffectRecord::DeferredWrite { tokens, .. }]
-            if tokens.tokens() == [Token::param(5)]
+            if tokens.id() == id
     ));
     drop(world);
     drop(snapshot);
-    assert_eq!(retained.strong_count(), 2);
     drop(detached);
-    assert_eq!(retained.strong_count(), 1);
 }
 
 #[test]

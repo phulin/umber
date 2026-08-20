@@ -741,7 +741,7 @@ fn replay_completion_precedes_parent_delivery() {
         ch: 'a',
         cat: Catcode::Letter,
     })]);
-    let episode = command.push_discretionary_episode(part);
+    let episode = command.push_discretionary_episode(&universe.command_context(), part);
 
     let first = {
         let mut processor = processor(&mut command, &mut universe, &mut capabilities);
@@ -820,7 +820,7 @@ fn output_replay_completion_follows_final_macro_replacement() {
             .expect("output replay expands")
     };
     assert_eq!(
-        universe.tokens(expanded.token_list()),
+        universe.tokens(expanded.token_list()).tokens(),
         text_tokens("DEFERRED-TWO")
     );
     let parent = {
@@ -2080,7 +2080,7 @@ fn rule_spec_starts_v_template_when_scalar_lookahead_hits_cell_delimiters() {
             )
             .expect("cell begins");
         command
-            .install_alignment_cell_template(alignment)
+            .install_alignment_cell_template(&universe.command_context(), alignment)
             .expect("omit-style cell has no u-template input");
         let mut tokens = b"width1pt height2pt depth0pt"
             .iter()
@@ -3616,7 +3616,7 @@ fn write_heavy_expansion_has_an_exact_monotonic_work_vector() {
 
     assert!(!expanded.unbalanced);
     assert_eq!(
-        expanded.tokens.token_ref().tokens().len(),
+        universe.tokens(expanded.tokens.token_ref().id()).len(),
         INVOCATIONS as usize
     );
     assert_eq!(

@@ -860,7 +860,7 @@ impl InputState {
         }
 
         fn payload_token(
-            _stores: &tex_state::CommandContext<'_>,
+            stores: &tex_state::CommandContext<'_>,
             tokens: &TokenCursor,
             index: usize,
             parameters: &crate::macro_call::ParameterState,
@@ -871,10 +871,13 @@ impl InputState {
                     admitted,
                     definition,
                     ..
-                } => parameters
-                    .admitted_macro(*admitted)
-                    .replacement_word(*definition, index)
-                    .map(|word| word.word().semantic_token()),
+                } => {
+                    debug_assert_eq!(parameters.admitted_macro(*admitted), *definition);
+                    stores
+                        .macro_definition(*definition)
+                        .replacement_traced_word(index)
+                        .map(|word| word.semantic_token())
+                }
                 TokenPayload::ArgumentRange { arguments, range } => parameters
                     .argument_word(*arguments, range.start().saturating_add(index))
                     .map(|word| word.word().semantic_token()),
@@ -975,12 +978,13 @@ impl InputState {
             if !before.is_complete() {
                 before.prepend_str("->");
             }
-            let owner = parameters.admitted_macro(*admitted);
-            for index in (0..owner.parameter_len(*definition)?).rev() {
+            debug_assert_eq!(parameters.admitted_macro(*admitted), *definition);
+            let owner = stores.macro_definition(*definition);
+            for index in (0..owner.parameter_len()).rev() {
                 if before.is_complete() {
                     break;
                 }
-                let token = owner.parameter_token(*definition, index)?;
+                let token = owner.parameter_token(index)?;
                 render_token(stores, token, &mut raw, &mut rendered);
                 before.prepend_str(&rendered);
             }

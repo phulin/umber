@@ -13,8 +13,7 @@ use crate::glue::GlueSpec;
 use crate::ids::{GlueId, MacroDefinitionId, TokenListId};
 use crate::macro_store::{MacroMeaning, MacroParameterPattern};
 use crate::meaning::MeaningFlags;
-use crate::provenance::OriginRef;
-use crate::token::{RootedTracedTokenWord, Token, TracedTokenWord};
+use crate::token::{OriginId, RootedTracedTokenWord, Token, TracedTokenWord};
 use crate::token_store::TokenSemanticId;
 
 use super::{
@@ -34,7 +33,7 @@ type ConcreteRegions = AcceptedRuntimeValueRegions<
     RuntimeMacroRecord,
     RuntimeMacroRootRow,
     GlueSpec,
-    RuntimeOriginRoot,
+    RuntimeOriginEntry,
 >;
 
 type ConcreteArena = RuntimeValueRegionArena<
@@ -43,7 +42,7 @@ type ConcreteArena = RuntimeValueRegionArena<
     RuntimeMacroRecord,
     RuntimeMacroRootRow,
     GlueSpec,
-    RuntimeOriginRoot,
+    RuntimeOriginEntry,
 >;
 
 type ConcreteAdmission<'a> = AdmittedRuntimeValueRegion<
@@ -53,7 +52,7 @@ type ConcreteAdmission<'a> = AdmittedRuntimeValueRegion<
     RuntimeMacroRecord,
     RuntimeMacroRootRow,
     GlueSpec,
-    RuntimeOriginRoot,
+    RuntimeOriginEntry,
 >;
 
 /// A compact span local to one already-admitted region.
@@ -105,19 +104,22 @@ pub(crate) struct RuntimeTokenListRow {
     id: TokenListId,
     semantic_id: TokenSemanticId,
     tokens: LocalSpan<Token>,
-    provenance_roots: LocalSpan<RuntimeOriginRoot>,
+    provenance: LocalSpan<RuntimeOriginEntry>,
 }
 
-/// Sparse exact provenance for one token offset in an admitted token span.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct RuntimeOriginRoot {
+/// Copy-only sparse provenance for one token offset.
+///
+/// Structural ownership remains solely in `ProvenanceStore`'s archive. This
+/// row is a compact lookup coordinate and never clones an `OriginRef`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct RuntimeOriginEntry {
     token_offset: u32,
-    origin: OriginRef,
+    origin: OriginId,
 }
 
-impl RuntimeOriginRoot {
+impl RuntimeOriginEntry {
     #[must_use]
-    pub(crate) fn new(token_offset: u32, origin: OriginRef) -> Self {
+    pub(crate) const fn new(token_offset: u32, origin: OriginId) -> Self {
         Self {
             token_offset,
             origin,
@@ -128,8 +130,8 @@ impl RuntimeOriginRoot {
         self.token_offset
     }
 
-    pub(crate) const fn origin(&self) -> &OriginRef {
-        &self.origin
+    pub(crate) const fn origin(self) -> OriginId {
+        self.origin
     }
 }
 
@@ -169,7 +171,7 @@ pub(crate) struct RuntimeTokenListView<'a> {
     coordinate: RuntimeTokenListCoordinate,
     semantic_id: TokenSemanticId,
     tokens: &'a [Token],
-    provenance_roots: &'a [RuntimeOriginRoot],
+    provenance: &'a [RuntimeOriginEntry],
 }
 
 impl<'a> RuntimeTokenListView<'a> {
@@ -185,33 +187,31 @@ impl<'a> RuntimeTokenListView<'a> {
         self.tokens
     }
 
-    pub(crate) const fn provenance_roots(&self) -> &'a [RuntimeOriginRoot] {
-        self.provenance_roots
+    pub(crate) const fn provenance(&self) -> &'a [RuntimeOriginEntry] {
+        self.provenance
     }
 
     /// Reconstructs the packed traced word at a cold provenance boundary.
     pub(crate) fn traced_word(&self, index: usize) -> Option<TracedTokenWord> {
         let token = *self.tokens.get(index)?;
         let origin = self
-            .provenance_roots
-            .binary_search_by_key(&(index as u32), RuntimeOriginRoot::token_offset)
+            .provenance
+            .binary_search_by_key(&(index as u32), RuntimeOriginEntry::token_offset)
             .map_or(crate::token::OriginId::UNKNOWN, |root| {
-                self.provenance_roots[root].origin.id()
+                self.provenance[root].origin()
             });
         Some(TracedTokenWord::pack(token, origin))
     }
 
     /// Reconstructs a structurally rooted word only for cold consumers.
-    pub(crate) fn rooted_word(&self, index: usize) -> Option<RootedTracedTokenWord> {
-        let token = *self.tokens.get(index)?;
-        let origin = self
-            .provenance_roots
-            .binary_search_by_key(&(index as u32), RuntimeOriginRoot::token_offset)
-            .map_or_else(
-                |_| OriginRef::unknown(),
-                |root| self.provenance_roots[root].origin.clone(),
-            );
-        Some(RootedTracedTokenWord::new(token, origin))
+    pub(crate) fn rooted_word(
+        &self,
+        index: usize,
+        mut resolve: impl FnMut(OriginId) -> Option<crate::provenance::OriginRef>,
+    ) -> Option<RootedTracedTokenWord> {
+        let word = self.traced_word(index)?;
+        let origin = resolve(word.origin())?;
+        Some(RootedTracedTokenWord::from_word(word, origin))
     }
 }
 
@@ -247,9 +247,9 @@ pub(crate) struct RuntimeMacroRootRow {
     definition: MacroDefinitionId,
     parameter_text: RuntimeTokenListCoordinate,
     replacement_text: RuntimeTokenListCoordinate,
-    definition_origin: u32,
-    parameter_origins: LocalSpan<RuntimeOriginRoot>,
-    replacement_origins: LocalSpan<RuntimeOriginRoot>,
+    definition_origin: OriginId,
+    parameter_origins: LocalSpan<RuntimeOriginEntry>,
+    replacement_origins: LocalSpan<RuntimeOriginEntry>,
 }
 
 /// Copy-only macro-definition identity and aligned record/root coordinate.
@@ -307,9 +307,9 @@ pub(crate) struct RuntimeMacroView<'a> {
     record: &'a RuntimeMacroRecord,
     parameter_text: RuntimeTokenListView<'a>,
     replacement_text: RuntimeTokenListView<'a>,
-    definition_origin: &'a RuntimeOriginRoot,
-    parameter_origins: &'a [RuntimeOriginRoot],
-    replacement_origins: &'a [RuntimeOriginRoot],
+    definition_origin: OriginId,
+    parameter_origins: &'a [RuntimeOriginEntry],
+    replacement_origins: &'a [RuntimeOriginEntry],
 }
 
 impl<'a> RuntimeMacroView<'a> {
@@ -341,15 +341,15 @@ impl<'a> RuntimeMacroView<'a> {
         &self.replacement_text
     }
 
-    pub(crate) const fn definition_origin(&self) -> &'a OriginRef {
-        self.definition_origin.origin()
+    pub(crate) const fn definition_origin(&self) -> OriginId {
+        self.definition_origin
     }
 
-    pub(crate) const fn parameter_origins(&self) -> &'a [RuntimeOriginRoot] {
+    pub(crate) const fn parameter_origins(&self) -> &'a [RuntimeOriginEntry] {
         self.parameter_origins
     }
 
-    pub(crate) const fn replacement_origins(&self) -> &'a [RuntimeOriginRoot] {
+    pub(crate) const fn replacement_origins(&self) -> &'a [RuntimeOriginEntry] {
         self.replacement_origins
     }
 
@@ -414,7 +414,14 @@ pub(crate) struct RuntimeTokenListInput<'a> {
     pub(crate) id: TokenListId,
     pub(crate) semantic_id: TokenSemanticId,
     pub(crate) tokens: &'a [Token],
-    pub(crate) provenance_roots: &'a [RuntimeOriginRoot],
+    pub(crate) provenance: &'a [RuntimeOriginEntry],
+}
+
+/// Scanner-owned traced words appended without an intermediate token/root heap.
+pub(crate) struct RuntimeTracedTokenListInput<'a> {
+    pub(crate) id: TokenListId,
+    pub(crate) semantic_id: TokenSemanticId,
+    pub(crate) words: &'a [TracedTokenWord],
 }
 
 /// Input used to append one record/root/provenance macro composite atomically.
@@ -424,9 +431,9 @@ pub(crate) struct RuntimeMacroInput<'a> {
     pub(crate) parameter_pattern: MacroParameterPattern,
     pub(crate) parameter_text: RuntimeTokenListCoordinate,
     pub(crate) replacement_text: RuntimeTokenListCoordinate,
-    pub(crate) definition_origin: &'a OriginRef,
-    pub(crate) parameter_origins: &'a [RuntimeOriginRoot],
-    pub(crate) replacement_origins: &'a [RuntimeOriginRoot],
+    pub(crate) definition_origin: OriginId,
+    pub(crate) parameter_origins: &'a [RuntimeOriginEntry],
+    pub(crate) replacement_origins: &'a [RuntimeOriginEntry],
     pub(crate) observation_operand: i64,
     pub(crate) allocation_serial: u64,
 }
@@ -518,7 +525,7 @@ impl RuntimeValueStore {
             token_list_view_from_admission(&self.regions, &admitted, roots.parameter_text)?;
         let replacement_text =
             token_list_view_from_admission(&self.regions, &admitted, roots.replacement_text)?;
-        let definition_origin = provenance_at(&admitted, roots.definition_origin)?;
+        let definition_origin = roots.definition_origin;
         let parameter_origins = provenance_span(&admitted, roots.parameter_origins)?;
         let replacement_origins = provenance_span(&admitted, roots.replacement_origins)?;
         Ok(RuntimeMacroView {
@@ -704,10 +711,10 @@ impl RuntimeValueCandidate {
         let additions = BundleAdditions {
             tokens: input.tokens.len(),
             token_lists: 1,
-            provenance_roots: input.provenance_roots.len(),
+            provenance_roots: input.provenance.len(),
             ..BundleAdditions::default()
         };
-        validate_sparse_origins(input.provenance_roots, input.tokens.len())?;
+        validate_sparse_origins(input.provenance, input.tokens.len())?;
         let active = prepare_bundle(&mut self.arena, additions)?;
         let word_start = checked_offset(active.columns.token_words.len())?;
         active.columns.token_words.extend_from_slice(input.tokens);
@@ -715,17 +722,54 @@ impl RuntimeValueCandidate {
         active
             .columns
             .provenance_roots
-            .extend_from_slice(input.provenance_roots);
+            .extend_from_slice(input.provenance);
         let row_offset = checked_offset(active.columns.token_lists.len())?;
         let semantic_id = input.semantic_id;
         active.columns.token_lists.push(RuntimeTokenListRow {
             id: input.id,
             semantic_id,
             tokens: LocalSpan::new(word_start, checked_len(input.tokens.len())?),
-            provenance_roots: LocalSpan::new(
-                provenance_start,
-                checked_len(input.provenance_roots.len())?,
-            ),
+            provenance: LocalSpan::new(provenance_start, checked_len(input.provenance.len())?),
+        });
+        Ok(RuntimeTokenListCoordinate {
+            row: active.key.coordinate(row_offset),
+            id: input.id,
+        })
+    }
+
+    pub(crate) fn append_traced_token_list(
+        &mut self,
+        input: RuntimeTracedTokenListInput<'_>,
+    ) -> Result<RuntimeTokenListCoordinate, RegionArenaError> {
+        let provenance_len = input
+            .words
+            .iter()
+            .filter(|word| word.origin() != OriginId::UNKNOWN)
+            .count();
+        let additions = BundleAdditions {
+            tokens: input.words.len(),
+            token_lists: 1,
+            provenance_roots: provenance_len,
+            ..BundleAdditions::default()
+        };
+        let active = prepare_bundle(&mut self.arena, additions)?;
+        let word_start = checked_offset(active.columns.token_words.len())?;
+        let provenance_start = checked_offset(active.columns.provenance_roots.len())?;
+        for (index, word) in input.words.iter().copied().enumerate() {
+            active.columns.token_words.push(word.semantic_token());
+            if word.origin() != OriginId::UNKNOWN {
+                active
+                    .columns
+                    .provenance_roots
+                    .push(RuntimeOriginEntry::new(checked_len(index)?, word.origin()));
+            }
+        }
+        let row_offset = checked_offset(active.columns.token_lists.len())?;
+        active.columns.token_lists.push(RuntimeTokenListRow {
+            id: input.id,
+            semantic_id: input.semantic_id,
+            tokens: LocalSpan::new(word_start, checked_len(input.words.len())?),
+            provenance: LocalSpan::new(provenance_start, checked_len(provenance_len)?),
         });
         Ok(RuntimeTokenListCoordinate {
             row: active.key.coordinate(row_offset),
@@ -746,9 +790,10 @@ impl RuntimeValueCandidate {
         let additions = BundleAdditions {
             macro_records: 1,
             macro_roots: 1,
-            provenance_roots: 1_usize
-                .checked_add(input.parameter_origins.len())
-                .and_then(|len| len.checked_add(input.replacement_origins.len()))
+            provenance_roots: input
+                .parameter_origins
+                .len()
+                .checked_add(input.replacement_origins.len())
                 .ok_or(RegionArenaError::OffsetCapacityExhausted)?,
             ..BundleAdditions::default()
         };
@@ -758,11 +803,6 @@ impl RuntimeValueCandidate {
         if record_offset != root_offset {
             return Err(RegionArenaError::InvalidMark);
         }
-        let definition_origin = checked_offset(active.columns.provenance_roots.len())?;
-        active
-            .columns
-            .provenance_roots
-            .push(RuntimeOriginRoot::new(0, input.definition_origin.clone()));
         let parameter_start = checked_offset(active.columns.provenance_roots.len())?;
         active
             .columns
@@ -786,7 +826,7 @@ impl RuntimeValueCandidate {
             definition: input.definition,
             parameter_text: input.parameter_text,
             replacement_text: input.replacement_text,
-            definition_origin,
+            definition_origin: input.definition_origin,
             parameter_origins: LocalSpan::new(
                 parameter_start,
                 checked_len(input.parameter_origins.len())?,

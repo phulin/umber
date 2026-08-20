@@ -193,13 +193,17 @@ fn fin_col_extra_tab_recovery_is_command_owned_and_accepts_span_too() {
         crate::AlignmentCellDelimiter::Span,
     ] {
         let mut state = CommandState::default();
+        let mut universe = tex_state::Universe::new();
         let alignment = AlignmentIdentity::new(41);
         state.begin_alignment(alignment);
         state.alignment.pending_fin_col_delimiter = Some((alignment, delimiter));
 
         assert_eq!(
             state
-                .apply_alignment_request(AlignmentRequest::RecoverExtraTab(alignment))
+                .apply_alignment_request(
+                    &universe.command_context(),
+                    AlignmentRequest::RecoverExtraTab(alignment),
+                )
                 .expect("TeX82 fin_col converts an exhausted tab/span to cr"),
             AlignmentRequestResult::ExtraTabRecovered,
         );
@@ -268,34 +272,43 @@ fn nested_alignment_suspension_restores_the_outer_cell_identity_and_templates() 
 #[test]
 fn typed_requests_preserve_nested_alignment_delivery_without_token_classification() {
     let mut state = CommandState::default();
+    let mut universe = tex_state::Universe::new();
     let outer = AlignmentIdentity::new(47);
     let inner = AlignmentIdentity::new(53);
 
     assert_eq!(
-        state.apply_alignment_request(AlignmentRequest::Begin(outer)),
+        state.apply_alignment_request(&universe.command_context(), AlignmentRequest::Begin(outer)),
         Ok(AlignmentRequestResult::Applied)
     );
     assert_eq!(
-        state.apply_alignment_request(AlignmentRequest::BeginCell {
-            alignment: outer,
-            templates: templates(),
-        }),
+        state.apply_alignment_request(
+            &universe.command_context(),
+            AlignmentRequest::BeginCell {
+                alignment: outer,
+                templates: templates(),
+            },
+        ),
         Ok(AlignmentRequestResult::Applied)
     );
     assert_eq!(
-        state.apply_alignment_request(AlignmentRequest::Suspend(outer)),
+        state.apply_alignment_request(
+            &universe.command_context(),
+            AlignmentRequest::Suspend(outer),
+        ),
         Ok(AlignmentRequestResult::Applied)
     );
     assert_eq!(
-        state.apply_alignment_request(AlignmentRequest::Begin(inner)),
+        state.apply_alignment_request(&universe.command_context(), AlignmentRequest::Begin(inner)),
         Ok(AlignmentRequestResult::Applied)
     );
     assert_eq!(
-        state.apply_alignment_request(AlignmentRequest::Finish(inner)),
+        state
+            .apply_alignment_request(&universe.command_context(), AlignmentRequest::Finish(inner),),
         Ok(AlignmentRequestResult::Applied)
     );
     assert_eq!(
-        state.apply_alignment_request(AlignmentRequest::Resume(outer)),
+        state
+            .apply_alignment_request(&universe.command_context(), AlignmentRequest::Resume(outer),),
         Ok(AlignmentRequestResult::Applied)
     );
     assert_eq!(

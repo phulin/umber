@@ -457,9 +457,10 @@ sparse cold sidecar, so ordinary word delivery does not construct diagnostic
 ranges. Resource suspension detaches handle-free words and coordinates, and
 resume admits fresh input, macro, argument, and invocation chunks at the exact
 portable cursors. Runtime chunk identities never enter the continuation or
-schema-11 format DTOs. Live macro meaning and diagnostic reads use the existing
-environment root and admitted macro owner; only cold detached or stale APIs
-repeat identity validation. Transaction marks remain for `umber2-awgc.4.2`.
+schema-11 format DTOs. Live macro meaning and diagnostic reads admit one
+copy-only definition coordinate through the aggregate runtime-value registry
+and borrow its traced row; only cold detached or stale APIs repeat identity
+validation. Transaction marks remain for `umber2-awgc.4.2`.
 
 The packed cutover itself has an assertion-bearing warmed gate for ordinary
 source delivery, packed backup/replay, stored replay, and macro matching,

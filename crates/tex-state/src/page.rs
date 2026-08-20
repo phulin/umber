@@ -6,7 +6,7 @@ mod state_hash;
 use sequence::PageNodeSequence;
 pub(crate) use state_hash::{PageHashCache, PageStateHashCursor};
 
-use crate::glue::{GlueSpec, GlueSpecRef};
+use crate::glue::GlueSpecRef;
 use crate::ids::TokenListId;
 use crate::node::Node;
 use crate::scaled::Scaled;
@@ -965,10 +965,8 @@ impl PageBuilderState {
         }
     }
 
-    pub(crate) fn last_skip(&self) -> GlueSpec {
+    pub(crate) fn last_skip_ref(&self) -> Option<GlueSpecRef> {
         self.last_glue
-            .as_ref()
-            .map_or(GlueSpec::ZERO, GlueSpecRef::spec)
     }
 
     pub(crate) const fn last_penalty(&self) -> i32 {

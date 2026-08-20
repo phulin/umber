@@ -1453,8 +1453,8 @@ fn mark_dump_prints_token_list_once() {
     let control_sequence = stores.token_list_ref(control_sequence);
     let empty = stores.intern_token_list(&[]);
     let empty = stores.token_list_ref(empty);
-    let literal_before = literal.tokens().to_vec();
-    let control_sequence_before = control_sequence.tokens().to_vec();
+    let literal_before = stores.tokens(literal.id()).to_vec();
+    let control_sequence_before = stores.tokens(control_sequence.id()).to_vec();
     let nodes = [
         Node::Mark {
             class: 0,
@@ -1497,9 +1497,12 @@ fn mark_dump_prints_token_list_once() {
     else {
         panic!("mark fixture changed shape")
     };
-    assert_eq!(literal.tokens(), literal_before);
-    assert_eq!(control_sequence.tokens(), control_sequence_before);
-    assert!(empty.tokens().is_empty());
+    assert_eq!(&*stores.tokens(literal.id()), literal_before);
+    assert_eq!(
+        &*stores.tokens(control_sequence.id()),
+        control_sequence_before
+    );
+    assert!(stores.tokens(empty.id()).is_empty());
 }
 
 /// TeX82 §193's insertion-node arm prints every symbolic field before

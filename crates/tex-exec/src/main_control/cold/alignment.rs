@@ -80,7 +80,10 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell(
     if extra_tab_recovery {
         let recovered = command
             .state
-            .apply_alignment_request(AlignmentRequest::RecoverExtraTab(alignment))
+            .apply_alignment_request(
+                &stores.command_context(),
+                AlignmentRequest::RecoverExtraTab(alignment),
+            )
             .map_err(|_| ExecError::MissingToken {
                 context: "alignment extra-tab recovery",
             })?;
@@ -137,10 +140,13 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell(
         AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => {
             command
                 .state
-                .apply_alignment_request(AlignmentRequest::BeginCell {
-                    alignment,
-                    templates,
-                })
+                .apply_alignment_request(
+                    &stores.command_context(),
+                    AlignmentRequest::BeginCell {
+                        alignment,
+                        templates,
+                    },
+                )
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment next-cell lifecycle",
                 })?;

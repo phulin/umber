@@ -9,22 +9,19 @@ use crate::meaning::Meaning;
 use crate::node_arena::NodeListRef as NodeRoot;
 use crate::scaled::Scaled;
 use crate::token::{Catcode, Token};
-use crate::token_store::{TokenListRef, TokenStore};
+use crate::token_store::TokenListRef;
 use ahash::AHashMap;
 
-fn env_with_tokens() -> (Env, TokenStore) {
-    let tokens = TokenStore::new();
+struct TestTokenRefs;
+
+fn env_with_tokens() -> (Env, TestTokenRefs) {
     let mut env = Env::new();
-    env.install_empty_token_root(tokens.owner(TokenListId::EMPTY).expect("empty token root"));
-    (env, tokens)
+    env.install_empty_token_root(TokenListRef::new(TokenListId::EMPTY));
+    (env, TestTokenRefs)
 }
 
-fn token_root(tokens: &mut TokenStore, ch: char) -> TokenListRef {
-    let id = tokens.intern(&[Token::Char {
-        ch,
-        cat: Catcode::Other,
-    }]);
-    tokens.owner(id).expect("interned token root")
+fn token_root(_tokens: &mut TestTokenRefs, ch: char) -> TokenListRef {
+    TokenListRef::new(TokenListId::new(u32::from(ch)))
 }
 
 fn box_owner(id: NodeListId) -> NodeRoot {
@@ -142,11 +139,7 @@ fn save_stack_projection_distinguishes_null_and_defined_token_parameters() {
     let (mut defined_empty_outer, mut defined_tokens) = env_with_tokens();
     defined_empty_outer.set_tok_param_option(
         TokParam::EVERY_DISPLAY,
-        Some(
-            defined_tokens
-                .owner(TokenListId::EMPTY)
-                .expect("empty token root"),
-        ),
+        Some(TokenListRef::new(TokenListId::EMPTY)),
     );
     defined_empty_outer.enter_group();
     let value = token_root(&mut defined_tokens, 'd');

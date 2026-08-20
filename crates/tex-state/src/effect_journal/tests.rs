@@ -128,7 +128,7 @@ fn splice_transfers_deferred_write_token_roots_with_selected_records() {
 
     let mut universe = Universe::new();
     let root = universe.intern_token_list_ref(&[Token::param(4)]);
-    let retained = root.clone();
+    let id = root.id();
     drop(universe);
     let accepted = journal(
         EffectRecord::DeferredWrite {
@@ -145,9 +145,7 @@ fn splice_transfers_deferred_write_token_roots_with_selected_records() {
     assert!(matches!(
         selected.records(),
         [EffectRecord::DeferredWrite { tokens, .. }, EffectRecord::StreamWrite { .. }]
-            if tokens.tokens() == [Token::param(4)]
+            if tokens.id() == id
     ));
-    assert_eq!(retained.strong_count(), 2);
     drop(selected);
-    assert_eq!(retained.strong_count(), 1);
 }

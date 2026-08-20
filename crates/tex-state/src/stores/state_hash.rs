@@ -496,7 +496,7 @@ impl Stores {
 
     pub(crate) fn hash_token_list_semantic(&self, id: TokenListId, hasher: &mut StateHasher) {
         hasher.tag(0x50);
-        self.tokens.semantic_id(id).apply(hasher);
+        self.tokens(id).semantic_id().apply(hasher);
     }
 
     pub(crate) fn hash_node_slice_semantic(
@@ -1048,14 +1048,14 @@ impl Stores {
     }
 
     fn hash_macro_definition(&self, id: MacroDefinitionId, hasher: &mut StateHasher) {
-        let definition = self.macros.get(id);
+        let definition = self.macro_definition(id).meaning();
         hasher.u8(definition.flags().bits());
         self.hash_portable_token_list(definition.parameter_text(), hasher);
         self.hash_portable_token_list(definition.replacement_text(), hasher);
     }
 
     fn hash_portable_token_list(&self, id: TokenListId, hasher: &mut StateHasher) {
-        let tokens = self.tokens.get(id);
+        let tokens = self.tokens(id);
         hasher.tag(0x50);
         hasher.usize(tokens.len());
         for &token in tokens.iter() {
@@ -1097,15 +1097,16 @@ impl Stores {
             shrink,
             shrink_order,
         } = self
-            .glue
-            .resolve_get(id)
-            .expect("stored glue slot is not live");
+            .runtime_values
+            .glue(self.resolve_stored_glue(id))
+            .expect("stored glue slot is not live")
+            .spec();
         hasher.tag(0x60);
         hasher.i32(width.raw());
         hasher.i32(stretch.raw());
-        hasher.u8(stretch_order as u8);
+        hasher.u8(*stretch_order as u8);
         hasher.i32(shrink.raw());
-        hasher.u8(shrink_order as u8);
+        hasher.u8(*shrink_order as u8);
     }
 
     fn hash_font(&self, font: FontId, hasher: &mut StateHasher) {

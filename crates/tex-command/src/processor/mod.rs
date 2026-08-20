@@ -37,7 +37,6 @@ pub use expand::{
 };
 pub(crate) use expand::{
     meaning_text, print_cs_text, render_the_value, selector_meaning_text, string_text,
-    token_slice_string_text,
 };
 pub(crate) use next::stored_input_reason;
 

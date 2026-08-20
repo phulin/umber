@@ -73,8 +73,6 @@ pub mod ids;
 pub mod input;
 pub mod interner;
 pub(crate) mod journal;
-#[cfg(any(test, feature = "testing"))]
-pub mod lookup_benchmark;
 pub mod macro_store;
 pub mod math;
 pub mod meaning;
@@ -93,8 +91,6 @@ pub mod print;
 pub mod provenance;
 mod provenance_resolver;
 mod pure_memo;
-#[allow(dead_code)] // Shared substrate is consumed as each value family migrates.
-mod reachable_value;
 mod read_observation;
 mod resource;
 pub mod scaled;

@@ -154,6 +154,7 @@ impl CommandState {
         arguments: MacroArguments,
         invocation: OriginId,
         admitted: u32,
+        replacement_len: usize,
     ) -> InputLevelId {
         let parameter_count = self
             .parameters
@@ -178,16 +179,12 @@ impl CommandState {
         let activation = self
             .parameters
             .push_activation(name, definition, arguments, invocation);
-        let len = self
-            .parameters
-            .admitted_macro(admitted)
-            .replacement_len(definition)
-            .expect("admitted macro contains its replacement");
+        debug_assert_eq!(self.parameters.admitted_macro(admitted), definition);
         self.push_token_level(
             TokenPayload::MacroReplacement {
                 admitted,
                 definition,
-                len: u32::try_from(len).expect("macro replacement exceeds u32"),
+                len: u32::try_from(replacement_len).expect("macro replacement exceeds u32"),
             },
             TokenBehavior::MacroBody(activation),
             RetirementBehavior::Pop,

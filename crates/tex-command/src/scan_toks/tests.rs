@@ -524,7 +524,9 @@ fn etex_unexpanded_preserves_empty_and_full_boundary_token_lists() {
             .expect("expanded collector accepts the unexpanded boundary list");
 
         assert_eq!(
-            universe.tokens(scanned.replacement_text.token_list()),
+            universe
+                .tokens(scanned.replacement_text.token_list())
+                .tokens(),
             expected,
             "unexpanded must preserve exact token identity and category"
         );
@@ -1600,7 +1602,10 @@ fn scan_toks_all_parameter_number_success_and_diagnostic_boundaries() {
             .expect("parameter matrix scans");
         let expected = (1..=count).map(Token::Param).collect::<Vec<_>>();
         assert_eq!(
-            processor.state.tokens(scanned.parameter_text.token_list()),
+            processor
+                .state
+                .tokens(scanned.parameter_text.token_list())
+                .tokens(),
             expected,
             "parameter count {count}"
         );
@@ -1681,7 +1686,10 @@ fn scan_toks_all_parameter_number_success_and_diagnostic_boundaries() {
             .expect("malformed parameter text recovers");
         assert!(scanned.malformed_parameter);
         assert_eq!(
-            processor.state.tokens(scanned.parameter_text.token_list()),
+            processor
+                .state
+                .tokens(scanned.parameter_text.token_list())
+                .tokens(),
             expected_parameters
         );
     }
@@ -1836,7 +1844,8 @@ fn scan_toks_raw_expanded_nested_brace_illegal_hash_and_missing_brace_matrix() {
         assert_eq!(
             processor
                 .state
-                .tokens(scanned.replacement_text.token_list()),
+                .tokens(scanned.replacement_text.token_list())
+                .tokens(),
             expected
         );
     }

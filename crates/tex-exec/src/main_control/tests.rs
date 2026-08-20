@@ -1930,7 +1930,7 @@ fn write_prints_a_control_character_equal_to_newlinechar_as_a_physical_newline()
     // non-printable-character `^^` rendering used for diagnostic strings.
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::NEWLINE_CHAR, 10);
-    let tokens = [
+    let tokens = stores.intern_token_list_ref(&[
         Token::Char {
             ch: 'A',
             cat: Catcode::Letter,
@@ -1943,9 +1943,9 @@ fn write_prints_a_control_character_equal_to_newlinechar_as_a_physical_newline()
             ch: 'B',
             cat: Catcode::Letter,
         },
-    ];
+    ]);
 
-    assert_eq!(write_text(&tokens, &stores), "A\nB\n");
+    assert_eq!(write_text(tokens.id(), &stores), "A\nB\n");
 }
 
 #[test]
@@ -3540,7 +3540,10 @@ fn base_whatsits_preserve_scan_timing_normalization_and_payload_ownership() {
     assert_eq!(path, "owned");
     assert_eq!(*sink, PrintSink::Log);
     let payload_symbol = stores.symbol("payload").expect("payload remains defined");
-    assert_eq!(tokens.tokens(), [Token::Cs(payload_symbol.symbol())]);
+    assert_eq!(
+        &*stores.tokens(tokens.id()),
+        [Token::Cs(payload_symbol.symbol())]
+    );
     assert_eq!(*close_slot, None);
     assert_eq!(class, "dvi");
     assert_eq!(payload, b"early");
@@ -5415,7 +5418,7 @@ fn recursive_owned_node_signature(
                 recursive_owned_node_signature(stores, replace)
             ),
             Node::Mark { class, tokens } => {
-                format!("mark={class}/tokens={:?}", tokens.tokens())
+                format!("mark={class}/tokens={:?}", &*stores.tokens(tokens.id()))
             }
             Node::Ins {
                 class,
@@ -5474,7 +5477,7 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
         matches!(&children[1], Node::Glue { spec, leader: Some(_), .. } if stores.glue(spec).width.raw() == 301)
     );
     assert!(
-        matches!(&children[3], Node::Mark { tokens, .. } if tokens.tokens() == [Token::Char { ch: 'm', cat: Catcode::Letter }, Token::Char { ch: '!', cat: Catcode::Other }])
+        matches!(&children[3], Node::Mark { tokens, .. } if &*stores.tokens(tokens.id()) == [Token::Char { ch: 'm', cat: Catcode::Letter }, Token::Char { ch: '!', cat: Catcode::Other }])
     );
 
     let mut control = MainControl::tex82_initex(&mut stores);
@@ -5850,8 +5853,8 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
                 class: 32_767,
                 tokens,
             } => Some(
-                tokens
-                    .tokens()
+                stores
+                    .tokens(tokens.id())
                     .iter()
                     .filter_map(|token| match token {
                         Token::Char { ch, .. } => Some(*ch),
@@ -5953,11 +5956,11 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
     assert_eq!(stores.group_depth(), 6, "diagnostic mutated the save stack");
 }
 
-fn macro_tokens(stores: &Universe, name: &str) -> tex_state::token_store::TokenListRef {
+fn macro_tokens(stores: &Universe, name: &str) -> tex_state::ids::TokenListId {
     let meaning = stores
         .macro_meaning(stores.symbol(name).expect("macro target"))
         .expect("macro is defined");
-    stores.tokens(meaning.replacement_text())
+    meaning.replacement_text()
 }
 
 fn pdftex_random_control(stores: &mut Universe) -> MainControl {
@@ -8386,7 +8389,7 @@ fn macro_tenth_parameter_reports_exact_limit_error() {
         .macro_meaning(nine)
         .expect("the recovered definition is committed");
     assert_eq!(
-        stores.tokens(meaning.parameter_text()),
+        stores.tokens(meaning.parameter_text()).tokens(),
         &(1..=9).map(Token::Param).collect::<Vec<_>>()
     );
     assert!(
@@ -9378,14 +9381,14 @@ fn openin_closein_replace_stream_state_and_apply_filename_rules() {
     );
     run_to_end(&mut control, &mut stores);
     assert_eq!(
-        macro_tokens(&stores, "first")[0],
+        stores.tokens(macro_tokens(&stores, "first")).tokens()[0],
         Token::Char {
             ch: 'o',
             cat: Catcode::Letter,
         }
     );
     assert_eq!(
-        macro_tokens(&stores, "second")[0],
+        stores.tokens(macro_tokens(&stores, "second")).tokens()[0],
         Token::Char {
             ch: 't',
             cat: Catcode::Letter,
@@ -9523,7 +9526,7 @@ fn out_of_range_read_selector_reaches_the_terminal_without_a_report() {
     }
 
     assert_eq!(
-        macro_tokens(&stores, "line")[0],
+        stores.tokens(macro_tokens(&stores, "line")).tokens()[0],
         Token::Char {
             ch: 'r',
             cat: Catcode::Letter,
@@ -9581,28 +9584,30 @@ fn read_to_definition_preserves_effective_scope_and_replay() {
     run_to_end(&mut control, &mut stores);
 
     assert_eq!(
-        macro_tokens(&stores, "local")[0],
+        stores.tokens(macro_tokens(&stores, "local")).tokens()[0],
         Token::Char {
             ch: 'o',
             cat: Catcode::Letter,
         }
     );
     assert_eq!(
-        macro_tokens(&stores, "explicit")[0],
+        stores.tokens(macro_tokens(&stores, "explicit")).tokens()[0],
         Token::Char {
             ch: 'e',
             cat: Catcode::Letter,
         }
     );
     assert_eq!(
-        macro_tokens(&stores, "forcedglobal")[0],
+        stores
+            .tokens(macro_tokens(&stores, "forcedglobal"))
+            .tokens()[0],
         Token::Char {
             ch: 'f',
             cat: Catcode::Letter,
         }
     );
     assert_eq!(
-        macro_tokens(&stores, "forcedlocal")[0],
+        stores.tokens(macro_tokens(&stores, "forcedlocal")).tokens()[0],
         Token::Char {
             ch: 'o',
             cat: Catcode::Letter,
@@ -9735,7 +9740,7 @@ fn case_shift_preserves_raw_token_structure_at_code_table_boundaries() {
     );
     run_to_end(&mut control, &mut stores);
     assert!(matches!(
-        macro_tokens(&stores, "up").tokens(),
+        &*stores.tokens(macro_tokens(&stores, "up")),
         [
             Token::Char {
                 ch: 'Z',
@@ -9745,7 +9750,7 @@ fn case_shift_preserves_raw_token_structure_at_code_table_boundaries() {
         ]
     ));
     assert!(matches!(
-        macro_tokens(&stores, "down").tokens(),
+        &*stores.tokens(macro_tokens(&stores, "down")),
         [
             Token::Char {
                 ch: 'y',
@@ -9755,14 +9760,14 @@ fn case_shift_preserves_raw_token_structure_at_code_table_boundaries() {
         ]
     ));
     assert!(matches!(
-        macro_tokens(&stores, "active").tokens(),
+        &*stores.tokens(macro_tokens(&stores, "active")),
         [Token::Char {
             ch: 'X',
             cat: Catcode::Active
         }]
     ));
     assert!(matches!(
-        macro_tokens(&stores, "zero").tokens(),
+        &*stores.tokens(macro_tokens(&stores, "zero")),
         [Token::Char { ch: '@', .. }]
     ));
 }
@@ -11255,7 +11260,10 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
 
     run_to_end(&mut control, &mut stores);
     let first_output = terminal_text(&stores);
-    let first_snapshot = macro_tokens(&stores, "snapshot").to_vec();
+    let first_snapshot = stores
+        .tokens(macro_tokens(&stores, "snapshot"))
+        .tokens()
+        .to_vec();
     assert_eq!(
         stores.page_dimension(PageDimension::Goal).raw(),
         12 * Scaled::UNITY
@@ -11271,7 +11279,10 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
         12 * Scaled::UNITY
     );
     assert_eq!(stores.page_integer(PageInteger::InsertPenalties), 4);
-    assert_eq!(macro_tokens(&stores, "snapshot"), first_snapshot);
+    assert_eq!(
+        stores.tokens(macro_tokens(&stores, "snapshot")).tokens(),
+        first_snapshot
+    );
     assert_eq!(terminal_text(&stores), first_output);
 }
 
@@ -12210,7 +12221,12 @@ fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
     assert!(flags.contains(tex_state::meaning::MeaningFlags::PROTECTED));
     assert_eq!(
         stores
-            .tokens(stores.macro_definition(definition).replacement_text())
+            .tokens(
+                stores
+                    .macro_definition(definition)
+                    .meaning()
+                    .replacement_text(),
+            )
             .len(),
         1
     );

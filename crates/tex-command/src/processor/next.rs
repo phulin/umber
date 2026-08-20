@@ -298,7 +298,7 @@ impl CommandProcessor<'_> {
             // `loc=null`. A live token either in the v-template itself or in
             // an interposed token-list frame is the canonical interwoven-
             // preamble fatal path, not an internal Rust invariant failure.
-            if Self::next_stored_token(cursor, &self.command.parameters).is_some() {
+            if Self::next_stored_token(cursor, &self.command.parameters, &self.state).is_some() {
                 break;
             }
             if cursor.identity() == v_level
@@ -473,6 +473,7 @@ impl CommandProcessor<'_> {
     ) -> Result<(), CommandError> {
         self.command
             .begin_alignment_v_template(
+                &self.state,
                 alignment,
                 saved_delimiter,
                 self.state
@@ -1046,8 +1047,9 @@ impl CommandProcessor<'_> {
         let output_id = self.state.tok_param(TokParam::OUTPUT);
         let output = TracedTokenList::synthetic(self.state.token_list_ref(output_id));
         self.report_named_token_list("output", output.token_list());
+        let words = self.state.tokens(output_id);
         let level = self.command.push_token_level(
-            TokenPayload::stored(output.token_ref().clone(), output.origin_ref().clone()),
+            TokenPayload::stored(&words, output.origin_ref().clone()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),
@@ -1092,7 +1094,7 @@ impl CommandProcessor<'_> {
 
         let output_has_remaining = match &self.command.input.levels[output_index] {
             InputLevel::Tokens(cursor) => {
-                Self::next_stored_token(cursor, &self.command.parameters).is_some()
+                Self::next_stored_token(cursor, &self.command.parameters, &self.state).is_some()
             }
             InputLevel::Source(_) => unreachable!("output replay is a token level"),
         };
@@ -1103,7 +1105,12 @@ impl CommandProcessor<'_> {
                     level,
                     InputLevel::Tokens(cursor)
                         if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                            && Self::next_stored_token(cursor, &self.command.parameters).is_none()
+                            && Self::next_stored_token(
+                                cursor,
+                                &self.command.parameters,
+                                &self.state,
+                            )
+                            .is_none()
                 )
             });
         let unbalanced = output_has_remaining || !levels_above_are_depleted_backups;
@@ -1122,7 +1129,10 @@ impl CommandProcessor<'_> {
                                 InputLevel::Source(_) => unreachable!("output token level"),
                             } =>
                     {
-                        Some(Self::next_stored_token(cursor, &self.command.parameters).is_some())
+                        Some(
+                            Self::next_stored_token(cursor, &self.command.parameters, &self.state)
+                                .is_some(),
+                        )
                     }
                     InputLevel::Source(_) | InputLevel::Tokens(_) => None,
                 })
@@ -1149,7 +1159,7 @@ impl CommandProcessor<'_> {
             return Ok(());
         };
         if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-            || Self::next_stored_token(cursor, &self.command.parameters).is_some()
+            || Self::next_stored_token(cursor, &self.command.parameters, &self.state).is_some()
             || !matches!(
                 cursor
                     .payload
@@ -1690,7 +1700,9 @@ impl CommandProcessor<'_> {
                             // `\everyeof` above the still-live source. Its
                             // token-list level must therefore push and retire
                             // before §329 retires the pseudo-file.
-                            if let Some(level) = self.command.begin_pending_every_eof(identity) {
+                            if let Some(level) =
+                                self.command.begin_pending_every_eof(&self.state, identity)
+                            {
                                 self.observe(CommandObservation::Input(InputRecord {
                                     transition: InputTransition::Push,
                                     reason: InputReason::EveryEof,
@@ -1766,7 +1778,7 @@ impl CommandProcessor<'_> {
                         };
                         debug_assert_eq!(cursor.identity(), identity);
                         debug_assert_eq!(cursor.position(), index);
-                        Self::next_stored_token(cursor, &self.command.parameters)
+                        Self::next_stored_token(cursor, &self.command.parameters, &self.state)
                     };
                     if let Some((spelling, position, behavior, source_provenance)) = next {
                         let InputLevel::Tokens(cursor) = self
@@ -2035,6 +2047,7 @@ impl CommandProcessor<'_> {
     fn next_stored_token(
         cursor: &TokenCursor,
         parameters: &crate::macro_call::ParameterState,
+        stores: &tex_state::CommandContext<'_>,
     ) -> Option<(
         TracedTokenWord,
         u64,
@@ -2049,10 +2062,13 @@ impl CommandProcessor<'_> {
                 admitted,
                 definition,
                 ..
-            } => parameters
-                .admitted_macro(*admitted)
-                .replacement_traced_word(*definition, index)
-                .map(|spelling| (spelling, None)),
+            } => {
+                debug_assert_eq!(parameters.admitted_macro(*admitted), *definition);
+                stores
+                    .macro_definition(*definition)
+                    .replacement_traced_word(index)
+                    .map(|spelling| (spelling, None))
+            }
             TokenPayload::ArgumentRange { arguments, range } => (index
                 < range.end().saturating_sub(range.start()))
             .then(|| parameters.argument_traced_word(*arguments, range.start() + index))
@@ -2090,7 +2106,12 @@ impl CommandProcessor<'_> {
             let depleted = match self.command.input.levels.last() {
                 Some(InputLevel::Tokens(cursor))
                     if drains_for_stack_conservation(&cursor.behavior)
-                        && Self::next_stored_token(cursor, &self.command.parameters).is_none() =>
+                        && Self::next_stored_token(
+                            cursor,
+                            &self.command.parameters,
+                            &self.state,
+                        )
+                        .is_none() =>
                 {
                     Some(cursor.identity())
                 }
@@ -2868,18 +2889,24 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
+        let mut universe = Universe::new_with_plain_catcodes();
         let alignment = crate::AlignmentIdentity::new(17);
         command.begin_alignment(alignment);
         command
-            .apply_alignment_request(crate::AlignmentRequest::BeginCell {
-                alignment,
-                templates: templates(),
-            })
+            .apply_alignment_request(
+                &universe.command_context(),
+                crate::AlignmentRequest::BeginCell {
+                    alignment,
+                    templates: templates(),
+                },
+            )
             .expect("cell begins");
         command
-            .apply_alignment_request(crate::AlignmentRequest::InstallCellTemplate(alignment))
+            .apply_alignment_request(
+                &universe.command_context(),
+                crate::AlignmentRequest::InstallCellTemplate(alignment),
+            )
             .expect("empty template installs");
-        let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         let mut processor =
@@ -3001,6 +3028,7 @@ mod tests {
     #[test]
     fn finishing_an_alignment_restores_the_saved_outer_align_state() {
         let mut command = CommandState::default();
+        let mut universe = Universe::new_with_plain_catcodes();
         command.alignment.align_state = crate::processor::TOP_LEVEL_ALIGN_STATE + 1;
         let alignment = crate::AlignmentIdentity::new(23);
         command.begin_alignment(alignment);
@@ -3009,7 +3037,10 @@ mod tests {
             crate::processor::alignment::PREAMBLE_ALIGN_STATE
         );
         command
-            .apply_alignment_request(crate::AlignmentRequest::Finish(alignment))
+            .apply_alignment_request(
+                &universe.command_context(),
+                crate::AlignmentRequest::Finish(alignment),
+            )
             .expect("alignment finishes");
         assert_eq!(
             command.alignment.align_state,
@@ -3030,15 +3061,18 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
+        let mut universe = Universe::new_with_plain_catcodes();
         let alignment = crate::AlignmentIdentity::new(18);
         command.begin_alignment(alignment);
         command
-            .apply_alignment_request(crate::AlignmentRequest::BeginCell {
-                alignment,
-                templates: templates(),
-            })
+            .apply_alignment_request(
+                &universe.command_context(),
+                crate::AlignmentRequest::BeginCell {
+                    alignment,
+                    templates: templates(),
+                },
+            )
             .expect("empty-template cell begins");
-        let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
@@ -3743,7 +3777,10 @@ mod tests {
             OriginId::UNKNOWN,
         )]);
         command.push_token_level(
-            TokenPayload::stored(stored.token_ref().clone(), stored.origin_ref().clone()),
+            TokenPayload::stored(
+                universe.tokens(stored.token_list()).tokens(),
+                stored.origin_ref().clone(),
+            ),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::MacroReplacement,
@@ -4080,7 +4117,7 @@ mod tests {
             )
             .expect("cell begins");
         command
-            .install_alignment_cell_template(alignment)
+            .install_alignment_cell_template(&universe.command_context(), alignment)
             .expect("cell without a u-template installs");
         command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
@@ -4115,15 +4152,15 @@ mod tests {
     #[test]
     fn intercepted_cr_retains_tex82_delimiter_identity_for_observation() {
         let mut command = CommandState::default();
+        let mut universe = Universe::new_with_plain_catcodes();
         let alignment = crate::AlignmentIdentity::new(18);
         command.begin_alignment(alignment);
         command
             .begin_alignment_cell(alignment, templates())
             .expect("cell begins");
         command
-            .install_alignment_cell_template(alignment)
+            .install_alignment_cell_template(&universe.command_context(), alignment)
             .expect("cell without a u-template installs");
-        let mut universe = Universe::new_with_plain_catcodes();
         let cr = universe.intern("cr").symbol();
         universe.set_meaning(
             cr,
@@ -4273,7 +4310,7 @@ mod tests {
             )
             .expect("cell begins");
         command
-            .install_alignment_cell_template(alignment)
+            .install_alignment_cell_template(&universe.command_context(), alignment)
             .expect("u-template installs after the cell opener lifecycle");
         let snapshot = command.snapshot();
         let mut capabilities = CommandHostCapabilities::default();
@@ -4494,7 +4531,7 @@ mod tests {
             )
             .expect("cell begins");
         command
-            .install_alignment_cell_template(alignment)
+            .install_alignment_cell_template(&universe.command_context(), alignment)
             .expect("u-template installs after the cell opener lifecycle");
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();

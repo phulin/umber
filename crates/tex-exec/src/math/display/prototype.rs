@@ -172,7 +172,7 @@ fn cancel_display_skip(
     kind: GlueKind,
     displacement: Scaled,
 ) -> Node {
-    let original = original.spec();
+    let original = stores.glue_spec(*original);
     let spec = stores.intern_glue(GlueSpec {
         width: scaled_sub(displacement, original.width),
         stretch: original

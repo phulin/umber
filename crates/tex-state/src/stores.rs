@@ -44,13 +44,12 @@ fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
         PdfFontCode::Knac => BankTag::PdfKnacCode,
     }
 }
-use crate::glue::{GlueSpec, GlueSpecRef, GlueStore, GlueStoreMark};
+use crate::glue::{GlueSpec, GlueSpecRef};
 use crate::hot_core::arena::store::registry::{
+    RuntimeMacroValueInput, RuntimeTokenValueInput, RuntimeTracedTokenValueInput,
     RuntimeValueRegistry, RuntimeValueRegistryMark,
 };
-use crate::hot_core::arena::store::{
-    RuntimeValueStore, RuntimeValueStorePublicationMark,
-};
+use crate::hot_core::arena::store::{RuntimeValueStore, RuntimeValueStorePublicationMark};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
@@ -59,8 +58,8 @@ use crate::interner::{
     ControlSequenceKind, Interner, InternerError, InternerMark, Symbol, SymbolId, SymbolReference,
 };
 use crate::macro_store::{
-    MacroDefinitionProvenance, MacroDefinitionRef, MacroMeaning, MacroParameterPattern, MacroStore,
-    MacroStoreMark,
+    MacroDefinitionProvenance, MacroDefinitionRef, MacroDefinitionView, MacroMeaning,
+    MacroParameterPattern,
 };
 use crate::math::MathFontSize;
 use crate::meaning::{Meaning, MeaningFlags};
@@ -79,8 +78,7 @@ use crate::source_map::{
 };
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{
-    TokenListBuilder, TokenListRef, TokenSemanticId, TokenSemanticIdBuilder, TokenStore,
-    TokenStoreMark,
+    TokenListBuilder, TokenListRef, TokenListView, TokenSemanticId, TokenSemanticIdBuilder,
 };
 use std::mem;
 use std::num::NonZeroU32;
@@ -119,11 +117,8 @@ pub(crate) struct StoreSnapshot {
     interner_mark: InternerMark,
     string_pool: StringPoolSnapshot,
     string_pool_recycled_mark: usize,
-    token_mark: TokenStoreMark,
     provenance_mark: ProvenanceStoreMark,
     source_map_mark: SourceMapMark,
-    macro_mark: MacroStoreMark,
-    glue_mark: GlueStoreMark,
     runtime_value_mark: RuntimeValueRegistryMark,
     runtime_value_roots_mark: RuntimeValueStorePublicationMark,
     font_mark: FontStoreMark,
@@ -147,9 +142,6 @@ pub(crate) struct DirectStoreOperationMark {
 /// rejects an unpublished suffix.
 #[derive(Debug)]
 pub(crate) struct StorePatchOperationMark {
-    tokens: TokenStoreMark,
-    macros: MacroStoreMark,
-    glue: GlueStoreMark,
     runtime_values: RuntimeValueRegistryMark,
     runtime_value_roots: RuntimeValueStorePublicationMark,
 }
@@ -209,12 +201,9 @@ pub struct Stores {
     interner: Interner,
     string_pool: StringPoolAccounting,
     string_pool_recycled_journal: Vec<Arc<str>>,
-    tokens: TokenStore,
     provenance: ProvenanceStore,
     source_map: SourceMap,
     source_fragments: FragmentStore,
-    macros: MacroStore,
-    glue: GlueStore,
     runtime_values: RuntimeValueRegistry,
     runtime_value_roots: RuntimeValueStore,
     fonts: FontStore,
@@ -579,7 +568,7 @@ impl EngineUsageStatistics {
             string_characters: self.string_characters.max(other.string_characters),
             string_character_capacity: other.string_character_capacity,
             // Variable-size typed nodes report their terminating live extent;
-            // TokenStore separately retains §125's one-word allocator extent.
+            // the runtime value registry retains §125's token-word extent.
             memory_words: other.memory_words,
             memory_word_capacity: other.memory_word_capacity,
             control_sequences: self.control_sequences.max(other.control_sequences),
@@ -645,12 +634,9 @@ impl Clone for Stores {
             interner: self.interner.clone(),
             string_pool: self.string_pool.clone(),
             string_pool_recycled_journal: self.string_pool_recycled_journal.clone(),
-            tokens: self.tokens.clone(),
             provenance: self.provenance.clone(),
             source_map: self.source_map.clone(),
             source_fragments: self.source_fragments.clone(),
-            macros: self.macros.clone(),
-            glue: self.glue.clone(),
             runtime_values,
             runtime_value_roots: self.runtime_value_roots.clone(),
             fonts: self.fonts.clone(),
@@ -686,16 +672,6 @@ impl Stores {
         budgets: crate::provenance::ProvenanceBudgets,
     ) {
         self.provenance.configure_budgets(budgets);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn testing_macro_store(&self) -> &MacroStore {
-        &self.macros
-    }
-
-    #[cfg(test)]
-    pub(crate) fn testing_macro_store_mut(&mut self) -> &mut MacroStore {
-        &mut self.macros
     }
 
     /// TeX82 §§273/275's save depth immediately before the newest checked
@@ -762,7 +738,7 @@ impl Stores {
     ) -> Result<format::MainMemoryUsage, format::StoreFormatError> {
         let projection = self.take_transient_memory_base()?;
         let usage = projection.usage_with_extra_nodes(self, extra_nodes);
-        self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+        self.transient_memory_base = Some((self.runtime_values.glue_len(), projection));
         usage.map(|usage| {
             if include_scratch_extent {
                 format::main_memory_usage_with_scratch_extent(usage)
@@ -786,7 +762,7 @@ impl Stores {
             self.observe_low_memory_requests(projection.usage().variable, &requests);
         }
         let usage = projection.usage_with_extra_nodes(self, extra_nodes);
-        self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+        self.transient_memory_base = Some((self.runtime_values.glue_len(), projection));
         self.record_main_memory_usage(usage)
     }
 
@@ -882,7 +858,7 @@ impl Stores {
             return self.record_main_memory_usage(projection.map(|value| value.usage()));
         };
         let base = projection.usage();
-        self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+        self.transient_memory_base = Some((self.runtime_values.glue_len(), projection));
         self.record_main_memory_usage(Ok(format::main_memory_usage_with_extra_dynamic_words(
             base,
             extra_words,
@@ -904,14 +880,14 @@ impl Stores {
         let usage = projection
             .usage_with_box_copy(root.id(), live_dynamic_words)
             .expect("copied box root belongs to the allocator projection");
-        self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+        self.transient_memory_base = Some((self.runtime_values.glue_len(), projection));
         self.record_main_memory_usage(Ok(usage));
     }
 
     fn take_transient_memory_base(
         &mut self,
     ) -> Result<format::MainMemoryProjection, format::StoreFormatError> {
-        let glue_specs = self.glue.watermark().specs;
+        let glue_specs = self.runtime_values.glue_len();
         if let Some((cached_glue_specs, mut projection)) = self.transient_memory_base.take() {
             #[cfg(feature = "profiling")]
             crate::measurement::record_main_memory_base_request(true);
@@ -964,7 +940,7 @@ impl Stores {
         #[cfg(feature = "profiling")]
         crate::measurement::record_main_memory_cell_root_update(retained);
         if retained {
-            self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+            self.transient_memory_base = Some((self.runtime_values.glue_len(), projection));
         } else {
             #[cfg(feature = "profiling")]
             crate::measurement::record_main_memory_cache_loss(
@@ -993,7 +969,7 @@ impl Stores {
         #[cfg(feature = "profiling")]
         crate::measurement::record_main_memory_box_root_update(retained);
         if retained {
-            self.transient_memory_base = Some((self.glue.watermark().specs, projection));
+            self.transient_memory_base = Some((self.runtime_values.glue_len(), projection));
             true
         } else {
             #[cfg(feature = "profiling")]
@@ -1147,12 +1123,9 @@ impl Stores {
             interner: Interner::new(),
             string_pool: StringPoolAccounting::default(),
             string_pool_recycled_journal: Vec::new(),
-            tokens: TokenStore::new(),
             provenance: ProvenanceStore::new(),
             source_map: SourceMap::default(),
             source_fragments: FragmentStore::new(),
-            macros: MacroStore::new(),
-            glue: GlueStore::new(),
             runtime_values,
             runtime_value_roots,
             fonts: FontStore::new(),
@@ -1176,12 +1149,9 @@ impl Stores {
             #[cfg(test)]
             main_memory_root_traversals: std::sync::atomic::AtomicUsize::new(0),
         };
-        stores.env.install_empty_token_root(
-            stores
-                .tokens
-                .owner(TokenListId::EMPTY)
-                .expect("token store owns canonical empty list"),
-        );
+        stores
+            .env
+            .install_empty_token_root(TokenListRef::new(TokenListId::EMPTY));
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::TOLERANCE, 10_000);
         stores.set_int_param(IntParam::HANG_AFTER, 1);
@@ -1240,9 +1210,15 @@ impl Stores {
         word: u64,
     ) -> CellMutationReceipt {
         let token_root = match cell.bank() {
-            crate::cell::BankTag::Toks => self.tokens.owner(TokenListId::new(word as u32)),
+            crate::cell::BankTag::Toks => self
+                .runtime_values
+                .contains_token(TokenListId::new(word as u32))
+                .then(|| TokenListRef::new(TokenListId::new(word as u32))),
             crate::cell::BankTag::TokParam if word != 0 => {
-                self.tokens.owner(TokenListId::new((word - 1) as u32))
+                let id = TokenListId::new((word - 1) as u32);
+                self.runtime_values
+                    .contains_token(id)
+                    .then(|| TokenListRef::new(id))
             }
             crate::cell::BankTag::TokParam => None,
             _ => None,
@@ -1268,9 +1244,10 @@ impl Stores {
                 | crate::cell::BankTag::Muskip
                 | crate::cell::BankTag::GlueParam
         ) {
-            self.glue
-                .resolve_stored(GlueId::new(word as u32))
-                .and_then(|id| self.glue.owner(id))
+            let id = GlueId::new(word as u32);
+            self.runtime_values
+                .contains_glue(id)
+                .then(|| GlueSpecRef::new(id))
         } else {
             None
         };
@@ -1632,66 +1609,64 @@ impl Stores {
                 provenance.replacement_ref(),
             );
         }
-        let parameter_root = self
-            .tokens
-            .resolved_owner(macro_meaning.parameter_text())
-            .expect("macro parameter tokens have a live owner");
-        let replacement_root = self
-            .tokens
-            .resolved_owner(macro_meaning.replacement_text())
-            .expect("macro replacement tokens have a live owner");
-        let parameter_pattern = MacroParameterPattern::from_tokens(parameter_root.tokens());
-        let observation_width =
-            u32::try_from(1_usize + parameter_root.len() + replacement_root.len())
-                .expect("macro token list length exceeds u32");
-        let parameter_semantic_id = parameter_root.semantic_id();
-        let replacement_semantic_id = replacement_root.semantic_id();
-        self.macros.intern_with_provenance(
-            macro_meaning,
-            parameter_root,
-            replacement_root,
-            parameter_pattern,
-            parameter_semantic_id,
-            replacement_semantic_id,
-            provenance,
-            observation_width,
-            domain,
-        )
+        let parameter = self.tokens(macro_meaning.parameter_text());
+        let replacement = self.tokens(macro_meaning.replacement_text());
+        let parameter_pattern = MacroParameterPattern::from_tokens(&parameter);
+        let observation_width = u32::try_from(1_usize + parameter.len() + replacement.len())
+            .expect("macro token list length exceeds u32");
+        let definition_origin = provenance
+            .as_ref()
+            .map_or(crate::token::OriginId::UNKNOWN, |value| {
+                value.definition_origin()
+            });
+        let _ = domain;
+        let id = self
+            .runtime_values
+            .allocate_macro(RuntimeMacroValueInput {
+                flags: macro_meaning.flags(),
+                parameter_pattern,
+                parameter_text: macro_meaning.parameter_text(),
+                replacement_text: macro_meaning.replacement_text(),
+                definition_origin,
+                parameter_origins: &[],
+                replacement_origins: &[],
+                observation_width,
+            })
+            .expect("runtime macro allocation must remain representable");
+        MacroDefinitionRef::new(id)
     }
 
     pub(crate) fn macro_definition_ref(&self, id: MacroDefinitionId) -> MacroDefinitionRef {
-        self.macros
-            .resolved_owner(id)
-            .expect("macro definition id is not live")
+        self.runtime_values
+            .macro_definition(id)
+            .expect("macro definition id is not live in the runtime registry");
+        MacroDefinitionRef::new(id)
     }
 
-    pub(crate) fn packed_macro_owner(
-        &self,
-        id: MacroDefinitionId,
-    ) -> crate::macro_store::PackedMacroChunkOwner {
-        self.macros
-            .packed_owner(id)
-            .expect("macro definition has no packed chunk")
-    }
-
-    pub(crate) fn packed_macro_meaning(&self, id: MacroDefinitionId) -> Option<MacroMeaning> {
-        self.macros.packed_meaning(id)
-    }
-
-    /// Reads a live frozen macro definition.
+    /// Admits a live macro definition for the duration of this aggregate borrow.
     #[must_use]
-    pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
-        self.macros.get(id)
+    pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroDefinitionView<'_> {
+        MacroDefinitionView::new(
+            self.runtime_values
+                .macro_definition(id)
+                .expect("macro definition id is not live in the runtime registry"),
+        )
+    }
+
+    pub(crate) fn materialize_macro_replacement_word(
+        &mut self,
+        id: MacroDefinitionId,
+        index: usize,
+    ) -> Option<crate::token::RootedTracedTokenWord> {
+        let word = self.macro_definition(id).replacement_traced_word(index)?;
+        let origin = self.materialize_origin_ref(word.origin())?;
+        Some(crate::token::RootedTracedTokenWord::from_word(word, origin))
     }
 
     /// Returns TeX82's definition-head identity for command observation.
     #[must_use]
     pub fn macro_definition_observation_operand(&self, id: MacroDefinitionId) -> i64 {
-        self.macros.observation_operand(id)
-    }
-
-    pub(crate) fn packed_macro_observation_operand(&self, id: MacroDefinitionId) -> Option<i64> {
-        self.macros.packed_observation_operand(id)
+        self.macro_definition(id).observation_operand()
     }
 
     /// Reads the pre-parsed parameter structure for a live macro definition.
@@ -1700,23 +1675,65 @@ impl Stores {
         &self,
         id: MacroDefinitionId,
     ) -> MacroParameterPattern {
-        self.macros.parameter_pattern(id)
+        self.macro_definition(id).parameter_pattern()
     }
 
     /// Reads structurally owned diagnostic provenance for a macro definition,
     /// degrading to unknown when a loaded definition has none.
     #[must_use]
-    pub fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance {
-        self.macros
-            .provenance(id)
-            .unwrap_or_else(MacroDefinitionProvenance::unknown)
+    pub fn macro_definition_provenance(
+        &mut self,
+        id: MacroDefinitionId,
+    ) -> MacroDefinitionProvenance {
+        let definition = self.macro_definition(id);
+        let definition_origin = definition.definition_origin();
+        let parameter_text = definition.parameter_text();
+        let replacement_text = definition.replacement_text();
+        let parameter_origins = (0..self.tokens(parameter_text).len())
+            .map(|index| {
+                self.tokens(parameter_text)
+                    .traced_word(index)
+                    .expect("parameter token index was bounded")
+                    .origin()
+            })
+            .collect::<Vec<_>>();
+        let replacement_origins = (0..self.tokens(replacement_text).len())
+            .map(|index| {
+                self.tokens(replacement_text)
+                    .traced_word(index)
+                    .expect("replacement token index was bounded")
+                    .origin()
+            })
+            .collect::<Vec<_>>();
+        let definition_origin = self
+            .materialize_origin_ref(definition_origin)
+            .unwrap_or_else(OriginRef::unknown);
+        let parameter_origins = parameter_origins
+            .into_iter()
+            .map(|origin| {
+                self.materialize_origin_ref(origin)
+                    .unwrap_or_else(|| OriginRef::direct(origin))
+            })
+            .collect::<Vec<_>>();
+        let replacement_origins = replacement_origins
+            .into_iter()
+            .map(|origin| {
+                self.materialize_origin_ref(origin)
+                    .unwrap_or_else(|| OriginRef::direct(origin))
+            })
+            .collect::<Vec<_>>();
+        MacroDefinitionProvenance::new(
+            definition_origin,
+            self.provenance.allocate_rooted_list(&parameter_origins),
+            self.provenance.allocate_rooted_list(&replacement_origins),
+        )
     }
 
     pub(crate) fn macro_definition_provenance_roots(
-        &self,
+        &mut self,
         id: MacroDefinitionId,
     ) -> Option<(OriginRef, OriginListRef, OriginListRef)> {
-        let provenance = self.macros.provenance(id)?;
+        let provenance = self.macro_definition_provenance(id);
         Some((
             provenance.definition_ref().clone(),
             provenance.parameter_ref().clone(),
@@ -1729,7 +1746,11 @@ impl Stores {
         id: MacroDefinitionId,
         provenance: MacroDefinitionProvenance,
     ) {
-        self.macros.set_provenance(id, provenance);
+        assert_eq!(
+            self.macro_definition(id).definition_origin(),
+            provenance.definition_origin(),
+            "runtime macro provenance is immutable after publication"
+        );
     }
 
     /// Sets a local macro meaning by freezing its public aggregate first.
@@ -1774,8 +1795,7 @@ impl Stores {
         self.install_macro_meaning(symbol, macro_meaning.flags(), definition, true)
     }
 
-    /// Installs an ordinary runtime definition from the scanner's existing
-    /// strong token owners, without weak resolution or exact-body interning.
+    /// Installs an ordinary runtime definition from scanner token coordinates.
     pub fn set_macro_meaning_from_traced(
         &mut self,
         symbol: impl SymbolReference,
@@ -1787,38 +1807,36 @@ impl Stores {
     ) -> CellMutationReceipt {
         let parameter_root = parameter_text.token_ref();
         let replacement_root = replacement_text.token_ref();
-        assert!(
-            self.tokens.accepts_owner(parameter_root),
-            "macro parameter tokens belong to a foreign or stale timeline"
-        );
-        assert!(
-            self.tokens.accepts_owner(replacement_root),
-            "macro replacement tokens belong to a foreign or stale timeline"
-        );
+        let parameter = self.tokens(parameter_root.id());
+        let replacement = self.tokens(replacement_root.id());
         self.assert_live_origin(provenance.definition_origin());
         assert_eq!(
-            parameter_root.len(),
+            parameter.len(),
             provenance.parameter_ref().origins().len(),
             "macro parameter token and origin lengths differ"
         );
         assert_eq!(
-            replacement_root.len(),
+            replacement.len(),
             provenance.replacement_ref().origins().len(),
             "macro replacement token and origin lengths differ"
         );
         let meaning = MacroMeaning::new(flags, parameter_root.id(), replacement_root.id());
-        let parameter_pattern = MacroParameterPattern::from_tokens(parameter_root.tokens());
-        let observation_width =
-            u32::try_from(1_usize + parameter_root.len() + replacement_root.len())
-                .expect("macro token list length exceeds u32");
-        let definition = self.macros.allocate_with_provenance(
-            meaning,
-            parameter_root.clone(),
-            replacement_root.clone(),
-            parameter_pattern,
-            Some(provenance),
-            observation_width,
-            None,
+        let parameter_pattern = MacroParameterPattern::from_tokens(&parameter);
+        let observation_width = u32::try_from(1_usize + parameter.len() + replacement.len())
+            .expect("macro token list length exceeds u32");
+        let definition = MacroDefinitionRef::new(
+            self.runtime_values
+                .allocate_macro(RuntimeMacroValueInput {
+                    flags,
+                    parameter_pattern,
+                    parameter_text: meaning.parameter_text(),
+                    replacement_text: meaning.replacement_text(),
+                    definition_origin: provenance.definition_origin(),
+                    parameter_origins: &[],
+                    replacement_origins: &[],
+                    observation_width,
+                })
+                .expect("runtime macro allocation must remain representable"),
         );
         self.install_macro_meaning(symbol, flags, definition, global)
     }
@@ -1837,30 +1855,39 @@ impl Stores {
         global: bool,
     ) -> CellMutationReceipt {
         self.assert_live_origin(definition_origin.id());
-        self.macros.prepare_runtime_allocation();
-        self.tokens.prepare_runtime_allocation();
         let parameter_semantic_id = self.traced_token_list_semantic_id(parameter_text.words());
         let replacement_semantic_id = self.traced_token_list_semantic_id(replacement_text.words());
-        let (parameter_root, replacement_root) = self.tokens.allocate_traced_pair(
-            parameter_text.words(),
-            replacement_text.words(),
-            [parameter_semantic_id, replacement_semantic_id],
-        );
+        let parameter = self
+            .runtime_values
+            .allocate_traced_token_list(RuntimeTracedTokenValueInput {
+                semantic_id: parameter_semantic_id,
+                words: parameter_text.words(),
+            })
+            .expect("runtime parameter token-list allocation must remain representable");
+        let replacement = self
+            .runtime_values
+            .allocate_traced_token_list(RuntimeTracedTokenValueInput {
+                semantic_id: replacement_semantic_id,
+                words: replacement_text.words(),
+            })
+            .expect("runtime replacement token-list allocation must remain representable");
         let parameter_pattern = MacroParameterPattern::from_traced_words(parameter_text.words());
         let observation_width =
             u32::try_from(1_usize + parameter_text.len() + replacement_text.len())
                 .expect("macro token list length exceeds u32");
-        let definition = self.macros.allocate_packed_with_provenance(
-            flags,
-            parameter_root,
-            replacement_root,
-            parameter_pattern,
-            definition_origin,
-            parameter_text.roots(),
-            replacement_text.roots(),
-            parameter_text.words(),
-            replacement_text.words(),
-            observation_width,
+        let definition = MacroDefinitionRef::new(
+            self.runtime_values
+                .allocate_macro(RuntimeMacroValueInput {
+                    flags,
+                    parameter_pattern,
+                    parameter_text: parameter,
+                    replacement_text: replacement,
+                    definition_origin: definition_origin.id(),
+                    parameter_origins: &[],
+                    replacement_origins: &[],
+                    observation_width,
+                })
+                .expect("runtime macro allocation must remain representable"),
         );
         self.install_macro_meaning(symbol, flags, definition, global)
     }
@@ -1885,7 +1912,7 @@ impl Stores {
     #[must_use]
     pub fn macro_meaning(&self, symbol: impl SymbolReference) -> Option<MacroMeaning> {
         match self.meaning(symbol) {
-            Meaning::Macro { definition, .. } => Some(self.macro_definition(definition)),
+            Meaning::Macro { definition, .. } => Some(self.macro_definition(definition).meaning()),
             _ => None,
         }
     }
@@ -2057,7 +2084,7 @@ impl Stores {
     /// Creates a fresh owned scratch token-list builder.
     #[must_use]
     pub fn token_list_builder(&self) -> TokenListBuilder {
-        TokenStore::builder()
+        TokenListBuilder::new()
     }
 
     /// Interns a frozen token-list value in the owned token store.
@@ -2066,28 +2093,19 @@ impl Stores {
         self.intern_token_list_in_domain(tokens, None)
     }
 
-    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn intern_token_list_in_domain(
         &mut self,
         tokens: &[Token],
-        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
+        _domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
     ) -> TokenListId {
         let semantic_id = self.token_list_semantic_id(tokens.iter().copied());
-        let frozen_hash = self
-            .tokens
-            .has_frozen_lists()
-            .then(|| self.frozen_token_lookup_hash(tokens.iter().copied()));
-        let legacy_key = self
-            .tokens
-            .requires_legacy_frozen_key()
-            .then(|| self.legacy_frozen_token_lookup_key(tokens.iter().copied()));
-        self.tokens.testing_intern_with_semantic_id(
-            tokens,
-            semantic_id,
-            frozen_hash.unwrap_or(0),
-            legacy_key.as_deref(),
-            domain,
-        )
+        self.runtime_values
+            .intern_token_list(RuntimeTokenValueInput {
+                semantic_id,
+                tokens,
+                provenance: &[],
+            })
+            .expect("runtime token-list allocation must remain representable")
     }
 
     pub(crate) fn intern_token_list_ref_in_domain(
@@ -2095,22 +2113,7 @@ impl Stores {
         tokens: &[Token],
         domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
     ) -> TokenListRef {
-        let semantic_id = self.token_list_semantic_id(tokens.iter().copied());
-        let frozen_hash = self
-            .tokens
-            .has_frozen_lists()
-            .then(|| self.frozen_token_lookup_hash(tokens.iter().copied()));
-        let legacy_key = self
-            .tokens
-            .requires_legacy_frozen_key()
-            .then(|| self.legacy_frozen_token_lookup_key(tokens.iter().copied()));
-        self.tokens.intern_owned_with_semantic_identity(
-            tokens,
-            semantic_id,
-            frozen_hash.unwrap_or(0),
-            legacy_key.as_deref(),
-            domain,
-        )
+        TokenListRef::new(self.intern_token_list_in_domain(tokens, domain))
     }
 
     /// Interns the current token-list builder value and clears it for reuse.
@@ -2125,22 +2128,7 @@ impl Stores {
         builder: &mut TokenListBuilder,
         domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
     ) -> TokenListId {
-        let semantic_id = self.token_list_semantic_id(builder.as_slice().iter().copied());
-        let frozen_hash = self
-            .tokens
-            .has_frozen_lists()
-            .then(|| self.frozen_token_lookup_hash(builder.as_slice().iter().copied()));
-        let legacy_key = self
-            .tokens
-            .requires_legacy_frozen_key()
-            .then(|| self.legacy_frozen_token_lookup_key(builder.as_slice().iter().copied()));
-        let id = self.tokens.testing_intern_with_semantic_id(
-            builder.as_slice(),
-            semantic_id,
-            frozen_hash.unwrap_or(0),
-            legacy_key.as_deref(),
-            domain,
-        );
+        let id = self.intern_token_list_in_domain(builder.as_slice(), domain);
         builder.clear();
         id
     }
@@ -2151,9 +2139,15 @@ impl Stores {
         domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
     ) -> TracedTokenList {
         let semantic_id = self.traced_token_list_semantic_id(traced);
-        let token_list =
-            self.tokens
-                .allocate_traced_owned_with_semantic_id(traced, semantic_id, domain);
+        let _ = domain;
+        let token_list = TokenListRef::new(
+            self.runtime_values
+                .allocate_traced_token_list(RuntimeTracedTokenValueInput {
+                    semantic_id,
+                    words: traced,
+                })
+                .expect("runtime traced token-list allocation must remain representable"),
+        );
         #[cfg(feature = "profiling")]
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
         let origin_list = self
@@ -2169,9 +2163,12 @@ impl Stores {
     ) -> TracedTokenList {
         let words = traced.words();
         let semantic_id = self.traced_token_list_semantic_id(words);
-        let token_list =
-            self.tokens
-                .allocate_traced_owned_with_semantic_id(words, semantic_id, domain);
+        let _ = domain;
+        let token_list = TokenListRef::new(
+            self.runtime_values
+                .allocate_traced_token_list(RuntimeTracedTokenValueInput { semantic_id, words })
+                .expect("runtime rooted token-list allocation must remain representable"),
+        );
         #[cfg(feature = "profiling")]
         crate::measurement::record_traced_list_finish(words.len(), 0, 0);
         let origin_list = self
@@ -2181,58 +2178,60 @@ impl Stores {
     }
 
     pub(crate) fn token_list_ref(&self, id: TokenListId) -> TokenListRef {
-        self.tokens
-            .resolved_owner(id)
-            .expect("token list id is not live")
+        self.runtime_values
+            .token_list(id)
+            .expect("token list id is not live in the runtime registry");
+        TokenListRef::new(id)
     }
 
-    /// Reads a live frozen token list.
+    /// Admits a live token list for the duration of this aggregate borrow.
     #[must_use]
-    pub fn tokens(&self, id: TokenListId) -> TokenListRef {
-        self.tokens.get(id)
+    pub fn tokens(&self, id: TokenListId) -> TokenListView<'_> {
+        TokenListView::new(
+            self.runtime_values
+                .token_list(id)
+                .expect("token list id is not live in the runtime registry"),
+        )
+    }
+
+    pub(crate) fn materialize_token_word(
+        &mut self,
+        id: TokenListId,
+        index: usize,
+    ) -> Option<crate::token::RootedTracedTokenWord> {
+        let word = self.tokens(id).traced_word(index)?;
+        let origin = self.materialize_origin_ref(word.origin())?;
+        Some(crate::token::RootedTracedTokenWord::from_word(word, origin))
     }
 
     pub(crate) fn token_list_semantic_id_value(&self, id: TokenListId) -> u64 {
-        self.tokens.semantic_id(id).value()
+        self.tokens(id).semantic_id().value()
     }
 
     pub(crate) fn token_list_semantic_fragment(&self, id: TokenListId) -> StateHashFragment {
-        self.tokens.semantic_id(id).fragment()
+        self.tokens(id).semantic_id().fragment()
     }
 
     #[cfg(test)]
     pub(crate) fn testing_token_semantic_id(&self, id: TokenListId) -> TokenSemanticId {
-        self.tokens.semantic_id(id)
+        self.tokens(id).semantic_id()
     }
 
     pub(crate) fn selected_patch_roots(
         &self,
-        domain: &crate::patch_domain::PatchAllocationDomain,
+        _domain: &crate::patch_domain::PatchAllocationDomain,
     ) -> Vec<crate::patch_domain::PatchRoot> {
-        let mut roots = self.tokens.selected_patch_roots(domain);
-        roots.extend(self.macros.selected_patch_roots(domain));
-        roots.extend(self.glue.selected_patch_roots(domain));
-        roots
+        Vec::new()
     }
 
     pub(crate) fn patch_allocation_count(&self) -> usize {
-        self.tokens
-            .patch_allocation_count()
-            .saturating_add(self.macros.patch_allocation_count())
-            .saturating_add(self.glue.patch_allocation_count())
+        0
     }
 
-    pub(crate) fn clear_patch_allocations(&mut self) {
-        self.tokens.clear_patch_allocations();
-        self.macros.clear_patch_allocations();
-        self.glue.clear_patch_allocations();
-    }
+    pub(crate) fn clear_patch_allocations(&mut self) {}
 
     pub(crate) fn begin_patch_operation(&self) -> StorePatchOperationMark {
         StorePatchOperationMark {
-            tokens: self.tokens.watermark(),
-            macros: self.macros.watermark(),
-            glue: self.glue.watermark(),
             runtime_values: self
                 .runtime_values
                 .mark()
@@ -2251,9 +2250,6 @@ impl Stores {
         self.runtime_values
             .rollback(mark.runtime_values)
             .expect("patch runtime value mark belongs to this store");
-        self.tokens.truncate_to(mark.tokens);
-        self.macros.truncate_to(mark.macros);
-        self.glue.truncate_to(mark.glue);
     }
 
     fn token_list_semantic_id(&self, tokens: impl IntoIterator<Item = Token>) -> TokenSemanticId {
@@ -2319,55 +2315,6 @@ impl Stores {
             identity.push(token, atom);
         }
         identity.finish()
-    }
-
-    fn frozen_token_lookup_hash(&self, tokens: impl IntoIterator<Item = Token>) -> u64 {
-        let mut hash = crate::frozen_lookup::FrozenWordHasher::new();
-        for token in tokens {
-            hash.push_u32(self.frozen_token_word(token));
-        }
-        hash.finish()
-    }
-
-    fn frozen_token_word(&self, token: Token) -> u32 {
-        const CS_TAG: u32 = 1 << 30;
-        const PARAM_TAG: u32 = 2 << 30;
-        const FROZEN_TAG: u32 = 3 << 30;
-        match token {
-            Token::Char { ch, cat } => u32::from(cat as u8) << 21 | ch as u32,
-            Token::Cs(symbol) => {
-                let slot = self
-                    .interner
-                    .resolve_stored(symbol)
-                    .expect("token symbol is live")
-                    .raw();
-                assert!(slot < CS_TAG, "frozen token symbol exceeds 30 bits");
-                CS_TAG | slot
-            }
-            Token::Param(slot) => PARAM_TAG | u32::from(slot),
-            Token::Frozen(frozen) => FROZEN_TAG | u32::from(frozen.raw()),
-        }
-    }
-
-    fn legacy_frozen_token_lookup_key(&self, tokens: impl IntoIterator<Item = Token>) -> Vec<u8> {
-        let mut key = Vec::new();
-        for token in tokens {
-            let word = match token {
-                Token::Char { ch, cat } => u64::from(ch as u32) | (u64::from(cat as u8) << 32),
-                Token::Cs(symbol) => {
-                    let slot = self
-                        .interner
-                        .resolve_stored(symbol)
-                        .expect("token symbol is live")
-                        .raw();
-                    (1_u64 << 56) | u64::from(slot)
-                }
-                Token::Param(slot) => (2_u64 << 56) | u64::from(slot),
-                Token::Frozen(frozen) => (3_u64 << 56) | u64::from(frozen.raw()),
-            };
-            key.extend_from_slice(&word.to_le_bytes());
-        }
-        key
     }
 
     /// Returns the reserved unknown/bootstrap provenance origin.
@@ -2515,7 +2462,7 @@ impl Stores {
         self.assert_live_origin(invocation);
         self.assert_live_origin(definition_origin);
         self.assert_live_origin(parent_invocation);
-        let definition_operand = self.macros.observation_operand(definition) as u64;
+        let definition_operand = self.macro_definition_observation_operand(definition) as u64;
         self.provenance
             .allocate_unique(OriginRecord::MacroInvocation(
                 MacroInvocationOrigin::from_nonowning_operand(
@@ -2575,7 +2522,7 @@ impl Stores {
         parent_invocation: OriginRef,
     ) -> ExpansionFrameRef {
         self.assert_live_macro_definition(definition);
-        let definition_operand = self.macros.observation_operand(definition) as u64;
+        let definition_operand = self.macro_definition_observation_operand(definition) as u64;
         self.macro_invocation_frame_from_nonowning_operand(
             definition_operand,
             invocation,
@@ -2846,37 +2793,49 @@ impl Stores {
         );
     }
 
-    /// Interns a glue specification and returns its strong exact-content owner.
+    /// Interns a glue specification and returns its copy-only identity.
     pub fn intern_glue_in_domain(
         &mut self,
         spec: GlueSpec,
-        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
+        _domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
     ) -> GlueSpecRef {
-        self.glue.intern_owned(spec, domain)
+        GlueSpecRef::new(
+            self.runtime_values
+                .intern_glue(spec)
+                .expect("runtime glue allocation must remain representable"),
+        )
     }
 
     #[cfg(any(test, feature = "testing"))]
     #[allow(dead_code)]
     pub(crate) fn intern_glue(&mut self, spec: GlueSpec) -> GlueId {
-        self.glue.testing_intern(spec)
+        self.runtime_values
+            .intern_glue(spec)
+            .expect("runtime glue allocation must remain representable")
     }
 
     #[cfg(test)]
     pub(crate) fn testing_glue_live_totals(&self) -> (usize, usize) {
-        self.glue.testing_live_totals()
+        let len = self.runtime_values.glue_len() as usize;
+        (len, len)
     }
 
     pub(crate) fn glue_ref(&self, id: GlueId) -> GlueSpecRef {
         let id = self.resolve_stored_glue(id);
-        self.glue.owner(id).expect("glue id is not live")
+        self.runtime_values
+            .glue(id)
+            .expect("glue id is not live in the runtime registry");
+        GlueSpecRef::new(id)
     }
 
     /// Reads a live frozen glue specification.
     #[must_use]
     pub fn glue(&self, id: GlueId) -> GlueSpec {
-        self.glue
-            .resolve_get(id)
-            .expect("stored glue slot is not live")
+        *self
+            .runtime_values
+            .glue(self.resolve_stored_glue(id))
+            .expect("stored glue slot is not live in the runtime registry")
+            .spec()
     }
 
     /// Interns a loaded immutable font and initializes its Env-side banks.
@@ -3753,12 +3712,7 @@ impl Stores {
     pub fn set_toks(&mut self, index: u16, value: TokenListId) -> crate::env::CellMutationReceipt {
         self.assert_live_token_list(value);
         let value = self.resolve_stored_token_list(value);
-        self.env.set_toks(
-            index,
-            self.tokens
-                .owner(value)
-                .expect("validated token list has a live owner"),
-        )
+        self.env.set_toks(index, TokenListRef::new(value))
     }
 
     #[must_use]
@@ -3773,12 +3727,7 @@ impl Stores {
     ) -> crate::env::CellMutationReceipt {
         self.assert_live_token_list(value);
         let value = self.resolve_stored_token_list(value);
-        self.env.set_toks_global(
-            index,
-            self.tokens
-                .owner(value)
-                .expect("validated token list has a live owner"),
-        )
+        self.env.set_toks_global(index, TokenListRef::new(value))
     }
 
     pub fn clear_box_reg(&mut self, index: u16) -> crate::env::CellMutationReceipt {
@@ -3988,9 +3937,7 @@ impl Stores {
         let root = value.map(|value| {
             self.assert_live_token_list(value);
             let value = self.resolve_stored_token_list(value);
-            self.tokens
-                .owner(value)
-                .expect("validated token list has a live owner")
+            TokenListRef::new(value)
         });
         self.env.set_tok_param_option(param, root)
     }
@@ -4016,9 +3963,7 @@ impl Stores {
         let root = value.map(|value| {
             self.assert_live_token_list(value);
             let value = self.resolve_stored_token_list(value);
-            self.tokens
-                .owner(value)
-                .expect("validated token list has a live owner")
+            TokenListRef::new(value)
         });
         self.env.set_tok_param_option_global(param, root)
     }
@@ -4040,11 +3985,8 @@ impl Stores {
             interner_mark: self.interner.watermark(),
             string_pool: self.string_pool.checkpoint(),
             string_pool_recycled_mark: self.string_pool_recycled_journal.len(),
-            token_mark: self.tokens.watermark(),
             provenance_mark: self.provenance.watermark(),
             source_map_mark: self.source_map.watermark(),
-            macro_mark: self.macros.watermark(),
-            glue_mark: self.glue.watermark(),
             runtime_value_mark: self
                 .runtime_values
                 .mark()
@@ -4091,9 +4033,8 @@ impl Stores {
     }
 
     fn retire_unrooted_region_values(&mut self) {
-        self.macros.retire_unrooted_region_values();
-        self.tokens.retire_unrooted_region_values();
-        self.glue.retire_unrooted_region_values();
+        // Runtime-value liveness is region-root based. There is no per-value
+        // weak sweep or operation event journal to retire here.
     }
 
     /// Finishes one executor operation without discarding its live-root projection.
@@ -4153,11 +4094,8 @@ impl Stores {
         self.runtime_values
             .rollback(snapshot.runtime_value_mark)
             .expect("snapshot runtime value mark belongs to this store");
-        self.tokens.truncate_to(snapshot.token_mark);
         self.provenance.truncate_to(snapshot.provenance_mark);
         self.source_map.truncate_to(snapshot.source_map_mark);
-        self.macros.truncate_to(snapshot.macro_mark);
-        self.glue.truncate_to(snapshot.glue_mark);
         self.fonts.truncate_to(snapshot.font_mark);
         self.code_tables
             .rollback_to(snapshot.code_tables_snapshot.clone());
@@ -4254,23 +4192,27 @@ impl Stores {
     #[cfg(any(test, feature = "testing"))]
     #[must_use]
     pub fn testing_ownership_census(&self) -> TestingOwnershipCensus {
-        let macro_live = self.macros.testing_live_totals();
-        let macro_shapes = self.macros.testing_pool_shapes();
+        let token_len = self.runtime_values.token_len() as usize;
+        let macro_len = self.runtime_values.macro_len() as usize;
+        let glue_len = self.runtime_values.glue_len() as usize;
         let provenance = self.provenance_stats();
         let (node_weak_entries, node_weak_capacity) = self.node_ref_index.shape();
         TestingOwnershipCensus {
             token_lists: TestingValuePoolCensus::new(
-                self.tokens.testing_live_totals(),
-                self.tokens.testing_pool_shape(),
+                (token_len, token_len),
+                (token_len, token_len, 0, 0, 0, 0),
             ),
-            macro_bodies: TestingValuePoolCensus::new((macro_live.0, macro_live.1), macro_shapes.0),
+            macro_bodies: TestingValuePoolCensus::new(
+                (macro_len, macro_len),
+                (macro_len, macro_len, 0, 0, 0, 0),
+            ),
             macro_definitions: TestingValuePoolCensus::new(
-                (macro_live.2, macro_live.3),
-                macro_shapes.1,
+                (macro_len, macro_len),
+                (macro_len, macro_len, 0, 0, 0, 0),
             ),
             glue_specs: TestingValuePoolCensus::new(
-                self.glue.testing_live_totals(),
-                self.glue.testing_pool_shape(),
+                (glue_len, glue_len),
+                (glue_len, glue_len, 0, 0, 0, 0),
             ),
             node_weak_entries,
             node_weak_capacity,

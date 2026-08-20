@@ -604,7 +604,7 @@ fn update_glue_or_kern(
     let width = match node {
         Node::Kern { amount, .. } => *amount,
         Node::Glue { spec, kind, leader } => {
-            let spec = spec.spec();
+            let spec = stores.glue_spec(*spec);
             let spec = finite_page_shrink(stores, spec, error_context)?;
             let finite_id = stores.intern_glue(spec);
             replacement = Some(Node::Glue {
@@ -657,7 +657,7 @@ fn normalize_insert_content_shrink(
         let Some(Node::Glue { spec, kind, leader }) = content_nodes.get(index) else {
             continue;
         };
-        let mut finite = spec.spec();
+        let mut finite = stores.glue_spec(*spec);
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }

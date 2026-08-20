@@ -1,8 +1,9 @@
 //! Opaque store handles.
 //!
-//! `TokenListId` is minted by the token store. `OriginListId` is the compact
+//! `TokenListId` is minted by the runtime value registry. `OriginListId` is the compact
 //! projection of a live reachability-owned origin list and is not independently
-//! resolvable. `GlueId` is minted by the glue store. `NodeListId` is minted by
+//! resolvable. `GlueId` and `MacroDefinitionId` are minted by the same runtime
+//! value registry. `NodeListId` is minted by
 //! node arenas. `FontId` is minted by the loaded font store. `SnapshotId`
 //! becomes real in State M3.
 
@@ -94,12 +95,12 @@ semantic_id!(FontId, 13, 1);
 semantic_id!(OriginListId, 14, 1);
 
 impl GlueId {
-    /// The canonical zero-glue id, pre-interned by every glue store.
+    /// The canonical zero-glue id, pre-interned by every runtime registry.
     pub const ZERO: Self = Self(crate::identity::HandleIdentity::builtin(0));
 }
 
 impl TokenListId {
-    /// The canonical empty token-list id, pre-interned by every token store.
+    /// The canonical empty token-list id, pre-interned by every runtime registry.
     pub const EMPTY: Self = Self(crate::identity::HandleIdentity::builtin(0));
 }
 

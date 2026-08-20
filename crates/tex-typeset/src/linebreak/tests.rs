@@ -325,7 +325,7 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
     assert_eq!(breakpoints[0].position, paragraph.len());
     assert_eq!(&paragraph[..whatsits.len()], whatsits);
     assert_eq!(
-        tokens.tokens(),
+        &*universe.tokens(tokens.id()),
         [Token::Char {
             ch: 'w',
             cat: Catcode::Letter,

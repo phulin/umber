@@ -1690,7 +1690,7 @@ pub(in crate::main_control) fn apply(
             tokens,
         } => {
             let mut text = String::new();
-            for &token in tokens.token_ref().tokens() {
+            for &token in stores.tokens(tokens.token_ref().id()).iter() {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
             crate::box_runtime::append_whatsit(
@@ -1832,7 +1832,7 @@ pub(in crate::main_control) fn apply(
                 Meaning::Relax,
                 global,
             );
-            drop(_provisional_macro_root);
+            let _ = _provisional_macro_root;
             let observed = match primitive {
                 UnexpandablePrimitive::CharDef => ObservationValue::Character(value as u32),
                 UnexpandablePrimitive::MathCharDef => ObservationValue::Integer(i64::from(value)),
@@ -1878,7 +1878,7 @@ pub(in crate::main_control) fn apply(
                 Meaning::Relax,
                 global,
             );
-            drop(_provisional_macro_root);
+            let _ = _provisional_macro_root;
             let observed_name =
                 if command.state.profile().capabilities().supports_etex() && index > 255 {
                     if primitive == UnexpandablePrimitive::ToksDef {
@@ -1987,7 +1987,7 @@ pub(in crate::main_control) fn apply(
             // TeX82 §1279's `issue_message` renders the scanned list through
             // `token_show` into one string and then hands it to §1280 or
             // §1283; neither branch formats or routes its own output.
-            let text = message_tokens_text(stores, tokens.token_ref().tokens());
+            let text = message_tokens_text(stores, tokens.token_ref().id());
             if error {
                 let context = command.state.output_open_context(&stores.command_context());
                 issue_error_message(stores, &text, context)?;
@@ -2027,7 +2027,7 @@ pub(in crate::main_control) fn apply(
             // §1297 prints `token_show(temp_head)` and takes the common
             // `\show` completion path.
             let context = command.state.output_open_context(&stores.command_context());
-            let text = show_tokens_tokens_text(stores, tokens.token_ref().tokens());
+            let text = show_tokens_tokens_text(stores, tokens.token_ref().id());
             // §1297 opens with §62's `print_nl(">␣")`, whose break is
             // conditional on a selected sink already having an open column.
             // An unconditional newline here left a blank line above the
@@ -2094,7 +2094,7 @@ pub(in crate::main_control) fn apply(
                     }
                 }
                 ImmediateExtension::Write { stream, tokens } => {
-                    let text = write_text(tokens.token_ref().tokens(), stores);
+                    let text = write_text(tokens.token_ref().id(), stores);
                     if let Some(sink) = immediate_write_sink(stream, stores) {
                         write_immediate_text(stores, sink, &text);
                     }
@@ -2929,7 +2929,10 @@ pub(in crate::main_control) fn apply(
             if let Some(outer) = active_alignment.take() {
                 command
                     .state
-                    .apply_alignment_request(AlignmentRequest::Suspend(outer.identity))
+                    .apply_alignment_request(
+                        &stores.command_context(),
+                        AlignmentRequest::Suspend(outer.identity),
+                    )
                     .map_err(|_| ExecError::MissingToken {
                         context: "nested alignment suspension",
                     })?;
@@ -2939,7 +2942,10 @@ pub(in crate::main_control) fn apply(
             *next_alignment_identity = next_alignment_identity.wrapping_add(1);
             command
                 .state
-                .apply_alignment_request(AlignmentRequest::Begin(identity))
+                .apply_alignment_request(
+                    &stores.command_context(),
+                    AlignmentRequest::Begin(identity),
+                )
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment lifecycle",
                 })?;
@@ -2999,7 +3005,10 @@ pub(in crate::main_control) fn apply(
         ColdOperation::AlignmentPreambleOpening { alignment, packing } => {
             command
                 .state
-                .apply_alignment_request(AlignmentRequest::Preamble(alignment))
+                .apply_alignment_request(
+                    &stores.command_context(),
+                    AlignmentRequest::Preamble(alignment),
+                )
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment preamble lifecycle",
                 })?;
@@ -3109,10 +3118,13 @@ pub(in crate::main_control) fn apply(
                     })?;
             command
                 .state
-                .apply_alignment_request(AlignmentRequest::BeginCell {
-                    alignment,
-                    templates,
-                })
+                .apply_alignment_request(
+                    &stores.command_context(),
+                    AlignmentRequest::BeginCell {
+                        alignment,
+                        templates,
+                    },
+                )
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment next-row lifecycle",
                 })?;
@@ -3121,13 +3133,19 @@ pub(in crate::main_control) fn apply(
             if omit {
                 command
                     .state
-                    .apply_alignment_request(AlignmentRequest::PrepareCellLookahead(alignment))
+                    .apply_alignment_request(
+                        &stores.command_context(),
+                        AlignmentRequest::PrepareCellLookahead(alignment),
+                    )
                     .map_err(|_| ExecError::MissingToken {
                         context: "alignment omit lookahead lifecycle",
                     })?;
                 command
                     .state
-                    .apply_alignment_request(AlignmentRequest::InstallOmitCellTemplate(alignment))
+                    .apply_alignment_request(
+                        &stores.command_context(),
+                        AlignmentRequest::InstallOmitCellTemplate(alignment),
+                    )
                     .map_err(|_| ExecError::MissingToken {
                         context: "alignment omit-cell lifecycle",
                     })?;
@@ -3138,7 +3156,10 @@ pub(in crate::main_control) fn apply(
                 // command before the template is installed.
                 command
                     .state
-                    .apply_alignment_request(AlignmentRequest::InstallCellTemplate(alignment))
+                    .apply_alignment_request(
+                        &stores.command_context(),
+                        AlignmentRequest::InstallCellTemplate(alignment),
+                    )
                     .map_err(|_| ExecError::MissingToken {
                         context: "alignment next-row cell-template lifecycle",
                     })?;
@@ -3186,14 +3207,17 @@ pub(in crate::main_control) fn apply(
         ColdOperation::AlignmentCellOpening { alignment, opening } => {
             command
                 .state
-                .apply_alignment_request(match opening {
-                    AlignmentCellOpening::Template => {
-                        AlignmentRequest::InstallCellTemplate(alignment)
-                    }
-                    AlignmentCellOpening::Omit => {
-                        AlignmentRequest::InstallOmitCellTemplate(alignment)
-                    }
-                })
+                .apply_alignment_request(
+                    &stores.command_context(),
+                    match opening {
+                        AlignmentCellOpening::Template => {
+                            AlignmentRequest::InstallCellTemplate(alignment)
+                        }
+                        AlignmentCellOpening::Omit => {
+                            AlignmentRequest::InstallOmitCellTemplate(alignment)
+                        }
+                    },
+                )
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment cell-template lifecycle",
                 })?;
@@ -3247,7 +3271,10 @@ pub(in crate::main_control) fn apply(
             schedule_aftergroup(command, stores, alignment_aftergroup)?;
             command
                 .state
-                .apply_alignment_request(AlignmentRequest::Finish(alignment))
+                .apply_alignment_request(
+                    &stores.command_context(),
+                    AlignmentRequest::Finish(alignment),
+                )
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment finish lifecycle",
                 })?;
@@ -3255,7 +3282,10 @@ pub(in crate::main_control) fn apply(
             if let Some(outer) = boxes.suspended_alignments.pop() {
                 command
                     .state
-                    .apply_alignment_request(AlignmentRequest::Resume(outer.identity))
+                    .apply_alignment_request(
+                        &stores.command_context(),
+                        AlignmentRequest::Resume(outer.identity),
+                    )
                     .map_err(|_| ExecError::MissingToken {
                         context: "nested alignment resumption",
                     })?;

@@ -769,7 +769,7 @@ fn emit_index(
             dvi.kern(amount).map_err(invalid_artifact)?;
         }
         NodeRef::Glue { spec, kind, leader } => {
-            let spec = lower_glue(spec.spec());
+            let spec = lower_glue(stores.glue_spec(*spec));
             let kind = lower_glue_kind(kind);
             emit_glue(
                 stores, overlay, output, dvi, emission, spec, kind, leader, list, depth,

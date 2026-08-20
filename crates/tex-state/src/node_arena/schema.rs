@@ -586,7 +586,7 @@ pub(super) fn semantic_eq(left: &NodeRef<'_>, right: &NodeRef<'_>) -> bool {
                 class: c,
                 tokens: d,
             },
-        ) => a == c && b.tokens() == d.tokens(),
+        ) => a == c && b == d,
         (
             NodeRef::Ins {
                 class: a,

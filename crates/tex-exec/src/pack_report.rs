@@ -356,7 +356,7 @@ fn append_short_display_nodes(
             | Node::Adjust(_) => out.push_str("[]"),
             Node::Rule { .. } => out.push('|'),
             Node::Glue { spec, .. } => {
-                if spec.spec() != tex_state::glue::GlueSpec::ZERO {
+                if stores.glue_spec(*spec) != tex_state::glue::GlueSpec::ZERO {
                     out.push(' ');
                 }
             }

@@ -236,8 +236,8 @@ fn main_memory_projection_inner(
         mut node_lists,
         box_roots,
     } = capture_memory_roots(stores, extra_nodes)?;
-    let token_count = stores.tokens.slot_len() as usize;
-    let macro_count = stores.macros.watermark().definitions as usize;
+    let token_count = stores.runtime_values.token_len() as usize;
+    let macro_count = stores.runtime_values.macro_len() as usize;
     let mut macro_refs = vec![0_u32; macro_count];
     let mut macro_words_by_definition = vec![None; macro_count];
     let mut token_refs = vec![0_u32; token_count];
@@ -256,8 +256,8 @@ fn main_memory_projection_inner(
                     crate::meaning::Meaning::decode_stored(raw)
                 {
                     let definition = stores
-                        .macros
-                        .resolve_stored(definition)
+                        .runtime_values
+                        .macro_id_at(definition.raw())
                         .ok_or(StoreFormatError::Invalid("environment macro"))?;
                     increment_reachable(&mut macro_refs, definition.raw(), "environment macro")?;
                 }
@@ -281,11 +281,7 @@ fn main_memory_projection_inner(
     let mut macro_token_refs = vec![0_u32; token_count];
     let mut token_words = vec![0_usize; token_count];
     if let Some(empty) = token_words.first_mut() {
-        *empty = stores
-            .tokens
-            .get(TokenListId::EMPTY)
-            .len()
-            .saturating_add(1);
+        *empty = stores.tokens(TokenListId::EMPTY).len().saturating_add(1);
     }
     let mut macro_words = 0_usize;
     let mut live_macro_count = 0_usize;
@@ -294,14 +290,21 @@ fn main_memory_projection_inner(
             continue;
         }
         live_macro_count = live_macro_count.saturating_add(1);
-        let definition = stores.macros.get(MacroDefinitionId::new(raw as u32));
+        let definition = stores
+            .macro_definition(
+                stores
+                    .runtime_values
+                    .macro_id_at(raw as u32)
+                    .ok_or(StoreFormatError::Invalid("environment macro allocation"))?,
+            )
+            .meaning();
         let mut children = [(0, 0); 2];
         for (child, list_id) in children
             .iter_mut()
             .zip([definition.parameter_text(), definition.replacement_text()])
         {
-            let list = stores.tokens.get(list_id);
-            let index = list.id().raw() as usize;
+            let list = stores.tokens(list_id);
+            let index = list_id.raw() as usize;
             *child = (index, list.len());
             token_words[index] = list.len().saturating_add(1);
             macro_token_refs[index] = macro_token_refs[index].saturating_add(1);
@@ -335,8 +338,7 @@ fn main_memory_projection_inner(
         .filter(|(index, refs)| **refs != 0 && *index != 0 && macro_token_refs[*index] == 0)
         .map(|(index, _)| {
             let words = stores
-                .tokens
-                .get(TokenListId::new(index as u32))
+                .tokens(stores.resolve_stored_token_list(TokenListId::new(index as u32)))
                 .len()
                 .saturating_add(1);
             token_words[index] = words;
@@ -377,7 +379,7 @@ fn main_memory_projection_inner(
     // variable-size words independently of its two-word glue node.
     let variable = 21_usize
         .saturating_add(
-            (stores.glue.watermark().specs as usize)
+            (stores.runtime_values.glue_len() as usize)
                 .saturating_sub(5)
                 .saturating_mul(4),
         )
@@ -732,7 +734,7 @@ impl MainMemoryProjection {
         }
         let extra_token_words = extra_tokens
             .into_iter()
-            .map(|id| stores.tokens.get(id).len().saturating_add(1))
+            .map(|id| stores.tokens(id).len().saturating_add(1))
             .sum::<usize>();
 
         let roots = node_lists
@@ -804,10 +806,10 @@ impl MainMemoryProjection {
         new_word: u64,
     ) -> Result<bool, StoreFormatError> {
         self.macro_refs
-            .resize(stores.macros.watermark().definitions as usize, 0);
+            .resize(stores.runtime_values.macro_len() as usize, 0);
         self.macro_words
-            .resize(stores.macros.watermark().definitions as usize, None);
-        let token_count = stores.tokens.slot_len() as usize;
+            .resize(stores.runtime_values.macro_len() as usize, None);
+        let token_count = stores.runtime_values.token_len() as usize;
         self.token_refs.resize(token_count, 0);
         self.macro_token_refs.resize(token_count, 0);
         self.token_words.resize(token_count, 0);
@@ -877,8 +879,8 @@ impl MainMemoryProjection {
         if add {
             if refs == 0 {
                 let definition = stores
-                    .macros
-                    .resolve_stored(definition)
+                    .runtime_values
+                    .macro_id_at(definition.raw())
                     .ok_or(StoreFormatError::Invalid("environment macro"))?;
                 let projection = Self::capture_macro_words(stores, definition)?;
                 self.adjust_macro_words(projection, true)?;
@@ -905,14 +907,14 @@ impl MainMemoryProjection {
         stores: &Stores,
         definition: MacroDefinitionId,
     ) -> Result<MacroMemoryProjection, StoreFormatError> {
-        let definition = stores.macros.get(definition);
+        let definition = stores.macro_definition(definition).meaning();
         let mut children = [(0, 0); 2];
         for (child, list_id) in children
             .iter_mut()
             .zip([definition.parameter_text(), definition.replacement_text()])
         {
-            let list = stores.tokens.get(list_id);
-            let index = list.id().raw() as usize;
+            let list = stores.tokens(list_id);
+            let index = list_id.raw() as usize;
             let list_words = list.len();
             *child = (index, list_words);
         }
@@ -986,8 +988,7 @@ impl MainMemoryProjection {
             .ok_or(StoreFormatError::Invalid("environment token list"))?;
         let words = if add {
             let words = stores
-                .tokens
-                .get(TokenListId::new(raw))
+                .tokens(stores.resolve_stored_token_list(TokenListId::new(raw)))
                 .len()
                 .saturating_add(1);
             self.token_words[index] = words;
@@ -1421,9 +1422,9 @@ impl Stores {
         validate_loaded_references(
             &env,
             core.interner.len(),
-            core.tokens.slot_len() as usize,
-            core.macros.watermark().definitions as usize,
-            core.glue.slot_len() as usize,
+            core.tokens.len(),
+            core.macros.len(),
+            core.glue.len(),
             non_node.font_rows.len(),
         )?;
         #[cfg(feature = "profiling")]
@@ -1465,19 +1466,17 @@ impl Stores {
                 }
             })
             .collect();
-        let token_lists = (0..self.tokens.slot_len())
+        let token_lists = (0..self.runtime_values.token_len())
             .map(|raw| {
-                self.tokens
-                    .get(self.resolve_stored_token_list(TokenListId::new(raw)))
+                self.tokens(self.resolve_stored_token_list(TokenListId::new(raw)))
                     .iter()
                     .copied()
                     .map(|token| FormatToken::capture(self, token))
                     .collect()
             })
             .collect();
-        let glue_mark = self.glue.watermark();
-        let glue = (0..glue_mark.specs)
-            .map(|raw| FormatGlue::capture(self.glue.stored_slot(raw).spec()))
+        let glue = (0..self.runtime_values.glue_len())
+            .map(|raw| FormatGlue::capture(self.glue(GlueId::new(raw))))
             .collect();
         let font_mark = self.fonts.watermark();
         let fonts = (0..font_mark.len)
@@ -1526,19 +1525,17 @@ impl Stores {
                 }
             })
             .collect();
-        let token_lists = (0..self.tokens.slot_len())
+        let token_lists = (0..self.runtime_values.token_len())
             .map(|raw| {
-                self.tokens
-                    .get(self.resolve_stored_token_list(TokenListId::new(raw)))
+                self.tokens(self.resolve_stored_token_list(TokenListId::new(raw)))
                     .iter()
                     .copied()
                     .map(|token| FormatToken::capture(self, token))
                     .collect()
             })
             .collect();
-        let glue_mark = self.glue.watermark();
-        let glue = (0..glue_mark.specs)
-            .map(|raw| FormatGlue::capture(self.glue.stored_slot(raw).spec()))
+        let glue = (0..self.runtime_values.glue_len())
+            .map(|raw| FormatGlue::capture(self.glue(GlueId::new(raw))))
             .collect();
         let font_mark = self.fonts.watermark();
         let fonts = (0..font_mark.len)
@@ -2144,28 +2141,26 @@ impl ImmutableStoreIdentity {
                 }
             })
             .collect();
-        let token_lists = (0..stores.tokens.slot_len())
+        let token_lists = (0..stores.runtime_values.token_len())
             .map(|raw| {
                 stores
-                    .tokens
-                    .stored_slot_tokens(raw)
+                    .tokens(stores.resolve_stored_token_list(TokenListId::new(raw)))
                     .iter()
                     .copied()
                     .map(|token| FormatToken::capture(stores, token))
                     .collect()
             })
             .collect();
-        let macro_mark = stores.macros.watermark();
-        let macros = (0..macro_mark.definitions)
+        let macros = (0..stores.runtime_values.macro_len())
             .map(|raw| {
-                let meaning = stores.macros.stored_slot(raw).map_or(
-                    MacroMeaning::new(
-                        crate::meaning::MeaningFlags::EMPTY,
-                        TokenListId::EMPTY,
-                        TokenListId::EMPTY,
-                    ),
-                    |root| root.meaning(),
-                );
+                let meaning = stores
+                    .macro_definition(
+                        stores
+                            .runtime_values
+                            .macro_id_at(raw)
+                            .expect("captured macro slot should be live"),
+                    )
+                    .meaning();
                 FormatMacro {
                     flags: meaning.flags().bits(),
                     parameter_text: meaning.parameter_text().raw(),
@@ -2173,9 +2168,8 @@ impl ImmutableStoreIdentity {
                 }
             })
             .collect();
-        let glue_mark = stores.glue.watermark();
-        let glue = (0..glue_mark.specs)
-            .map(|raw| FormatGlue::capture(stores.glue.stored_slot(raw).spec()))
+        let glue = (0..stores.runtime_values.glue_len())
+            .map(|raw| FormatGlue::capture(stores.glue(GlueId::new(raw))))
             .collect();
         let font_mark = stores.fonts.watermark();
         let fonts = (0..font_mark.len)
@@ -2287,19 +2281,54 @@ fn install_frozen_sections(
     non_node: frozen_non_node::DecodedFrozenNonNode,
 ) -> Result<Stores, StoreFormatError> {
     let font_count = non_node.font_rows.len();
-    let glue_count = frozen.glue.slot_len() as usize;
-    let token_list_count = frozen.tokens.slot_len() as usize;
+    let glue_count = frozen.glue.len();
+    let token_list_count = frozen.tokens.len();
     let mut stores = Stores::new();
     stores.interner = frozen.interner;
-    stores.tokens = frozen.tokens;
-    stores.env.install_empty_token_root(
+    for (raw, value) in frozen.tokens.iter().enumerate() {
         stores
-            .tokens
-            .owner(TokenListId::EMPTY)
-            .expect("frozen token store owns canonical empty list"),
-    );
-    stores.macros = frozen.macros;
-    stores.glue = frozen.glue;
+            .runtime_values
+            .install_frozen_token_list(
+                raw as u32,
+                crate::hot_core::arena::store::registry::RuntimeTokenValueInput {
+                    semantic_id: value.semantic_id,
+                    tokens: &value.tokens,
+                    provenance: &[],
+                },
+            )
+            .map_err(|_| StoreFormatError::Invalid("frozen token registry install"))?;
+    }
+    stores
+        .env
+        .install_empty_token_root(crate::token_store::TokenListRef::new(TokenListId::EMPTY));
+    for (raw, value) in frozen.macros.iter().enumerate() {
+        stores
+            .runtime_values
+            .install_frozen_macro(
+                raw as u32,
+                crate::hot_core::arena::store::registry::RuntimeMacroValueInput {
+                    flags: value.meaning.flags(),
+                    parameter_pattern: value.pattern,
+                    parameter_text: value.meaning.parameter_text(),
+                    replacement_text: value.meaning.replacement_text(),
+                    definition_origin: crate::token::OriginId::UNKNOWN,
+                    parameter_origins: &[],
+                    replacement_origins: &[],
+                    observation_width: value.observation_width,
+                },
+            )
+            .map_err(|_| StoreFormatError::Invalid("frozen macro registry install"))?;
+    }
+    for (raw, spec) in frozen.glue.iter().copied().enumerate() {
+        stores
+            .runtime_values
+            .install_frozen_glue(raw as u32, spec)
+            .map_err(|_| StoreFormatError::Invalid("frozen glue registry install"))?;
+    }
+    stores
+        .runtime_values
+        .publish_into(&mut stores.runtime_value_roots)
+        .map_err(|_| StoreFormatError::Invalid("frozen runtime registry publication"))?;
     stores.fonts = non_node.fonts;
     stores.code_tables = non_node.code_tables;
     stores.hyphenation = non_node.hyphenation.into();
@@ -2422,34 +2451,26 @@ fn install_frozen_sections(
                 return Err(StoreFormatError::Invalid("box value in non-box bank"));
             }
         };
-        let token_root = match cell.bank() {
-            crate::cell::BankTag::Toks => Some(
-                stores
-                    .tokens
-                    .resolved_owner(TokenListId::new(word as u32))
-                    .ok_or(StoreFormatError::Invalid(
-                        "frozen environment token-register owner",
-                    ))?,
-            ),
-            crate::cell::BankTag::TokParam if word != 0 => Some(
-                stores
-                    .tokens
-                    .resolved_owner(TokenListId::new((word - 1) as u32))
-                    .ok_or(StoreFormatError::Invalid(
-                        "frozen environment token-parameter owner",
-                    ))?,
-            ),
-            crate::cell::BankTag::TokParam => None,
-            _ => None,
-        };
+        let token_root =
+            match cell.bank() {
+                crate::cell::BankTag::Toks => Some(stores.token_list_ref(
+                    stores.resolve_stored_token_list(TokenListId::new(word as u32)),
+                )),
+                crate::cell::BankTag::TokParam if word != 0 => Some(stores.token_list_ref(
+                    stores.resolve_stored_token_list(TokenListId::new((word - 1) as u32)),
+                )),
+                crate::cell::BankTag::TokParam => None,
+                _ => None,
+            };
         let macro_root = if cell.bank() == crate::cell::BankTag::Meaning {
             match crate::meaning::Meaning::decode_stored(word) {
-                crate::meaning::Meaning::Macro { definition, .. } => Some(
-                    stores
-                        .macros
-                        .resolved_owner(definition)
-                        .ok_or(StoreFormatError::Invalid("frozen environment macro owner"))?,
-                ),
+                crate::meaning::Meaning::Macro { definition, .. } => {
+                    let definition = stores
+                        .runtime_values
+                        .macro_id_at(definition.raw())
+                        .ok_or(StoreFormatError::Invalid("frozen environment macro owner"))?;
+                    Some(stores.macro_definition_ref(definition))
+                }
                 _ => None,
             }
         } else {
@@ -2461,16 +2482,7 @@ fn install_frozen_sections(
                 | crate::cell::BankTag::Muskip
                 | crate::cell::BankTag::GlueParam
         ) {
-            let id = stores
-                .glue
-                .resolve_stored(GlueId::new(word as u32))
-                .ok_or(StoreFormatError::Invalid("frozen environment glue owner"))?;
-            Some(
-                stores
-                    .glue
-                    .owner(id)
-                    .ok_or(StoreFormatError::Invalid("frozen environment glue owner"))?,
-            )
+            Some(stores.glue_ref(GlueId::new(word as u32)))
         } else {
             None
         };
@@ -2808,11 +2820,11 @@ impl FormatToken {
     fn capture(stores: &Stores, token: Token) -> Self {
         match token {
             Token::Char { ch, cat } => Self::Char { ch, cat: cat as u8 },
-            // Weak token slots may still be live through a detached builder
-            // after its timeline-local symbol was rolled back. The reachable
-            // closure below discards such a slot; use an invalid sentinel so
-            // an actually reachable stale reference is rejected rather than
-            // panicking while the unreachable physical table is projected.
+            // A detached cold builder may still contain a token whose
+            // timeline-local symbol was rolled back. The reachable closure
+            // below discards such a value; use an invalid sentinel so an
+            // actually reachable stale reference is rejected rather than
+            // panicking while unreachable cold content is projected.
             Token::Cs(symbol) => Self::Cs(
                 stores
                     .try_resolve_stored_symbol(symbol)

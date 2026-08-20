@@ -30,7 +30,9 @@ use crate::input::{
     SourceId, TokenListReplayKind, TracedTokenList,
 };
 use crate::interner::{ControlSequenceKind, Symbol, SymbolId};
-use crate::macro_store::{MacroDefinitionProvenance, MacroDefinitionRef, MacroMeaning};
+use crate::macro_store::{
+    MacroDefinitionProvenance, MacroDefinitionRef, MacroDefinitionView, MacroMeaning,
+};
 use crate::math::MathFontSize;
 use crate::meaning::Meaning;
 use crate::node::{GlueKind, KernKind, MarginKernSide, Node, Whatsit};
@@ -71,7 +73,7 @@ use crate::stores::{
     StoreSnapshot, Stores,
 };
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
-use crate::token_store::{TokenListBuilder, TokenListRef};
+use crate::token_store::{TokenListBuilder, TokenListRef, TokenListView};
 use crate::world::{
     CommittedArtifact, ContentHash, EffectPos, EffectRecord, JobClock, PrintSink,
     ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldCommitMode,
@@ -1182,7 +1184,7 @@ fn format_restore_tokens(
 
 /// Decodes an environment token-parameter word and rebinds its stored handle
 /// to this Universe's live token store.
-fn restored_tok_param_tokens(universe: &Universe, stored: u64) -> Option<TokenListRef> {
+fn restored_tok_param_tokens(universe: &Universe, stored: u64) -> Option<TokenListView<'_>> {
     use crate::env::banks::{BankCodec, OptionalTokenListIdCodec};
 
     OptionalTokenListIdCodec::decode(stored).map(|id| universe.tokens(id))
@@ -5448,37 +5450,23 @@ impl Universe {
         self.stores.macro_definition_ref(id)
     }
 
-    #[doc(hidden)]
     #[must_use]
-    pub fn packed_macro_owner(
-        &self,
-        id: MacroDefinitionId,
-    ) -> crate::macro_store::PackedMacroChunkOwner {
-        self.stores.packed_macro_owner(id)
-    }
-
-    /// Reads the current packed meaning for a definition already rooted by
-    /// live command state, without entering the weak value index.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn packed_macro_meaning(&self, id: MacroDefinitionId) -> Option<MacroMeaning> {
-        self.stores.packed_macro_meaning(id)
-    }
-
-    #[must_use]
-    pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroMeaning {
+    pub fn macro_definition(&self, id: MacroDefinitionId) -> MacroDefinitionView<'_> {
         self.stores.macro_definition(id)
+    }
+
+    /// Materializes one cold replacement origin from the provenance archive.
+    pub fn materialize_macro_replacement_word(
+        &mut self,
+        id: MacroDefinitionId,
+        index: usize,
+    ) -> Option<crate::token::RootedTracedTokenWord> {
+        self.stores.materialize_macro_replacement_word(id, index)
     }
 
     #[must_use]
     pub fn macro_definition_observation_operand(&self, id: MacroDefinitionId) -> i64 {
         self.stores.macro_definition_observation_operand(id)
-    }
-
-    #[doc(hidden)]
-    #[must_use]
-    pub fn packed_macro_observation_operand(&self, id: MacroDefinitionId) -> Option<i64> {
-        self.stores.packed_macro_observation_operand(id)
     }
 
     #[must_use]
@@ -5490,13 +5478,16 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance {
+    pub fn macro_definition_provenance(
+        &mut self,
+        id: MacroDefinitionId,
+    ) -> MacroDefinitionProvenance {
         self.stores.macro_definition_provenance(id)
     }
 
     #[doc(hidden)]
     pub fn macro_definition_provenance_roots(
-        &self,
+        &mut self,
         id: MacroDefinitionId,
     ) -> Option<(OriginRef, OriginListRef, OriginListRef)> {
         self.stores.macro_definition_provenance_roots(id)
@@ -5664,7 +5655,7 @@ impl Universe {
             .intern_token_list_in_domain(tokens, self.private_revision_domain.as_mut())
     }
 
-    /// Interns a token list and returns its strong exact-content owner.
+    /// Interns a token list and returns its copy-only identity.
     pub fn intern_token_list_ref(&mut self, tokens: &[Token]) -> TokenListRef {
         self.stores
             .intern_token_list_ref_in_domain(tokens, self.private_revision_domain.as_mut())
@@ -5696,11 +5687,20 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn tokens(&self, id: TokenListId) -> TokenListRef {
+    pub fn tokens(&self, id: TokenListId) -> TokenListView<'_> {
         self.stores.tokens(id)
     }
 
-    /// Clones the strong exact-content owner for a live token coordinate.
+    /// Materializes one cold structural token origin from the provenance archive.
+    pub fn materialize_token_word(
+        &mut self,
+        id: TokenListId,
+        index: usize,
+    ) -> Option<crate::token::RootedTracedTokenWord> {
+        self.stores.materialize_token_word(id, index)
+    }
+
+    /// Returns the copy-only identity for a live token coordinate.
     #[must_use]
     pub fn token_list_ref(&self, id: TokenListId) -> TokenListRef {
         self.stores.token_list_ref(id)
@@ -6199,6 +6199,12 @@ impl Universe {
     #[must_use]
     pub fn glue(&self, id: impl crate::glue::GlueHandle) -> GlueSpec {
         self.stores.glue(id.glue_id())
+    }
+
+    /// Resolves a copy-only glue reference while this Universe is borrowed.
+    #[must_use]
+    pub fn glue_spec(&self, root: GlueSpecRef) -> GlueSpec {
+        self.stores.glue(root.id())
     }
 
     pub fn intern_font(&mut self, font: LoadedFont) -> FontId {
@@ -8140,7 +8146,9 @@ impl Universe {
     #[must_use]
     pub fn page_last_skip(&self) -> GlueSpec {
         self.observe_semantic_dependency(DependencyKey::Page(DependencyPageField::CurrentPage));
-        self.page.last_skip()
+        self.page
+            .last_skip_ref()
+            .map_or(GlueSpec::ZERO, |root| self.stores.glue(root.id()))
     }
 
     #[must_use]
@@ -8265,7 +8273,7 @@ impl Universe {
         let candidate = loop {
             let candidate = next();
             match candidate {
-                Some(node) if margin_kern_enquiry_skipable(&children_owner, &node, side) => {}
+                Some(node) if margin_kern_enquiry_skipable(self, &children_owner, &node, side) => {}
                 _ => break candidate,
             }
         };
@@ -8844,6 +8852,7 @@ fn box_dimension_from_nodes(nodes: NodeList<'_>, dimension: BoxDimension) -> Opt
 
 /// pdftex.web §470's edge traversal, using its `cp_skipable` predicate.
 fn margin_kern_enquiry_skipable(
+    universe: &Universe,
     owner: &NodeListRef,
     node: &crate::node_arena::NodeRef<'_>,
     side: MarginKernSide,
@@ -8873,7 +8882,7 @@ fn margin_kern_enquiry_skipable(
             amount.raw() == 0 || matches!(kind, KernKind::Font | KernKind::Auto)
         }
         NodeRef::Glue { spec, kind, .. } => {
-            spec.spec() == GlueSpec::ZERO
+            universe.glue_spec(**spec) == GlueSpec::ZERO
                 || matches!(
                     (side, kind),
                     (MarginKernSide::Left, GlueKind::LeftSkip)

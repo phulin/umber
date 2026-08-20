@@ -221,7 +221,7 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
         {
             Search::Skip
         }
-        Node::Glue { spec, .. } if spec.spec().width.raw() == 0 => Search::Skip,
+        Node::Glue { spec, .. } if state.glue_spec(*spec).width.raw() == 0 => Search::Skip,
         Node::Penalty(_)
         | Node::MarginKern { .. }
         | Node::Mark { .. }

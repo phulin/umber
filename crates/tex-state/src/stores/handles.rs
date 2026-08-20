@@ -119,15 +119,16 @@ impl Stores {
                     ..
                 } => {
                     self.assert_live_token_list(token_list.id());
+                    let token_view = self.tokens(token_list.id());
                     if origin_list.id() != crate::ids::OriginListId::EMPTY {
                         assert_eq!(
                             origin_list.origins().len(),
-                            token_list.tokens().len(),
+                            token_view.len(),
                             "input origin-list length does not match token list"
                         );
                     }
                     assert!(
-                        *index <= token_list.tokens().len(),
+                        *index <= token_view.len(),
                         "input token-list frame index exceeds its live token list"
                     );
                     for &word in macro_arguments.tokens().iter() {
@@ -274,14 +275,14 @@ impl Stores {
         }
     }
     pub(super) fn resolve_stored_token_list(&self, id: TokenListId) -> TokenListId {
-        self.tokens
-            .resolve_stored(id)
+        self.runtime_values
+            .token_id_at(id.raw())
             .expect("stored token-list slot is not live")
     }
 
     pub(super) fn resolve_stored_glue(&self, id: GlueId) -> GlueId {
-        self.glue
-            .resolve_stored(id)
+        self.runtime_values
+            .glue_id_at(id.raw())
             .expect("stored glue slot is not live")
     }
 
@@ -295,8 +296,8 @@ impl Stores {
         match meaning {
             Meaning::Macro { definition, flags } => Meaning::Macro {
                 definition: self
-                    .macros
-                    .resolve_stored(definition)
+                    .runtime_values
+                    .macro_id_at(definition.raw())
                     .expect("stored macro-definition slot is not live"),
                 flags,
             },
@@ -314,14 +315,14 @@ impl Stores {
 
     pub(crate) fn assert_live_token_list(&self, id: TokenListId) {
         assert!(
-            self.tokens.resolved_owner(id).is_some(),
+            self.runtime_values.contains_token(id),
             "token list is not live in this Universe timeline"
         );
     }
 
     pub(super) fn assert_live_glue(&self, id: GlueId) {
         assert!(
-            self.glue.resolve_stored(id).is_some(),
+            self.runtime_values.contains_glue(id),
             "glue id is not live in this Universe timeline"
         );
     }
@@ -335,7 +336,7 @@ impl Stores {
 
     pub(super) fn assert_live_macro_definition(&self, id: MacroDefinitionId) {
         assert!(
-            self.macros.resolved_owner(id).is_some(),
+            self.runtime_values.contains_macro(id),
             "macro definition id is not live in this Universe timeline: {id:?}"
         );
     }

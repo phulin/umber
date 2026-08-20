@@ -3,7 +3,6 @@ use crate::cell::{BankTag, CellId};
 use crate::env::banks::{IntParam, TokParam};
 use crate::glue::GlueSpec;
 use crate::glue::Order;
-use crate::ids::MacroDefinitionId;
 use crate::macro_store::MacroMeaning;
 use crate::meaning::{Meaning, MeaningFlags};
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, DiscKind, GlueKind, LeaderPayload, Node, Sign};
@@ -737,7 +736,7 @@ fn format_round_trip_preserves_every_extended_register_family_at_boundaries() {
 }
 
 #[test]
-fn frozen_environment_and_macro_rows_install_exact_token_owners() {
+fn frozen_environment_and_macro_rows_install_exact_region_coordinates() {
     let mut stores = Stores::new();
     let register = stores.intern_token_list(&[Token::Char {
         ch: 'R',
@@ -764,7 +763,7 @@ fn frozen_environment_and_macro_rows_install_exact_token_owners() {
         },
     );
     assert_eq!(definition.raw(), 0);
-    assert_eq!(stores.macros.watermark().definitions, 1);
+    assert_eq!(stores.runtime_values.macro_len(), 1);
     let encoded = stores.encode_frozen_format().expect("encode macro format");
     assert_eq!(
         u32::from_le_bytes(encoded.macros[4..8].try_into().expect("macro count field")),
@@ -772,7 +771,7 @@ fn frozen_environment_and_macro_rows_install_exact_token_owners() {
     );
 
     let mut restored = frozen_round_trip(&stores);
-    assert_eq!(restored.macros.watermark().definitions, 1);
+    assert_eq!(restored.runtime_values.macro_len(), 1);
     for (cell, id) in [
         (CellId::new(BankTag::Toks, 300), restored.toks(300)),
         (
@@ -780,48 +779,38 @@ fn frozen_environment_and_macro_rows_install_exact_token_owners() {
             restored.tok_param(TokParam::EVERY_JOB),
         ),
     ] {
-        let env_root = restored
+        let env_coordinate = restored
             .env
             .token_root(cell)
-            .expect("format Env token owner");
-        let store_root = restored.tokens.owner(id).expect("loaded token owner");
-        assert!(env_root.ptr_eq(&store_root));
+            .expect("format Env token coordinate");
+        assert_eq!(env_coordinate.id(), id);
+        assert!(restored.runtime_values.contains_token(id));
         let base = restored
             .env
             .testing_format_base()
             .iter()
             .find(|entry| entry.cell == cell)
             .expect("token cell is installed in immutable format base");
-        assert!(
-            base.token_root
-                .as_ref()
-                .is_some_and(|root| root.ptr_eq(&store_root))
-        );
+        assert!(base.token_root.is_some_and(|root| root.id() == id));
     }
 
     let definition = restored
-        .macros
-        .resolve_stored(MacroDefinitionId::new(0))
+        .runtime_values
+        .macro_id_at(0)
         .expect("loaded macro definition");
-    let (macro_parameter, macro_replacement) = restored.macros.testing_token_roots(definition);
-    let loaded_meaning = restored.macros.get(definition);
+    let loaded_meaning = restored.macro_definition(definition);
     let loaded_parameter = loaded_meaning.parameter_text();
     let loaded_replacement = loaded_meaning.replacement_text();
-    assert!(
-        macro_parameter.ptr_eq(
-            &restored
-                .tokens
-                .owner(loaded_parameter)
-                .expect("parameter owner")
-        )
+    assert_eq!(
+        restored.tokens(loaded_parameter).tokens(),
+        &[Token::param(1)]
     );
-    assert!(
-        macro_replacement.ptr_eq(
-            &restored
-                .tokens
-                .owner(loaded_replacement)
-                .expect("replacement owner")
-        )
+    assert_eq!(
+        restored.tokens(loaded_replacement).tokens(),
+        &[Token::Char {
+            ch: 'M',
+            cat: Catcode::Other,
+        }]
     );
 
     let overlay = restored.intern_token_list(&[Token::Char {
