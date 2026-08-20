@@ -339,6 +339,17 @@ impl Interner {
         )
     }
 
+    /// Returns an already-interned active-character control sequence.
+    pub(crate) fn active(&self, ch: char) -> Option<SymbolId> {
+        let mut encoded = [0; 4];
+        let name = ch.encode_utf8(&mut encoded);
+        self.lookup_slot(
+            EntryKind::ControlSequence(ControlSequenceKind::ActiveCharacter),
+            name,
+        )
+        .map(|slot| SymbolId::new(self.epoch, slot))
+    }
+
     /// Interns an inaccessible engine-owned fixed control sequence.
     pub(crate) fn intern_internal(&mut self, name: &str) -> Result<SymbolId, InternerError> {
         self.intern_control_sequence(ControlSequenceKind::Internal, name, false)

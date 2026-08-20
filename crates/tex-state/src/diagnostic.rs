@@ -28,18 +28,18 @@ use crate::universe::Universe;
 /// Close it with [`Diagnostic::end`], whose `blank_line` argument is
 /// `end_diagnostic`'s.
 #[must_use = "an open diagnostic must be closed with `Diagnostic::end`"]
-pub struct Diagnostic<'a> {
-    printer: Printer<'a>,
+pub struct Diagnostic<'a, G> {
+    printer: Printer<'a, G>,
 }
 
-impl<'a> Diagnostic<'a> {
-    fn begin(universe: &'a mut Universe) -> Self {
+impl<'a, G> Diagnostic<'a, G> {
+    fn begin(universe: &'a mut Universe<G>) -> Self {
         let tracing_online = universe.int_param(IntParam::TRACING_ONLINE);
         Self::begin_with_tracing_online(universe, tracing_online)
     }
 
     pub(crate) fn begin_with_tracing_online(
-        universe: &'a mut Universe,
+        universe: &'a mut Universe<G>,
         tracing_online: i32,
     ) -> Self {
         // tex.web §245: `if (tracing_online<=0)and(selector=term_and_log) then
@@ -63,7 +63,7 @@ impl<'a> Diagnostic<'a> {
 
     /// The state being traced. Diagnostics read live state while printing.
     #[must_use]
-    pub fn state(&self) -> &Universe {
+    pub fn state(&self) -> &Universe<G> {
         self.printer.state()
     }
 
@@ -136,10 +136,10 @@ impl<'a> Diagnostic<'a> {
     }
 }
 
-impl Universe {
+impl<G> Universe<G> {
     /// tex.web §245's `begin_diagnostic`: opens the shared `\tracing*` print
     /// channel.
-    pub fn begin_diagnostic(&mut self) -> Diagnostic<'_> {
+    pub fn begin_diagnostic(&mut self) -> Diagnostic<'_, G> {
         Diagnostic::begin(self)
     }
 
@@ -149,7 +149,7 @@ impl Universe {
     /// `tracing_online` while reporting level-two missing characters. This
     /// routing override deliberately does not perform an eqtb assignment or
     /// create a save-stack entry.
-    pub fn begin_online_diagnostic(&mut self) -> Diagnostic<'_> {
+    pub fn begin_online_diagnostic(&mut self) -> Diagnostic<'_, G> {
         Diagnostic::begin_with_tracing_online(self, 1)
     }
 }

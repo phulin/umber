@@ -220,25 +220,25 @@ impl Selector {
 }
 
 /// tex.web §§57-65's print primitives over one [`Selector`].
-pub struct Printer<'a> {
-    universe: &'a mut Universe,
+pub struct Printer<'a, G> {
+    universe: &'a mut Universe<G>,
     selector: Selector,
 }
 
-impl<'a> Printer<'a> {
+impl<'a, G> Printer<'a, G> {
     /// Opens a print scope routed by `selector`.
-    pub fn new(universe: &'a mut Universe, selector: Selector) -> Self {
+    pub fn new(universe: &'a mut Universe<G>, selector: Selector) -> Self {
         Self { universe, selector }
     }
 
     /// The state being printed from. Printing reads live state.
     #[must_use]
-    pub fn state(&self) -> &Universe {
+    pub fn state(&self) -> &Universe<G> {
         self.universe
     }
 
     /// Mutable state, for callers that must render from and then update it.
-    pub fn state_mut(&mut self) -> &mut Universe {
+    pub fn state_mut(&mut self) -> &mut Universe<G> {
         self.universe
     }
 
@@ -439,8 +439,8 @@ impl<'a> Printer<'a> {
 /// The message text is printed as the report is built; §79's help lines and
 /// §1283's `use_err_help` are accumulated and shown by [`Self::error`].
 #[must_use = "an opened error report must be completed with `error` or `int_error`"]
-pub struct ErrorReport<'a> {
-    printer: Printer<'a>,
+pub struct ErrorReport<'a, G> {
+    printer: Printer<'a, G>,
     help: Vec<String>,
     err_help: Option<String>,
     context: Option<String>,
@@ -512,13 +512,13 @@ impl ErrorOutcome {
     }
 }
 
-impl<'a> ErrorReport<'a> {
-    fn begin(universe: &'a mut Universe, text: &str) -> Self {
+impl<'a, G> ErrorReport<'a, G> {
+    fn begin(universe: &'a mut Universe<G>, text: &str) -> Self {
         let selector = Selector::for_interaction(universe.interaction_mode());
         Self::begin_with_selector(universe, text, selector)
     }
 
-    fn begin_with_selector(universe: &'a mut Universe, text: &str, selector: Selector) -> Self {
+    fn begin_with_selector(universe: &'a mut Universe<G>, text: &str, selector: Selector) -> Self {
         // tex.web §73: `print_nl("! "); print(#)`.
         let mut printer = Printer::new(universe, selector);
         printer.print_nl("! ").print(text);
@@ -1032,7 +1032,7 @@ impl ErrorChannel {
     }
 }
 
-impl Universe {
+impl<G> Universe<G> {
     /// pdftex.web §73's `print_ignored_err`: an original-TeX error that
     /// pdfTeX deliberately records only in the transcript, without the word
     /// `error` that humans and tooling treat specially.
@@ -1044,7 +1044,7 @@ impl Universe {
     }
 
     /// tex.web §73's `print_err`, opening a recoverable-error report.
-    pub fn print_err(&mut self, text: &str) -> ErrorReport<'_> {
+    pub fn print_err(&mut self, text: &str) -> ErrorReport<'_, G> {
         ErrorReport::begin(self, text)
     }
 
@@ -1060,7 +1060,7 @@ impl Universe {
         &mut self,
         text: &str,
         transcript_open: bool,
-    ) -> ErrorReport<'_> {
+    ) -> ErrorReport<'_, G> {
         let selector = Selector::for_interaction_and_log(self.interaction_mode(), transcript_open);
         ErrorReport::begin_with_selector(self, text, selector)
     }
@@ -1071,7 +1071,7 @@ impl Universe {
     /// §1293's `\show` completion is the one such site: §1294 and §1297 print
     /// their `>␣` line through the ordinary print routines and then reach
     /// `common_ending`'s bare `error`.
-    pub fn error_report(&mut self) -> ErrorReport<'_> {
+    pub fn error_report(&mut self) -> ErrorReport<'_, G> {
         let selector = Selector::for_interaction(self.interaction_mode());
         ErrorReport {
             printer: Printer::new(self, selector),
@@ -1082,7 +1082,7 @@ impl Universe {
     }
 
     /// Resumes a report paused by [`ErrorReport::defer`].
-    pub fn resume_error_report(&mut self, deferred: DeferredErrorReport) -> ErrorReport<'_> {
+    pub fn resume_error_report(&mut self, deferred: DeferredErrorReport) -> ErrorReport<'_, G> {
         ErrorReport {
             printer: Printer::new(self, deferred.selector),
             help: deferred.help,
@@ -1109,7 +1109,7 @@ impl Universe {
 
     /// An ordinary print scope at the §75 selector the current interaction
     /// mode implies.
-    pub fn printer(&mut self) -> Printer<'_> {
+    pub fn printer(&mut self) -> Printer<'_, G> {
         let selector = Selector::for_interaction(self.interaction_mode());
         Printer::new(self, selector)
     }

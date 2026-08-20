@@ -65,7 +65,7 @@ impl FileFraming {
 /// `file_offset` -- even though the resulting `print_ln` or space is written
 /// through the ambient selector to every channel it routes to. That asymmetry
 /// is tex.web's, not an approximation of it.
-pub fn print_file_open(universe: &mut Universe, name: &str) {
+pub fn print_file_open<G>(universe: &mut Universe<G>, name: &str) {
     let mut printer = universe.printer();
     let term_offset = printer.terminal_offset();
     if term_offset + name.chars().count() > printer.max_print_line() - 2 {
@@ -79,13 +79,13 @@ pub fn print_file_open(universe: &mut Universe, name: &str) {
 }
 
 /// tex.web §362's bare `)`.
-pub fn print_file_close(universe: &mut Universe) {
+pub fn print_file_close<G>(universe: &mut Universe<G>) {
     universe.printer().print_char(')');
     universe.world_mut().file_framing_mut().decr();
 }
 
 /// tex.web §1335's `while open_parens>0 do begin print("␣)"); decr(open_parens); end`.
-pub fn print_remaining_file_closes(universe: &mut Universe) {
+pub fn print_remaining_file_closes<G>(universe: &mut Universe<G>) {
     while universe.world().file_framing().open_parens() > 0 {
         universe.printer().print(" )");
         universe.world_mut().file_framing_mut().decr();
@@ -100,7 +100,7 @@ pub fn print_remaining_file_closes(universe: &mut Universe) {
 /// `print_char("("); incr(open_parens)`, and §1335 must therefore see it when
 /// `\end` or `\dump` abandons the still-open root -- but it is terminal-only,
 /// because the log is not open yet when a root is selected.
-pub fn print_startup_file_open(universe: &mut Universe, name: &str) {
+pub fn print_startup_file_open<G>(universe: &mut Universe<G>, name: &str) {
     Printer::new(universe, Selector::TermOnly)
         .print_char('(')
         .print(name);
@@ -108,7 +108,7 @@ pub fn print_startup_file_open(universe: &mut Universe, name: &str) {
 }
 
 /// §537's startup opening after §536 has opened the transcript.
-pub fn print_startup_file_open_after_log(universe: &mut Universe, name: &str) {
+pub fn print_startup_file_open_after_log<G>(universe: &mut Universe<G>, name: &str) {
     let selector = Selector::for_interaction(universe.interaction_mode());
     Printer::new(universe, selector).print_char('(').print(name);
     universe.world_mut().file_framing_mut().incr();

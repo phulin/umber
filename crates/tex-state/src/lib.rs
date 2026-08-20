@@ -120,7 +120,10 @@ pub use expansion_diagnostic::RecoverableExpansionDiagnostic;
 pub use expansion_recovery::ExpansionRecovery;
 pub use generation::GenerationOwner;
 pub use read_observation::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};
-pub use resource::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
+pub use resource::{
+    InputOpenContext, InputOpenState, InputReadState, InputResolver, ResourceLookup, ResourceNeed,
+    ResourceResult,
+};
 
 pub use command_context::CommandContext;
 pub use definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};

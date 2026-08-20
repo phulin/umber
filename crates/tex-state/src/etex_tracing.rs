@@ -15,7 +15,7 @@ use crate::GroupKind;
 use crate::env::banks::IntParam;
 use crate::universe::Universe;
 
-impl Universe {
+impl<G> Universe<G> {
     /// e-TeX 2.6 [19.274]'s `group_trace(false)`, called when
     /// [`Self::enter_group_with_kind_at_line`] opens a new save level.
     ///

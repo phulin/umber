@@ -12,7 +12,7 @@ use crate::interner::{
     InternerRetirement, InternerUsage, Symbol, SymbolId,
 };
 use crate::journal::JournalCursor;
-use crate::meaning::MeaningWord;
+use crate::meaning::{Meaning, MeaningWord};
 use crate::node::Node;
 use crate::node_arena::{
     DurableListId, NodeArenaCursor, NodeArenaError, NodeList, PageLifetime, PageListId,
@@ -162,6 +162,8 @@ pub struct Universe<G> {
     page_nodes: PageNodeArena,
     world: World,
     interaction_mode: InteractionMode,
+    primitive_names: Vec<String>,
+    primitive_meanings: Vec<Meaning>,
 }
 
 impl<G> Universe<G> {
@@ -172,6 +174,8 @@ impl<G> Universe<G> {
             page_nodes: PageNodeArena::new(),
             world: World::default(),
             interaction_mode: InteractionMode::default(),
+            primitive_names: Vec::new(),
+            primitive_meanings: Vec::new(),
         }
     }
 
@@ -209,6 +213,126 @@ impl<G> Universe<G> {
     pub fn control_sequence_kind(&self, symbol: Symbol) -> Option<ControlSequenceKind> {
         self.qualify_symbol(symbol)
             .and_then(|id| self.interner.kind_id(id).ok())
+    }
+
+    #[must_use]
+    pub fn active_character_symbol(&self, ch: char) -> Option<SymbolId> {
+        self.interner.active(ch)
+    }
+
+    pub fn intern_active_character(&mut self, ch: char) -> Result<SymbolId, UniverseError> {
+        let symbol = self.interner.intern_active(ch)?;
+        self.core
+            .as_mut()
+            .ok_or(UniverseError::Retired)?
+            .admit_mut()?
+            .state()
+            .admit_symbol(symbol.symbol())?;
+        Ok(symbol)
+    }
+
+    /// Records one immutable primitive-table row without changing eqtb.
+    pub fn register_primitive_meaning(&mut self, name: &str, meaning: Meaning) {
+        if let Some(index) = self
+            .primitive_names
+            .iter()
+            .position(|candidate| candidate == name)
+        {
+            assert_eq!(self.primitive_meanings[index], meaning);
+            return;
+        }
+        let index = self.primitive_names.len();
+        assert!(
+            index < 60_000 - 2,
+            "primitive registry exceeds frozen-token capacity"
+        );
+        self.primitive_names.push(name.to_owned());
+        self.primitive_meanings.push(meaning);
+    }
+
+    /// Records and installs one static primitive meaning.
+    pub fn install_primitive_meaning(&mut self, name: &str, meaning: Meaning) {
+        self.register_primitive_meaning(name, meaning);
+        let symbol = self
+            .intern(name)
+            .expect("primitive name exceeds interner budget");
+        self.assign_meaning(
+            symbol,
+            MeaningWord::from_static(meaning),
+            AssignmentScope::Global,
+        )
+        .expect("primitive meaning installation must target admitted state");
+    }
+
+    #[must_use]
+    pub fn primitive_meaning(&self, name: &str) -> Option<Meaning> {
+        self.primitive_names
+            .iter()
+            .position(|candidate| candidate == name)
+            .map(|index| self.primitive_meanings[index])
+    }
+
+    #[must_use]
+    pub fn primitive_name(&self, meaning: Meaning) -> Option<&str> {
+        self.primitive_meanings
+            .iter()
+            .position(|&candidate| candidate == meaning)
+            .map(|index| self.primitive_names[index].as_str())
+    }
+
+    #[must_use]
+    pub fn primitive_token(&self, name: &str) -> Option<crate::token::Token> {
+        let index = self
+            .primitive_names
+            .iter()
+            .position(|candidate| candidate == name)?;
+        Some(crate::token::Token::frozen_primitive(
+            u16::try_from(index).ok()?,
+        ))
+    }
+
+    #[must_use]
+    pub fn frozen_primitive_name(&self, token: crate::token::Token) -> Option<&str> {
+        let crate::token::Token::Frozen(frozen) = token else {
+            return None;
+        };
+        if token.is_frozen_end_template() || token.is_frozen_endv() {
+            return Some("endtemplate");
+        }
+        if token.is_frozen_relax() {
+            return Some("relax");
+        }
+        self.primitive_names
+            .get(usize::from(frozen.primitive_index()?))
+            .map(String::as_str)
+    }
+
+    #[must_use]
+    pub fn frozen_primitive_meaning(&self, token: crate::token::Token) -> Option<Meaning> {
+        let crate::token::Token::Frozen(frozen) = token else {
+            return None;
+        };
+        self.primitive_meanings
+            .get(usize::from(frozen.primitive_index()?))
+            .copied()
+    }
+
+    #[must_use]
+    pub fn catcode(&self, ch: char) -> crate::token::Catcode {
+        let raw = self
+            .command_context()
+            .ok()
+            .and_then(|context| context.code(CodeTableKind::Catcode, ch).ok())
+            .unwrap_or(crate::token::Catcode::Other as i64);
+        u8::try_from(raw)
+            .ok()
+            .and_then(crate::token::Catcode::from_raw)
+            .unwrap_or(crate::token::Catcode::Other)
+    }
+
+    #[must_use]
+    pub fn font_name(&self, id: crate::ids::FontId) -> String {
+        format!("font{}", id.raw())
     }
 
     pub fn meaning(
@@ -705,7 +829,12 @@ impl<G> Universe<G> {
     /// Admits matching coarse owners once for a command episode.
     pub fn command_context(&self) -> Result<CommandContext<'_, G>, UniverseError> {
         let core = self.core.as_ref().ok_or(UniverseError::Retired)?;
-        Ok(CommandContext::new(&self.interner, core.admit()))
+        Ok(CommandContext::new(
+            &self.interner,
+            core.admit(),
+            &self.primitive_names,
+            &self.primitive_meanings,
+        ))
     }
 
     /// Retains the complete immutable generation across an in-process

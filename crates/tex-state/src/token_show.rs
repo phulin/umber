@@ -9,12 +9,12 @@
 use crate::Universe;
 use crate::env::banks::IntParam;
 use crate::interner::ControlSequenceKind;
-use crate::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
-use crate::token::{Catcode, Token};
+use crate::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePrimitive};
+use crate::token::{Catcode, Token, TokenWord};
 
 /// Renders the meaning TeX82's `\meaning` and `\show` expose for one token.
 #[must_use]
-pub fn meaning_text(stores: &Universe, token: Token) -> String {
+pub fn meaning_text<G>(stores: &Universe<G>, token: Token) -> String {
     match token {
         Token::Char {
             ch,
@@ -30,48 +30,67 @@ pub fn meaning_text(stores: &Universe, token: Token) -> String {
         Token::Char { ch, .. } => format!("the character {ch}"),
         Token::Param(slot) => format!("macro parameter character #{slot}"),
         Token::Frozen(_) => "end of alignment template".to_owned(),
-        Token::Cs(symbol) => match stores.meaning(symbol) {
-            Meaning::Undefined => "undefined".to_owned(),
-            Meaning::Relax => "\\relax".to_owned(),
-            Meaning::EndV => "\\endtemplate".to_owned(),
-            Meaning::CharGiven(ch) => format!("the character {ch}"),
-            Meaning::CharToken {
+        Token::Cs(symbol) => match stores.meaning(symbol).ok() {
+            Some(ResolvedMeaning::Static(Meaning::Undefined)) | None => "undefined".to_owned(),
+            Some(ResolvedMeaning::Static(Meaning::Relax)) => "\\relax".to_owned(),
+            Some(ResolvedMeaning::Static(Meaning::EndV)) => "\\endtemplate".to_owned(),
+            Some(ResolvedMeaning::Static(Meaning::CharGiven(ch))) => format!("the character {ch}"),
+            Some(ResolvedMeaning::Static(Meaning::CharToken {
                 ch,
                 cat: Catcode::Letter,
-            } => format!("the letter {ch}"),
-            Meaning::CharToken { ch, .. } => format!("the character {ch}"),
-            Meaning::MathCharGiven(value) => format!("\\mathchar\"{value:X}"),
-            Meaning::CountRegister(index) => format!("\\count{index}"),
-            Meaning::DimenRegister(index) => format!("\\dimen{index}"),
-            Meaning::SkipRegister(index) => format!("\\skip{index}"),
-            Meaning::MuskipRegister(index) => format!("\\muskip{index}"),
-            Meaning::ToksRegister(index) => format!("\\toks{index}"),
-            Meaning::IntParam(_)
-            | Meaning::InternalInteger(_)
-            | Meaning::DimenParam(_)
-            | Meaning::GlueParam(_)
-            | Meaning::MuGlueParam(_)
-            | Meaning::TokParam(_)
-            | Meaning::PageDimension(_)
-            | Meaning::PageInteger(_) => format!("\\{}", stores.resolve(symbol)),
-            Meaning::Font(font) => format!("select font {}", stores.font_name(font)),
-            meaning @ Meaning::ExpandablePrimitive(_) => format!(
-                "\\{}",
-                stores
-                    .primitive_name(meaning)
-                    .unwrap_or_else(|| stores.resolve(symbol))
-            ),
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Radical) => {
-                "\\radical".to_owned()
+            })) => format!("the letter {ch}"),
+            Some(ResolvedMeaning::Static(Meaning::CharToken { ch, .. })) => {
+                format!("the character {ch}")
             }
-            meaning @ Meaning::UnexpandablePrimitive(_) => format!(
+            Some(ResolvedMeaning::Static(Meaning::MathCharGiven(value))) => {
+                format!("\\mathchar\"{value:X}")
+            }
+            Some(ResolvedMeaning::Static(Meaning::CountRegister(index))) => {
+                format!("\\count{index}")
+            }
+            Some(ResolvedMeaning::Static(Meaning::DimenRegister(index))) => {
+                format!("\\dimen{index}")
+            }
+            Some(ResolvedMeaning::Static(Meaning::SkipRegister(index))) => format!("\\skip{index}"),
+            Some(ResolvedMeaning::Static(Meaning::MuskipRegister(index))) => {
+                format!("\\muskip{index}")
+            }
+            Some(ResolvedMeaning::Static(Meaning::ToksRegister(index))) => format!("\\toks{index}"),
+            Some(ResolvedMeaning::Static(
+                Meaning::IntParam(_)
+                | Meaning::InternalInteger(_)
+                | Meaning::DimenParam(_)
+                | Meaning::GlueParam(_)
+                | Meaning::MuGlueParam(_)
+                | Meaning::TokParam(_)
+                | Meaning::PageDimension(_)
+                | Meaning::PageInteger(_),
+            )) => format!("\\{}", stores.resolve(symbol).unwrap_or("")),
+            Some(ResolvedMeaning::Static(Meaning::Font(font))) => {
+                format!("select font {}", stores.font_name(font))
+            }
+            Some(ResolvedMeaning::Static(meaning @ Meaning::ExpandablePrimitive(_))) => format!(
                 "\\{}",
                 stores
                     .primitive_name(meaning)
-                    .unwrap_or_else(|| stores.resolve(symbol))
+                    .or_else(|| stores.resolve(symbol))
+                    .unwrap_or("")
             ),
-            Meaning::Macro { flags, definition } => {
-                let macro_meaning = stores.macro_definition(definition);
+            Some(ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::Radical,
+            ))) => "\\radical".to_owned(),
+            Some(ResolvedMeaning::Static(meaning @ Meaning::UnexpandablePrimitive(_))) => format!(
+                "\\{}",
+                stores
+                    .primitive_name(meaning)
+                    .or_else(|| stores.resolve(symbol))
+                    .unwrap_or("")
+            ),
+            Some(ResolvedMeaning::Macro { flags, definition }) => {
+                let macro_meaning = stores
+                    .command_context()
+                    .expect("live universe")
+                    .definition(definition);
                 let mut text = macro_prefix(flags);
                 text.push_str("macro:");
                 append_token_list(stores, macro_meaning.parameter_text(), &mut text);
@@ -79,30 +98,31 @@ pub fn meaning_text(stores: &Universe, token: Token) -> String {
                 append_token_list(stores, macro_meaning.replacement_text(), &mut text);
                 text
             }
-            Meaning::Unknown(_) => "unknown".to_owned(),
+            Some(ResolvedMeaning::Static(Meaning::Unknown(_))) => "unknown".to_owned(),
         },
     }
 }
 
 /// TeX82 §252's `show_eqtb` meaning text, bounded like `show_token_list`.
 #[must_use]
-pub fn bounded_meaning_text(stores: &Universe, token: Token, breadth: usize) -> String {
+pub fn bounded_meaning_text<G>(stores: &Universe<G>, token: Token, breadth: usize) -> String {
     let Token::Cs(symbol) = token else {
         return meaning_text(stores, token);
     };
-    let Meaning::Macro { flags, definition } = stores.meaning(symbol) else {
+    let Ok(ResolvedMeaning::Macro { flags, definition }) = stores.meaning(symbol) else {
         return meaning_text(stores, token);
     };
-    let macro_meaning = stores.macro_definition(definition);
+    let context = stores.command_context().expect("live universe");
+    let macro_meaning = context.definition(definition);
     let mut text = macro_prefix(flags);
     text.push_str("macro:");
-    let parameter = stores.tokens(macro_meaning.parameter_text());
-    let replacement = stores.tokens(macro_meaning.replacement_text());
+    let parameter = macro_meaning.parameter_text();
+    let replacement = macro_meaning.replacement_text();
     let mut shown = 0;
     let mut tally = 0;
     while shown < parameter.len() && tally < breadth {
         let before = text.chars().count();
-        append_token_show_text(stores, parameter[shown], &mut text);
+        append_token_show_text(stores, parameter[shown].semantic_token(), &mut text);
         tally += text.chars().count() - before;
         shown += 1;
     }
@@ -114,7 +134,7 @@ pub fn bounded_meaning_text(stores: &Universe, token: Token, breadth: usize) -> 
             shown = 0;
             while shown < replacement.len() && tally < breadth {
                 let before = text.chars().count();
-                append_token_show_text(stores, replacement[shown], &mut text);
+                append_token_show_text(stores, replacement[shown].semantic_token(), &mut text);
                 tally += text.chars().count() - before;
                 shown += 1;
             }
@@ -148,16 +168,16 @@ fn macro_prefix(flags: MeaningFlags) -> String {
     text
 }
 
-fn append_token_list(stores: &Universe, list: crate::ids::TokenListId, text: &mut String) {
-    let tokens = stores.tokens(list);
+fn append_token_list<G>(stores: &Universe<G>, tokens: &[TokenWord], text: &mut String) {
     let mut index = 0;
     while index < tokens.len() {
-        let token = tokens[index];
+        let token = tokens[index].semantic_token();
         if let Token::Char {
             ch,
             cat: Catcode::Parameter,
         } = token
-            && let Some(Token::Param(slot)) = tokens.get(index + 1)
+            && let Some(Token::Param(slot)) =
+                tokens.get(index + 1).map(|word| word.semantic_token())
         {
             append_tex_print_char(ch, text);
             text.push(char::from(b'0' + *slot));
@@ -175,7 +195,7 @@ fn append_token_list(stores: &Universe, list: crate::ids::TokenListId, text: &mu
 /// sequence names with a space. Direct-address single-character names only
 /// receive that space when the character's current catcode is `letter`, and
 /// active characters receive neither an escape nor a trailing space.
-pub fn append_token_show_text(stores: &Universe, token: Token, text: &mut String) {
+pub fn append_token_show_text<G>(stores: &Universe<G>, token: Token, text: &mut String) {
     if let Token::Char { ch, cat } = token {
         append_tex_print_char(ch, text);
         if cat == Catcode::Parameter {
@@ -186,10 +206,10 @@ pub fn append_token_show_text(stores: &Universe, token: Token, text: &mut String
     }
     let name = match token {
         Token::Cs(symbol) => {
-            if stores.control_sequence_kind(symbol) == ControlSequenceKind::ActiveCharacter {
+            if stores.control_sequence_kind(symbol) == Some(ControlSequenceKind::ActiveCharacter) {
                 return;
             }
-            stores.resolve(symbol)
+            stores.resolve(symbol).unwrap_or("")
         }
         Token::Frozen(_) => stores.frozen_primitive_name(token).unwrap_or("endtemplate"),
         Token::Char { .. } | Token::Param(_) => return,
@@ -201,14 +221,14 @@ pub fn append_token_show_text(stores: &Universe, token: Token, text: &mut String
     }
 }
 
-fn append_non_character_token_text(stores: &Universe, token: Token, text: &mut String) {
+fn append_non_character_token_text<G>(stores: &Universe<G>, token: Token, text: &mut String) {
     match token {
         Token::Cs(symbol) => {
-            let name = stores.resolve(symbol);
+            let name = stores.resolve(symbol).unwrap_or("");
             let escape = escapechar(stores);
             match stores.control_sequence_kind(symbol) {
-                ControlSequenceKind::ActiveCharacter => text.push_str(name),
-                ControlSequenceKind::Null => {
+                Some(ControlSequenceKind::ActiveCharacter) => text.push_str(name),
+                Some(ControlSequenceKind::Null) => {
                     if let Some(escape) = escape {
                         text.push(escape);
                     }
@@ -218,14 +238,17 @@ fn append_non_character_token_text(stores: &Universe, token: Token, text: &mut S
                     }
                     text.push_str("endcsname");
                 }
-                ControlSequenceKind::SingleCharacter
-                | ControlSequenceKind::Named
-                | ControlSequenceKind::Internal => {
+                Some(
+                    ControlSequenceKind::SingleCharacter
+                    | ControlSequenceKind::Named
+                    | ControlSequenceKind::Internal,
+                ) => {
                     if let Some(escape) = escape {
                         text.push(escape);
                     }
                     text.push_str(name);
                 }
+                None => {}
             }
         }
         Token::Param(slot) => {
@@ -246,7 +269,7 @@ fn append_non_character_token_text(stores: &Universe, token: Token, text: &mut S
 ///
 /// Unlike ordinary diagnostic display, character tokens remain raw; control
 /// sequence spelling and its separator still follow `show_token_list`.
-pub fn append_token_string_text(stores: &Universe, token: Token, text: &mut String) {
+pub fn append_token_string_text<G>(stores: &Universe<G>, token: Token, text: &mut String) {
     if let Token::Char { ch, cat } = token {
         text.push(ch);
         if cat == Catcode::Parameter {
@@ -263,8 +286,8 @@ pub fn append_token_string_text(stores: &Universe, token: Token, text: &mut Stri
 /// Section 262 sends every character through `print`. Section 59's `print`
 /// recognizes the live new-line character before expanding any other
 /// non-printable byte to its canonical `^^` spelling.
-pub fn append_token_selector_text(
-    stores: &Universe,
+pub fn append_token_selector_text<G>(
+    stores: &Universe<G>,
     token: Token,
     newlinechar: Option<char>,
     text: &mut String,
@@ -304,7 +327,7 @@ pub fn append_tex_print_char(ch: char, text: &mut String) {
 
 /// The characters TeX82 §69's `\string` produces for one token.
 #[must_use]
-pub fn token_text(stores: &Universe, token: Token) -> String {
+pub fn token_text<G>(stores: &Universe<G>, token: Token) -> String {
     string_tokens(stores, token)
         .into_iter()
         .filter_map(|token| match token {
@@ -316,38 +339,42 @@ pub fn token_text(stores: &Universe, token: Token) -> String {
 
 /// TeX82 §69's `\string` expansion of one token, as `other`/`space` tokens.
 #[must_use]
-pub fn string_tokens(stores: &Universe, token: Token) -> Vec<Token> {
+pub fn string_tokens<G>(stores: &Universe<G>, token: Token) -> Vec<Token> {
     match token {
         Token::Char { ch, .. } => vec![rendered_char(ch)],
         Token::Cs(symbol) => {
-            let name = stores.resolve(symbol);
+            let name = stores.resolve(symbol).unwrap_or("");
             let escape = escapechar(stores);
             let kind = stores.control_sequence_kind(symbol);
             let capacity = match kind {
-                ControlSequenceKind::ActiveCharacter => name.chars().count(),
-                ControlSequenceKind::Null => {
+                Some(ControlSequenceKind::ActiveCharacter) => name.chars().count(),
+                Some(ControlSequenceKind::Null) => {
                     "csname".len() + "endcsname".len() + 2 * usize::from(escape.is_some())
                 }
-                ControlSequenceKind::SingleCharacter
-                | ControlSequenceKind::Named
-                | ControlSequenceKind::Internal => {
-                    name.chars().count() + usize::from(escape.is_some())
-                }
+                Some(
+                    ControlSequenceKind::SingleCharacter
+                    | ControlSequenceKind::Named
+                    | ControlSequenceKind::Internal,
+                ) => name.chars().count() + usize::from(escape.is_some()),
+                None => 0,
             };
             let mut out = Vec::with_capacity(capacity);
             match kind {
-                ControlSequenceKind::ActiveCharacter => {
+                Some(ControlSequenceKind::ActiveCharacter) => {
                     out.extend(name.chars().map(rendered_char));
                 }
-                ControlSequenceKind::Null => {
+                Some(ControlSequenceKind::Null) => {
                     append_escaped_text(escape, "csname", &mut out);
                     append_escaped_text(escape, "endcsname", &mut out);
                 }
-                ControlSequenceKind::SingleCharacter
-                | ControlSequenceKind::Named
-                | ControlSequenceKind::Internal => {
+                Some(
+                    ControlSequenceKind::SingleCharacter
+                    | ControlSequenceKind::Named
+                    | ControlSequenceKind::Internal,
+                ) => {
                     append_escaped_text(escape, name, &mut out);
                 }
+                None => {}
             }
             out
         }
@@ -387,7 +414,7 @@ fn append_escaped_text(escape: Option<char>, value: &str, out: &mut Vec<Token>) 
     out.extend(value.chars().map(rendered_char));
 }
 
-fn escapechar(stores: &Universe) -> Option<char> {
+fn escapechar<G>(stores: &Universe<G>) -> Option<char> {
     u32::try_from(stores.int_param(IntParam::ESCAPE_CHAR))
         .ok()
         .filter(|&value| value < 256)

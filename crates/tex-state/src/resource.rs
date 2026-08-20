@@ -2,7 +2,91 @@
 
 use std::path::Path;
 
-use crate::{FileContent, InputReadState};
+use std::sync::Arc;
+
+use crate::world::{InputDependencyAccess, InputDependencyOutcome, World, WorldError};
+use crate::{FileContent, Universe};
+
+/// Narrow mutable capability exposed to driver-owned input resolvers.
+pub trait InputReadState {
+    fn read_input_file(&mut self, path: &Path) -> Result<FileContent, WorldError>;
+
+    fn read_pending_output_file(&mut self, path: &Path) -> Result<Option<FileContent>, WorldError>;
+
+    fn read_supplied_input_file(
+        &mut self,
+        path: &Path,
+        bytes: Arc<[u8]>,
+    ) -> Result<FileContent, WorldError>;
+
+    fn record_input_dependency(
+        &mut self,
+        path: &Path,
+        outcome: InputDependencyOutcome,
+        access: InputDependencyAccess,
+    ) -> Result<(), WorldError>;
+}
+
+/// Borrowed input-only view of the ambient world.
+pub struct InputOpenContext<'a> {
+    world: &'a mut World,
+}
+
+impl InputReadState for InputOpenContext<'_> {
+    fn read_input_file(&mut self, path: &Path) -> Result<FileContent, WorldError> {
+        self.world.read_file(path)
+    }
+
+    fn read_pending_output_file(&mut self, path: &Path) -> Result<Option<FileContent>, WorldError> {
+        self.world.read_pending_output_file(path)
+    }
+
+    fn read_supplied_input_file(
+        &mut self,
+        path: &Path,
+        bytes: Arc<[u8]>,
+    ) -> Result<FileContent, WorldError> {
+        self.world.read_supplied_file(path, bytes)
+    }
+
+    fn record_input_dependency(
+        &mut self,
+        path: &Path,
+        outcome: InputDependencyOutcome,
+        access: InputDependencyAccess,
+    ) -> Result<(), WorldError> {
+        self.world
+            .record_input_dependency(path.to_owned(), outcome, access)
+    }
+}
+
+/// Aggregate capability used by retained resource sessions.
+pub trait InputOpenState {
+    type Input<'a>: InputReadState
+    where
+        Self: 'a;
+
+    fn input_open_context(&mut self) -> Self::Input<'_>;
+}
+
+impl<G> InputOpenState for Universe<G> {
+    type Input<'a>
+        = InputOpenContext<'a>
+    where
+        Self: 'a;
+
+    fn input_open_context(&mut self) -> Self::Input<'_> {
+        InputOpenContext {
+            world: self.world_mut(),
+        }
+    }
+}
+
+impl<G> Universe<G> {
+    pub fn input_open_context(&mut self) -> InputOpenContext<'_> {
+        InputOpenState::input_open_context(self)
+    }
+}
 
 /// A host resource lookup distinguishes authoritative absence from a request
 /// which can be satisfied before replaying the current operation.

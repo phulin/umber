@@ -73,6 +73,13 @@ pub enum Catcode {
     Invalid = 15,
 }
 
+impl Catcode {
+    #[must_use]
+    pub const fn from_raw(raw: u8) -> Option<Self> {
+        catcode_from_raw(raw)
+    }
+}
+
 /// A frozen TeX token.
 ///
 /// Parameter tokens carry the future macro parameter slot number, `1..=9`.

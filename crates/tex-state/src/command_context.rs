@@ -6,7 +6,7 @@ use crate::env::banks::IntParam;
 use crate::env::{CodeTableKind, DenseState, StateError};
 use crate::glue::GlueSpec;
 use crate::interner::{ControlSequenceKind, Interner, InternerAccessError, Symbol, SymbolId};
-use crate::meaning::ResolvedMeaning;
+use crate::meaning::{Meaning, ResolvedMeaning};
 use crate::node_arena::{DurableListId, NodeArenaError, NodeList};
 use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
@@ -20,11 +20,23 @@ use crate::token::TokenWord;
 pub struct CommandContext<'a, G> {
     interner: &'a Interner,
     admitted: AdmittedState<'a, G>,
+    primitive_names: &'a [String],
+    primitive_meanings: &'a [Meaning],
 }
 
 impl<'a, G> CommandContext<'a, G> {
-    pub(super) const fn new(interner: &'a Interner, admitted: AdmittedState<'a, G>) -> Self {
-        Self { interner, admitted }
+    pub(super) const fn new(
+        interner: &'a Interner,
+        admitted: AdmittedState<'a, G>,
+        primitive_names: &'a [String],
+        primitive_meanings: &'a [Meaning],
+    ) -> Self {
+        Self {
+            interner,
+            admitted,
+            primitive_names,
+            primitive_meanings,
+        }
     }
 
     pub fn resolve_symbol(&self, symbol: SymbolId) -> Result<&'a str, InternerAccessError> {
@@ -57,6 +69,29 @@ impl<'a, G> CommandContext<'a, G> {
         self.interner
             .qualify_local(symbol)
             .and_then(|id| self.interner.kind_id(id).ok())
+    }
+
+    #[must_use]
+    pub fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
+        self.interner.active(ch).map(SymbolId::symbol)
+    }
+
+    #[must_use]
+    pub fn frozen_primitive_meaning(&self, token: crate::token::Token) -> Option<Meaning> {
+        let crate::token::Token::Frozen(frozen) = token else {
+            return None;
+        };
+        self.primitive_meanings
+            .get(usize::from(frozen.primitive_index()?))
+            .copied()
+    }
+
+    #[must_use]
+    pub fn primitive_name(&self, meaning: Meaning) -> Option<&'a str> {
+        self.primitive_meanings
+            .iter()
+            .position(|&candidate| candidate == meaning)
+            .map(|index| self.primitive_names[index].as_str())
     }
 
     #[inline(always)]
