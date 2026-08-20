@@ -258,6 +258,15 @@ rollback results, and diagnostics instead of allocation identities or storage
 topology. Test-only growth, root-traversal, cache-shape, and ownership-census
 facades with no semantic consumers do not belong in this crate.
 
+The deletion boundary includes fabricated raw ids; stale-slot and generation
+number comparisons whose only subject is the old coordinate layout; exact
+owner, root-set, and admission projections; fixed handle, mark, checkpoint, or
+aggregate sizes; `Arc`/`Weak` counts and pointer identity; exact retained-byte
+growth tied to old owners; and weak-candidate lookup or reclamation work. Do
+not recreate those assertions while replacing the storage substrate. The
+cross-crate retained-owner and deletion ledger is
+[`../../docs/runtime_storage_contract_tests.md`](../../docs/runtime_storage_contract_tests.md).
+
 ## Boundaries
 
 - Do not expose raw substores, raw checkpoint/restore hooks, raw word decoders, or opaque handle constructors outside crate-private or test-only APIs.
@@ -270,6 +279,3 @@ facades with no semantic consumers do not belong in this crate.
 
 Run `cargo test --tests -p tex-state` for state changes. For boundary-sensitive changes, include the live-boundary, replay, shadow, and compile-fail coverage that exercises the affected facade.
 State performance benchmarks live in the standalone `benchmarks/tex-state` crate and are run explicitly with `cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench state_budgets`.
-The fixed-size HotCore substrate has an independent assertion-bearing gate at
-`cargo run --manifest-path benchmarks/hot-core-snapshot/Cargo.toml`; its
-Criterion rows compile with `cargo bench --manifest-path benchmarks/hot-core-snapshot/Cargo.toml --bench snapshots --no-run`.
