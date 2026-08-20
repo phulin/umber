@@ -11,6 +11,7 @@ use tex_state::{EngineBoundaryHasher, EngineMode, Universe};
 use crate::ExecError;
 
 mod journal;
+pub(crate) use journal::Cursor as ModeJournalCursor;
 
 /// TeX's sentinel depth used before any vertical-list box has established a baseline.
 pub const IGNORE_DEPTH: Scaled = Scaled::from_raw(-65_536_000);

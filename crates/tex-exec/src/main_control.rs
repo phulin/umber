@@ -776,6 +776,18 @@ struct DirectFailureContext {
     initial_effect_pos: tex_state::EffectPos,
 }
 
+/// Fixed-size rollback coordinates for one direct command operation.
+///
+/// Mode roots are restored first; only then may the attempt and page-arena
+/// suffixes be truncated.
+#[derive(Clone, Copy, Debug)]
+struct DirectOperationMark<G> {
+    state: tex_state::JournalCursor<G>,
+    mode: crate::mode::ModeJournalCursor,
+    attempt: tex_command::CommandAttemptMark,
+    page: tex_state::node_arena::NodeArenaCursor<tex_state::node_arena::PageLifetime>,
+}
+
 impl From<ExecError> for PrepareOperationError {
     fn from(error: ExecError) -> Self {
         Self {
@@ -2964,10 +2976,48 @@ impl MainControl {
         self.advance_telemetry.commits += 1;
     }
 
-    fn finish_direct_failure(
+    fn begin_direct_operation<G>(&mut self, stores: &Universe<G>) -> DirectOperationMark<G> {
+        DirectOperationMark {
+            state: stores
+                .journal_cursor()
+                .expect("live generation has a state journal"),
+            mode: self.modes.begin_journal(),
+            attempt: self.command.begin_attempt_operation(),
+            page: stores.page_node_cursor(),
+        }
+    }
+
+    fn commit_direct_operation<G>(
         &mut self,
-        stores: &mut Universe,
-        operation_mark: tex_state::DirectOperationMark,
+        _stores: &mut Universe<G>,
+        mark: DirectOperationMark<G>,
+    ) {
+        self.modes
+            .commit_journal(mark.mode)
+            .expect("direct operation owns the top mode journal frame");
+    }
+
+    fn discard_direct_operation<G>(
+        &mut self,
+        stores: &mut Universe<G>,
+        mark: DirectOperationMark<G>,
+    ) {
+        stores
+            .restore_state(mark.state)
+            .expect("direct operation state cursor belongs to the live generation");
+        self.modes
+            .rollback_journal(mark.mode)
+            .expect("direct operation owns the top mode journal frame");
+        self.command.discard_attempt_operation(mark.attempt);
+        stores
+            .truncate_page_nodes(mark.page)
+            .expect("direct operation page cursor belongs to the live page arena");
+    }
+
+    fn finish_direct_failure<G>(
+        &mut self,
+        stores: &mut Universe<G>,
+        operation_mark: DirectOperationMark<G>,
         error: ExecError,
         context: DirectFailureContext,
     ) -> Result<StepResult, ExecError> {
@@ -2980,7 +3030,7 @@ impl MainControl {
         let error =
             error.freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
         let Some(fatal) = error.as_fatal() else {
-            stores.discard_direct_operation_allocations(operation_mark);
+            self.discard_direct_operation(stores, operation_mark);
             return Err(error);
         };
         let context = self.command.output_open_context(&stores.command_context());
@@ -3007,7 +3057,7 @@ impl MainControl {
         ]);
         let evidence_error =
             self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
-        stores.commit_direct_operation(operation_mark);
+        self.commit_direct_operation(stores, operation_mark);
         self.record_direct_episode_commit(
             stores,
             operations,
@@ -3026,9 +3076,9 @@ impl MainControl {
     /// loop deliberately has no group-depth stop and owns no retry snapshot.
     /// Only a capability with an explicit transaction specification, dynamic
     /// output continuation, or unsettled expansion leaves this path.
-    fn execute_direct_episode(
+    fn execute_direct_episode<G>(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         max_operations: usize,
         mut initial_delivery: Option<OperationDelivery>,
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
@@ -3060,7 +3110,7 @@ impl MainControl {
             // allocation to belong to one fixed-size operation suffix. The
             // mark therefore opens before delivery preflight, while semantic
             // owners still remain untouched until prepared apply.
-            let operation_mark = stores.begin_direct_operation();
+            let operation_mark = self.begin_direct_operation(stores);
             let preflight = if let Some(pending) = self.pending_resource_operation.take() {
                 PreflightDelivery {
                     delivery: OperationDelivery::Prepared(pending.scanned),
@@ -3141,7 +3191,7 @@ impl MainControl {
                             self.episode_telemetry
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource);
                         }
-                        stores.commit_direct_operation(operation_mark);
+                        self.commit_direct_operation(stores, operation_mark);
                         return result;
                     }
                 };
@@ -3245,7 +3295,7 @@ impl MainControl {
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource);
                             let result =
                                 self.finish_resource_preflight_failure(stores, *failure.error);
-                            stores.commit_direct_operation(operation_mark);
+                            self.commit_direct_operation(stores, operation_mark);
                             return result;
                         }
                         let result = self.finish_resource_preflight_failure(stores, *failure.error);
@@ -3272,7 +3322,7 @@ impl MainControl {
                             self.episode_telemetry
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource);
                         }
-                        stores.commit_direct_operation(operation_mark);
+                        self.commit_direct_operation(stores, operation_mark);
                         return result;
                     }
                 };
@@ -3310,10 +3360,10 @@ impl MainControl {
                 if let Some(error) =
                     self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
                 {
-                    stores.commit_direct_operation(operation_mark);
+                    self.commit_direct_operation(stores, operation_mark);
                     return Err(error);
                 }
-                stores.commit_direct_operation(operation_mark);
+                self.commit_direct_operation(stores, operation_mark);
                 let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
                 self.record_direct_episode_commit(
                     stores,
@@ -3408,7 +3458,7 @@ impl MainControl {
                             });
                             let result =
                                 self.finish_resource_preflight_failure(stores, *failure.error);
-                            stores.commit_direct_operation(operation_mark);
+                            self.commit_direct_operation(stores, operation_mark);
                             return result;
                         }
                         let result = self.finish_resource_preflight_failure(stores, *failure.error);
@@ -3429,11 +3479,11 @@ impl MainControl {
                                         None => retry,
                                     }
                                 });
-                                stores.commit_direct_operation(operation_mark);
+                                self.commit_direct_operation(stores, operation_mark);
                                 return Ok(step);
                             }
                             Ok(step) => {
-                                stores.commit_direct_operation(operation_mark);
+                                self.commit_direct_operation(stores, operation_mark);
                                 return Ok(step);
                             }
                             Err(error) => {
@@ -3446,7 +3496,7 @@ impl MainControl {
                                         None => retry,
                                     }
                                 });
-                                stores.commit_direct_operation(operation_mark);
+                                self.commit_direct_operation(stores, operation_mark);
                                 Self::publish_pdf_fatal_error(stores, &error)?;
                                 return Err(error);
                             }
@@ -3498,7 +3548,7 @@ impl MainControl {
                         }
                         if error.as_fatal().is_none() {
                             self.pending_preflight_command = retry_command;
-                            stores.discard_direct_operation_allocations(operation_mark);
+                            self.discard_direct_operation(stores, operation_mark);
                             self.advance_telemetry.commits += 1;
                             let error = error.freeze_diagnostic_origin(
                                 stores,
@@ -3523,10 +3573,10 @@ impl MainControl {
                 if let Some(error) =
                     self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
                 {
-                    stores.commit_direct_operation(operation_mark);
+                    self.commit_direct_operation(stores, operation_mark);
                     return Err(error);
                 }
-                stores.commit_direct_operation(operation_mark);
+                self.commit_direct_operation(stores, operation_mark);
                 let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
                 self.record_direct_episode_commit(
                     stores,
@@ -3636,7 +3686,7 @@ impl MainControl {
                             }
                         });
                     }
-                    stores.commit_direct_operation(operation_mark);
+                    self.commit_direct_operation(stores, operation_mark);
                     return match result {
                         Err(error) => {
                             let error = error.freeze_diagnostic_origin(
@@ -3699,10 +3749,10 @@ impl MainControl {
             if let Some(error) =
                 self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
             {
-                stores.commit_direct_operation(operation_mark);
+                self.commit_direct_operation(stores, operation_mark);
                 return Err(error);
             }
-            stores.commit_direct_operation(operation_mark);
+            self.commit_direct_operation(stores, operation_mark);
             let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
             if let Some(boundary) = boundary {
                 self.record_direct_episode_commit(
@@ -3911,11 +3961,11 @@ impl MainControl {
     /// typesetting. TeX82 §1270's command-code partition still routes every
     /// assignment through §1211 `prefixed_command`; other spellings, including
     /// undefined control sequences, are returned to the host with provenance.
-    pub fn diagnostic_expand_step(
+    pub fn diagnostic_expand_step<G>(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<DiagnosticStepResult, ExecError> {
-        let operation_mark = stores.begin_direct_operation();
+        let operation_mark = self.begin_direct_operation(stores);
         let continuation = self.pending_diagnostic_operation.take();
         let assignment = match continuation {
             Some(PendingDiagnosticOperation::Prepared(scanned)) => {
@@ -3950,7 +4000,7 @@ impl MainControl {
                     Ok(command) => command,
                     Err(error) => {
                         let result = self.finish_resource_preflight_failure(stores, error);
-                        stores.commit_direct_operation(operation_mark);
+                        self.commit_direct_operation(stores, operation_mark);
                         return match result? {
                             StepResult::Suspended(need) => {
                                 Ok(DiagnosticStepResult::Suspended(need))
@@ -3962,7 +4012,7 @@ impl MainControl {
                     }
                 };
                 let Some(command) = command else {
-                    stores.commit_direct_operation(operation_mark);
+                    self.commit_direct_operation(stores, operation_mark);
                     return Ok(DiagnosticStepResult::Progress(DiagnosticStep::EndOfInput));
                 };
                 if !tex_command::exceeds_max_non_prefixed_command(command.meaning()) {
@@ -3972,7 +4022,7 @@ impl MainControl {
                         control_sequence: command.control_sequence(),
                         source_provenance: command.source_provenance(),
                     };
-                    stores.commit_direct_operation(operation_mark);
+                    self.commit_direct_operation(stores, operation_mark);
                     return Ok(DiagnosticStepResult::Progress(step));
                 }
                 let retry = (command.clone(), cursor);
@@ -4012,7 +4062,7 @@ impl MainControl {
                 self.modes
                     .rollback_journal(mode_mark)
                     .expect("diagnostic assignment owns the mode mark");
-                stores.commit_direct_operation(operation_mark);
+                self.commit_direct_operation(stores, operation_mark);
                 return match result? {
                     StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
                     StepResult::Progress(_) => {
@@ -4026,14 +4076,14 @@ impl MainControl {
                 self.modes
                     .commit_journal(mode_mark)
                     .expect("diagnostic assignment owns the mode mark");
-                stores.commit_direct_operation(operation_mark);
+                self.commit_direct_operation(stores, operation_mark);
                 Ok(DiagnosticStepResult::Progress(DiagnosticStep::Assignment))
             }
             Err(error) => {
                 self.modes
                     .rollback_journal(mode_mark)
                     .expect("diagnostic assignment owns the mode mark");
-                stores.discard_direct_operation_allocations(operation_mark);
+                self.discard_direct_operation(stores, operation_mark);
                 Err(error
                     .freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8)))
             }

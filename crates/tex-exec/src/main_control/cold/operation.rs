@@ -473,7 +473,6 @@ pub(in crate::main_control) enum ColdOperation {
         target: Symbol,
         /// Meaning replaced by §1224's already-applied provisional `\relax`.
         provisional_old: Meaning,
-        _provisional_macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
         /// `cur_val` after §434/§436's recover-to-zero.
         value: i32,
         global: bool,
@@ -506,7 +505,6 @@ pub(in crate::main_control) enum ColdOperation {
         target: Symbol,
         /// Meaning replaced by §1224's already-applied provisional `\relax`.
         provisional_old: Meaning,
-        _provisional_macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
         index: u16,
         global: bool,
     },

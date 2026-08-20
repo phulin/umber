@@ -1814,7 +1814,6 @@ pub(in crate::main_control) fn apply(
             primitive,
             target,
             provisional_old,
-            _provisional_macro_root,
             value,
             global,
             ..
@@ -1834,7 +1833,6 @@ pub(in crate::main_control) fn apply(
                 Meaning::Relax,
                 global,
             );
-            let _ = _provisional_macro_root;
             let observed = match primitive {
                 UnexpandablePrimitive::CharDef => ObservationValue::Character(value as u32),
                 UnexpandablePrimitive::MathCharDef => ObservationValue::Integer(i64::from(value)),
@@ -1861,7 +1859,6 @@ pub(in crate::main_control) fn apply(
             primitive,
             target,
             provisional_old,
-            _provisional_macro_root,
             index,
             global,
         } => {
@@ -1880,7 +1877,6 @@ pub(in crate::main_control) fn apply(
                 Meaning::Relax,
                 global,
             );
-            let _ = _provisional_macro_root;
             let observed_name =
                 if command.state.profile().capabilities().supports_etex() && index > 255 {
                     if primitive == UnexpandablePrimitive::ToksDef {

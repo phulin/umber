@@ -1096,7 +1096,6 @@ pub(in crate::main_control) fn scan(
                 primitive,
                 target: definition.target,
                 provisional_old: definition.provisional_old,
-                _provisional_macro_root: definition.provisional_macro_root,
                 value: definition.value,
                 global,
             })
@@ -1115,7 +1114,6 @@ pub(in crate::main_control) fn scan(
                 primitive,
                 target: definition.target,
                 provisional_old: definition.provisional_old,
-                _provisional_macro_root: definition.provisional_macro_root,
                 index: definition.index,
                 global,
             })
