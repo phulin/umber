@@ -55,10 +55,10 @@ fn futurelet_target_control_sequence_is_not_skipped_when_it_means_space() {
     assert_eq!(assignment.target, target);
     assert_eq!(
         assignment.meaning,
-        Meaning::CharToken {
+        tex_state::ResolvedMeaning::Static(Meaning::CharToken {
             ch: '[',
             cat: Catcode::Other
-        }
+        })
     );
 }
 
@@ -293,14 +293,24 @@ fn missing_macro_target_reports_once_and_leaves_following_command() {
     };
 
     assert_eq!(universe.resolve(definition.target), "inaccessible");
-    assert!(definition.parameter_text.is_empty());
-    assert!(definition.replacement_text.is_empty());
+    assert!(
+        command
+            .attempt_token_words(definition.parameter_text)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        command
+            .attempt_token_words(definition.replacement_text)
+            .unwrap()
+            .is_empty()
+    );
     assert!(matches!(
         next.meaning(),
-        Meaning::CharToken {
+        tex_state::ResolvedMeaning::Static(Meaning::CharToken {
             ch: '?',
             cat: Catcode::Other
-        }
+        })
     ));
     assert_eq!(
         diagnostic_text(&universe)
@@ -1716,8 +1726,13 @@ fn expanded_balanced_text_uses_canonical_macro_argument_matching() {
             .expect("macro argument expands")
     };
     assert_eq!(
-        universe.tokens(scanned.tokens.token_list()),
-        &[Token::Char {
+        command
+            .attempt_token_words(scanned.tokens)
+            .unwrap()
+            .iter()
+            .map(|word| word.semantic_token())
+            .collect::<Vec<_>>(),
+        vec![Token::Char {
             ch: 'q',
             cat: Catcode::Letter
         }]
@@ -2062,13 +2077,14 @@ fn rule_spec_starts_v_template_when_scalar_lookahead_hits_cell_delimiters() {
                 cat: Catcode::AlignmentTab,
             }
         };
-        let v_template =
-            tex_state::input::TracedTokenList::synthetic(universe.intern_token_list_ref(&[
-                Token::Char {
-                    ch: 'v',
-                    cat: Catcode::Letter,
-                },
-            ]));
+        let v_template = command
+            .attempt
+            .arena_mut()
+            .allocate_token_list([traced(Token::Char {
+                ch: 'v',
+                cat: Catcode::Letter,
+            })])
+            .expect("v-template attempt list allocates");
         command.begin_alignment(alignment);
         command
             .begin_alignment_cell(
@@ -2080,7 +2096,7 @@ fn rule_spec_starts_v_template_when_scalar_lookahead_hits_cell_delimiters() {
             )
             .expect("cell begins");
         command
-            .install_alignment_cell_template(&universe.command_context(), alignment)
+            .install_alignment_cell_template(alignment)
             .expect("omit-style cell has no u-template input");
         let mut tokens = b"width1pt height2pt depth0pt"
             .iter()
@@ -3616,7 +3632,7 @@ fn write_heavy_expansion_has_an_exact_monotonic_work_vector() {
 
     assert!(!expanded.unbalanced);
     assert_eq!(
-        universe.tokens(expanded.tokens.token_ref().id()).len(),
+        command.attempt_token_words(expanded.tokens).unwrap().len(),
         INVOCATIONS as usize
     );
     assert_eq!(

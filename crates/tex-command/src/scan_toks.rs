@@ -1504,7 +1504,7 @@ fn parameter_text_for_runaway<G>(
     Ok(tokens)
 }
 
-fn attempt_command_error(error: AttemptError) -> CommandError {
+pub(crate) fn attempt_command_error(error: AttemptError) -> CommandError {
     match error {
         AttemptError::CapacityOverflow | AttemptError::AllocationFailed => CommandError::Fatal(
             crate::FatalError::overflow("scanner token storage", i32::MAX),

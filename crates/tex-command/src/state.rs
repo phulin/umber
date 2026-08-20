@@ -365,6 +365,67 @@ pub enum CommandReplayDelivery<G> {
 }
 
 impl<G> CommandState<G> {
+    /// Resolves one operation-local token-list coordinate while the owning
+    /// attempt remains installed.
+    pub fn attempt_token_words(
+        &self,
+        id: crate::AttemptTokenListId,
+    ) -> Result<&[tex_state::token::TracedTokenWord], crate::AttemptError> {
+        self.attempt.arena().token_words(id)
+    }
+
+    /// Promotes one declared token-list escape root into generation-durable
+    /// storage. No unrelated attempt row is inspected or copied.
+    pub fn promote_attempt_token_list(
+        &self,
+        universe: &mut tex_state::Universe<G>,
+        id: crate::AttemptTokenListId,
+    ) -> Result<tex_state::TokenListId<G>, crate::AttemptError> {
+        let promotion = self.attempt.arena().promote(
+            universe,
+            crate::attempt::AttemptEscapeRoots {
+                token_lists: core::slice::from_ref(&id),
+                ..crate::attempt::AttemptEscapeRoots::default()
+            },
+        )?;
+        Ok(promotion.token_lists[0])
+    }
+
+    /// Promotes one declared macro-definition root and its schema-owned text
+    /// into the current generation's definition arena.
+    pub fn promote_attempt_definition(
+        &self,
+        universe: &mut tex_state::Universe<G>,
+        id: crate::AttemptDefinitionId,
+    ) -> Result<tex_state::DefinitionId<G>, crate::AttemptError> {
+        let promotion = self.attempt.arena().promote(
+            universe,
+            crate::attempt::AttemptEscapeRoots {
+                definitions: core::slice::from_ref(&id),
+                ..crate::attempt::AttemptEscapeRoots::default()
+            },
+        )?;
+        Ok(promotion.definitions[0])
+    }
+
+    /// Captures every attempt-local table and subordinate builder cursor for
+    /// an executor operation.
+    #[must_use]
+    pub fn begin_attempt_operation(&self) -> crate::CommandAttemptMark {
+        crate::CommandAttemptMark(self.attempt.arena().mark())
+    }
+
+    /// Rejects the attempt-local suffix created after `mark`.
+    ///
+    /// Executor aggregate rollback restores semantic roots before invoking
+    /// this method, so no surviving command coordinate can name the suffix.
+    pub fn discard_attempt_operation(&mut self, mark: crate::CommandAttemptMark) {
+        self.attempt
+            .arena_mut()
+            .truncate(mark.0)
+            .expect("command operation mark belongs to the installed attempt");
+    }
+
     /// Moves the complete operation arena into a resource continuation.
     pub fn suspend_attempt<R>(
         &mut self,
@@ -1088,7 +1149,7 @@ impl<G> CommandState<G> {
     /// by [`crate::CommandProcessor`].
     pub fn apply_alignment_request(
         &mut self,
-        stores: &tex_state::CommandContext<'_, G>,
+        _stores: &tex_state::CommandContext<'_, G>,
         request: AlignmentRequest,
     ) -> Result<AlignmentRequestResult, AlignmentLifecycleError> {
         match request {
@@ -1115,7 +1176,7 @@ impl<G> CommandState<G> {
                 Ok(AlignmentRequestResult::Applied)
             }
             AlignmentRequest::InstallCellTemplate(alignment) => {
-                self.install_alignment_cell_template(stores, alignment)?;
+                self.install_alignment_cell_template(alignment)?;
                 Ok(AlignmentRequestResult::Applied)
             }
             AlignmentRequest::InstallOmitCellTemplate(alignment) => {
@@ -1176,13 +1237,11 @@ impl<G> CommandState<G> {
     /// typed opener phase has completed command-owned brace replay.
     pub fn install_alignment_cell_template(
         &mut self,
-        stores: &tex_state::CommandContext<'_, G>,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
         let template = self.alignment.active_cell_template(alignment)?;
         if let Some(template) = template {
             let level = self.push_alignment_template(
-                stores,
                 template,
                 TokenBehavior::UTemplate,
                 RetirementBehavior::Pop,
@@ -1322,26 +1381,30 @@ impl<G> CommandState<G> {
     /// the canonical raw-delivery loop.
     pub fn begin_alignment_v_template(
         &mut self,
-        stores: &tex_state::CommandContext<'_, G>,
         alignment: AlignmentIdentity,
         delimiter: AlignmentCellDelimiter,
-        empty: tex_state::token_store::TokenListRef,
     ) -> Result<(), AlignmentLifecycleError> {
-        let template = self.alignment.v_template(alignment, empty)?;
+        let template = self.alignment.v_template(alignment)?;
         // tex.web §789: `if cur_cmd=omit then begin_token_list(omit_template,
         // v_template) else begin_token_list(v_part(cur_align),v_template)`.
         // Both levels are `token_type=v_template`; only the list differs, and
         // that is what names the level in the pinned observer's trace.
-        let omit = self.alignment.active_cell_is_omit(alignment);
-        let level = self.push_alignment_template(
-            stores,
-            template,
-            TokenBehavior::VTemplate,
-            RetirementBehavior::RetainExhaustedVTemplate,
-            if omit {
-                ReplayTrace::OmitTemplate
-            } else {
-                ReplayTrace::VTemplate
+        let level = template.map_or_else(
+            || {
+                self.push_token_level(
+                    TokenPayload::transient([]),
+                    TokenBehavior::VTemplate,
+                    RetirementBehavior::RetainExhaustedVTemplate,
+                    ReplayTrace::OmitTemplate,
+                )
+            },
+            |template| {
+                self.push_alignment_template(
+                    template,
+                    TokenBehavior::VTemplate,
+                    RetirementBehavior::RetainExhaustedVTemplate,
+                    ReplayTrace::VTemplate,
+                )
             },
         );
         self.alignment.begin_v_template(alignment, level, delimiter)
@@ -1896,14 +1959,18 @@ impl<G> CommandState<G> {
 
     fn push_alignment_template(
         &mut self,
-        stores: &tex_state::CommandContext<'_, G>,
-        template: tex_state::TokenListId<G>,
+        template: crate::AttemptTokenListId,
         behavior: TokenBehavior,
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> InputLevelId {
-        let words = stores.token_list(template);
-        self.push_token_level(TokenPayload::durable(words), behavior, retirement, trace)
+        let words = self
+            .attempt
+            .arena()
+            .token_words(template)
+            .expect("alignment template belongs to the installed attempt")
+            .to_vec();
+        self.push_token_level(TokenPayload::transient(words), behavior, retirement, trace)
     }
 
     /// Splits and normalizes the next physical line on the active source.
@@ -2273,7 +2340,7 @@ pub(crate) struct TransientState {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct LiveTokenBuilder {
     pub(crate) identity: u64,
-    pub(crate) tokens: tex_state::token::RootedTracedTokenBuffer,
+    pub(crate) tokens: crate::attempt::AttemptTokenBufferId,
 }
 
 #[cfg(test)]

@@ -5,14 +5,13 @@
 //! Replay receives only the frozen completed request and can therefore apply
 //! the aggregate mutation without acquiring a second input path.
 
-use tex_state::TracedTokenList;
 use tex_state::env::banks::TokParam;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::scan_toks::ScanToksMode;
-use crate::{CommandError, CommandProcessor};
+use crate::{AttemptTokenListId, CommandError, CommandProcessor};
 
 /// A completed TeX token-register assignment operand.
 ///
@@ -22,7 +21,7 @@ use crate::{CommandError, CommandProcessor};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedTokenRegisterAssignment {
     pub index: u16,
-    pub tokens: TracedTokenList,
+    pub tokens: AttemptTokenListId,
 }
 
 /// A completed TeX token-parameter assignment operand.
@@ -32,16 +31,16 @@ pub struct ScannedTokenRegisterAssignment {
 /// list is empty, while a newly scanned empty braced list becomes null.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedTokenParameterAssignment {
-    pub tokens: Option<TracedTokenList>,
+    pub tokens: Option<AttemptTokenListId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ScannedTokenListRightHandSide {
-    tokens: TracedTokenList,
+    tokens: AttemptTokenListId,
     pointer_present: bool,
 }
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Scans the operand sequence of TeX82's `\toks` assignment.
     ///
     /// This follows TeX82 §§403/470's register scan, optional equals, and
@@ -66,7 +65,7 @@ impl CommandProcessor<'_> {
     pub fn scan_token_register_value(
         &mut self,
         owner: Symbol,
-    ) -> Result<TracedTokenList, CommandError> {
+    ) -> Result<AttemptTokenListId, CommandError> {
         let _ = self.scan_optional_equals()?;
         Ok(self.scan_token_list_right_hand_side(owner, false)?.tokens)
     }
@@ -115,34 +114,45 @@ impl CommandProcessor<'_> {
                 // [49.1226]'s assignment target; both select the same sparse
                 // token-register namespace.
                 let index = self.scan_profile_register_index()?;
-                let tokens = self.state.toks(index);
+                let tokens = self
+                    .state
+                    .token_register(index)
+                    .expect("scanner produced an admitted token-register index");
                 return Ok(ScannedTokenListRightHandSide {
-                    tokens: TracedTokenList::synthetic(self.state.token_list_ref(tokens)),
-                    pointer_present: !self.state.tokens(tokens).is_empty(),
+                    tokens: self.copy_durable_token_list_into_attempt(tokens)?,
+                    pointer_present: tokens
+                        .is_some_and(|tokens| !self.state.token_list(tokens).is_empty()),
                 });
             }
             Meaning::ToksRegister(index) => {
-                let tokens = self.state.toks(index);
+                let tokens = self
+                    .state
+                    .token_register(index)
+                    .expect("meaning contains an admitted token-register index");
                 return Ok(ScannedTokenListRightHandSide {
-                    tokens: TracedTokenList::synthetic(self.state.token_list_ref(tokens)),
-                    pointer_present: !self.state.tokens(tokens).is_empty(),
+                    tokens: self.copy_durable_token_list_into_attempt(tokens)?,
+                    pointer_present: tokens
+                        .is_some_and(|tokens| !self.state.token_list(tokens).is_empty()),
                 });
             }
             Meaning::TokParam(index) => {
                 return Ok(
                     match self
                         .state
-                        .tok_param_option(tex_state::env::banks::TokParam::new(index))
+                        .token_parameter(tex_state::env::banks::TokParam::new(index))
+                        .expect("meaning contains an admitted token-parameter index")
                     {
                         Some(tokens) => ScannedTokenListRightHandSide {
-                            tokens: TracedTokenList::synthetic(self.state.token_list_ref(tokens)),
+                            tokens: self.copy_durable_token_list_into_attempt(Some(tokens))?,
                             pointer_present: true,
                         },
                         None => ScannedTokenListRightHandSide {
-                            tokens: TracedTokenList::synthetic(
-                                self.state
-                                    .token_list_ref(tex_state::ids::TokenListId::EMPTY),
-                            ),
+                            tokens: self
+                                .command
+                                .attempt
+                                .arena_mut()
+                                .allocate_token_list([])
+                                .map_err(crate::scan_toks::attempt_command_error)?,
                             pointer_present: false,
                         },
                     },
@@ -175,7 +185,14 @@ impl CommandProcessor<'_> {
                 .replacement_text
             }
         };
-        if self.state.tokens(collected.token_ref().id()).is_empty() {
+        if self
+            .command
+            .attempt
+            .arena()
+            .token_words(collected)
+            .map_err(crate::scan_toks::attempt_command_error)?
+            .is_empty()
+        {
             return Ok(ScannedTokenListRightHandSide {
                 tokens: collected,
                 pointer_present: false,
@@ -195,12 +212,12 @@ impl CommandProcessor<'_> {
             },
             OriginId::UNKNOWN,
         ));
-        tokens.extend(
-            self.state
-                .tokens(collected.token_ref().id())
-                .iter()
-                .copied()
-                .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),
+        tokens.extend_from_slice(
+            self.command
+                .attempt
+                .arena()
+                .token_words(collected)
+                .map_err(crate::scan_toks::attempt_command_error)?,
         );
         tokens.push(TracedTokenWord::pack(
             Token::Char {
@@ -210,7 +227,12 @@ impl CommandProcessor<'_> {
             OriginId::UNKNOWN,
         ));
         Ok(ScannedTokenListRightHandSide {
-            tokens: self.state.finish_traced_token_list(&tokens),
+            tokens: self
+                .command
+                .attempt
+                .arena_mut()
+                .allocate_token_list(tokens)
+                .map_err(crate::scan_toks::attempt_command_error)?,
             pointer_present: true,
         })
     }

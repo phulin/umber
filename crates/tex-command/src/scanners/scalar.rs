@@ -10,7 +10,7 @@ use tex_state::scaled::{
     scaled_from_decimal_parts, xn_over_d,
 };
 use tex_state::token::{Catcode, OriginId, Token};
-use tex_state::token_store::TokenListRef;
+
 use tex_state::{BoxDimension, PenaltyArrayKind, PrepareMagDiagnostic};
 
 use crate::observation::canonical_names::glue_order_name;
@@ -58,13 +58,13 @@ pub(crate) enum PendingIntegerScan {
     },
 }
 
-struct MatchedKeywordPrefix {
-    inline: [Option<CurrentCommand>; KEYWORD_PREFIX_INLINE_CAPACITY],
+struct MatchedKeywordPrefix<G> {
+    inline: [Option<CurrentCommand<G>>; KEYWORD_PREFIX_INLINE_CAPACITY],
     len: usize,
-    spill: Option<Vec<CurrentCommand>>,
+    spill: Option<Vec<CurrentCommand<G>>>,
 }
 
-impl MatchedKeywordPrefix {
+impl<G> MatchedKeywordPrefix<G> {
     fn new() -> Self {
         Self {
             inline: std::array::from_fn(|_| None),
@@ -77,7 +77,7 @@ impl MatchedKeywordPrefix {
         self.len == 0
     }
 
-    fn push(&mut self, command: CurrentCommand) {
+    fn push(&mut self, command: CurrentCommand<G>) {
         if let Some(spill) = &mut self.spill {
             spill.push(command);
         } else if self.len < KEYWORD_PREFIX_INLINE_CAPACITY {
@@ -91,7 +91,7 @@ impl MatchedKeywordPrefix {
         self.len += 1;
     }
 
-    fn into_vec(mut self) -> Vec<CurrentCommand> {
+    fn into_vec(mut self) -> Vec<CurrentCommand<G>> {
         self.spill.take().unwrap_or_else(|| {
             self.inline
                 .iter_mut()
@@ -164,7 +164,7 @@ pub enum InternalValue {
     /// which slot it came from is not part of the value: `\\the` installs the
     /// copy through §467's `ins_list` either way.
     Tokens {
-        tokens: TokenListRef,
+        tokens: crate::AttemptTokenListId,
     },
 }
 
@@ -307,7 +307,7 @@ const DECIMAL_RADIX: u8 = 10;
 /// `continental_point_token` to `point_token` twice, so a comma behaves
 /// exactly like a period: `3,5pt` is `3.5pt`, and a leading `,5pt` is
 /// `0.5pt`.
-fn is_point_token(command: &CurrentCommand) -> bool {
+fn is_point_token(command: &CurrentCommand<G>) -> bool {
     matches!(
         command.meaning(),
         Meaning::CharToken {
@@ -348,7 +348,7 @@ struct ScannedUnits {
     attach_sign: bool,
 }
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
     pub fn scan_optional_equals(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
         let mut provenance = OriginId::UNKNOWN;
@@ -490,7 +490,7 @@ impl CommandProcessor<'_> {
     /// §407's `back_list(link(backup_head))`, over commands rather than raw
     /// tokens so the replayed prefix keeps each delivery's exact spelling and
     /// source provenance.
-    fn back_matched_keyword_prefix(&mut self, matched: Vec<CurrentCommand>) {
+    fn back_matched_keyword_prefix(&mut self, matched: Vec<CurrentCommand<G>>) {
         self.back_list(
             matched
                 .into_iter()
@@ -636,7 +636,7 @@ impl CommandProcessor<'_> {
     /// constant.
     fn complete_integer(
         &mut self,
-        first: CurrentCommand,
+        first: CurrentCommand<G>,
         negative: bool,
         provenance: OriginId,
         retain_continuation: bool,
@@ -975,7 +975,7 @@ impl CommandProcessor<'_> {
     /// following point to the unit scan.
     fn scan_dimension_constant(
         &mut self,
-        first: CurrentCommand,
+        first: CurrentCommand<G>,
         allow_infinite: bool,
         mu: bool,
         provenance: ScalarProvenance,
@@ -1356,7 +1356,7 @@ impl CommandProcessor<'_> {
     /// missing number. `None` is §413's "not an internal quantity" test.
     pub(crate) fn scan_the_internal_value(
         &mut self,
-        target: &CurrentCommand,
+        target: &CurrentCommand<G>,
     ) -> Result<Option<InternalValue>, CommandError> {
         match self.scan_something_internal(target, InternalLevel::Tokens, false)? {
             InternalScan::Value(value) => Ok(Some(value)),
@@ -1463,7 +1463,7 @@ impl CommandProcessor<'_> {
         Ok((value, vacuous))
     }
 
-    fn radix_digit(command: &CurrentCommand) -> Option<u8> {
+    fn radix_digit(command: &CurrentCommand<G>) -> Option<u8> {
         match command.meaning() {
             Meaning::CharToken {
                 ch: ch @ '0'..='9',
@@ -1852,7 +1852,10 @@ impl CommandProcessor<'_> {
     /// carries, and §349's "Enter `skip_blanks` state, emit a space" is what
     /// normalizes such a character's `cur_chr` to a space inside §341's
     /// `get_next`.
-    fn back_input_unless_spacer(&mut self, command: CurrentCommand) -> Result<bool, CommandError> {
+    fn back_input_unless_spacer(
+        &mut self,
+        command: CurrentCommand<G>,
+    ) -> Result<bool, CommandError> {
         if matches!(
             command.meaning(),
             Meaning::CharToken {
@@ -2169,7 +2172,7 @@ impl CommandProcessor<'_> {
     /// re-derived once per scanner.
     fn scan_something_internal(
         &mut self,
-        command: &CurrentCommand,
+        command: &CurrentCommand<G>,
         level: InternalLevel,
         negative: bool,
     ) -> Result<InternalScan, CommandError> {
@@ -2222,7 +2225,7 @@ impl CommandProcessor<'_> {
     /// lowers the result for its caller.
     fn missing_number_internal_result(
         &mut self,
-        command: &CurrentCommand,
+        command: &CurrentCommand<G>,
         level: InternalLevel,
     ) -> Result<InternalScan, CommandError> {
         self.back_input(command.copy_for_backup())?;
@@ -2243,7 +2246,7 @@ impl CommandProcessor<'_> {
     /// would publish a level TeX never commits.
     fn fetch_internal_value(
         &mut self,
-        command: &CurrentCommand,
+        command: &CurrentCommand<G>,
     ) -> Result<Option<InternalValue>, CommandError> {
         let value = match command.meaning() {
             // TeX82 `scan_something_internal` owns a register primitive's
@@ -2276,9 +2279,12 @@ impl CommandProcessor<'_> {
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
                 let index = self.scan_profile_register_index()?;
-                let tokens = self.state.toks(index);
+                let tokens = self
+                    .state
+                    .token_register(index)
+                    .expect("scanner produced an admitted token-register index");
                 InternalValue::Tokens {
-                    tokens: self.state.token_list_ref(tokens),
+                    tokens: self.copy_durable_token_list_into_attempt(tokens)?,
                 }
             }
             // TeX82 §424's `scan_something_internal` treats `\wd`, `\ht`,
@@ -2592,17 +2598,21 @@ impl CommandProcessor<'_> {
                 InternalValue::MuGlue(self.state.glue(identity))
             }
             Meaning::ToksRegister(index) => {
-                let tokens = self.state.toks(index);
+                let tokens = self
+                    .state
+                    .token_register(index)
+                    .expect("meaning contains an admitted token-register index");
                 InternalValue::Tokens {
-                    tokens: self.state.token_list_ref(tokens),
+                    tokens: self.copy_durable_token_list_into_attempt(tokens)?,
                 }
             }
             Meaning::TokParam(index) => {
                 let tokens = self
                     .state
-                    .tok_param(tex_state::env::banks::TokParam::new(index));
+                    .token_parameter(tex_state::env::banks::TokParam::new(index))
+                    .expect("meaning contains an admitted token-parameter index");
                 InternalValue::Tokens {
-                    tokens: self.state.token_list_ref(tokens),
+                    tokens: self.copy_durable_token_list_into_attempt(tokens)?,
                 }
             }
             Meaning::InternalInteger(integer) => {
@@ -2782,16 +2792,18 @@ impl CommandProcessor<'_> {
                 ObservationValue::Name(self.state.resolve(symbol).to_owned())
             }
             InternalValue::Tokens { tokens, .. } => {
-                let token_count = self.state.tokens(tokens.id()).len();
+                let words = self
+                    .command
+                    .attempt
+                    .arena()
+                    .token_words(tokens)
+                    .map_err(crate::scan_toks::attempt_command_error)
+                    .expect("internal token value belongs to the installed attempt")
+                    .to_vec();
                 ObservationValue::Tokens(
-                    (0..token_count)
-                        .map(|index| {
-                            let token = self.state.tokens(tokens.id())[index];
-                            self.observed_token(tex_state::token::TracedTokenWord::pack(
-                                token,
-                                OriginId::UNKNOWN,
-                            ))
-                        })
+                    words
+                        .into_iter()
+                        .map(|word| self.observed_token(word))
                         .collect(),
                 )
             }

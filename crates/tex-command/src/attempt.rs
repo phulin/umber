@@ -39,7 +39,7 @@ impl AttemptKey {
 macro_rules! attempt_id {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-        pub(crate) struct $name {
+        pub struct $name {
             key: NonZeroU64,
             row: u32,
             serial: NonZeroU64,
@@ -109,7 +109,7 @@ pub(crate) struct AttemptMark {
 
 /// Invalid foreign coordinates or bounded-capacity failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AttemptError {
+pub enum AttemptError {
     ForeignAttempt,
     InvalidCoordinate,
     CapacityOverflow,
@@ -876,6 +876,14 @@ pub(crate) struct AttemptPromotion<G> {
 pub struct CommandAttempt<G> {
     arena: AttemptArena<G>,
 }
+
+/// Fixed-size rollback coordinate for one command operation.
+///
+/// Construction is restricted to [`crate::CommandState`]. The coordinate
+/// carries no storage owner and is valid only while the matching live attempt
+/// remains installed in that state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommandAttemptMark(AttemptMark);
 
 impl<G> core::fmt::Debug for CommandAttempt<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

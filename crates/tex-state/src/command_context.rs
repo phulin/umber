@@ -135,6 +135,14 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[inline(always)]
+    pub fn token_parameter(
+        &self,
+        parameter: crate::env::banks::TokParam,
+    ) -> Result<Option<TokenListId<G>>, StateError> {
+        self.admitted.state().token_parameter(parameter)
+    }
+
+    #[inline(always)]
     pub fn glue_register(&self, index: u16) -> Result<Option<GlueId<G>>, StateError> {
         self.admitted.state().glue_register(index)
     }

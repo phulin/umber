@@ -475,13 +475,7 @@ impl<G> CommandProcessor<'_, G> {
         saved_delimiter: crate::AlignmentCellDelimiter,
     ) -> Result<(), CommandError> {
         self.command
-            .begin_alignment_v_template(
-                &self.state,
-                alignment,
-                saved_delimiter,
-                self.state
-                    .token_list_ref(tex_state::ids::TokenListId::EMPTY),
-            )
+            .begin_alignment_v_template(alignment, saved_delimiter)
             .map_err(|_| CommandError::input_invariant())?;
         if let Some(input) = self
             .command
@@ -4105,7 +4099,7 @@ mod tests {
             )
             .expect("cell begins");
         command
-            .install_alignment_cell_template(&universe.command_context(), alignment)
+            .install_alignment_cell_template(alignment)
             .expect("cell without a u-template installs");
         command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
@@ -4147,7 +4141,7 @@ mod tests {
             .begin_alignment_cell(alignment, templates())
             .expect("cell begins");
         command
-            .install_alignment_cell_template(&universe.command_context(), alignment)
+            .install_alignment_cell_template(alignment)
             .expect("cell without a u-template installs");
         let cr = universe.intern("cr").symbol();
         universe.set_meaning(
@@ -4298,7 +4292,7 @@ mod tests {
             )
             .expect("cell begins");
         command
-            .install_alignment_cell_template(&universe.command_context(), alignment)
+            .install_alignment_cell_template(alignment)
             .expect("u-template installs after the cell opener lifecycle");
         let snapshot = command.snapshot();
         let mut capabilities = CommandHostCapabilities::default();
@@ -4519,7 +4513,7 @@ mod tests {
             )
             .expect("cell begins");
         command
-            .install_alignment_cell_template(&universe.command_context(), alignment)
+            .install_alignment_cell_template(alignment)
             .expect("u-template installs after the cell opener lifecycle");
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();

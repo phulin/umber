@@ -4,11 +4,10 @@ use std::fmt::Write as _;
 
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::{MacroDefinitionId, TokenListId};
+use tex_state::ids::MacroDefinitionId;
 use tex_state::interner::ControlSequenceKind;
-use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::page::PageMark;
-use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -226,6 +225,13 @@ pub(super) enum UndefinedHandling {
     Preserve,
 }
 
+const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
+    match meaning {
+        ResolvedMeaning::Static(meaning) => Some(meaning),
+        ResolvedMeaning::Macro { .. } => None,
+    }
+}
+
 /// The finite expansion set selected by the pinned structural census.
 ///
 /// These families execute against the borrowed live command in the one
@@ -234,11 +240,11 @@ pub(super) enum UndefinedHandling {
 /// explicit fallback boundary.
 #[inline(always)]
 #[cfg(any(feature = "profiling", test))]
-const fn is_ranked_fused_expansion(meaning: Meaning) -> bool {
+const fn is_ranked_fused_expansion<G>(meaning: ResolvedMeaning<G>) -> bool {
     matches!(
         meaning,
-        Meaning::Macro { .. }
-            | Meaning::ExpandablePrimitive(
+        ResolvedMeaning::Macro { .. }
+            | ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
                 ExpandablePrimitive::ExpandAfter
                     | ExpandablePrimitive::Fi
                     | ExpandablePrimitive::IfX
@@ -255,7 +261,7 @@ const fn is_ranked_fused_expansion(meaning: Meaning) -> bool {
                     | ExpandablePrimitive::IfCsName
                     | ExpandablePrimitive::Number
                     | ExpandablePrimitive::The
-            )
+            ))
     )
 }
 
@@ -465,11 +471,13 @@ impl<G> CommandProcessor<'_, G> {
                 return Ok(None);
             };
             if !matches!(
-                command.meaning(),
-                Meaning::CharToken {
-                    cat: Catcode::Space,
-                    ..
-                } | Meaning::Relax
+                static_meaning(command.meaning()),
+                Some(
+                    Meaning::CharToken {
+                        cat: Catcode::Space,
+                        ..
+                    } | Meaning::Relax
+                )
             ) {
                 return Ok(Some(command));
             }
@@ -489,11 +497,11 @@ impl<G> CommandProcessor<'_, G> {
                 return Ok(None);
             };
             if !matches!(
-                command.meaning(),
-                Meaning::CharToken {
+                static_meaning(command.meaning()),
+                Some(Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
-                }
+                })
             ) {
                 return Ok(Some(command));
             }
@@ -832,8 +840,10 @@ impl<G> CommandProcessor<'_, G> {
                 return Ok(Some(DeliveryEvent::Command(command)));
             }
             if matches!(
-                command.meaning(),
-                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+                static_meaning(command.meaning()),
+                Some(Meaning::ExpandablePrimitive(
+                    ExpandablePrimitive::EndTemplate
+                ))
             ) {
                 if policy.alignment_interception == AlignmentInterceptionPolicy::Surface
                     && matches!(
@@ -871,12 +881,12 @@ impl<G> CommandProcessor<'_, G> {
                 )));
             }
             if (expanded.undefined == UndefinedHandling::Preserve
-                && matches!(command.meaning(), Meaning::Undefined))
+                && matches!(static_meaning(command.meaning()), Some(Meaning::Undefined)))
                 || !is_expandable_command(&command)
                 || (expanded.protected_macros == ProtectedMacroHandling::Preserve
                     && matches!(
                         command.meaning(),
-                        Meaning::Macro { flags, .. }
+                        ResolvedMeaning::Macro { flags, .. }
                             if flags.contains(MeaningFlags::PROTECTED)
                     ))
             {
@@ -1018,16 +1028,16 @@ impl<G> CommandProcessor<'_, G> {
                 );
             }
             match command.meaning() {
-                Meaning::ExpandablePrimitive(primitive) => {
+                ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => {
                     tex_state::measurement::record_hot_core_expandable_opcode(
                         usize::try_from(primitive.operand())
                             .expect("expandable primitive operand fits usize"),
                     );
                 }
-                Meaning::Macro { .. } => {
+                ResolvedMeaning::Macro { .. } => {
                     tex_state::measurement::record_hot_core_macro_expansion();
                 }
-                Meaning::Undefined => {}
+                ResolvedMeaning::Static(Meaning::Undefined) => {}
                 _ => unreachable!("expand receives only expandable meanings"),
             }
         }
@@ -1050,28 +1060,28 @@ impl<G> CommandProcessor<'_, G> {
                 .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
                 > 1
             && (matches!(
-                command.meaning(),
-                Meaning::ExpandablePrimitive(primitive)
+                static_meaning(command.meaning()),
+                Some(Meaning::ExpandablePrimitive(primitive))
                     if primitive != ExpandablePrimitive::EndTemplate
-            ) || matches!(command.meaning(), Meaning::Undefined))
+            ) || matches!(static_meaning(command.meaning()), Some(Meaning::Undefined)))
         {
             self.print_command_trace(crate::PrintCommand::from_current(command));
         }
         match command.meaning() {
-            Meaning::ExpandablePrimitive(primitive)
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive))
                 if crate::conditionals::ConditionalKind::from_primitive(primitive).is_some() =>
             {
                 self.expand_conditional(command, false)
             }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless) => {
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless)) => {
                 self.expand_unless(command)
             }
-            Meaning::ExpandablePrimitive(
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
                 primitive @ (ExpandablePrimitive::Else
                 | ExpandablePrimitive::Or
                 | ExpandablePrimitive::Fi),
-            ) => self.expand_conditional_delimiter(command, primitive),
-            Meaning::Macro { .. } => {
+            )) => self.expand_conditional_delimiter(command, primitive),
+            ResolvedMeaning::Macro { .. } => {
                 match self.macro_call(command)? {
                     crate::macro_call::MacroCallOutcome::Activated => {}
                     crate::macro_call::MacroCallOutcome::PrefixMismatchRecovered => {}
@@ -1082,13 +1092,15 @@ impl<G> CommandProcessor<'_, G> {
             // sentinel that ended a v-template with the distinct frozen
             // `endv` token. Neither sentinel is a user-installable primitive;
             // §780 gives them only frozen control-sequence slots.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate) => {
-                self.insert_frozen_endv()
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand) => self.expand_noexpand(),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter) => {
-                self.expand_expandafter()
-            }
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                ExpandablePrimitive::EndTemplate,
+            )) => self.insert_frozen_endv(),
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                ExpandablePrimitive::NoExpand,
+            )) => self.expand_noexpand(),
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                ExpandablePrimitive::ExpandAfter,
+            )) => self.expand_expandafter(),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
                 self.expand_csname(command)
             }
@@ -1123,7 +1135,7 @@ impl<G> CommandProcessor<'_, G> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFontSize) => {
                 let font = self.scan_font_selector()?;
                 let size = format_scaled(self.state.tracked_font_size(font));
-                self.push_rendered_text(&size, command.origin_ref());
+                self.push_rendered_text(&size, command.origin());
                 Ok(())
             }
             // pdftex.web §470 scans e-TeX's extended box-register domain,
@@ -1144,7 +1156,7 @@ impl<G> CommandProcessor<'_, G> {
                         "pdfTeX error (marginkern): a non-empty hbox expected",
                     ));
                 };
-                self.push_rendered_text(&format_scaled(amount), command.origin_ref());
+                self.push_rendered_text(&format_scaled(amount), command.origin());
                 Ok(())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
@@ -1154,20 +1166,20 @@ impl<G> CommandProcessor<'_, G> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => {
                 self.state.unsupported_host_capability();
                 let job_name = self.host.job_name().to_owned();
-                self.push_rendered_text(&job_name, command.origin_ref());
+                self.push_rendered_text(&job_name, command.origin());
                 Ok(())
             }
             // e-TeX 2.6 etex.ch §3211 installs `\eTeXrevision` as a
             // `convert` command; §1387 prints the immutable revision string
             // through TeX82 §470's ordinary conversion-token path.
             Meaning::ExpandablePrimitive(ExpandablePrimitive::ETeXRevision) => {
-                self.push_rendered_text(".6", command.origin_ref());
+                self.push_rendered_text(".6", command.origin());
                 Ok(())
             }
             // pdfTeX §57.4 exposes the revision suffix independently of the
             // integer `\pdftexversion` parameter.
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision) => {
-                self.push_rendered_text("27", command.origin_ref());
+                self.push_rendered_text("27", command.origin());
                 Ok(())
             }
             // pdftex.web §§494 and 496--498 install `\pdftexbanner` as an
@@ -1178,7 +1190,7 @@ impl<G> CommandProcessor<'_, G> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXBanner) => {
                 self.push_rendered_text(
                     "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) kpathsea version 6.4.2",
-                    command.origin_ref(),
+                    command.origin(),
                 );
                 Ok(())
             }
@@ -1189,12 +1201,12 @@ impl<G> CommandProcessor<'_, G> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUniformDeviate) => {
                 let bound = self.scan_integer()?.value;
                 let value = self.state.pdf_uniform_deviate(bound);
-                self.push_rendered_text(&value.to_string(), command.origin_ref());
+                self.push_rendered_text(&value.to_string(), command.origin());
                 Ok(())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfNormalDeviate) => {
                 let value = self.state.pdf_normal_deviate();
-                self.push_rendered_text(&value.to_string(), command.origin_ref());
+                self.push_rendered_text(&value.to_string(), command.origin());
                 Ok(())
             }
             // pdftex.web §1590's `pdf_creation_date_code` conversion calls
@@ -1204,7 +1216,7 @@ impl<G> CommandProcessor<'_, G> {
             // pdfTeX's `\pdfcreationdate` spelling share this meaning.
             Meaning::ExpandablePrimitive(ExpandablePrimitive::CreationDate) => {
                 let clock = self.state.job_clock();
-                self.push_rendered_text(&format_pdf_date(clock, 0), command.origin_ref());
+                self.push_rendered_text(&format_pdf_date(clock, 0), command.origin());
                 Ok(())
             }
             // pdfTeX and XeTeX change section [53a] report shell escape as
@@ -1216,7 +1228,7 @@ impl<G> CommandProcessor<'_, G> {
                     .state
                     .internal_integer(tex_state::meaning::InternalInteger::PdfShellEscape)
                     .expect("the shell-escape status is an integer enquiry");
-                self.push_rendered_text(&status.to_string(), command.origin_ref());
+                self.push_rendered_text(&status.to_string(), command.origin());
                 Ok(())
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
@@ -1278,7 +1290,7 @@ impl<G> CommandProcessor<'_, G> {
                         "pdfTeX error (pdfximagebbox): invalid parameter.",
                     ));
                 };
-                self.push_rendered_text(&format_scaled(coordinate), command.origin_ref());
+                self.push_rendered_text(&format_scaled(coordinate), command.origin());
                 Ok(())
             }
             // pdftex.web §1549's `pdf_xform_name_code` conversion scans a
@@ -1291,7 +1303,7 @@ impl<G> CommandProcessor<'_, G> {
                     .ok()
                     .and_then(|object| self.state.pdf_form_resource(object))
                     .unwrap_or(0);
-                self.push_rendered_text(&resource.to_string(), command.origin_ref());
+                self.push_rendered_text(&resource.to_string(), command.origin());
                 Ok(())
             }
             // pdftex.web §470's `pdf_page_ref_code` conversion scans a one-based
@@ -1310,7 +1322,7 @@ impl<G> CommandProcessor<'_, G> {
                     .ok()
                     .and_then(|page| self.state.pdf_page_object(page))
                     .unwrap_or(0);
-                self.push_rendered_text(&object.to_string(), command.origin_ref());
+                self.push_rendered_text(&object.to_string(), command.origin());
                 Ok(())
             }
             // pdfTeX §57.1 consumes one raw token and, only for a registered
@@ -1381,8 +1393,7 @@ impl<G> CommandProcessor<'_, G> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::GeneralText {
             purpose: "scantokens",
         })?;
-        let mut text =
-            stored_token_list_string_text(&mut self.state, scanned.replacement_text.token_ref());
+        let mut text = self.attempt_token_list_string_text(scanned.replacement_text)?;
         let newline = self.state.int_param(IntParam::NEWLINE_CHAR);
         if let Some(newline) = char::from_u32(u32::try_from(newline).unwrap_or(u32::MAX))
             && newline != '\n'
@@ -1398,8 +1409,8 @@ impl<G> CommandProcessor<'_, G> {
         text.push('\n');
         let every_eof = self
             .state
-            .tok_param_option(tex_state::env::banks::TokParam::EVERY_EOF)
-            .map(|id| tex_state::TracedTokenList::synthetic(self.state.token_list_ref(id)));
+            .token_parameter(tex_state::env::banks::TokParam::EVERY_EOF)
+            .expect("everyeof is an admitted token parameter");
         let tracing_scantokens = self.state.int_param(IntParam::TRACING_SCAN_TOKENS);
         let level = self
             .command
@@ -1463,9 +1474,8 @@ impl<G> CommandProcessor<'_, G> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::GeneralText {
             purpose: "detokenize",
         })?;
-        let text =
-            stored_token_list_string_text(&mut self.state, scanned.replacement_text.token_ref());
-        self.push_rendered_text(&text, opener.origin_ref());
+        let text = self.attempt_token_list_string_text(scanned.replacement_text)?;
+        self.push_rendered_text(&text, opener.origin());
         Ok(())
     }
 
@@ -1478,10 +1488,15 @@ impl<G> CommandProcessor<'_, G> {
     fn expand_expanded(&mut self) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
         let replacement = scanned.replacement_text;
-        let words = self.state.tokens(replacement.token_ref().id());
-        let first = words.first().copied();
-        let origins = self.state.origin_list(replacement.origin_ref());
-        self.insert_expansion_list(TokenPayload::stored(&words, origins.iter()), first);
+        let words = self
+            .command
+            .attempt
+            .arena()
+            .token_words(replacement)
+            .map_err(crate::scan_toks::attempt_command_error)?
+            .to_vec();
+        let first = words.first().map(|word| word.semantic_token());
+        self.insert_expansion_list(TokenPayload::transient(words), first);
         Ok(())
     }
 
@@ -1493,17 +1508,15 @@ impl<G> CommandProcessor<'_, G> {
     /// preserves that ordering for Umber's extended scalar domain as well.
     fn expand_string_compare(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let left = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
-        let left =
-            stored_token_list_string_text(&mut self.state, left.replacement_text.token_ref());
+        let left = self.attempt_token_list_string_text(left.replacement_text)?;
         let right = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
-        let right =
-            stored_token_list_string_text(&mut self.state, right.replacement_text.token_ref());
+        let right = self.attempt_token_list_string_text(right.replacement_text)?;
         let value = match left.as_bytes().cmp(right.as_bytes()) {
             std::cmp::Ordering::Less => -1,
             std::cmp::Ordering::Equal => 0,
             std::cmp::Ordering::Greater => 1,
         };
-        self.push_rendered_text(&value.to_string(), opener.origin_ref());
+        self.push_rendered_text(&value.to_string(), opener.origin());
         Ok(())
     }
 
@@ -1538,7 +1551,7 @@ impl<G> CommandProcessor<'_, G> {
                     .collect(),
             }),
         );
-        self.push_rendered_text(&escaped, opener.origin_ref());
+        self.push_rendered_text(&escaped, opener.origin());
         Ok(())
     }
 
@@ -1572,7 +1585,7 @@ impl<G> CommandProcessor<'_, G> {
                     .collect(),
             }),
         );
-        self.push_rendered_text(&escaped, opener.origin_ref());
+        self.push_rendered_text(&escaped, opener.origin());
         Ok(())
     }
 
@@ -1611,7 +1624,7 @@ impl<G> CommandProcessor<'_, G> {
                     .collect(),
             }),
         );
-        self.push_rendered_text(&unescaped, opener.origin_ref());
+        self.push_rendered_text(&unescaped, opener.origin());
         Ok(())
     }
 
@@ -1680,10 +1693,7 @@ impl<G> CommandProcessor<'_, G> {
     fn expand_csname(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
         let name = self.scan_csname_characters()?;
         let symbol = self.state.intern_relaxed_control_sequence(&name);
-        let origin = self
-            .state
-            .synthesized_origin(SynthesizedOriginKind::Expansion, opener.origin());
-        self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), origin))
+        self.back_input_token(TracedTokenWord::pack(Token::Cs(symbol), opener.origin()))
     }
 
     /// Collects TeX82 §372's expanded character list through `\\endcsname`.
@@ -1743,7 +1753,7 @@ impl<G> CommandProcessor<'_, G> {
             .ok_or(CommandError::input_invariant())?;
         self.push_rendered_text(
             &string_text(&self.state, target.spelling().semantic_token()),
-            opener.origin_ref(),
+            opener.origin(),
         );
         Ok(())
     }
@@ -1753,7 +1763,7 @@ impl<G> CommandProcessor<'_, G> {
             .get_token_with_normal_scanner_status()?
             .ok_or(CommandError::input_invariant())?;
         let text = meaning_text(&mut self.state, &target);
-        self.push_rendered_text(&text, opener.origin_ref());
+        self.push_rendered_text(&text, opener.origin());
         Ok(())
     }
 
@@ -1768,7 +1778,7 @@ impl<G> CommandProcessor<'_, G> {
         } else {
             value.to_string()
         };
-        self.push_rendered_text(&text, opener.origin_ref());
+        self.push_rendered_text(&text, opener.origin());
         Ok(())
     }
 
@@ -1781,7 +1791,7 @@ impl<G> CommandProcessor<'_, G> {
     /// scanner and changes the observable input ordering.
     fn expand_the(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
         let target = self.scan_internal_value_or_zero()?;
-        self.expand_the_value(opener.origin_ref(), target.value)
+        self.expand_the_value(opener.origin(), target.value)
     }
 
     /// Installs one TeX82 §467 `ins_the_toks` result.
@@ -1794,7 +1804,7 @@ impl<G> CommandProcessor<'_, G> {
     /// input level.
     pub(crate) fn expand_the_value(
         &mut self,
-        opener: &tex_state::provenance::OriginRef,
+        opener: OriginId,
         value: crate::InternalValue,
     ) -> Result<(), CommandError> {
         if let Some(text) = render_the_value(&value) {
@@ -1802,15 +1812,18 @@ impl<G> CommandProcessor<'_, G> {
         } else {
             match value {
                 // §466 copies the register's list rather than sharing its
-                // reference, which Umber's immutable stored list already is:
-                // reassigning the register cannot mutate this payload.
+                // durable source. The operation-local copy remains in the
+                // attempt until this inserted level has copied its words.
                 crate::InternalValue::Tokens { tokens } => {
-                    let words = self.state.tokens(tokens.id());
-                    let first = words.first().copied();
-                    self.insert_expansion_list(
-                        TokenPayload::stored(&words, std::iter::empty()),
-                        first,
-                    );
+                    let words = self
+                        .command
+                        .attempt
+                        .arena()
+                        .token_words(tokens)
+                        .map_err(crate::scan_toks::attempt_command_error)?
+                        .to_vec();
+                    let first = words.first().map(|word| word.semantic_token());
+                    self.insert_expansion_list(TokenPayload::transient(words), first);
                 }
                 crate::InternalValue::Font(symbol) => {
                     self.push_rendered_tokens([Token::Cs(symbol)], opener);
@@ -1830,7 +1843,7 @@ impl<G> CommandProcessor<'_, G> {
     fn expand_fontname(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let font = self.scan_font_selector()?;
         let name = self.state.font_name(font);
-        self.push_rendered_text(&name, opener.origin_ref());
+        self.push_rendered_text(&name, opener.origin());
         Ok(())
     }
 
@@ -1845,10 +1858,7 @@ impl<G> CommandProcessor<'_, G> {
             // a diagnostic on the restored command says `<recently read>`.
             let opener_origin = opener.origin();
             self.back_input(opener)?;
-            let origin = self
-                .state
-                .synthesized_origin(SynthesizedOriginKind::Expansion, opener_origin);
-            let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), origin);
+            let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), opener_origin);
             let level = self.command.push_token_level(
                 TokenPayload::backed_up([BackedUpToken {
                     spelling: frozen_relax,
@@ -1944,7 +1954,7 @@ impl<G> CommandProcessor<'_, G> {
             Ok(regex) => regex.case_insensitive(case_insensitive),
             Err(error) => {
                 self.pdftex_regex_warning(posix_regex_diagnostic(&error, &pattern));
-                self.push_rendered_text("-1", opener.origin_ref());
+                self.push_rendered_text("-1", opener.origin());
                 return Ok(());
             }
         };
@@ -1965,7 +1975,7 @@ impl<G> CommandProcessor<'_, G> {
             .collect();
         self.state
             .set_pdf_match_state(haystack, captures, subcount, matched);
-        self.push_rendered_text(if matched { "1" } else { "0" }, opener.origin_ref());
+        self.push_rendered_text(if matched { "1" } else { "0" }, opener.origin());
         Ok(())
     }
 
@@ -2001,7 +2011,7 @@ impl<G> CommandProcessor<'_, G> {
                 0
             }
         };
-        self.push_rendered_text(&id.to_string(), opener.origin_ref());
+        self.push_rendered_text(&id.to_string(), opener.origin());
         Ok(())
     }
 
@@ -2022,7 +2032,7 @@ impl<G> CommandProcessor<'_, G> {
         if let Some((_, bytes)) = capture {
             rendered.extend(bytes.into_iter().map(char::from));
         }
-        self.push_rendered_text(&rendered, opener.origin_ref());
+        self.push_rendered_text(&rendered, opener.origin());
         Ok(())
     }
 
@@ -2093,7 +2103,7 @@ impl<G> CommandProcessor<'_, G> {
             use std::fmt::Write as _;
             write!(rendered, "{byte:02X}").expect("writing to a String cannot fail");
         }
-        self.push_rendered_text(&rendered, opener.origin_ref());
+        self.push_rendered_text(&rendered, opener.origin());
         Ok(())
     }
 
@@ -2126,10 +2136,7 @@ impl<G> CommandProcessor<'_, G> {
                 Err(CommandError::MissingInputProbe(request))
             };
         };
-        self.push_rendered_text(
-            &source.source().bytes().len().to_string(),
-            opener.origin_ref(),
-        );
+        self.push_rendered_text(&source.source().bytes().len().to_string(), opener.origin());
         Ok(())
     }
 
@@ -2166,7 +2173,7 @@ impl<G> CommandProcessor<'_, G> {
         if let Some(date) = resource.modification_date() {
             self.push_rendered_text(
                 &format_pdf_date(date.clock, date.utc_offset_minutes),
-                opener.origin_ref(),
+                opener.origin(),
             );
         }
         Ok(())
@@ -2214,7 +2221,7 @@ impl<G> CommandProcessor<'_, G> {
             .iter()
             .map(|byte| format!("{byte:02X}"))
             .collect::<String>();
-        self.push_rendered_text(&rendered, opener.origin_ref());
+        self.push_rendered_text(&rendered, opener.origin());
         Ok(())
     }
 
@@ -2238,7 +2245,7 @@ impl<G> CommandProcessor<'_, G> {
             .host
             .page_insertion_height(class)
             .map_or_else(|| "0pt".to_owned(), format_scaled);
-        self.push_rendered_text(&rendered, opener.origin_ref());
+        self.push_rendered_text(&rendered, opener.origin());
         Ok(())
     }
 
@@ -2271,10 +2278,10 @@ impl<G> CommandProcessor<'_, G> {
         );
     }
 
-    fn push_mark_text(&mut self, tokens: TokenListId) {
-        let words = self.state.tokens(tokens);
+    fn push_mark_text(&mut self, tokens: tex_state::TokenListId<G>) {
+        let words = self.state.token_list(tokens);
         let level = self.command.push_token_level(
-            TokenPayload::stored(&words, std::iter::empty()),
+            TokenPayload::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::Mark),
@@ -2292,6 +2299,26 @@ impl<G> CommandProcessor<'_, G> {
         );
     }
 
+    fn attempt_token_list_string_text(
+        &mut self,
+        tokens: crate::AttemptTokenListId,
+    ) -> Result<String, CommandError> {
+        let words = self
+            .command
+            .attempt
+            .arena()
+            .token_words(tokens)
+            .map_err(crate::scan_toks::attempt_command_error)?
+            .to_vec();
+        let mut text = String::new();
+        let _ = self.state.int_param(IntParam::ESCAPE_CHAR);
+        for word in words {
+            self.state
+                .append_token_string_text(word.semantic_token(), &mut text);
+        }
+        Ok(text)
+    }
+
     /// Installs TeX82 §470 `conv_toks` output as an inserted recovery level.
     ///
     /// Conversion output is not an ordinary token-list replay: §470 ends with
@@ -2299,7 +2326,7 @@ impl<G> CommandProcessor<'_, G> {
     /// Keeping that identity on the live input frame makes both retirement and
     /// detached observation follow the actual input transition, rather than
     /// asking a trace adapter to recognize rendered text later.
-    fn push_rendered_text(&mut self, text: &str, parent: &tex_state::provenance::OriginRef) {
+    fn push_rendered_text(&mut self, text: &str, parent: OriginId) {
         self.push_rendered_tokens(
             text.chars().map(|ch| Token::Char {
                 ch,
@@ -2313,21 +2340,14 @@ impl<G> CommandProcessor<'_, G> {
         );
     }
 
-    fn push_rendered_tokens(
-        &mut self,
-        tokens: impl IntoIterator<Item = Token>,
-        parent: &tex_state::provenance::OriginRef,
-    ) {
-        let origin = self
-            .state
-            .synthesized_origin(SynthesizedOriginKind::ValueRendering, parent.id());
+    fn push_rendered_tokens(&mut self, tokens: impl IntoIterator<Item = Token>, parent: OriginId) {
         let mut tokens = tokens.into_iter();
         let first = tokens.next();
         let payload = TokenPayload::transient(
             first
                 .into_iter()
                 .chain(tokens)
-                .map(|token| TracedTokenWord::pack(token, origin)),
+                .map(|token| TracedTokenWord::pack(token, parent)),
         );
         self.insert_expansion_list(payload, first);
     }
@@ -2482,21 +2502,23 @@ fn inserted_recovery_kind(token: &crate::observation::ObservedToken) -> Recovery
 /// These are exactly the three commands §1034's inner loop can continue on
 /// without expanding, so they are the only ones the lookahead delivers
 /// straight out of `get_next`.
-pub(crate) fn is_main_loop_character(meaning: Meaning) -> bool {
+pub(crate) fn is_main_loop_character<G>(meaning: ResolvedMeaning<G>) -> bool {
     matches!(
         meaning,
-        Meaning::CharToken {
-            cat: Catcode::Letter | Catcode::Other,
-            ..
-        } | Meaning::CharGiven(_)
+        ResolvedMeaning::Static(
+            Meaning::CharToken {
+                cat: Catcode::Letter | Catcode::Other,
+                ..
+            } | Meaning::CharGiven(_)
+        )
     )
 }
 
-fn is_expandable(meaning: Meaning) -> bool {
-    matches!(meaning, Meaning::Macro { .. })
+fn is_expandable<G>(meaning: ResolvedMeaning<G>) -> bool {
+    matches!(meaning, ResolvedMeaning::Macro { .. })
         || matches!(
             meaning,
-            Meaning::ExpandablePrimitive(primitive)
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive))
                 if primitive != ExpandablePrimitive::EndCsName
         )
 }
@@ -2510,7 +2532,7 @@ fn is_expandable(meaning: Meaning) -> bool {
 /// the two command identities distinct here.
 pub(crate) fn is_expandable_command<G>(command: &CurrentCommand<G>) -> bool {
     is_expandable(command.meaning())
-        || (matches!(command.meaning(), Meaning::Undefined)
+        || (matches!(static_meaning(command.meaning()), Some(Meaning::Undefined))
             && !matches!(command.spelling().semantic_token(), Token::Param(_)))
 }
 
@@ -2727,9 +2749,9 @@ fn append_meaning_text_with_token_selector(
     }
 }
 
-fn append_meaning_token_list(
-    state: &tex_state::CommandContext<'_>,
-    tokens: TokenListId,
+fn append_meaning_token_list<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    tokens: tex_state::TokenListId<G>,
     active_selector: bool,
     text: &mut String,
 ) {
@@ -3005,44 +3027,48 @@ pub fn append_command_token_text(
     }
 }
 
-pub(crate) fn append_token_list_text(
-    state: &tex_state::CommandContext<'_>,
-    tokens: TokenListId,
+pub(crate) fn append_token_list_text<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    tokens: tex_state::TokenListId<G>,
     text: &mut String,
 ) {
-    let tokens = state.tokens(tokens);
+    let tokens = state.token_list(tokens);
     let mut index = 0;
     while index < tokens.len() {
         if let Token::Char {
             ch,
             cat: Catcode::Parameter,
-        } = tokens[index]
-            && let Some(Token::Param(slot)) = tokens.get(index + 1)
+        } = tokens[index].token().expect("durable token word is valid")
+            && let Some(Token::Param(slot)) = tokens.get(index + 1).and_then(|word| word.token())
         {
             text.push(ch);
             text.push(char::from(b'0' + *slot));
             index += 2;
             continue;
         }
-        append_token_list_token_text(state, tokens[index], text);
+        append_token_list_token_text(
+            state,
+            tokens[index].token().expect("durable token word is valid"),
+            text,
+        );
         index += 1;
     }
 }
 
 /// TeX82 §262's `show_token_list` through an active print selector.
-fn append_selector_token_list_text(
-    state: &tex_state::CommandContext<'_>,
-    tokens: TokenListId,
+fn append_selector_token_list_text<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    tokens: tex_state::TokenListId<G>,
     text: &mut String,
 ) {
-    let tokens = state.tokens(tokens);
+    let tokens = state.token_list(tokens);
     let mut index = 0;
     while index < tokens.len() {
         if let Token::Char {
             ch,
             cat: Catcode::Parameter,
-        } = tokens[index]
-            && let Some(Token::Param(slot)) = tokens.get(index + 1)
+        } = tokens[index].token().expect("durable token word is valid")
+            && let Some(Token::Param(slot)) = tokens.get(index + 1).and_then(|word| word.token())
         {
             let raw = [ch, char::from(b'0' + *slot)]
                 .into_iter()
@@ -3051,7 +3077,10 @@ fn append_selector_token_list_text(
             index += 2;
             continue;
         }
-        state.append_token_selector_text(tokens[index], text);
+        state.append_token_selector_text(
+            tokens[index].token().expect("durable token word is valid"),
+            text,
+        );
         index += 1;
     }
 }
@@ -3075,15 +3104,17 @@ pub(crate) fn token_slice_string_text(
     text
 }
 
-pub(crate) fn stored_token_list_string_text(
-    state: &mut tex_state::CommandContext<'_>,
-    tokens: tex_state::token_store::TokenListRef,
+pub(crate) fn stored_token_list_string_text<G>(
+    state: &mut tex_state::CommandContext<'_, G>,
+    tokens: tex_state::TokenListId<G>,
 ) -> String {
     let mut text = String::new();
     let _ = state.int_param(IntParam::ESCAPE_CHAR);
-    let token_count = state.tokens(tokens.id()).len();
+    let token_count = state.token_list(tokens).len();
     for index in 0..token_count {
-        let token = state.tokens(tokens.id())[index];
+        let token = state.token_list(tokens)[index]
+            .token()
+            .expect("durable token word is valid");
         state.append_token_string_text(token, &mut text);
     }
     text
@@ -3139,9 +3170,9 @@ pub(crate) fn append_token_list_token_text(
     }
 }
 
-fn pdftex_stored_token_list_bytes(
-    state: &mut tex_state::CommandContext<'_>,
-    tokens: tex_state::token_store::TokenListRef,
+fn pdftex_stored_token_list_bytes<G>(
+    state: &mut tex_state::CommandContext<'_, G>,
+    tokens: tex_state::TokenListId<G>,
 ) -> Vec<u8> {
     stored_token_list_string_text(state, tokens)
         .chars()

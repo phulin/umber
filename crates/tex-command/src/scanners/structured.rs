@@ -9,13 +9,15 @@ use std::sync::Arc;
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::scaled::{FontSizeSpec, Scaled};
-use tex_state::token::{Catcode, OriginId, RootedTracedTokenBuffer, Token, TracedTokenWord};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{
-    SourceId, TracedTokenList,
+    SourceId,
     env::banks::{GlueParam, IntParam},
 };
+
+use crate::attempt::{AttemptDefinitionId, AttemptTokenListId};
 
 use crate::input::{
     BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, StoredReplayReason,
@@ -48,6 +50,13 @@ const MISSING_DELIMITER_HELP: &[&str] = &[
     "nonnegative, or you can use `\\delimiter <delimiter code>'.",
 ];
 
+fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
+    match meaning {
+        ResolvedMeaning::Static(meaning) => Some(meaning),
+        ResolvedMeaning::Macro { .. } => None,
+    }
+}
+
 /// Provenance for a completed structured scan.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct StructuredProvenance {
@@ -58,13 +67,13 @@ pub struct StructuredProvenance {
 /// A balanced token list frozen through the aggregate token store.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedBalancedText {
-    pub tokens: TracedTokenList,
+    pub tokens: AttemptTokenListId,
     pub provenance: StructuredProvenance,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExpandedWriteText {
-    pub tokens: TracedTokenList,
+    pub tokens: AttemptTokenListId,
     pub unbalanced: bool,
     /// TeX82 §1372's live §310 context, captured before recovery consumes
     /// the artificial write input episode.
@@ -79,10 +88,10 @@ pub struct ScannedMacroDefinition {
     /// executor never has to reopen raw input between the primitive and its
     /// parameter/replacement scan.
     pub target: Symbol,
-    pub parameter_text: RootedTracedTokenBuffer,
-    pub replacement_text: RootedTracedTokenBuffer,
+    pub definition: AttemptDefinitionId,
+    pub parameter_text: AttemptTokenListId,
+    pub replacement_text: AttemptTokenListId,
     pub provenance: StructuredProvenance,
-    pub definition_origin: tex_state::provenance::OriginRef,
 }
 
 /// A completed TeX82 `\let` or `\futurelet` assignment.
@@ -91,12 +100,10 @@ pub struct ScannedMacroDefinition {
 /// optional equals sign and `\futurelet`'s lookahead replay. Replay receives
 /// only the target and its already-resolved source meaning.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScannedLetAssignment {
+pub struct ScannedLetAssignment<G> {
     pub target: Symbol,
     pub source: Option<Symbol>,
-    pub meaning: Meaning,
-    #[doc(hidden)]
-    pub macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
+    pub meaning: ResolvedMeaning<G>,
 }
 
 /// A completed TeX82 §1224 `\\chardef` or `\\mathchardef` operand.
@@ -106,12 +113,10 @@ pub struct ScannedLetAssignment {
 /// control receives no token or input capability: it only applies the
 /// assignment's effective scope and reports the recovery diagnostic.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScannedCharacterDefinition {
+pub struct ScannedCharacterDefinition<G> {
     pub target: Symbol,
     /// The meaning replaced by §1224's scanner-time provisional `\relax`.
-    pub provisional_old: Meaning,
-    #[doc(hidden)]
-    pub provisional_macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
+    pub provisional_old: ResolvedMeaning<G>,
     /// The restricted class §1224 selects for this primitive.
     pub class: RestrictedIntegerClass,
     /// `cur_val` after §434/§436's recovery.
@@ -129,23 +134,11 @@ pub struct ScannedCharacterDefinition {
 /// receives only the chosen target and register selector to apply with the
 /// already determined assignment scope.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScannedRegisterDefinition {
+pub struct ScannedRegisterDefinition<G> {
     pub target: Symbol,
     /// The meaning replaced by §1224's scanner-time provisional `\relax`.
-    pub provisional_old: Meaning,
-    #[doc(hidden)]
-    pub provisional_macro_root: Option<tex_state::macro_store::MacroDefinitionRef>,
+    pub provisional_old: ResolvedMeaning<G>,
     pub index: u16,
-}
-
-fn meaning_macro_root(
-    state: &tex_state::CommandContext<'_>,
-    meaning: Meaning,
-) -> Option<tex_state::macro_store::MacroDefinitionRef> {
-    match meaning {
-        Meaning::Macro { definition, .. } => Some(state.macro_definition_ref(definition)),
-        _ => None,
-    }
 }
 
 /// TeX82 §§1254--1261's completed `\\font` definition request.
@@ -225,7 +218,7 @@ pub struct PdfImageRequest {
     /// Whether source selected `page_box` rather than leaving it to the live
     /// pdfTeX page-box parameters applied by canonical main control.
     pub page_box_explicit: bool,
-    pub attr: Option<TracedTokenList>,
+    pub attr: Option<AttemptTokenListId>,
 }
 
 impl PdfImageRequest {
@@ -234,9 +227,9 @@ impl PdfImageRequest {
     /// pdftex.web §1550's `read_image` receives the file/page/page-box facts;
     /// rule dimensions and `attr` are command/output state. Dimensions remain
     /// in this deliberately conservative key, but `attr` cannot: its
-    /// `TracedTokenList` carries allocator-owned handles that are regenerated
-    /// when an aggregate resource suspension rolls back and retries. The
-    /// retried request still carries its fresh attribute list to application.
+    /// Attribute text is command-attempt state, not part of host resource
+    /// identity. A retried request carries the coordinate in its owned
+    /// continuation arena.
     pub(crate) fn same_resource_as(&self, other: &Self) -> bool {
         self.name == other.name
             && self.width == other.width
@@ -597,7 +590,7 @@ pub struct ScannedRuleSpec {
 /// loop body is `prefixed_command` -- executor state, not scanner state. The
 /// lookahead is therefore delivered one command at a time.
 #[derive(Debug, Eq, PartialEq)]
-pub enum ScannedAccentBase {
+pub enum ScannedAccentBase<G> {
     /// §1124's `letter`, `other_char`, `char_given`, or `char_num` base.
     Character {
         character: u8,
@@ -605,7 +598,7 @@ pub enum ScannedAccentBase {
     },
     /// §1270's `prefixed_command`: the delivered assignment the executor must
     /// run before the lookahead continues.
-    Assignment(CurrentCommand),
+    Assignment(CurrentCommand<G>),
     /// §1124's `else back_input`, already performed, or end of input. Either
     /// way §1123 appends the accent by itself.
     Missing,
@@ -958,7 +951,7 @@ pub enum InputStreamRequest {
         /// Effective TeX82 §1214 scope selected by `prefixed_command`
         /// before §1225 enters `read_toks`.
         global: bool,
-        tokens: tex_state::TracedTokenList,
+        tokens: AttemptTokenListId,
     },
 }
 
@@ -982,7 +975,7 @@ pub enum ImmediateExtension {
     },
     Write {
         stream: WriteStreamSelector,
-        tokens: TracedTokenList,
+        tokens: AttemptTokenListId,
     },
     CloseOut {
         stream: WriteStreamSelector,
@@ -1137,10 +1130,12 @@ impl<G> CommandProcessor<'_, G> {
         &mut self,
         class: RestrictedIntegerClass,
         provisional_global: bool,
-    ) -> Result<ScannedCharacterDefinition, CommandError> {
+    ) -> Result<ScannedCharacterDefinition<G>, CommandError> {
         let target = self.scan_definition_target()?;
-        let provisional_old = self.state.meaning(target);
-        let provisional_macro_root = meaning_macro_root(&self.state, provisional_old);
+        let provisional_old = self
+            .state
+            .meaning(target)
+            .map_err(|_| CommandError::input_invariant())?;
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         observe!(
@@ -1157,7 +1152,6 @@ impl<G> CommandProcessor<'_, G> {
         Ok(ScannedCharacterDefinition {
             target,
             provisional_old,
-            provisional_macro_root,
             class,
             value: scanned.value,
             scanned: scanned.scanned,
@@ -1173,10 +1167,12 @@ impl<G> CommandProcessor<'_, G> {
     pub fn scan_register_definition(
         &mut self,
         provisional_global: bool,
-    ) -> Result<ScannedRegisterDefinition, CommandError> {
+    ) -> Result<ScannedRegisterDefinition<G>, CommandError> {
         let target = self.scan_definition_target()?;
-        let provisional_old = self.state.meaning(target);
-        let provisional_macro_root = meaning_macro_root(&self.state, provisional_old);
+        let provisional_old = self
+            .state
+            .meaning(target)
+            .map_err(|_| CommandError::input_invariant())?;
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         observe!(
@@ -1201,7 +1197,6 @@ impl<G> CommandProcessor<'_, G> {
         Ok(ScannedRegisterDefinition {
             target,
             provisional_old,
-            provisional_macro_root,
             index,
         })
     }
@@ -1672,13 +1667,13 @@ impl<G> CommandProcessor<'_, G> {
             };
             // §1151's `reswitch`: `char_num` scans its selector and re-enters
             // the table as `char_given`, so both reach one `math_code` read.
-            let character = match command.meaning() {
-                Meaning::CharToken {
+            let character = match static_meaning(command.meaning()) {
+                Some(Meaning::CharToken {
                     ch,
                     cat: Catcode::Letter | Catcode::Other,
-                } => Some(ch),
-                Meaning::CharGiven(ch) => Some(ch),
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
+                }) => Some(ch),
+                Some(Meaning::CharGiven(ch)) => Some(ch),
+                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)) => {
                     Some(self.scan_character_number()?)
                 }
                 _ => None,
@@ -1697,14 +1692,14 @@ impl<G> CommandProcessor<'_, G> {
                     provenance,
                 });
             }
-            let (code, provenance) = match command.meaning() {
+            let (code, provenance) = match static_meaning(command.meaning()) {
                 // §1224's `\mathchardef` target carries its own code.
-                Meaning::MathCharGiven(code) => (code, provenance),
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathChar) => {
+                Some(Meaning::MathCharGiven(code)) => (code, provenance),
+                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::MathChar)) => {
                     let scanned = self.scan_math_character()?;
                     (scanned.code, scanned.provenance)
                 }
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter) => {
+                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter)) => {
                     let scanned = self.scan_delimiter_number()?;
                     // §1151: `c:=cur_val div @'10000`.
                     ((scanned.code / 0o10000) as u16, scanned.provenance)
@@ -1852,12 +1847,12 @@ impl<G> CommandProcessor<'_, G> {
             });
         };
         let primary = command.origin();
-        let code = match command.meaning() {
-            Meaning::CharToken {
+        let code = match static_meaning(command.meaning()) {
+            Some(Meaning::CharToken {
                 ch,
                 cat: Catcode::Letter | Catcode::Other,
-            } => self.state.delcode(ch),
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter) => {
+            }) => self.state.delcode(ch),
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Delimiter)) => {
                 return self.scan_delimiter_number();
             }
             _ => -1,
@@ -1983,7 +1978,7 @@ impl<G> CommandProcessor<'_, G> {
     /// excluded `math_given` from the whole mmode table.
     pub fn scan_math_request(
         &mut self,
-        command: &crate::CurrentCommand,
+        command: &crate::CurrentCommand<G>,
     ) -> Result<Option<MathRequest>, CommandError> {
         use MathRequest as Request;
         use MathTextFieldKind as Field;
@@ -1992,7 +1987,7 @@ impl<G> CommandProcessor<'_, G> {
         // (§1155) through §436's `scan_fifteen_bit_int`, the code is already
         // complete in the delivered command, so nothing is scanned and the
         // math char's provenance is the delivering token's own origin.
-        if let Meaning::MathCharGiven(code) = command.meaning() {
+        if let Some(Meaning::MathCharGiven(code)) = static_meaning(command.meaning()) {
             return Ok(Some(Request::Character(ScannedMathCharacter {
                 code,
                 recovered: false,
@@ -2001,7 +1996,8 @@ impl<G> CommandProcessor<'_, G> {
                 },
             })));
         }
-        let Meaning::UnexpandablePrimitive(primitive) = command.meaning() else {
+        let Some(Meaning::UnexpandablePrimitive(primitive)) = static_meaning(command.meaning())
+        else {
             return Ok(None);
         };
         let request = match primitive {
@@ -2292,12 +2288,18 @@ impl<G> CommandProcessor<'_, G> {
         };
         let page = if self.scan_keyword("named")?.value {
             let tokens = self.scan_balanced_text(true)?.tokens;
+            let semantic = self
+                .command
+                .attempt
+                .arena()
+                .token_words(tokens)
+                .map_err(|_| CommandError::input_invariant())?
+                .iter()
+                .map(|word| word.semantic_token())
+                .collect::<Vec<_>>();
             PdfImagePageSelection::Named(
-                crate::processor::expand::stored_token_list_string_text(
-                    &mut self.state,
-                    tokens.token_ref(),
-                )
-                .into_bytes(),
+                crate::processor::expand::token_slice_string_text(&mut self.state, &semantic)
+                    .into_bytes(),
             )
         } else if self.scan_keyword("page")?.value {
             PdfImagePageSelection::Number(self.scan_integer()?.value)
@@ -2367,23 +2369,23 @@ impl<G> CommandProcessor<'_, G> {
     /// is handed to the executor still delivered; only §1124's own `else`
     /// branch replays, and it does so here, inside the delivery episode that
     /// owns the command.
-    pub fn scan_accent_base(&mut self) -> Result<ScannedAccentBase, CommandError> {
+    pub fn scan_accent_base(&mut self) -> Result<ScannedAccentBase<G>, CommandError> {
         let Some(command) = self.next_non_blank_non_relax_x_token()? else {
             return Ok(ScannedAccentBase::Missing);
         };
         let provenance = StructuredProvenance {
             primary: command.origin(),
         };
-        match command.meaning() {
-            Meaning::CharToken {
+        match static_meaning(command.meaning()) {
+            Some(Meaning::CharToken {
                 ch,
                 cat: Catcode::Letter | Catcode::Other,
-            }
-            | Meaning::CharGiven(ch)
-            | Meaning::CharToken {
+            })
+            | Some(Meaning::CharGiven(ch))
+            | Some(Meaning::CharToken {
                 ch,
                 cat: Catcode::Active,
-            } => {
+            }) => {
                 let character =
                     u8::try_from(ch as u32).map_err(|_| CommandError::input_invariant())?;
                 Ok(ScannedAccentBase::Character {
@@ -2391,7 +2393,7 @@ impl<G> CommandProcessor<'_, G> {
                     provenance,
                 })
             }
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)) => {
                 let character = u8::try_from(self.scan_integer()?.value)
                     .map_err(|_| CommandError::input_invariant())?;
                 Ok(ScannedAccentBase::Character {
@@ -2399,7 +2401,7 @@ impl<G> CommandProcessor<'_, G> {
                     provenance,
                 })
             }
-            meaning if crate::primitives::is_prefixed_command(meaning) => {
+            Some(meaning) if crate::primitives::is_prefixed_command(meaning) => {
                 Ok(ScannedAccentBase::Assignment(command))
             }
             _ => {
@@ -2416,7 +2418,9 @@ impl<G> CommandProcessor<'_, G> {
     /// neither backs up assignments nor refetches the first non-assignment it
     /// stops on. This boundary is also used by §1206 after `fin_align`, where
     /// blanks before the display-closing command must not reach main control.
-    pub fn next_do_assignments_command(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+    pub fn next_do_assignments_command(
+        &mut self,
+    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
         self.next_non_blank_non_relax_x_token()
     }
 
@@ -2479,17 +2483,17 @@ impl<G> CommandProcessor<'_, G> {
         let command = loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             if !matches!(
-                command.meaning(),
-                Meaning::CharToken {
+                static_meaning(command.meaning()),
+                Some(Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
-                }
+                })
             ) {
                 break command;
             }
         };
-        match command.meaning() {
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut) => {
+        match static_meaning(command.meaning()) {
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::OpenOut)) => {
                 let stream = self
                     .scan_restricted_integer(RestrictedIntegerClass::FourBit)?
                     .value as u8;
@@ -2497,7 +2501,7 @@ impl<G> CommandProcessor<'_, G> {
                 let file_name = self.scan_file_name()?;
                 Ok(ImmediateExtension::OpenOut { stream, file_name })
             }
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write)) => {
                 let stream = self.scan_write_stream()?;
                 // TeX82 §53 first saves write text without expansion, then
                 // `write_out` replays it under an outer `\\endwrite` stopper
@@ -2510,11 +2514,11 @@ impl<G> CommandProcessor<'_, G> {
                     tokens: expanded.tokens,
                 })
             }
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut) => {
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CloseOut)) => {
                 let stream = self.scan_write_stream()?;
                 Ok(ImmediateExtension::CloseOut { stream })
             }
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject) => {
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfObject)) => {
                 if !pdf_output_enabled {
                     Ok(ImmediateExtension::PdfExtensionInDviMode(
                         UnexpandablePrimitive::PdfObject,
@@ -2525,7 +2529,7 @@ impl<G> CommandProcessor<'_, G> {
                     ))
                 }
             }
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXForm) => {
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXForm)) => {
                 if !pdf_output_enabled {
                     Ok(ImmediateExtension::PdfExtensionInDviMode(
                         UnexpandablePrimitive::PdfXForm,
@@ -2536,7 +2540,7 @@ impl<G> CommandProcessor<'_, G> {
                     ))
                 }
             }
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXImage) => {
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfXImage)) => {
                 if !pdf_output_enabled {
                     Ok(ImmediateExtension::PdfExtensionInDviMode(
                         UnexpandablePrimitive::PdfXImage,
@@ -2561,7 +2565,7 @@ impl<G> CommandProcessor<'_, G> {
     /// source input.
     pub fn expand_write_text(
         &mut self,
-        tokens: TracedTokenList,
+        tokens: AttemptTokenListId,
     ) -> Result<ExpandedWriteText, CommandError> {
         self.write_expansion_depth = self
             .write_expansion_depth
@@ -2574,9 +2578,15 @@ impl<G> CommandProcessor<'_, G> {
 
     fn expand_write_text_inner(
         &mut self,
-        tokens: TracedTokenList,
+        tokens: AttemptTokenListId,
     ) -> Result<ExpandedWriteText, CommandError> {
-        let write_words = self.state.tokens(tokens.token_ref().id()).len();
+        let write_words = self
+            .command
+            .attempt
+            .arena()
+            .token_words(tokens)
+            .map_err(|_| CommandError::input_invariant())?
+            .len();
         let endwrite = self
             .state
             .primitive_token("endwrite")
@@ -2594,10 +2604,11 @@ impl<G> CommandProcessor<'_, G> {
         // by frozen outer `\\endwrite`; the write list and opening brace sit
         // above it exactly as TeX82's three `ins_list` calls do.
         let stopper_level = self.push_write_recovery([right_brace, endwrite], right_brace);
-        let words = self.state.tokens(tokens.token_ref().id());
-        let origins = self.state.origin_list(tokens.origin_ref());
         let write_level = self.command.push_token_level(
-            TokenPayload::stored(&words, origins.iter()),
+            TokenPayload::Argument {
+                list: tokens,
+                len: u32::try_from(write_words).map_err(|_| CommandError::input_invariant())?,
+            },
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::Write),
@@ -2615,12 +2626,16 @@ impl<G> CommandProcessor<'_, G> {
             let mut text = String::new();
             crate::processor::expand::append_print_esc_text(&self.state, "write", &mut text);
             text.push_str("->");
-            let token_count = self.state.tokens(tokens.token_ref().id()).len();
-            for index in 0..token_count {
-                let token = self.state.tokens(tokens.token_ref().id())[index];
+            let words = self
+                .command
+                .attempt
+                .arena()
+                .token_words(tokens)
+                .map_err(|_| CommandError::input_invariant())?;
+            for word in words {
                 crate::processor::expand::append_token_list_token_text(
                     &self.state,
-                    token,
+                    word.semantic_token(),
                     &mut text,
                 );
             }
@@ -2636,18 +2651,6 @@ impl<G> CommandProcessor<'_, G> {
 
         self.outer_recovered_while_absorbing = false;
         let expanded = self.scan_balanced_text(true)?.tokens;
-        let transient_words = self.command.transient_dynamic_words();
-        let expanded_words = self.state.tokens(expanded.token_ref().id()).len();
-        // TeX82 §1370 keeps the original write list, its expanded scan result,
-        // the command-owned transient input nodes, and the three artificial
-        // brace/`endwrite` nodes live on the same `write_out` call stack. The
-        // expanded list also owns §200's reference-count head.
-        self.state.observe_transient_token_words(
-            write_words
-                .saturating_add(expanded_words)
-                .saturating_add(transient_words)
-                .saturating_add(4),
-        );
         let mut stopper = self.get_token()?.ok_or(CommandError::input_invariant())?;
         let unbalanced =
             self.outer_recovered_while_absorbing || stopper.spelling().semantic_token() != endwrite;
@@ -2674,7 +2677,7 @@ impl<G> CommandProcessor<'_, G> {
     /// terminator has been validated and backed up. Unlike general-text
     /// callers, §53's `new_write_whatsit` enters the absorbing collection at
     /// that already-backed-up brace.
-    fn scan_immediate_write_text(&mut self) -> Result<TracedTokenList, CommandError> {
+    fn scan_immediate_write_text(&mut self) -> Result<AttemptTokenListId, CommandError> {
         let scanned = self.scan_toks(ScanToksMode::GeneralAfterOpening {
             expanded: false,
             primary: OriginId::UNKNOWN,
@@ -2762,24 +2765,26 @@ impl<G> CommandProcessor<'_, G> {
     /// §57's `print_ln` does nothing, which is why only this caller breaks
     /// the line.
     fn shown_meaning_text(
-        state: &mut tex_state::CommandContext<'_>,
-        command: &crate::CurrentCommand,
+        state: &mut tex_state::CommandContext<'_, G>,
+        command: &crate::CurrentCommand<G>,
     ) -> String {
         let text = selector_meaning_text(state, command);
-        let breaks_after_colon = matches!(command.meaning(), Meaning::Macro { .. })
+        let breaks_after_colon = matches!(command.meaning(), ResolvedMeaning::Macro { .. })
             || matches!(
-                command.meaning(),
-                Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate)
+                static_meaning(command.meaning()),
+                Some(Meaning::ExpandablePrimitive(
+                    tex_state::meaning::ExpandablePrimitive::EndTemplate
+                ))
             )
             || matches!(
-                command.meaning(),
-                Meaning::ExpandablePrimitive(
+                static_meaning(command.meaning()),
+                Some(Meaning::ExpandablePrimitive(
                     tex_state::meaning::ExpandablePrimitive::TopMark
                         | tex_state::meaning::ExpandablePrimitive::FirstMark
                         | tex_state::meaning::ExpandablePrimitive::BotMark
                         | tex_state::meaning::ExpandablePrimitive::SplitFirstMark
                         | tex_state::meaning::ExpandablePrimitive::SplitBotMark
-                )
+                ))
             );
         if breaks_after_colon {
             text.replacen(':', ":\n", 1)
@@ -2834,9 +2839,7 @@ impl<G> CommandProcessor<'_, G> {
             InternalValue::Font(symbol) => print_cs_text(&mut self.state, symbol),
             InternalValue::Tokens { tokens, .. } => {
                 let mut text = String::new();
-                let token_count = self.state.tokens(tokens.id()).len();
-                for index in 0..token_count {
-                    let token = self.state.tokens(tokens.id())[index];
+                for token in self.state.token_list(tokens) {
                     self.state.append_token_selector_text(token, &mut text);
                 }
                 text
@@ -2892,29 +2895,29 @@ impl<G> CommandProcessor<'_, G> {
         let Some(command) = self.get_x_token()? else {
             return Ok(ScannedLeaderPayload::Missing);
         };
-        match command.meaning() {
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box) => {
+        match static_meaning(command.meaning()) {
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)) => {
                 Ok(ScannedLeaderPayload::BoxRegister {
                     index: self.scan_eight_bit_register_index()?,
                     copy: false,
                 })
             }
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
+            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy)) => {
                 Ok(ScannedLeaderPayload::BoxRegister {
                     index: self.scan_eight_bit_register_index()?,
                     copy: true,
                 })
             }
-            Meaning::UnexpandablePrimitive(
+            Some(Meaning::UnexpandablePrimitive(
                 primitive @ (UnexpandablePrimitive::HBox
                 | UnexpandablePrimitive::VBox
                 | UnexpandablePrimitive::VTop),
-            ) => Ok(ScannedLeaderPayload::Construction(
+            )) => Ok(ScannedLeaderPayload::Construction(
                 self.scan_box_construction(primitive)?,
             )),
-            Meaning::UnexpandablePrimitive(
+            Some(Meaning::UnexpandablePrimitive(
                 primitive @ (UnexpandablePrimitive::HRule | UnexpandablePrimitive::VRule),
-            ) => Ok(ScannedLeaderPayload::Rule(self.scan_rule_spec(primitive)?)),
+            )) => Ok(ScannedLeaderPayload::Rule(self.scan_rule_spec(primitive)?)),
             _ => {
                 self.back_input(command)?;
                 Ok(ScannedLeaderPayload::Missing)
@@ -3112,37 +3115,37 @@ impl<G> CommandProcessor<'_, G> {
             let Some(command) = self.get_x_token()? else {
                 return Ok(ScannedBoxShiftPayload::Missing);
             };
-            match command.meaning() {
-                Meaning::CharToken {
+            match static_meaning(command.meaning()) {
+                Some(Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
-                }
-                | Meaning::Relax => continue,
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box) => {
+                })
+                | Some(Meaning::Relax) => continue,
+                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Box)) => {
                     return Ok(ScannedBoxShiftPayload::BoxRegister {
                         index: self.scan_box_register()?.index,
                         copy: false,
                     });
                 }
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy) => {
+                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Copy)) => {
                     return Ok(ScannedBoxShiftPayload::BoxRegister {
                         index: self.scan_box_register()?.index,
                         copy: true,
                     });
                 }
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
+                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox)) => {
                     return Ok(ScannedBoxShiftPayload::LastBox {
                         error_context: self.error_context(),
                     });
                 }
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
+                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit)) => {
                     return Ok(ScannedBoxShiftPayload::VSplit(self.scan_vsplit()?));
                 }
-                Meaning::UnexpandablePrimitive(
+                Some(Meaning::UnexpandablePrimitive(
                     primitive @ (UnexpandablePrimitive::HBox
                     | UnexpandablePrimitive::VBox
                     | UnexpandablePrimitive::VTop),
-                ) => {
+                )) => {
                     return Ok(ScannedBoxShiftPayload::Construction(
                         self.scan_box_construction(primitive)?,
                     ));
@@ -3185,12 +3188,12 @@ impl<G> CommandProcessor<'_, G> {
     pub fn scan_alignment_cell_opening(&mut self) -> Result<AlignmentCellOpening, CommandError> {
         loop {
             let opening = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-            match opening.meaning() {
-                Meaning::CharToken {
+            match static_meaning(opening.meaning()) {
+                Some(Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
-                } => continue,
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit) => {
+                }) => continue,
+                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit)) => {
                     self.command
                         .prepare_alignment_cell_lookahead()
                         .map_err(|_| CommandError::input_invariant())?;
@@ -3219,8 +3222,8 @@ impl<G> CommandProcessor<'_, G> {
             .ok_or(CommandError::input_invariant())?;
         {
             if matches!(
-                lookahead.command().meaning(),
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit)
+                static_meaning(lookahead.command().meaning()),
+                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit))
             ) {
                 let _ = self.commit_alignment_lookahead_delivery(lookahead);
                 return Ok(AlignmentCellOpening::Omit);
@@ -3285,12 +3288,18 @@ impl<G> CommandProcessor<'_, G> {
         let builder = TokenBuilderId(self.command.transient.next_builder_identity);
         self.command.transient.next_builder_identity =
             self.command.transient.next_builder_identity.wrapping_add(1);
+        let live_tokens = self
+            .command
+            .attempt
+            .arena_mut()
+            .allocate_token_buffer()
+            .map_err(|_| CommandError::input_invariant())?;
         self.command
             .transient
             .builders
             .push(crate::state::LiveTokenBuilder {
                 identity: builder.0,
-                tokens: RootedTracedTokenBuffer::default(),
+                tokens: live_tokens,
             });
         let scanner_episode = self.begin_scanner_episode(
             ScannerStatus::Aligning(AlignmentScanContext {
@@ -3322,14 +3331,19 @@ impl<G> CommandProcessor<'_, G> {
             // `done1`/`done2` labels. A missing `#` leaves the delivered
             // delimiter backed up, then the v-template loop reads it again.
             // A single combined u/v phase loses that replay boundary.
-            let mut u_template = RootedTracedTokenBuffer::default();
+            let u_template = self
+                .command
+                .attempt
+                .arena_mut()
+                .allocate_token_buffer()
+                .map_err(|_| CommandError::input_invariant())?;
             loop {
                 let command = self
                     .get_preamble_token()?
                     .ok_or(CommandError::input_invariant())?;
                 if matches!(
-                    command.meaning(),
-                    Meaning::GlueParam(index) if index == GlueParam::TAB_SKIP.raw()
+                    static_meaning(command.meaning()),
+                    Some(Meaning::GlueParam(index)) if index == GlueParam::TAB_SKIP.raw()
                 ) {
                     // TeX82 §759 executes only a direct `\tabskip`, then
                     // restarts instead of copying it into the template.
@@ -3349,17 +3363,26 @@ impl<G> CommandProcessor<'_, G> {
                 let tab = is_character_command(&command, Catcode::AlignmentTab);
                 let terminator = tab
                     || matches!(
-                        command.meaning(),
-                        Meaning::UnexpandablePrimitive(
+                        static_meaning(command.meaning()),
+                        Some(Meaning::UnexpandablePrimitive(
                             UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr
-                        )
+                        ))
                     );
                 if terminator && self.command.alignment.align_state == -1_000_000 {
                     // The `&&` case is the one exception: the second tab
                     // starts the periodic suffix and u-template scanning
                     // continues. Every other delimiter is TeX's
                     // `Missing # inserted` / `back_error` path.
-                    if tab && u_template.is_empty() && repeat_start.is_none() {
+                    if tab
+                        && self
+                            .command
+                            .attempt
+                            .arena()
+                            .token_buffer(u_template)
+                            .map_err(|_| CommandError::input_invariant())?
+                            .is_empty()
+                        && repeat_start.is_none()
+                    {
                         repeat_start = Some(columns.len());
                         continue;
                     }
@@ -3387,34 +3410,54 @@ impl<G> CommandProcessor<'_, G> {
                     break;
                 }
                 if !matches!(
-                    command.meaning(),
-                    Meaning::CharToken {
+                    static_meaning(command.meaning()),
+                    Some(Meaning::CharToken {
                         cat: Catcode::Space,
                         ..
-                    }
-                ) || !u_template.is_empty()
+                    })
+                ) || !self
+                    .command
+                    .attempt
+                    .arena()
+                    .token_buffer(u_template)
+                    .map_err(|_| CommandError::input_invariant())?
+                    .is_empty()
                 {
                     // TeX82 §760 eliminates only leading u-template spaces.
-                    u_template.push(command.rooted_spelling());
                     self.command
+                        .attempt
+                        .arena_mut()
+                        .push_buffer_token(u_template, command.spelling())
+                        .map_err(|_| CommandError::input_invariant())?;
+                    let live_tokens = self
+                        .command
                         .transient
                         .builders
-                        .iter_mut()
+                        .iter()
                         .find(|live| live.identity == builder.0)
                         .ok_or(CommandError::input_invariant())?
-                        .tokens
-                        .push(command.rooted_spelling());
+                        .tokens;
+                    self.command
+                        .attempt
+                        .arena_mut()
+                        .push_buffer_token(live_tokens, command.spelling())
+                        .map_err(|_| CommandError::input_invariant())?;
                 }
             }
 
-            let mut v_template = RootedTracedTokenBuffer::default();
+            let v_template = self
+                .command
+                .attempt
+                .arena_mut()
+                .allocate_token_buffer()
+                .map_err(|_| CommandError::input_invariant())?;
             let ends_preamble = loop {
                 let command = self
                     .get_preamble_token()?
                     .ok_or(CommandError::input_invariant())?;
                 if matches!(
-                    command.meaning(),
-                    Meaning::GlueParam(index) if index == GlueParam::TAB_SKIP.raw()
+                    static_meaning(command.meaning()),
+                    Some(Meaning::GlueParam(index)) if index == GlueParam::TAB_SKIP.raw()
                 ) {
                     let _ = self.scan_optional_equals()?;
                     current_tabskip = self.scan_glue(false)?.value;
@@ -3427,10 +3470,10 @@ impl<G> CommandProcessor<'_, G> {
                 }
                 let ends_column = is_character_command(&command, Catcode::AlignmentTab);
                 let ends_preamble = matches!(
-                    command.meaning(),
-                    Meaning::UnexpandablePrimitive(
+                    static_meaning(command.meaning()),
+                    Some(Meaning::UnexpandablePrimitive(
                         UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr
-                    )
+                    ))
                 );
                 if (ends_column || ends_preamble)
                     && self.command.alignment.align_state == -1_000_000
@@ -3462,21 +3505,42 @@ impl<G> CommandProcessor<'_, G> {
                     );
                     continue;
                 }
-                v_template.push(command.rooted_spelling());
                 self.command
+                    .attempt
+                    .arena_mut()
+                    .push_buffer_token(v_template, command.spelling())
+                    .map_err(|_| CommandError::input_invariant())?;
+                let live_tokens = self
+                    .command
                     .transient
                     .builders
-                    .iter_mut()
+                    .iter()
                     .find(|live| live.identity == builder.0)
                     .ok_or(CommandError::input_invariant())?
-                    .tokens
-                    .push(command.rooted_spelling());
+                    .tokens;
+                self.command
+                    .attempt
+                    .arena_mut()
+                    .push_buffer_token(live_tokens, command.spelling())
+                    .map_err(|_| CommandError::input_invariant())?;
             };
+            let u_template = self
+                .command
+                .attempt
+                .arena_mut()
+                .finish_token_buffer(u_template)
+                .map_err(|_| CommandError::input_invariant())?;
+            let v_template = self
+                .command
+                .attempt
+                .arena_mut()
+                .finish_token_buffer(v_template)
+                .map_err(|_| CommandError::input_invariant())?;
             columns.push(AlignmentCellTemplates {
                 // `init_col` installs a u-template even when its token list
                 // is empty. `None` is reserved for the typed `\\omit` path.
-                u_template: Some(self.state.finish_rooted_traced_token_list(&u_template)),
-                v_template: self.state.finish_rooted_traced_token_list(&v_template),
+                u_template: Some(u_template),
+                v_template,
             });
             tabskips.push(current_tabskip);
             if ends_preamble {
@@ -3524,12 +3588,12 @@ impl<G> CommandProcessor<'_, G> {
     /// expands that token exactly once when expandable, and repeats if the
     /// resulting raw token is another `\span`. Ordinary template tokens stay
     /// raw so their meanings are resolved when each cell is executed.
-    fn get_preamble_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+    fn get_preamble_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
         let mut command = self.get_token()?;
         while command.as_ref().is_some_and(|command| {
             matches!(
-                command.meaning(),
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span)
+                static_meaning(command.meaning()),
+                Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span))
             )
         }) {
             let Some(next) = self.get_token()? else {
@@ -3619,17 +3683,25 @@ impl<G> CommandProcessor<'_, G> {
         // and leaves the `cmd` alone; a zero `\uccode`/`\lccode` entry means
         // "no change".  Multiletter control sequences and frozen tokens are
         // above that bound and are never rewritten.
-        let token_count = self.state.tokens(scanned.token_ref().id()).len();
-        let mut shifted = Vec::with_capacity(token_count);
-        for index in 0..token_count {
+        let source = self
+            .command
+            .attempt
+            .arena()
+            .token_words(scanned)
+            .map_err(|_| CommandError::input_invariant())?
+            .to_vec();
+        let shifted = self
+            .command
+            .attempt
+            .arena_mut()
+            .allocate_token_buffer()
+            .map_err(|_| CommandError::input_invariant())?;
+        for word in source {
             // Copy one immutable word at a time so the source interned lists
             // remain in place while the case-code lookup records its mutable
             // dependency read. Only the rewritten backup list needs storage.
-            let token = self.state.tokens(scanned.token_ref().id())[index];
-            let origin = self
-                .state
-                .origin_list_origin(scanned.origin_ref(), index)
-                .unwrap_or(OriginId::UNKNOWN);
+            let token = word.semantic_token();
+            let origin = word.origin();
             let token = match token {
                 Token::Char { ch, cat } => {
                     let code = if uppercase {
@@ -3643,10 +3715,30 @@ impl<G> CommandProcessor<'_, G> {
                 }
                 Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => token,
             };
-            shifted.push(TracedTokenWord::pack(token, origin));
+            self.command
+                .attempt
+                .arena_mut()
+                .push_buffer_token(shifted, TracedTokenWord::pack(token, origin))
+                .map_err(|_| CommandError::input_invariant())?;
         }
+        let shifted = self
+            .command
+            .attempt
+            .arena_mut()
+            .finish_token_buffer(shifted)
+            .map_err(|_| CommandError::input_invariant())?;
+        let shifted_len = self
+            .command
+            .attempt
+            .arena()
+            .token_words(shifted)
+            .map_err(|_| CommandError::input_invariant())?
+            .len();
         let level = self.command.push_token_level(
-            TokenPayload::transient(shifted),
+            TokenPayload::Argument {
+                list: shifted,
+                len: u32::try_from(shifted_len).map_err(|_| CommandError::input_invariant())?,
+            },
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -3710,12 +3802,18 @@ impl<G> CommandProcessor<'_, G> {
         let provenance = StructuredProvenance {
             primary: scanned.primary,
         };
+        let definition = self
+            .command
+            .attempt
+            .arena_mut()
+            .allocate_definition(scanned.parameter_text, scanned.replacement_text)
+            .map_err(|_| CommandError::input_invariant())?;
         Ok(ScannedMacroDefinition {
             target,
+            definition,
             parameter_text: scanned.parameter_text,
             replacement_text: scanned.replacement_text,
             provenance,
-            definition_origin: scanned.primary_root,
         })
     }
 
@@ -3731,7 +3829,7 @@ impl<G> CommandProcessor<'_, G> {
     pub fn scan_let_assignment(
         &mut self,
         future: bool,
-    ) -> Result<ScannedLetAssignment, CommandError> {
+    ) -> Result<ScannedLetAssignment<G>, CommandError> {
         let target = self
             .next_non_space_raw()?
             .and_then(|command| command.control_sequence())
@@ -3746,14 +3844,17 @@ impl<G> CommandProcessor<'_, G> {
             (source, meaning)
         } else {
             let mut source = self.get_token()?.ok_or(CommandError::input_invariant())?;
-            if matches!(source.meaning(), Meaning::CharToken { ch: '=', .. }) {
+            if matches!(
+                static_meaning(source.meaning()),
+                Some(Meaning::CharToken { ch: '=', .. })
+            ) {
                 source = self.get_token()?.ok_or(CommandError::input_invariant())?;
                 if matches!(
-                    source.meaning(),
-                    Meaning::CharToken {
+                    static_meaning(source.meaning()),
+                    Some(Meaning::CharToken {
                         cat: Catcode::Space,
                         ..
-                    }
+                    })
                 ) {
                     source = self.get_token()?.ok_or(CommandError::input_invariant())?;
                 }
@@ -3764,7 +3865,6 @@ impl<G> CommandProcessor<'_, G> {
             target,
             source,
             meaning,
-            macro_root: meaning_macro_root(&self.state, meaning),
         })
     }
 
@@ -3781,11 +3881,11 @@ impl<G> CommandProcessor<'_, G> {
         let first = loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             if !matches!(
-                command.meaning(),
-                Meaning::CharToken {
+                static_meaning(command.meaning()),
+                Some(Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
-                }
+                })
             ) {
                 break command;
             }
@@ -3794,11 +3894,11 @@ impl<G> CommandProcessor<'_, G> {
             primary: first.origin(),
         };
         let grouped = matches!(
-            first.meaning(),
-            Meaning::CharToken {
+            static_meaning(first.meaning()),
+            Some(Meaning::CharToken {
                 cat: Catcode::BeginGroup,
                 ..
-            }
+            })
         );
         // `scan_file_name` replays its first non-space token before consuming
         // the filename. TeX82 exposes this `back_input` hand-off, and it
@@ -3816,25 +3916,25 @@ impl<G> CommandProcessor<'_, G> {
                     None => break,
                 },
             };
-            match command.meaning() {
-                Meaning::CharToken {
+            match static_meaning(command.meaning()) {
+                Some(Meaning::CharToken {
                     cat: Catcode::BeginGroup,
                     ..
-                } if grouped => {}
-                Meaning::CharToken { ch: '"', .. } => quoted = !quoted,
-                Meaning::CharToken {
+                }) if grouped => {}
+                Some(Meaning::CharToken { ch: '"', .. }) => quoted = !quoted,
+                Some(Meaning::CharToken {
                     cat: Catcode::EndGroup,
                     ..
-                } if grouped && !quoted => {
+                }) if grouped && !quoted => {
                     break;
                 }
-                Meaning::CharToken {
+                Some(Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
-                } if !grouped && !quoted => {
+                }) if !grouped && !quoted => {
                     break;
                 }
-                Meaning::CharToken { ch, .. } => {
+                Some(Meaning::CharToken { ch, .. }) => {
                     character_count += 1;
                     if character_count > FILE_NAME_POOL_CAPACITY {
                         return Err(CommandError::Fatal(crate::FatalError::overflow(
@@ -4037,7 +4137,7 @@ impl<G> CommandProcessor<'_, G> {
     ///
     /// This tests the raw spelling, not `cur_cmd`: a control sequence whose
     /// current meaning is a space remains a legal definition target.
-    fn next_non_space_raw(&mut self) -> Result<Option<crate::CurrentCommand>, CommandError> {
+    fn next_non_space_raw(&mut self) -> Result<Option<crate::CurrentCommand<G>>, CommandError> {
         loop {
             let Some(command) = self.get_token()? else {
                 return Ok(None);

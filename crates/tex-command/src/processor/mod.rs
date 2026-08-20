@@ -321,6 +321,30 @@ impl ProcessorFuel<'_> {
 }
 
 impl<'a, G> CommandProcessor<'a, G> {
+    pub(crate) fn copy_durable_token_list_into_attempt(
+        &mut self,
+        tokens: Option<tex_state::TokenListId<G>>,
+    ) -> Result<crate::AttemptTokenListId, CommandError> {
+        let words = tokens.map_or_else(Vec::new, |tokens| {
+            self.state
+                .token_list(tokens)
+                .iter()
+                .copied()
+                .map(|word| {
+                    tex_state::token::TracedTokenWord::from_parts(
+                        word,
+                        tex_state::token::OriginId::UNKNOWN,
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        self.command
+            .attempt
+            .arena_mut()
+            .allocate_token_list(words)
+            .map_err(crate::scan_toks::attempt_command_error)
+    }
+
     /// Prints TeX82 §§299/1030's command trace at the fetch boundary.
     ///
     /// This must run before operand scanning because restricted scanners can

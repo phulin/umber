@@ -9,11 +9,11 @@
 mod tests;
 
 use tex_state::glue::GlueSpec;
-use tex_state::input::TracedTokenList;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::CurrentCommand;
+use crate::attempt::AttemptTokenListId;
 use crate::input::InputLevelId;
 
 /// Whether TeX82 §24 has resolved this delivery to the given character
@@ -64,9 +64,9 @@ impl AlignmentIdentity {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct AlignmentCellTemplates {
     /// Prefix replayed before the cell body. `None` is TeX's `\omit` path.
-    pub u_template: Option<TracedTokenList>,
+    pub u_template: Option<AttemptTokenListId>,
     /// Suffix replayed between the intercepted delimiter and its re-delivery.
-    pub v_template: TracedTokenList,
+    pub v_template: AttemptTokenListId,
 }
 
 /// The delimiter saved when `get_next` enters a cell's v-template.
@@ -504,7 +504,7 @@ impl AlignmentDeliveryState {
     pub(crate) fn active_cell_template(
         &self,
         alignment: AlignmentIdentity,
-    ) -> Result<Option<TracedTokenList>, AlignmentLifecycleError> {
+    ) -> Result<Option<AttemptTokenListId>, AlignmentLifecycleError> {
         let cell = self.active_cell_ref(alignment)?;
         if cell.u_template_installed {
             return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
@@ -558,8 +558,7 @@ impl AlignmentDeliveryState {
     pub(crate) fn v_template(
         &self,
         alignment: AlignmentIdentity,
-        empty: tex_state::token_store::TokenListRef,
-    ) -> Result<TracedTokenList, AlignmentLifecycleError> {
+    ) -> Result<Option<AttemptTokenListId>, AlignmentLifecycleError> {
         let cell = self.active_cell_ref(alignment)?;
         if cell.u_level.is_some() {
             return Err(AlignmentLifecycleError::UTemplateStillActive);
@@ -568,11 +567,7 @@ impl AlignmentDeliveryState {
         // selected column's v-part. Its only effective delivery is the
         // retained end-template boundary, represented by an empty replay
         // level in the command machine.
-        Ok(if cell.omit {
-            TracedTokenList::synthetic(empty)
-        } else {
-            cell.templates.v_template
-        })
+        Ok((!cell.omit).then_some(cell.templates.v_template))
     }
 
     /// Whether the active cell installed tex.web §789's constant

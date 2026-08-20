@@ -266,6 +266,14 @@ impl<G> DenseState<G> {
         Ok(self.token_registers.get(index)?.value)
     }
 
+    #[inline(always)]
+    pub(crate) fn token_parameter(
+        &self,
+        parameter: banks::TokParam,
+    ) -> Result<Option<TokenListId<G>>, StateError> {
+        Ok(self.token_parameters.get(u32::from(parameter.raw()))?.value)
+    }
+
     pub(crate) fn assign_token_register(
         &mut self,
         index: u16,
