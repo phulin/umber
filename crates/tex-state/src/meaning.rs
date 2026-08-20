@@ -1,6 +1,7 @@
 //! Meaning word encoding and decoding.
 
-use crate::ids::{FontId, MacroDefinitionId};
+use crate::definition_arena::DefinitionId;
+use crate::ids::FontId;
 use crate::page::{PageDimension, PageInteger};
 use crate::token::Catcode;
 
@@ -75,10 +76,6 @@ impl core::ops::BitOr for MeaningFlags {
 pub enum Meaning {
     Undefined,
     Relax,
-    Macro {
-        flags: MeaningFlags,
-        definition: MacroDefinitionId,
-    },
     CharGiven(char),
     CharToken {
         ch: char,
@@ -109,6 +106,135 @@ pub enum Meaning {
     UnexpandablePrimitive(UnexpandablePrimitive),
     Unknown(RawMeaning),
 }
+
+/// One generation-scoped packed meaning cell.
+///
+/// Static meanings retain TeX's compact `opcode:8 | flags:8 | operand:48`
+/// representation. Macro meanings carry their typed definition coordinate
+/// directly: the coordinate has no raw constructor, and resolving it remains
+/// an O(1) borrow of the matching admitted generation.
+pub enum MeaningWord<G> {
+    Static(u64),
+    Macro {
+        flags: MeaningFlags,
+        definition: DefinitionId<G>,
+    },
+}
+
+impl<G> Clone for MeaningWord<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for MeaningWord<G> {}
+
+impl<G> core::fmt::Debug for MeaningWord<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Static(word) => formatter.debug_tuple("Static").field(word).finish(),
+            Self::Macro { flags, .. } => formatter
+                .debug_struct("Macro")
+                .field("flags", flags)
+                .field("definition", &"DefinitionId(..)")
+                .finish(),
+        }
+    }
+}
+
+impl<G> PartialEq for MeaningWord<G> {
+    fn eq(&self, other: &Self) -> bool {
+        match (*self, *other) {
+            (Self::Static(left), Self::Static(right)) => left == right,
+            (
+                Self::Macro {
+                    flags: left_flags,
+                    definition: left_definition,
+                },
+                Self::Macro {
+                    flags: right_flags,
+                    definition: right_definition,
+                },
+            ) => left_flags == right_flags && left_definition == right_definition,
+            (Self::Static(_), Self::Macro { .. }) | (Self::Macro { .. }, Self::Static(_)) => false,
+        }
+    }
+}
+
+impl<G> Eq for MeaningWord<G> {}
+
+impl<G> MeaningWord<G> {
+    pub(crate) const UNDEFINED: Self = Self::Static(0);
+
+    #[must_use]
+    pub const fn from_static(meaning: Meaning) -> Self {
+        Self::Static(meaning.encode())
+    }
+
+    #[must_use]
+    pub const fn macro_definition(flags: MeaningFlags, definition: DefinitionId<G>) -> Self {
+        Self::Macro { flags, definition }
+    }
+
+    #[must_use]
+    pub const fn resolve(self) -> ResolvedMeaning<G> {
+        match self {
+            Self::Static(word) => ResolvedMeaning::Static(Meaning::decode_stored(word)),
+            Self::Macro { flags, definition } => ResolvedMeaning::Macro { flags, definition },
+        }
+    }
+}
+
+/// Decoded meaning returned by an admitted generation borrow.
+pub enum ResolvedMeaning<G> {
+    Static(Meaning),
+    Macro {
+        flags: MeaningFlags,
+        definition: DefinitionId<G>,
+    },
+}
+
+impl<G> Clone for ResolvedMeaning<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for ResolvedMeaning<G> {}
+
+impl<G> core::fmt::Debug for ResolvedMeaning<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Static(meaning) => formatter.debug_tuple("Static").field(meaning).finish(),
+            Self::Macro { flags, .. } => formatter
+                .debug_struct("Macro")
+                .field("flags", flags)
+                .field("definition", &"DefinitionId(..)")
+                .finish(),
+        }
+    }
+}
+
+impl<G> PartialEq for ResolvedMeaning<G> {
+    fn eq(&self, other: &Self) -> bool {
+        match (*self, *other) {
+            (Self::Static(left), Self::Static(right)) => left == right,
+            (
+                Self::Macro {
+                    flags: left_flags,
+                    definition: left_definition,
+                },
+                Self::Macro {
+                    flags: right_flags,
+                    definition: right_definition,
+                },
+            ) => left_flags == right_flags && left_definition == right_definition,
+            (Self::Static(_), Self::Macro { .. }) | (Self::Macro { .. }, Self::Static(_)) => false,
+        }
+    }
+}
+
+impl<G> Eq for ResolvedMeaning<G> {}
 
 /// Read-only internal integer quantities.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1364,7 +1490,6 @@ impl Meaning {
         match self {
             Self::Undefined => pack(OP_UNDEFINED, MeaningFlags::EMPTY, 0),
             Self::Relax => pack(OP_RELAX, MeaningFlags::EMPTY, 0),
-            Self::Macro { flags, definition } => pack(OP_MACRO, flags, definition.raw() as u64),
             Self::CharGiven(ch) => pack(OP_CHAR_GIVEN, MeaningFlags::EMPTY, ch as u64),
             Self::CharToken { ch, cat } => pack(
                 OP_CHAR_TOKEN,
@@ -1427,10 +1552,10 @@ impl Meaning {
         match op {
             OP_UNDEFINED => Self::Undefined,
             OP_RELAX => Self::Relax,
-            OP_MACRO => Self::Macro {
-                flags,
-                definition: MacroDefinitionId::new(operand as u32),
-            },
+            // Runtime definition coordinates are never decoded from an
+            // unvalidated integer. Cold formats materialize a fresh
+            // generation-local id before constructing `MeaningWord::Macro`.
+            OP_MACRO => Self::Unknown(RawMeaning { op, flags, operand }),
             OP_CHAR_GIVEN => match char::from_u32(operand as u32) {
                 Some(ch) => Self::CharGiven(ch),
                 None => Self::Unknown(RawMeaning { op, flags, operand }),
@@ -1522,4 +1647,5 @@ const fn catcode_from_raw(raw: u8) -> Option<Catcode> {
 }
 
 #[cfg(test)]
+#[path = "meaning/tests.rs"]
 mod tests;

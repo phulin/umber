@@ -1,8 +1,9 @@
 use super::{
-    ExpandablePrimitive, InternalInteger, Meaning, MeaningFlags, OPERAND_MASK, RawMeaning,
-    UnexpandablePrimitive,
+    ExpandablePrimitive, InternalInteger, Meaning, MeaningFlags, MeaningWord, OPERAND_MASK,
+    RawMeaning, ResolvedMeaning, UnexpandablePrimitive,
 };
-use crate::ids::{FontId, MacroDefinitionId};
+use crate::generation::with_generation;
+use crate::ids::FontId;
 use crate::page::{PageDimension, PageInteger};
 
 fn round_trip(meaning: Meaning) {
@@ -21,17 +22,6 @@ fn undefined_is_the_all_zero_word() {
 fn meaning_variants_round_trip() {
     round_trip(Meaning::Undefined);
     round_trip(Meaning::Relax);
-    round_trip(Meaning::Macro {
-        flags: MeaningFlags::LONG
-            | MeaningFlags::OUTER
-            | MeaningFlags::PROTECTED
-            | MeaningFlags::FROZEN,
-        definition: MacroDefinitionId::new(0),
-    });
-    round_trip(Meaning::Macro {
-        flags: MeaningFlags::EMPTY,
-        definition: MacroDefinitionId::new(u32::MAX),
-    });
     round_trip(Meaning::CharGiven('\0'));
     round_trip(Meaning::CharGiven(char::MAX));
     round_trip(Meaning::Font(FontId::new(0)));
@@ -106,6 +96,19 @@ fn meaning_variants_round_trip() {
         MeaningFlags::from_bits(0xa5),
         OPERAND_MASK,
     )));
+}
+
+#[test]
+fn macro_meanings_carry_only_generation_typed_definition_ids() {
+    with_generation(|mut generation| {
+        let definition = generation.definitions_mut().allocate(&[], &[]).unwrap();
+        let flags = MeaningFlags::LONG
+            | MeaningFlags::OUTER
+            | MeaningFlags::PROTECTED
+            | MeaningFlags::FROZEN;
+        let word = MeaningWord::macro_definition(flags, definition);
+        assert_eq!(word.resolve(), ResolvedMeaning::Macro { flags, definition });
+    });
 }
 
 #[test]

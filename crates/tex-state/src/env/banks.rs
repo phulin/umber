@@ -1,14 +1,6 @@
-//! Dense fixed-size environment banks.
+//! Direct-index dense and page/index dense mutable banks.
 
-use crate::cell::{BankTag, CellId};
-use crate::env::{CellMutationReceipt, barrier};
-use crate::epoch::Epoch;
-use crate::ids::{FontId, GlueId, TokenListId};
-use crate::journal::{Journal, JournalPos};
-use crate::scaled::Scaled;
-#[cfg(feature = "shadow")]
-use ahash::AHashMap;
-use core::marker::PhantomData;
+use core::array;
 
 /// Number of dense classical register slots per bank.
 pub const DENSE_REGISTER_COUNT: usize = 256;
@@ -488,212 +480,221 @@ impl TokParam {
     pub const PDF_PK_MODE: Self = Self::new(12);
 }
 
-pub(crate) trait BankCodec {
-    type Value: Copy;
+/// TeX's level-zero undefined value and level-one global value.
+pub(crate) const LEVEL_ZERO: u32 = 0;
+pub(crate) const LEVEL_ONE: u32 = 1;
 
-    const DEFAULT_WORD: u64 = 0;
+const PAGE_BITS: u32 = 8;
+const PAGE_LEN: usize = 1 << PAGE_BITS;
+const PAGE_MASK: u32 = PAGE_LEN as u32 - 1;
 
-    fn encode(value: Self::Value) -> u64;
-    fn decode(word: u64) -> Self::Value;
-}
+#[cfg(test)]
+#[path = "banks/tests.rs"]
+mod tests;
 
-pub(crate) struct BankSetContext<'a> {
-    pub(crate) journal: &'a mut Journal,
-    #[cfg(feature = "shadow")]
-    pub(crate) shadow: &'a mut AHashMap<CellId, u64>,
-    pub(crate) epoch: Epoch,
-    pub(crate) bank: BankTag,
-    pub(crate) global: bool,
-}
-
-impl BankSetContext<'_> {
-    fn cell_id(&self, index: u16) -> CellId {
-        cell_id(self.bank, index, self.global)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct FixedBank<C, const N: usize> {
-    values: [u64; N],
-    stamps: [Epoch; N],
-    _codec: PhantomData<C>,
-}
-
+/// One current value and its TeX assignment level.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum BoxWriteOutcome {
-    Unchanged,
-    SameLevel,
-    Journaled { pos: JournalPos },
-    Coalesced,
+pub(crate) struct BankCell<T: Copy> {
+    pub(crate) value: T,
+    pub(crate) level: u32,
 }
 
-impl<C, const N: usize> FixedBank<C, N>
-where
-    C: BankCodec,
-{
-    pub(crate) const fn new() -> Self {
+impl<T: Copy> BankCell<T> {
+    pub(crate) const fn level_zero(value: T) -> Self {
         Self {
-            values: [C::DEFAULT_WORD; N],
-            stamps: [Epoch::ZERO; N],
-            _codec: PhantomData,
+            value,
+            level: LEVEL_ZERO,
         }
     }
 
-    pub(crate) fn get(&self, index: u16) -> C::Value {
-        C::decode(self.values[checked_index::<N>(index)])
-    }
-
-    pub(crate) fn set(
-        &mut self,
-        index: u16,
-        value: C::Value,
-        ctx: BankSetContext<'_>,
-    ) -> CellMutationReceipt {
-        let offset = checked_index::<N>(index);
-        let cell_id = ctx.cell_id(index);
-        barrier(
-            &mut self.values[offset],
-            &mut self.stamps[offset],
-            ctx.journal,
-            #[cfg(feature = "shadow")]
-            ctx.shadow,
-            ctx.epoch,
-            cell_id,
-            C::encode(value),
-        )
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn restore_word(&mut self, index: u16, word: u64) {
-        self.values[checked_index::<N>(index)] = word;
-    }
-
-    pub(crate) fn for_each_non_default_word(&self, bank: BankTag, mut f: impl FnMut(CellId, u64)) {
-        for (index, &word) in self.values.iter().enumerate() {
-            if word != C::DEFAULT_WORD {
-                f(CellId::new(bank, index as u32), word);
-            }
+    pub(crate) const fn level_one(value: T) -> Self {
+        Self {
+            value,
+            level: LEVEL_ONE,
         }
     }
 }
 
-impl<C, const N: usize> Default for FixedBank<C, N>
-where
-    C: BankCodec,
-{
-    fn default() -> Self {
-        Self::new()
+/// A rejected bank access.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BankError {
+    IndexOutOfBounds,
+    AllocationFailed,
+}
+
+/// Contiguous current-value storage. Reads are one bounds-checked index.
+pub(crate) struct DenseBank<T: Copy> {
+    cells: Vec<BankCell<T>>,
+    default: T,
+}
+
+impl<T: Copy> DenseBank<T> {
+    pub(crate) fn fixed(len: usize, default: T, level: u32) -> Result<Self, BankError> {
+        let mut cells = Vec::new();
+        cells
+            .try_reserve_exact(len)
+            .map_err(|_| BankError::AllocationFailed)?;
+        cells.resize(
+            len,
+            BankCell {
+                value: default,
+                level,
+            },
+        );
+        Ok(Self { cells, default })
+    }
+
+    pub(crate) fn growing(default: T) -> Self {
+        Self {
+            cells: Vec::new(),
+            default,
+        }
+    }
+
+    pub(crate) fn admit_through(&mut self, index: u32) -> Result<(), BankError> {
+        let required = index as usize + 1;
+        if required <= self.cells.len() {
+            return Ok(());
+        }
+        self.cells
+            .try_reserve_exact(required - self.cells.len())
+            .map_err(|_| BankError::AllocationFailed)?;
+        self.cells
+            .resize(required, BankCell::level_zero(self.default));
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(crate) fn get(&self, index: u32) -> Result<BankCell<T>, BankError> {
+        self.cells
+            .get(index as usize)
+            .copied()
+            .ok_or(BankError::IndexOutOfBounds)
+    }
+
+    #[inline(always)]
+    pub(crate) fn write(&mut self, index: u32, cell: BankCell<T>) -> Result<(), BankError> {
+        *self
+            .cells
+            .get_mut(index as usize)
+            .ok_or(BankError::IndexOutOfBounds)? = cell;
+        Ok(())
+    }
+
+    #[must_use]
+    pub(crate) fn len(&self) -> usize {
+        self.cells.len()
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct I32Codec;
+type Page<T> = Box<[BankCell<T>; PAGE_LEN]>;
 
-impl BankCodec for I32Codec {
-    type Value = i32;
+/// Sparse-allocation storage with direct page/index access.
+///
+/// The complete page directory is allocated once. A read performs no search
+/// and absent pages evaluate their algorithmic default without allocation.
+pub(crate) struct PagedDenseBank<T: Copy> {
+    pages: Vec<Option<Page<T>>>,
+    len: u32,
+    default: fn(u32) -> T,
+    default_level: u32,
+}
 
-    fn encode(value: Self::Value) -> u64 {
-        value as u32 as u64
+impl<T: Copy> PagedDenseBank<T> {
+    pub(crate) fn new(
+        len: u32,
+        default: fn(u32) -> T,
+        default_level: u32,
+    ) -> Result<Self, BankError> {
+        let page_count = len.div_ceil(PAGE_LEN as u32) as usize;
+        let mut pages = Vec::new();
+        pages
+            .try_reserve_exact(page_count)
+            .map_err(|_| BankError::AllocationFailed)?;
+        pages.resize_with(page_count, || None);
+        Ok(Self {
+            pages,
+            len,
+            default,
+            default_level,
+        })
     }
 
-    fn decode(word: u64) -> Self::Value {
-        word as u32 as i32
+    #[inline(always)]
+    pub(crate) fn get(&self, index: u32) -> Result<BankCell<T>, BankError> {
+        let (page, offset) = self.location(index)?;
+        Ok(self.pages[page].as_ref().map_or_else(
+            || BankCell {
+                value: (self.default)(index),
+                level: self.default_level,
+            },
+            |values| values[offset],
+        ))
+    }
+
+    pub(crate) fn write(&mut self, index: u32, cell: BankCell<T>) -> Result<(), BankError> {
+        let (page, offset) = self.location(index)?;
+        if self.pages[page].is_none() {
+            let base = page as u32 * PAGE_LEN as u32;
+            let default = self.default;
+            let default_level = self.default_level;
+            let values = array::from_fn(|slot| BankCell {
+                value: default(base + slot as u32),
+                level: default_level,
+            });
+            self.pages[page] = Some(Box::new(values));
+        }
+        self.pages[page].as_mut().expect("page was installed")[offset] = cell;
+        Ok(())
+    }
+
+    #[must_use]
+    pub(crate) fn allocated_pages(&self) -> usize {
+        self.pages.iter().filter(|page| page.is_some()).count()
+    }
+
+    fn location(&self, index: u32) -> Result<(usize, usize), BankError> {
+        if index >= self.len {
+            return Err(BankError::IndexOutOfBounds);
+        }
+        Ok(((index >> PAGE_BITS) as usize, (index & PAGE_MASK) as usize))
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ScaledCodec;
-
-impl BankCodec for ScaledCodec {
-    type Value = Scaled;
-
-    fn encode(value: Self::Value) -> u64 {
-        I32Codec::encode(value.raw())
-    }
-
-    fn decode(word: u64) -> Self::Value {
-        Scaled::from_raw(I32Codec::decode(word))
-    }
+/// TeX's dense 0--255 register prefix plus page/index dense e-TeX overflow.
+pub(crate) struct RegisterBank<T: Copy> {
+    dense: [BankCell<T>; DENSE_REGISTER_COUNT],
+    overflow: PagedDenseBank<T>,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct GlueIdCodec;
-
-impl BankCodec for GlueIdCodec {
-    type Value = GlueId;
-
-    fn encode(value: Self::Value) -> u64 {
-        u64::from(value.raw())
+impl<T: Copy> RegisterBank<T> {
+    pub(crate) fn new(default: fn(u32) -> T) -> Result<Self, BankError> {
+        Ok(Self {
+            dense: [BankCell::level_one(default(0)); DENSE_REGISTER_COUNT],
+            overflow: PagedDenseBank::new(u16::MAX as u32 + 1, default, LEVEL_ONE)?,
+        })
     }
 
-    fn decode(word: u64) -> Self::Value {
-        GlueId::new(decode_u32(word))
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct FontIdCodec;
-
-impl BankCodec for FontIdCodec {
-    type Value = FontId;
-
-    fn encode(value: Self::Value) -> u64 {
-        u64::from(value.raw())
+    #[inline(always)]
+    pub(crate) fn get(&self, index: u16) -> Result<BankCell<T>, BankError> {
+        if usize::from(index) < DENSE_REGISTER_COUNT {
+            Ok(self.dense[index as usize])
+        } else {
+            self.overflow.get(u32::from(index))
+        }
     }
 
-    fn decode(word: u64) -> Self::Value {
-        FontId::new(decode_u32(word))
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct TokenListIdCodec;
-
-impl BankCodec for TokenListIdCodec {
-    type Value = TokenListId;
-
-    fn encode(value: Self::Value) -> u64 {
-        u64::from(value.raw())
+    pub(crate) fn write(&mut self, index: u16, cell: BankCell<T>) -> Result<(), BankError> {
+        if usize::from(index) < DENSE_REGISTER_COUNT {
+            self.dense[index as usize] = cell;
+            Ok(())
+        } else {
+            self.overflow.write(u32::from(index), cell)
+        }
     }
 
-    fn decode(word: u64) -> Self::Value {
-        TokenListId::new(decode_u32(word))
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct OptionalTokenListIdCodec;
-
-impl BankCodec for OptionalTokenListIdCodec {
-    type Value = Option<TokenListId>;
-
-    fn encode(value: Self::Value) -> u64 {
-        value.map_or(0, |id| u64::from(id.raw()) + 1)
-    }
-
-    fn decode(word: u64) -> Self::Value {
-        word.checked_sub(1)
-            .map(|raw| TokenListId::new(decode_u32(raw)))
-    }
-}
-
-fn checked_index<const N: usize>(index: u16) -> usize {
-    let index = usize::from(index);
-    assert!(index < N, "index out of dense bank range");
-    index
-}
-
-fn cell_id(bank: BankTag, index: u16, global: bool) -> CellId {
-    if global {
-        CellId::new_global(bank, u32::from(index))
-    } else {
-        CellId::new(bank, u32::from(index))
-    }
-}
-
-fn decode_u32(word: u64) -> u32 {
-    match u32::try_from(word) {
-        Ok(value) => value,
-        Err(_) => panic!("opaque id word exceeds u32"),
+    #[must_use]
+    pub(crate) fn allocated_overflow_pages(&self) -> usize {
+        self.overflow.allocated_pages()
     }
 }

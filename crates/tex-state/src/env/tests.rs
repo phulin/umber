@@ -1,1035 +1,188 @@
-use super::{CellMutationDisposition, Env, SEGMENT_LEN, font_dimen_index};
-use crate::GroupKind;
-use crate::cell::{BankTag, CellId};
-use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
-use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
-use crate::interner::Symbol;
-use crate::journal::{Entry, UndoRec};
-use crate::meaning::Meaning;
-use crate::node_arena::NodeListRef as NodeRoot;
+use super::{AssignmentScope, CodeTableKind, DenseState};
+use crate::env::group::GroupKind;
+use crate::interner::{Interner, InternerBudget};
+use crate::journal::{JournalEntry, MutationKind};
+use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
 use crate::scaled::Scaled;
-use crate::token::{Catcode, Token};
-use crate::token_store::TokenListRef;
-use ahash::AHashMap;
 
-struct TestTokenRefs;
+enum TestGeneration {}
 
-fn env_with_tokens() -> (Env, TestTokenRefs) {
-    let mut env = Env::new();
-    env.install_empty_token_root(TokenListRef::new(TokenListId::EMPTY));
-    (env, TestTokenRefs)
+fn state() -> DenseState<TestGeneration> {
+    DenseState::new().expect("state allocation")
 }
 
-fn token_root(_tokens: &mut TestTokenRefs, ch: char) -> TokenListRef {
-    TokenListRef::new(TokenListId::new(u32::from(ch)))
+fn interner() -> Interner {
+    Interner::new(InternerBudget::new(64, 64, 1024).expect("budget"))
 }
 
 #[test]
-fn default_get_before_any_set_is_undefined() {
-    let env = Env::new();
-
-    assert_eq!(env.get(Symbol::new(10)), Meaning::Undefined);
-}
-
-#[test]
-fn mutation_receipts_separate_semantics_from_journal_disposition() {
-    let mut env = Env::new();
+fn admitted_meanings_are_direct_dense_slots() {
+    let mut names = interner();
+    let alpha = names.intern("alpha").expect("intern");
+    let beta = names.intern("beta").expect("intern");
+    let mut state = state();
+    state.admit_symbol(alpha.symbol()).expect("admit alpha");
+    state.admit_symbol(beta.symbol()).expect("admit beta");
 
     assert_eq!(
-        env.set_count(300, 0).disposition(),
-        CellMutationDisposition::Unchanged,
-        "an equal sparse write still passes through the barrier"
+        state.meaning(alpha.symbol()).expect("read"),
+        ResolvedMeaning::Static(Meaning::Undefined)
     );
+    state
+        .assign_meaning(
+            beta.symbol(),
+            MeaningWord::from_static(Meaning::Relax),
+            AssignmentScope::Global,
+        )
+        .expect("assign");
     assert_eq!(
-        env.set_meaning_slot(7, Meaning::Undefined, false)
-            .disposition(),
-        CellMutationDisposition::Unchanged
-    );
-    assert_eq!(
-        env.set_font_hyphen_char_global(FontId::new(0), 0)
-            .disposition(),
-        CellMutationDisposition::Unchanged
-    );
-    let (box_receipt, box_outcome) = env.set_box_reg_global(300, None);
-    assert_eq!(
-        box_receipt.disposition(),
-        CellMutationDisposition::Unchanged
-    );
-    assert!(matches!(
-        box_outcome,
-        crate::env::banks::BoxWriteOutcome::Journaled { .. }
-    ));
-
-    env.enter_group();
-    assert_eq!(
-        env.set_count(300, 9).disposition(),
-        CellMutationDisposition::Changed
-    );
-    assert_eq!(
-        env.set_count_global(300, 9).disposition(),
-        CellMutationDisposition::Unchanged
-    );
-    let (_, _, receipts, _) = env.leave_group_observing_meanings();
-    assert_eq!(receipts.len(), 1);
-    assert_eq!(
-        receipts[0].disposition(),
-        CellMutationDisposition::Retained,
-        "global retention is explicit even when the visible word is stable"
-    );
-
-    let snapshot = env.checkpoint();
-    let _ = env.set_count(300, 11);
-    let receipts = env.rollback_to(snapshot);
-    assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0].disposition(), CellMutationDisposition::Changed);
-}
-
-#[test]
-fn meaning_level_projection_follows_live_local_and_global_levels() {
-    let mut env = Env::new();
-    let symbol = Symbol::new(10);
-
-    env.set(symbol, Meaning::Relax);
-    assert_eq!(env.testing_meaning_level(symbol), 1);
-
-    env.enter_group();
-    env.set(symbol, Meaning::CharGiven('L'));
-    assert_eq!(env.testing_meaning_level(symbol), 2);
-
-    env.enter_group();
-    env.set_global(symbol, Meaning::CharGiven('G'));
-    assert_eq!(env.testing_meaning_level(symbol), 1);
-    let _ = env.leave_group();
-    assert_eq!(env.testing_meaning_level(symbol), 1);
-    let _ = env.leave_group();
-    assert_eq!(env.testing_meaning_level(symbol), 1);
-}
-
-#[test]
-fn etex_save_stack_projection_counts_only_enclosing_group_line_words() {
-    // TeX82 §273 checks `save_ptr` before §274 installs the new boundary.
-    // e-TeX [19.274] has one saved source-line word below every already-live
-    // boundary, so the innermost boundary in the typed post-entry state names
-    // the checkpoint and only its two enclosing groups add line words.
-    let mut env = Env::new();
-    for line in 1..=3 {
-        env.enter_group_with_kind_at_line(GroupKind::Simple, line);
-    }
-
-    assert_eq!(env.canonical_save_stack_words(false), 3);
-    assert_eq!(env.canonical_save_stack_words(true), 5);
-}
-
-#[test]
-fn save_stack_projection_distinguishes_null_and_defined_token_parameters() {
-    // TeX82 §§240/275--276 use a one-word restore_zero record for a token-list
-    // parameter whose outer value is null. OptionalTokenListIdCodec preserves
-    // defined-empty as a different word, so that case remains the ordinary
-    // two-word restore_old_value negative control.
-    let (mut null_outer, mut null_tokens) = env_with_tokens();
-    let value = token_root(&mut null_tokens, 'n');
-    null_outer.enter_group();
-    null_outer.set_tok_param_option(TokParam::EVERY_DISPLAY, Some(value));
-    assert_eq!(null_outer.canonical_save_stack_words(false), 2);
-
-    let (mut defined_empty_outer, mut defined_tokens) = env_with_tokens();
-    defined_empty_outer.set_tok_param_option(
-        TokParam::EVERY_DISPLAY,
-        Some(TokenListRef::new(TokenListId::EMPTY)),
-    );
-    defined_empty_outer.enter_group();
-    let value = token_root(&mut defined_tokens, 'd');
-    defined_empty_outer.set_tok_param_option(TokParam::EVERY_DISPLAY, Some(value));
-    assert_eq!(defined_empty_outer.canonical_save_stack_words(false), 3);
-}
-
-#[test]
-fn lower_meaning_write_preserves_allocated_higher_segments() {
-    let mut env = Env::new();
-    let low = Symbol::new(7);
-    let high = Symbol::new(SEGMENT_LEN as u32 + 7);
-
-    env.set(high, Meaning::CharGiven('H'));
-    env.set(low, Meaning::CharGiven('L'));
-
-    assert_eq!(env.get(low), Meaning::CharGiven('L'));
-    assert_eq!(env.get(high), Meaning::CharGiven('H'));
-}
-
-#[test]
-fn fontdimen_key_codec_is_injective_at_both_field_boundaries() {
-    use crate::font::{MAX_FONT_DIMEN, MAX_FONT_DIMEN_FONT_ID};
-    use crate::stores::FontParameterError;
-
-    let first = font_dimen_index(FontId::new(0), 1).expect("first fontdimen key");
-    let last_slot =
-        font_dimen_index(FontId::new(0), MAX_FONT_DIMEN).expect("last slot of first font");
-    let next_font = font_dimen_index(FontId::new(1), 1).expect("first slot of next font");
-    let last = font_dimen_index(FontId::new(MAX_FONT_DIMEN_FONT_ID), MAX_FONT_DIMEN)
-        .expect("last representable fontdimen key");
-
-    assert_eq!(first, 0);
-    assert_eq!(last_slot + 1, next_font);
-    assert_eq!(last, u32::MAX);
-    assert!(matches!(
-        font_dimen_index(FontId::new(0), MAX_FONT_DIMEN + 1),
-        Err(FontParameterError::NumberOutOfRange { .. })
-    ));
-    assert!(matches!(
-        font_dimen_index(FontId::new(MAX_FONT_DIMEN_FONT_ID + 1), 1),
-        Err(FontParameterError::FontOutOfRange { .. })
-    ));
-}
-
-#[test]
-fn first_write_per_epoch_coalesces_and_keeps_first_new_value() {
-    let mut env = Env::new();
-    let symbol = Symbol::new(3);
-    let start = env.journal_pos();
-
-    env.set(symbol, Meaning::Relax);
-    env.set(symbol, Meaning::CharGiven('x'));
-
-    assert_eq!(env.get(symbol), Meaning::CharGiven('x'));
-    let entries = env.journal_entries_since(start);
-    assert_eq!(
-        entries,
-        &[Entry::Undo(UndoRec::new(
-            CellId::new(BankTag::Meaning, 3),
-            Meaning::Undefined.encode(),
-            Meaning::Relax.encode(),
-        ))]
+        state.meaning(beta.symbol()).expect("read"),
+        ResolvedMeaning::Static(Meaning::Relax)
     );
 }
 
 #[test]
-fn write_in_later_epoch_records_again() {
-    let mut env = Env::new();
-    let symbol = Symbol::new(8);
-    let start = env.journal_pos();
-
-    env.set(symbol, Meaning::Relax);
-    env.bump_epoch();
-    env.set(symbol, Meaning::CharGiven('y'));
-
-    let entries = env.journal_entries_since(start);
-    assert_eq!(
-        entries,
-        &[
-            Entry::Undo(UndoRec::new(
-                CellId::new(BankTag::Meaning, 8),
-                Meaning::Undefined.encode(),
-                Meaning::Relax.encode(),
-            )),
-            Entry::Undo(UndoRec::new(
-                CellId::new(BankTag::Meaning, 8),
-                Meaning::Relax.encode(),
-                Meaning::CharGiven('y').encode(),
-            )),
-        ]
-    );
+fn register_overflow_is_page_index_dense() {
+    let mut state = state();
+    assert_eq!(state.allocated_overflow_pages(), 0);
+    state
+        .assign_count(40_000, 17, AssignmentScope::Global)
+        .expect("assign overflow");
+    assert_eq!(state.count(40_000).expect("read overflow"), 17);
+    assert_eq!(state.count(39_999).expect("read adjacent"), 0);
+    assert_eq!(state.allocated_overflow_pages(), 1);
 }
 
 #[test]
-fn global_set_tags_cell_id_in_journal() {
-    let mut env = Env::new();
-    let symbol = Symbol::new(4);
-    let start = env.journal_pos();
-
-    env.set_global(symbol, Meaning::Relax);
-
-    assert_eq!(
-        env.journal_entries_since(start),
-        &[Entry::Undo(UndoRec::new(
-            CellId::new_global(BankTag::Meaning, 4),
-            Meaning::Undefined.encode(),
-            Meaning::Relax.encode(),
-        ))]
-    );
+fn repeated_local_writes_restore_the_first_prior_value() {
+    let mut state = state();
+    state
+        .assign_count(0, 3, AssignmentScope::Global)
+        .expect("base");
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_count(0, 4, AssignmentScope::Local)
+        .expect("first local");
+    state
+        .assign_count(0, 5, AssignmentScope::Local)
+        .expect("second local");
+    state.end_group(GroupKind::Simple).expect("end group");
+    assert_eq!(state.count(0).expect("read"), 3);
 }
 
 #[test]
-fn segment_growth_preserves_values_in_earlier_segments() {
-    let mut env = Env::new();
-    let first = Symbol::new(0);
-    let second_segment = Symbol::new(SEGMENT_LEN as u32);
+fn ordered_journal_carries_each_exact_prior_word_and_only_the_tex_save() {
+    let mut state = state();
+    state
+        .assign_count(0, 3, AssignmentScope::Global)
+        .expect("base");
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_count(0, 4, AssignmentScope::Local)
+        .expect("first local");
+    state
+        .assign_count(0, 5, AssignmentScope::Local)
+        .expect("second local");
 
-    env.set(first, Meaning::Relax);
-    env.set(second_segment, Meaning::CharGiven('z'));
-
-    assert_eq!(env.get(first), Meaning::Relax);
-    assert_eq!(env.get(second_segment), Meaning::CharGiven('z'));
-}
-
-#[test]
-fn meaning_boundaries_above_26_bits_preserve_journal_and_group_semantics() {
-    for index in [1 << 26, (1 << 30) - 1] {
-        let mut env = Env::new();
-        let symbol = Symbol::new(index);
-        env.enter_group();
-        let group_start = env.journal_pos();
-        env.set(symbol, Meaning::Relax);
-        assert_eq!(
-            env.journal_entries_since(group_start),
-            &[Entry::Undo(UndoRec::new(
-                CellId::new(BankTag::Meaning, index),
-                Meaning::Undefined.encode(),
-                Meaning::Relax.encode(),
-            ))]
-        );
-        assert_eq!(env.leave_group(), Vec::<Token>::new());
-        assert_eq!(env.get(symbol), Meaning::Undefined);
-
-        let checkpoint = env.checkpoint();
-        env.enter_group();
-        env.set_global(symbol, Meaning::CharGiven('x'));
-        assert_eq!(env.leave_group(), Vec::<Token>::new());
-        assert_eq!(env.get(symbol), Meaning::CharGiven('x'));
-        env.rollback_to(checkpoint);
-        assert_eq!(env.get(symbol), Meaning::Undefined);
-
-        let cell = CellId::new(BankTag::Meaning, index);
-        env.restore_raw(cell, Meaning::Relax.encode());
-        assert_eq!(env.get(symbol), Meaning::Relax);
-        env.restore_raw(cell, Meaning::Undefined.encode());
-        assert_eq!(env.get(symbol), Meaning::Undefined);
-    }
-}
-
-#[test]
-fn cached_group_boundaries_survive_deep_journals_clone_and_rollback() {
-    let mut env = Env::new();
-    env.enter_group_with_kind(GroupKind::Simple);
-    let outer_marker = env.last_group_marker_pos();
-    for index in 0..10_000 {
-        env.set(Symbol::new(index), Meaning::Relax);
-    }
-    assert_eq!(env.innermost_group_kind(), Some(GroupKind::Simple));
-    assert_eq!(env.last_group_marker_pos(), outer_marker);
-
-    let checkpoint = env.checkpoint();
-    env.enter_group_with_kind(GroupKind::Align);
-    env.set(Symbol::new(20_000), Meaning::CharGiven('x'));
-    assert_eq!(env.innermost_group_kind(), Some(GroupKind::Align));
-
-    let mut fork = env.clone();
-    assert_eq!(fork.leave_group_with_kind(GroupKind::Align), Ok(Vec::new()));
-    assert_eq!(fork.innermost_group_kind(), Some(GroupKind::Simple));
-    assert_eq!(env.innermost_group_kind(), Some(GroupKind::Align));
-
-    env.rollback_to(checkpoint);
-    assert_eq!(env.innermost_group_kind(), Some(GroupKind::Simple));
-    assert_eq!(env.last_group_marker_pos(), outer_marker);
-    assert_eq!(env.group_boundaries.len(), env.group_depth as usize);
-    assert_eq!(env.leave_group_with_kind(GroupKind::Simple), Ok(Vec::new()));
-    assert_eq!(env.innermost_group_kind(), None);
-    assert!(env.group_boundaries.is_empty());
-}
-
-#[test]
-fn dense_register_typed_api_round_trips_boundary_and_signed_values() {
-    let (mut env, mut tokens) = env_with_tokens();
-    let token_root = token_root(&mut tokens, 't');
-    let token_id = token_root.id();
-
-    env.set_count(255, i32::MIN);
-    env.set_dimen(255, Scaled::MIN);
-    env.set_skip(
-        255,
-        crate::glue::GlueSpecRef::testing_new(GlueId::new(u32::MAX)),
-    );
-    env.set_muskip(
-        255,
-        crate::glue::GlueSpecRef::testing_new(GlueId::new(u32::MAX - 3)),
-    );
-    env.set_toks(255, token_root);
-    let box_root = NodeRoot::empty();
-    let box_id = box_root.id();
-    env.set_box_reg(255, Some(box_root));
-
-    assert_eq!(env.count(255), i32::MIN);
-    assert_eq!(env.dimen(255), Scaled::MIN);
-    assert_eq!(env.skip(255), GlueId::new(u32::MAX));
-    assert_eq!(env.muskip(255), GlueId::new(u32::MAX - 3));
-    assert_eq!(env.toks(255), token_id);
-    assert_eq!(env.box_reg(255), Some(box_id));
-}
-
-#[test]
-fn dense_register_journal_records_use_bank_tags_and_encoded_words() {
-    let (mut env, mut tokens) = env_with_tokens();
-    let token_root = token_root(&mut tokens, 'j');
-    let token_raw = u64::from(token_root.id().raw());
-    let start = env.journal_pos();
-
-    env.set_count(1, -1);
-    env.set_dimen(2, Scaled::from_raw(-2));
-    env.set_skip(3, crate::glue::GlueSpecRef::testing_new(GlueId::new(33)));
-    env.set_muskip(4, crate::glue::GlueSpecRef::testing_new(GlueId::new(34)));
-    env.set_toks(5, token_root);
-    let box_root = NodeRoot::empty();
-    let box_id = box_root.id();
-    env.set_box_reg(6, Some(box_root));
-
-    let entries = env.journal_entries_since(start);
-    assert_eq!(
-        &entries[..5],
-        &[
-            undo(BankTag::Count, 1, 0, u64::from((-1_i32) as u32)),
-            undo(BankTag::Dimen, 2, 0, u64::from((-2_i32) as u32)),
-            undo(BankTag::Skip, 3, 0, 33),
-            undo(BankTag::Muskip, 4, 0, 34),
-            undo(BankTag::Toks, 5, 0, token_raw),
-        ]
-    );
-    let Entry::BoxUndo(id) = entries[5] else {
-        panic!("box write must use the specialized journal arena");
+    let JournalEntry::Mutation(first) = state.journal.entry(2) else {
+        panic!("expected first local mutation");
     };
-    let rec = env.box_undo(id);
-    assert_eq!(rec.index(), 6);
-    assert!(!rec.is_global());
-    assert_eq!(rec.old().value(), u64::MAX);
-    assert_eq!(
-        rec.new_value().value(),
-        NodeListId::encode_box_word(Some(box_id))
-    );
-}
-
-#[test]
-fn dense_register_global_sets_tag_journal_records() {
-    let mut env = Env::new();
-    let start = env.journal_pos();
-
-    env.set_count_global(255, 7);
-
-    assert_eq!(
-        env.journal_entries_since(start),
-        &[Entry::Undo(UndoRec::new(
-            CellId::new_global(BankTag::Count, 255),
-            0,
-            7,
-        ))]
-    );
-}
-
-#[test]
-fn parameter_typed_api_round_trips_values() {
-    let (mut env, mut tokens) = env_with_tokens();
-    let token_root = token_root(&mut tokens, 'p');
-    let token_id = token_root.id();
-
-    env.set_int_param(IntParam::new(127), i32::MIN);
-    env.set_dimen_param(DimenParam::new(127), Scaled::MIN);
-    env.set_glue_param(
-        GlueParam::new(127),
-        crate::glue::GlueSpecRef::testing_new(GlueId::new(77)),
-    );
-    env.set_tok_param_option(TokParam::new(127), Some(token_root));
-
-    assert_eq!(env.int_param(IntParam::new(127)), i32::MIN);
-    assert_eq!(env.dimen_param(DimenParam::new(127)), Scaled::MIN);
-    assert_eq!(env.glue_param(GlueParam::new(127)), GlueId::new(77));
-    assert_eq!(env.tok_param(TokParam::new(127)), token_id);
-}
-
-#[test]
-fn parameter_journal_records_use_parameter_bank_tags() {
-    let (mut env, mut tokens) = env_with_tokens();
-    let token_root = token_root(&mut tokens, 'q');
-    let encoded_token = u64::from(token_root.id().raw()) + 1;
-    let start = env.journal_pos();
-
-    env.set_int_param(IntParam::new(1), -9);
-    env.set_dimen_param(DimenParam::new(2), Scaled::from_raw(-10));
-    env.set_glue_param(
-        GlueParam::new(3),
-        crate::glue::GlueSpecRef::testing_new(GlueId::new(90)),
-    );
-    env.set_tok_param_option(TokParam::new(4), Some(token_root));
-
-    assert_eq!(
-        env.journal_entries_since(start),
-        &[
-            undo(BankTag::IntParam, 1, 0, u64::from((-9_i32) as u32)),
-            undo(BankTag::DimenParam, 2, 0, u64::from((-10_i32) as u32)),
-            undo(BankTag::GlueParam, 3, 0, 90),
-            undo(BankTag::TokParam, 4, 0, encoded_token),
-        ]
-    );
-}
-
-#[test]
-fn first_same_value_local_write_at_new_group_level_is_restored() {
-    let mut env = Env::new();
-    let param = IntParam::FAM;
-    env.set_int_param(param, -1);
-    env.enter_group();
-
-    env.set_int_param(param, -1);
-    let (_, _, _, restores) = env.leave_group_observing_meanings();
-
-    assert_eq!(env.int_param(param), -1);
-    assert_eq!(restores.len(), 1);
-    assert_eq!(
-        restores[0].cell(),
-        CellId::new(BankTag::IntParam, u32::from(param.raw()))
-    );
-    assert_eq!(restores[0].old(), u64::from((-1_i32) as u32));
-    assert!(!restores[0].is_retaining());
-}
-
-#[test]
-fn first_same_box_value_at_new_group_level_keeps_canonical_restore_order() {
-    let mut env = Env::new();
-    let box_root = crate::node_arena::NodeListRef::empty();
-    env.set_box_reg_global(255, Some(box_root.clone()));
-    env.enter_group();
-
-    env.set_dimen(9, Scaled::from_raw(1));
-    env.set_count(5, 1);
-    env.set_box_reg(255, Some(box_root));
-    env.set_int_param(IntParam::GLOBAL_DEFS, 1);
-    let (_, _, _, restores) = env.leave_group_observing_meanings();
-
-    assert_eq!(
-        restores
-            .iter()
-            .map(crate::env::group::RestoreRecord::cell)
-            .collect::<Vec<_>>(),
-        [
-            CellId::new(BankTag::IntParam, u32::from(IntParam::GLOBAL_DEFS.raw()),),
-            CellId::new(BankTag::Box, 255),
-            CellId::new(BankTag::Count, 5),
-            CellId::new(BankTag::Dimen, 9),
-        ]
-    );
-}
-
-#[test]
-fn parameter_global_sets_tag_journal_records() {
-    let (mut env, mut tokens) = env_with_tokens();
-    let token_root = token_root(&mut tokens, 'g');
-    let encoded_token = u64::from(token_root.id().raw()) + 1;
-    let start = env.journal_pos();
-
-    env.set_tok_param_option_global(TokParam::new(7), Some(token_root));
-
-    assert_eq!(
-        env.journal_entries_since(start),
-        &[Entry::Undo(UndoRec::new(
-            CellId::new_global(BankTag::TokParam, 7),
-            0,
-            encoded_token,
-        ))]
-    );
-}
-
-#[test]
-fn sparse_read_before_write_returns_default_without_allocating_page() {
-    let env = Env::new();
-
-    assert_eq!(env.count(300), 0);
-    assert!(!env.overflow_counts.has_page_for(300));
-    assert_eq!(env.box_reg(300), None);
-    assert!(!env.boxes.has_page_for(300));
-}
-
-#[test]
-fn sparse_registers_round_trip_boundaries() {
-    let mut env = Env::new();
-
-    env.set_count(256, 1);
-    env.set_count(511, 2);
-    env.set_count(512, 3);
-    env.set_count(32_767, 4);
-
-    assert_eq!(env.count(256), 1);
-    assert_eq!(env.count(511), 2);
-    assert_eq!(env.count(512), 3);
-    assert_eq!(env.count(32_767), 4);
-}
-
-#[test]
-fn sparse_journal_records_use_absolute_register_indices() {
-    let mut env = Env::new();
-    let start = env.journal_pos();
-
-    env.set_count(256, -1);
-    env.set_dimen(32_767, Scaled::from_raw(-2));
-    env.set_muskip(300, crate::glue::GlueSpecRef::testing_new(GlueId::new(99)));
-
-    assert_eq!(
-        env.journal_entries_since(start),
-        &[
-            undo(BankTag::Count, 256, 0, u64::from((-1_i32) as u32)),
-            undo(BankTag::Dimen, 32_767, 0, u64::from((-2_i32) as u32)),
-            undo(BankTag::Muskip, 300, 0, 99),
-        ]
-    );
-}
-
-#[test]
-fn sparse_global_write_tags_absolute_register_cell_id() {
-    let mut env = Env::new();
-    let start = env.journal_pos();
-
-    env.set_count_global(300, 7);
-
-    assert_eq!(
-        env.journal_entries_since(start),
-        &[Entry::Undo(UndoRec::new(
-            CellId::new_global(BankTag::Count, 300),
-            0,
-            7,
-        ))]
-    );
-}
-
-#[test]
-fn restore_raw_routes_sparse_journal_records_without_journaling() {
-    let mut env = Env::new();
-    env.set_count(300, 11);
-    env.bump_epoch();
-    let start = env.journal_pos();
-    env.set_count(300, 22);
-    let rec = match env.journal_entries_since(start) {
-        [Entry::Undo(rec)] => *rec,
-        entries => panic!("expected one sparse undo record, got {entries:?}"),
+    let JournalEntry::Mutation(second) = state.journal.entry(3) else {
+        panic!("expected second local mutation");
     };
-    let before_restore = env.journal_pos();
-
-    env.restore_raw(rec.cell(), rec.old());
-
-    assert_eq!(env.count(300), 11);
-    assert_eq!(env.journal_pos(), before_restore);
-    assert!(env.journal_entries_since(before_restore).is_empty());
+    assert_eq!(first.kind, MutationKind::Assignment);
+    assert_eq!(first.before, super::StateWord::Integer(3));
+    assert_eq!(first.after, super::StateWord::Integer(4));
+    assert_eq!(first.saved_at, Some(2));
+    assert_eq!(second.before, super::StateWord::Integer(4));
+    assert_eq!(second.after, super::StateWord::Integer(5));
+    assert_eq!(second.saved_at, None);
 }
 
 #[test]
-fn restore_raw_routes_dense_parameters_and_meanings() {
-    let mut env = Env::new();
-    let symbol = Symbol::new(9);
-    let param = IntParam::new(3);
-    env.set(symbol, Meaning::Relax);
-    env.set_count(7, 10);
-    env.set_int_param(param, 20);
-    let before_restore = env.journal_pos();
-
-    env.restore_raw(
-        CellId::new(BankTag::Meaning, 9),
-        Meaning::Undefined.encode(),
-    );
-    env.restore_raw(CellId::new(BankTag::Count, 7), 1);
-    env.restore_raw(CellId::new(BankTag::IntParam, 3), 2);
-
-    assert_eq!(env.get(symbol), Meaning::Undefined);
-    assert_eq!(env.count(7), 1);
-    assert_eq!(env.int_param(param), 2);
-    assert_eq!(env.journal_pos(), before_restore);
+fn later_global_assignment_suppresses_every_applicable_restore() {
+    let mut state = state();
+    state
+        .assign_count(0, 1, AssignmentScope::Global)
+        .expect("base");
+    state.begin_group(GroupKind::Simple, 1).expect("outer");
+    state
+        .assign_count(0, 2, AssignmentScope::Local)
+        .expect("outer local");
+    state.begin_group(GroupKind::SemiSimple, 2).expect("inner");
+    state
+        .assign_count(0, 3, AssignmentScope::Local)
+        .expect("inner local");
+    state
+        .assign_count(0, 4, AssignmentScope::Global)
+        .expect("global");
+    state.end_group(GroupKind::SemiSimple).expect("inner end");
+    state.end_group(GroupKind::Simple).expect("outer end");
+    assert_eq!(state.count(0).expect("read"), 4);
 }
 
 #[test]
-fn sparse_register_classes_are_independent() {
-    let mut env = Env::new();
-
-    env.set_count(300, 123);
-    env.set_dimen(300, Scaled::from_raw(456));
-    env.set_skip(300, crate::glue::GlueSpecRef::testing_new(GlueId::new(7)));
-    env.set_muskip(300, crate::glue::GlueSpecRef::testing_new(GlueId::new(8)));
-
-    assert_eq!(env.count(300), 123);
-    assert_eq!(env.dimen(300), Scaled::from_raw(456));
-    assert_eq!(env.skip(300), GlueId::new(7));
-    assert_eq!(env.muskip(300), GlueId::new(8));
-    assert!(env.overflow_counts.has_page_for(300));
-    assert!(env.overflow_dimens.has_page_for(300));
-    assert!(env.overflow_skips.has_page_for(300));
-    assert!(env.overflow_muskips.has_page_for(300));
+fn local_after_global_restores_the_global_value() {
+    let mut state = state();
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_count(0, 10, AssignmentScope::Local)
+        .expect("local");
+    state
+        .assign_count(0, 20, AssignmentScope::Global)
+        .expect("global");
+    state
+        .assign_count(0, 30, AssignmentScope::Local)
+        .expect("second local");
+    state.end_group(GroupKind::Simple).expect("end");
+    assert_eq!(state.count(0).expect("read"), 20);
 }
 
 #[test]
-fn nested_groups_follow_naive_oracle_three_deep() {
-    let mut env = Env::new();
-    let mut oracle = Oracle::new();
+fn journal_cursor_restores_group_exit_and_assignment_exactly() {
+    let mut state = state();
+    state
+        .assign_dimension(0, Scaled::from_raw(5), AssignmentScope::Global)
+        .expect("base");
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_dimension(0, Scaled::from_raw(7), AssignmentScope::Local)
+        .expect("local");
+    let inside = state.journal_cursor();
+    state.end_group(GroupKind::Simple).expect("end");
+    assert_eq!(state.dimension(0).expect("read"), Scaled::from_raw(5));
 
-    oracle.set_local(1, 10);
-    env.set_count(1, 10);
-    assert_oracle(&env, &oracle, &[1, 2, 300]);
-
-    env.enter_group();
-    oracle.enter_group();
-    oracle.set_local(1, 11);
-    oracle.set_local(2, 20);
-    env.set_count(1, 11);
-    env.set_count(2, 20);
-    assert_oracle(&env, &oracle, &[1, 2, 300]);
-
-    env.enter_group();
-    oracle.enter_group();
-    oracle.set_local(1, 12);
-    oracle.set_global(2, 21);
-    env.set_count(1, 12);
-    env.set_count_global(2, 21);
-    assert_oracle(&env, &oracle, &[1, 2, 300]);
-
-    env.enter_group();
-    oracle.enter_group();
-    oracle.set_local(300, 30);
-    env.set_count(300, 30);
-    assert_oracle(&env, &oracle, &[1, 2, 300]);
-
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-    oracle.leave_group();
-    assert_oracle(&env, &oracle, &[1, 2, 300]);
-
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-    oracle.leave_group();
-    assert_oracle(&env, &oracle, &[1, 2, 300]);
-
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-    oracle.leave_group();
-    assert_oracle(&env, &oracle, &[1, 2, 300]);
+    state.restore(inside).expect("restore inside group");
+    assert_eq!(state.group_depth(), 1);
+    assert_eq!(state.dimension(0).expect("read"), Scaled::from_raw(7));
 }
 
 #[test]
-fn local_write_shadowed_by_global_same_cell_survives_group_exit() {
-    let mut env = Env::new();
-    let mut oracle = Oracle::new();
-
-    env.enter_group();
-    oracle.enter_group();
-    env.set_count(7, 1);
-    oracle.set_local(7, 1);
-    env.set_count_global(7, 2);
-    oracle.set_global(7, 2);
-
-    assert_oracle(&env, &oracle, &[7]);
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-    oracle.leave_group();
-
-    assert_oracle(&env, &oracle, &[7]);
-    assert_eq!(env.count(7), 2);
+fn rollback_to_pre_group_cursor_removes_group_and_writes() {
+    let mut state = state();
+    let before = state.journal_cursor();
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_count(0, 9, AssignmentScope::Local)
+        .expect("local");
+    state.restore(before).expect("restore");
+    assert_eq!(state.group_depth(), 0);
+    assert_eq!(state.count(0).expect("read"), 0);
 }
 
 #[test]
-fn global_then_local_same_cell_local_wins_inside_global_after_exit() {
-    let mut env = Env::new();
-    let mut oracle = Oracle::new();
+fn code_tables_use_initex_defaults_and_the_same_save_journal() {
+    let mut state = state();
+    assert_eq!(state.code(CodeTableKind::Catcode, '\\').expect("cat"), 0);
+    assert_eq!(state.code(CodeTableKind::Catcode, 'A').expect("cat"), 11);
+    assert_eq!(state.code(CodeTableKind::Delcode, '.').expect("del"), 0);
+    assert_eq!(state.code(CodeTableKind::Delcode, '(').expect("del"), -1);
 
-    env.enter_group();
-    oracle.enter_group();
-    env.set_count_global(9, 5);
-    oracle.set_global(9, 5);
-    env.set_count(9, 6);
-    oracle.set_local(9, 6);
-
-    assert_eq!(env.count(9), 6);
-    assert_oracle(&env, &oracle, &[9]);
-
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-    oracle.leave_group();
-
-    assert_eq!(env.count(9), 5);
-    assert_oracle(&env, &oracle, &[9]);
-}
-
-#[test]
-fn repeated_same_epoch_globals_keep_last_global_after_exit() {
-    let mut env = Env::new();
-
-    env.enter_group();
-    env.set_count_global(10, 1);
-    env.set_count_global(10, 2);
-    env.set_count(10, 3);
-
-    assert_eq!(env.count(10), 3);
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-    assert_eq!(env.count(10), 2);
-}
-
-#[test]
-fn local_noop_does_not_consume_first_write_for_epoch() {
-    let mut env = Env::new();
-    let pos = env.checkpoint();
-
-    env.set_count(12, 0);
-    env.set_count(12, 1);
-    env.rollback_to(pos);
-
-    assert_eq!(env.count(12), 0);
-}
-
-#[test]
-fn compacted_global_after_local_rolls_back_to_pre_group_value() {
-    let mut env = Env::new();
-    let pos = env.checkpoint();
-
-    env.enter_group();
-    env.set_count(12, 1);
-    env.set_count_global(12, 0);
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-
-    assert_eq!(env.count(12), 0);
-    env.rollback_to(pos);
-    assert_eq!(env.count(12), 0);
-}
-
-#[test]
-fn same_value_global_after_local_still_survives_group_exit() {
-    let mut env = Env::new();
-
-    env.enter_group();
-    env.set_count(12, 1);
-    env.set_count_global(12, 1);
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-
-    assert_eq!(env.count(12), 1);
-}
-
-#[test]
-fn large_local_only_group_exit_restores_without_compaction_records() {
-    let mut env = Env::new();
-    let start = env.checkpoint();
-
-    env.enter_group();
-    for index in 0..1024_u16 {
-        env.set_count(index, i32::from(index) + 1);
-    }
-
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-
-    for index in 0..1024_u16 {
-        assert_eq!(env.count(index), 0, "count register {index}");
-    }
-    assert!(env.journal_entries_since(start.journal_pos()).is_empty());
-}
-
-#[test]
-fn mixed_global_local_same_cell_compacts_first_old_for_rollback() {
-    let mut env = Env::new();
-    env.set_count(7, 70);
-    let start = env.checkpoint();
-
-    env.enter_group();
-    env.set_count(7, 71);
-    env.set_count_global(7, 72);
-    env.set_count(7, 73);
-    env.set_count_global(7, 74);
-
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-
-    assert_eq!(env.count(7), 74);
-    assert_eq!(
-        env.journal_entries_since(start.journal_pos()),
-        &[
-            Entry::Undo(UndoRec::new(CellId::new_global(BankTag::Count, 7), 70, 72,)),
-            Entry::Undo(UndoRec::new(CellId::new_global(BankTag::Count, 7), 73, 74,)),
-        ]
-    );
-
-    env.rollback_to(start);
-    assert_eq!(env.count(7), 70);
-}
-
-#[test]
-fn aftergroup_payloads_are_fifo_per_group_across_nesting() {
-    let mut env = Env::new();
-    let one = Token::Char {
-        ch: '1',
-        cat: Catcode::Other,
-    };
-    let two = Token::Char {
-        ch: '2',
-        cat: Catcode::Other,
-    };
-    let three = Token::Char {
-        ch: '3',
-        cat: Catcode::Other,
-    };
-    let four = Token::Char {
-        ch: '4',
-        cat: Catcode::Other,
-    };
-
-    env.enter_group();
-    env.push_aftergroup(one);
-    env.enter_group();
-    env.push_aftergroup(two);
-    env.push_aftergroup(three);
-
-    assert_eq!(env.leave_group(), vec![two, three]);
-
-    env.push_aftergroup(four);
-    assert_eq!(env.leave_group(), vec![one, four]);
-}
-
-#[test]
-fn aftergroup_payload_origin_survives_snapshot_rollback_and_group_exit() {
-    let mut env = Env::new();
-    let token = Token::Char {
-        ch: 'x',
-        cat: Catcode::Letter,
-    };
-    let parent = crate::token::OriginId::from_raw(42);
-
-    env.enter_group();
-    env.push_aftergroup_traced(crate::token::RootedTracedTokenWord::unowned(
-        crate::token::TracedTokenWord::pack(token, parent),
-    ));
-    let snapshot = env.checkpoint();
-    env.push_aftergroup(Token::Char {
-        ch: 'y',
-        cat: Catcode::Letter,
-    });
-    env.rollback_to(snapshot);
-
-    let payloads = env.leave_group_observing_meanings().0;
-    assert_eq!(payloads.len(), 1);
-    assert_eq!(payloads[0].word().semantic_token(), token);
-    assert_eq!(payloads[0].word().origin(), parent);
-}
-
-#[test]
-fn sparse_register_local_restores_on_group_exit() {
-    let mut env = Env::new();
-    let mut oracle = Oracle::new();
-
-    env.set_count(300, 100);
-    oracle.set_local(300, 100);
-    env.enter_group();
-    oracle.enter_group();
-    env.set_count(300, 200);
-    oracle.set_local(300, 200);
-    assert_oracle(&env, &oracle, &[300]);
-
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-    oracle.leave_group();
-
-    assert_oracle(&env, &oracle, &[300]);
-    assert_eq!(env.count(300), 100);
-}
-
-#[test]
-fn sparse_first_write_group_exit_prunes_restored_default_page() {
-    let mut env = Env::new();
-
-    env.enter_group();
-    env.set_count(300, 100);
-    assert_eq!(env.count(300), 100);
-    assert!(env.overflow_counts.has_page_for(300));
-
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-
-    assert_eq!(env.count(300), 0);
-    assert!(!env.overflow_counts.has_page_for(300));
-}
-
-#[test]
-fn sparse_first_write_rollback_prunes_restored_default_page() {
-    let mut env = Env::new();
-    let pos = env.checkpoint();
-
-    env.set_count(300, 100);
-    assert_eq!(env.count(300), 100);
-    assert!(env.overflow_counts.has_page_for(300));
-
-    env.rollback_to(pos);
-
-    assert_eq!(env.count(300), 0);
-    assert!(!env.overflow_counts.has_page_for(300));
-}
-
-#[test]
-fn group_exit_bumps_epoch_so_outer_undo_slice_records_rewrite() {
-    let mut env = Env::new();
-
-    env.enter_group();
-    let outer_pos = env.checkpoint();
-    env.enter_group();
-    env.set_count(11, 1);
-    assert_eq!(env.leave_group(), Vec::<Token>::new());
-
-    // Regression for core_state.md §6 / 97a3c1d: without the group-exit epoch
-    // bump, this write sees the restored cell's high stamp and skips journaling,
-    // so the enclosing rollback would fail to restore the pre-inner value.
-    env.set_count(11, 2);
-    env.rollback_to(outer_pos);
-
-    assert_eq!(env.count(11), 0);
-}
-
-#[test]
-fn rollback_to_restores_globals_across_group_markers() {
-    let mut env = Env::new();
-    let pos = env.checkpoint();
-
-    env.enter_group();
-    env.set_count_global(1, 10);
-    env.enter_group();
-    env.set_count_global(300, 20);
-    env.set_count(2, 30);
-
-    env.rollback_to(pos.clone());
-
-    assert_eq!(env.count(1), 0);
-    assert_eq!(env.count(2), 0);
-    assert_eq!(env.count(300), 0);
-    assert!(env.journal_entries_since(pos.journal_pos()).is_empty());
-}
-
-fn undo(bank: BankTag, index: u32, old: u64, new: u64) -> Entry {
-    Entry::Undo(UndoRec::new(CellId::new(bank, index), old, new))
-}
-
-#[derive(Debug)]
-struct Oracle {
-    scopes: Vec<AHashMap<u16, i32>>,
-}
-
-impl Oracle {
-    fn new() -> Self {
-        Self {
-            scopes: vec![AHashMap::new()],
-        }
-    }
-
-    fn enter_group(&mut self) {
-        self.scopes.push(AHashMap::new());
-    }
-
-    fn leave_group(&mut self) {
-        assert!(self.scopes.len() > 1, "oracle group underflow");
-        self.scopes.pop();
-    }
-
-    fn set_local(&mut self, index: u16, value: i32) {
-        self.scopes
-            .last_mut()
-            .expect("oracle always has a root scope")
-            .insert(index, value);
-    }
-
-    fn set_global(&mut self, index: u16, value: i32) {
-        for scope in &mut self.scopes {
-            scope.insert(index, value);
-        }
-    }
-
-    fn get(&self, index: u16) -> i32 {
-        self.scopes
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(&index).copied())
-            .unwrap_or(0)
-    }
-}
-
-fn assert_oracle(env: &Env, oracle: &Oracle, indices: &[u16]) {
-    for &index in indices {
-        assert_eq!(
-            env.count(index),
-            oracle.get(index),
-            "count register {index}"
-        );
-    }
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_code(CodeTableKind::Catcode, 'A', 12, AssignmentScope::Local)
+        .expect("assign");
+    assert_eq!(state.code(CodeTableKind::Catcode, 'A').expect("cat"), 12);
+    state.end_group(GroupKind::Simple).expect("end");
+    assert_eq!(state.code(CodeTableKind::Catcode, 'A').expect("cat"), 11);
 }
