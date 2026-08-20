@@ -1,17 +1,20 @@
-//! Control-sequence name interning.
+//! Bounded session-local interning for control-sequence names and token spellings.
 //!
-//! Symbols are dense indexes into a span table. The arena can be truncated to
-//! a watermark, but that rollback machinery is crate-private so the live
-//! interner rolls back only as part of the aggregate `Universe` tuple.
+//! An [`Interner`] is the storage owner for one engine session's interning
+//! epoch. Entries are append-only until the whole epoch is retired. In
+//! particular, TeX groups, failed commands, and incremental revision rollback
+//! do not expose a cursor which can truncate this storage.
 
 use crate::ContentHash;
-use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
 use crate::state_hash::StateHasher;
 use ahash::{AHashMap, AHasher};
 use std::hash::{Hash, Hasher};
-use std::sync::{OnceLock, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-static GLOBAL_SYMBOLS: OnceLock<RwLock<GlobalSymbols>> = OnceLock::new();
+/// Maximum number of interner slots representable in a packed token word.
+pub const SYMBOL_CAPACITY: u32 = 1 << 30;
+
+static NEXT_SESSION_EPOCH: AtomicU64 = AtomicU64::new(1);
 
 /// The TeX82 control-sequence namespace containing an interned symbol.
 ///
@@ -31,593 +34,629 @@ pub enum ControlSequenceKind {
     Internal,
 }
 
-/// A permanent process-wide key for a semantic control-sequence name.
+/// A compact slot coordinate stored in tokens and dense state.
 ///
-/// Keys fit the 30-bit token payload, are never reused, and resolve to dense
-/// local interner slots only through the owning aggregate.
+/// This value deliberately contains no process-global identity. It is valid
+/// only while carried by storage owned by the same session epoch. APIs which
+/// admit values across an owner boundary use [`SymbolId`] instead.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Symbol(u32);
 
-/// A live generation-tagged capability for an interned control-sequence name.
+/// A session-qualified control-sequence identity.
+///
+/// The epoch component is private, so callers cannot forge admission into a
+/// different session from a raw slot number.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SymbolId {
-    identity: HandleIdentity,
+    epoch: SessionEpochKey,
     symbol: Symbol,
 }
 
-/// A live symbol capability or an explicitly compact token/Env symbol key.
-pub trait SymbolReference: Copy {
-    #[doc(hidden)]
-    fn live_id(self) -> Option<SymbolId>;
-    #[doc(hidden)]
-    fn stored_key(self) -> Option<Symbol>;
+/// A session-qualified spelling which is not a control sequence.
+///
+/// Retained token spellings share the epoch's byte arena and total slot budget
+/// with control-sequence names, but do not consume a control-sequence-name
+/// slot or enter TeX82's `hash` namespace.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SpellingId {
+    epoch: SessionEpochKey,
+    slot: u32,
 }
 
-impl SymbolReference for SymbolId {
-    fn live_id(self) -> Option<SymbolId> {
-        Some(self)
-    }
-    fn stored_key(self) -> Option<Symbol> {
-        None
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct SessionEpochKey(u64);
+
+impl SessionEpochKey {
+    fn fresh() -> Self {
+        let raw = NEXT_SESSION_EPOCH
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(1)
+            })
+            .expect("session epoch identity space exhausted");
+        Self(raw)
     }
 }
-
-impl SymbolReference for Symbol {
-    fn live_id(self) -> Option<SymbolId> {
-        None
-    }
-    fn stored_key(self) -> Option<Symbol> {
-        Some(self)
-    }
-}
-
-/// Maximum number of symbols that can be represented in a packed token word.
-pub const SYMBOL_CAPACITY: u32 = 1 << 30;
 
 impl Symbol {
-    pub(crate) const fn new(raw: u32) -> Self {
-        Self(raw)
-    }
-
-    /// Creates a symbol for tests that need direct cell-level state coverage.
-    #[cfg(any(test, feature = "testing"))]
+    /// Returns the compact slot for same-session packed storage.
     #[must_use]
-    pub const fn testing_new(raw: u32) -> Self {
-        Self(raw)
-    }
-
-    /// Returns the compact permanent symbol key.
-    #[must_use]
-    pub const fn raw(self) -> u32 {
+    pub(crate) const fn raw(self) -> u32 {
         self.0
-    }
-
-    /// Returns this compact token/Env key (parallel to `SymbolId::symbol`).
-    #[must_use]
-    pub const fn symbol(self) -> Self {
-        self
     }
 }
 
 impl SymbolId {
-    const fn from_identity(identity: HandleIdentity, symbol: Symbol) -> Self {
-        Self { identity, symbol }
+    const fn new(epoch: SessionEpochKey, slot: u32) -> Self {
+        Self {
+            epoch,
+            symbol: Symbol(slot),
+        }
     }
-    const fn identity(self) -> HandleIdentity {
-        self.identity
-    }
+
+    /// Returns the compact same-session coordinate.
     #[must_use]
     pub const fn symbol(self) -> Symbol {
         self.symbol
     }
+
     #[must_use]
-    pub const fn raw(self) -> u32 {
-        self.identity.slot()
+    pub(crate) const fn raw(self) -> u32 {
+        self.symbol.0
     }
 }
 
-/// Failure to intern a new control-sequence name.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum InternerError {
-    /// The process-wide compact key space used by packed tokens is exhausted.
-    TooManySymbols,
+impl SpellingId {
+    const fn new(epoch: SessionEpochKey, slot: u32) -> Self {
+        Self { epoch, slot }
+    }
+
+    #[must_use]
+    pub(crate) const fn raw(self) -> u32 {
+        self.slot
+    }
 }
 
-/// A rollback watermark for the interner.
+/// One independently enforced interning-budget dimension.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct InternerMark {
-    spans: u32,
+pub enum InternerResource {
+    /// Distinct control-sequence entries, excluding retained spellings.
+    ControlSequenceNames,
+    /// All dense entries, including retained spellings.
+    Slots,
+    /// UTF-8 bytes retained by all entries.
+    Bytes,
+}
+
+/// Invalid static configuration for a session interning epoch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InternerBudgetError {
+    /// The configured slot count does not fit the packed token representation.
+    SlotCapacity { requested: u32, maximum: u32 },
+    /// A control-sequence-name limit cannot exceed the total slot limit.
+    NamesExceedSlots { names: u32, slots: u32 },
+}
+
+/// Explicit limits for one session interning epoch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InternerBudget {
+    control_sequence_names: u32,
+    slots: u32,
     bytes: u32,
-    identities: IdentityMark,
 }
 
-/// Interned UTF-8 string arena.
-#[derive(Debug)]
-pub struct Interner {
-    arena: String,
-    spans: Vec<(u32, u32)>,
-    kinds: Vec<ControlSequenceKind>,
-    hash_entries: Vec<bool>,
-    semantic_atoms: Vec<u64>,
-    semantic_identities: Vec<ContentHash>,
-    symbols: Vec<Symbol>,
-    symbol_slots: AHashMap<Symbol, u32>,
-    frozen_lookup: crate::frozen_lookup::FrozenLookup,
-    frozen_len: u32,
-    index: AHashMap<u64, Vec<SymbolId>>,
-    index_dirty: bool,
-    identities: IdentityAllocator,
-}
-
-impl Clone for Interner {
-    fn clone(&self) -> Self {
-        Self {
-            arena: self.arena.clone(),
-            spans: self.spans.clone(),
-            kinds: self.kinds.clone(),
-            hash_entries: self.hash_entries.clone(),
-            semantic_atoms: self.semantic_atoms.clone(),
-            semantic_identities: self.semantic_identities.clone(),
-            symbols: self.symbols.clone(),
-            symbol_slots: self.symbol_slots.clone(),
-            frozen_lookup: self.frozen_lookup.clone(),
-            frozen_len: self.frozen_len,
-            index: self.index.clone(),
-            index_dirty: self.index_dirty,
-            identities: self.identities.fork(),
+impl InternerBudget {
+    /// Validates and constructs a session budget.
+    pub const fn new(
+        control_sequence_names: u32,
+        slots: u32,
+        bytes: u32,
+    ) -> Result<Self, InternerBudgetError> {
+        if slots > SYMBOL_CAPACITY {
+            return Err(InternerBudgetError::SlotCapacity {
+                requested: slots,
+                maximum: SYMBOL_CAPACITY,
+            });
         }
-    }
-}
-
-impl Interner {
-    /// Creates an empty interner.
-    #[must_use]
-    pub(crate) fn new() -> Self {
-        Self {
-            arena: String::new(),
-            spans: Vec::new(),
-            kinds: Vec::new(),
-            hash_entries: Vec::new(),
-            semantic_atoms: Vec::new(),
-            semantic_identities: Vec::new(),
-            symbols: Vec::new(),
-            symbol_slots: AHashMap::new(),
-            frozen_lookup: crate::frozen_lookup::FrozenLookup::empty(),
-            frozen_len: 0,
-            index: AHashMap::new(),
-            index_dirty: false,
-            identities: IdentityAllocator::new(0),
-        }
-    }
-
-    /// Installs an already structurally validated frozen dense prefix without
-    /// replaying ordinary interning. Process-wide compact symbols are resolved
-    /// in one batch while local slots and lookup indexes are built directly.
-    pub(crate) fn from_frozen(
-        arena: String,
-        spans: Vec<(u32, u32)>,
-        kinds: Vec<ControlSequenceKind>,
-        hash_entries: Vec<bool>,
-        semantic_atoms: Vec<u64>,
-        frozen_lookup: crate::frozen_lookup::FrozenLookup,
-    ) -> Result<Self, &'static str> {
-        if spans.len() != kinds.len()
-            || spans.len() != hash_entries.len()
-            || spans.len() != semantic_atoms.len()
-        {
-            return Err("frozen interner column length mismatch");
-        }
-        let count = u32::try_from(spans.len()).map_err(|_| "frozen interner capacity")?;
-        let identities = IdentityAllocator::from_frozen_len(0, count);
-        let mut symbols = Vec::with_capacity(spans.len());
-        let mut semantic_identities = Vec::with_capacity(spans.len());
-        let mut symbol_slots = AHashMap::with_capacity(spans.len());
-        let index: AHashMap<u64, Vec<SymbolId>> = AHashMap::new();
-        for slot in 0..spans.len() {
-            let (start, len) = spans[slot];
-            let start = start as usize;
-            let end = start
-                .checked_add(len as usize)
-                .ok_or("frozen interner span overflow")?;
-            let name = arena
-                .get(start..end)
-                .ok_or("frozen interner span is not UTF-8 aligned")?;
-            let kind = kinds[slot];
-            if semantic_atoms[slot] != semantic_atom(kind, name) {
-                return Err("frozen interner semantic atom mismatch");
-            }
-            semantic_identities.push(semantic_identity(kind, name));
-            if matches!(
-                kind,
-                ControlSequenceKind::ActiveCharacter | ControlSequenceKind::SingleCharacter
-            ) {
-                let mut chars = name.chars();
-                if chars.next().is_none() || chars.next().is_some() {
-                    return Err("frozen active name is not one character");
-                }
-            }
-            let stored = global_symbol(kind, name).map_err(|_| "frozen interner capacity")?;
-            if symbol_slots.insert(stored, slot as u32).is_some() {
-                return Err("duplicate frozen interner name");
-            }
-            symbols.push(stored);
+        if control_sequence_names > slots {
+            return Err(InternerBudgetError::NamesExceedSlots {
+                names: control_sequence_names,
+                slots,
+            });
         }
         Ok(Self {
-            arena,
-            spans,
-            kinds,
-            hash_entries,
-            semantic_atoms,
-            semantic_identities,
-            symbols,
-            symbol_slots,
-            frozen_lookup,
-            frozen_len: count,
-            index,
-            index_dirty: false,
-            identities,
+            control_sequence_names,
+            slots,
+            bytes,
         })
     }
 
-    /// Interns `name`, returning its live capability and compact stored key.
-    pub(crate) fn intern(&mut self, name: &str) -> Result<SymbolId, InternerError> {
-        if let Some(symbol) = self.get_key(ControlSequenceKind::Internal, name) {
-            return Ok(symbol);
-        }
-        let kind = named_kind(name);
-        let symbol = self.intern_key(kind, name)?;
-        if kind == ControlSequenceKind::Named {
-            self.hash_entries[symbol.raw() as usize] = true;
-        }
-        Ok(symbol)
+    #[must_use]
+    pub const fn control_sequence_names(self) -> u32 {
+        self.control_sequence_names
     }
 
-    /// Interns a spelling used only as a retained TeX string.
-    ///
-    /// TeX82 §1252 stores active/null font identifiers in `font_id_text`,
-    /// which shares the string pool with control-sequence names but does not
-    /// call §259's `id_lookup` or occupy a hash-table entry.
-    pub(crate) fn intern_retained_string(&mut self, name: &str) -> Result<SymbolId, InternerError> {
-        if let Some(symbol) = self.get_key(ControlSequenceKind::Internal, name) {
-            return Ok(symbol);
+    #[must_use]
+    pub const fn slots(self) -> u32 {
+        self.slots
+    }
+
+    #[must_use]
+    pub const fn bytes(self) -> u32 {
+        self.bytes
+    }
+}
+
+/// Current or retired resource use for one complete epoch.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct InternerUsage {
+    control_sequence_names: u32,
+    slots: u32,
+    bytes: u32,
+}
+
+impl InternerUsage {
+    #[must_use]
+    pub const fn control_sequence_names(self) -> u32 {
+        self.control_sequence_names
+    }
+
+    #[must_use]
+    pub const fn slots(self) -> u32 {
+        self.slots
+    }
+
+    #[must_use]
+    pub const fn bytes(self) -> u32 {
+        self.bytes
+    }
+}
+
+/// Failure to append to a session epoch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InternerError {
+    /// The complete epoch was already retired and cannot be reused.
+    RetiredEpoch,
+    /// Appending the entry would exceed one explicit session limit.
+    BudgetExceeded {
+        resource: InternerResource,
+        limit: u32,
+        attempted: u64,
+    },
+}
+
+/// Failure to admit a session-qualified identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InternerAccessError {
+    /// The complete epoch was retired and owns no entries now.
+    RetiredEpoch,
+    /// The identity belongs to a different session epoch.
+    ForeignEpoch,
+    /// The identity does not address an entry of the requested kind.
+    InvalidIdentity,
+}
+
+/// Evidence that all storage owned by one epoch was retired together.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InternerRetirement {
+    usage: InternerUsage,
+}
+
+impl InternerRetirement {
+    /// Returns the resources released by retirement.
+    #[must_use]
+    pub const fn usage(self) -> InternerUsage {
+        self.usage
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum EntryKind {
+    ControlSequence(ControlSequenceKind),
+    Spelling,
+}
+
+#[derive(Debug)]
+struct Entry {
+    start: u32,
+    len: u32,
+    kind: EntryKind,
+    hash_entry: bool,
+    semantic_atom: u64,
+    semantic_identity: ContentHash,
+}
+
+/// Append-only interned UTF-8 storage for one bounded engine session.
+///
+/// The type intentionally does not implement `Clone`: continuations retain
+/// the same owner, while an independent job receives a fresh epoch key.
+#[derive(Debug)]
+pub struct Interner {
+    epoch: SessionEpochKey,
+    budget: InternerBudget,
+    usage: InternerUsage,
+    retired: bool,
+    arena: String,
+    entries: Vec<Entry>,
+    index: AHashMap<u64, Vec<u32>>,
+}
+
+impl Interner {
+    /// Creates a fresh, empty session epoch under explicit limits.
+    #[must_use]
+    pub(crate) fn new(budget: InternerBudget) -> Self {
+        Self {
+            epoch: SessionEpochKey::fresh(),
+            budget,
+            usage: InternerUsage::default(),
+            retired: false,
+            arena: String::new(),
+            entries: Vec::new(),
+            index: AHashMap::new(),
         }
-        self.intern_key(named_kind(name), name)
+    }
+
+    /// Returns the immutable limits charged by this epoch.
+    #[must_use]
+    pub const fn budget(&self) -> InternerBudget {
+        self.budget
+    }
+
+    /// Returns current resource use. A retired epoch reports zero live use.
+    #[must_use]
+    pub const fn usage(&self) -> InternerUsage {
+        self.usage
+    }
+
+    /// Returns whether the complete session epoch has been retired.
+    #[must_use]
+    pub const fn is_retired(&self) -> bool {
+        self.retired
+    }
+
+    /// Interns an ordinary escaped control-sequence spelling.
+    pub(crate) fn intern(&mut self, name: &str) -> Result<SymbolId, InternerError> {
+        self.intern_control_sequence(named_kind(name), name, false)
     }
 
     /// Interns a name through TeX82 §259's hash-table path.
     pub(crate) fn intern_hash(&mut self, name: &str) -> Result<SymbolId, InternerError> {
-        let symbol = self.intern(name)?;
-        // §§356/372 use fixed `eqtb` slots for null and one-character
-        // spellings; only a multiletter name reaches §259's `id_lookup`.
-        if self.kind_id(symbol) == ControlSequenceKind::Named {
-            self.hash_entries[symbol.raw() as usize] = true;
+        let id = self.intern(name)?;
+        if self.kind_id(id).expect("newly interned symbol is admitted")
+            == ControlSequenceKind::Named
+        {
+            self.entries[id.raw() as usize].hash_entry = true;
         }
-        Ok(symbol)
+        Ok(id)
     }
 
     /// Interns an active-character control sequence.
     pub(crate) fn intern_active(&mut self, ch: char) -> Result<SymbolId, InternerError> {
         let mut encoded = [0; 4];
-        self.intern_key(
+        self.intern_control_sequence(
             ControlSequenceKind::ActiveCharacter,
             ch.encode_utf8(&mut encoded),
+            false,
         )
     }
 
+    /// Interns an inaccessible engine-owned fixed control sequence.
     pub(crate) fn intern_internal(&mut self, name: &str) -> Result<SymbolId, InternerError> {
-        if let Some(symbol) = self.get_key(named_kind(name), name) {
-            let slot = symbol.raw() as usize;
-            self.kinds[slot] = ControlSequenceKind::Internal;
-            self.semantic_atoms[slot] = semantic_atom(ControlSequenceKind::Internal, name);
-            self.semantic_identities[slot] = semantic_identity(ControlSequenceKind::Internal, name);
-            self.index_dirty = true;
-            return Ok(symbol);
-        }
-        self.intern_key(ControlSequenceKind::Internal, name)
+        self.intern_control_sequence(ControlSequenceKind::Internal, name, false)
     }
 
-    fn intern_key(
+    /// Interns a non-control-sequence token spelling in the same epoch.
+    pub(crate) fn intern_spelling(&mut self, spelling: &str) -> Result<SpellingId, InternerError> {
+        if self.retired {
+            return Err(InternerError::RetiredEpoch);
+        }
+        let kind = EntryKind::Spelling;
+        if let Some(slot) = self.lookup_slot(kind, spelling) {
+            return Ok(SpellingId::new(self.epoch, slot));
+        }
+        let slot = self.append(kind, spelling)?;
+        Ok(SpellingId::new(self.epoch, slot))
+    }
+
+    fn intern_control_sequence(
         &mut self,
         kind: ControlSequenceKind,
         name: &str,
+        hash_entry: bool,
     ) -> Result<SymbolId, InternerError> {
-        if self.index_dirty {
-            self.rebuild_index();
+        if self.retired {
+            return Err(InternerError::RetiredEpoch);
         }
-
-        if let Some(slot) = self
-            .frozen_lookup
-            .get_prefixed(kind_tag(kind), name.as_bytes())
-        {
-            let stored = self.symbols[slot as usize];
-            let identity = self
-                .identities
-                .identity_at(slot)
-                .expect("frozen symbol is live");
-            return Ok(SymbolId::from_identity(identity, stored));
-        }
-
-        let hash = content_hash(kind, name);
-        if let Some(candidates) = self.index.get(&hash) {
-            for &symbol in candidates {
-                if self.kind_id(symbol) == kind && self.resolve_id(symbol) == name {
-                    return Ok(symbol);
-                }
+        validate_character_kind(kind, name);
+        let entry_kind = EntryKind::ControlSequence(kind);
+        if let Some(slot) = self.lookup_slot(entry_kind, name) {
+            if hash_entry {
+                self.entries[slot as usize].hash_entry = true;
             }
+            return Ok(SymbolId::new(self.epoch, slot));
         }
-
-        let start = u32_len(self.arena.len(), "interner arena exceeds u32 bytes");
-        let len = u32_len(name.len(), "interned string exceeds u32 bytes");
-        let stored = global_symbol(kind, name)?;
-        let identity = self
-            .identities
-            .allocate()
-            .map_err(|_| InternerError::TooManySymbols)?;
-        let symbol = SymbolId::from_identity(identity, stored);
-        debug_assert_eq!(identity.slot() as usize, self.spans.len());
-
-        self.arena.push_str(name);
-        self.spans.push((start, len));
-        self.kinds.push(kind);
-        self.hash_entries.push(false);
-        self.semantic_atoms.push(semantic_atom(kind, name));
-        self.semantic_identities.push(semantic_identity(kind, name));
-        self.symbols.push(stored);
-        let old = self.symbol_slots.insert(stored, identity.slot());
-        debug_assert!(old.is_none(), "symbol already mapped in local interner");
-        self.index.entry(hash).or_default().push(symbol);
-
-        Ok(symbol)
+        let slot = self.append(entry_kind, name)?;
+        self.entries[slot as usize].hash_entry = hash_entry;
+        Ok(SymbolId::new(self.epoch, slot))
     }
 
-    /// Returns the live symbol for `name` without mutating the interner.
+    fn append(&mut self, kind: EntryKind, value: &str) -> Result<u32, InternerError> {
+        let names = u64::from(self.usage.control_sequence_names)
+            + u64::from(matches!(kind, EntryKind::ControlSequence(_)));
+        let slots = u64::from(self.usage.slots) + 1;
+        let bytes = u64::from(self.usage.bytes) + value.len() as u64;
+        check_budget(
+            InternerResource::ControlSequenceNames,
+            self.budget.control_sequence_names,
+            names,
+        )?;
+        check_budget(InternerResource::Slots, self.budget.slots, slots)?;
+        check_budget(InternerResource::Bytes, self.budget.bytes, bytes)?;
+
+        let start = self.usage.bytes;
+        let len = u32::try_from(value.len()).expect("byte budget bounds each spelling to u32");
+        let slot = self.usage.slots;
+        let semantic_atom = semantic_atom_for_entry(kind, value);
+        let semantic_identity = semantic_identity(kind, value);
+        let hash = lookup_hash(kind, value);
+
+        self.arena.push_str(value);
+        self.entries.push(Entry {
+            start,
+            len,
+            kind,
+            hash_entry: false,
+            semantic_atom,
+            semantic_identity,
+        });
+        self.index.entry(hash).or_default().push(slot);
+        self.usage = InternerUsage {
+            control_sequence_names: names as u32,
+            slots: slots as u32,
+            bytes: bytes as u32,
+        };
+        Ok(slot)
+    }
+
+    /// Returns an ordinary escaped control sequence without mutation.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<SymbolId> {
-        self.get_key(named_kind(name), name)
-            .or_else(|| self.get_key(ControlSequenceKind::Internal, name))
+        (!self.retired)
+            .then(|| self.lookup_slot(EntryKind::ControlSequence(named_kind(name)), name))
+            .flatten()
+            .map(|slot| SymbolId::new(self.epoch, slot))
     }
 
-    /// Returns whether this exact live symbol owns a TeX82 §259 hash entry.
-    #[must_use]
-    pub(crate) fn is_hash_entry(&self, symbol: Symbol) -> bool {
-        self.resolve_stored(symbol)
-            .and_then(|symbol| self.hash_entries.get(symbol.raw() as usize))
-            .copied()
-            .unwrap_or(false)
-    }
-
-    /// Returns the live symbol for an active character without mutating.
+    /// Returns an active-character control sequence without mutation.
     #[must_use]
     pub fn get_active(&self, ch: char) -> Option<SymbolId> {
         let mut encoded = [0; 4];
-        self.get_key(
-            ControlSequenceKind::ActiveCharacter,
-            ch.encode_utf8(&mut encoded),
-        )
-    }
-
-    fn get_key(&self, kind: ControlSequenceKind, name: &str) -> Option<SymbolId> {
-        if let Some(slot) = self
-            .frozen_lookup
-            .get_prefixed(kind_tag(kind), name.as_bytes())
-        {
-            let stored = *self.symbols.get(slot as usize)?;
-            let identity = self.identities.identity_at(slot)?;
-            return Some(SymbolId::from_identity(identity, stored));
-        }
-        let hash = content_hash(kind, name);
-        self.index.get(&hash).and_then(|candidates| {
-            candidates.iter().copied().find(|&symbol| {
-                self.contains_id(symbol)
-                    && self.kind_id(symbol) == kind
-                    && self.resolve_id(symbol) == name
+        let name = ch.encode_utf8(&mut encoded);
+        (!self.retired)
+            .then(|| {
+                self.lookup_slot(
+                    EntryKind::ControlSequence(ControlSequenceKind::ActiveCharacter),
+                    name,
+                )
             })
-        })
+            .flatten()
+            .map(|slot| SymbolId::new(self.epoch, slot))
     }
 
-    /// Resolves a live symbol to its interned string.
+    /// Returns a retained token spelling without mutation.
     #[must_use]
-    pub fn resolve_id(&self, symbol: SymbolId) -> &str {
-        assert!(self.contains_id(symbol), "symbol is not live");
-        let index = symbol.raw() as usize;
-        assert!(index < self.spans.len(), "symbol is not live");
-        let (start, len) = self.spans[index];
-        let start = start as usize;
-        let end = start + len as usize;
-        assert!(end <= self.arena.len(), "symbol span exceeds arena");
+    pub fn get_spelling(&self, spelling: &str) -> Option<SpellingId> {
+        (!self.retired)
+            .then(|| self.lookup_slot(EntryKind::Spelling, spelling))
+            .flatten()
+            .map(|slot| SpellingId::new(self.epoch, slot))
+    }
 
+    fn lookup_slot(&self, kind: EntryKind, value: &str) -> Option<u32> {
+        self.index
+            .get(&lookup_hash(kind, value))?
+            .iter()
+            .copied()
+            .find(|&slot| {
+                self.entries
+                    .get(slot as usize)
+                    .is_some_and(|entry| entry.kind == kind && self.entry_text(entry) == value)
+            })
+    }
+
+    /// Resolves a session-qualified control-sequence identity.
+    pub fn resolve_id(&self, id: SymbolId) -> Result<&str, InternerAccessError> {
+        let entry = self.admit_symbol(id)?;
+        Ok(self.entry_text(entry))
+    }
+
+    /// Returns the namespace of a session-qualified control-sequence identity.
+    pub fn kind_id(&self, id: SymbolId) -> Result<ControlSequenceKind, InternerAccessError> {
+        match self.admit_symbol(id)?.kind {
+            EntryKind::ControlSequence(kind) => Ok(kind),
+            EntryKind::Spelling => unreachable!("symbol admission checked the entry kind"),
+        }
+    }
+
+    /// Resolves a session-qualified non-control-sequence spelling.
+    pub fn resolve_spelling(&self, id: SpellingId) -> Result<&str, InternerAccessError> {
+        let entry = self.admit_spelling(id)?;
+        Ok(self.entry_text(entry))
+    }
+
+    /// Returns whether this exact identity is admitted by the epoch.
+    #[must_use]
+    pub fn contains_id(&self, id: SymbolId) -> bool {
+        self.admit_symbol(id).is_ok()
+    }
+
+    /// Returns whether this exact spelling identity is admitted by the epoch.
+    #[must_use]
+    pub fn contains_spelling(&self, id: SpellingId) -> bool {
+        self.admit_spelling(id).is_ok()
+    }
+
+    fn admit_symbol(&self, id: SymbolId) -> Result<&Entry, InternerAccessError> {
+        self.admit_epoch(id.epoch)?;
+        self.entries
+            .get(id.raw() as usize)
+            .filter(|entry| matches!(entry.kind, EntryKind::ControlSequence(_)))
+            .ok_or(InternerAccessError::InvalidIdentity)
+    }
+
+    fn admit_spelling(&self, id: SpellingId) -> Result<&Entry, InternerAccessError> {
+        self.admit_epoch(id.epoch)?;
+        self.entries
+            .get(id.raw() as usize)
+            .filter(|entry| entry.kind == EntryKind::Spelling)
+            .ok_or(InternerAccessError::InvalidIdentity)
+    }
+
+    fn admit_epoch(&self, epoch: SessionEpochKey) -> Result<(), InternerAccessError> {
+        if self.retired {
+            Err(InternerAccessError::RetiredEpoch)
+        } else if epoch != self.epoch {
+            Err(InternerAccessError::ForeignEpoch)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn entry_text<'a>(&'a self, entry: &Entry) -> &'a str {
+        let start = entry.start as usize;
+        let end = start + entry.len as usize;
         &self.arena[start..end]
     }
 
-    /// Returns the TeX control-sequence namespace of a live symbol.
-    #[must_use]
-    pub fn kind_id(&self, symbol: SymbolId) -> ControlSequenceKind {
-        assert!(self.contains_id(symbol), "symbol is not live");
-        let index = symbol.raw() as usize;
-        assert!(index < self.kinds.len(), "symbol is not live");
-        self.kinds[index]
+    /// Admits a compact coordinate already owned by this session aggregate.
+    pub(crate) fn resolve_local(&self, symbol: Symbol) -> Option<&str> {
+        if self.retired {
+            return None;
+        }
+        let entry = self.entries.get(symbol.raw() as usize)?;
+        matches!(entry.kind, EntryKind::ControlSequence(_)).then(|| self.entry_text(entry))
     }
 
-    /// Returns whether `symbol` names a currently-live interner slot.
-    #[must_use]
-    pub fn contains_id(&self, symbol: SymbolId) -> bool {
-        self.identities.contains(symbol.identity())
-            && self.symbols.get(symbol.raw() as usize).copied() == Some(symbol.symbol())
+    /// Returns the session-qualified identity for a local compact coordinate.
+    pub(crate) fn qualify_local(&self, symbol: Symbol) -> Option<SymbolId> {
+        self.resolve_local(symbol)
+            .map(|_| SymbolId::new(self.epoch, symbol.raw()))
     }
 
-    /// Resolves a compact stored symbol key through the owning interner.
-    #[must_use]
-    pub fn resolve(&self, symbol: Symbol) -> &str {
-        self.resolve_id(self.resolve_stored(symbol).expect("symbol is not live"))
+    /// Returns the control-sequence identity at a dense epoch slot.
+    pub(crate) fn symbol_at_slot(&self, slot: u32) -> Option<SymbolId> {
+        self.qualify_local(Symbol(slot))
     }
 
-    #[must_use]
-    pub fn kind(&self, symbol: Symbol) -> ControlSequenceKind {
-        self.kind_id(self.resolve_stored(symbol).expect("symbol is not live"))
-    }
-
-    /// Returns the canonical semantic atom for a live compact symbol.
-    pub(crate) fn semantic_atom(&self, symbol: Symbol) -> Option<u64> {
-        let id = self.resolve_stored(symbol)?;
-        self.semantic_atoms.get(id.raw() as usize).copied()
-    }
-
-    /// Returns both cached semantic projections with one compact-key lookup.
-    ///
-    /// Token-list freezing visits control-sequence tokens proportionally to
-    /// list length. Keeping this spelling-derived value beside the interner's
-    /// existing atom makes each visit O(1), instead of allocating and hashing
-    /// the same control-sequence name again for every token occurrence.
-    pub(crate) fn semantic_atom_identity(&self, symbol: Symbol) -> Option<(u64, ContentHash)> {
-        let id = self.resolve_stored(symbol)?;
-        let slot = id.raw() as usize;
-        Some((
-            *self.semantic_atoms.get(slot)?,
-            *self.semantic_identities.get(slot)?,
-        ))
-    }
-
-    #[must_use]
-    pub fn contains(&self, symbol: Symbol) -> bool {
-        self.resolve_stored(symbol).is_some()
-    }
-
-    pub(crate) fn resolve_stored(&self, symbol: Symbol) -> Option<SymbolId> {
-        let slot = *self.symbol_slots.get(&symbol)?;
-        self.identities
-            .identity_at(slot)
-            .map(|identity| SymbolId::from_identity(identity, symbol))
-    }
-
-    /// Returns the compact nonreused key stored at a live dense interner slot.
-    pub(crate) fn symbol_at_slot(&self, slot: u32) -> Option<Symbol> {
-        self.symbols.get(slot as usize).copied()
-    }
-
-    /// Returns the number of live interned names.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.spans.len()
+    /// Returns whether this identity owns a TeX82 §259 hash entry.
+    pub(crate) fn is_hash_entry(&self, id: SymbolId) -> Result<bool, InternerAccessError> {
+        Ok(self.admit_symbol(id)?.hash_entry)
     }
 
     /// Returns TeX82's occupied `hash` entries for the §1334 usage summary.
-    ///
-    /// TeX's active, control-symbol, and null control sequences have fixed
-    /// `eqtb` slots (§222), while §356 sends control words of every length to
-    /// §259's hash. Occupancy is retained separately from the runtime name
-    /// kind because TeX never removes a hash entry (§256).
     #[must_use]
     pub(crate) fn multiletter_len(&self) -> usize {
-        self.hash_entries
-            .iter()
-            .filter(|&&occupied| occupied)
-            .count()
+        if self.retired {
+            return 0;
+        }
+        self.entries.iter().filter(|entry| entry.hash_entry).count()
     }
 
-    /// Returns whether there are no live interned names.
+    /// Returns the number of live slots, including retained spellings.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns whether the live epoch contains no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.spans.is_empty()
+        self.entries.is_empty()
     }
 
-    /// Takes a rollback watermark for `Universe`-owned aggregate snapshots.
-    #[must_use]
-    pub(crate) fn watermark(&self) -> InternerMark {
-        debug_assert_eq!(self.symbols.len(), self.spans.len());
-        debug_assert_eq!(self.kinds.len(), self.spans.len());
-        debug_assert_eq!(self.hash_entries.len(), self.spans.len());
-        debug_assert_eq!(self.semantic_atoms.len(), self.spans.len());
-        debug_assert_eq!(self.semantic_identities.len(), self.spans.len());
-        InternerMark {
-            spans: u32_len(self.spans.len(), "interner spans exceed u32 entries"),
-            bytes: u32_len(self.arena.len(), "interner arena exceeds u32 bytes"),
-            identities: self.identities.watermark(),
-        }
+    /// Returns the canonical semantic atom for a local control-sequence slot.
+    pub(crate) fn semantic_atom(&self, symbol: Symbol) -> Option<u64> {
+        let entry = self.entries.get(symbol.raw() as usize)?;
+        matches!(entry.kind, EntryKind::ControlSequence(_)).then_some(entry.semantic_atom)
     }
 
-    /// Truncates to a previously-taken aggregate snapshot watermark.
-    pub(crate) fn truncate_to(&mut self, mark: InternerMark) {
-        let spans = mark.spans as usize;
-        let bytes = mark.bytes as usize;
-        assert!(
-            spans <= self.spans.len(),
-            "interner mark has too many spans"
-        );
-        assert!(
-            bytes <= self.arena.len(),
-            "interner mark has too many bytes"
-        );
-        assert!(
-            self.spans[..spans]
-                .last()
-                .map_or(mark.bytes == 0, |&(start, len)| start + len == mark.bytes),
-            "interner mark does not point to a span boundary"
-        );
-
-        self.identities
-            .rollback(mark.identities)
-            .expect("interner mark is not an ancestor");
-        self.spans.truncate(spans);
-        self.kinds.truncate(spans);
-        self.hash_entries.truncate(spans);
-        self.semantic_atoms.truncate(spans);
-        self.semantic_identities.truncate(spans);
-        for symbol in self.symbols.drain(spans..) {
-            self.symbol_slots.remove(&symbol);
-        }
-        self.arena.truncate(bytes);
-        debug_assert_eq!(self.kinds.len(), self.spans.len());
-        debug_assert_eq!(self.hash_entries.len(), self.spans.len());
-        debug_assert_eq!(self.semantic_atoms.len(), self.spans.len());
-        debug_assert_eq!(self.semantic_identities.len(), self.spans.len());
-        debug_assert_eq!(self.symbols.len(), self.spans.len());
-        self.index_dirty = true;
+    /// Returns cached semantic projections for a local control-sequence slot.
+    pub(crate) fn semantic_atom_identity(&self, symbol: Symbol) -> Option<(u64, ContentHash)> {
+        let entry = self.entries.get(symbol.raw() as usize)?;
+        matches!(entry.kind, EntryKind::ControlSequence(_))
+            .then_some((entry.semantic_atom, entry.semantic_identity))
     }
 
-    fn rebuild_index(&mut self) {
-        self.index.clear();
-        for raw in self.frozen_len as usize..self.spans.len() {
-            let stored = self.symbols[raw];
-            let identity = self
-                .identities
-                .identity_at(u32_len(raw, "interner spans exceed u32 entries"))
-                .expect("live interner slot should have identity");
-            let symbol = SymbolId::from_identity(identity, stored);
-            let hash = content_hash(self.kind_id(symbol), self.resolve_id(symbol));
-            self.index.entry(hash).or_default().push(symbol);
+    /// Retires every name, spelling, lookup entry, and retained byte together.
+    ///
+    /// Capacity is not retained because retirement is the daemon memory bound,
+    /// not a rollback or scratch-pool operation.
+    pub fn retire(&mut self) -> Result<InternerRetirement, InternerError> {
+        if self.retired {
+            return Err(InternerError::RetiredEpoch);
         }
-        self.index_dirty = false;
+        let usage = self.usage;
+        self.arena = String::new();
+        self.entries = Vec::new();
+        self.index = AHashMap::new();
+        self.usage = InternerUsage::default();
+        self.retired = true;
+        Ok(InternerRetirement { usage })
     }
 }
 
-const fn kind_tag(kind: ControlSequenceKind) -> u8 {
+fn check_budget(
+    resource: InternerResource,
+    limit: u32,
+    attempted: u64,
+) -> Result<(), InternerError> {
+    if attempted > u64::from(limit) {
+        Err(InternerError::BudgetExceeded {
+            resource,
+            limit,
+            attempted,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_character_kind(kind: ControlSequenceKind, name: &str) {
+    if matches!(kind, ControlSequenceKind::ActiveCharacter) {
+        let mut chars = name.chars();
+        assert!(
+            chars.next().is_some() && chars.next().is_none(),
+            "active control sequence must contain exactly one character"
+        );
+    }
+}
+
+const fn entry_tag(kind: EntryKind) -> u8 {
     match kind {
-        ControlSequenceKind::Null
-        | ControlSequenceKind::SingleCharacter
-        | ControlSequenceKind::Named => 0,
-        ControlSequenceKind::ActiveCharacter => 1,
-        ControlSequenceKind::Internal => 2,
+        EntryKind::ControlSequence(ControlSequenceKind::Null)
+        | EntryKind::ControlSequence(ControlSequenceKind::SingleCharacter)
+        | EntryKind::ControlSequence(ControlSequenceKind::Named) => 0,
+        EntryKind::ControlSequence(ControlSequenceKind::ActiveCharacter) => 1,
+        EntryKind::ControlSequence(ControlSequenceKind::Internal) => 2,
+        EntryKind::Spelling => 3,
     }
 }
 
 pub(crate) fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {
+    semantic_atom_for_entry(EntryKind::ControlSequence(kind), name)
+}
+
+fn semantic_atom_for_entry(kind: EntryKind, value: &str) -> u64 {
     let mut hasher = StateHasher::new(0x6373_5f61_746f_6d31);
-    hasher.u8(match kind {
-        ControlSequenceKind::Null
-        | ControlSequenceKind::SingleCharacter
-        | ControlSequenceKind::Named => 0,
-        ControlSequenceKind::ActiveCharacter => 1,
-        ControlSequenceKind::Internal => 2,
-    });
-    hasher.str(name);
+    hasher.u8(entry_tag(kind));
+    hasher.str(value);
     hasher.finish()
 }
 
-fn semantic_identity(kind: ControlSequenceKind, name: &str) -> ContentHash {
-    let mut bytes = Vec::with_capacity(name.len() + 1);
-    bytes.push(kind_tag(kind));
-    bytes.extend_from_slice(name.as_bytes());
-    crate::state_hash::semantic_identity_bytes(b"umber-control-sequence-v1", &bytes)
+fn semantic_identity(kind: EntryKind, value: &str) -> ContentHash {
+    let mut bytes = Vec::with_capacity(value.len() + 1);
+    bytes.push(entry_tag(kind));
+    bytes.extend_from_slice(value.as_bytes());
+    crate::state_hash::semantic_identity_bytes(b"umber-session-interner-v1", &bytes)
 }
 
 /// Selects TeX82 §222's fixed control-sequence namespace from its spelling.
@@ -630,81 +669,13 @@ pub(crate) fn named_kind(name: &str) -> ControlSequenceKind {
     }
 }
 
-#[derive(Debug, Default)]
-struct GlobalSymbols {
-    names: AHashMap<u64, Vec<GlobalSymbolEntry>>,
-    len: u32,
-}
-
-#[derive(Debug)]
-struct GlobalSymbolEntry {
-    kind: ControlSequenceKind,
-    name: String,
-    symbol: Symbol,
-}
-
-fn global_symbol(kind: ControlSequenceKind, name: &str) -> Result<Symbol, InternerError> {
-    let symbols = GLOBAL_SYMBOLS.get_or_init(|| RwLock::new(GlobalSymbols::default()));
-    let hash = content_hash(kind, name);
-    if let Some(symbol) = symbols
-        .read()
-        .expect("global symbol registry lock poisoned")
-        .names
-        .get(&hash)
-        .and_then(|entries| {
-            entries
-                .iter()
-                .find(|entry| entry.kind == kind && entry.name == name)
-                .map(|entry| entry.symbol)
-        })
-    {
-        return Ok(symbol);
-    }
-
-    let mut symbols = symbols
-        .write()
-        .expect("global symbol registry lock poisoned");
-    if let Some(symbol) = symbols.names.get(&hash).and_then(|entries| {
-        entries
-            .iter()
-            .find(|entry| entry.kind == kind && entry.name == name)
-            .map(|entry| entry.symbol)
-    }) {
-        return Ok(symbol);
-    }
-    let symbol = symbol_for_global_len(symbols.len)?;
-    symbols.len += 1;
-    symbols
-        .names
-        .entry(hash)
-        .or_default()
-        .push(GlobalSymbolEntry {
-            kind,
-            name: name.to_owned(),
-            symbol,
-        });
-    Ok(symbol)
-}
-
-fn symbol_for_global_len(len: u32) -> Result<Symbol, InternerError> {
-    (len < SYMBOL_CAPACITY)
-        .then_some(Symbol(len))
-        .ok_or(InternerError::TooManySymbols)
-}
-
-fn content_hash(kind: ControlSequenceKind, name: &str) -> u64 {
+fn lookup_hash(kind: EntryKind, value: &str) -> u64 {
     let mut hasher = AHasher::default();
     kind.hash(&mut hasher);
-    name.hash(&mut hasher);
+    value.hash(&mut hasher);
     hasher.finish()
 }
 
-fn u32_len(value: usize, message: &str) -> u32 {
-    match u32::try_from(value) {
-        Ok(value) => value,
-        Err(_) => panic!("{message}"),
-    }
-}
-
 #[cfg(test)]
+#[path = "interner/tests.rs"]
 mod tests;
