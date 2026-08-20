@@ -349,7 +349,7 @@ impl<'a, G> CommandProcessor<'a, G> {
     ///
     /// This must run before operand scanning because restricted scanners can
     /// report recoverable errors of their own before the command completes.
-    pub fn print_command_trace(&mut self, command: PrintCommand) {
+    pub fn print_command_trace(&mut self, command: PrintCommand<G>) {
         // TeX82 §537 prints an input file's opening before reading its
         // first line; §§299/1030 trace only after the resulting command
         // has been fetched. Host-neutral input queues the framing transition,
@@ -364,7 +364,7 @@ impl<'a, G> CommandProcessor<'a, G> {
     }
 
     /// Prints e-TeX §28.498's merged `\unless` conditional command.
-    pub(crate) fn print_unless_command_trace(&mut self, operand: PrintCommand) {
+    pub(crate) fn print_unless_command_trace(&mut self, operand: PrintCommand<G>) {
         let conditional_suffix = self.command_trace_conditional_suffix(operand.meaning());
         let mut command = String::new();
         crate::processor::expand::append_print_esc_text(&self.state, "unless", &mut command);

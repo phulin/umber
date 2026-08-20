@@ -2551,14 +2551,14 @@ fn page_mark(primitive: ExpandablePrimitive) -> PageMark {
     }
 }
 
-pub(crate) fn string_text(state: &tex_state::CommandContext<'_>, token: Token) -> String {
+pub(crate) fn string_text<G>(state: &tex_state::CommandContext<'_, G>, token: Token) -> String {
     let mut text = String::new();
     append_string_text(state, token, &mut text);
     text
 }
 
-pub(crate) fn append_string_text(
-    state: &tex_state::CommandContext<'_>,
+pub(crate) fn append_string_text<G>(
+    state: &tex_state::CommandContext<'_, G>,
     token: Token,
     text: &mut String,
 ) {
@@ -2581,8 +2581,8 @@ pub(crate) fn append_string_text(
 /// This is distinct from §263's `sprint_cs` spelling used by `\show` before
 /// `=` and from §213's `\string`: named control words and `null_cs` append a
 /// space, while active characters and single nonletter control symbols do not.
-pub(crate) fn print_cs_text(
-    state: &mut tex_state::CommandContext<'_>,
+pub(crate) fn print_cs_text<G>(
+    state: &mut tex_state::CommandContext<'_, G>,
     symbol: tex_state::interner::Symbol,
 ) -> String {
     let mut text = String::new();
@@ -2590,8 +2590,8 @@ pub(crate) fn print_cs_text(
     text
 }
 
-pub(crate) fn append_print_cs_text(
-    state: &mut tex_state::CommandContext<'_>,
+pub(crate) fn append_print_cs_text<G>(
+    state: &mut tex_state::CommandContext<'_, G>,
     symbol: tex_state::interner::Symbol,
     text: &mut String,
 ) {
@@ -2620,8 +2620,8 @@ pub(crate) fn append_print_cs_text(
     }
 }
 
-pub(crate) fn meaning_text(
-    state: &mut tex_state::CommandContext<'_>,
+pub(crate) fn meaning_text<G>(
+    state: &mut tex_state::CommandContext<'_, G>,
     command: &CurrentCommand<G>,
 ) -> String {
     let mut text = String::new();
@@ -2634,8 +2634,8 @@ pub(crate) fn meaning_text(
 /// `\meaning` builds a string, but `\show` prints a macro or mark token list
 /// directly. Character tokens in the latter path therefore observe the live
 /// `\newlinechar` instead of always using their context-free `^^` spelling.
-pub(crate) fn selector_meaning_text(
-    state: &mut tex_state::CommandContext<'_>,
+pub(crate) fn selector_meaning_text<G>(
+    state: &mut tex_state::CommandContext<'_, G>,
     command: &CurrentCommand<G>,
 ) -> String {
     let mut text = String::new();
@@ -2643,13 +2643,44 @@ pub(crate) fn selector_meaning_text(
     text
 }
 
-fn append_meaning_text_with_token_selector(
-    state: &mut tex_state::CommandContext<'_>,
+fn append_meaning_text_with_token_selector<G>(
+    state: &mut tex_state::CommandContext<'_, G>,
     command: &CurrentCommand<G>,
     active_selector: bool,
     text: &mut String,
 ) {
-    match command.meaning() {
+    if let ResolvedMeaning::Macro { flags, definition } = command.meaning() {
+        let macro_meaning = state.macro_definition(definition).meaning();
+        if flags.contains(MeaningFlags::PROTECTED) {
+            append_print_esc_text(state, "protected", text);
+        }
+        if flags.contains(MeaningFlags::LONG) {
+            append_print_esc_text(state, "long", text);
+        }
+        if flags.contains(MeaningFlags::OUTER) {
+            append_print_esc_text(state, "outer", text);
+        }
+        if flags.bits()
+            & (MeaningFlags::PROTECTED | MeaningFlags::LONG | MeaningFlags::OUTER).bits()
+            != 0
+        {
+            text.push(' ');
+        }
+        text.push_str("macro:");
+        append_meaning_token_list(state, macro_meaning.parameter_text(), active_selector, text);
+        text.push_str("->");
+        append_meaning_token_list(
+            state,
+            macro_meaning.replacement_text(),
+            active_selector,
+            text,
+        );
+        return;
+    }
+    let ResolvedMeaning::Static(meaning) = command.meaning() else {
+        unreachable!("macro meanings returned above")
+    };
+    match meaning {
         Meaning::Undefined => text.push_str("undefined"),
         Meaning::Relax => append_print_esc_text(state, "relax", text),
         Meaning::CharToken { ch, cat } => append_character_command_text(ch, cat, text),
@@ -2694,37 +2725,6 @@ fn append_meaning_text_with_token_selector(
                 append_scaled_without_unit(size, text);
             }
         }
-        Meaning::Macro { flags, definition } => {
-            // `\\meaning` prints the definition, not a live macro-body input
-            // frame.  A completed macro call retires its activation and body,
-            // whereas the definition's parameter and replacement lists remain
-            // immutable state owned by the meaning.
-            let macro_meaning = state.macro_definition(definition).meaning();
-            if flags.contains(MeaningFlags::PROTECTED) {
-                append_print_esc_text(state, "protected", text);
-            }
-            if flags.contains(MeaningFlags::LONG) {
-                append_print_esc_text(state, "long", text);
-            }
-            if flags.contains(MeaningFlags::OUTER) {
-                append_print_esc_text(state, "outer", text);
-            }
-            if flags.bits()
-                & (MeaningFlags::PROTECTED | MeaningFlags::LONG | MeaningFlags::OUTER).bits()
-                != 0
-            {
-                text.push(' ');
-            }
-            text.push_str("macro:");
-            append_meaning_token_list(state, macro_meaning.parameter_text(), active_selector, text);
-            text.push_str("->");
-            append_meaning_token_list(
-                state,
-                macro_meaning.replacement_text(),
-                active_selector,
-                text,
-            );
-        }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate) => {
             append_print_esc_text(state, "outer", text);
             text.push_str(" endtemplate:");
@@ -2736,7 +2736,12 @@ fn append_meaning_text_with_token_selector(
             | ExpandablePrimitive::SplitFirstMark
             | ExpandablePrimitive::SplitBotMark),
         ) => {
-            append_meaning_control_sequence_text(state, command, command.meaning(), text);
+            append_meaning_control_sequence_text(
+                state,
+                command,
+                Meaning::ExpandablePrimitive(primitive),
+                text,
+            );
             text.push(':');
             let tokens = state.page_mark(page_mark(primitive));
             append_meaning_token_list(state, tokens, active_selector, text);
@@ -2768,12 +2773,12 @@ fn append_meaning_token_list<G>(
 /// so the delivered control-sequence identity remains available across the
 /// executor's transactional scan/apply seam.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PrintCommand {
-    meaning: Meaning,
+pub struct PrintCommand<G> {
+    meaning: ResolvedMeaning<G>,
     control_sequence: Option<tex_state::interner::Symbol>,
 }
 
-impl PrintCommand {
+impl<G> PrintCommand<G> {
     #[must_use]
     pub const fn from_current(command: &CurrentCommand<G>) -> Self {
         Self {
@@ -2783,7 +2788,7 @@ impl PrintCommand {
     }
 
     #[must_use]
-    pub(crate) const fn meaning(self) -> Meaning {
+    pub(crate) const fn meaning(self) -> ResolvedMeaning<G> {
         self.meaning
     }
 }
@@ -2796,39 +2801,46 @@ impl PrintCommand {
 /// a primitive prints the primitive, while aliases of character commands keep
 /// their character command class.
 #[must_use]
-pub fn print_cmd_chr_text(state: &tex_state::CommandContext<'_>, command: PrintCommand) -> String {
+pub fn print_cmd_chr_text<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    command: PrintCommand<G>,
+) -> String {
     let mut text = String::new();
     append_print_cmd_chr_text(state, command, &mut text);
     text
 }
 
 /// Appends TeX82 §298's `print_cmd_chr` representation to caller-owned text.
-pub fn append_print_cmd_chr_text(
-    state: &tex_state::CommandContext<'_>,
-    command: PrintCommand,
+pub fn append_print_cmd_chr_text<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    command: PrintCommand<G>,
     text: &mut String,
 ) {
-    match command.meaning {
+    if let ResolvedMeaning::Macro { flags, .. } = command.meaning {
+        if flags.contains(MeaningFlags::PROTECTED) {
+            append_print_esc_text(state, "protected", text);
+        }
+        if flags.contains(MeaningFlags::LONG) {
+            append_print_esc_text(state, "long", text);
+        }
+        if flags.contains(MeaningFlags::OUTER) {
+            append_print_esc_text(state, "outer", text);
+        }
+        if flags.bits()
+            & (MeaningFlags::PROTECTED | MeaningFlags::LONG | MeaningFlags::OUTER).bits()
+            != 0
+        {
+            text.push(' ');
+        }
+        text.push_str("macro");
+        return;
+    }
+    let ResolvedMeaning::Static(meaning) = command.meaning else {
+        unreachable!("macro meanings returned above")
+    };
+    match meaning {
         Meaning::Undefined => text.push_str("undefined"),
         Meaning::Relax => append_print_esc_text(state, "relax", text),
-        Meaning::Macro { flags, .. } => {
-            if flags.contains(MeaningFlags::PROTECTED) {
-                append_print_esc_text(state, "protected", text);
-            }
-            if flags.contains(MeaningFlags::LONG) {
-                append_print_esc_text(state, "long", text);
-            }
-            if flags.contains(MeaningFlags::OUTER) {
-                append_print_esc_text(state, "outer", text);
-            }
-            if flags.bits()
-                & (MeaningFlags::PROTECTED | MeaningFlags::LONG | MeaningFlags::OUTER).bits()
-                != 0
-            {
-                text.push(' ');
-            }
-            text.push_str("macro");
-        }
         Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate) => {
             append_print_esc_text(state, "outer", text);
             text.push_str(" endtemplate");
@@ -2874,8 +2886,8 @@ pub fn append_print_cmd_chr_text(
     }
 }
 
-fn append_escaped_index(
-    state: &tex_state::CommandContext<'_>,
+fn append_escaped_index<G>(
+    state: &tex_state::CommandContext<'_, G>,
     name: &str,
     index: u16,
     text: &mut String,
@@ -2884,9 +2896,9 @@ fn append_escaped_index(
     write!(text, "{index}").expect("writing to String cannot fail");
 }
 
-fn append_print_command_control_sequence_text(
-    state: &tex_state::CommandContext<'_>,
-    command: PrintCommand,
+fn append_print_command_control_sequence_text<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    command: PrintCommand<G>,
     meaning: Meaning,
     text: &mut String,
 ) {
@@ -2900,8 +2912,8 @@ fn append_print_command_control_sequence_text(
     }
 }
 
-fn append_meaning_control_sequence_text(
-    state: &tex_state::CommandContext<'_>,
+fn append_meaning_control_sequence_text<G>(
+    state: &tex_state::CommandContext<'_, G>,
     command: &CurrentCommand<G>,
     meaning: Meaning,
     text: &mut String,
@@ -2979,14 +2991,18 @@ fn append_printable_character_text(ch: char, text: &mut String) {
 /// range, which is why the prefix is conditional rather than a hard-coded
 /// backslash.
 #[must_use]
-pub fn print_esc_text(state: &tex_state::CommandContext<'_>, name: &str) -> String {
+pub fn print_esc_text<G>(state: &tex_state::CommandContext<'_, G>, name: &str) -> String {
     let mut text = String::with_capacity(name.len() + 1);
     append_print_esc_text(state, name, &mut text);
     text
 }
 
 /// Appends TeX82 §63's `print_esc` representation.
-pub fn append_print_esc_text(state: &tex_state::CommandContext<'_>, name: &str, text: &mut String) {
+pub fn append_print_esc_text<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    name: &str,
+    text: &mut String,
+) {
     if let Ok(escape) = u8::try_from(state.untracked_int_param(IntParam::ESCAPE_CHAR)) {
         text.push(char::from(escape));
     }
@@ -2998,15 +3014,15 @@ pub fn append_print_esc_text(state: &tex_state::CommandContext<'_>, name: &str, 
 /// Diagnostics use this same renderer as `\meaning`; consequently Rust enum
 /// spellings cannot leak into ordinary terminal or transcript output.
 #[must_use]
-pub fn command_token_text(state: &mut tex_state::CommandContext<'_>, token: Token) -> String {
+pub fn command_token_text<G>(state: &mut tex_state::CommandContext<'_, G>, token: Token) -> String {
     let mut text = String::new();
     append_command_token_text(state, token, &mut text);
     text
 }
 
 /// Appends TeX82 §298's representation for a delivered token.
-pub fn append_command_token_text(
-    state: &mut tex_state::CommandContext<'_>,
+pub fn append_command_token_text<G>(
+    state: &mut tex_state::CommandContext<'_, G>,
     token: Token,
     text: &mut String,
 ) {
@@ -3092,8 +3108,8 @@ fn append_selector_token_list_text<G>(
 /// character and catcode table. The returned value owns no token-list handle,
 /// so it remains stable when a typed resource continuation resumes the
 /// enclosing command.
-pub(crate) fn token_slice_string_text(
-    state: &mut tex_state::CommandContext<'_>,
+pub(crate) fn token_slice_string_text<G>(
+    state: &mut tex_state::CommandContext<'_, G>,
     tokens: &[Token],
 ) -> String {
     let mut text = String::new();
@@ -3123,14 +3139,17 @@ pub(crate) fn stored_token_list_string_text<G>(
 /// TeX82's `show_token_list` representation used by `\\meaning` distinguishes
 /// a printed control word from following letter tokens with one space.  That
 /// delimiter belongs to the rendered definition, not to source input.
-pub(crate) fn token_list_token_text(state: &tex_state::CommandContext<'_>, token: Token) -> String {
+pub(crate) fn token_list_token_text<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    token: Token,
+) -> String {
     let mut text = String::new();
     append_token_list_token_text(state, token, &mut text);
     text
 }
 
-pub(crate) fn append_token_list_token_text(
-    state: &tex_state::CommandContext<'_>,
+pub(crate) fn append_token_list_token_text<G>(
+    state: &tex_state::CommandContext<'_, G>,
     token: Token,
     text: &mut String,
 ) {
