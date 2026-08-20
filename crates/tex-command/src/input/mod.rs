@@ -19,8 +19,8 @@ mod tests;
 pub(crate) use levels::SharedTokenBuffer;
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, PackedInputFrame, ReplayTrace,
-    RetirementBehavior, RootedBackedUpToken, SourceLevel, SourceOpenDepths, SourceRetirement,
-    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload, packed_token_frame,
+    RetirementBehavior, SourceLevel, SourceOpenDepths, SourceRetirement, StoredReplayReason,
+    TokenBehavior, TokenCursor, TokenPayload, packed_token_frame,
 };
 pub(crate) use lines::{ReducedSourceSpelling, SourceLineState};
 pub(crate) use source::{
@@ -53,8 +53,8 @@ pub use tokenizer::{
 /// Conditions, scanner policy, meanings, and host capabilities belong to
 /// other ownership classes.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct InputState {
-    pub(crate) levels: Vec<InputLevel>,
+pub(crate) struct InputState<G> {
+    pub(crate) levels: Vec<InputLevel<G>>,
     /// TeX82 §331's bottom terminal buffer after the startup line has been
     /// consumed. Umber retires that acquisition level before opening the root
     /// file, but §310 must still reach its `<*>` context after the last file
@@ -228,9 +228,9 @@ impl ContextHead {
 /// Versioned, allocation-independent projection of command input state.
 /// Runtime source, level, token-list, and provenance ids are deliberately
 /// translated to immutable content and stack position before hashing.
-pub(crate) fn tracked_input_projection(
-    input: &InputState,
-    state: &mut tex_state::CommandContext<'_>,
+pub(crate) fn tracked_input_projection<G>(
+    input: &InputState<G>,
+    state: &mut tex_state::CommandContext<'_, G>,
 ) -> Option<(u64, u64)> {
     let mut stack = ProjectionHasher::new(0x696e_7075_745f_0001);
     stack.bytes(
@@ -277,9 +277,9 @@ pub(crate) fn tracked_input_projection(
     Some((line.finish(), stack.finish()))
 }
 
-pub(crate) fn observe_immutable_source(
-    state: &mut tex_state::CommandContext<'_>,
-    source: &SourceLevel,
+pub(crate) fn observe_immutable_source<G>(
+    state: &mut tex_state::CommandContext<'_, G>,
+    source: &SourceLevel<G>,
 ) {
     let backing = source.cursor.current_backing();
     let record = tex_state::world::ContentHash::from_bytes(&backing.bytes);
@@ -309,7 +309,7 @@ pub(crate) fn observe_immutable_source(
     );
 }
 
-fn project_source(hash: &mut ProjectionHasher, source: &SourceLevel) {
+fn project_source<G>(hash: &mut ProjectionHasher, source: &SourceLevel<G>) {
     hash.bytes(&source.cursor.backing.bytes);
     hash.byte(source.cursor.backing.mode as u8);
     hash.bytes(
@@ -360,10 +360,10 @@ fn project_line(hash: &mut ProjectionHasher, cursor: &SourceCursor, line: &lines
     }
 }
 
-fn project_token_cursor(
+fn project_token_cursor<G>(
     hash: &mut ProjectionHasher,
-    cursor: &TokenCursor,
-    state: &tex_state::CommandContext<'_>,
+    cursor: &TokenCursor<G>,
+    state: &tex_state::CommandContext<'_, G>,
 ) -> Option<()> {
     hash.u64(u64::from(cursor.frame.position()));
     hash.byte(match cursor.retirement {
@@ -384,7 +384,7 @@ fn project_token_cursor(
     });
     if matches!(
         cursor.payload,
-        TokenPayload::MacroReplacement { .. } | TokenPayload::ArgumentRange { .. }
+        TokenPayload::MacroReplacement { .. } | TokenPayload::Argument { .. }
     ) {
         return None;
     }
@@ -394,17 +394,17 @@ fn project_token_cursor(
                 project_token(hash, chunk.word(index)?.token()?, state)?;
             }
         }
-        TokenPayload::MacroReplacement { .. } | TokenPayload::ArgumentRange { .. } => {
+        TokenPayload::MacroReplacement { .. } | TokenPayload::Argument { .. } => {
             unreachable!("packed macro payloads fail closed above")
         }
     }
     Some(())
 }
 
-fn project_token(
+fn project_token<G>(
     hash: &mut ProjectionHasher,
     token: tex_state::token::Token,
-    state: &tex_state::CommandContext<'_>,
+    state: &tex_state::CommandContext<'_, G>,
 ) -> Option<()> {
     use tex_state::token::Token;
     match token {
@@ -459,7 +459,7 @@ impl ProjectionHasher {
     }
 }
 
-impl InputState {
+impl<G> InputState<G> {
     /// tex.web §310's `show_context` display for the canonical input stack.
     ///
     /// The two-line pseudoprint arithmetic (§316--§318) and §310's own
@@ -469,10 +469,11 @@ impl InputState {
     /// stack in the engine projects onto the same renderer.
     pub(crate) fn output_open_context(
         &self,
-        stores: &tex_state::CommandContext<'_>,
-        parameters: &crate::macro_call::ParameterState,
+        stores: &tex_state::CommandContext<'_, G>,
+        parameters: &crate::macro_call::ParameterState<G>,
+        attempt: &crate::attempt::AttemptArena<G>,
     ) -> String {
-        self.render_context_for_levels(&self.levels, stores, parameters)
+        self.render_context_for_levels(&self.levels, stores, parameters, attempt)
     }
 
     /// Whether §312's first displayed level enters §314's unconditional
@@ -484,8 +485,9 @@ impl InputState {
     /// a blank separator before an ordinary token-list level.
     pub(crate) fn open_context_starts_with_print_ln(
         &self,
-        stores: &tex_state::CommandContext<'_>,
-        parameters: &crate::macro_call::ParameterState,
+        stores: &tex_state::CommandContext<'_, G>,
+        parameters: &crate::macro_call::ParameterState<G>,
+        attempt: &crate::attempt::AttemptArena<G>,
     ) -> bool {
         let widths = stores.error_context_widths();
         for (index, level) in self.levels.iter().enumerate().rev() {
@@ -501,8 +503,10 @@ impl InputState {
                     }
                 }
                 InputLevel::Tokens(tokens) => {
-                    if Self::token_context_level(stores, tokens, current, parameters, widths)
-                        .is_some()
+                    if Self::token_context_level(
+                        stores, tokens, current, parameters, attempt, widths,
+                    )
+                    .is_some()
                     {
                         // §314's backed-up family uses `print_nl` for both
                         // `<recently read>` and `<to be read again>`; every
@@ -519,9 +523,10 @@ impl InputState {
     /// source has completed its last line but has not yet left `input_stack`.
     pub(crate) fn output_retiring_source_context(
         &self,
-        retiring: &SourceLevel,
-        stores: &tex_state::CommandContext<'_>,
-        parameters: &crate::macro_call::ParameterState,
+        retiring: &SourceLevel<G>,
+        stores: &tex_state::CommandContext<'_, G>,
+        parameters: &crate::macro_call::ParameterState<G>,
+        attempt: &crate::attempt::AttemptArena<G>,
     ) -> String {
         let mut levels = self.levels.clone();
         if let Some(InputLevel::Source(source)) = levels.iter_mut().find(|level| {
@@ -532,13 +537,14 @@ impl InputState {
                 line.physical = line.physical.with_number(source.cursor.next_line_number);
             }
         }
-        self.render_context_for_levels(&levels, stores, parameters)
+        self.render_context_for_levels(&levels, stores, parameters, attempt)
     }
 
     pub(crate) fn output_close_context(
         &self,
-        stores: &tex_state::CommandContext<'_>,
-        parameters: &crate::macro_call::ParameterState,
+        stores: &tex_state::CommandContext<'_, G>,
+        parameters: &crate::macro_call::ParameterState<G>,
+        attempt: &crate::attempt::AttemptArena<G>,
     ) -> String {
         let output_index = self.levels.iter().position(|level| {
             matches!(
@@ -550,18 +556,19 @@ impl InputState {
             )
         });
         let levels = output_index.map_or(self.levels.as_slice(), |index| &self.levels[..index]);
-        self.render_context_for_levels(levels, stores, parameters)
+        self.render_context_for_levels(levels, stores, parameters, attempt)
     }
 
     fn render_context_for_levels(
         &self,
-        levels: &[InputLevel],
-        stores: &tex_state::CommandContext<'_>,
-        parameters: &crate::macro_call::ParameterState,
+        levels: &[InputLevel<G>],
+        stores: &tex_state::CommandContext<'_, G>,
+        parameters: &crate::macro_call::ParameterState<G>,
+        attempt: &crate::attempt::AttemptArena<G>,
     ) -> String {
         let widths = stores.error_context_widths();
         tex_state::print::render_error_context(
-            &self.error_context_levels_for(levels, stores, parameters, widths),
+            &self.error_context_levels_for(levels, stores, parameters, attempt, widths),
             widths,
             stores.untracked_int_param(tex_state::env::banks::IntParam::new(54)),
         )
@@ -575,9 +582,10 @@ impl InputState {
     /// traversing while nothing below an `\input`ed file is projected.
     fn error_context_levels_for(
         &self,
-        input_levels: &[InputLevel],
-        stores: &tex_state::CommandContext<'_>,
-        parameters: &crate::macro_call::ParameterState,
+        input_levels: &[InputLevel<G>],
+        stores: &tex_state::CommandContext<'_, G>,
+        parameters: &crate::macro_call::ParameterState<G>,
+        attempt: &crate::attempt::AttemptArena<G>,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Vec<tex_state::print::ErrorContextLevel> {
         let mut levels = Vec::new();
@@ -616,9 +624,9 @@ impl InputState {
                     }
                 }
                 InputLevel::Tokens(tokens) => {
-                    if let Some(rendered) =
-                        Self::token_context_level(stores, tokens, current, parameters, widths)
-                    {
+                    if let Some(rendered) = Self::token_context_level(
+                        stores, tokens, current, parameters, attempt, widths,
+                    ) {
                         levels.push(rendered);
                     }
                 }
@@ -651,7 +659,7 @@ impl InputState {
 
     /// §313's `<Print location of current line>` and `<Pseudoprint the line>`.
     fn source_context_level(
-        source: &SourceLevel,
+        source: &SourceLevel<G>,
         bottom_of_stack: bool,
         live_endlinechar: Option<char>,
         newlinechar: Option<char>,
@@ -839,53 +847,48 @@ impl InputState {
 
     /// §314's `<Print type of token list>` and §315's pseudoprint.
     fn token_context_level(
-        stores: &tex_state::CommandContext<'_>,
-        tokens: &TokenCursor,
+        stores: &tex_state::CommandContext<'_, G>,
+        tokens: &TokenCursor<G>,
         current: bool,
-        parameters: &crate::macro_call::ParameterState,
+        parameters: &crate::macro_call::ParameterState<G>,
+        attempt: &crate::attempt::AttemptArena<G>,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
-        fn payload_len(
-            _stores: &tex_state::CommandContext<'_>,
-            tokens: &TokenCursor,
-            _parameters: &crate::macro_call::ParameterState,
+        fn payload_len<G>(
+            _stores: &tex_state::CommandContext<'_, G>,
+            tokens: &TokenCursor<G>,
+            _parameters: &crate::macro_call::ParameterState<G>,
         ) -> usize {
             match &tokens.payload {
                 TokenPayload::Packed(chunk) => chunk.len(),
                 TokenPayload::MacroReplacement { len, .. } => *len as usize,
-                TokenPayload::ArgumentRange { range, .. } => {
-                    range.end().saturating_sub(range.start())
-                }
+                TokenPayload::Argument { len, .. } => *len as usize,
             }
         }
 
-        fn payload_token(
-            stores: &tex_state::CommandContext<'_>,
-            tokens: &TokenCursor,
+        fn payload_token<G>(
+            stores: &tex_state::CommandContext<'_, G>,
+            tokens: &TokenCursor<G>,
             index: usize,
-            parameters: &crate::macro_call::ParameterState,
+            _parameters: &crate::macro_call::ParameterState<G>,
+            attempt: &crate::attempt::AttemptArena<G>,
         ) -> Option<tex_state::token::Token> {
             match &tokens.payload {
                 TokenPayload::Packed(chunk) => chunk.word(index).map(|word| word.semantic_token()),
-                TokenPayload::MacroReplacement {
-                    admitted,
-                    definition,
-                    ..
-                } => {
-                    debug_assert_eq!(parameters.admitted_macro(*admitted), *definition);
-                    stores
-                        .macro_definition(*definition)
-                        .replacement_traced_word(index)
-                        .map(|word| word.semantic_token())
-                }
-                TokenPayload::ArgumentRange { arguments, range } => parameters
-                    .argument_word(*arguments, range.start().saturating_add(index))
-                    .map(|word| word.word().semantic_token()),
+                TokenPayload::MacroReplacement { definition, .. } => stores
+                    .definition(*definition)
+                    .replacement_text()
+                    .get(index)
+                    .map(|word| word.semantic_token()),
+                TokenPayload::Argument { list, .. } => attempt
+                    .token_word(*list, index)
+                    .ok()
+                    .map(|word| word.semantic_token()),
             }
         }
 
         fn render_token(
-            stores: &tex_state::CommandContext<'_>,
+            stores: &tex_state::CommandContext<'_, G>,
             token: tex_state::token::Token,
             raw: &mut String,
             rendered: &mut String,
@@ -899,7 +902,7 @@ impl InputState {
         }
 
         fn render_selector_text(
-            stores: &tex_state::CommandContext<'_>,
+            stores: &tex_state::CommandContext<'_, G>,
             text: &str,
             rendered: &mut String,
         ) {
@@ -911,12 +914,7 @@ impl InputState {
             let TokenBehavior::MacroBody(activation) = tokens.behavior else {
                 return None;
             };
-            let TokenPayload::MacroReplacement {
-                admitted,
-                definition,
-                ..
-            } = &tokens.payload
-            else {
+            let TokenPayload::MacroReplacement { definition, .. } = &tokens.payload else {
                 return None;
             };
             let activation = parameters
@@ -931,7 +929,6 @@ impl InputState {
                     stores,
                     tex_state::token::Token::Cs(activation.name),
                 ),
-                *admitted,
                 *definition,
             ))
         } else {
@@ -969,22 +966,21 @@ impl InputState {
             if before.is_complete() {
                 break;
             }
-            if let Some(token) = payload_token(stores, tokens, index, parameters) {
+            if let Some(token) = payload_token(stores, tokens, index, parameters, attempt) {
                 render_token(stores, token, &mut raw, &mut rendered);
                 before.prepend_str(&rendered);
             }
         }
-        if let Some((_, admitted, definition)) = &macro_context {
+        if let Some((_, definition)) = &macro_context {
             if !before.is_complete() {
                 before.prepend_str("->");
             }
-            debug_assert_eq!(parameters.admitted_macro(*admitted), *definition);
-            let owner = stores.macro_definition(*definition);
-            for index in (0..owner.parameter_len()).rev() {
+            let owner = stores.definition(*definition);
+            for index in (0..owner.parameter_text().len()).rev() {
                 if before.is_complete() {
                     break;
                 }
-                let token = owner.parameter_token(index)?;
+                let token = owner.parameter_text().get(index)?.semantic_token();
                 render_token(stores, token, &mut raw, &mut rendered);
                 before.prepend_str(&rendered);
             }
@@ -997,7 +993,7 @@ impl InputState {
             before.prepend_str(&rendered);
         }
         let (before, before_chars) = before.finish();
-        let label = if let Some((label, _, _)) = &macro_context {
+        let label = if let Some((label, _)) = &macro_context {
             label.clone()
         } else {
             match tokens.trace {
@@ -1043,7 +1039,7 @@ impl InputState {
             if after.is_complete() {
                 break;
             }
-            if let Some(token) = payload_token(stores, tokens, index, parameters) {
+            if let Some(token) = payload_token(stores, tokens, index, parameters, attempt) {
                 render_token(stores, token, &mut raw, &mut rendered);
                 after.push_str(&rendered);
             }

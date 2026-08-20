@@ -300,7 +300,8 @@ impl<G> CommandProcessor<'_, G> {
             // `loc=null`. A live token either in the v-template itself or in
             // an interposed token-list frame is the canonical interwoven-
             // preamble fatal path, not an internal Rust invariant failure.
-            if Self::next_stored_token(cursor, &self.command.parameters, &self.state).is_some() {
+            if Self::next_stored_token(cursor, &self.state, self.command.attempt.arena()).is_some()
+            {
                 break;
             }
             if cursor.identity() == v_level
@@ -752,13 +753,13 @@ impl<G> CommandProcessor<'_, G> {
     /// §407 guards its call with `if p<>backup_head`, so an empty list is the
     /// caller's business; pushing one here would observe a level that retires
     /// without ever delivering a token.
-    pub(crate) fn back_list(&mut self, tokens: Vec<crate::input::RootedBackedUpToken>) {
+    pub(crate) fn back_list(&mut self, tokens: Vec<BackedUpToken>) {
         debug_assert!(
             !tokens.is_empty(),
             "TeX82 §407 guards back_list with `p<>backup_head`"
         );
         let level = self.command.push_token_level(
-            TokenPayload::backed_up_rooted(tokens),
+            TokenPayload::backed_up(tokens),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -798,30 +799,17 @@ impl<G> CommandProcessor<'_, G> {
     /// that is available must have its own adjustment reversed, not one
     /// recomputed from the token.
     pub fn back_input_token(&mut self, spelling: TracedTokenWord) -> Result<(), CommandError> {
-        self.back_input_rooted_token(tex_state::token::RootedTracedTokenWord::unowned(spelling))
-    }
-
-    /// Rooted form of [`Self::back_input_token`] for synthesized or saved
-    /// arena-backed positions.
-    pub fn back_input_rooted_token(
-        &mut self,
-        spelling: tex_state::token::RootedTracedTokenWord,
-    ) -> Result<(), CommandError> {
         self.conserve_input_stack()?;
-        let word = spelling.word();
         self.command
             .alignment
             .undo_delivery(AlignmentDeliveryState::back_input_adjustment(
-                word.semantic_token(),
+                spelling.semantic_token(),
             ));
         let level = self.command.push_token_level(
-            TokenPayload::backed_up_rooted([crate::input::RootedBackedUpToken::new(
-                BackedUpToken {
-                    spelling: word,
-                    source_provenance: None,
-                },
-                spelling.into_parts().1,
-            )]),
+            TokenPayload::backed_up([BackedUpToken {
+                spelling,
+                source_provenance: None,
+            }]),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -837,7 +825,7 @@ impl<G> CommandProcessor<'_, G> {
             }));
             self.observe(CommandObservation::Recovery(RecoveryRecord {
                 kind: RecoveryKind::Backup,
-                tokens: vec![self.observed_token(word)],
+                tokens: vec![self.observed_token(spelling)],
             }));
         }
         Ok(())
@@ -852,18 +840,18 @@ impl<G> CommandProcessor<'_, G> {
     /// not push or observe another input level.
     pub fn back_input_aftergroup_tokens(
         &mut self,
-        tokens: impl IntoIterator<Item = tex_state::token::RootedTracedTokenWord>,
+        tokens: impl IntoIterator<Item = TracedTokenWord>,
     ) -> Result<(), CommandError> {
         let mut tokens = tokens.into_iter().collect::<Vec<_>>();
         let Some(last) = tokens.pop() else {
             return Ok(());
         };
-        self.back_input_rooted_token(last)?;
+        self.back_input_token(last)?;
         if self.profile().capabilities().supports_etex() {
             let prepended = tokens.len();
             for spelling in tokens.iter().rev() {
                 self.command.alignment.undo_delivery(
-                    AlignmentDeliveryState::back_input_adjustment(spelling.word().semantic_token()),
+                    AlignmentDeliveryState::back_input_adjustment(spelling.semantic_token()),
                 );
             }
             let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last_mut() else {
@@ -876,15 +864,9 @@ impl<G> CommandProcessor<'_, G> {
             );
             if cursor
                 .payload
-                .prepend_backed_up(tokens.into_iter().map(|spelling| {
-                    let (word, root) = spelling.into_parts();
-                    crate::input::RootedBackedUpToken::new(
-                        BackedUpToken {
-                            spelling: word,
-                            source_provenance: None,
-                        },
-                        root,
-                    )
+                .prepend_backed_up(tokens.into_iter().map(|spelling| BackedUpToken {
+                    spelling,
+                    source_provenance: None,
                 }))
                 .is_none()
             {
@@ -898,7 +880,7 @@ impl<G> CommandProcessor<'_, G> {
             }
         } else {
             for spelling in tokens.into_iter().rev() {
-                self.back_input_rooted_token(spelling)?;
+                self.back_input_token(spelling)?;
             }
         }
         Ok(())
@@ -1100,7 +1082,7 @@ impl<G> CommandProcessor<'_, G> {
 
         let output_has_remaining = match &self.command.input.levels[output_index] {
             InputLevel::Tokens(cursor) => {
-                Self::next_stored_token(cursor, &self.command.parameters, &self.state).is_some()
+                Self::next_stored_token(cursor, &self.state, self.command.attempt.arena()).is_some()
             }
             InputLevel::Source(_) => unreachable!("output replay is a token level"),
         };
@@ -1113,8 +1095,8 @@ impl<G> CommandProcessor<'_, G> {
                         if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
                             && Self::next_stored_token(
                                 cursor,
-                                &self.command.parameters,
                                 &self.state,
+                                self.command.attempt.arena(),
                             )
                             .is_none()
                 )
@@ -1136,8 +1118,12 @@ impl<G> CommandProcessor<'_, G> {
                             } =>
                     {
                         Some(
-                            Self::next_stored_token(cursor, &self.command.parameters, &self.state)
-                                .is_some(),
+                            Self::next_stored_token(
+                                cursor,
+                                &self.state,
+                                self.command.attempt.arena(),
+                            )
+                            .is_some(),
                         )
                     }
                     InputLevel::Source(_) | InputLevel::Tokens(_) => None,
@@ -1165,7 +1151,7 @@ impl<G> CommandProcessor<'_, G> {
             return Ok(());
         };
         if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-            || Self::next_stored_token(cursor, &self.command.parameters, &self.state).is_some()
+            || Self::next_stored_token(cursor, &self.state, self.command.attempt.arena()).is_some()
             || !matches!(
                 cursor
                     .payload
@@ -1390,13 +1376,10 @@ impl<G> CommandProcessor<'_, G> {
         self.undo_alignment_delivery(&command);
 
         let level = self.command.push_token_level(
-            TokenPayload::backed_up_rooted([crate::input::RootedBackedUpToken::new(
-                BackedUpToken {
-                    spelling: command.spelling(),
-                    source_provenance: command.source_provenance(),
-                },
-                command.origin_ref().clone(),
-            )]),
+            TokenPayload::backed_up([BackedUpToken {
+                spelling: command.spelling(),
+                source_provenance: command.source_provenance(),
+            }]),
             TokenBehavior::BackedUp(treatment),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -1787,7 +1770,7 @@ impl<G> CommandProcessor<'_, G> {
                         };
                         debug_assert_eq!(cursor.identity(), identity);
                         debug_assert_eq!(cursor.position(), index);
-                        Self::next_stored_token(cursor, &self.command.parameters, &self.state)
+                        Self::next_stored_token(cursor, &self.state, self.command.attempt.arena())
                     };
                     if let Some((spelling, position, behavior, source_provenance)) = next {
                         let InputLevel::Tokens(cursor) = self
@@ -2054,9 +2037,9 @@ impl<G> CommandProcessor<'_, G> {
     }
 
     fn next_stored_token(
-        cursor: &TokenCursor,
-        parameters: &crate::macro_call::ParameterState,
-        stores: &tex_state::CommandContext<'_>,
+        cursor: &TokenCursor<G>,
+        stores: &tex_state::CommandContext<'_, G>,
+        attempt: &crate::attempt::AttemptArena<G>,
     ) -> Option<(
         TracedTokenWord,
         u64,
@@ -2067,22 +2050,15 @@ impl<G> CommandProcessor<'_, G> {
         let position = u64::try_from(index).ok()?;
         let spelling = match &cursor.payload {
             TokenPayload::Packed(chunk) => chunk.get(index),
-            TokenPayload::MacroReplacement {
-                admitted,
-                definition,
-                ..
-            } => {
-                debug_assert_eq!(parameters.admitted_macro(*admitted), *definition);
-                stores
-                    .macro_definition(*definition)
-                    .replacement_traced_word(index)
-                    .map(|spelling| (spelling, None))
-            }
-            TokenPayload::ArgumentRange { arguments, range } => (index
-                < range.end().saturating_sub(range.start()))
-            .then(|| parameters.argument_traced_word(*arguments, range.start() + index))
-            .flatten()
-            .map(|spelling| (spelling, None)),
+            TokenPayload::MacroReplacement { definition, .. } => stores
+                .definition(*definition)
+                .replacement_text()
+                .get(index)
+                .map(|word| (TracedTokenWord::from_parts(*word, OriginId::UNKNOWN), None)),
+            TokenPayload::Argument { list, .. } => attempt
+                .token_word(*list, index)
+                .ok()
+                .map(|spelling| (spelling, None)),
         }?;
         Some((spelling.0, position, cursor.behavior.clone(), spelling.1))
     }
@@ -2117,8 +2093,8 @@ impl<G> CommandProcessor<'_, G> {
                     if drains_for_stack_conservation(&cursor.behavior)
                         && Self::next_stored_token(
                             cursor,
-                            &self.command.parameters,
                             &self.state,
+                            self.command.attempt.arena(),
                         )
                         .is_none() =>
                 {

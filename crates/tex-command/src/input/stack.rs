@@ -2,7 +2,7 @@
 #![allow(dead_code)] // consumed by the ordered raw-delivery implementation issues
 
 use crate::CommandState;
-use tex_state::ids::MacroDefinitionId;
+use tex_state::DefinitionId;
 use tex_state::token::OriginId;
 
 use crate::macro_call::{MacroActivationId, MacroArguments};
@@ -112,7 +112,7 @@ pub(crate) enum ParameterReplayError {
     },
 }
 
-impl CommandState {
+impl<G> CommandState<G> {
     /// TeX82 one-word nodes owned by live command input and argument buffers.
     ///
     /// An execution operation that allocates recursively must compose its
@@ -123,7 +123,23 @@ impl CommandState {
             .parameters
             .activations
             .iter()
-            .map(|activation| self.parameters.argument_words(activation.arguments).len())
+            .map(|activation| {
+                activation.arguments.record().map_or(0, |record| {
+                    self.attempt
+                        .arena()
+                        .arguments(record)
+                        .expect("live macro argument record")
+                        .iter()
+                        .map(|argument| {
+                            self.attempt
+                                .arena()
+                                .token_words(*argument)
+                                .expect("live macro argument list")
+                                .len()
+                        })
+                        .sum()
+                })
+            })
             .sum::<usize>();
         self.input.levels.iter().fold(arguments, |words, level| {
             let InputLevel::Tokens(cursor) = level else {
@@ -150,28 +166,30 @@ impl CommandState {
     pub(crate) fn push_macro_activation(
         &mut self,
         name: tex_state::interner::Symbol,
-        definition: MacroDefinitionId,
+        definition: DefinitionId<G>,
         arguments: MacroArguments,
         invocation: OriginId,
-        admitted: u32,
         replacement_len: usize,
     ) -> InputLevelId {
         let parameter_count = self
             .parameters
-            .argument_ranges(arguments)
-            .iter()
-            .filter(|range| range.is_some())
-            .count();
+            .attempt
+            .arena()
+            .arguments(arguments.record().expect("macro call allocated arguments"))
+            .expect("live macro argument record")
+            .len();
         let parameter_ptr = self
             .parameters
             .activations
             .iter()
             .map(|activation| {
-                self.parameters
-                    .argument_ranges(activation.arguments)
-                    .iter()
-                    .filter(|range| range.is_some())
-                    .count()
+                activation.arguments.record().map_or(0, |record| {
+                    self.attempt
+                        .arena()
+                        .arguments(record)
+                        .expect("live macro argument record")
+                        .len()
+                })
             })
             .sum::<usize>()
             .saturating_add(parameter_count);
@@ -179,10 +197,8 @@ impl CommandState {
         let activation = self
             .parameters
             .push_activation(name, definition, arguments, invocation);
-        debug_assert_eq!(self.parameters.admitted_macro(admitted), definition);
         self.push_token_level(
             TokenPayload::MacroReplacement {
-                admitted,
                 definition,
                 len: u32::try_from(replacement_len).expect("macro replacement exceeds u32"),
             },
@@ -194,7 +210,7 @@ impl CommandState {
 
     pub(crate) fn push_token_level(
         &mut self,
-        payload: TokenPayload,
+        payload: TokenPayload<G>,
         behavior: TokenBehavior,
         retirement: RetirementBehavior,
         trace: ReplayTrace,
@@ -272,22 +288,26 @@ impl CommandState {
             .iter()
             .find(|activation| activation.identity == owner)
             .ok_or(ParameterReplayError::MissingActivation(owner))?;
-        let range = self
-            .parameters
-            .argument_range(activation.arguments, slot)
+        let list = activation
+            .arguments
+            .record()
+            .and_then(|record| self.attempt.arena().argument(record, slot).ok().flatten())
             .ok_or(ParameterReplayError::MissingArgument {
                 activation: owner,
                 slot,
             })?;
-        if range.end() > self.parameters.argument_words(activation.arguments).len() {
-            return Err(ParameterReplayError::ArgumentRangeOutsideBuffer {
+        let len = self
+            .attempt
+            .arena()
+            .token_words(list)
+            .map_err(|_| ParameterReplayError::ArgumentRangeOutsideBuffer {
                 activation: owner,
                 slot,
-            });
-        }
-        let payload = TokenPayload::ArgumentRange {
-            arguments: activation.arguments,
-            range,
+            })?
+            .len();
+        let payload = TokenPayload::Argument {
+            list,
+            len: u32::try_from(len).expect("macro argument length exceeds u32"),
         };
         let identity = self.push_token_level(
             payload,
@@ -553,7 +573,7 @@ fn input_retirement_reason(behavior: &TokenBehavior, trace: &ReplayTrace) -> Inp
     }
 }
 
-pub(crate) fn input_level_identity(level: &InputLevel) -> InputLevelId {
+pub(crate) fn input_level_identity<G>(level: &InputLevel<G>) -> InputLevelId {
     match level {
         InputLevel::Source(level) => level.identity(),
         InputLevel::Tokens(level) => level.identity(),

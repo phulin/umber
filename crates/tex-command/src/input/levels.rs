@@ -1,15 +1,12 @@
 //! Dense source and token-list input-level ownership.
 #![allow(dead_code)] // consumed by the ordered raw-delivery implementation issues
 
-use smallvec::SmallVec;
-use tex_state::ids::MacroDefinitionId;
+use tex_state::DefinitionId;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
-use tex_state::provenance::OriginRef;
-use tex_state::token::{
-    OriginId, RootedTracedTokenBuffer, RootedTracedTokenWord, Token, TracedTokenWord,
-};
+use tex_state::token::{OriginId, Token, TracedTokenWord};
 
-use crate::macro_call::{MacroActivationId, MacroArgumentRange};
+use crate::attempt::AttemptTokenListId;
+use crate::macro_call::MacroActivationId;
 
 use super::{
     lines::SourceProvenance,
@@ -85,14 +82,14 @@ pub(crate) fn packed_token_frame(
 /// Conditions, caches, scanner policy, and paragraph transitions cannot be
 /// represented here. Both character profiles use this same level structure.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum InputLevel {
-    Source(SourceLevel),
-    Tokens(TokenCursor),
+pub(crate) enum InputLevel<G> {
+    Source(SourceLevel<G>),
+    Tokens(TokenCursor<G>),
 }
 
 /// One registered-source level and its exact delivery identity.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct SourceLevel {
+pub(crate) struct SourceLevel<G> {
     pub(crate) frame: PackedInputFrame,
     pub(crate) cursor: SourceCursor,
     /// tex.web §303's `name` classification for this level. A token-list
@@ -103,7 +100,7 @@ pub(crate) struct SourceLevel {
     pub(crate) retirement: SourceRetirement,
     /// e-TeX §24.362's once-only token list, pushed above this source when
     /// natural EOF is first observed and before `end_file_reading`.
-    pub(crate) every_eof: Option<tex_state::TracedTokenList>,
+    pub(crate) every_eof: Option<tex_state::TokenListId<G>>,
     /// e-TeX 2.6 [23.328]'s `grp_stack[in_open]`/`if_stack[in_open]`: the
     /// live group and conditional boundary ancestry recorded when this
     /// level's `begin_file_reading` ran, compared against the current stacks
@@ -113,7 +110,7 @@ pub(crate) struct SourceLevel {
     pub(crate) open_depths: Option<Box<SourceOpenDepths>>,
 }
 
-impl SourceLevel {
+impl<G> SourceLevel<G> {
     pub(crate) fn identity(&self) -> InputLevelId {
         InputLevelId(self.frame.identity())
     }
@@ -148,15 +145,15 @@ pub(crate) enum SourceRetirement {
 /// The four classified fields deliberately keep storage ownership, delivery
 /// semantics, end-of-level handling, and diagnostic explanation independent.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct TokenCursor {
-    pub(crate) payload: TokenPayload,
+pub(crate) struct TokenCursor<G> {
+    pub(crate) payload: TokenPayload<G>,
     pub(crate) behavior: TokenBehavior,
     pub(crate) retirement: RetirementBehavior,
     pub(crate) trace: ReplayTrace,
     pub(crate) frame: PackedInputFrame,
 }
 
-impl TokenCursor {
+impl<G> TokenCursor<G> {
     pub(crate) fn identity(&self) -> InputLevelId {
         InputLevelId(self.frame.identity())
     }
@@ -172,22 +169,18 @@ impl TokenCursor {
 // canonical live representation this cutover is specifically designed to
 // avoid. Compact coordinate-only variants are intentionally smaller.
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum TokenPayload {
+pub(crate) enum TokenPayload<G> {
     /// Chunk-owned packed words used by canonical source-adjacent replay,
     /// hooks, templates, insertions, and backup. The sparse roots are owned
     /// once by the chunk rather than by each input frame or delivered word.
     Packed(PackedTokenChunk),
     /// Replacement replay borrowed from one command-admitted macro chunk.
     MacroReplacement {
-        admitted: u32,
-        definition: MacroDefinitionId,
+        definition: DefinitionId<G>,
         len: u32,
     },
     /// One already materialized macro argument, replayed literally by range.
-    ArgumentRange {
-        arguments: crate::macro_call::MacroArguments,
-        range: MacroArgumentRange,
-    },
+    Argument { list: AttemptTokenListId, len: u32 },
 }
 
 /// One packed token chunk and the cold source coordinates needed only when a
@@ -195,11 +188,11 @@ pub(crate) enum TokenPayload {
 /// slice directly and does not clone this owner.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct PackedTokenChunk {
-    words: RootedTracedTokenBuffer,
+    words: Vec<TracedTokenWord>,
     /// Position-aligned only for backed-up physical-source tokens. Ordinary
     /// generated/stored runs canonically leave this empty: absence already
     /// denotes `None` and must not allocate a redundant per-position vector.
-    source_provenance: SmallVec<[Option<SourceProvenance>; 2]>,
+    source_provenance: Vec<Option<SourceProvenance>>,
     ownership: PackedTokenOwnership,
 }
 
@@ -224,8 +217,20 @@ impl PackedTokenChunk {
             .copied()
             .map(|token| TracedTokenWord::pack(token, origins.next().unwrap_or(OriginId::UNKNOWN)));
         Self {
-            words: RootedTracedTokenBuffer::with_archived_origins(words),
-            source_provenance: SmallVec::new(),
+            words: words.collect(),
+            source_provenance: Vec::new(),
+            ownership: PackedTokenOwnership::Stored,
+        }
+    }
+
+    fn from_durable(words: &[tex_state::token::TokenWord]) -> Self {
+        Self {
+            words: words
+                .iter()
+                .copied()
+                .map(|word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN))
+                .collect(),
+            source_provenance: Vec::new(),
             ownership: PackedTokenOwnership::Stored,
         }
     }
@@ -236,13 +241,13 @@ impl PackedTokenChunk {
 
     pub(crate) fn get(&self, index: usize) -> Option<(TracedTokenWord, Option<SourceProvenance>)> {
         Some((
-            self.words.get(index)?,
+            *self.words.get(index)?,
             self.source_provenance.get(index).copied().flatten(),
         ))
     }
 
     pub(crate) fn word(&self, index: usize) -> Option<TracedTokenWord> {
-        self.words.get(index)
+        self.words.get(index).copied()
     }
 
     fn backed_up_token(&self, index: usize) -> Option<BackedUpToken> {
@@ -250,13 +255,9 @@ impl PackedTokenChunk {
             return None;
         }
         Some(BackedUpToken {
-            spelling: self.words.get(index)?,
+            spelling: *self.words.get(index)?,
             source_provenance: self.source_provenance.get(index).copied().flatten(),
         })
-    }
-
-    pub(crate) fn rooted_words(&self) -> impl ExactSizeIterator<Item = RootedTracedTokenWord> + '_ {
-        self.words.rooted_words()
     }
 
     pub(crate) fn source_provenance(&self) -> &[Option<SourceProvenance>] {
@@ -270,39 +271,35 @@ impl PackedTokenChunk {
     }
 }
 
-impl TokenPayload {
+impl<G> TokenPayload<G> {
     #[cfg(test)]
     #[allow(non_snake_case)]
     pub(crate) fn Transient(buffer: SharedTokenBuffer) -> Self {
-        Self::transient_rooted(buffer.rooted_words())
+        Self::transient(buffer.words().iter().copied())
     }
 
     pub(crate) fn stored(tokens: &[Token], origins: impl IntoIterator<Item = OriginId>) -> Self {
         Self::Packed(PackedTokenChunk::from_stored(tokens, origins))
     }
 
+    pub(crate) fn durable(words: &[tex_state::token::TokenWord]) -> Self {
+        Self::Packed(PackedTokenChunk::from_durable(words))
+    }
+
     pub(crate) fn frame_len(&self) -> usize {
         match self {
             Self::Packed(chunk) => chunk.len(),
             Self::MacroReplacement { len, .. } => *len as usize,
-            Self::ArgumentRange { range, .. } => range.end().saturating_sub(range.start()),
+            Self::Argument { len, .. } => *len as usize,
         }
     }
 
     /// Packs one bounded insertion or scanner result directly into its sole
     /// live chunk representation.
     pub(crate) fn transient(tokens: impl IntoIterator<Item = TracedTokenWord>) -> Self {
-        Self::transient_rooted(tokens.into_iter().map(RootedTracedTokenWord::unowned))
-    }
-
-    /// Packs rooted transient positions without an intermediate shared owner.
-    pub(crate) fn transient_rooted(
-        tokens: impl IntoIterator<Item = RootedTracedTokenWord>,
-    ) -> Self {
-        let words = RootedTracedTokenBuffer::new(tokens);
         Self::Packed(PackedTokenChunk {
-            words,
-            source_provenance: SmallVec::new(),
+            words: tokens.into_iter().collect(),
+            source_provenance: Vec::new(),
             ownership: PackedTokenOwnership::Transient,
         })
     }
@@ -311,27 +308,24 @@ impl TokenPayload {
     /// forming a temporary strong owner for every position.
     pub(crate) fn transient_with_shared_origin(
         tokens: impl IntoIterator<Item = Token>,
-        origin: OriginRef,
+        origin: OriginId,
     ) -> Self {
-        let words = RootedTracedTokenBuffer::with_shared_origin(tokens, origin);
         Self::Packed(PackedTokenChunk {
-            words,
-            source_provenance: SmallVec::new(),
+            words: tokens
+                .into_iter()
+                .map(|token| TracedTokenWord::pack(token, origin))
+                .collect(),
+            source_provenance: Vec::new(),
             ownership: PackedTokenOwnership::Transient,
         })
     }
 
     /// Packs commands restored by `back_input` into the canonical chunk.
     pub(crate) fn backed_up(tokens: impl IntoIterator<Item = BackedUpToken>) -> Self {
-        Self::backed_up_rooted(tokens.into_iter().map(RootedBackedUpToken::unowned))
-    }
-
-    pub(crate) fn backed_up_rooted(tokens: impl IntoIterator<Item = RootedBackedUpToken>) -> Self {
-        let mut words = RootedTracedTokenBuffer::default();
-        let mut source_provenance = SmallVec::new();
+        let mut words = Vec::new();
+        let mut source_provenance = Vec::new();
         for token in tokens {
-            let (token, root) = token.into_parts();
-            words.push(RootedTracedTokenWord::from_word(token.spelling, root));
+            words.push(token.spelling);
             source_provenance.push(token.source_provenance);
         }
         Self::Packed(PackedTokenChunk {
@@ -344,7 +338,7 @@ impl TokenPayload {
     pub(crate) fn transient_words(&self) -> Option<&[TracedTokenWord]> {
         match self {
             Self::Packed(chunk) if chunk.ownership == PackedTokenOwnership::Transient => {
-                Some(chunk.words.words())
+                Some(&chunk.words)
             }
             _ => None,
         }
@@ -383,19 +377,18 @@ impl TokenPayload {
     /// resulting backed-up level contains multiple commands.
     pub(crate) fn prepend_backed_up(
         &mut self,
-        prefix: impl IntoIterator<Item = RootedBackedUpToken>,
+        prefix: impl IntoIterator<Item = BackedUpToken>,
     ) -> Option<()> {
         let mut prefix = prefix.into_iter().collect::<Vec<_>>();
         match self {
             Self::Packed(chunk) if chunk.ownership == PackedTokenOwnership::BackedUp => {
-                let mut words = RootedTracedTokenBuffer::default();
-                let mut provenance = SmallVec::new();
+                let mut words = Vec::new();
+                let mut provenance = Vec::new();
                 for token in prefix.drain(..) {
-                    let (token, root) = token.into_parts();
-                    words.push(RootedTracedTokenWord::from_word(token.spelling, root));
+                    words.push(token.spelling);
                     provenance.push(token.source_provenance);
                 }
-                words.append_buffer(std::mem::take(&mut chunk.words));
+                words.append(&mut chunk.words);
                 provenance.extend(chunk.source_provenance.drain(..));
                 chunk.words = words;
                 chunk.source_provenance = provenance;
@@ -423,12 +416,11 @@ impl TokenPayload {
 
     pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
         if let (Self::Packed(recorded), Self::Packed(live)) = (&*self, live) {
-            if recorded.words.words().len() != live.words.words().len()
+            if recorded.words.len() != live.words.len()
                 || recorded
                     .words
-                    .words()
                     .iter()
-                    .zip(live.words.words())
+                    .zip(&live.words)
                     .any(|(recorded, live)| recorded.token() != live.token())
                 || recorded.source_provenance != live.source_provenance
                 || recorded.ownership != live.ownership
@@ -447,34 +439,16 @@ impl TokenPayload {
 /// packed chunk before a level exists.
 #[cfg(test)]
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct SharedTokenBuffer(RootedTracedTokenBuffer);
+pub(crate) struct SharedTokenBuffer(Vec<TracedTokenWord>);
 
 #[cfg(test)]
 impl SharedTokenBuffer {
     pub(crate) fn new(tokens: impl AsRef<[TracedTokenWord]>) -> Self {
-        Self(RootedTracedTokenBuffer::new(
-            tokens
-                .as_ref()
-                .iter()
-                .copied()
-                .map(RootedTracedTokenWord::unowned),
-        ))
-    }
-
-    pub(crate) fn new_rooted(tokens: impl IntoIterator<Item = RootedTracedTokenWord>) -> Self {
-        Self(RootedTracedTokenBuffer::new(tokens))
-    }
-
-    pub(crate) fn from_rooted_buffer(buffer: RootedTracedTokenBuffer) -> Self {
-        Self(buffer)
+        Self(tokens.as_ref().to_vec())
     }
 
     pub(crate) fn words(&self) -> &[TracedTokenWord] {
-        self.0.words()
-    }
-
-    pub(crate) fn rooted_words(&self) -> impl ExactSizeIterator<Item = RootedTracedTokenWord> + '_ {
-        self.0.rooted_words()
+        &self.0
     }
 }
 
@@ -483,39 +457,6 @@ impl SharedTokenBuffer {
 pub(crate) struct BackedUpToken {
     pub(crate) spelling: TracedTokenWord,
     pub(crate) source_provenance: Option<SourceProvenance>,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct RootedBackedUpToken {
-    token: BackedUpToken,
-    root: OriginRef,
-}
-
-impl RootedBackedUpToken {
-    pub(crate) fn new(token: BackedUpToken, root: OriginRef) -> Self {
-        assert_eq!(token.spelling.origin(), root.id());
-        Self { token, root }
-    }
-
-    pub(crate) fn unowned(token: BackedUpToken) -> Self {
-        let rooted = RootedTracedTokenWord::unowned(token.spelling);
-        Self {
-            token,
-            root: rooted.into_parts().1,
-        }
-    }
-
-    pub(crate) const fn token(&self) -> BackedUpToken {
-        self.token
-    }
-
-    pub(crate) fn origin_ref(&self) -> &OriginRef {
-        &self.root
-    }
-
-    pub(crate) fn into_parts(self) -> (BackedUpToken, OriginRef) {
-        (self.token, self.root)
-    }
 }
 
 /// Semantic treatment applied while a token level delivers its payload.

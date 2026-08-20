@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tex_state::CommandContext;
-use tex_state::input::TracedTokenList;
 
 use crate::AlignmentRecord;
 use crate::conditionals::ConditionStack;
@@ -61,8 +60,8 @@ pub struct CommandState<G> {
     /// profile. Unlike the profile, this is job configuration and is not part
     /// of portable format identity.
     pub(crate) engine_semantics: CommandEngineSemantics,
-    pub(crate) input: InputState,
-    pub(crate) parameters: ParameterState,
+    pub(crate) input: InputState<G>,
+    pub(crate) parameters: ParameterState<G>,
     pub(crate) scanner: ScannerState,
     pub(crate) conditions: ConditionStack,
     pub(crate) alignment: AlignmentDeliveryState,
@@ -103,7 +102,7 @@ pub struct CommandState<G> {
     /// outermost collector is resumed first and naturally re-enters the
     /// nested collector beneath it. Each entry owns only its accumulated
     /// rooted words, scanner scope, and exact failed current command.
-    pub(crate) pending_scan_toks: Vec<crate::scan_toks::PendingScanToks>,
+    pub(crate) pending_scan_toks: Vec<crate::scan_toks::PendingScanToks<G>>,
     /// Expandable current commands whose host-dependent expansion suspended.
     /// Nested expansion unwinds inner-to-outer and appends at each layer, so
     /// popping resumes the outermost exact delivery first without redelivery.
@@ -609,7 +608,8 @@ impl<G> CommandState<G> {
     /// releases the command processor borrow.
     #[must_use]
     pub fn output_open_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
-        self.input.output_open_context(stores, &self.parameters)
+        self.input
+            .output_open_context(stores, &self.parameters, self.attempt.arena())
     }
 
     /// Retains TeX82 §331's bottom terminal buffer for §310 after the
@@ -630,16 +630,20 @@ impl<G> CommandState<G> {
         stores: &tex_state::CommandContext<'_, G>,
     ) -> bool {
         self.input
-            .open_context_starts_with_print_ln(stores, &self.parameters)
+            .open_context_starts_with_print_ln(stores, &self.parameters, self.attempt.arena())
     }
 
     pub(crate) fn output_retiring_source_context(
         &self,
-        source: &crate::input::SourceLevel,
+        source: &crate::input::SourceLevel<G>,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> String {
-        self.input
-            .output_retiring_source_context(source, stores, &self.parameters)
+        self.input.output_retiring_source_context(
+            source,
+            stores,
+            &self.parameters,
+            self.attempt.arena(),
+        )
     }
 
     /// TeX82 §§1026/1028's context after the selected output list ends.
@@ -650,7 +654,8 @@ impl<G> CommandState<G> {
     /// exactly as it would after §1026's `end_token_list`.
     #[must_use]
     pub fn output_close_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
-        self.input.output_close_context(stores, &self.parameters)
+        self.input
+            .output_close_context(stores, &self.parameters, self.attempt.arena())
     }
 
     /// Whether TeX82 §1370's artificial deferred-write input is live.
@@ -673,7 +678,7 @@ impl<G> CommandState<G> {
     pub fn push_discretionary_episode(
         &mut self,
         stores: &tex_state::CommandContext<'_, G>,
-        tokens: TracedTokenList,
+        tokens: tex_state::TokenListId<G>,
     ) -> CommandReplayEpisode {
         self.push_stored_episode(
             stores,
@@ -690,7 +695,7 @@ impl<G> CommandState<G> {
     pub fn push_output_replay_episode(
         &mut self,
         stores: &tex_state::CommandContext<'_, G>,
-        tokens: TracedTokenList,
+        tokens: tex_state::TokenListId<G>,
     ) -> CommandReplayEpisode {
         self.push_stored_episode(stores, tokens, crate::input::StoredReplayReason::Write)
     }
@@ -698,13 +703,12 @@ impl<G> CommandState<G> {
     fn push_stored_episode(
         &mut self,
         stores: &tex_state::CommandContext<'_, G>,
-        tokens: TracedTokenList,
+        tokens: tex_state::TokenListId<G>,
         reason: StoredReplayReason,
     ) -> CommandReplayEpisode {
-        let words = stores.tokens(tokens.token_list());
-        let origins = stores.origin_list(tokens.origin_ref());
+        let words = stores.token_list(tokens);
         let identity = self.push_token_level(
-            TokenPayload::stored(&words, origins.iter()),
+            TokenPayload::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -782,7 +786,7 @@ impl<G> CommandState<G> {
     pub fn push_everypar(
         &mut self,
         stores: &tex_state::CommandContext<'_, G>,
-        tokens: TracedTokenList,
+        tokens: tex_state::TokenListId<G>,
     ) {
         self.push_named_token_list(stores, tokens, StoredReplayReason::EveryPar);
     }
@@ -793,7 +797,7 @@ impl<G> CommandState<G> {
     pub fn push_everymath(
         &mut self,
         stores: &tex_state::CommandContext<'_, G>,
-        tokens: TracedTokenList,
+        tokens: tex_state::TokenListId<G>,
         display: bool,
     ) {
         self.push_named_token_list(
@@ -812,7 +816,7 @@ impl<G> CommandState<G> {
     pub fn push_everybox(
         &mut self,
         stores: &tex_state::CommandContext<'_, G>,
-        tokens: TracedTokenList,
+        tokens: tex_state::TokenListId<G>,
         horizontal: bool,
     ) {
         self.push_named_token_list(
@@ -833,7 +837,7 @@ impl<G> CommandState<G> {
     pub fn push_everycr(
         &mut self,
         stores: &tex_state::CommandContext<'_, G>,
-        tokens: TracedTokenList,
+        tokens: tex_state::TokenListId<G>,
     ) {
         self.push_named_token_list(stores, tokens, StoredReplayReason::EveryCr);
     }
@@ -845,7 +849,7 @@ impl<G> CommandState<G> {
     pub fn push_everyjob(
         &mut self,
         stores: &tex_state::CommandContext<'_, G>,
-        tokens: TracedTokenList,
+        tokens: tex_state::TokenListId<G>,
     ) {
         self.push_named_token_list(stores, tokens, StoredReplayReason::EveryJob);
     }
@@ -859,20 +863,17 @@ impl<G> CommandState<G> {
     fn push_named_token_list(
         &mut self,
         stores: &tex_state::CommandContext<'_, G>,
-        tokens: TracedTokenList,
+        tokens: tex_state::TokenListId<G>,
         reason: StoredReplayReason,
     ) {
-        let token_root = tokens.token_ref();
-        let words = stores.tokens(token_root.id());
-        let origins = stores.origin_list(tokens.origin_ref());
+        let words = stores.token_list(tokens);
         let level = self.push_token_level(
-            TokenPayload::stored(&words, origins.iter()),
+            TokenPayload::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
         );
-        self.named_token_list_pushes
-            .push((level, reason, token_root));
+        self.named_token_list_pushes.push((level, reason, tokens));
     }
 
     /// Takes the pushes of executor-requested named token lists, in order.
@@ -1426,7 +1427,7 @@ impl<G> CommandState<G> {
     /// proof remains for direct structural request tests that have no token
     /// store capability.
     fn prove_endv_input_shape(&self, v_level: InputLevelId) -> Result<(), AlignmentLifecycleError> {
-        let retained_v_template = |level: &InputLevel| {
+        let retained_v_template = |level: &InputLevel<G>| {
             matches!(level,
                 InputLevel::Tokens(cursor)
                     if cursor.identity() == v_level
@@ -1737,7 +1738,7 @@ impl<G> CommandState<G> {
     pub(crate) fn open_scantokens(
         &mut self,
         registration: SourceRegistration,
-        every_eof: Option<TracedTokenList>,
+        every_eof: Option<tex_state::TokenListId<G>>,
         numeric_name: u8,
     ) -> Result<InputLevelId, SourceRegistrationError> {
         assert!(matches!(numeric_name, 18 | 19));
@@ -1769,10 +1770,9 @@ impl<G> CommandState<G> {
         if matches!(level.name_class, SourceNameClass::Scantokens(_)) {
             level.cursor.install_scantokens_eof_context_line();
         }
-        let words = stores.tokens(every_eof.token_list());
-        let origins = stores.origin_list(every_eof.origin_ref());
+        let words = stores.token_list(every_eof);
         Some(self.push_token_level(
-            TokenPayload::stored(&words, origins.iter()),
+            TokenPayload::durable(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::EveryEof),
@@ -1789,7 +1789,7 @@ impl<G> CommandState<G> {
         registered: RegisteredSource,
         name_class: SourceNameClass,
         retirement: crate::input::SourceRetirement,
-        every_eof: Option<TracedTokenList>,
+        every_eof: Option<tex_state::TokenListId<G>>,
     ) -> InputLevelId {
         // TeX82 §321 checks `input_ptr` before `push_input` increments it.
         self.usage.record_input_push(self.input.levels.len());
@@ -1898,19 +1898,13 @@ impl<G> CommandState<G> {
     fn push_alignment_template(
         &mut self,
         stores: &tex_state::CommandContext<'_, G>,
-        template: TracedTokenList,
+        template: tex_state::TokenListId<G>,
         behavior: TokenBehavior,
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> InputLevelId {
-        let words = stores.tokens(template.token_list());
-        let origins = stores.origin_list(template.origin_ref());
-        self.push_token_level(
-            TokenPayload::stored(&words, origins.iter()),
-            behavior,
-            retirement,
-            trace,
-        )
+        let words = stores.token_list(template);
+        self.push_token_level(TokenPayload::durable(words), behavior, retirement, trace)
     }
 
     /// Splits and normalizes the next physical line on the active source.
@@ -2214,7 +2208,7 @@ impl<G> CommandState<G> {
     }
 }
 
-fn source_buffer_line(level: &InputLevel) -> Option<(usize, bool)> {
+fn source_buffer_line<G>(level: &InputLevel<G>) -> Option<(usize, bool)> {
     let InputLevel::Source(source) = level else {
         return None;
     };

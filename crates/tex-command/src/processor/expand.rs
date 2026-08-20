@@ -1328,10 +1328,7 @@ impl<G> CommandProcessor<'_, G> {
                 let Some(frozen) = self.state.primitive_token(name) else {
                     return Ok(());
                 };
-                self.back_input_rooted_token(tex_state::token::RootedTracedTokenWord::new(
-                    frozen,
-                    target.origin_ref().clone(),
-                ))
+                self.back_input_token(TracedTokenWord::pack(frozen, target.origin()))
             }
             Meaning::ExpandablePrimitive(
                 primitive @ (ExpandablePrimitive::TopMark
@@ -2382,13 +2379,10 @@ impl<G> CommandProcessor<'_, G> {
         self.conserve_input_stack()?;
         self.undo_alignment_delivery(&command);
         let level = self.command.push_token_level(
-            TokenPayload::backed_up_rooted([crate::input::RootedBackedUpToken::new(
-                BackedUpToken {
-                    spelling: command.spelling(),
-                    source_provenance: command.source_provenance(),
-                },
-                command.origin_ref().clone(),
-            )]),
+            TokenPayload::backed_up([BackedUpToken {
+                spelling: command.spelling(),
+                source_provenance: command.source_provenance(),
+            }]),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -2423,31 +2417,17 @@ impl<G> CommandProcessor<'_, G> {
     pub(crate) fn push_macro_activation(
         &mut self,
         name: tex_state::interner::Symbol,
-        definition: MacroDefinitionId,
+        definition: tex_state::DefinitionId<G>,
         call_site: OriginId,
         arguments: MacroArguments,
-        admitted: u32,
     ) -> InputLevelId {
-        debug_assert_eq!(self.command.parameters.admitted_macro(admitted), definition);
-        let definition_view = self.state.macro_definition(definition);
-        let definition_origin = definition_view.definition_origin();
+        let definition_view = self.state.definition(definition);
         let parent = self.command.parameters.parent_invocation();
-        let definition_operand = definition_view.observation_operand() as u64;
-        let replacement_len = definition_view.replacement_len();
-        let invocation = self.state.macro_invocation_origin_from_nonowning_operand(
-            definition_operand,
-            call_site,
-            definition_origin,
-            parent,
-        );
-        self.command.push_macro_activation(
-            name,
-            definition,
-            arguments,
-            invocation,
-            admitted,
-            replacement_len,
-        )
+        let replacement_len = definition_view.replacement_text().len();
+        let invocation = call_site;
+        let _ = parent;
+        self.command
+            .push_macro_activation(name, definition, arguments, invocation, replacement_len)
     }
 }
 
