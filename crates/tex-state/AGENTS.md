@@ -40,7 +40,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/env/banks.rs`: Dense fixed-size bank codecs, parameter ids, and typed
   bank access helpers. Primitive spellings are owned by `tex-command`'s
   catalogue, not repeated here.
-- `src/env/box_bank.rs`: Dense-and-paged box slots combining raw semantic projections, direct `NodeListRef` ownership, and journal-owned assignment/coalescing state.
+- `src/env/box_bank.rs`: Dense-and-paged box-slot semantics and journal-owned assignment/coalescing behavior; its removed list-storage dependency is a compiler-guided destination for the final node arenas.
 - `src/env/group.rs`: Group stack, aftergroup/afterassignment handling, group mismatch types, final-value restoration receipts, and environment snapshot logic.
 - `src/env/overflow.rs`: Sparse e-TeX overflow register banks for high register numbers.
 - `src/env/raw.rs`: Restore-only raw environment writes, semantic word iteration, shadow verification, and raw word helpers.
@@ -55,42 +55,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/format_container/tests.rs`: Focused frozen-container header, directory, checksum-coverage, fingerprint, and geometry tests.
 - `src/frozen_lookup.rs`: Versioned portable literal bucket/index codecs used to encode and validate cold format structures; decoded token lookup tables own no runtime liveness.
 - `src/frozen_lookup/tests.rs`: Deterministic generation, lookup equivalence, and malformed literal-table validation tests.
-- `src/glue.rs`: Copy-only glue ids and immutable glue values; payload reads are admitted by the aggregate runtime-value registry.
-- `src/hot_core/arena.rs`: Generic append-only typed region arena with
-  compact namespace/generation coordinates, accepted sealed chunk bases,
-  candidate-local overlays, suffix rollback, and reusable chunk slots.
-- `src/hot_core/arena/layout.rs`: Fixed-width typed coordinates, spans,
-  reservations, rollback marks, validation errors, and logical/retained
-  accounting values for the region arena.
-- `src/hot_core/arena/value_region.rs`: Heterogeneous token, macro, glue, and
-  provenance columns sharing one rollback-owned region lifecycle and explicit
-  canonical sealed-region root sets.
-- `src/hot_core/arena/value_region/store.rs`: Concrete runtime token-list,
-  macro, glue, and provenance row facade with copy-only coordinates, atomic
-  composite publication, counted region roots, and admitted borrowed views.
-- `src/hot_core/arena/value_region/store/storage.rs`: Fallible whole-bundle
-  reservation and one-time admitted slice resolution for concrete regions.
-- `src/hot_core/arena/value_region/store/registry.rs`: Persistent live
-  token/macro/glue/origin-list candidate, append-only identity tables, dense
-  coordinate maps, fixed rollback marks, incremental region publication, and
-  cold forks that share sealed regions while copying only the private active
-  suffix.
+- `src/glue.rs`: Storage-independent immutable TeX glue values.
 - `src/hot_core/journal.rs`: Inline-small first-write inverse records, strictly
   nested marks, exact rollback, and parent-epoch transfer over typed mutable
   targets.
-- `src/hot_core/layout.rs`: Canonical
-  32-bit token words, compact source coordinates, chunk-owned token spans,
-  fixed 40-byte input frames, exact TeX input-kind values, and focused layout,
-  generation-rejection, and warmed traversal controls.
-- `src/packed_input.rs`: Narrow borrow-safe runtime seam through which the
-  command input machine uses the canonical 40-byte frame layout without
-  exposing arena ownership, reservations, or runtime coordinates.
 - `src/hot_core/mod.rs`: Private HotCore storage module boundary; command
   semantics remain outside this substrate.
-- `src/hot_core/snapshot.rs`: Storage-only
-  HotCore aggregate, 152-byte runtime snapshots, atomic restore preflight,
-  accepted-base lifecycle, exact-growth controls, and warmed aggregate plateau
-  coverage.
 - `src/hot_core/stack.rs`: Copy-only compact
   stacks with 32-bit marks, inline common storage, spill reuse, accounting, and
   bounded-cycle controls.
@@ -98,13 +68,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   inline-small dense mutable banks, typed namespace/generation coordinates,
   first-write journal integration, stale rejection, nested rollback, and
   plateau controls.
-- `src/hot_core_benchmark.rs`: Testing-feature scalar facade for the standalone
-  HotCore snapshot latency and allocation gates; live runtime coordinates stay
-  crate-private.
 - `src/hyphenation.rs`: Hyphenation pattern trie and exception table implementing Liang-style position lookup.
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.
-- `src/ids.rs`: Opaque ids for token lists, live origin-list projections, macros, glue, fonts, snapshots, and borrow-scoped compact node-payload coordinates.
+- `src/ids.rs`: Opaque snapshot and font handles retained outside the deleted runtime-value ownership substrate.
 - `src/input.rs`: Snapshot-ready lexer/input stack summaries with copy-only token-list ids, macro replay sites and argument slots, source ids, and generic checkpoint future-state comparison.
 - `src/input/tests.rs`: Value and snapshot-isolation tests for frozen input
   summaries and source payloads.
@@ -113,16 +80,12 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/journal.rs`: Append-only journal records, markers, undo entries, copy-only token/macro/glue old/new sidecars, and rollback/group replay support.
 - `src/journal/tests.rs`: Unit tests for journal positions, markers, entry traversal, and truncation.
 - `src/lib.rs`: Public module declarations and re-exports forming the `tex-state` API surface.
-- `src/macro_store.rs`: Copy-only macro-definition ids, allocation-free parameter programs, semantic meanings, detached provenance DTOs, and borrowed registry views for replay.
+- `src/macro_definition.rs`: Storage-independent allocation-free macro parameter programs retained for the replacement definition arena.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
 - `src/meaning.rs`: TeX meaning representation, primitive enums, flags, and packed raw meaning encode/decode logic.
 - `src/meaning/tests.rs`: Unit tests for meaning round trips, flag packing, and primitive encoding.
 - `src/memo.rs`: Opaque schema-versioned detached memo envelopes, handle-free transition/effect/result DTOs, and aggregate token/glue/macro/node/font import APIs.
 - `src/memo/tests.rs`: Cold/fork/rollback Cross-Universe memo import, provenance stripping, corruption, bounds, kind, and semantic round-trip tests.
-- `src/measurement.rs` and `src/measurement/hot_core.rs`: `profiling-stats`
-  process-local allocation-owner, loaded-format restoration-work, TeX82
-  diagnostic-projection reuse/loss, and current main-control structural
-  counters used by dedicated profiling builds.
 - `profiling-allocator/`: isolated profiling-only `GlobalAlloc` forwarding
   shim used by executable profiling builds to attribute allocation calls and
   requested bytes to nested hot-core owner scopes.
@@ -135,19 +98,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
   construction and packed episodes; freeze derives direct-child reachability
   before publishing one immutable graph.
 - `src/node_arena/copy.rs`: Test-only compact-copy and child-patch machinery retained for node-storage measurement coverage; production freeze does not copy immutable child payloads.
-- `src/node_arena/measurement.rs`: `profiling-stats` compact-column and peak-storage accounting.
-- `src/node_arena/measurement/tests.rs`: Coherence, divergent-maximum, nested-payload, and concurrent peak-measurement tests.
 - `src/node_arena/mutation.rs`: Test-only shape-preserving compact-row replacement support for compact-copy measurement coverage.
-- `src/node_arena/owned.rs`: Direct `NodeListRef` ownership, consuming builder freeze, private borrow-scoped span resolution, exact weak candidate reuse, canonical empty ownership, and retained-byte accounting.
-- `src/node_arena/owned/tests.rs`: Nested readback and allocation-independent
-  semantic identity controls for direct node-list ownership.
 - `src/node_arena/schema.rs`: Exhaustive allocation-free logical node descriptors, typed handle policies, origins, and ordered child traversal.
 - `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
 - `src/node_arena/storage.rs`: Canonical node words, aligned provenance plus copy-only token/glue coordinate sidecars, and immutable payload encoding.
 - `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.
 - `src/node_arena/view.rs`: Zero-allocation node references, list spans, raw tag predicates, character runs, and iterators.
 - `src/page.rs`: Snapshot-owned page-builder state with copy-only last-glue and scalar/class mark coordinates, page dimensions/integers, contribution/current-page queues, and fire-up records.
-- `src/patch_domain.rs`: Private-revision aggregate allocation ownership, exact single-operation marks, explicit root-set transfer, and focused lifecycle controls; it contains no per-value liveness marker.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with copy-only token coordinates in catalog/page/form collections, deterministic object allocation, snapshots, suffix transfer, and committed-page ledger.
 - `src/pdf/action.rs`: Typed, checkpointed PDF action model carrying copy-only token coordinates shared by catalog, link, and outline scanners.
 - `src/pdf/annotation.rs`: Checkpointed general-annotation reservations with copy-only token coordinates, running dimension specs, and logical/open-link records.
@@ -161,11 +118,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/print.rs`: tex.web §54's print `selector`, §§57--65's print primitives, §73's `print_err`, and §82's `error` report channel.
 - `src/print/error_context.rs`: tex.web §§310--318's `show_context` two-line pseudoprint, bounded eager before/after projections captured at the live input seam, §314's token-list labels, and §310's `\errorcontextlines` elision, shared by every input-stack owner.
 - `src/print/tests.rs`: Unit tests for context widths, selector routing, help routing, and error-report completion.
-- `src/provenance.rs`: Structural origin-record authority, copy-only
-  `OriginListRef` facade and borrowed aggregate views, packed
-  macro-invocation records with cold root materialization, demand policy,
-  explicit provenance budgets, and record retry leases. Exact list entries
-  live only in the aggregate runtime value region.
+- `src/provenance.rs`: Storage-independent provenance demand, budget, source,
+  invocation, insertion, synthesis, related-location, and origin-record values;
+  live storage and ownership are deliberately absent pending the final arenas.
 - `src/provenance/tests.rs`: Structural record sharing, packed-key, allocation,
   readback, retry, fork, list-region budget, and rollback provenance controls.
 - `src/pure_memo.rs`: Optional entry/byte-bounded pure-query caches for pretolerance, page-breaking, and shipout results, bounded eviction telemetry, explicit cache release, and stable output-provenance recipes.
@@ -184,14 +139,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/source_fragments/layout_index.rs`: Fragment-and-offset index for logarithmic current/deleted piece resolution across repeated views.
 - `src/source_fragments/tests.rs`: Fragment range, deletion, fork-liveness, anchor, allocator, snapshot, and line-index cache tests.
 - `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots and replay convergence checks.
-- `src/stores.rs`: Internal aggregate store tuple that coordinates interner,
-  env, token, provenance, glue, font, input, and rollback/shipout scope state;
-  node lifetimes remain entirely in the structural `NodeListRef` fields of
-  those aggregates, while the derived TeX82 memory projection survives
-  unchanged operation boundaries and follows canonical root mutations. Its
-  direct-operation admission/commit advances the environment first-write
-  epoch and node watermark without creating an aggregate snapshot.
-- `src/stores/handles.rs`: Store-boundary admission checks for symbols, token, provenance, glue, font, macro, and node coordinates.
+- `src/stores.rs`: Retained aggregate semantic-state behavior and TeX82 memory
+  projection. References to deleted token, definition, glue, provenance, node,
+  snapshot, and private-revision storage are intentional compiler-guided
+  destinations for the final lifetime owners.
 - `src/stores/low_memory.rs`: Compact TeX variable-size free-ring and rover projection.
 - `src/stores/exact_identity.rs`: Commutative current-cell accumulator and constant-size rollback image for canonical identities of non-default environment cells.
 - `src/stores/node_semantic.rs`: Canonical node encoding and bottom-up semantic-identity composition at aggregate freeze.
@@ -216,7 +167,6 @@ All production mutation of live TeX state should pass through `Universe` or simi
   the sparse owner set once; they never clone it per token before deduplication.
 - `src/token/tests.rs`: Unit tests for token constructors, catcodes, parameter tokens, and display/debug behavior.
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
-- `src/token_store.rs`: Copy-only token-list ids, reusable scanner scratch, semantic-identity framing, and borrowed registry views.
 - `src/stores.rs`: Also owns the unified runtime-value registry and published
   region-root set; checkpoints and private-operation rollback restore published
   roots before truncating registry suffixes.

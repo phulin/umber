@@ -65,27 +65,20 @@ mod frozen_lookup;
 pub mod glue;
 #[allow(dead_code)] // Storage substrate is consumed as HotCore families migrate.
 pub(crate) mod hot_core;
-#[cfg(any(test, feature = "testing"))]
-pub mod hot_core_benchmark;
 pub mod hyphenation;
 pub(crate) mod identity;
 pub mod ids;
 pub mod input;
 pub mod interner;
 pub(crate) mod journal;
-pub mod macro_store;
+pub mod macro_definition;
 pub mod math;
 pub mod meaning;
-#[cfg(feature = "profiling")]
-pub mod measurement;
 pub mod memo;
 pub mod node;
 pub mod node_arena;
 pub mod node_sequence;
-#[doc(hidden)]
-pub mod packed_input;
 pub mod page;
-mod patch_domain;
 mod pdf;
 pub mod print;
 pub mod provenance;
@@ -100,7 +93,6 @@ pub(crate) mod state_hash;
 mod stores;
 pub mod token;
 pub mod token_show;
-pub mod token_store;
 mod universe;
 
 pub use pdf::{
@@ -170,11 +162,10 @@ pub use source_fragments::{
 };
 pub use stores::{FontParameterError, GroupFrame, GroupKind, GroupMismatch, PrepareMagDiagnostic};
 pub use universe::{
-    BoxBuildTransaction, BoxDimension, DirectOperationMark, EngineBoundaryHasher, FormatError,
-    GenerationForkError, GenerationSubstrate, GeometryObservation, InputOpenContext,
-    InputOpenState, InputReadState, InteractionMode, ParagraphShapeLine, PenaltyArrayKind,
-    PreparedPageSuffix, PrivateRevisionAcceptanceError, ReplayProbeTransaction, ShipoutTransaction,
-    Snapshot, TakeUnboxResult, TrackedEnvironmentWrite, TrackedRegionError, TrackedRegionMark,
+    BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, FormatError, GeometryObservation,
+    InputOpenContext, InputOpenState, InputReadState, InteractionMode, ParagraphShapeLine,
+    PenaltyArrayKind, PreparedPageSuffix, ReplayProbeTransaction, ShipoutTransaction,
+    TakeUnboxResult, TrackedEnvironmentWrite, TrackedRegionError, TrackedRegionMark,
     TrackedRegionRecord, UnboxKind, Universe, WorldMut,
 };
 #[cfg(feature = "profiling")]

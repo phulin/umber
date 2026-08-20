@@ -45,15 +45,6 @@ fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
     }
 }
 use crate::glue::{GlueSpec, GlueSpecRef};
-use crate::hot_core::arena::store::registry::{
-    RuntimeMacroValueInput, RuntimeOriginListValueInput, RuntimeTokenValueInput,
-    RuntimeTracedTokenValueInput, RuntimeValueRegistry, RuntimeValueRegistryError,
-    RuntimeValueRegistryMark,
-};
-use crate::hot_core::arena::store::{
-    RuntimeGlueView, RuntimeMacroView, RuntimeOriginEntry, RuntimeOriginListView,
-    RuntimeTokenListView, RuntimeValueRootSet,
-};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
@@ -88,11 +79,8 @@ use std::mem;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-const RUNTIME_VALUE_REGION_CAPACITY: NonZeroU32 = NonZeroU32::new(4_096).unwrap();
-
 mod exact_identity;
 mod format;
-mod handles;
 mod low_memory;
 mod node_semantic;
 mod state_hash;
@@ -113,150 +101,6 @@ pub(crate) use format::{
 pub use crate::env::group::{GroupFrame, GroupKind, GroupMismatch};
 pub(crate) use state_hash::StoreStateHashCursor;
 
-/// One generation's copy-only value coordinates and their accepted storage.
-///
-/// The registry is not an ownership authority: its dense location tables are
-/// coordinates only. This adjacent root set is the canonical generation
-/// consumer for those coordinates, while snapshots, node payloads, and other
-/// detached consumers retain their own narrowed sets.
-#[derive(Debug)]
-struct RuntimeValueGeneration {
-    registry: RuntimeValueRegistry,
-    roots: RuntimeValueRootSet,
-}
-
-impl std::ops::Deref for RuntimeValueGeneration {
-    type Target = RuntimeValueRegistry;
-
-    fn deref(&self) -> &Self::Target {
-        &self.registry
-    }
-}
-
-impl std::ops::DerefMut for RuntimeValueGeneration {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.registry
-    }
-}
-
-impl RuntimeValueGeneration {
-    fn new(mut registry: RuntimeValueRegistry) -> Self {
-        let mut roots = registry.empty_root_set();
-        registry
-            .publish_into(&mut roots)
-            .expect("canonical runtime values must publish");
-        Self { registry, roots }
-    }
-
-    fn from_parts(registry: RuntimeValueRegistry, roots: RuntimeValueRootSet) -> Self {
-        Self { registry, roots }
-    }
-
-    fn fork(&self) -> Result<Self, RuntimeValueRegistryError> {
-        Ok(Self {
-            registry: self.registry.fork(&[&self.roots])?,
-            roots: self.roots.clone(),
-        })
-    }
-
-    fn publish(&mut self) -> Result<(), RuntimeValueRegistryError> {
-        self.registry.publish_into(&mut self.roots)
-    }
-
-    fn token_list(
-        &self,
-        id: TokenListId,
-    ) -> Result<RuntimeTokenListView<'_>, RuntimeValueRegistryError> {
-        self.registry.token_list(&[&self.roots], id)
-    }
-
-    fn macro_definition(
-        &self,
-        id: MacroDefinitionId,
-    ) -> Result<RuntimeMacroView<'_>, RuntimeValueRegistryError> {
-        self.registry.macro_definition(&[&self.roots], id)
-    }
-
-    fn glue(&self, id: GlueId) -> Result<RuntimeGlueView<'_>, RuntimeValueRegistryError> {
-        self.registry.glue(&[&self.roots], id)
-    }
-
-    fn origin_list(
-        &self,
-        id: OriginListId,
-    ) -> Result<RuntimeOriginListView<'_>, RuntimeValueRegistryError> {
-        self.registry.origin_list(&[&self.roots], id)
-    }
-
-    fn intern_token_list(
-        &mut self,
-        input: RuntimeTokenValueInput<'_>,
-    ) -> Result<TokenListId, RuntimeValueRegistryError> {
-        self.registry.intern_token_list(&[&self.roots], input)
-    }
-
-    fn allocate_macro(
-        &mut self,
-        input: RuntimeMacroValueInput<'_>,
-    ) -> Result<MacroDefinitionId, RuntimeValueRegistryError> {
-        self.registry.allocate_macro(&[&self.roots], input)
-    }
-
-    fn intern_glue(&mut self, spec: GlueSpec) -> Result<GlueId, RuntimeValueRegistryError> {
-        self.registry.intern_glue(&[&self.roots], spec)
-    }
-
-    fn intern_origin_list(
-        &mut self,
-        input: RuntimeOriginListValueInput<'_>,
-    ) -> Result<OriginListId, RuntimeValueRegistryError> {
-        self.registry.intern_origin_list(&[&self.roots], input)
-    }
-
-    fn install_frozen_token_list(
-        &mut self,
-        expected_raw: u32,
-        input: RuntimeTokenValueInput<'_>,
-    ) -> Result<TokenListId, RuntimeValueRegistryError> {
-        self.registry
-            .install_frozen_token_list(&[&self.roots], expected_raw, input)
-    }
-
-    fn install_frozen_macro(
-        &mut self,
-        expected_raw: u32,
-        input: RuntimeMacroValueInput<'_>,
-    ) -> Result<MacroDefinitionId, RuntimeValueRegistryError> {
-        self.registry
-            .install_frozen_macro(&[&self.roots], expected_raw, input)
-    }
-
-    fn install_frozen_glue(
-        &mut self,
-        expected_raw: u32,
-        spec: GlueSpec,
-    ) -> Result<GlueId, RuntimeValueRegistryError> {
-        self.registry
-            .install_frozen_glue(&[&self.roots], expected_raw, spec)
-    }
-
-    fn rollback_inherited(
-        &mut self,
-        mark: RuntimeValueRegistryMark,
-    ) -> Result<(), RuntimeValueRegistryError> {
-        self.registry.rollback_inherited(mark, &self.roots)
-    }
-
-    fn origin_list_accounting(
-        &self,
-    ) -> Result<
-        crate::hot_core::arena::store::registry::RuntimeOriginListAccounting,
-        RuntimeValueRegistryError,
-    > {
-        self.registry.origin_list_accounting(&[&self.roots])
-    }
-}
-
 /// A rollback snapshot for all currently implemented state stores.
 #[derive(Clone, Debug)]
 pub(crate) struct StoreSnapshot {
@@ -267,9 +111,6 @@ pub(crate) struct StoreSnapshot {
     string_pool_recycled_mark: usize,
     provenance_mark: ProvenanceStoreMark,
     source_map_mark: SourceMapMark,
-    runtime_value_mark: RuntimeValueRegistryMark,
-    runtime_value_roots: RuntimeValueRootSet,
-    runtime_values_inherited: bool,
     font_mark: FontStoreMark,
     code_tables_snapshot: CodeTablesSnapshot,
     hyphenation: Arc<HyphenationTable>,
@@ -284,14 +125,6 @@ pub(crate) struct StoreSnapshot {
 #[derive(Debug)]
 pub(crate) struct DirectStoreOperationMark {
     env: DirectJournalMark,
-}
-
-/// Fixed-size immutable-store suffix coordinates for a private operation.
-/// These marks own no values and are used only when the allocation domain
-/// rejects an unpublished suffix.
-#[derive(Debug)]
-pub(crate) struct StorePatchOperationMark {
-    runtime_values: RuntimeValueRegistryMark,
 }
 
 #[derive(Clone, Debug)]
@@ -349,12 +182,9 @@ pub struct Stores {
     interner: Interner,
     string_pool: StringPoolAccounting,
     string_pool_recycled_journal: Vec<Arc<str>>,
-    provenance: ProvenanceStore,
     source_map: SourceMap,
     source_fragments: FragmentStore,
-    runtime_values: RuntimeValueGeneration,
     fonts: FontStore,
-    node_ref_index: NodeListWeakIndex,
     code_tables: CodeTables,
     hyphenation: Arc<HyphenationTable>,
     prepared_mag: Option<i32>,
@@ -713,75 +543,7 @@ pub enum FontParameterError {
     },
 }
 
-impl Clone for Stores {
-    fn clone(&self) -> Self {
-        let runtime_values = self
-            .runtime_values
-            .fork()
-            .expect("runtime value registry fork must remain representable");
-        self.clone_with_runtime_values(runtime_values)
-    }
-}
-
 impl Stores {
-    fn clone_with_runtime_values(&self, runtime_values: RuntimeValueGeneration) -> Self {
-        let mut env = self.env.clone();
-        env.reset_snapshot_roots_for_fork();
-        Self {
-            owner: StoreOwner::new(),
-            env,
-            interner: self.interner.clone(),
-            string_pool: self.string_pool.clone(),
-            string_pool_recycled_journal: self.string_pool_recycled_journal.clone(),
-            provenance: self.provenance.clone(),
-            source_map: self.source_map.clone(),
-            source_fragments: self.source_fragments.clone(),
-            runtime_values,
-            fonts: self.fonts.clone(),
-            node_ref_index: NodeListWeakIndex::new(),
-            code_tables: self.code_tables.clone(),
-            hyphenation: self.hyphenation.clone(),
-            prepared_mag: self.prepared_mag,
-            last_loaded_font: self.last_loaded_font,
-            font_info_capacity: self.font_info_capacity,
-            semantic_hash_cache: self.semantic_hash_cache.clone(),
-            exact_env_identity: self.exact_env_identity.clone(),
-            usage_high_water: self.usage_high_water,
-            memory_low_extent: self.memory_low_extent,
-            memory_high_extent: self.memory_high_extent,
-            main_memory_profile: self.main_memory_profile,
-            low_memory_fragments: self.low_memory_fragments.clone(),
-            pending_low_memory_break: self.pending_low_memory_break.clone(),
-            transient_memory_base: self.transient_memory_base.clone(),
-            #[cfg(test)]
-            transient_memory_base_projections: self.transient_memory_base_projections,
-            #[cfg(test)]
-            main_memory_root_traversals: std::sync::atomic::AtomicUsize::new(
-                self.main_memory_root_traversals
-                    .load(std::sync::atomic::Ordering::Relaxed),
-            ),
-        }
-    }
-
-    /// Forks directly at a retained checkpoint's sealed runtime-value roots.
-    /// The source generation's mutable value suffix is never copied.
-    pub(crate) fn fork_at_snapshot(&self, snapshot: &StoreSnapshot) -> Self {
-        assert_eq!(
-            snapshot.owner,
-            self.owner.snapshot_owner(),
-            "Stores snapshot belongs to a different Stores instance"
-        );
-        let registry = self
-            .runtime_values
-            .registry
-            .fork_at(snapshot.runtime_value_mark, &snapshot.runtime_value_roots)
-            .expect("retained runtime value checkpoint must fork");
-        self.clone_with_runtime_values(RuntimeValueGeneration::from_parts(
-            registry,
-            snapshot.runtime_value_roots.clone(),
-        ))
-    }
-
     pub(crate) fn configure_provenance_budgets(
         &mut self,
         budgets: crate::provenance::ProvenanceBudgets,
@@ -1189,15 +951,6 @@ impl Stores {
             && snapshot.string_pool_recycled_mark <= self.string_pool_recycled_journal.len()
     }
 
-    /// Retargets an already-validated inherited snapshot to this fork's exact owner.
-    pub(crate) fn retarget_inherited_snapshot(&self, snapshot: &StoreSnapshot) -> StoreSnapshot {
-        let mut snapshot = snapshot.clone();
-        snapshot.owner = self.owner.snapshot_owner();
-        snapshot.env_snapshot = self.env.retarget_snapshot(&snapshot.env_snapshot);
-        snapshot.runtime_values_inherited = true;
-        snapshot
-    }
-
     pub(crate) fn env_group_depth(&self) -> u32 {
         self.env.group_depth()
     }
@@ -1216,28 +969,15 @@ impl Stores {
     /// Creates an empty state-store tuple.
     #[must_use]
     pub fn new() -> Self {
-        let empty_token_semantic_id = TokenSemanticIdBuilder::new().finish();
-        let mut runtime_values =
-            RuntimeValueRegistry::new(RUNTIME_VALUE_REGION_CAPACITY, empty_token_semantic_id)
-                .expect("canonical runtime values must fit an empty registry");
-        let provenance_budgets = crate::provenance::ProvenanceBudgets::default();
-        runtime_values.configure_origin_list_budgets(
-            provenance_budgets.live_origin_lists,
-            provenance_budgets.origin_list_entries,
-        );
-        let runtime_values = RuntimeValueGeneration::new(runtime_values);
         let mut stores = Self {
             owner: StoreOwner::new(),
             env: Env::new(),
             interner: Interner::new(),
             string_pool: StringPoolAccounting::default(),
             string_pool_recycled_journal: Vec::new(),
-            provenance: ProvenanceStore::new(),
             source_map: SourceMap::default(),
             source_fragments: FragmentStore::new(),
-            runtime_values,
             fonts: FontStore::new(),
-            node_ref_index: NodeListWeakIndex::new(),
             code_tables: CodeTables::new(),
             hyphenation: Arc::new(HyphenationTable::new()),
             prepared_mag: None,

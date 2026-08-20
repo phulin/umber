@@ -6,10 +6,8 @@
 mod builder;
 #[cfg(all(test, feature = "profiling"))]
 mod copy;
-mod measurement;
 #[cfg(all(test, feature = "profiling"))]
 mod mutation;
-mod owned;
 mod schema;
 mod semantic;
 mod storage;
@@ -18,12 +16,6 @@ mod view;
 
 pub(crate) use builder::CompactBuilderNode;
 pub use builder::NodeListBuilder;
-#[cfg(feature = "profiling")]
-pub use measurement::{NodeMemoryColumn, NodeStorageObservation, peak_node_storage_measurement};
-pub use owned::NodeListRef;
-pub(crate) use owned::{
-    NodeListPayload, NodeListWeakIndex, OwnedSemanticSpan, allocate_node_payload_root,
-};
 pub use schema::{
     FieldPolicy, NodeChildRole, NodeDescriptor, NodeField, NodeHandle, NodeHandleEvent,
     NodeHandleKind, NodeHandlePolicy, NodeHandleRole, NodeSchemaVisitor, NodeTag,

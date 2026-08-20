@@ -41,7 +41,6 @@ use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
     PageInsertion, PageInteger, PageMark, PageMemoState, PageStateHashCursor,
 };
-use crate::patch_domain::{PatchAllocationDomain, PatchOperationMark};
 use crate::pdf::{
     PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageMetadata,
     PdfExternalImageRegistrationError, PdfFontResourceRecord, PdfFormatState,
@@ -65,7 +64,7 @@ use crate::state_hash::{
     CachedProjection, INITIAL_STATE_HASH, StateHashComponent, StateHashFragment, StateHasher,
     combine,
 };
-use crate::stores::{DirectStoreOperationMark, StorePatchOperationMark, StoreStateHashCursor};
+use crate::stores::StoreStateHashCursor;
 use crate::stores::{
     FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, StoreFormatError,
     StoreSnapshot, Stores,
@@ -281,107 +280,6 @@ impl<'a> InputOpenContext<'a> {
     }
 }
 
-/// A whole-Universe rollback snapshot.
-///
-/// Snapshot capture is O(1): the private store snapshot is a tuple of marks,
-/// roots, and positions; the remaining fields are small scalar placeholders
-/// for M3 World/input state.
-#[derive(Clone, Debug)]
-pub struct Snapshot {
-    geometry_observations_len: usize,
-    owner: SnapshotOwner,
-    serial: u64,
-    store: StoreSnapshot,
-    epoch: Epoch,
-    world: WorldSnapshot,
-    input_summary: InputSummary,
-    interaction_mode: InteractionMode,
-    page: PageBuilderState,
-    pdf: PdfStateSnapshot,
-    exact_state_identity: Option<u64>,
-    /// Fixed-size derived component roots matching this snapshot.
-    state_hash_projection_cache: StateHashProjectionCache,
-    dependency_tracker: DependencyTrackerSnapshot,
-    state_hash: u64,
-    state_hash_base: StateHashBase,
-}
-
-/// Fixed-size allocation-domain mark for one preflighted executor operation.
-///
-/// Semantic owners commit directly or through their own journals. This mark
-/// owns only a non-restoring environment-journal cursor and the disposable
-/// private-revision allocation suffix, and therefore retains no aggregate
-/// state roots.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct DirectOperationMark {
-    store: DirectStoreOperationMark,
-    patch_operation: Option<PatchOperationMark>,
-    patch_store: Option<StorePatchOperationMark>,
-}
-
-/// One immutable accepted-generation state substrate shared by O(1) snapshots.
-#[derive(Debug)]
-pub struct GenerationSubstrate {
-    universe: Universe,
-    charged_bytes: usize,
-}
-
-/// Rejection from the narrow validated generation-fork/retarget operations.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GenerationForkError {
-    ForeignSnapshot,
-    InvalidatedSnapshot,
-    PrefixBeyondForkAnchor,
-    UnrelatedFork,
-    InvalidMappedAnchor,
-    RootRevisionMismatch,
-    ChangedRootInterval,
-}
-
-/// A private revision cannot become accepted until every domain allocation is
-/// named by an explicit typed semantic or detached-output root.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PrivateRevisionAcceptanceError {
-    ActiveOperation,
-    UnrootedAllocations,
-}
-
-impl std::fmt::Display for PrivateRevisionAcceptanceError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(match self {
-            Self::ActiveOperation => "private revision still owns an active allocation operation",
-            Self::UnrootedAllocations => {
-                "private revision has allocations without explicit accepted roots"
-            }
-        })
-    }
-}
-
-impl std::error::Error for PrivateRevisionAcceptanceError {}
-
-impl std::fmt::Display for GenerationForkError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::ForeignSnapshot => "checkpoint belongs to another generation substrate",
-            Self::InvalidatedSnapshot => "checkpoint roots are no longer retained",
-            Self::PrefixBeyondForkAnchor => "checkpoint is after the fork anchor",
-            Self::UnrelatedFork => "target substrate was not forked from the source generation",
-            Self::InvalidMappedAnchor => "mapped editor anchor is outside a UTF-8 boundary",
-            Self::RootRevisionMismatch => "checkpoint root revision does not match the source",
-            Self::ChangedRootInterval => "mapped root interval is not byte-identical",
-        })
-    }
-}
-
-impl std::error::Error for GenerationForkError {}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ForkOrigin {
-    source_owner: SnapshotOwner,
-    anchor_serial: u64,
-}
-
 #[derive(Debug)]
 pub struct ShipoutTransaction<'a> {
     universe: &'a mut Universe,
@@ -439,22 +337,7 @@ pub struct ReplayProbeTransaction<'a> {
     rollback: Option<ScopedRollback>,
 }
 
-#[derive(Debug)]
-struct ScopedRollback {
-    owner: SnapshotOwner,
-    store: StoreSnapshot,
-    world: WorldSnapshot,
-    input_summary: InputSummary,
-    interaction_mode: InteractionMode,
-    page: PageBuilderState,
-    pdf: PdfStateSnapshot,
-    state_hash_base: StateHashBase,
-    state_hash_projection_cache: StateHashProjectionCache,
-    dependency_tracker: DependencyTrackerSnapshot,
-    geometry_observations_len: usize,
-}
-
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct PageMemoWire {
     state: PageMemoState,
     detached_nodes: Vec<u8>,
@@ -629,286 +512,6 @@ impl BoxBuildTransaction<'_> {
     }
 }
 
-impl Snapshot {
-    /// Returns the epoch captured by this snapshot.
-    ///
-    /// Rollback does not restore this value; the live Universe always bumps
-    /// forward from its current maximum epoch after restoring state.
-    #[must_use]
-    pub const fn epoch(&self) -> Epoch {
-        self.epoch
-    }
-
-    /// Returns the schedule-relative convergence lineage captured by this snapshot.
-    ///
-    /// The hash is a fold of semantic slice hashes over the checkpoint
-    /// timeline (`combine(previous_checkpoint_hash, slice_hash)`), so it is
-    /// checkpoint-schedule-relative: it witnesses "same lineage observed at
-    /// the same checkpoint boundaries", not a canonical fingerprint of the
-    /// reached state. Compare hashes only between runs
-    /// that take checkpoints at the same positions under the same policy;
-    /// see `docs/core_state.md` §9 (convergence detection).
-    #[must_use]
-    pub const fn state_hash(&self) -> u64 {
-        self.state_hash
-    }
-
-    /// Compares the probabilistic fixed-seed 64-bit aHash projection of every
-    /// future-relevant root retained by two named checkpoints.
-    ///
-    /// The canonical store identity is deliberately unavailable inside open
-    /// groups, which are not named convergence boundaries; that case is a safe
-    /// miss. Detached effect and artifact history is excluded; callers splice
-    /// those ordered prefixes separately. Equality is authoritative for this
-    /// session-local optimization, so a rare collision may cause incorrect
-    /// suffix reuse; durable identities retain their cryptographic contracts.
-    #[must_use]
-    pub fn exact_future_state_matches(&self, other: &Self) -> bool {
-        self.exact_state_identity.is_some()
-            && self.exact_state_identity == other.exact_state_identity
-    }
-
-    /// Compares detached output/effect slices captured by two snapshots.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn output_segment_matches(
-        &self,
-        effect_range: std::ops::Range<usize>,
-        artifact_range: std::ops::Range<usize>,
-        other: &Self,
-        other_effect_range: std::ops::Range<usize>,
-        other_artifact_range: std::ops::Range<usize>,
-    ) -> bool {
-        self.world.output_segment_matches(
-            effect_range,
-            artifact_range,
-            &other.world,
-            other_effect_range,
-            other_artifact_range,
-        )
-    }
-
-    /// Returns whether the optional composed canonical projection was captured.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn has_exact_state_identity(&self) -> bool {
-        self.exact_state_identity.is_some()
-    }
-}
-
-impl GenerationSubstrate {
-    /// Freezes one completed mutable timeline as an accepted generation.
-    #[must_use]
-    pub fn new(universe: Universe) -> Self {
-        let charged_bytes = generation_charged_bytes(&universe);
-        Self {
-            universe,
-            charged_bytes,
-        }
-    }
-
-    /// Opaque charged bytes shared by every checkpoint on this substrate.
-    #[must_use]
-    pub const fn charged_bytes(&self) -> usize {
-        self.charged_bytes
-    }
-
-    /// Completes the private-revision ownership transition before this
-    /// substrate becomes accepted session state.
-    #[doc(hidden)]
-    pub fn accept_private_revision(&mut self) -> Result<(), PrivateRevisionAcceptanceError> {
-        self.universe.accept_private_revision()?;
-        self.charged_bytes = generation_charged_bytes(&self.universe);
-        Ok(())
-    }
-
-    #[must_use]
-    pub const fn world(&self) -> &World {
-        self.universe.world()
-    }
-
-    /// Resolves one diagnostic origin retained by this accepted generation.
-    #[must_use]
-    pub fn resolve_origin(
-        &self,
-        origin: crate::token::OriginId,
-    ) -> Option<crate::ResolvedSourceLocation> {
-        crate::ProvenanceResolver::new(&self.universe).resolve_origin(origin)
-    }
-
-    /// Resolves an artifact-owned structural root without importing it into
-    /// this generation's provenance index.
-    #[must_use]
-    pub fn resolve_rooted_origin(
-        &self,
-        origin: &crate::provenance::OriginRef,
-    ) -> Option<crate::ResolvedSourceLocation> {
-        crate::ProvenanceResolver::new(&self.universe).resolve_origin_ref(origin)
-    }
-
-    /// Resolves one retained origin against the session's current editor layout.
-    #[must_use]
-    pub fn resolve_layout_origin(
-        &self,
-        origin: crate::token::OriginId,
-        fragments: &crate::FragmentStore,
-        layout: &crate::EditorLayout,
-    ) -> crate::LayoutResolvedOrigin {
-        crate::ProvenanceResolver::new(&self.universe)
-            .resolve_layout_origin(origin, fragments, layout)
-    }
-
-    /// Resolves an artifact-owned structural root against the live editor
-    /// layout without convergence-time origin import.
-    #[must_use]
-    pub fn resolve_layout_rooted_origin(
-        &self,
-        origin: &crate::provenance::OriginRef,
-        fragments: &crate::FragmentStore,
-        layout: &crate::EditorLayout,
-    ) -> crate::LayoutResolvedOrigin {
-        crate::ProvenanceResolver::new(&self.universe)
-            .resolve_layout_origin_ref(origin, fragments, layout)
-    }
-
-    /// Resolves a stable paragraph recipe span directly at the diagnostic
-    /// boundary, without first allocating a live `OriginId`.
-    #[must_use]
-    pub fn resolve_stable_layout_origin(
-        &self,
-        span: crate::RootSpanId,
-        fragments: &crate::FragmentStore,
-        layout: &crate::EditorLayout,
-    ) -> crate::LayoutResolvedOrigin {
-        crate::source_fragments::resolve_root_span(span, fragments, layout)
-    }
-
-    #[doc(hidden)]
-    pub fn validate_checkpoint_snapshot(
-        &self,
-        checkpoint: &Snapshot,
-    ) -> Result<(), GenerationForkError> {
-        self.universe.validate_fork_snapshot(checkpoint)
-    }
-
-    #[must_use]
-    pub fn root_content_hash(&self, summary: &InputSummary) -> Option<ContentHash> {
-        self.universe.root_editor_content_hash(summary)
-    }
-
-    /// Clones this frozen generation once and atomically rolls the clone back
-    /// to an exact owner-validated checkpoint.
-    pub fn fork_at(&self, checkpoint: &Snapshot) -> Result<Universe, GenerationForkError> {
-        self.fork_at_prepared(checkpoint, |_| ())
-            .map(|(fork, ())| fork)
-    }
-
-    /// Prepares handle-free continuation data from the complete retained
-    /// generation, then forks directly from `checkpoint`'s sealed roots.
-    ///
-    /// Preparation cannot mutate the source generation. This ordering is the
-    /// atomic boundary required by clients whose retained continuation can
-    /// reach immutable arenas allocated after the selected checkpoint.
-    pub fn fork_at_prepared<T>(
-        &self,
-        checkpoint: &Snapshot,
-        prepare: impl FnOnce(&Universe) -> T,
-    ) -> Result<(Universe, T), GenerationForkError> {
-        self.universe.validate_fork_snapshot(checkpoint)?;
-        let prepared = prepare(&self.universe);
-        let stores = self.universe.stores.fork_at_snapshot(&checkpoint.store);
-        let mut fork = self.universe.clone_with_stores(stores);
-        let checkpoint = fork.retarget_inherited_snapshot(checkpoint);
-        fork.rollback_generation_fork(&checkpoint);
-        fork.fork_origin = Some(ForkOrigin {
-            source_owner: self.universe.owner.snapshot_owner(),
-            anchor_serial: checkpoint.serial,
-        });
-        Ok((fork, prepared))
-    }
-
-    /// Retargets a source-generation prefix snapshot onto a promoted fork.
-    /// This is deliberately limited to records at or before the exact fork anchor.
-    pub fn retarget_prefix_from(
-        &self,
-        source: &GenerationSubstrate,
-        checkpoint: &Snapshot,
-    ) -> Result<Snapshot, GenerationForkError> {
-        source.universe.validate_fork_snapshot(checkpoint)?;
-        let origin = self
-            .universe
-            .fork_origin
-            .ok_or(GenerationForkError::UnrelatedFork)?;
-        if origin.source_owner != source.universe.owner.snapshot_owner() {
-            return Err(GenerationForkError::UnrelatedFork);
-        }
-        if checkpoint.serial > origin.anchor_serial {
-            return Err(GenerationForkError::PrefixBeyondForkAnchor);
-        }
-        Ok(self.universe.retarget_inherited_snapshot(checkpoint))
-    }
-
-    /// Consumes the accepted generation, installs the session-owned ordered
-    /// effect history, materializes it exactly once, and returns the sealed World.
-    pub fn export_detached_outputs(
-        self,
-        effects: Vec<EffectRecord>,
-        artifacts: Vec<CommittedArtifact>,
-        artifact_publications: Vec<crate::ArtifactPublicationRecord>,
-    ) -> Result<World, WorldError> {
-        let mut universe =
-            self.into_detached_universe(effects, artifacts, artifact_publications)?;
-        universe.export_retained_effects()?;
-        Ok(universe.world)
-    }
-
-    /// Consumes the accepted generation and installs its detached outputs
-    /// without committing effects. Client-owned finalizers can inspect the
-    /// reached engine state and then choose whether to publish those effects.
-    pub fn into_detached_universe(
-        self,
-        effects: Vec<EffectRecord>,
-        artifacts: Vec<CommittedArtifact>,
-        artifact_publications: Vec<crate::ArtifactPublicationRecord>,
-    ) -> Result<Universe, WorldError> {
-        let mut universe = self.universe;
-        universe
-            .world
-            .replace_retained_outputs(effects, artifacts, artifact_publications)?;
-        Ok(universe)
-    }
-
-    /// Materializes detached session output without consuming the retained
-    /// generation used by later incremental revisions.
-    pub fn materialize_detached_outputs(
-        &self,
-        effects: Vec<EffectRecord>,
-        artifacts: Vec<CommittedArtifact>,
-        artifact_publications: Vec<crate::ArtifactPublicationRecord>,
-    ) -> Result<World, WorldError> {
-        let mut world = self.universe.world.clone();
-        world.replace_retained_outputs(effects, artifacts, artifact_publications)?;
-        world.export_retained_effects()?;
-        Ok(world)
-    }
-}
-
-fn generation_charged_bytes(universe: &Universe) -> usize {
-    universe
-        .stores
-        .generation_retained_bytes()
-        .saturating_add(
-            universe
-                .private_revision_domain
-                .as_ref()
-                .map_or(0, PatchAllocationDomain::retained_bytes),
-        )
-        .saturating_add(std::mem::size_of::<Universe>())
-        .saturating_add(universe.input_summary.retained_bytes())
-        .saturating_add(universe.page.retained_bytes())
-        .saturating_add(universe.world.generation_retained_bytes())
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SnapshotOwner {
     address: usize,
@@ -1068,9 +671,6 @@ struct PrimitiveMeaningOwner {
 #[derive(Debug)]
 pub struct Universe {
     owner: UniverseOwner,
-    /// Disposable allocations owned by one private incremental revision.
-    /// Absent from templates and accepted generations at rest.
-    private_revision_domain: Option<PatchAllocationDomain>,
     stores: Stores,
     /// Immutable job-level selection and admission limits for optional
     /// provenance consumers. Excluded from semantic state and formats.
@@ -1098,7 +698,6 @@ pub struct Universe {
     state_hash_base: StateHashBase,
     state_hash_projection_cache: StateHashProjectionCache,
     next_snapshot_serial: u64,
-    fork_origin: Option<ForkOrigin>,
     /// Operational memo metadata; excluded from snapshots and semantic hashes.
     dependencies: Mutex<DependencyRuntime>,
     /// Allocation-free inactive fast path for dependency-aware getters.
@@ -3060,169 +2659,6 @@ impl Universe {
             && self.world.snapshot_is_retained(&snapshot.world)
     }
 
-    /// Installs one fresh allocation owner for a private revision.
-    ///
-    /// This is an engine/session lifecycle hook, not a store or host
-    /// capability. Templates and accepted generations must not carry it.
-    #[doc(hidden)]
-    pub fn begin_private_revision(&mut self) {
-        assert!(
-            self.private_revision_domain.is_none(),
-            "Universe already owns a private revision allocation domain"
-        );
-        self.private_revision_domain = Some(PatchAllocationDomain::new());
-    }
-
-    /// Closes an accepted private revision after its typed owners have
-    /// transferred every explicit root.
-    fn accept_private_revision(&mut self) -> Result<(), PrivateRevisionAcceptanceError> {
-        let Some(domain) = self.private_revision_domain.as_ref() else {
-            return Ok(());
-        };
-        let stats = domain.stats();
-        if stats.operation_active {
-            return Err(PrivateRevisionAcceptanceError::ActiveOperation);
-        }
-        if stats.allocations != self.stores.patch_allocation_count() {
-            return Err(PrivateRevisionAcceptanceError::UnrootedAllocations);
-        }
-        let roots = self.stores.selected_patch_roots(domain);
-        let domain = self
-            .private_revision_domain
-            .take()
-            .expect("private domain was validated above");
-        let accepted = domain
-            .accept(roots)
-            .expect("typed token roots were validated against the private domain");
-        debug_assert!(accepted.len() <= stats.allocations);
-        self.stores.clear_patch_allocations();
-        drop(accepted);
-        Ok(())
-    }
-
-    /// Commits an ordinary successful executor operation without creating an
-    /// aggregate rollback snapshot.
-    #[must_use]
-    #[doc(hidden)]
-    pub const fn direct_operation_supported(&self) -> bool {
-        true
-    }
-
-    /// Opens an ordinary operation after capability preflight has established
-    /// that it needs no rollback mark.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn begin_direct_operation(&mut self) -> DirectOperationMark {
-        let (patch_operation, patch_store) =
-            self.private_revision_domain
-                .as_mut()
-                .map_or((None, None), |domain| {
-                    let operation = domain
-                        .begin_operation()
-                        .expect("private revision owns one direct operation mark");
-                    (Some(operation), Some(self.stores.begin_patch_operation()))
-                });
-        let store = self.stores.begin_direct_operation();
-        DirectOperationMark {
-            store,
-            patch_operation,
-            patch_store,
-        }
-    }
-
-    /// Commits an ordinary successful executor operation without creating an
-    /// aggregate rollback snapshot.
-    #[doc(hidden)]
-    pub fn commit_direct_operation(&mut self, mark: DirectOperationMark) {
-        let DirectOperationMark {
-            store,
-            patch_operation,
-            patch_store,
-        } = mark;
-        match (
-            &mut self.private_revision_domain,
-            patch_operation,
-            patch_store,
-        ) {
-            (Some(domain), Some(mark), Some(_)) => domain
-                .commit_operation(mark)
-                .expect("direct operation owns the active patch allocation mark"),
-            (None, None, None) => {}
-            _ => panic!("direct operation mark does not match its Universe"),
-        }
-        self.finish_direct_operation(store);
-    }
-
-    /// Discards private-revision allocations from a failed direct operation.
-    /// Canonical partial semantic state is retained.
-    #[doc(hidden)]
-    pub fn discard_direct_operation_allocations(&mut self, mark: DirectOperationMark) {
-        let DirectOperationMark {
-            store,
-            patch_operation,
-            patch_store,
-        } = mark;
-        match (
-            &mut self.private_revision_domain,
-            patch_operation,
-            patch_store,
-        ) {
-            (Some(domain), Some(mark), Some(store_mark)) => {
-                self.stores.discard_patch_operation_allocations(store_mark);
-                domain
-                    .rollback_operation(mark)
-                    .expect("direct operation owns the active patch allocation mark");
-            }
-            (None, None, None) => {}
-            _ => panic!("direct operation mark does not match its Universe"),
-        }
-        self.finish_direct_operation(store);
-    }
-
-    fn finish_direct_operation(&mut self, store: DirectStoreOperationMark) {
-        // A generation fork may later retarget every retained prefix record at
-        // or before its anchor onto this timeline. `fork_origin` is that live
-        // restoration authority even before those checkpoint values are
-        // rehomed, so its shared prefix cannot become a fresh baseline here.
-        if self.fork_origin.is_none() && !self.dependency_region_is_active() {
-            if self
-                .stores
-                .commit_direct_operation(store, &self.state_hash_base.store)
-            {
-                self.retarget_hash_base_after_group_compaction();
-            }
-        } else {
-            self.stores.finish_node_operation();
-        }
-    }
-
-    #[must_use]
-    pub fn freeze_generation(self) -> GenerationSubstrate {
-        GenerationSubstrate::new(self)
-    }
-
-    fn validate_fork_snapshot(&self, snapshot: &Snapshot) -> Result<(), GenerationForkError> {
-        if snapshot.owner != self.owner.snapshot_owner() {
-            return Err(GenerationForkError::ForeignSnapshot);
-        }
-        if !self.stores.can_restore_snapshot(&snapshot.store)
-            || !self.world.snapshot_is_forkable(&snapshot.world)
-        {
-            return Err(GenerationForkError::InvalidatedSnapshot);
-        }
-        Ok(())
-    }
-
-    fn retarget_inherited_snapshot(&self, snapshot: &Snapshot) -> Snapshot {
-        let mut retargeted = snapshot.clone();
-        retargeted.owner = self.owner.snapshot_owner();
-        retargeted.store = self.stores.retarget_inherited_snapshot(&snapshot.store);
-        retargeted.state_hash_base.store = self
-            .stores
-            .retarget_state_hash_cursor(&snapshot.state_hash_base.store);
-        retargeted
-    }
-
     fn capture_scoped_rollback(&mut self) -> ScopedRollback {
         ScopedRollback {
             owner: self.owner.snapshot_owner(),
@@ -3934,14 +3370,6 @@ impl Universe {
     #[must_use]
     pub fn retained_output_bytes(&self) -> usize {
         self.world.retained_output_bytes()
-    }
-
-    /// Approximate ownership charge for a live private execution generation.
-    /// This uses the same aggregate roots as accepted-generation accounting,
-    /// before any additional accepted diagnostic-origin map is installed.
-    #[must_use]
-    pub fn live_generation_charged_bytes(&self) -> usize {
-        generation_charged_bytes(self)
     }
 
     /// Rehomes the stable root editor frame without registering a document-sized backing.
