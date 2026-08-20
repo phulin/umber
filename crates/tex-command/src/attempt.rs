@@ -66,6 +66,7 @@ attempt_id!(AttemptTokenListId);
 attempt_id!(AttemptGlueId);
 attempt_id!(AttemptDefinitionId);
 attempt_id!(AttemptArgumentRecordId);
+attempt_id!(AttemptTokenBufferId);
 attempt_id!(AttemptNameId);
 attempt_id!(AttemptProvenanceId);
 
@@ -100,6 +101,7 @@ pub(crate) struct AttemptMark {
     definitions: u32,
     argument_words: u32,
     argument_records: u32,
+    token_buffers: u32,
     name_bytes: u32,
     names: u32,
     provenance: u32,
@@ -173,6 +175,7 @@ pub(crate) struct AttemptArena<G> {
     definitions: Vec<AttemptRow<AttemptDefinition>>,
     argument_words: Vec<AttemptTokenListId>,
     argument_records: Vec<AttemptRow<AttemptRange>>,
+    token_buffers: Vec<AttemptRow<Vec<TracedTokenWord>>>,
     name_bytes: Vec<u8>,
     names: Vec<AttemptRow<AttemptRange>>,
     provenance: Vec<AttemptRow<OriginRecord>>,
@@ -193,6 +196,7 @@ impl<G> Default for AttemptArena<G> {
             definitions: Vec::new(),
             argument_words: Vec::new(),
             argument_records: Vec::new(),
+            token_buffers: Vec::new(),
             name_bytes: Vec::new(),
             names: Vec::new(),
             provenance: Vec::new(),
@@ -226,6 +230,8 @@ impl<G> AttemptArena<G> {
                 .expect("attempt argument-word length is bounded"),
             argument_records: u32::try_from(self.argument_records.len())
                 .expect("attempt argument-record length is bounded"),
+            token_buffers: u32::try_from(self.token_buffers.len())
+                .expect("attempt token-buffer length is bounded"),
             name_bytes: u32::try_from(self.name_bytes.len())
                 .expect("attempt name-byte length is bounded"),
             names: u32::try_from(self.names.len()).expect("attempt name length is bounded"),
@@ -250,6 +256,7 @@ impl<G> AttemptArena<G> {
             (mark.definitions as usize, self.definitions.len()),
             (mark.argument_words as usize, self.argument_words.len()),
             (mark.argument_records as usize, self.argument_records.len()),
+            (mark.token_buffers as usize, self.token_buffers.len()),
             (mark.name_bytes as usize, self.name_bytes.len()),
             (mark.names as usize, self.names.len()),
             (mark.provenance as usize, self.provenance.len()),
@@ -263,6 +270,7 @@ impl<G> AttemptArena<G> {
         self.argument_records
             .truncate(mark.argument_records as usize);
         self.argument_words.truncate(mark.argument_words as usize);
+        self.token_buffers.truncate(mark.token_buffers as usize);
         self.definitions.truncate(mark.definitions as usize);
         self.glue_values.truncate(mark.glue_values as usize);
         self.token_lists.truncate(mark.token_lists as usize);
@@ -519,6 +527,9 @@ impl<G> AttemptArena<G> {
         &mut self,
         arguments: &[AttemptTokenListId],
     ) -> Result<AttemptArgumentRecordId, AttemptError> {
+        if arguments.len() > 9 {
+            return Err(AttemptError::InvalidCoordinate);
+        }
         for &argument in arguments {
             self.token_words(argument)?;
         }
@@ -536,6 +547,87 @@ impl<G> AttemptArena<G> {
             value: range,
         });
         Ok(id)
+    }
+
+    /// Allocates one mutable scanner buffer owned by this attempt.
+    pub(crate) fn allocate_token_buffer(&mut self) -> Result<AttemptTokenBufferId, AttemptError> {
+        let id = AttemptTokenBufferId::new(self.key, self.token_buffers.len())?;
+        self.token_buffers
+            .try_reserve(1)
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        self.token_buffers.push(AttemptRow {
+            serial: id.serial,
+            value: Vec::new(),
+        });
+        Ok(id)
+    }
+
+    pub(crate) fn token_buffer(
+        &self,
+        id: AttemptTokenBufferId,
+    ) -> Result<&[TracedTokenWord], AttemptError> {
+        self.validate_key(id.key)?;
+        self.token_buffers
+            .get(id.index())
+            .filter(|row| row.serial == id.serial)
+            .map(|row| row.value.as_slice())
+            .ok_or(AttemptError::InvalidCoordinate)
+    }
+
+    fn token_buffer_mut(
+        &mut self,
+        id: AttemptTokenBufferId,
+    ) -> Result<&mut Vec<TracedTokenWord>, AttemptError> {
+        self.validate_key(id.key)?;
+        self.token_buffers
+            .get_mut(id.index())
+            .filter(|row| row.serial == id.serial)
+            .map(|row| &mut row.value)
+            .ok_or(AttemptError::InvalidCoordinate)
+    }
+
+    pub(crate) fn push_buffer_token(
+        &mut self,
+        id: AttemptTokenBufferId,
+        word: TracedTokenWord,
+    ) -> Result<(), AttemptError> {
+        self.token_buffer_mut(id)?
+            .try_reserve(1)
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        self.token_buffer_mut(id)?.push(word);
+        Ok(())
+    }
+
+    pub(crate) fn drain_buffer_prefix(
+        &mut self,
+        id: AttemptTokenBufferId,
+        len: usize,
+    ) -> Result<Vec<TracedTokenWord>, AttemptError> {
+        let buffer = self.token_buffer_mut(id)?;
+        if len > buffer.len() {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        Ok(buffer.drain(..len).collect())
+    }
+
+    pub(crate) fn strip_buffer_outer_group(
+        &mut self,
+        id: AttemptTokenBufferId,
+    ) -> Result<(), AttemptError> {
+        let buffer = self.token_buffer_mut(id)?;
+        if buffer.len() >= 2 {
+            buffer.pop();
+            buffer.remove(0);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish_token_buffer(
+        &mut self,
+        id: AttemptTokenBufferId,
+    ) -> Result<AttemptTokenListId, AttemptError> {
+        let words = self.token_buffer(id)?.to_vec();
+        self.allocate_token_list(words)
     }
 
     pub(crate) fn arguments(

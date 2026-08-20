@@ -184,6 +184,50 @@ fn nested_builders_keep_outer_and_inner_scratch_disjoint() {
 }
 
 #[test]
+fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
+    tex_state::with_universe(InternerBudget::default(), |_universe| {
+        let mut attempt = AttemptArena::<_>::default();
+        let mark = attempt.mark();
+        let buffer = attempt.allocate_token_buffer().unwrap();
+        attempt.push_buffer_token(buffer, word('a')).unwrap();
+        attempt.push_buffer_token(buffer, word('b')).unwrap();
+        assert_eq!(
+            attempt.token_buffer(buffer).unwrap(),
+            &[word('a'), word('b')]
+        );
+        let frozen = attempt.finish_token_buffer(buffer).unwrap();
+        assert_eq!(
+            attempt.token_words(frozen).unwrap(),
+            &[word('a'), word('b')]
+        );
+
+        attempt.truncate(mark).unwrap();
+        assert_eq!(
+            attempt.token_buffer(buffer),
+            Err(AttemptError::InvalidCoordinate)
+        );
+        assert_eq!(
+            attempt.token_words(frozen),
+            Err(AttemptError::InvalidCoordinate)
+        );
+    })
+    .unwrap();
+}
+
+#[test]
+fn argument_records_reject_more_than_texs_nine_slots() {
+    tex_state::with_universe(InternerBudget::default(), |_universe| {
+        let mut attempt = AttemptArena::<_>::default();
+        let empty = attempt.allocate_token_list([]).unwrap();
+        assert_eq!(
+            attempt.allocate_arguments(&[empty; 10]),
+            Err(AttemptError::InvalidCoordinate)
+        );
+    })
+    .unwrap();
+}
+
+#[test]
 fn attempt_local_provenance_stays_aligned_through_nested_builders() {
     tex_state::with_universe(InternerBudget::default(), |_universe| {
         let mut attempt = AttemptArena::<_>::default();
