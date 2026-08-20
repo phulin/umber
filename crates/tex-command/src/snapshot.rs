@@ -1,298 +1,357 @@
-//! Command snapshot and durable-summary ownership.
+//! Bounded in-session command snapshots and named command summaries.
+//!
+//! A retained value owns one complete generation at coarse granularity and a
+//! fixed tuple of scalar cursors. It never owns, clones, or borrows an input,
+//! token, definition, provenance, or attempt row. The subsystem which owns the
+//! live command timeline is responsible for validating these cursors before it
+//! restores anything.
 
-use std::fmt;
-use std::sync::Arc;
+#![allow(dead_code)] // The .6.4 integration installs capture/restore consumers.
 
-use crate::CommandState;
-use crate::conditionals::ConditionStack;
-use crate::input::InputLevel;
-use crate::input::InputState;
-use crate::macro_call::ParameterState;
-use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState, ScannerStatus};
-use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
-use crate::state::TransientState;
+use core::fmt;
+use core::marker::PhantomData;
 
-/// Exact owned command-machine state for one executor-step rollback.
+use tex_state::GenerationOwner;
+
+/// Watermarks for command-owned append-only storage.
 ///
-/// The value contains only [`CommandState`]. Runtime caches, processor
-/// borrows, host capabilities, and an ephemeral current command have no field
-/// through which they could enter this snapshot.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct CommandStateSnapshot {
-    state: CommandState,
+/// Each coordinate is an exclusive row count. The corresponding arena
+/// validates the coordinate against its own generation before truncation.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct CommandArenaCursors {
+    input_rows: u32,
+    input_words: u32,
+    parameter_words: u32,
+    builder_words: u32,
+    attempt_rows: u32,
 }
 
-/// Restartable command state published at a named incremental boundary.
+impl CommandArenaCursors {
+    #[must_use]
+    pub const fn new(
+        input_rows: u32,
+        input_words: u32,
+        parameter_words: u32,
+        builder_words: u32,
+        attempt_rows: u32,
+    ) -> Self {
+        Self {
+            input_rows,
+            input_words,
+            parameter_words,
+            builder_words,
+            attempt_rows,
+        }
+    }
+
+    #[must_use]
+    pub const fn input_rows(self) -> u32 {
+        self.input_rows
+    }
+
+    #[must_use]
+    pub const fn input_words(self) -> u32 {
+        self.input_words
+    }
+
+    #[must_use]
+    pub const fn parameter_words(self) -> u32 {
+        self.parameter_words
+    }
+
+    #[must_use]
+    pub const fn builder_words(self) -> u32 {
+        self.builder_words
+    }
+
+    #[must_use]
+    pub const fn attempt_rows(self) -> u32 {
+        self.attempt_rows
+    }
+}
+
+/// Length cursors for command-owned stacks and ordered ledgers.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct CommandStackCursors {
+    input_depth: u32,
+    parameter_depth: u32,
+    condition_depth: u32,
+    alignment_depth: u32,
+    replay_depth: u32,
+    diagnostic_count: u32,
+    framing_event_count: u32,
+}
+
+impl CommandStackCursors {
+    #[must_use]
+    pub const fn new(
+        input_depth: u32,
+        parameter_depth: u32,
+        condition_depth: u32,
+        alignment_depth: u32,
+        replay_depth: u32,
+        diagnostic_count: u32,
+        framing_event_count: u32,
+    ) -> Self {
+        Self {
+            input_depth,
+            parameter_depth,
+            condition_depth,
+            alignment_depth,
+            replay_depth,
+            diagnostic_count,
+            framing_event_count,
+        }
+    }
+
+    #[must_use]
+    pub const fn input_depth(self) -> u32 {
+        self.input_depth
+    }
+
+    #[must_use]
+    pub const fn parameter_depth(self) -> u32 {
+        self.parameter_depth
+    }
+
+    #[must_use]
+    pub const fn condition_depth(self) -> u32 {
+        self.condition_depth
+    }
+
+    #[must_use]
+    pub const fn alignment_depth(self) -> u32 {
+        self.alignment_depth
+    }
+
+    #[must_use]
+    pub const fn replay_depth(self) -> u32 {
+        self.replay_depth
+    }
+
+    #[must_use]
+    pub const fn diagnostic_count(self) -> u32 {
+        self.diagnostic_count
+    }
+
+    #[must_use]
+    pub const fn framing_event_count(self) -> u32 {
+        self.framing_event_count
+    }
+}
+
+/// Complete fixed-size command coordinate captured at a restorable boundary.
 ///
-/// Construction is restricted to [`CommandState::publish_summary`], which
-/// proves that every resumable command episode is quiescent. Consequently the
-/// summary does not store scanner status, live builders, rollback roots,
-/// expansion episodes, or alignment-template identities.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct CommandSummary {
-    pub(crate) input: InputState,
-    pub(crate) parameters: ParameterState,
-    pub(crate) conditions: ConditionStack,
-    pub(crate) align_state: i32,
-    pub(crate) expansion: ExpansionState,
-    pub(crate) next_builder_identity: u64,
+/// `command_journal` addresses scalar and replacement mutations. Arena and
+/// stack cursors address append-only suffixes. Restoration must acquire the
+/// retained generation before replaying the journal or exposing any restored
+/// coordinate, and may truncate suffixes only after roots have transferred.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct CommandSnapshotCursor {
+    command_journal: u32,
+    arenas: CommandArenaCursors,
+    stacks: CommandStackCursors,
 }
 
-impl CommandStateSnapshot {
-    /// Returns the immutable profile identity captured by this snapshot.
+impl CommandSnapshotCursor {
     #[must_use]
-    pub fn profile_fingerprint(&self) -> CommandProfileFingerprint {
-        self.state.profile().fingerprint()
+    pub const fn new(
+        command_journal: u32,
+        arenas: CommandArenaCursors,
+        stacks: CommandStackCursors,
+    ) -> Self {
+        Self {
+            command_journal,
+            arenas,
+            stacks,
+        }
+    }
+
+    #[must_use]
+    pub const fn command_journal(self) -> u32 {
+        self.command_journal
+    }
+
+    #[must_use]
+    pub const fn arenas(self) -> CommandArenaCursors {
+        self.arenas
+    }
+
+    #[must_use]
+    pub const fn stacks(self) -> CommandStackCursors {
+        self.stacks
     }
 }
 
-impl CommandSummary {
-    /// Returns the root source coordinate capability retained by this
-    /// continuation, when the root input is still live.
-    #[doc(hidden)]
+/// Exact in-session command snapshot for one admitted generation.
+///
+/// The default owner is [`GenerationOwner<G>`]. The owner parameter exists so
+/// the fixed-cursor contract can be tested without constructing a live TeX
+/// session; production construction remains crate-private.
+pub struct CommandStateSnapshot<G, Owner = GenerationOwner<G>> {
+    generation: Owner,
+    cursor: CommandSnapshotCursor,
+    brand: PhantomData<fn(&G) -> &G>,
+}
+
+impl<G, Owner: Clone> Clone for CommandStateSnapshot<G, Owner> {
+    fn clone(&self) -> Self {
+        Self {
+            generation: self.generation.clone(),
+            cursor: self.cursor,
+            brand: PhantomData,
+        }
+    }
+}
+
+impl<G, Owner: fmt::Debug> fmt::Debug for CommandStateSnapshot<G, Owner> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CommandStateSnapshot")
+            .field("generation", &self.generation)
+            .field("cursor", &self.cursor)
+            .finish()
+    }
+}
+
+impl<G, Owner> CommandStateSnapshot<G, Owner> {
     #[must_use]
-    pub fn root_source_id(&self) -> Option<tex_state::SourceId> {
-        self.input.levels.iter().find_map(|level| {
-            let InputLevel::Source(source) = level else {
-                return None;
-            };
-            Some(source.cursor.backing.id)
-        })
+    pub(crate) const fn new(generation: Owner, cursor: CommandSnapshotCursor) -> Self {
+        Self {
+            generation,
+            cursor,
+            brand: PhantomData,
+        }
     }
 
-    /// Compares future command semantics while normalizing allocation-local
-    /// provenance handles on backed-up tokens through their captured source
-    /// provenance.
     #[must_use]
-    pub fn exact_future_state_matches(
-        &self,
-        other: &Self,
-        self_root_anchor: usize,
-        other_root_anchor: usize,
-    ) -> bool {
-        let mut normalized = self.clone();
-        let Some((old_backing, expected_backing)) =
-            normalized
-                .input
-                .levels
-                .iter()
-                .find_map(|level| match level {
-                    InputLevel::Source(source) => Some((
-                        source.cursor.backing.bytes.to_vec(),
-                        other.input.levels.iter().find_map(|level| match level {
-                            InputLevel::Source(source) => Some(source.cursor.backing.bytes.clone()),
-                            InputLevel::Tokens(_) => None,
-                        })?,
-                    )),
-                    InputLevel::Tokens(_) => None,
-                })
-        else {
-            return normalized == *other;
-        };
-        if !normalized.rebind_root_source_at(
-            &old_backing,
-            expected_backing,
-            self_root_anchor,
-            other_root_anchor,
-        ) {
-            return false;
-        }
-        if normalized.input.levels.len() != other.input.levels.len() {
-            return false;
-        }
-        for (left, right) in normalized.input.levels.iter_mut().zip(&other.input.levels) {
-            match (left, right) {
-                (InputLevel::Tokens(left), InputLevel::Tokens(right)) => {
-                    if left.payload.is_backed_up()
-                        && right.payload.is_backed_up()
-                        && left
-                            .payload
-                            .adopt_matching_origins(&right.payload)
-                            .is_none()
-                    {
-                        return false;
-                    }
-                }
-                (InputLevel::Source(left), InputLevel::Source(right)) => {
-                    // The source cursor below is the complete future-semantic
-                    // coordinate. The compact frame's current offset counts
-                    // delivered tokens, so unchanged future input reached
-                    // after an edited comment may have a different historical
-                    // count. Preserve the exact level identity, then adopt the
-                    // comparison cursor just as backed-up provenance adopts
-                    // allocation-local roots above.
-                    if left.identity() != right.identity() {
-                        return false;
-                    }
-                    left.frame = right.frame;
-                }
-                _ => return false,
-            }
-        }
-        normalized == *other
+    pub const fn cursor(&self) -> CommandSnapshotCursor {
+        self.cursor
     }
 
-    /// Returns the immutable profile identity captured by this durable summary.
     #[must_use]
-    pub fn profile_fingerprint(&self) -> CommandProfileFingerprint {
-        self.expansion.profile.fingerprint()
+    pub(crate) const fn generation(&self) -> &Owner {
+        &self.generation
     }
 
-    /// Conservative physical cursor of the bottom registered source.
     #[must_use]
-    pub fn root_source_anchor(&self) -> Option<usize> {
-        self.input.levels.iter().find_map(|level| {
-            let crate::input::InputLevel::Source(source) = level else {
-                return None;
-            };
-            // A loaded physical line owns its complete normalized image,
-            // including unread bytes after the command that published this
-            // checkpoint. The next refill offset is therefore the earliest
-            // safe edit boundary both while a line is active and between
-            // lines; the token cursor would admit a stale line suffix.
-            usize::try_from(source.cursor.next_physical_offset).ok()
-        })
+    pub(crate) fn into_parts(self) -> (Owner, CommandSnapshotCursor) {
+        (self.generation, self.cursor)
     }
+}
 
-    /// Rebinds the bottom generated source to edited bytes while retaining
-    /// its exact command-owned identity and lexer cursor.
-    pub fn rebind_root_source(&mut self, old: &[u8], new: Arc<[u8]>) -> bool {
-        self.rebind_root_source_at(old, new, 0, 0)
-    }
-
-    /// Rebinds the generated root and maps every live source coordinate from
-    /// one already-proven unchanged suffix anchor to the other.
-    pub fn rebind_root_source_at(
-        &mut self,
-        old: &[u8],
-        new: Arc<[u8]>,
-        old_anchor: usize,
-        new_anchor: usize,
-    ) -> bool {
-        let Ok(old_anchor) = u64::try_from(old_anchor) else {
-            return false;
-        };
-        let Ok(new_anchor) = u64::try_from(new_anchor) else {
-            return false;
-        };
-        let Some(byte_delta) = i64::try_from(new_anchor)
-            .ok()
-            .and_then(|new_anchor| i64::try_from(old_anchor).ok().map(|old| new_anchor - old))
-        else {
-            return false;
-        };
-        let old_line = old
-            .get(..usize::try_from(old_anchor).unwrap_or(usize::MAX))
-            .map(|prefix| prefix.iter().filter(|&&byte| byte == b'\n').count());
-        let new_line = new
-            .get(..usize::try_from(new_anchor).unwrap_or(usize::MAX))
-            .map(|prefix| prefix.iter().filter(|&&byte| byte == b'\n').count());
-        let Some(line_delta) = old_line.zip(new_line).and_then(|(old, new)| {
-            i64::try_from(new)
-                .ok()
-                .zip(i64::try_from(old).ok())
-                .map(|(new, old)| new - old)
-        }) else {
-            return false;
-        };
-        let Some(source) = self.input.levels.iter_mut().find_map(|level| match level {
-            crate::input::InputLevel::Source(source) => Some(source),
-            crate::input::InputLevel::Tokens(_) => None,
-        }) else {
-            return false;
-        };
-        if source.cursor.backing.bytes.as_ref() != old {
-            return false;
-        }
-        let id = source.cursor.backing.id;
-        let Ok(backing) = source.cursor.backing.rebind_generated(id, new) else {
-            return false;
-        };
-        source.cursor.backing = backing;
-        let Some(next_physical_offset) = source
-            .cursor
-            .next_physical_offset
-            .checked_add_signed(byte_delta)
-        else {
-            return false;
-        };
-        let Some(next_line_number) = source
-            .cursor
-            .next_line_number
-            .checked_add_signed(line_delta)
-        else {
-            return false;
-        };
-        source.cursor.next_physical_offset = next_physical_offset;
-        source.cursor.next_line_number = next_line_number;
-        if let Some(line) = &mut source.cursor.line
-            && line
-                .rehome_edited_backing(
-                    id,
-                    &source.cursor.backing.bytes,
-                    source.cursor.backing.mode,
-                    byte_delta,
-                    line_delta,
-                )
-                .is_none()
-        {
-            return false;
-        }
-        for level in &mut self.input.levels {
-            let InputLevel::Tokens(tokens) = level else {
-                continue;
-            };
-            if tokens.payload.is_backed_up()
-                && tokens
-                    .payload
-                    .rehome_backed_up_source(id, byte_delta)
-                    .is_none()
-            {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// Whether this summary still owns the expected bottom source backing.
+impl<G> CommandStateSnapshot<G> {
+    /// Whether this snapshot addresses the admitted generation retained by
+    /// `generation`.
     #[must_use]
-    pub fn root_source_matches(&self, expected: &[u8]) -> bool {
-        self.input.levels.iter().find_map(|level| match level {
-            crate::input::InputLevel::Source(source) => Some(source.cursor.backing.bytes.as_ref()),
-            crate::input::InputLevel::Tokens(_) => None,
-        }) == Some(expected)
+    pub(crate) fn addresses(&self, generation: &GenerationOwner<G>) -> bool {
+        self.generation.same_generation(generation)
+    }
+}
+
+/// Restartable command state retained at a named in-session boundary.
+///
+/// A summary differs from an operation snapshot only in its publication
+/// proof: construction requires quiescent command state and records the
+/// portable profile fingerprint. The live form still contains no copied
+/// command graph; cold detachment turns its selected roots into recipes.
+pub struct CommandSummary<G, Owner = GenerationOwner<G>> {
+    generation: Owner,
+    cursor: CommandSnapshotCursor,
+    profile_fingerprint: u64,
+    root_source_anchor: Option<u64>,
+    brand: PhantomData<fn(&G) -> &G>,
+}
+
+impl<G, Owner: Clone> Clone for CommandSummary<G, Owner> {
+    fn clone(&self) -> Self {
+        Self {
+            generation: self.generation.clone(),
+            cursor: self.cursor,
+            profile_fingerprint: self.profile_fingerprint,
+            root_source_anchor: self.root_source_anchor,
+            brand: PhantomData,
+        }
+    }
+}
+
+impl<G, Owner: fmt::Debug> fmt::Debug for CommandSummary<G, Owner> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CommandSummary")
+            .field("generation", &self.generation)
+            .field("cursor", &self.cursor)
+            .field("profile_fingerprint", &self.profile_fingerprint)
+            .field("root_source_anchor", &self.root_source_anchor)
+            .finish()
+    }
+}
+
+impl<G, Owner> CommandSummary<G, Owner> {
+    #[must_use]
+    pub(crate) const fn new(
+        generation: Owner,
+        cursor: CommandSnapshotCursor,
+        profile_fingerprint: u64,
+        root_source_anchor: Option<u64>,
+    ) -> Self {
+        Self {
+            generation,
+            cursor,
+            profile_fingerprint,
+            root_source_anchor,
+            brand: PhantomData,
+        }
+    }
+
+    #[must_use]
+    pub const fn cursor(&self) -> CommandSnapshotCursor {
+        self.cursor
+    }
+
+    #[must_use]
+    pub const fn profile_fingerprint(&self) -> u64 {
+        self.profile_fingerprint
+    }
+
+    #[must_use]
+    pub const fn root_source_anchor(&self) -> Option<u64> {
+        self.root_source_anchor
+    }
+
+    #[must_use]
+    pub(crate) const fn generation(&self) -> &Owner {
+        &self.generation
+    }
+
+    #[must_use]
+    pub(crate) fn into_parts(self) -> (Owner, CommandSnapshotCursor, u64, Option<u64>) {
+        (
+            self.generation,
+            self.cursor,
+            self.profile_fingerprint,
+            self.root_source_anchor,
+        )
     }
 }
 
 /// The first nonquiescent command-state class preventing summary publication.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum CommandSummaryError {
-    /// Conditional text is being skipped by `pass_text`.
     ConditionalSkip,
-    /// A macro argument matcher is consuming raw input.
     MacroMatch,
-    /// A definition token-list scan is incomplete.
     DefinitionScan,
-    /// An alignment preamble token-list scan is incomplete.
     AlignmentScan,
-    /// Another balanced token-list absorption is incomplete.
     AbsorbingScan,
-    /// An expanded-command request still owns the command machine.
     ExpansionActive,
-    /// A u- or v-template is still associated with the active cell.
     AlignmentTemplateActive,
-    /// An outer alignment delivery context is suspended.
     SuspendedAlignment,
-    /// A semantic token builder remains live.
     LiveTokenBuilder,
-    /// A temporary rollback root remains live.
     LiveRollbackRoot,
-    /// Scanner warning context remains installed despite normal status.
     ScannerWarningContext,
-    /// A command diagnostic has not yet crossed the executor boundary.
     PendingSemanticDiagnostic,
-    /// A scanned `\input` filename is awaiting host acquisition.
     ResourceSuspension,
+    AttemptSuspended,
 }
 
 impl fmt::Display for CommandSummaryError {
@@ -312,169 +371,14 @@ impl fmt::Display for CommandSummaryError {
             Self::PendingSemanticDiagnostic => {
                 "a command semantic diagnostic is awaiting executor delivery"
             }
-            Self::ResourceSuspension => "an input-open continuation is awaiting a resource",
+            Self::ResourceSuspension => "a command resource request is pending",
+            Self::AttemptSuspended => "the command attempt is owned by a suspension",
         })
     }
 }
 
 impl std::error::Error for CommandSummaryError {}
 
-impl CommandState {
-    /// Captures every future-relevant command field for executor-step retry.
-    ///
-    /// Capture clones retained source and token backing through their owned
-    /// command-state representations. It neither consults host policy nor
-    /// includes process-local scratch allocations.
-    #[must_use]
-    pub fn snapshot(&self) -> CommandStateSnapshot {
-        CommandStateSnapshot {
-            state: self.clone(),
-        }
-    }
-
-    /// Restores an exact executor-step snapshot without host access.
-    pub fn rollback(
-        &mut self,
-        snapshot: CommandStateSnapshot,
-    ) -> Result<(), CommandProfileMismatch> {
-        self.profile().validate_fingerprint(
-            CommandProfileBoundary::Snapshot,
-            snapshot.profile_fingerprint(),
-        )?;
-        *self = snapshot.state;
-        Ok(())
-    }
-
-    /// Restores an isolated nested-input transaction while retaining the
-    /// conditional stack produced by expansion inside that transaction.
-    ///
-    /// TeX82 §1370's deferred `write_out` input is artificial, but expansion
-    /// still uses the live global `cond_ptr`. Its `\if` pushes and `\fi` pops
-    /// therefore survive after the synthetic input levels are removed. This
-    /// boundary restores the surrounding cursor/scanner state without
-    /// resurrecting conditional frames that the nested expansion changed.
-    pub fn rollback_nested_input_preserving_conditions(
-        &mut self,
-        snapshot: CommandStateSnapshot,
-    ) -> Result<(), CommandProfileMismatch> {
-        let conditions = self.conditions.clone();
-        self.rollback(snapshot)?;
-        self.conditions = conditions;
-        Ok(())
-    }
-
-    /// Validates and publishes restartable state for a named boundary.
-    pub fn publish_summary(&self) -> Result<CommandSummary, CommandSummaryError> {
-        match self.scanner.status() {
-            ScannerStatus::Normal => {}
-            ScannerStatus::Skipping { .. } => {
-                return Err(CommandSummaryError::ConditionalSkip);
-            }
-            ScannerStatus::Defining { .. } => {
-                return Err(CommandSummaryError::DefinitionScan);
-            }
-            ScannerStatus::Matching { .. } => {
-                return Err(CommandSummaryError::MacroMatch);
-            }
-            ScannerStatus::Aligning { .. } => {
-                return Err(CommandSummaryError::AlignmentScan);
-            }
-            ScannerStatus::Absorbing { .. } => {
-                return Err(CommandSummaryError::AbsorbingScan);
-            }
-        }
-        if self.scanner.warning().is_some() {
-            return Err(CommandSummaryError::ScannerWarningContext);
-        }
-        if !self.semantic_diagnostics.is_empty() {
-            return Err(CommandSummaryError::PendingSemanticDiagnostic);
-        }
-        if self.pending_input_open.is_some()
-            || self.pending_file_enquiry.is_some()
-            || !self.pending_integer_scans.is_empty()
-            || !self.pending_scan_toks.is_empty()
-            || !self.pending_expansions.is_empty()
-            || !self.pending_expandafters.is_empty()
-            || !self.pending_csnames.is_empty()
-        {
-            return Err(CommandSummaryError::ResourceSuspension);
-        }
-        if self.transient.active_expansion_depth != 0
-            || !self.replay_completions.is_empty()
-            || !self.pending_replay_completions.is_empty()
-        {
-            return Err(CommandSummaryError::ExpansionActive);
-        }
-        if self.alignment.active_alignment.is_some() || self.alignment.active_cell.is_some() {
-            return Err(CommandSummaryError::AlignmentTemplateActive);
-        }
-        if !self.alignment.suspended.is_empty() || !self.alignment.align_stack.is_empty() {
-            return Err(CommandSummaryError::SuspendedAlignment);
-        }
-        if !self.transient.builders.is_empty() {
-            return Err(CommandSummaryError::LiveTokenBuilder);
-        }
-        if !self.transient.rollback_roots.is_empty() {
-            return Err(CommandSummaryError::LiveRollbackRoot);
-        }
-        Ok(CommandSummary {
-            input: self.input.clone(),
-            parameters: self.parameters.clone(),
-            conditions: self.conditions.clone(),
-            align_state: self.alignment.align_state,
-            expansion: self.expansion.clone(),
-            next_builder_identity: self.transient.next_builder_identity,
-        })
-    }
-
-    /// Replaces the command machine with a validated named-boundary summary.
-    ///
-    /// Omitted transient domains are reconstructed in their unique quiescent
-    /// forms. All source/token backing is already owned by the summary, so
-    /// restoration cannot perform host acquisition.
-    pub fn restore_summary(
-        &mut self,
-        summary: CommandSummary,
-    ) -> Result<(), CommandProfileMismatch> {
-        self.profile().validate_fingerprint(
-            CommandProfileBoundary::Summary,
-            summary.profile_fingerprint(),
-        )?;
-        let engine_semantics = self.engine_semantics();
-        let usage = self.usage.clone();
-        *self = Self {
-            engine_semantics,
-            input: summary.input,
-            parameters: summary.parameters,
-            scanner: ScannerState::default(),
-            conditions: summary.conditions,
-            alignment: AlignmentDeliveryState {
-                align_state: summary.align_state,
-                ..AlignmentDeliveryState::default()
-            },
-            expansion: summary.expansion,
-            replay_completions: Vec::new(),
-            pending_replay_completions: Vec::new(),
-            semantic_diagnostics: Vec::new(),
-            name_in_progress: false,
-            pending_input_open: None,
-            pending_file_enquiry: None,
-            pending_integer_scans: Vec::new(),
-            pending_scan_toks: Vec::new(),
-            pending_expansions: Vec::new(),
-            pending_expandafters: Vec::new(),
-            pending_csnames: Vec::new(),
-            named_token_list_pushes: Vec::new(),
-            file_framing_events: Vec::new(),
-            usage,
-            transient: TransientState {
-                next_builder_identity: summary.next_builder_identity,
-                ..TransientState::default()
-            },
-        };
-        Ok(())
-    }
-}
-
 #[cfg(test)]
+#[path = "snapshot/tests.rs"]
 mod tests;
