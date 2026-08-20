@@ -9,6 +9,17 @@ deleted together by `umber2-66p0.2`. The branch is intentionally compiler-red
 until children `.3` through `.7` install the lifetime owners defined here; no
 compatibility storage path is available during that interval.
 
+The `.3` state core now owns one bounded append-only interning epoch, one
+coarse generation bundle, direct contiguous and page/index dense current-value
+banks, generation-typed definition/token/glue coordinates, and one exact
+ordered TeX save/operation-undo journal. Code-table INITEX defaults are virtual
+values of page/index dense banks rather than persistent roots. Journal cursors
+are generation-branded and dynamically owner-checked; interning is outside
+their rollback domain. Node/page arenas, attempt storage, cold detachment, and
+incremental generation retention remain the explicit `.4`--`.7` consumers of
+that core, so the rewrite branch stays compiler-red without a compatibility
+owner between those stages.
+
 This document defines the ownership and lifetime model for Umber's live TeX
 runtime. It is the authority when another architecture document discusses a
 different runtime storage lifetime. It does not define a wire format or a

@@ -14,37 +14,34 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `Cargo.toml`: Crate manifest, dependencies, features, library target, and integration test wiring.
 - `src/cell.rs`: Packed environment cell identifiers and bank tags shared by journals, raw storage, dependency tracking, and semantic hashing; assignment scope is stripped through the canonical `CellId` helper.
 - `src/cell/tests.rs`: Unit tests for cell id packing, bank decoding, and global-bit handling.
-- `src/code_tables.rs`: Sparse persistent-radix TeX catcode, lc/uc/sf/math/delcode tables whose virtual defaults are INITEX's initial values (tex.web §232 and §240, never a format's), plus generation stamps, groups, and snapshots.
-- `src/code_tables/global.rs`: Persistent global-assignment delta history used to rebase saved group roots without depth-sensitive writes.
-- `src/code_tables/tests.rs`: Unit tests for code-table defaults, semantic
-  writes, save-stack diagnostics, sparse updates, and snapshot rollback.
-- `src/command_context.rs`: Interpretation-neutral aggregate access boundary
-  reserved for the command processor. Exposes `begin_diagnostic`
-  (e-TeX `\tracingifs`), `printer` (e-TeX `\tracingnesting`'s
-  not-`stat`-gated `file_warning`), and `group_frames_from` (the same
-  per-group display `\showgroups` uses) so `tex-command` can render those
-  without a queued cross-crate diagnostic.
+- `src/code_tables.rs`: Storage-independent code-table value vocabulary; the
+  live cat/lc/uc/sf/math/delcode banks and INITEX virtual defaults are owned by
+  `DenseState`.
+- `src/command_context.rs`: Already-admitted session/generation borrow for
+  direct meaning, register, code-table, definition, token-list, and glue reads.
 - `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, registered World-backed mutation keys, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, generic tracked-region lifecycle and journal-write records, deterministic ordering, rollback failure closure, and handle-independent observation tests.
 - `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
 - `src/diagnostic/tests.rs`: Destination-selection, `print_nl` line-break, and scalar-formatting tests for the diagnostic channel.
-- `src/env.rs`: Barriered mutable environment storage for meanings, registers, parameters, font values, grouping, journals, and tracked-region journal lineage; typed writes produce canonical semantic mutation receipts, while token-, macro-, and glue-valued cells carry copy-only runtime identities beside compact words.
+- `src/definition_arena.rs`: Append-only generation-branded immutable macro
+  definitions whose parameter and replacement words live in the same arena.
+- `src/durable_arena.rs`: Separate generation-branded append-only token-list,
+  glue, and provenance arenas with direct row resolution.
+- `src/env.rs`: Generation-branded eqtb-equivalent current state, exact TeX
+  local/global save semantics, group boundaries, and journal-cursor restore.
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
-- `src/universe.rs`: aggregate state facade, durable snapshots, tracked
-  regions, and the fixed-size, non-restoring `DirectOperationMark` that owns
-  only an environment-journal cursor and private-revision allocation suffix.
 - `src/expansion_diagnostic.rs`: Detached recoverable expansion diagnostic
   values shared by command expansion and execution-side presentation.
 - `src/expansion_recovery.rs`: Detached main-control recovery vocabulary that
   keeps execution independent of the command expansion error tree.
-- `src/env/banks.rs`: Dense fixed-size bank codecs, parameter ids, and typed
-  bank access helpers. Primitive spellings are owned by `tex-command`'s
-  catalogue, not repeated here.
-- `src/env/box_bank.rs`: Dense-and-paged box-slot semantics and journal-owned assignment/coalescing behavior; its removed list-storage dependency is a compiler-guided destination for the final node arenas.
-- `src/env/group.rs`: Group stack, aftergroup/afterassignment handling, group mismatch types, final-value restoration receipts, and environment snapshot logic.
-- `src/env/overflow.rs`: Sparse e-TeX overflow register banks for high register numbers.
-- `src/env/raw.rs`: Restore-only raw environment writes, semantic word iteration, shadow verification, and raw word helpers.
-- `src/env/tests.rs`: Unit tests for environment write barriers, grouping, globals, aftergroup, font banks, and raw restore behavior.
+- `src/env/banks.rs`: Direct contiguous banks, page/index dense banks,
+  dense-prefix/paged-overflow register banks, and typed parameter ids.
+- `src/env/banks/tests.rs`: Direct-index, virtual-default, and paged-overflow
+  bank tests.
+- `src/env/group.rs`: Storage-independent group kinds, display frames, and
+  mismatch values carried by the ordered journal.
+- `src/env/tests.rs`: Meaning admission, dense/paged registers, INITEX code
+  defaults, exact nested local/global restoration, and cursor rollback tests.
 - `src/epoch.rs`: Monotonic epoch stamps used to coalesce journal entries within a state epoch.
 - `src/epoch/tests.rs`: Unit tests for epoch ordering, raw values, and overflow behavior.
 - `src/effect_journal.rs` and `src/effect_journal/tests.rs`: Validated detached effect-ledger ownership, aligned publication metadata, copy-only deferred-write token coordinates, prefix splicing, and terminal materialization.
@@ -71,19 +68,27 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/hyphenation.rs`: Hyphenation pattern trie and exception table implementing Liang-style position lookup.
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.
+- `src/generation.rs`: Fresh invariant generation brands, sealed arena
+  construction, coarse generation ownership, and whole-generation retirement.
 - `src/ids.rs`: Opaque snapshot and font handles retained outside the deleted runtime-value ownership substrate.
 - `src/input.rs`: Snapshot-ready lexer/input stack summaries with copy-only token-list ids, macro replay sites and argument slots, source ids, and generic checkpoint future-state comparison.
 - `src/input/tests.rs`: Value and snapshot-isolation tests for frozen input
   summaries and source payloads.
-- `src/interner.rs`: Control-sequence name interner with dense symbols, lookup, hashing, and rollback marks.
-- `src/interner/tests.rs`: Unit tests for symbol interning, resolution, rollback, and content hashing.
-- `src/journal.rs`: Append-only journal records, markers, undo entries, copy-only token/macro/glue old/new sidecars, and rollback/group replay support.
-- `src/journal/tests.rs`: Unit tests for journal positions, markers, entry traversal, and truncation.
+- `src/interner.rs`: Bounded append-only session epoch for control-sequence
+  names and retained spellings, with explicit foreign-session admission and
+  whole-epoch retirement.
+- `src/interner/tests.rs`: Session budget, namespace, stability, admission,
+  and retirement tests.
+- `src/journal.rs`: Generation-branded ordered mutation/group history carrying
+  exact prior packed values, TeX save levels, and owner-checked cursors.
+- `src/journal/tests.rs`: Exact position/truncation and foreign-owner cursor
+  rejection tests.
 - `src/lib.rs`: Public module declarations and re-exports forming the `tex-state` API surface.
 - `src/macro_definition.rs`: Storage-independent allocation-free macro parameter programs retained for the replacement definition arena.
 - `src/math.rs`: Immutable math-list model for noads, fields, fractions, styles, choices, and math font families.
-- `src/meaning.rs`: TeX meaning representation, primitive enums, flags, and packed raw meaning encode/decode logic.
-- `src/meaning/tests.rs`: Unit tests for meaning round trips, flag packing, and primitive encoding.
+- `src/meaning.rs`: Static packed TeX meanings plus generation-typed macro
+  meaning words; raw integers never materialize runtime definition ids.
+- `src/meaning/tests.rs`: Static codec, primitive, and typed macro-meaning tests.
 - `src/memo.rs`: Opaque schema-versioned detached memo envelopes, handle-free transition/effect/result DTOs, and aggregate token/glue/macro/node/font import APIs.
 - `src/memo/tests.rs`: Cold/fork/rollback Cross-Universe memo import, provenance stripping, corruption, bounds, kind, and semantic round-trip tests.
 - `profiling-allocator/`: isolated profiling-only `GlobalAlloc` forwarding
@@ -137,15 +142,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/source_fragments/layout_index.rs`: Fragment-and-offset index for logarithmic current/deleted piece resolution across repeated views.
 - `src/source_fragments/tests.rs`: Fragment range, deletion, fork-liveness, anchor, allocator, snapshot, and line-index cache tests.
 - `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots and replay convergence checks.
-- `src/stores.rs`: Retained aggregate semantic-state behavior and TeX82 memory
-  projection. References to deleted token, definition, glue, provenance, node,
-  snapshot, and private-revision storage are intentional compiler-guided
-  destinations for the final lifetime owners.
-- `src/stores/low_memory.rs`: Compact TeX variable-size free-ring and rover projection.
-- `src/stores/exact_identity.rs`: Commutative current-cell accumulator and constant-size rollback image for canonical identities of non-default environment cells.
-- `src/stores/node_semantic.rs`: Canonical node encoding and bottom-up semantic-identity composition at aggregate freeze.
-- `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
-- `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
+- `src/stores.rs`: Coarse generation state owner, immutable/mutable admitted
+  episode views, typed arena publication, and whole-generation retirement.
+- `src/stores/tests.rs`: Direct arena resolution, generation-id bank
+  installation, and coarse retirement tests.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
 - `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.
 - `src/tests/replay.rs`: Unit tests for snapshot/replay behavior and semantic state convergence.
@@ -157,18 +157,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
   the sparse owner set once; they never clone it per token before deduplication.
 - `src/token/tests.rs`: Unit tests for token constructors, catcodes, parameter tokens, and display/debug behavior.
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
-- `src/stores.rs`: Also owns the unified runtime-value registry and published
-  region-root set; checkpoints and private-operation rollback restore published
-  roots before truncating registry suffixes.
-- `src/universe.rs`: Top-level TeX state timeline and sole state API, with
-  snapshots, effect commits, execution-side dependency-aware getters and
-  barriers, precise World mutation-guard stamping, the strong frozen-macro
-  primitive-registry sidecar, immutable provenance demand/budgets, direct
-  artifact-root resolution, and the input-open capability context. Restoration traces resolve
-  named parameters through the installed primitive registry rather than a
-  state-local spelling table. It also admits snapshot-free direct-operation
-  commit only outside private revision allocation domains.
-- `src/universe/tests.rs`: Unit tests for `Universe` mutation, snapshots, contexts, effects, and boundary behavior.
+- `src/universe.rs`: Public session/generation aggregate, typed mutation and
+  allocation facade, owner-checked journal cursors, admitted command views,
+  and whole-session retirement.
+- `src/universe/tests.rs`: Session/generation admission, rollback-independent
+  interning, foreign-session rejection, and retirement tests.
 - `src/world.rs`: External-effect boundary for files, atomic downstream
   file-set publication, streams, clocks, randomness, shell policy, printing,
   coordinate-valued deferred-write effects, artifact-owned rendered-source
