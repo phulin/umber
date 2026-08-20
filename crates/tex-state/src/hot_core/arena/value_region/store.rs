@@ -10,7 +10,7 @@ use core::marker::PhantomData;
 use core::num::{NonZeroU32, NonZeroUsize};
 
 use crate::glue::GlueSpec;
-use crate::ids::{GlueId, MacroDefinitionId, TokenListId};
+use crate::ids::{GlueId, MacroDefinitionId, OriginListId, TokenListId};
 use crate::macro_store::{MacroMeaning, MacroParameterPattern};
 use crate::meaning::MeaningFlags;
 use crate::token::{OriginId, RootedTracedTokenWord, Token, TracedTokenWord};
@@ -132,6 +132,55 @@ impl RuntimeOriginEntry {
 
     pub(crate) const fn origin(self) -> OriginId {
         self.origin
+    }
+}
+
+/// Copy-only identity and physical span for one exact origin sequence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RuntimeOriginListCoordinate {
+    owner: ChunkOwner,
+    origins: LocalSpan<RuntimeOriginEntry>,
+    id: OriginListId,
+}
+
+impl RuntimeOriginListCoordinate {
+    pub(crate) const fn id(self) -> OriginListId {
+        self.id
+    }
+
+    pub(crate) const fn owner(self) -> ChunkOwner {
+        self.owner
+    }
+}
+
+/// Borrowed exact origin sequence admitted through the live registry.
+pub(crate) struct RuntimeOriginListView<'a> {
+    coordinate: RuntimeOriginListCoordinate,
+    origins: &'a [RuntimeOriginEntry],
+}
+
+impl RuntimeOriginListView<'_> {
+    pub(crate) const fn coordinate(&self) -> RuntimeOriginListCoordinate {
+        self.coordinate
+    }
+
+    pub(crate) const fn len(&self) -> usize {
+        self.origins.len()
+    }
+
+    pub(crate) const fn is_empty(&self) -> bool {
+        self.origins.is_empty()
+    }
+
+    pub(crate) fn origin(&self, index: usize) -> Option<OriginId> {
+        self.origins
+            .get(index)
+            .copied()
+            .map(RuntimeOriginEntry::origin)
+    }
+
+    pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = OriginId> + '_ {
+        self.origins.iter().copied().map(RuntimeOriginEntry::origin)
     }
 }
 
@@ -586,6 +635,17 @@ impl RuntimeValueStore {
         })
     }
 
+    pub(crate) fn admit_origin_list(
+        &self,
+        coordinate: RuntimeOriginListCoordinate,
+    ) -> Result<RuntimeOriginListView<'_>, RegionArenaError> {
+        let admitted = self.regions.admit(coordinate.owner())?;
+        Ok(RuntimeOriginListView {
+            coordinate,
+            origins: provenance_span(&admitted, coordinate.origins)?,
+        })
+    }
+
     pub(crate) fn retain_token_list_from(
         &mut self,
         source: &Self,
@@ -740,6 +800,17 @@ impl RuntimeValueCandidate {
         candidate_glue_view(&self.arena, coordinate)
     }
 
+    pub(crate) fn admit_origin_list(
+        &self,
+        coordinate: RuntimeOriginListCoordinate,
+    ) -> Result<RuntimeOriginListView<'_>, RegionArenaError> {
+        let columns = self.arena.resolve_columns(coordinate.owner())?;
+        Ok(RuntimeOriginListView {
+            coordinate,
+            origins: resolve_local_span(&columns.provenance_roots, coordinate.origins)?,
+        })
+    }
+
     pub(crate) fn append_token_list(
         &mut self,
         input: RuntimeTokenListInput<'_>,
@@ -885,6 +956,30 @@ impl RuntimeValueCandidate {
     ) -> Result<RuntimeGlueCoordinate, RegionArenaError> {
         Ok(RuntimeGlueCoordinate {
             row: self.arena.append_glue(spec)?,
+            id,
+        })
+    }
+
+    pub(crate) fn append_origin_list(
+        &mut self,
+        id: OriginListId,
+        origins: &[OriginId],
+    ) -> Result<RuntimeOriginListCoordinate, RegionArenaError> {
+        let additions = BundleAdditions {
+            provenance_roots: origins.len(),
+            ..BundleAdditions::default()
+        };
+        let active = prepare_bundle(&mut self.arena, additions)?;
+        let start = checked_offset(active.columns.provenance_roots.len())?;
+        for (index, origin) in origins.iter().copied().enumerate() {
+            active
+                .columns
+                .provenance_roots
+                .push(RuntimeOriginEntry::new(checked_len(index)?, origin));
+        }
+        Ok(RuntimeOriginListCoordinate {
+            owner: active.key,
+            origins: LocalSpan::new(start, checked_len(origins.len())?),
             id,
         })
     }

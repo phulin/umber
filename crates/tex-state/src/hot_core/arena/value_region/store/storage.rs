@@ -356,7 +356,10 @@ pub(super) fn validate_sparse_origins(
     Ok(())
 }
 
-fn resolve_local_span<T>(values: &[T], span: LocalSpan<T>) -> Result<&[T], RegionArenaError> {
+pub(super) fn resolve_local_span<T>(
+    values: &[T],
+    span: LocalSpan<T>,
+) -> Result<&[T], RegionArenaError> {
     let start = span.start as usize;
     let end = start
         .checked_add(span.len as usize)

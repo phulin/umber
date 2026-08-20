@@ -139,6 +139,17 @@ fn fixed_mark_is_copy_only_and_all_families_allocate_and_read() {
             ..GlueSpec::ZERO
         })
         .expect("glue allocates");
+    let origin_values = [OriginId::UNKNOWN, OriginId::from_raw(7)];
+    let origins = registry
+        .intern_origin_list(RuntimeOriginListValueInput {
+            origins: &origin_values,
+        })
+        .expect("origin list allocates");
+    let same_origins = registry
+        .intern_origin_list(RuntimeOriginListValueInput {
+            origins: &origin_values,
+        })
+        .expect("origin list reuses canonical identity");
 
     assert_eq!(
         registry.token_list(tokens).expect("tokens read").tokens(),
@@ -155,6 +166,14 @@ fn fixed_mark_is_copy_only_and_all_families_allocate_and_read() {
     assert_eq!(
         registry.glue(glue).expect("glue reads").spec().width,
         Scaled::from_raw(13)
+    );
+    assert_eq!(same_origins, origins);
+    assert!(
+        registry
+            .origin_list(origins)
+            .expect("origins read")
+            .iter()
+            .eq(origin_values)
     );
 }
 
@@ -176,6 +195,11 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
     let rejected_glue = registry
         .allocate_glue(GlueSpec::ZERO)
         .expect("attempt glue allocates");
+    let rejected_origins = registry
+        .intern_origin_list(RuntimeOriginListValueInput {
+            origins: &[OriginId::from_raw(11)],
+        })
+        .expect("attempt origin list allocates");
     registry
         .publish_into(&mut roots)
         .expect("attempt publishes");
@@ -198,12 +222,19 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
     let replacement_glue = registry
         .allocate_glue(GlueSpec::ZERO)
         .expect("replacement glue allocates");
+    let replacement_origins = registry
+        .intern_origin_list(RuntimeOriginListValueInput {
+            origins: &[OriginId::from_raw(12)],
+        })
+        .expect("replacement origin list allocates");
     assert_eq!(rejected_tokens.raw(), replacement_tokens.raw());
     assert_eq!(rejected_macro.raw(), replacement_macro.raw());
     assert_eq!(rejected_glue.raw(), replacement_glue.raw());
+    assert_eq!(rejected_origins.raw(), replacement_origins.raw());
     assert_ne!(rejected_tokens, replacement_tokens);
     assert_ne!(rejected_macro, replacement_macro);
     assert_ne!(rejected_glue, replacement_glue);
+    assert_ne!(rejected_origins, replacement_origins);
     assert_eq!(
         registry.token_list(rejected_tokens).err(),
         Some(RuntimeValueRegistryError::UnknownTokenList)
@@ -215,6 +246,10 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
     assert_eq!(
         registry.glue(rejected_glue).err(),
         Some(RuntimeValueRegistryError::UnknownGlue)
+    );
+    assert_eq!(
+        registry.origin_list(rejected_origins).err(),
+        Some(RuntimeValueRegistryError::UnknownOriginList)
     );
 }
 
@@ -233,6 +268,12 @@ fn fork_shares_inherited_rows_and_rejects_foreign_suffix_ids() {
     let inherited_glue = parent
         .allocate_glue(glue(17))
         .expect("inherited glue allocates");
+    let inherited_origin_values = [OriginId::UNKNOWN, OriginId::from_raw(13)];
+    let inherited_origins = parent
+        .intern_origin_list(RuntimeOriginListValueInput {
+            origins: &inherited_origin_values,
+        })
+        .expect("inherited origin list allocates");
     let mut child = parent.fork().expect("cold fork succeeds");
     let parent_values = [token('p')];
     let child_values = [token('c')];
@@ -242,6 +283,16 @@ fn fork_shares_inherited_rows_and_rejects_foreign_suffix_ids() {
     let child_only = child
         .allocate_token_list(token_input(6, &child_values))
         .expect("child suffix allocates");
+    let parent_only_origins = parent
+        .intern_origin_list(RuntimeOriginListValueInput {
+            origins: &[OriginId::from_raw(14)],
+        })
+        .expect("parent origin suffix allocates");
+    let child_only_origins = child
+        .intern_origin_list(RuntimeOriginListValueInput {
+            origins: &[OriginId::from_raw(15)],
+        })
+        .expect("child origin suffix allocates");
 
     assert_eq!(
         parent
@@ -272,8 +323,17 @@ fn fork_shares_inherited_rows_and_rejects_foreign_suffix_ids() {
             .spec(),
         glue(17)
     );
+    assert!(
+        child
+            .origin_list(inherited_origins)
+            .expect("child inherits origin list")
+            .iter()
+            .eq(inherited_origin_values)
+    );
     assert!(child.token_list(parent_only).is_err());
     assert!(parent.token_list(child_only).is_err());
+    assert!(child.origin_list(parent_only_origins).is_err());
+    assert!(parent.origin_list(child_only_origins).is_err());
 }
 
 #[test]

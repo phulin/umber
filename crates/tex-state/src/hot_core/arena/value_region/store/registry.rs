@@ -5,7 +5,7 @@ use core::num::NonZeroU32;
 
 use crate::glue::GlueSpec;
 use crate::identity::{IdentityAllocator, IdentityError};
-use crate::ids::{GlueId, MacroDefinitionId, TokenListId};
+use crate::ids::{GlueId, MacroDefinitionId, OriginListId, TokenListId};
 use crate::macro_store::MacroParameterPattern;
 use crate::meaning::MeaningFlags;
 use crate::token::TracedTokenWord;
@@ -14,9 +14,10 @@ use crate::token_store::TokenSemanticId;
 
 use super::{
     RegionArenaError, RuntimeGlueCoordinate, RuntimeGlueView, RuntimeMacroCoordinate,
-    RuntimeMacroInput, RuntimeMacroView, RuntimeOriginEntry, RuntimeTokenListCoordinate,
-    RuntimeTokenListInput, RuntimeTokenListView, RuntimeTracedTokenListInput,
-    RuntimeValueCandidate, RuntimeValueRegionAccounting, RuntimeValueRegionMark, RuntimeValueStore,
+    RuntimeMacroInput, RuntimeMacroView, RuntimeOriginEntry, RuntimeOriginListCoordinate,
+    RuntimeOriginListView, RuntimeTokenListCoordinate, RuntimeTokenListInput, RuntimeTokenListView,
+    RuntimeTracedTokenListInput, RuntimeValueCandidate, RuntimeValueRegionAccounting,
+    RuntimeValueRegionMark, RuntimeValueStore,
 };
 
 /// A rejected live-registry operation.
@@ -27,6 +28,7 @@ pub(crate) enum RuntimeValueRegistryError {
     UnknownTokenList,
     UnknownMacroDefinition,
     UnknownGlue,
+    UnknownOriginList,
     LocationCapacityExhausted,
     InvalidMark,
 }
@@ -50,6 +52,7 @@ pub(crate) struct RuntimeValueRegistryMark {
     token_locations: u32,
     macro_locations: u32,
     glue_locations: u32,
+    origin_list_locations: u32,
     next_macro_observation_operand: i64,
     next_macro_allocation_serial: u64,
 }
@@ -65,6 +68,11 @@ pub(crate) struct RuntimeTokenValueInput<'a> {
 pub(crate) struct RuntimeTracedTokenValueInput<'a> {
     pub(crate) semantic_id: TokenSemanticId,
     pub(crate) words: &'a [TracedTokenWord],
+}
+
+/// Exact provenance sequence allocated under a fresh registry identity.
+pub(crate) struct RuntimeOriginListValueInput<'a> {
+    pub(crate) origins: &'a [OriginId],
 }
 
 /// Macro payload allocated under a fresh registry identity.
@@ -86,6 +94,7 @@ pub(crate) struct RuntimeValueRegistryAccounting {
     pub(crate) token_locations: usize,
     pub(crate) macro_locations: usize,
     pub(crate) glue_locations: usize,
+    pub(crate) origin_list_locations: usize,
     pub(crate) retained_location_slots: usize,
     pub(crate) identity_slots: usize,
     pub(crate) retained_identity_slots: usize,
@@ -97,9 +106,11 @@ pub(crate) struct RuntimeValueRegistry {
     token_identities: IdentityAllocator,
     macro_identities: IdentityAllocator,
     glue_identities: IdentityAllocator,
+    origin_list_identities: IdentityAllocator,
     token_locations: Vec<RuntimeTokenListCoordinate>,
     macro_locations: Vec<RuntimeMacroCoordinate>,
     glue_locations: Vec<RuntimeGlueCoordinate>,
+    origin_list_locations: Vec<RuntimeOriginListCoordinate>,
     next_macro_observation_operand: i64,
     next_macro_allocation_serial: u64,
 }
@@ -126,14 +137,17 @@ impl RuntimeValueRegistry {
             provenance: &[],
         })?;
         let zero = candidate.append_glue(GlueId::ZERO, GlueSpec::ZERO)?;
+        let empty_origins = candidate.append_origin_list(OriginListId::EMPTY, &[])?;
         Ok(Self {
             candidate,
             token_identities: IdentityAllocator::new(1),
             macro_identities: IdentityAllocator::new(0),
             glue_identities: IdentityAllocator::new(1),
+            origin_list_identities: IdentityAllocator::new(1),
             token_locations: vec![empty],
             macro_locations: Vec::new(),
             glue_locations: vec![zero],
+            origin_list_locations: vec![empty_origins],
             next_macro_observation_operand: 249_985,
             next_macro_allocation_serial: 0,
         })
@@ -145,6 +159,7 @@ impl RuntimeValueRegistry {
             token_locations: checked_location_len(self.token_locations.len())?,
             macro_locations: checked_location_len(self.macro_locations.len())?,
             glue_locations: checked_location_len(self.glue_locations.len())?,
+            origin_list_locations: checked_location_len(self.origin_list_locations.len())?,
             next_macro_observation_operand: self.next_macro_observation_operand,
             next_macro_allocation_serial: self.next_macro_allocation_serial,
         })
@@ -158,12 +173,18 @@ impl RuntimeValueRegistry {
         let token_identities = self.token_identities.watermark_at(mark.token_locations)?;
         let macro_identities = self.macro_identities.watermark_at(mark.macro_locations)?;
         let glue_identities = self.glue_identities.watermark_at(mark.glue_locations)?;
+        let origin_list_identities = self
+            .origin_list_identities
+            .watermark_at(mark.origin_list_locations)?;
         self.token_identities.validate_rollback(token_identities)?;
         self.macro_identities.validate_rollback(macro_identities)?;
         self.glue_identities.validate_rollback(glue_identities)?;
+        self.origin_list_identities
+            .validate_rollback(origin_list_identities)?;
         validate_location_mark(self.token_locations.len(), mark.token_locations)?;
         validate_location_mark(self.macro_locations.len(), mark.macro_locations)?;
         validate_location_mark(self.glue_locations.len(), mark.glue_locations)?;
+        validate_location_mark(self.origin_list_locations.len(), mark.origin_list_locations)?;
         Ok(())
     }
 
@@ -177,12 +198,19 @@ impl RuntimeValueRegistry {
         let token_identities = self.token_identities.watermark_at(mark.token_locations)?;
         let macro_identities = self.macro_identities.watermark_at(mark.macro_locations)?;
         let glue_identities = self.glue_identities.watermark_at(mark.glue_locations)?;
+        let origin_list_identities = self
+            .origin_list_identities
+            .watermark_at(mark.origin_list_locations)?;
         self.token_locations.truncate(mark.token_locations as usize);
         self.macro_locations.truncate(mark.macro_locations as usize);
         self.glue_locations.truncate(mark.glue_locations as usize);
+        self.origin_list_locations
+            .truncate(mark.origin_list_locations as usize);
         self.token_identities.rollback(token_identities)?;
         self.macro_identities.rollback(macro_identities)?;
         self.glue_identities.rollback(glue_identities)?;
+        self.origin_list_identities
+            .rollback(origin_list_identities)?;
         self.next_macro_observation_operand = mark.next_macro_observation_operand;
         self.next_macro_allocation_serial = mark.next_macro_allocation_serial;
         self.candidate.truncate(mark.arena)?;
@@ -339,6 +367,33 @@ impl RuntimeValueRegistry {
         self.allocate_glue(spec)
     }
 
+    /// Cold collision-safe exact provenance-list lookup.
+    pub(crate) fn intern_origin_list(
+        &mut self,
+        input: RuntimeOriginListValueInput<'_>,
+    ) -> Result<OriginListId, RuntimeValueRegistryError> {
+        for coordinate in self.origin_list_locations.iter().copied() {
+            let view = self.candidate.admit_origin_list(coordinate)?;
+            if view.len() == input.origins.len() && view.iter().eq(input.origins.iter().copied()) {
+                return Ok(coordinate.id());
+            }
+        }
+        reserve_location(&mut self.origin_list_locations)?;
+        let identity_mark = self.origin_list_identities.watermark();
+        let identity = self.origin_list_identities.allocate()?;
+        let id = OriginListId::from_identity(identity);
+        let coordinate = match self.candidate.append_origin_list(id, input.origins) {
+            Ok(coordinate) => coordinate,
+            Err(error) => {
+                self.origin_list_identities.rollback(identity_mark)?;
+                return Err(error.into());
+            }
+        };
+        debug_assert_eq!(id.raw() as usize, self.origin_list_locations.len());
+        self.origin_list_locations.push(coordinate);
+        Ok(id)
+    }
+
     pub(crate) fn token_list(
         &self,
         id: TokenListId,
@@ -362,6 +417,15 @@ impl RuntimeValueRegistry {
         Ok(self.candidate.admit_glue(self.glue_coordinate(id)?)?)
     }
 
+    pub(crate) fn origin_list(
+        &self,
+        id: OriginListId,
+    ) -> Result<RuntimeOriginListView<'_>, RuntimeValueRegistryError> {
+        Ok(self
+            .candidate
+            .admit_origin_list(self.origin_list_coordinate(id)?)?)
+    }
+
     pub(crate) fn token_len(&self) -> u32 {
         u32::try_from(self.token_locations.len()).expect("token location count exceeds u32")
     }
@@ -372,6 +436,11 @@ impl RuntimeValueRegistry {
 
     pub(crate) fn glue_len(&self) -> u32 {
         u32::try_from(self.glue_locations.len()).expect("glue location count exceeds u32")
+    }
+
+    pub(crate) fn origin_list_len(&self) -> u32 {
+        u32::try_from(self.origin_list_locations.len())
+            .expect("origin-list location count exceeds u32")
     }
 
     pub(crate) fn token_id_at(&self, raw: u32) -> Option<TokenListId> {
@@ -392,6 +461,12 @@ impl RuntimeValueRegistry {
             .map(|value| value.id())
     }
 
+    pub(crate) fn origin_list_id_at(&self, raw: u32) -> Option<OriginListId> {
+        self.origin_list_locations
+            .get(raw as usize)
+            .map(|value| value.id())
+    }
+
     pub(crate) fn contains_token(&self, id: TokenListId) -> bool {
         self.token_coordinate(id).is_ok()
     }
@@ -402,6 +477,10 @@ impl RuntimeValueRegistry {
 
     pub(crate) fn contains_glue(&self, id: GlueId) -> bool {
         self.glue_coordinate(id).is_ok()
+    }
+
+    pub(crate) fn contains_origin_list(&self, id: OriginListId) -> bool {
+        self.origin_list_coordinate(id).is_ok()
     }
 
     pub(crate) fn install_frozen_token_list(
@@ -483,19 +562,29 @@ impl RuntimeValueRegistry {
         let token_identities = self.token_identities.watermark_at(mark.token_locations)?;
         let macro_identities = self.macro_identities.watermark_at(mark.macro_locations)?;
         let glue_identities = self.glue_identities.watermark_at(mark.glue_locations)?;
+        let origin_list_identities = self
+            .origin_list_identities
+            .watermark_at(mark.origin_list_locations)?;
         self.token_identities.validate_rollback(token_identities)?;
         self.macro_identities.validate_rollback(macro_identities)?;
         self.glue_identities.validate_rollback(glue_identities)?;
+        self.origin_list_identities
+            .validate_rollback(origin_list_identities)?;
         validate_location_mark(self.token_locations.len(), mark.token_locations)?;
         validate_location_mark(self.macro_locations.len(), mark.macro_locations)?;
         validate_location_mark(self.glue_locations.len(), mark.glue_locations)?;
+        validate_location_mark(self.origin_list_locations.len(), mark.origin_list_locations)?;
 
         self.token_locations.truncate(mark.token_locations as usize);
         self.macro_locations.truncate(mark.macro_locations as usize);
         self.glue_locations.truncate(mark.glue_locations as usize);
+        self.origin_list_locations
+            .truncate(mark.origin_list_locations as usize);
         self.token_identities.rollback(token_identities)?;
         self.macro_identities.rollback(macro_identities)?;
         self.glue_identities.rollback(glue_identities)?;
+        self.origin_list_identities
+            .rollback(origin_list_identities)?;
         self.next_macro_observation_operand = mark.next_macro_observation_operand;
         self.next_macro_allocation_serial = mark.next_macro_allocation_serial;
         self.candidate = RuntimeValueCandidate::from_store(published.clone())?;
@@ -509,6 +598,9 @@ impl RuntimeValueRegistry {
         for coordinate in self.glue_locations.iter().copied() {
             self.candidate.admit_glue(coordinate)?;
         }
+        for coordinate in self.origin_list_locations.iter().copied() {
+            self.candidate.admit_origin_list(coordinate)?;
+        }
         Ok(())
     }
 
@@ -521,9 +613,11 @@ impl RuntimeValueRegistry {
             token_identities: self.token_identities.fork(),
             macro_identities: self.macro_identities.fork(),
             glue_identities: self.glue_identities.fork(),
+            origin_list_identities: self.origin_list_identities.fork(),
             token_locations: self.token_locations.clone(),
             macro_locations: self.macro_locations.clone(),
             glue_locations: self.glue_locations.clone(),
+            origin_list_locations: self.origin_list_locations.clone(),
             next_macro_observation_operand: self.next_macro_observation_operand,
             next_macro_allocation_serial: self.next_macro_allocation_serial,
         };
@@ -574,6 +668,17 @@ impl RuntimeValueRegistry {
             let copied = child.candidate.append_glue(coordinate.id(), *view.spec())?;
             child.glue_locations[slot] = copied;
         }
+        for (slot, coordinate) in self.origin_list_locations.iter().copied().enumerate() {
+            if coordinate.owner() != active_owner {
+                continue;
+            }
+            let view = self.candidate.admit_origin_list(coordinate)?;
+            let origins = view.iter().collect::<Vec<_>>();
+            let copied = child
+                .candidate
+                .append_origin_list(coordinate.id(), &origins)?;
+            child.origin_list_locations[slot] = copied;
+        }
         Ok(child)
     }
 
@@ -587,24 +692,29 @@ impl RuntimeValueRegistry {
         let token_shape = self.token_identities.storage_shape();
         let macro_shape = self.macro_identities.storage_shape();
         let glue_shape = self.glue_identities.storage_shape();
+        let origin_list_shape = self.origin_list_identities.storage_shape();
         RuntimeValueRegistryAccounting {
             regions: self.candidate.accounting(),
             token_locations: self.token_locations.len(),
             macro_locations: self.macro_locations.len(),
             glue_locations: self.glue_locations.len(),
+            origin_list_locations: self.origin_list_locations.len(),
             retained_location_slots: self
                 .token_locations
                 .capacity()
                 .saturating_add(self.macro_locations.capacity())
-                .saturating_add(self.glue_locations.capacity()),
+                .saturating_add(self.glue_locations.capacity())
+                .saturating_add(self.origin_list_locations.capacity()),
             identity_slots: token_shape
                 .0
                 .saturating_add(macro_shape.0)
-                .saturating_add(glue_shape.0),
+                .saturating_add(glue_shape.0)
+                .saturating_add(origin_list_shape.0),
             retained_identity_slots: token_shape
                 .1
                 .saturating_add(macro_shape.1)
-                .saturating_add(glue_shape.1),
+                .saturating_add(glue_shape.1)
+                .saturating_add(origin_list_shape.1),
         }
     }
 
@@ -648,6 +758,20 @@ impl RuntimeValueRegistry {
             .copied()
             .filter(|coordinate| coordinate.id() == id)
             .ok_or(RuntimeValueRegistryError::UnknownGlue)
+    }
+
+    fn origin_list_coordinate(
+        &self,
+        id: OriginListId,
+    ) -> Result<RuntimeOriginListCoordinate, RuntimeValueRegistryError> {
+        if !self.origin_list_identities.contains(id.identity()) {
+            return Err(RuntimeValueRegistryError::UnknownOriginList);
+        }
+        self.origin_list_locations
+            .get(id.raw() as usize)
+            .copied()
+            .filter(|coordinate| coordinate.id() == id)
+            .ok_or(RuntimeValueRegistryError::UnknownOriginList)
     }
 }
 
