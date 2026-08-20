@@ -19,7 +19,7 @@ impl Stores {
     ) {
         let mut collector = RuntimeValueRootCollector {
             registry: &self.runtime_values,
-            source: &self.runtime_value_roots,
+            source: &self.runtime_values.roots,
             destination,
         };
         for node in nodes {
@@ -34,7 +34,7 @@ impl Stores {
     ) {
         let mut collector = RuntimeValueRootCollector {
             registry: &self.runtime_values,
-            source: &self.runtime_value_roots,
+            source: &self.runtime_values.roots,
             destination,
         };
         for node in nodes.iter() {

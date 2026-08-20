@@ -55,19 +55,25 @@ metadata do not create a second semantic identity.
 
 ## Aggregate ownership
 
-The aggregate registry is the sole runtime lookup and allocation authority.
+The aggregate registry is the sole runtime coordinate and allocation authority.
 Environment cells, journals, command input, macro activations, mode state,
 nodes, page state, PDF state, effects, snapshots, and checkpoints store only
 copyable family ids or refs. They do not carry a hidden payload owner.
 
 These consumers keep accepted storage live through deduplicated canonical
-region-root sets. A durable store checkpoint owns a clone of the sealed root
-set admitted at its barrier rather than a scalar publication length. Private
-candidate storage is instead bounded
-by the active revision and its rollback marks. The important distinction is
-between region lifetime and per-value reachability: removing one cell or node
-does not perform object collection, while discarding a suffix or a whole
-generation reclaims its storage at once.
+region-root sets. The dense registry coordinates and their root set form one
+`RuntimeValueGeneration`; the root set is not a detached `Stores`
+compatibility owner. Durable store checkpoints and frozen node payloads own
+independent root sets admitted at their publication barriers rather than
+scalar publication lengths. Private candidate storage is bounded by the
+active revision and its rollback marks. It has no accepted-region base.
+
+Every read uses an owner-scoped provider over candidate-private rows plus the
+caller's fixed canonical root tuple. A coordinate in a dense table is not read
+authority by itself. The important distinction is between region lifetime and
+per-value reachability: removing one cell or node does not perform object
+collection, while discarding a suffix or a whole generation reclaims its
+storage at once.
 
 Command-owned packed token buffers are replay storage, not a value allocator.
 When a stored token list crosses into command input, `CommandContext` admits
@@ -111,7 +117,8 @@ Rollback reverses the order:
 1. Validate and construct the command and mode restoration without mutation.
 2. Install command, mode, environment, input, page, PDF, and effect
    destinations while the checkpoint still owns its sealed root set.
-3. Replace the live canonical root set with retain-before-release ordering.
+3. Restore the generation and durable consumer root sets with
+   retain-before-release ordering.
 4. Restore family identity allocators and dense coordinate maps.
 5. Truncate the candidate to the saved region mark.
 
@@ -127,8 +134,9 @@ forked generation; values materialized from detached content receive
 destination-local coordinates.
 
 An inherited fork rollback first restores the canonical published root set,
-then rebuilds its private candidate from that accepted prefix before applying
-the saved family watermarks. The operation mark stores compact coordinate
+then rebuilds an empty private candidate before applying the saved family
+watermarks. Accepted coordinates remain readable only through the restored
+owner set. The operation mark stores compact coordinate
 lengths and the arena generation mark; identity rollback watermarks are
 derived only after that generation validates. It does not retain per-family
 owner marks or publish roots from private operations.

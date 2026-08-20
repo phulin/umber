@@ -59,6 +59,10 @@ fn macro_input<'a>(
 
 #[test]
 fn migrated_value_families_have_no_per_value_ownership_compatibility() {
+    assert!(
+        !include_str!("../../../value_region.rs").contains("\n    base:"),
+        "runtime value candidates must not store an accepted base"
+    );
     let sources = [
         include_str!("../../../../../token_store.rs"),
         include_str!("../../../../../macro_store.rs"),
@@ -90,32 +94,41 @@ fn cold_exact_lookup_is_collision_safe_without_owning_candidates() {
     let left = [token('a')];
     let right = [token('b')];
     let left_id = registry
-        .intern_token_list(RuntimeTokenValueInput {
-            semantic_id: semantic(99),
-            tokens: &left,
-            provenance: &[],
-        })
+        .intern_token_list(
+            &[],
+            RuntimeTokenValueInput {
+                semantic_id: semantic(99),
+                tokens: &left,
+                provenance: &[],
+            },
+        )
         .expect("left token list interns");
     let same_id = registry
-        .intern_token_list(RuntimeTokenValueInput {
-            semantic_id: semantic(99),
-            tokens: &left,
-            provenance: &[],
-        })
+        .intern_token_list(
+            &[],
+            RuntimeTokenValueInput {
+                semantic_id: semantic(99),
+                tokens: &left,
+                provenance: &[],
+            },
+        )
         .expect("exact token list reuses identity");
     let collision_id = registry
-        .intern_token_list(RuntimeTokenValueInput {
-            semantic_id: semantic(99),
-            tokens: &right,
-            provenance: &[],
-        })
+        .intern_token_list(
+            &[],
+            RuntimeTokenValueInput {
+                semantic_id: semantic(99),
+                tokens: &right,
+                provenance: &[],
+            },
+        )
         .expect("semantic collision remains distinct");
     assert_eq!(same_id, left_id);
     assert_ne!(collision_id, left_id);
 
-    let first_glue = registry.intern_glue(glue(17)).expect("glue interns");
-    let same_glue = registry.intern_glue(glue(17)).expect("glue reuses");
-    let distinct_glue = registry.intern_glue(glue(18)).expect("glue differs");
+    let first_glue = registry.intern_glue(&[], glue(17)).expect("glue interns");
+    let same_glue = registry.intern_glue(&[], glue(17)).expect("glue reuses");
+    let distinct_glue = registry.intern_glue(&[], glue(18)).expect("glue differs");
     assert_eq!(same_glue, first_glue);
     assert_ne!(distinct_glue, first_glue);
 }
@@ -131,7 +144,7 @@ fn fixed_mark_is_copy_only_and_all_families_allocate_and_read() {
         .allocate_token_list(token_input(1, &values))
         .expect("token list allocates");
     let definition = registry
-        .allocate_macro(macro_input(TokenListId::EMPTY, tokens, unknown))
+        .allocate_macro(&[], macro_input(TokenListId::EMPTY, tokens, unknown))
         .expect("macro allocates");
     let glue = registry
         .allocate_glue(GlueSpec {
@@ -141,39 +154,62 @@ fn fixed_mark_is_copy_only_and_all_families_allocate_and_read() {
         .expect("glue allocates");
     let origin_values = [OriginId::UNKNOWN, OriginId::from_raw(7)];
     let origins = registry
-        .intern_origin_list(RuntimeOriginListValueInput {
-            origins: &origin_values,
-        })
+        .intern_origin_list(
+            &[],
+            RuntimeOriginListValueInput {
+                origins: &origin_values,
+            },
+        )
         .expect("origin list allocates");
     let same_origins = registry
-        .intern_origin_list(RuntimeOriginListValueInput {
-            origins: &origin_values,
-        })
+        .intern_origin_list(
+            &[],
+            RuntimeOriginListValueInput {
+                origins: &origin_values,
+            },
+        )
         .expect("origin list reuses canonical identity");
 
     assert_eq!(
-        registry.token_list(tokens).expect("tokens read").tokens(),
+        registry
+            .token_list(&[], tokens)
+            .expect("tokens read")
+            .tokens(),
         values
     );
     assert_eq!(
         registry
-            .macro_definition(definition)
+            .macro_definition(&[], definition)
             .expect("macro reads")
             .replacement_text()
             .tokens(),
         values
     );
     assert_eq!(
-        registry.glue(glue).expect("glue reads").spec().width,
+        registry.glue(&[], glue).expect("glue reads").spec().width,
         Scaled::from_raw(13)
     );
     assert_eq!(same_origins, origins);
     assert!(
         registry
-            .origin_list(origins)
+            .origin_list(&[], origins)
             .expect("origins read")
             .iter()
             .eq(origin_values)
+    );
+}
+
+#[test]
+fn foreign_registry_mark_cannot_use_the_published_mark_fallback() {
+    let left = RuntimeValueRegistry::new(capacity(8), semantic(0)).expect("left initializes");
+    let mut right = RuntimeValueRegistry::new(capacity(8), semantic(0)).expect("right initializes");
+    let foreign = left.mark().expect("left mark exists");
+
+    assert_eq!(
+        right.rollback(foreign),
+        Err(RuntimeValueRegistryError::Region(
+            RegionArenaError::InvalidMark
+        ))
     );
 }
 
@@ -183,6 +219,9 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
         RuntimeValueRegistry::new(capacity(16), semantic(0)).expect("registry initializes");
     let unknown = OriginId::UNKNOWN;
     let mut roots = registry.empty_root_set();
+    registry
+        .publish_into(&mut roots)
+        .expect("bootstrap values publish before the checkpoint");
     let checkpoint_roots = roots.clone();
     let mark = registry.mark().expect("registry mark exists");
     let values = [token('x')];
@@ -190,15 +229,21 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
         .allocate_token_list(token_input(2, &values))
         .expect("attempt token allocates");
     let rejected_macro = registry
-        .allocate_macro(macro_input(TokenListId::EMPTY, rejected_tokens, unknown))
+        .allocate_macro(
+            &[&roots],
+            macro_input(TokenListId::EMPTY, rejected_tokens, unknown),
+        )
         .expect("attempt macro allocates");
     let rejected_glue = registry
         .allocate_glue(GlueSpec::ZERO)
         .expect("attempt glue allocates");
     let rejected_origins = registry
-        .intern_origin_list(RuntimeOriginListValueInput {
-            origins: &[OriginId::from_raw(11)],
-        })
+        .intern_origin_list(
+            &[&roots],
+            RuntimeOriginListValueInput {
+                origins: &[OriginId::from_raw(11)],
+            },
+        )
         .expect("attempt origin list allocates");
     registry
         .publish_into(&mut roots)
@@ -211,15 +256,21 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
         .allocate_token_list(token_input(3, &values))
         .expect("replacement token allocates");
     let replacement_macro = registry
-        .allocate_macro(macro_input(TokenListId::EMPTY, replacement_tokens, unknown))
+        .allocate_macro(
+            &[&checkpoint_roots],
+            macro_input(TokenListId::EMPTY, replacement_tokens, unknown),
+        )
         .expect("replacement macro allocates");
     let replacement_glue = registry
         .allocate_glue(GlueSpec::ZERO)
         .expect("replacement glue allocates");
     let replacement_origins = registry
-        .intern_origin_list(RuntimeOriginListValueInput {
-            origins: &[OriginId::from_raw(12)],
-        })
+        .intern_origin_list(
+            &[&checkpoint_roots],
+            RuntimeOriginListValueInput {
+                origins: &[OriginId::from_raw(12)],
+            },
+        )
         .expect("replacement origin list allocates");
     assert_eq!(rejected_tokens.raw(), replacement_tokens.raw());
     assert_eq!(rejected_macro.raw(), replacement_macro.raw());
@@ -230,19 +281,19 @@ fn published_roots_restore_before_reject_and_reused_slots_stay_stale() {
     assert_ne!(rejected_glue, replacement_glue);
     assert_ne!(rejected_origins, replacement_origins);
     assert_eq!(
-        registry.token_list(rejected_tokens).err(),
+        registry.token_list(&[], rejected_tokens).err(),
         Some(RuntimeValueRegistryError::UnknownTokenList)
     );
     assert_eq!(
-        registry.macro_definition(rejected_macro).err(),
+        registry.macro_definition(&[], rejected_macro).err(),
         Some(RuntimeValueRegistryError::UnknownMacroDefinition)
     );
     assert_eq!(
-        registry.glue(rejected_glue).err(),
+        registry.glue(&[], rejected_glue).err(),
         Some(RuntimeValueRegistryError::UnknownGlue)
     );
     assert_eq!(
-        registry.origin_list(rejected_origins).err(),
+        registry.origin_list(&[], rejected_origins).err(),
         Some(RuntimeValueRegistryError::UnknownOriginList)
     );
 }
@@ -294,18 +345,21 @@ fn fork_shares_inherited_rows_and_rejects_foreign_suffix_ids() {
         .expect("inherited token allocates");
     let unknown = OriginId::UNKNOWN;
     let inherited_macro = parent
-        .allocate_macro(macro_input(TokenListId::EMPTY, inherited, unknown))
+        .allocate_macro(&[], macro_input(TokenListId::EMPTY, inherited, unknown))
         .expect("inherited macro allocates");
     let inherited_glue = parent
         .allocate_glue(glue(17))
         .expect("inherited glue allocates");
     let inherited_origin_values = [OriginId::UNKNOWN, OriginId::from_raw(13)];
     let inherited_origins = parent
-        .intern_origin_list(RuntimeOriginListValueInput {
-            origins: &inherited_origin_values,
-        })
+        .intern_origin_list(
+            &[],
+            RuntimeOriginListValueInput {
+                origins: &inherited_origin_values,
+            },
+        )
         .expect("inherited origin list allocates");
-    let mut child = parent.fork().expect("cold fork succeeds");
+    let mut child = parent.fork(&[]).expect("cold fork succeeds");
     let parent_values = [token('p')];
     let child_values = [token('c')];
     let parent_only = parent
@@ -315,33 +369,39 @@ fn fork_shares_inherited_rows_and_rejects_foreign_suffix_ids() {
         .allocate_token_list(token_input(6, &child_values))
         .expect("child suffix allocates");
     let parent_only_origins = parent
-        .intern_origin_list(RuntimeOriginListValueInput {
-            origins: &[OriginId::from_raw(14)],
-        })
+        .intern_origin_list(
+            &[],
+            RuntimeOriginListValueInput {
+                origins: &[OriginId::from_raw(14)],
+            },
+        )
         .expect("parent origin suffix allocates");
     let child_only_origins = child
-        .intern_origin_list(RuntimeOriginListValueInput {
-            origins: &[OriginId::from_raw(15)],
-        })
+        .intern_origin_list(
+            &[],
+            RuntimeOriginListValueInput {
+                origins: &[OriginId::from_raw(15)],
+            },
+        )
         .expect("child origin suffix allocates");
 
     assert_eq!(
         parent
-            .token_list(inherited)
+            .token_list(&[], inherited)
             .expect("parent inherits")
             .tokens(),
         inherited_values
     );
     assert_eq!(
         child
-            .token_list(inherited)
+            .token_list(&[], inherited)
             .expect("child inherits")
             .tokens(),
         inherited_values
     );
     assert_eq!(
         child
-            .macro_definition(inherited_macro)
+            .macro_definition(&[], inherited_macro)
             .expect("child inherits macro")
             .meaning()
             .replacement_text(),
@@ -349,22 +409,22 @@ fn fork_shares_inherited_rows_and_rejects_foreign_suffix_ids() {
     );
     assert_eq!(
         *child
-            .glue(inherited_glue)
+            .glue(&[], inherited_glue)
             .expect("child inherits glue")
             .spec(),
         glue(17)
     );
     assert!(
         child
-            .origin_list(inherited_origins)
+            .origin_list(&[], inherited_origins)
             .expect("child inherits origin list")
             .iter()
             .eq(inherited_origin_values)
     );
-    assert!(child.token_list(parent_only).is_err());
-    assert!(parent.token_list(child_only).is_err());
-    assert!(child.origin_list(parent_only_origins).is_err());
-    assert!(parent.origin_list(child_only_origins).is_err());
+    assert!(child.token_list(&[], parent_only).is_err());
+    assert!(parent.token_list(&[], child_only).is_err());
+    assert!(child.origin_list(&[], parent_only_origins).is_err());
+    assert!(parent.origin_list(&[], child_only_origins).is_err());
 }
 
 #[test]
@@ -381,7 +441,7 @@ fn checkpoint_fork_shares_sealed_rows_and_omits_later_candidate_suffix() {
         .expect("checkpoint seals inherited region");
     let checkpoint = parent.mark().expect("checkpoint mark exists");
     let inherited_address = parent
-        .token_list(inherited)
+        .token_list(&[&checkpoint_roots], inherited)
         .expect("parent resolves inherited row")
         .tokens()
         .as_ptr();
@@ -396,7 +456,7 @@ fn checkpoint_fork_shares_sealed_rows_and_omits_later_candidate_suffix() {
 
     assert_eq!(
         child
-            .token_list(inherited)
+            .token_list(&[&checkpoint_roots], inherited)
             .expect("child resolves inherited row")
             .tokens()
             .as_ptr(),
@@ -419,7 +479,7 @@ fn all_live_growth_is_exact_in_locations_identities_and_region_values() {
             .allocate_token_list(token_input(10 + cycle, &values))
             .expect("token allocates");
         registry
-            .allocate_macro(macro_input(TokenListId::EMPTY, tokens, unknown))
+            .allocate_macro(&[], macro_input(TokenListId::EMPTY, tokens, unknown))
             .expect("macro allocates");
         registry
             .allocate_glue(GlueSpec::ZERO)
@@ -447,7 +507,7 @@ fn ten_thousand_bounded_retries_reuse_retained_storage() {
         .allocate_token_list(token_input(20, &values))
         .expect("warm token allocates");
     registry
-        .allocate_macro(macro_input(TokenListId::EMPTY, warm_tokens, unknown))
+        .allocate_macro(&[], macro_input(TokenListId::EMPTY, warm_tokens, unknown))
         .expect("warm macro allocates");
     registry
         .allocate_glue(GlueSpec::ZERO)
@@ -457,7 +517,7 @@ fn ten_thousand_bounded_retries_reuse_retained_storage() {
         .allocate_token_list(token_input(21, &values))
         .expect("second warm token allocates");
     registry
-        .allocate_macro(macro_input(TokenListId::EMPTY, warm_tokens, unknown))
+        .allocate_macro(&[], macro_input(TokenListId::EMPTY, warm_tokens, unknown))
         .expect("second warm macro allocates");
     registry
         .allocate_glue(GlueSpec::ZERO)
@@ -470,7 +530,7 @@ fn ten_thousand_bounded_retries_reuse_retained_storage() {
             .allocate_token_list(token_input(100 + cycle, &values))
             .expect("retry token allocates");
         registry
-            .allocate_macro(macro_input(TokenListId::EMPTY, tokens, unknown))
+            .allocate_macro(&[], macro_input(TokenListId::EMPTY, tokens, unknown))
             .expect("retry macro allocates");
         registry
             .allocate_glue(GlueSpec::ZERO)

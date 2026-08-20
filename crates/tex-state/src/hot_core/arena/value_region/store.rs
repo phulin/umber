@@ -516,6 +516,8 @@ pub(crate) struct RuntimeMacroInput<'a> {
     pub(crate) parameter_pattern: MacroParameterPattern,
     pub(crate) parameter_text: RuntimeTokenListCoordinate,
     pub(crate) replacement_text: RuntimeTokenListCoordinate,
+    pub(crate) parameter_len: u32,
+    pub(crate) replacement_len: u32,
     pub(crate) definition_origin: OriginId,
     pub(crate) parameter_origins: &'a [RuntimeOriginEntry],
     pub(crate) replacement_origins: &'a [RuntimeOriginEntry],
@@ -551,6 +553,7 @@ impl RuntimeValueRootSet {
     pub(crate) fn candidate(&self) -> Result<RuntimeValueCandidate, RegionArenaError> {
         Ok(RuntimeValueCandidate {
             arena: self.regions.candidate()?,
+            initial_region_capacity: self.regions.initial_region_capacity,
         })
     }
 
@@ -720,24 +723,144 @@ impl RuntimeValueRootSet {
     }
 }
 
+/// Borrowed read authority over one private suffix and canonical consumers.
+///
+/// The candidate owns only mutable or not-yet-published rows. Every accepted
+/// row must be admitted through one of the caller-supplied root sets; merely
+/// retaining a copy-only family coordinate in the registry is insufficient.
+pub(crate) struct RuntimeValueProvider<'a, 'roots> {
+    candidate: &'a RuntimeValueCandidate,
+    roots: &'roots [&'a RuntimeValueRootSet],
+}
+
+impl<'a, 'roots> RuntimeValueProvider<'a, 'roots> {
+    pub(crate) const fn new(
+        candidate: &'a RuntimeValueCandidate,
+        roots: &'roots [&'a RuntimeValueRootSet],
+    ) -> Self {
+        Self { candidate, roots }
+    }
+
+    pub(crate) fn admit_token_list(
+        &self,
+        coordinate: RuntimeTokenListCoordinate,
+    ) -> Result<RuntimeTokenListView<'a>, RegionArenaError> {
+        if let Ok(view) = self.candidate.admit_token_list(coordinate) {
+            return Ok(view);
+        }
+        for roots in self.roots {
+            if let Ok(view) = roots.admit_token_list(coordinate) {
+                return Ok(view);
+            }
+        }
+        Err(RegionArenaError::UnknownChunk)
+    }
+
+    pub(crate) fn admit_macro(
+        &self,
+        coordinate: RuntimeMacroCoordinate,
+    ) -> Result<RuntimeMacroView<'a>, RegionArenaError> {
+        let (record, roots, parameter_origins, replacement_origins) =
+            if let Ok(columns) = self.candidate.arena.resolve_columns(coordinate.owner()) {
+                let offset = coordinate.row.offset() as usize;
+                let record = columns
+                    .macro_records
+                    .get(offset)
+                    .ok_or(RegionArenaError::OffsetOutOfBounds)?;
+                let roots = columns
+                    .macro_roots
+                    .get(offset)
+                    .ok_or(RegionArenaError::OffsetOutOfBounds)?;
+                validate_macro_identity(coordinate, record, roots)?;
+                (
+                    record,
+                    roots,
+                    resolve_local_span(&columns.provenance_roots, roots.parameter_origins)?,
+                    resolve_local_span(&columns.provenance_roots, roots.replacement_origins)?,
+                )
+            } else {
+                let mut admitted = None;
+                for source in self.roots {
+                    if let Ok(region) = source.regions.admit(coordinate.owner()) {
+                        admitted = Some(region);
+                        break;
+                    }
+                }
+                let admitted = admitted.ok_or(RegionArenaError::UnknownChunk)?;
+                let record = admitted.macro_record(coordinate.row)?;
+                let root_coordinate = coordinate
+                    .owner()
+                    .coordinate::<RuntimeMacroRootRow>(coordinate.row.offset());
+                let roots = admitted.macro_root(root_coordinate)?;
+                validate_macro_identity(coordinate, record, roots)?;
+                (
+                    record,
+                    roots,
+                    provenance_span(&admitted, roots.parameter_origins)?,
+                    provenance_span(&admitted, roots.replacement_origins)?,
+                )
+            };
+        let parameter_text = self.admit_token_list(roots.parameter_text)?;
+        let replacement_text = self.admit_token_list(roots.replacement_text)?;
+        Ok(RuntimeMacroView {
+            coordinate,
+            record,
+            parameter_text,
+            replacement_text,
+            definition_origin: roots.definition_origin,
+            parameter_origins,
+            replacement_origins,
+        })
+    }
+
+    pub(crate) fn admit_glue(
+        &self,
+        coordinate: RuntimeGlueCoordinate,
+    ) -> Result<RuntimeGlueView<'a>, RegionArenaError> {
+        if let Ok(view) = self.candidate.admit_glue(coordinate) {
+            return Ok(view);
+        }
+        for roots in self.roots {
+            if let Ok(view) = roots.admit_glue(coordinate) {
+                return Ok(view);
+            }
+        }
+        Err(RegionArenaError::UnknownChunk)
+    }
+
+    pub(crate) fn admit_origin_list(
+        &self,
+        coordinate: RuntimeOriginListCoordinate,
+    ) -> Result<RuntimeOriginListView<'a>, RegionArenaError> {
+        if let Ok(view) = self.candidate.admit_origin_list(coordinate) {
+            return Ok(view);
+        }
+        for roots in self.roots {
+            if let Ok(view) = roots.admit_origin_list(coordinate) {
+                return Ok(view);
+            }
+        }
+        Err(RegionArenaError::UnknownChunk)
+    }
+}
+
 /// Mutable rollback-owned suffix over an accepted [`RuntimeValueRootSet`].
 pub(crate) struct RuntimeValueCandidate {
     arena: ConcreteArena,
+    initial_region_capacity: NonZeroU32,
 }
 
 impl RuntimeValueCandidate {
     fn from_store(store: RuntimeValueRootSet) -> Result<Self, RegionArenaError> {
+        let initial_region_capacity = store.regions.initial_region_capacity;
         Ok(Self {
-            arena: RuntimeValueRegionArena::new(store.regions)?,
+            arena: RuntimeValueRegionArena::new(initial_region_capacity)?,
+            initial_region_capacity,
         })
     }
 
-    /// Shares every immutable region while leaving the private active suffix
-    /// for the cold fork path to copy into its own namespace.
-    fn sealed_store(&self) -> RuntimeValueRootSet {
-        RuntimeValueRootSet {
-            regions: clone_sealed_regions(&self.arena),
-        }
+    fn empty_root_set(&self) -> RuntimeValueRootSet {
+        RuntimeValueRootSet::new(self.initial_region_capacity)
     }
 
     fn active_owner(&self) -> Option<ChunkOwner> {
@@ -753,6 +876,10 @@ impl RuntimeValueCandidate {
         mark: RuntimeValueRegionMark,
     ) -> Result<(), RegionArenaError> {
         self.arena.validate_mark(mark)
+    }
+
+    pub(crate) fn owns_mark_namespace(&self, mark: RuntimeValueRegionMark) -> bool {
+        self.arena.namespace == mark.namespace
     }
 
     pub(crate) fn truncate(
@@ -878,10 +1005,8 @@ impl RuntimeValueCandidate {
         &mut self,
         input: RuntimeMacroInput<'_>,
     ) -> Result<RuntimeMacroCoordinate, RegionArenaError> {
-        let parameter = self.resolve_token_list(input.parameter_text)?;
-        let replacement = self.resolve_token_list(input.replacement_text)?;
-        let parameter_len = parameter.tokens.len;
-        let replacement_len = replacement.tokens.len;
+        let parameter_len = input.parameter_len;
+        let replacement_len = input.replacement_len;
         validate_sparse_origins(input.parameter_origins, parameter_len as usize)?;
         validate_sparse_origins(input.replacement_origins, replacement_len as usize)?;
         let additions = BundleAdditions {
@@ -999,15 +1124,6 @@ impl RuntimeValueCandidate {
 
     pub(crate) fn accounting(&self) -> RuntimeValueRegionAccounting {
         self.arena.accounting()
-    }
-
-    fn resolve_token_list(
-        &self,
-        coordinate: RuntimeTokenListCoordinate,
-    ) -> Result<&RuntimeTokenListRow, RegionArenaError> {
-        let row = self.arena.resolve_token_list(coordinate.row)?;
-        validate_token_identity(coordinate, row)?;
-        Ok(row)
     }
 }
 

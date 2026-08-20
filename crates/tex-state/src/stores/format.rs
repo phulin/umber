@@ -2344,7 +2344,7 @@ fn install_frozen_sections(
     }
     stores
         .runtime_values
-        .publish_into(&mut stores.runtime_value_roots)
+        .publish()
         .map_err(|_| StoreFormatError::Invalid("frozen runtime registry publication"))?;
     stores.fonts = non_node.fonts;
     stores.code_tables = non_node.code_tables;

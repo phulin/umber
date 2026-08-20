@@ -196,38 +196,20 @@ pub(super) fn candidate_glue_view<'a>(
     Ok(RuntimeGlueView { coordinate, spec })
 }
 
-/// Seals the mutable tail and adds only previously absent region owners.
+/// Seals the mutable tail and moves its owners into the canonical consumer.
+///
+/// Published regions are drained from the candidate, which therefore retains
+/// only its mutable/private suffix. Reads of these rows must subsequently use
+/// an owner-scoped provider.
 pub(super) fn publish_candidate_regions(
     arena: &mut ConcreteArena,
     destination: &mut ConcreteRegions,
 ) -> Result<(), RegionArenaError> {
     arena.seal_active()?;
-    for root in &arena.base.regions {
-        retain_root_if_absent(destination, root.owner.key, root.uses, &root.owner)?;
-    }
-    for owner in &arena.sealed_suffix {
-        retain_root_if_absent(destination, owner.key, NonZeroUsize::MIN, owner)?;
+    for owner in arena.sealed_suffix.drain(..) {
+        retain_root_if_absent(destination, owner.key, NonZeroUsize::MIN, &owner)?;
     }
     Ok(())
-}
-
-/// Clones only the one owner per already-immutable region. The mutable active
-/// region is deliberately excluded and is copied into a fresh child namespace
-/// by the registry's cold fork path.
-pub(super) fn clone_sealed_regions(arena: &ConcreteArena) -> ConcreteRegions {
-    let mut regions = arena.base.clone();
-    regions
-        .regions
-        .extend(
-            arena
-                .sealed_suffix
-                .iter()
-                .map(|owner| super::super::RuntimeValueRegionRoot {
-                    owner: Arc::clone(owner),
-                    uses: NonZeroUsize::MIN,
-                }),
-        );
-    regions
 }
 
 fn retain_root_if_absent(

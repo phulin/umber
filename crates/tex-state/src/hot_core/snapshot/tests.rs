@@ -122,7 +122,7 @@ fn rollback_restores_every_composed_component_exactly() {
 }
 
 #[test]
-fn accepted_bases_remain_readable_across_accept_reject_and_retry() {
+fn accepted_regions_require_their_owner_across_reject_and_retry() {
     let empty = base();
     let mut author = candidate(&empty);
     let inherited = author
@@ -139,13 +139,23 @@ fn accepted_bases_remain_readable_across_accept_reject_and_retry() {
         .append_arena_word(HotArenaKind::TokenWord, 12)
         .expect("rejected token appends");
     assert_eq!(
-        rejected.resolve(HotArenaKind::TokenWord, inherited),
+        accepted.resolve(HotArenaKind::TokenWord, inherited),
         Ok(&11)
+    );
+    assert!(
+        rejected
+            .resolve(HotArenaKind::TokenWord, inherited)
+            .is_err(),
+        "candidate coordinates do not authorize accepted-region reads"
     );
     drop(rejected);
 
     let mut retry = candidate(&accepted);
-    assert_eq!(retry.resolve(HotArenaKind::TokenWord, inherited), Ok(&11));
+    assert_eq!(
+        accepted.resolve(HotArenaKind::TokenWord, inherited),
+        Ok(&11)
+    );
+    assert!(retry.resolve(HotArenaKind::TokenWord, inherited).is_err());
     assert!(
         retry
             .resolve(HotArenaKind::TokenWord, rejected_word)
@@ -162,7 +172,10 @@ fn accepted_bases_remain_readable_across_accept_reject_and_retry() {
         .expect("retry replacement appends");
     let next = retry.accept().expect("retry candidate accepts");
 
-    assert_eq!(next.resolve(HotArenaKind::TokenWord, inherited), Ok(&11));
+    assert_eq!(
+        accepted.resolve(HotArenaKind::TokenWord, inherited),
+        Ok(&11)
+    );
     assert_eq!(next.resolve(HotArenaKind::TokenWord, replacement), Ok(&14));
     assert!(
         next.resolve(HotArenaKind::TokenWord, rejected_word)

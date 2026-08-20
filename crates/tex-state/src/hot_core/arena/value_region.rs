@@ -258,7 +258,7 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
         RuntimeValueRegionArena<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>,
         RegionArenaError,
     > {
-        RuntimeValueRegionArena::new(self.clone())
+        RuntimeValueRegionArena::new(self.initial_region_capacity)
     }
 
     pub(crate) fn resolve_token_word(
@@ -570,7 +570,7 @@ pub(crate) struct RuntimeValueRegionMark {
     lengths: RuntimeValueColumnLengths,
 }
 
-/// Mutable bump suffix over an explicit accepted region-root set.
+/// Mutable bump suffix with no authority over accepted regions.
 pub(crate) struct RuntimeValueRegionArena<
     TokenWord,
     TokenList,
@@ -579,8 +579,7 @@ pub(crate) struct RuntimeValueRegionArena<
     Glue,
     Provenance,
 > {
-    base:
-        AcceptedRuntimeValueRegions<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>,
+    initial_region_capacity: NonZeroU32,
     namespace: NonZeroU64,
     sealed_suffix: Vec<SealedOwner<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>>,
     active: Option<
@@ -598,20 +597,11 @@ pub(crate) struct RuntimeValueRegionArena<
 impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
     RuntimeValueRegionArena<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
 {
-    fn new(
-        base: AcceptedRuntimeValueRegions<
-            TokenWord,
-            TokenList,
-            MacroRecord,
-            MacroRoot,
-            Glue,
-            Provenance,
-        >,
-    ) -> Result<Self, RegionArenaError> {
+    fn new(initial_region_capacity: NonZeroU32) -> Result<Self, RegionArenaError> {
         let namespace = fresh_namespace()?;
         Ok(Self {
-            region_capacity: base.initial_region_capacity.get(),
-            base,
+            region_capacity: initial_region_capacity.get(),
+            initial_region_capacity,
             namespace,
             sealed_suffix: Vec::new(),
             active: None,
@@ -743,17 +733,17 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
         RegionArenaError,
     > {
         self.seal_active()?;
-        self.base
-            .regions
-            .extend(
-                self.sealed_suffix
-                    .drain(..)
-                    .map(|owner| RuntimeValueRegionRoot {
-                        owner,
-                        uses: NonZeroUsize::MIN,
-                    }),
-            );
-        Ok(self.base)
+        Ok(AcceptedRuntimeValueRegions {
+            regions: self
+                .sealed_suffix
+                .drain(..)
+                .map(|owner| RuntimeValueRegionRoot {
+                    owner,
+                    uses: NonZeroUsize::MIN,
+                })
+                .collect(),
+            initial_region_capacity: self.initial_region_capacity,
+        })
     }
 
     pub(crate) fn append_token_word(
@@ -913,12 +903,8 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
     }
 
     pub(crate) fn accounting(&self) -> RuntimeValueRegionAccounting {
-        let mut accounting = self.base.accounting().plus(accounting_for_owners(
-            &self.sealed_suffix,
-            0,
-            0,
-            self.sealed_suffix.capacity(),
-        ));
+        let mut accounting =
+            accounting_for_owners(&self.sealed_suffix, 0, 0, self.sealed_suffix.capacity());
         if let Some(active) = &self.active {
             accounting = accounting.plus(accounting_for_columns(&active.columns, 1, 0));
         }
@@ -1034,12 +1020,7 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
         {
             return Ok(&active.columns);
         }
-        match resolve_sealed_region(&self.sealed_suffix, key) {
-            Ok(region) => return Ok(&region.columns),
-            Err(RegionArenaError::ForeignNamespace) => {}
-            Err(error) => return Err(error),
-        }
-        Ok(&self.base.resolve_region(key)?.columns)
+        Ok(&resolve_sealed_region(&self.sealed_suffix, key)?.columns)
     }
 }
 

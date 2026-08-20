@@ -47,9 +47,13 @@ fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
 use crate::glue::{GlueSpec, GlueSpecRef};
 use crate::hot_core::arena::store::registry::{
     RuntimeMacroValueInput, RuntimeOriginListValueInput, RuntimeTokenValueInput,
-    RuntimeTracedTokenValueInput, RuntimeValueRegistry, RuntimeValueRegistryMark,
+    RuntimeTracedTokenValueInput, RuntimeValueRegistry, RuntimeValueRegistryError,
+    RuntimeValueRegistryMark,
 };
-use crate::hot_core::arena::store::{RuntimeOriginEntry, RuntimeValueRootSet};
+use crate::hot_core::arena::store::{
+    RuntimeGlueView, RuntimeMacroView, RuntimeOriginEntry, RuntimeOriginListView,
+    RuntimeTokenListView, RuntimeValueRootSet,
+};
 use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::SourceId;
@@ -108,6 +112,150 @@ pub(crate) use format::{
 
 pub use crate::env::group::{GroupFrame, GroupKind, GroupMismatch};
 pub(crate) use state_hash::StoreStateHashCursor;
+
+/// One generation's copy-only value coordinates and their accepted storage.
+///
+/// The registry is not an ownership authority: its dense location tables are
+/// coordinates only. This adjacent root set is the canonical generation
+/// consumer for those coordinates, while snapshots, node payloads, and other
+/// detached consumers retain their own narrowed sets.
+#[derive(Debug)]
+struct RuntimeValueGeneration {
+    registry: RuntimeValueRegistry,
+    roots: RuntimeValueRootSet,
+}
+
+impl std::ops::Deref for RuntimeValueGeneration {
+    type Target = RuntimeValueRegistry;
+
+    fn deref(&self) -> &Self::Target {
+        &self.registry
+    }
+}
+
+impl std::ops::DerefMut for RuntimeValueGeneration {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.registry
+    }
+}
+
+impl RuntimeValueGeneration {
+    fn new(mut registry: RuntimeValueRegistry) -> Self {
+        let mut roots = registry.empty_root_set();
+        registry
+            .publish_into(&mut roots)
+            .expect("canonical runtime values must publish");
+        Self { registry, roots }
+    }
+
+    fn from_parts(registry: RuntimeValueRegistry, roots: RuntimeValueRootSet) -> Self {
+        Self { registry, roots }
+    }
+
+    fn fork(&self) -> Result<Self, RuntimeValueRegistryError> {
+        Ok(Self {
+            registry: self.registry.fork(&[&self.roots])?,
+            roots: self.roots.clone(),
+        })
+    }
+
+    fn publish(&mut self) -> Result<(), RuntimeValueRegistryError> {
+        self.registry.publish_into(&mut self.roots)
+    }
+
+    fn token_list(
+        &self,
+        id: TokenListId,
+    ) -> Result<RuntimeTokenListView<'_>, RuntimeValueRegistryError> {
+        self.registry.token_list(&[&self.roots], id)
+    }
+
+    fn macro_definition(
+        &self,
+        id: MacroDefinitionId,
+    ) -> Result<RuntimeMacroView<'_>, RuntimeValueRegistryError> {
+        self.registry.macro_definition(&[&self.roots], id)
+    }
+
+    fn glue(&self, id: GlueId) -> Result<RuntimeGlueView<'_>, RuntimeValueRegistryError> {
+        self.registry.glue(&[&self.roots], id)
+    }
+
+    fn origin_list(
+        &self,
+        id: OriginListId,
+    ) -> Result<RuntimeOriginListView<'_>, RuntimeValueRegistryError> {
+        self.registry.origin_list(&[&self.roots], id)
+    }
+
+    fn intern_token_list(
+        &mut self,
+        input: RuntimeTokenValueInput<'_>,
+    ) -> Result<TokenListId, RuntimeValueRegistryError> {
+        self.registry.intern_token_list(&[&self.roots], input)
+    }
+
+    fn allocate_macro(
+        &mut self,
+        input: RuntimeMacroValueInput<'_>,
+    ) -> Result<MacroDefinitionId, RuntimeValueRegistryError> {
+        self.registry.allocate_macro(&[&self.roots], input)
+    }
+
+    fn intern_glue(&mut self, spec: GlueSpec) -> Result<GlueId, RuntimeValueRegistryError> {
+        self.registry.intern_glue(&[&self.roots], spec)
+    }
+
+    fn intern_origin_list(
+        &mut self,
+        input: RuntimeOriginListValueInput<'_>,
+    ) -> Result<OriginListId, RuntimeValueRegistryError> {
+        self.registry.intern_origin_list(&[&self.roots], input)
+    }
+
+    fn install_frozen_token_list(
+        &mut self,
+        expected_raw: u32,
+        input: RuntimeTokenValueInput<'_>,
+    ) -> Result<TokenListId, RuntimeValueRegistryError> {
+        self.registry
+            .install_frozen_token_list(&[&self.roots], expected_raw, input)
+    }
+
+    fn install_frozen_macro(
+        &mut self,
+        expected_raw: u32,
+        input: RuntimeMacroValueInput<'_>,
+    ) -> Result<MacroDefinitionId, RuntimeValueRegistryError> {
+        self.registry
+            .install_frozen_macro(&[&self.roots], expected_raw, input)
+    }
+
+    fn install_frozen_glue(
+        &mut self,
+        expected_raw: u32,
+        spec: GlueSpec,
+    ) -> Result<GlueId, RuntimeValueRegistryError> {
+        self.registry
+            .install_frozen_glue(&[&self.roots], expected_raw, spec)
+    }
+
+    fn rollback_inherited(
+        &mut self,
+        mark: RuntimeValueRegistryMark,
+    ) -> Result<(), RuntimeValueRegistryError> {
+        self.registry.rollback_inherited(mark, &self.roots)
+    }
+
+    fn origin_list_accounting(
+        &self,
+    ) -> Result<
+        crate::hot_core::arena::store::registry::RuntimeOriginListAccounting,
+        RuntimeValueRegistryError,
+    > {
+        self.registry.origin_list_accounting(&[&self.roots])
+    }
+}
 
 /// A rollback snapshot for all currently implemented state stores.
 #[derive(Clone, Debug)]
@@ -204,8 +352,7 @@ pub struct Stores {
     provenance: ProvenanceStore,
     source_map: SourceMap,
     source_fragments: FragmentStore,
-    runtime_values: RuntimeValueRegistry,
-    runtime_value_roots: RuntimeValueRootSet,
+    runtime_values: RuntimeValueGeneration,
     fonts: FontStore,
     node_ref_index: NodeListWeakIndex,
     code_tables: CodeTables,
@@ -626,16 +773,12 @@ impl Clone for Stores {
             .runtime_values
             .fork()
             .expect("runtime value registry fork must remain representable");
-        self.clone_with_runtime_values(runtime_values, self.runtime_value_roots.clone())
+        self.clone_with_runtime_values(runtime_values)
     }
 }
 
 impl Stores {
-    fn clone_with_runtime_values(
-        &self,
-        runtime_values: RuntimeValueRegistry,
-        runtime_value_roots: RuntimeValueRootSet,
-    ) -> Self {
+    fn clone_with_runtime_values(&self, runtime_values: RuntimeValueGeneration) -> Self {
         let mut env = self.env.clone();
         env.reset_snapshot_roots_for_fork();
         Self {
@@ -648,7 +791,6 @@ impl Stores {
             source_map: self.source_map.clone(),
             source_fragments: self.source_fragments.clone(),
             runtime_values,
-            runtime_value_roots,
             fonts: self.fonts.clone(),
             node_ref_index: NodeListWeakIndex::new(),
             code_tables: self.code_tables.clone(),
@@ -683,11 +825,15 @@ impl Stores {
             self.owner.snapshot_owner(),
             "Stores snapshot belongs to a different Stores instance"
         );
-        let runtime_values = self
+        let registry = self
             .runtime_values
+            .registry
             .fork_at(snapshot.runtime_value_mark, &snapshot.runtime_value_roots)
             .expect("retained runtime value checkpoint must fork");
-        self.clone_with_runtime_values(runtime_values, snapshot.runtime_value_roots.clone())
+        self.clone_with_runtime_values(RuntimeValueGeneration::from_parts(
+            registry,
+            snapshot.runtime_value_roots.clone(),
+        ))
     }
 
     pub(crate) fn configure_provenance_budgets(
@@ -1144,10 +1290,7 @@ impl Stores {
             provenance_budgets.live_origin_lists,
             provenance_budgets.origin_list_entries,
         );
-        let mut runtime_value_roots = runtime_values.empty_root_set();
-        runtime_values
-            .publish_into(&mut runtime_value_roots)
-            .expect("canonical runtime values must publish");
+        let runtime_values = RuntimeValueGeneration::new(runtime_values);
         let mut stores = Self {
             owner: StoreOwner::new(),
             env: Env::new(),
@@ -1158,7 +1301,6 @@ impl Stores {
             source_map: SourceMap::default(),
             source_fragments: FragmentStore::new(),
             runtime_values,
-            runtime_value_roots,
             fonts: FontStore::new(),
             node_ref_index: NodeListWeakIndex::new(),
             code_tables: CodeTables::new(),
@@ -4084,7 +4226,7 @@ impl Stores {
                 .runtime_values
                 .mark()
                 .expect("runtime value mark must remain representable"),
-            runtime_value_roots: self.runtime_value_roots.clone(),
+            runtime_value_roots: self.runtime_values.roots.clone(),
             runtime_values_inherited: false,
             font_mark: self.fonts.watermark(),
             code_tables_snapshot: self.code_tables.checkpoint(),
@@ -4101,7 +4243,7 @@ impl Stores {
     /// before cloning the aggregate generation.
     pub(crate) fn seal_runtime_value_regions(&mut self) {
         self.runtime_values
-            .publish_into(&mut self.runtime_value_roots)
+            .publish()
             .expect("runtime values must publish at an owner barrier");
     }
 
@@ -4188,11 +4330,12 @@ impl Stores {
             );
         }
         self.string_pool.rollback_to(snapshot.string_pool);
-        self.runtime_value_roots
+        self.runtime_values
+            .roots
             .restore_from(&snapshot.runtime_value_roots);
         if snapshot.runtime_values_inherited {
             self.runtime_values
-                .rollback_inherited(snapshot.runtime_value_mark, &self.runtime_value_roots)
+                .rollback_inherited(snapshot.runtime_value_mark)
                 .expect("inherited runtime value prefix belongs to this store");
         } else {
             self.runtime_values
