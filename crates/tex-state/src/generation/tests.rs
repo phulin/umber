@@ -1,4 +1,4 @@
-use super::with_generation;
+use super::{GenerationOwner, with_generation};
 
 #[test]
 fn a_fresh_generation_starts_with_one_empty_arena_per_namespace() {
@@ -20,5 +20,18 @@ fn retirement_consumes_the_complete_generation_owner() {
         assert_eq!(retired.token_lists, 1);
         assert_eq!(retired.glue_values, 0);
         assert_eq!(retired.provenance_records, 0);
+    });
+}
+
+#[test]
+fn coarse_owner_is_the_only_cloneable_generation_lifetime_authority() {
+    with_generation(|generation| {
+        let mut owner = GenerationOwner::new(generation);
+        let retained = owner.clone();
+        assert!(owner.same_generation(&retained));
+        assert!(owner.generation_mut().is_none());
+        drop(retained);
+        assert!(owner.generation_mut().is_some());
+        owner.retire().expect("last coarse owner");
     });
 }

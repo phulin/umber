@@ -29,6 +29,8 @@ macro_rules! observe {
     };
 }
 
+mod attempt;
+pub use attempt::{AttemptResumePoint, CommandAttempt, PendingCommandAttempt};
 mod command;
 mod conditionals;
 mod continuation;

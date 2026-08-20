@@ -128,6 +128,8 @@ pub enum StateError {
     GroupDepthExhausted,
     GroupLineageExhausted,
     GroupMismatch(GroupMismatch),
+    /// A suspended operation still owns the coarse immutable generation.
+    GenerationInUse,
 }
 
 impl From<BankError> for StateError {

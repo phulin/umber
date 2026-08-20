@@ -32,6 +32,10 @@ print channel of its own outside the borrowed
 
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.
 - `src/lib.rs`: intentionally small public facade and private module tree.
+- `src/attempt.rs` and `src/attempt/tests.rs`: operation-scoped typed command
+  scratch, fixed-size all-table marks, resource-continuation ownership shape,
+  and explicit-root atomic promotion through temporary dense relocation
+  vectors.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine

@@ -158,6 +158,32 @@ impl<G> DefinitionArena<G> {
         })
     }
 
+    /// Reserves a complete promotion batch without changing any logical
+    /// arena length. Callers validate the batch's final row and word extents
+    /// before invoking this method.
+    pub(crate) fn reserve_batch(
+        &mut self,
+        rows: usize,
+        words: usize,
+    ) -> Result<(), DefinitionAllocationError> {
+        self.rows
+            .len()
+            .checked_add(rows)
+            .and_then(|len| u32::try_from(len).ok())
+            .ok_or(DefinitionAllocationError::CapacityOverflow)?;
+        self.words
+            .len()
+            .checked_add(words)
+            .and_then(|len| u32::try_from(len).ok())
+            .ok_or(DefinitionAllocationError::CapacityOverflow)?;
+        self.rows
+            .try_reserve(rows)
+            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
+        self.words
+            .try_reserve(words)
+            .map_err(|_| DefinitionAllocationError::AllocationFailed)
+    }
+
     /// Resolves an arena-issued id with one direct row access.
     #[must_use]
     #[inline(always)]

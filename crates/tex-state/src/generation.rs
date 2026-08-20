@@ -1,6 +1,7 @@
 //! Fresh brands and coarse owners for one revision generation.
 
 use core::marker::PhantomData;
+use std::sync::Arc;
 
 use crate::definition_arena::DefinitionArena;
 use crate::durable_arena::{GlueArena, ProvenanceArena, TokenListArena};
@@ -46,6 +47,58 @@ pub(crate) struct Generation<G> {
     token_lists: TokenListArena<G>,
     glue: GlueArena<G>,
     provenance: ProvenanceArena<G>,
+}
+
+/// Cloneable lifetime authority for one complete immutable generation.
+///
+/// Cloning is deliberately available only at this coarse boundary. The
+/// backing arenas remain private, ids carry no owner, and ordinary admitted
+/// reads borrow the already-owned generation without retaining this `Arc`.
+pub struct GenerationOwner<G> {
+    generation: Arc<Generation<G>>,
+}
+
+impl<G> Clone for GenerationOwner<G> {
+    fn clone(&self) -> Self {
+        Self {
+            generation: Arc::clone(&self.generation),
+        }
+    }
+}
+
+impl<G> core::fmt::Debug for GenerationOwner<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("GenerationOwner(..)")
+    }
+}
+
+impl<G> GenerationOwner<G> {
+    pub(crate) fn new(generation: Generation<G>) -> Self {
+        Self {
+            generation: Arc::new(generation),
+        }
+    }
+
+    #[must_use]
+    pub fn same_generation(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.generation, &other.generation)
+    }
+
+    #[must_use]
+    pub(crate) fn generation(&self) -> &Generation<G> {
+        &self.generation
+    }
+
+    pub(crate) fn generation_mut(&mut self) -> Option<&mut Generation<G>> {
+        Arc::get_mut(&mut self.generation)
+    }
+
+    pub(crate) fn retire(self) -> Result<GenerationRetirement, Self> {
+        match Arc::try_unwrap(self.generation) {
+            Ok(generation) => Ok(generation.retire()),
+            Err(generation) => Err(Self { generation }),
+        }
+    }
 }
 
 /// Logical rows released when one coarse generation owner retires.

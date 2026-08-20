@@ -5,7 +5,7 @@ use crate::definition_arena::{DefinitionAllocationError, DefinitionId};
 use crate::durable_arena::{DurableAllocationError, GlueId, TokenListId};
 use crate::env::group::{GroupFrame, GroupKind};
 use crate::env::{AssignmentScope, CodeTableKind, StateError};
-use crate::generation::{GenerationBrand, with_generation};
+use crate::generation::{GenerationBrand, GenerationOwner, with_generation};
 use crate::glue::GlueSpec;
 use crate::interner::{
     Interner, InternerAccessError, InternerBudget, InternerError, InternerRetirement,
@@ -32,6 +32,54 @@ pub enum UniverseError {
     NodeArena(NodeArenaError),
     State(StateError),
     Retired,
+}
+
+/// One explicit macro-definition escape root in a promotion batch.
+#[derive(Clone, Copy, Debug)]
+pub struct DefinitionPromotion<'a> {
+    pub parameter_text: &'a [TokenWord],
+    pub replacement_text: &'a [TokenWord],
+}
+
+/// One explicit durable token-list escape root in a promotion batch.
+#[derive(Clone, Copy, Debug)]
+pub struct TokenListPromotion<'a> {
+    pub words: &'a [TokenWord],
+}
+
+/// Failure to reserve or validate an atomic promotion batch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PromotionError {
+    CapacityOverflow,
+    AllocationFailed,
+    Retired,
+    GenerationInUse,
+}
+
+impl From<DefinitionAllocationError> for PromotionError {
+    fn from(error: DefinitionAllocationError) -> Self {
+        match error {
+            DefinitionAllocationError::CapacityOverflow => Self::CapacityOverflow,
+            DefinitionAllocationError::AllocationFailed => Self::AllocationFailed,
+        }
+    }
+}
+
+impl From<DurableAllocationError> for PromotionError {
+    fn from(error: DurableAllocationError) -> Self {
+        match error {
+            DurableAllocationError::CapacityOverflow => Self::CapacityOverflow,
+            DurableAllocationError::AllocationFailed => Self::AllocationFailed,
+        }
+    }
+}
+
+/// Destination coordinates published together after complete batch staging.
+#[derive(Debug)]
+pub struct PromotionReceipt<G> {
+    pub definitions: Vec<DefinitionId<G>>,
+    pub token_lists: Vec<TokenListId<G>>,
+    pub glue: Vec<GlueId<G>>,
 }
 
 impl From<InternerError> for UniverseError {
@@ -94,7 +142,7 @@ impl<G> Universe<G> {
         self.core
             .as_mut()
             .ok_or(UniverseError::Retired)?
-            .admit_mut()
+            .admit_mut()?
             .state()
             .admit_symbol(symbol.symbol())?;
         Ok(symbol)
@@ -113,7 +161,7 @@ impl<G> Universe<G> {
             .core
             .as_mut()
             .ok_or(UniverseError::Retired)?
-            .admit_mut()
+            .admit_mut()?
             .allocate_definition(parameter_text, replacement_text)?)
     }
 
@@ -125,7 +173,7 @@ impl<G> Universe<G> {
             .core
             .as_mut()
             .ok_or(UniverseError::Retired)?
-            .admit_mut()
+            .admit_mut()?
             .allocate_token_list(words)?)
     }
 
@@ -134,8 +182,31 @@ impl<G> Universe<G> {
             .core
             .as_mut()
             .ok_or(UniverseError::Retired)?
-            .admit_mut()
+            .admit_mut()?
             .allocate_glue(value)?)
+    }
+
+    /// Promotes only the caller's declared escaping roots.
+    ///
+    /// All source traversal happens before this boundary. The state core
+    /// reserves every destination table and the receipt remains private until
+    /// every row has been initialized, so callers cannot publish a partial
+    /// relocation.
+    pub fn promote_values(
+        &mut self,
+        definitions: &[DefinitionPromotion<'_>],
+        token_lists: &[TokenListPromotion<'_>],
+        glue_values: &[GlueSpec],
+    ) -> Result<PromotionReceipt<G>, PromotionError> {
+        self.core
+            .as_mut()
+            .ok_or(PromotionError::Retired)?
+            .admit_mut()
+            .map_err(|error| match error {
+                StateError::GenerationInUse => PromotionError::GenerationInUse,
+                _ => PromotionError::AllocationFailed,
+            })?
+            .promote_values(definitions, token_lists, glue_values)
     }
 
     pub fn assign_meaning(
@@ -271,6 +342,24 @@ impl<G> Universe<G> {
         Ok(CommandContext::new(&self.interner, core.admit()))
     }
 
+    /// Retains the complete immutable generation across an in-process
+    /// resource suspension. No individual runtime value acquires an owner.
+    pub fn generation_owner(&self) -> Result<GenerationOwner<G>, UniverseError> {
+        Ok(self
+            .core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .generation_owner())
+    }
+
+    /// Validates a returned continuation owner before its attempt is resumed.
+    #[must_use]
+    pub fn owns_generation(&self, owner: &GenerationOwner<G>) -> bool {
+        self.core
+            .as_ref()
+            .is_some_and(|core| core.owns_generation(owner))
+    }
+
     fn live_state_mut(&mut self) -> Result<&mut crate::env::DenseState<G>, UniverseError> {
         Ok(self
             .core
@@ -286,7 +375,7 @@ impl<G> Universe<G> {
         let interner = self.interner.retire()?;
         Ok(UniverseRetirement {
             interner,
-            state: core.retire(),
+            state: core.retire()?,
         })
     }
 

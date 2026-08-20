@@ -3,7 +3,7 @@
 use crate::definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
 use crate::durable_arena::{DurableAllocationError, GlueId, TokenListId};
 use crate::env::{DenseState, StateError};
-use crate::generation::{Generation, GenerationRetirement};
+use crate::generation::{Generation, GenerationOwner, GenerationRetirement};
 use crate::glue::GlueSpec;
 use crate::node_arena::{DurableListId, DurableNodeArena, NodeArenaError, NodeList};
 use crate::token::TokenWord;
@@ -14,7 +14,7 @@ mod tests;
 
 /// Every mutable and immutable state owner for one revision generation.
 pub(crate) struct StateCore<G> {
-    generation: Generation<G>,
+    generation: GenerationOwner<G>,
     nodes: DurableNodeArena<G>,
     state: DenseState<G>,
 }
@@ -22,7 +22,7 @@ pub(crate) struct StateCore<G> {
 impl<G> StateCore<G> {
     pub(crate) fn new(generation: Generation<G>) -> Result<Self, StateError> {
         Ok(Self {
-            generation,
+            generation: GenerationOwner::new(generation),
             nodes: DurableNodeArena::new(),
             state: DenseState::new()?,
         })
@@ -31,9 +31,9 @@ impl<G> StateCore<G> {
     /// Validates and borrows the one matching generation bundle once per
     /// command episode. Hot reads through the returned view do no owner work.
     #[must_use]
-    pub(crate) const fn admit(&self) -> AdmittedState<'_, G> {
+    pub(crate) fn admit(&self) -> AdmittedState<'_, G> {
         AdmittedState {
-            generation: &self.generation,
+            generation: self.generation.generation(),
             nodes: &self.nodes,
             state: &self.state,
         }
@@ -42,12 +42,15 @@ impl<G> StateCore<G> {
     /// Mutable episode admission. All state writes and durable publication
     /// remain behind this unique aggregate borrow.
     #[must_use]
-    pub(crate) const fn admit_mut(&mut self) -> AdmittedStateMut<'_, G> {
-        AdmittedStateMut {
-            generation: &mut self.generation,
+    pub(crate) fn admit_mut(&mut self) -> Result<AdmittedStateMut<'_, G>, StateError> {
+        Ok(AdmittedStateMut {
+            generation: self
+                .generation
+                .generation_mut()
+                .ok_or(StateError::GenerationInUse)?,
             nodes: &mut self.nodes,
             state: &mut self.state,
-        }
+        })
     }
 
     pub(crate) const fn state_mut(&mut self) -> &mut DenseState<G> {
@@ -56,17 +59,30 @@ impl<G> StateCore<G> {
 
     /// Retires the complete generation after all admitted borrows end.
     #[must_use]
-    pub(crate) fn retire(self) -> StateCoreRetirement {
+    pub(crate) fn retire(self) -> Result<StateCoreRetirement, StateError> {
         let journal_entries = self.state.journal_len();
         let allocated_overflow_pages = self.state.allocated_overflow_pages();
         let durable_node_lists = self.nodes.len();
-        let generation = self.generation.retire();
-        StateCoreRetirement {
+        let generation = self
+            .generation
+            .retire()
+            .map_err(|_| StateError::GenerationInUse)?;
+        Ok(StateCoreRetirement {
             generation,
             durable_node_lists,
             journal_entries,
             allocated_overflow_pages,
-        }
+        })
+    }
+
+    #[must_use]
+    pub(crate) fn generation_owner(&self) -> GenerationOwner<G> {
+        self.generation.clone()
+    }
+
+    #[must_use]
+    pub(crate) fn owns_generation(&self, owner: &GenerationOwner<G>) -> bool {
+        self.generation.same_generation(owner)
     }
 }
 
@@ -152,6 +168,87 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         id: DurableListId<G>,
     ) -> Result<NodeList<'_, G, GlueId<G>, TokenListId<G>>, NodeArenaError> {
         self.nodes.get(id)
+    }
+
+    /// Promotes one already-validated batch while this unique admitted borrow
+    /// prevents any consumer from observing partial destination state.
+    pub(crate) fn promote_values(
+        &mut self,
+        definitions: &[crate::universe::DefinitionPromotion<'_>],
+        token_lists: &[crate::universe::TokenListPromotion<'_>],
+        glue_values: &[GlueSpec],
+    ) -> Result<crate::universe::PromotionReceipt<G>, crate::universe::PromotionError> {
+        let definition_words = definitions.iter().try_fold(0usize, |total, definition| {
+            total
+                .checked_add(definition.parameter_text.len())
+                .and_then(|total| total.checked_add(definition.replacement_text.len()))
+        });
+        let token_words = token_lists
+            .iter()
+            .try_fold(0usize, |total, list| total.checked_add(list.words.len()));
+        let Some(definition_words) = definition_words else {
+            return Err(crate::universe::PromotionError::CapacityOverflow);
+        };
+        let Some(token_words) = token_words else {
+            return Err(crate::universe::PromotionError::CapacityOverflow);
+        };
+
+        // Reserve every destination before the first logical length changes.
+        // Once these calls succeed, the individual arena allocators cannot
+        // allocate or fail for this validated batch.
+        self.generation
+            .definitions_mut()
+            .reserve_batch(definitions.len(), definition_words)?;
+        self.generation
+            .token_lists_mut()
+            .reserve_batch(token_lists.len(), token_words)?;
+        self.generation
+            .glue_mut()
+            .reserve_batch(glue_values.len())?;
+
+        let mut promoted_definitions = Vec::new();
+        let mut promoted_token_lists = Vec::new();
+        let mut promoted_glue = Vec::new();
+        promoted_definitions
+            .try_reserve_exact(definitions.len())
+            .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
+        promoted_token_lists
+            .try_reserve_exact(token_lists.len())
+            .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
+        promoted_glue
+            .try_reserve_exact(glue_values.len())
+            .map_err(|_| crate::universe::PromotionError::AllocationFailed)?;
+
+        for definition in definitions {
+            promoted_definitions.push(
+                self.generation
+                    .definitions_mut()
+                    .allocate(definition.parameter_text, definition.replacement_text)
+                    .expect("the complete definition promotion batch was reserved"),
+            );
+        }
+        for list in token_lists {
+            promoted_token_lists.push(
+                self.generation
+                    .token_lists_mut()
+                    .allocate(list.words)
+                    .expect("the complete token-list promotion batch was reserved"),
+            );
+        }
+        for &glue in glue_values {
+            promoted_glue.push(
+                self.generation
+                    .glue_mut()
+                    .allocate(glue)
+                    .expect("the complete glue promotion batch was reserved"),
+            );
+        }
+
+        Ok(crate::universe::PromotionReceipt {
+            definitions: promoted_definitions,
+            token_lists: promoted_token_lists,
+            glue: promoted_glue,
+        })
     }
 }
 

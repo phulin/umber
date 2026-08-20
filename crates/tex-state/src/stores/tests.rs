@@ -12,7 +12,7 @@ fn admitted_view_resolves_every_generation_typed_value_directly() {
         let mut core = StateCore::new(generation).expect("state core");
         let replacement = [TokenWord::pack(Token::frozen_relax())];
         let (definition, tokens, glue) = {
-            let mut admitted = core.admit_mut();
+            let mut admitted = core.admit_mut().expect("unique generation");
             let definition = admitted
                 .allocate_definition(&[], &replacement)
                 .expect("definition");
@@ -40,7 +40,7 @@ fn generation_ids_install_in_dense_state_without_per_value_owners() {
         let symbol = names.intern("macro").expect("intern");
         let mut core = StateCore::new(generation).expect("state core");
         let definition = {
-            let mut admitted = core.admit_mut();
+            let mut admitted = core.admit_mut().expect("unique generation");
             admitted
                 .state()
                 .admit_symbol(symbol.symbol())
@@ -75,7 +75,7 @@ fn retirement_releases_one_complete_generation_bundle() {
     with_generation(|generation| {
         let mut core = StateCore::new(generation).expect("state core");
         {
-            let mut admitted = core.admit_mut();
+            let mut admitted = core.admit_mut().expect("unique generation");
             admitted.allocate_definition(&[], &[]).expect("definition");
             admitted.allocate_token_list(&[]).expect("token list");
             admitted.allocate_glue(GlueSpec::ZERO).expect("glue");
@@ -84,7 +84,7 @@ fn retirement_releases_one_complete_generation_bundle() {
                 .assign_count(0, 7, AssignmentScope::Global)
                 .expect("assignment");
         }
-        let retired = core.retire();
+        let retired = core.retire().expect("unique generation");
         assert_eq!(retired.generation.definitions, 1);
         assert_eq!(retired.generation.token_lists, 1);
         assert_eq!(retired.generation.glue_values, 1);

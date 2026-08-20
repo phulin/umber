@@ -118,6 +118,7 @@ pub mod world;
 
 pub use expansion_diagnostic::RecoverableExpansionDiagnostic;
 pub use expansion_recovery::ExpansionRecovery;
+pub use generation::GenerationOwner;
 pub use read_observation::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};
 pub use resource::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
 
@@ -167,7 +168,10 @@ pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
-pub use universe::{Universe, UniverseError, UniverseRetirement, with_universe};
+pub use universe::{
+    DefinitionPromotion, PromotionError, PromotionReceipt, TokenListPromotion, Universe,
+    UniverseError, UniverseRetirement, with_universe,
+};
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;
 pub use world::{

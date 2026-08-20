@@ -146,6 +146,30 @@ impl<G> TokenListArena<G> {
         Ok(TokenListId::from_row(row))
     }
 
+    /// Reserves a complete promotion batch without publishing a row.
+    pub(crate) fn reserve_batch(
+        &mut self,
+        rows: usize,
+        words: usize,
+    ) -> Result<(), DurableAllocationError> {
+        self.rows
+            .len()
+            .checked_add(rows)
+            .and_then(|len| u32::try_from(len).ok())
+            .ok_or(DurableAllocationError::CapacityOverflow)?;
+        self.words
+            .len()
+            .checked_add(words)
+            .and_then(|len| u32::try_from(len).ok())
+            .ok_or(DurableAllocationError::CapacityOverflow)?;
+        self.rows
+            .try_reserve(rows)
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        self.words
+            .try_reserve(words)
+            .map_err(|_| DurableAllocationError::AllocationFailed)
+    }
+
     #[must_use]
     #[inline(always)]
     pub(crate) fn get(&self, id: TokenListId<G>) -> &[TokenWord] {
@@ -187,6 +211,18 @@ impl<G> GlueArena<G> {
             .map_err(|_| DurableAllocationError::AllocationFailed)?;
         self.rows.push(value);
         Ok(GlueId::from_row(row))
+    }
+
+    /// Reserves a complete promotion batch without publishing a row.
+    pub(crate) fn reserve_batch(&mut self, rows: usize) -> Result<(), DurableAllocationError> {
+        self.rows
+            .len()
+            .checked_add(rows)
+            .and_then(|len| u32::try_from(len).ok())
+            .ok_or(DurableAllocationError::CapacityOverflow)?;
+        self.rows
+            .try_reserve(rows)
+            .map_err(|_| DurableAllocationError::AllocationFailed)
     }
 
     #[must_use]
