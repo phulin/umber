@@ -217,7 +217,7 @@ impl NodeStorage {
             let glue_root = match &node {
                 Node::Glue {
                     spec, leader: None, ..
-                } => Some(spec.clone()),
+                } => Some(*spec),
                 _ => None,
             };
             let origin = match &node {
@@ -332,7 +332,7 @@ impl NodeStorage {
             self.glue_roots.push(match node {
                 Node::Glue {
                     spec, leader: None, ..
-                } => Some(spec.clone()),
+                } => Some(*spec),
                 _ => None,
             });
             self.origins.push(match node {
@@ -493,7 +493,7 @@ impl NodeStorage {
                 13,
                 &mut self.leaders,
                 (
-                    spec.clone(),
+                    *spec,
                     *kind,
                     value.clone().map_lists(|list| child_id(&list)),
                 ),
@@ -515,9 +515,7 @@ impl NodeStorage {
                     *physical_replace_count,
                 ),
             ),
-            Node::Mark { class, tokens } => {
-                push_sidecar(15, &mut self.marks, (*class, tokens.clone()))
-            }
+            Node::Mark { class, tokens } => push_sidecar(15, &mut self.marks, (*class, *tokens)),
             Node::Ins {
                 class,
                 size,
@@ -530,7 +528,7 @@ impl NodeStorage {
                 self.insertions.push((
                     *class,
                     *size,
-                    split_top_skip.clone(),
+                    *split_top_skip,
                     *split_max_depth,
                     *floating_penalty,
                     child_id(content),

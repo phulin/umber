@@ -85,10 +85,10 @@ fn prototype_nodes(
         .and_then(|len| len.checked_add(1))
         .expect("alignment node capacity fits usize");
     let mut nodes = Vec::with_capacity(capacity);
-    nodes.push(tabskip_node(resolved.tabskips[0].clone()));
+    nodes.push(tabskip_node(resolved.tabskips[0]));
     for (column, width) in resolved.columns.iter().copied().enumerate() {
         nodes.push(prototype_column(kind, width, empty.clone()));
-        nodes.push(tabskip_node(resolved.tabskips[column + 1].clone()));
+        nodes.push(tabskip_node(resolved.tabskips[column + 1]));
     }
     nodes
 }

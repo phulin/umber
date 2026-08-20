@@ -43,7 +43,7 @@ pub(super) fn resolve_widths(
 
 fn initial_tabskips(state: &AlignState, columns: usize) -> Vec<tex_state::glue::GlueSpecRef> {
     (0..=columns)
-        .map(|boundary| state.tabskip_for_boundary(boundary).clone())
+        .map(|boundary| *state.tabskip_for_boundary(boundary))
         .collect()
 }
 

@@ -31,7 +31,7 @@ fn unknown_origin_and_empty_list_are_preallocated() {
     let store = ProvenanceStore::new();
 
     assert_eq!(store.get(OriginId::UNKNOWN), OriginRecord::UnknownBootstrap);
-    assert_eq!(OriginListRef::empty().origins(), &[]);
+    assert_eq!(OriginListRef::empty().id(), crate::ids::OriginListId::EMPTY);
     assert!(store.contains_origin(OriginId::UNKNOWN));
     assert_eq!(store.stats().origin_records(), 0);
 }
@@ -149,7 +149,7 @@ fn ordinary_and_occurrence_unique_records_share_one_affine_key_lease() {
 }
 
 #[test]
-fn records_and_structural_origin_lists_allocate_and_read_back() {
+fn structural_origin_records_allocate_and_read_back() {
     let mut store = ProvenanceStore::new();
     let source_record = OriginRecord::Source(SourceOrigin::new(SourceId::new(7), 123, 4, 9));
     let source = store.allocate_rooted(source_record, []);
@@ -164,39 +164,10 @@ fn records_and_structural_origin_lists_allocate_and_read_back() {
         )),
         [source.clone()],
     );
-    let list = store.allocate_rooted_list(&[source.clone(), inserted.clone()]);
-
     assert!(source.id().raw() & 0x8000_0000 != 0);
     assert!(inserted.id().raw() & 0x8000_0000 != 0);
     assert_ne!(source.id(), inserted.id());
     assert_eq!(source.record(), Some(source_record));
-    assert_eq!(list.origins(), &[source.id(), inserted.id()]);
-}
-
-#[test]
-fn repeated_structural_origin_lists_share_one_distinct_owner() {
-    let mut store = ProvenanceStore::new();
-    let source = store.allocate_rooted(
-        OriginRecord::Source(SourceOrigin::new(SourceId::new(2), 9, 1, 9)),
-        [],
-    );
-    let before = store.stats();
-    let list = store.allocate_rooted_list(&[
-        source.clone(),
-        source.clone(),
-        source.clone(),
-        source.clone(),
-    ]);
-    let after = store.stats();
-
-    assert_eq!(list.origins(), &[source.id(); 4]);
-    assert_eq!(list.owned_root_count(), 1);
-    assert_eq!(after.origin_records(), before.origin_records());
-    let growth = after.saturating_sub(before);
-    assert_eq!(growth.origin_records(), 0);
-    assert_eq!(growth.origin_list_spans(), 1);
-    assert_eq!(growth.origin_list_entries(), 4);
-    assert!(growth.retained_bytes() >= growth.estimated_bytes());
 }
 
 #[test]
@@ -219,43 +190,27 @@ fn provenance_fork_keeps_inherited_origins_but_separates_new_keys() {
 }
 
 #[test]
-fn exact_records_and_lists_share_structural_slots() {
+fn exact_records_share_structural_slots() {
     let mut store = ProvenanceStore::new();
     let record = OriginRecord::Source(SourceOrigin::new(SourceId::new(7), 123, 4, 9));
     let first = store.allocate_rooted(record, []);
     let second = store.allocate_rooted(record, []);
     assert_eq!(first, second);
     assert_eq!(store.rooted_record_shape(), (0, 0));
-
-    let first_list = store.allocate_rooted_list(&[first.clone(), OriginRef::unknown()]);
-    let second_list = store.allocate_rooted_list(&[first, OriginRef::unknown()]);
-    assert_eq!(first_list, second_list);
-    assert_eq!(store.stats().origin_list_spans(), 1);
-    assert_eq!(store.stats().origin_list_entries(), 2);
 }
 
 #[test]
-fn exact_structural_hits_skip_unrelated_reclamation_work() {
+fn exact_structural_hits_preserve_record_identity() {
     let mut store = ProvenanceStore::new();
     let record = OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Test));
     let root = store.allocate_rooted(record, []);
-    let list = store.allocate_rooted_list(std::slice::from_ref(&root));
-
     let dead = store.allocate_rooted(
         OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Engine)),
         [],
     );
-    let dead_list = store.allocate_rooted_list(std::slice::from_ref(&dead));
-    drop(dead_list);
     drop(dead);
 
-    let list_cursor = store.rooted_list_sweep_cursor;
     assert_eq!(store.allocate_rooted(record, []).id(), root.id());
-    assert_eq!(
-        store.allocate_rooted_list(std::slice::from_ref(&root)).id(),
-        list.id()
-    );
-    assert_eq!(store.rooted_list_sweep_cursor, list_cursor);
 }
 
 #[test]
@@ -287,7 +242,7 @@ fn expansion_frame_children_fit_the_inline_allocation() {
 
 #[cfg(feature = "profiling")]
 #[test]
-fn lifecycle_counters_keep_archive_coordinates_out_of_the_weak_atom_index() {
+fn lifecycle_counters_keep_archive_coordinates_out_of_the_root_index() {
     let before = crate::measurement::provenance_lifecycle_measurement();
     {
         let mut store = ProvenanceStore::new();
@@ -303,11 +258,8 @@ fn lifecycle_counters_keep_archive_coordinates_out_of_the_weak_atom_index() {
             ));
         let frame = store.allocate_rooted(frame_record, [atom.clone()]);
         let frame_hit = store.allocate_rooted(frame_record, [atom.clone()]);
-        let list = store.allocate_rooted_list(&[frame.clone(), atom.clone()]);
-        let list_hit = store.allocate_rooted_list(&[frame.clone(), atom.clone()]);
         assert!(store.origin_ref(frame.id()).is_some());
-        assert_eq!(list.root(0).expect("rooted frame").id(), frame.id());
-        drop((list_hit, list, frame_hit, frame, atom_hit, atom));
+        drop((frame_hit, frame, atom_hit, atom));
         let replacement = store.allocate_rooted(
             OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Engine)),
             [],
@@ -317,15 +269,9 @@ fn lifecycle_counters_keep_archive_coordinates_out_of_the_weak_atom_index() {
     let work = crate::measurement::provenance_lifecycle_measurement().saturating_sub(before);
     assert_eq!(work.atom_intern_calls, 0);
     assert_eq!(work.frame_intern_calls, 0);
-    assert!(work.list_intern_hits >= 1);
-    assert!(work.list_intern_misses >= 1);
     assert!(work.atom_retains >= 1 && work.atom_releases >= 1);
     assert!(work.frame_retains >= 1 && work.frame_releases >= 1);
-    assert!(work.list_retains >= 1 && work.list_releases >= 1);
-    assert_eq!(work.atom_reclaim_visits, 0);
-    assert_eq!(work.list_reclaim_visits, 0);
     assert!(work.origin_resolutions >= 1);
-    assert!(work.list_resolutions >= 1 && work.list_resolution_comparisons >= 1);
 }
 
 #[test]
@@ -347,24 +293,6 @@ fn repeated_macro_expansion_shares_one_structural_frame() {
 }
 
 #[test]
-fn origin_list_candidate_hash_collision_still_compares_exact_content() {
-    let mut store = ProvenanceStore::new();
-    let first = store.allocate_unrooted_origin_ids([OriginId::UNKNOWN].into_iter());
-    let second_value = [OriginId::NOEXPAND_FALLBACK];
-    let colliding_hash = super::origin_list_hash(&second_value);
-    store
-        .rooted_list_candidates
-        .entry(colliding_hash)
-        .or_default()
-        .push(Arc::downgrade(first.value.as_ref().expect("nonempty list")));
-
-    let second = store.allocate_unrooted_origin_ids(second_value.into_iter());
-    assert_ne!(first, second);
-    assert_eq!(first.origins(), &[OriginId::UNKNOWN]);
-    assert_eq!(second.origins(), &second_value);
-}
-
-#[test]
 fn structural_candidate_indexes_are_explicitly_bounded() {
     let mut store = ProvenanceStore::new();
     let mut origins = Vec::new();
@@ -377,29 +305,20 @@ fn structural_candidate_indexes_are_explicitly_bounded() {
         ))));
     }
     assert!(store.record_candidates.len() <= super::RECORD_CANDIDATE_KEY_BUDGET);
-
-    let lists = (1..=super::LIST_CANDIDATE_KEY_BUDGET + 1)
-        .map(|raw| store.allocate_unrooted_origin_ids([OriginId::from_raw(raw as u32)].into_iter()))
-        .collect::<Vec<_>>();
-    assert_eq!(lists.len(), super::LIST_CANDIDATE_KEY_BUDGET + 1);
-    assert!(store.rooted_list_candidates.len() <= super::LIST_CANDIDATE_KEY_BUDGET);
 }
 
 #[test]
-fn rollback_removes_record_candidates_without_touching_owned_lists() {
+fn rollback_removes_record_candidates() {
     let mut store = ProvenanceStore::new();
     let mark = store.watermark();
     let record = OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Test));
     let stale = store.allocate(record);
-    let stale_list = store.allocate_rooted_list(&[OriginRef::direct(stale)]);
     store.truncate_to(mark);
 
     let replacement = store.allocate(record);
     assert_ne!(stale, replacement);
     assert!(!store.contains_origin(stale));
     assert!(store.contains_origin(replacement));
-    assert_eq!(stale_list.origins(), &[stale]);
-    assert_eq!(store.rooted_list_shape(), (1, 1, 2));
 }
 
 #[test]
@@ -598,11 +517,9 @@ fn provenance_capacity_index_guards_reserve_overflow_values() {
 }
 
 #[test]
-fn provenance_soft_budget_degrades_excess_history_to_unknown_and_empty() {
+fn provenance_soft_budget_degrades_excess_records_to_unknown() {
     let mut store = ProvenanceStore::new();
     store.record_limit = 1;
-    store.list_span_limit = 2;
-    store.list_entry_limit = 2;
 
     let retained = store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
         SyntheticOriginKind::Engine,
@@ -624,90 +541,32 @@ fn provenance_soft_budget_degrades_excess_history_to_unknown_and_empty() {
     );
     assert!(store.contains_origin(noexpand));
     assert_eq!(store.stats().origin_records(), 1);
-
-    let retained_list = store.allocate_rooted_list(&[
-        OriginRef::direct(OriginId::UNKNOWN),
-        OriginRef::direct(OriginId::NOEXPAND_FALLBACK),
-    ]);
-    let degraded_for_entries = store.allocate_rooted_list(&[OriginRef::unknown()]);
-    assert_ne!(retained_list, OriginListRef::empty());
-    assert_eq!(degraded_for_entries, OriginListRef::empty());
-
-    let mut span_limited = ProvenanceStore::new();
-    span_limited.list_span_limit = 0;
-    assert_eq!(
-        span_limited.allocate_rooted_list(&[OriginRef::unknown()]),
-        OriginListRef::empty()
-    );
 }
 
 #[test]
-fn rooted_provenance_obeys_each_explicit_live_and_weak_budget() {
-    let mut store = ProvenanceStore::new();
-    store.configure_budgets(ProvenanceBudgets {
-        live_atoms: 1,
-        live_origin_lists: 1,
-        origin_list_entries: 1,
-        weak_atom_slots: 1,
-        weak_atom_candidate_keys: 0,
-        weak_list_slots: 1,
-        weak_list_candidate_keys: 1,
-        detached_artifact_recipe_bytes: 0,
-    });
-    let first = store.allocate_rooted(
-        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Engine)),
-        [],
+fn runtime_origin_lists_obey_explicit_region_budgets() {
+    let mut universe = Universe::new().with_provenance_config(
+        super::ProvenanceDemand::default(),
+        ProvenanceBudgets {
+            live_atoms: 1,
+            live_origin_lists: 1,
+            origin_list_entries: 1,
+            weak_atom_slots: 1,
+            weak_atom_candidate_keys: 0,
+            detached_artifact_recipe_bytes: 0,
+        },
     );
-    let excess = store.allocate_rooted(
-        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Primitive)),
-        [],
-    );
-    assert_ne!(first.id(), OriginId::UNKNOWN);
-    assert_eq!(excess.id(), OriginId::UNKNOWN);
-
-    let list = store.allocate_rooted_list(std::slice::from_ref(&first));
-    let excess_list = store.allocate_rooted_list(std::slice::from_ref(&first));
+    let first = OriginRef::unknown();
+    let list = universe.allocate_origin_list_ref(std::slice::from_ref(&first));
+    let excess_list = universe.allocate_origin_list_ref(std::slice::from_ref(&first));
     assert_eq!(list, excess_list, "exact live value remains reusable");
-    let two_entries = store.allocate_rooted_list(&[first.clone(), first.clone()]);
+    let two_entries = universe.allocate_origin_list_ref(&[first.clone(), first]);
     assert_eq!(two_entries, OriginListRef::empty());
-
-    drop(list);
-    drop(excess_list);
-    drop(first);
-    let replacement = store.allocate_rooted(
-        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format)),
-        [],
-    );
-    assert_eq!(replacement.id(), OriginId::UNKNOWN);
-    assert_eq!(store.rooted_record_shape(), (0, 0));
-    assert_eq!(store.rooted_list_shape(), (0, 0, 2));
-}
-
-#[test]
-fn rollback_mark_truncates_records_without_invalidating_owned_lists() {
-    let mut store = ProvenanceStore::new();
-    let kept = store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
-        SyntheticOriginKind::Engine,
-    )));
-    let mark = store.watermark();
-    let stale = store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
-        SyntheticOriginKind::Primitive,
-    )));
-    let stale_list =
-        store.allocate_rooted_list(&[OriginRef::direct(kept), OriginRef::direct(stale)]);
-
-    store.truncate_to(mark);
-    let reused = store.allocate(OriginRecord::Synthetic(SyntheticOrigin::new(
-        SyntheticOriginKind::Format,
-    )));
-
-    assert_ne!(reused.raw(), stale.raw());
-    assert!(!store.contains_origin(stale));
-    assert_eq!(stale_list.origins(), &[kept, stale]);
     assert_eq!(
-        store.get(reused),
-        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Format))
+        universe.origin_list(list).iter().collect::<Vec<_>>(),
+        vec![OriginId::UNKNOWN]
     );
+    assert_eq!(universe.provenance_stats().origin_list_spans(), 1);
 }
 
 #[test]
@@ -722,7 +581,7 @@ fn universe_provenance_stats_measure_rollback_truncation() {
         )
         .expect("generated source registration");
     let source = stores.source_token_origin(SourceId::new(3), 0, 1);
-    let origins = stores.allocate_origin_list_ref(
+    let _origins = stores.allocate_origin_list_ref(
         &std::iter::repeat_n(OriginRef::direct(source), 128).collect::<Vec<_>>(),
     );
 
@@ -736,7 +595,6 @@ fn universe_provenance_stats_measure_rollback_truncation() {
         1
     );
 
-    drop(origins);
     stores.rollback(&snapshot);
     let rolled_back = stores.provenance_stats();
     assert_eq!(rolled_back.origin_records(), baseline.origin_records());
@@ -784,30 +642,7 @@ fn rooted_final_owner_release_leaves_only_the_archived_coordinate() {
 }
 
 #[test]
-fn rooted_origin_lists_release_children_and_reuse_generation_safe_slots() {
-    let mut store = ProvenanceStore::new();
-    let atom = store.allocate_rooted(
-        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Test)),
-        [],
-    );
-    let first = store.allocate_rooted_list(std::slice::from_ref(&atom));
-    let first_id = first.id();
-    drop(atom);
-    assert!(store.origin_ref(first.origins()[0]).is_some());
-    drop(first);
-
-    let replacement_atom = store.allocate_rooted(
-        OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Primitive)),
-        [],
-    );
-    let second = store.allocate_rooted_list(std::slice::from_ref(&replacement_atom));
-    assert_eq!(second.id().raw(), first_id.raw());
-    assert_ne!(second.id(), first_id);
-    assert_eq!(store.rooted_list_shape(), (1, 1, 2));
-}
-
-#[test]
-fn rooted_provenance_plateaus_for_dead_work_and_grows_exactly_for_live_work() {
+fn rooted_provenance_records_plateau_for_dead_work() {
     const OPERATIONS: u64 = 10_000;
     let mut bounded = ProvenanceStore::new();
     for serial in 0..OPERATIONS {
@@ -820,104 +655,9 @@ fn rooted_provenance_plateaus_for_dead_work_and_grows_exactly_for_live_work() {
             )),
             [],
         );
-        let list = bounded.allocate_rooted_list(std::slice::from_ref(&root));
-        drop(list);
         drop(root);
     }
     assert_eq!(bounded.rooted_record_shape(), (0, 0));
-    assert_eq!(bounded.rooted_list_shape(), (0, 0, 2));
-
-    let mut all_live = ProvenanceStore::new();
-    let roots = (0..OPERATIONS)
-        .map(|serial| {
-            all_live.allocate_rooted(
-                OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
-                    serial,
-                    OriginId::UNKNOWN,
-                    OriginId::UNKNOWN,
-                    OriginId::UNKNOWN,
-                )),
-                [],
-            )
-        })
-        .collect::<Vec<_>>();
-    let lists = roots
-        .iter()
-        .map(|root| all_live.allocate_rooted_list(std::slice::from_ref(root)))
-        .collect::<Vec<_>>();
-    assert_eq!(all_live.rooted_record_shape(), (0, 0));
-    assert_eq!(
-        all_live.rooted_list_shape(),
-        (
-            OPERATIONS as usize,
-            OPERATIONS as usize,
-            OPERATIONS as usize + 1
-        )
-    );
-    assert_eq!(lists.len(), OPERATIONS as usize);
-}
-
-#[test]
-fn structural_lists_plateau_for_direct_churn_and_grow_by_distinct_live_roots() {
-    const OPERATIONS: usize = 256;
-    const WIDTH: usize = 32;
-
-    let mut bounded_direct = ProvenanceStore::new();
-    let warm_ids = (1..=WIDTH)
-        .map(|raw| OriginId::from_raw(raw as u32))
-        .collect::<Vec<_>>();
-    let warm = bounded_direct.allocate_unrooted_origin_ids(warm_ids.into_iter());
-    drop(warm);
-    assert_eq!(bounded_direct.rooted_list_shape(), (0, 0, 2));
-    let baseline = bounded_direct.stats();
-    for operation in 0..OPERATIONS {
-        let first_raw = 1 + operation * WIDTH;
-        let list = bounded_direct.allocate_unrooted_origin_ids(
-            (first_raw..first_raw + WIDTH).map(|raw| OriginId::from_raw(raw as u32)),
-        );
-        assert_eq!(list.origins().len(), WIDTH);
-        assert_eq!(list.owned_root_count(), 0);
-        drop(list);
-    }
-    assert!(bounded_direct.stats().retained_layout_eq(baseline));
-    assert_eq!(bounded_direct.rooted_list_shape(), (0, 0, 2));
-
-    let mut all_live_rooted = ProvenanceStore::new();
-    let roots = (0..OPERATIONS as u64)
-        .map(|serial| {
-            all_live_rooted.allocate_rooted(
-                OriginRecord::MacroInvocation(MacroInvocationOrigin::from_nonowning_operand(
-                    serial,
-                    OriginId::UNKNOWN,
-                    OriginId::UNKNOWN,
-                    OriginId::UNKNOWN,
-                )),
-                [],
-            )
-        })
-        .collect::<Vec<_>>();
-    let lists = roots
-        .iter()
-        .map(|root| {
-            let repeated: [OriginRef; WIDTH] = std::array::from_fn(|_| root.clone());
-            all_live_rooted.allocate_rooted_list(&repeated)
-        })
-        .collect::<Vec<_>>();
-    assert!(lists.iter().all(|list| list.owned_root_count() == 1));
-    assert_eq!(
-        all_live_rooted.rooted_list_shape(),
-        (OPERATIONS, OPERATIONS * WIDTH, OPERATIONS + 1)
-    );
-    assert_eq!(
-        lists
-            .iter()
-            .map(|list| {
-                std::mem::size_of_val(list.origins())
-                    + list.owned_root_count() * std::mem::size_of::<OriginRef>()
-            })
-            .sum::<usize>(),
-        OPERATIONS * WIDTH * 4 + OPERATIONS * 24
-    );
 }
 
 #[test]

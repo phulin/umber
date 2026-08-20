@@ -116,6 +116,20 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
             )
     }
 
+    fn provenance_values(&self) -> usize {
+        self.provenance_roots.len()
+    }
+
+    fn retained_provenance_values(&self) -> usize {
+        self.provenance_roots.capacity()
+    }
+
+    fn retained_provenance_bytes(&self) -> usize {
+        self.provenance_roots
+            .capacity()
+            .saturating_mul(size_of::<Provenance>())
+    }
+
     fn lengths(&self) -> RuntimeValueColumnLengths {
         RuntimeValueColumnLengths {
             token_words: self.token_words.len() as u32,
@@ -1035,6 +1049,9 @@ pub(crate) struct RuntimeValueRegionAccounting {
     pub(crate) region_owners: usize,
     pub(crate) retained_payload_values: usize,
     pub(crate) retained_payload_bytes: usize,
+    pub(crate) provenance_values: usize,
+    pub(crate) retained_provenance_values: usize,
+    pub(crate) retained_provenance_bytes: usize,
     pub(crate) registry_slots: usize,
     pub(crate) registry_capacity: usize,
 }
@@ -1053,6 +1070,15 @@ impl RuntimeValueRegionAccounting {
             retained_payload_bytes: self
                 .retained_payload_bytes
                 .saturating_add(other.retained_payload_bytes),
+            provenance_values: self
+                .provenance_values
+                .saturating_add(other.provenance_values),
+            retained_provenance_values: self
+                .retained_provenance_values
+                .saturating_add(other.retained_provenance_values),
+            retained_provenance_bytes: self
+                .retained_provenance_bytes
+                .saturating_add(other.retained_provenance_bytes),
             registry_slots: self.registry_slots.saturating_add(other.registry_slots),
             registry_capacity: self
                 .registry_capacity
@@ -1220,6 +1246,9 @@ fn accounting_for_columns<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Pr
         region_owners: live_regions,
         retained_payload_values: columns.retained_values(),
         retained_payload_bytes: columns.retained_bytes(),
+        provenance_values: columns.provenance_values(),
+        retained_provenance_values: columns.retained_provenance_values(),
+        retained_provenance_bytes: columns.retained_provenance_bytes(),
         registry_slots: 0,
         registry_capacity: 0,
     }

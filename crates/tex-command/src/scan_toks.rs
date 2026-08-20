@@ -1429,10 +1429,10 @@ impl CommandProcessor<'_> {
         let first = scanned.replacement_text.token_ref();
         let words = self.state.tokens(first.id());
         let first = words.first().copied();
-        self.insert_expansion_list(
-            TokenPayload::stored(&words, scanned.replacement_text.origin_ref().clone()),
-            first,
-        );
+        let origins = self
+            .state
+            .origin_list(scanned.replacement_text.origin_ref());
+        self.insert_expansion_list(TokenPayload::stored(&words, origins.iter()), first);
         Ok(())
     }
 
@@ -1443,16 +1443,15 @@ impl CommandProcessor<'_> {
             .copied()
             .enumerate()
             .map(|(index, token)| {
-                let origin = list
-                    .origin_ref()
-                    .origins()
-                    .get(index)
-                    .copied()
+                let origin = self
+                    .state
+                    .origin_list_origin(list.origin_ref(), index)
                     .unwrap_or(OriginId::UNKNOWN);
-                RootedTracedTokenWord::from_word(
-                    TracedTokenWord::pack(token, origin),
-                    tex_state::provenance::OriginRef::direct(origin),
-                )
+                let root = self
+                    .state
+                    .origin_list_root(list.origin_ref(), index)
+                    .unwrap_or_else(tex_state::provenance::OriginRef::unknown);
+                RootedTracedTokenWord::from_word(TracedTokenWord::pack(token, origin), root)
             })
             .collect()
     }

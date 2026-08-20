@@ -646,8 +646,9 @@ impl CommandState {
         reason: StoredReplayReason,
     ) -> CommandReplayEpisode {
         let words = stores.tokens(tokens.token_list());
+        let origins = stores.origin_list(tokens.origin_ref());
         let identity = self.push_token_level(
-            TokenPayload::stored(&words, tokens.origin_ref().clone()),
+            TokenPayload::stored(&words, origins.iter()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -807,8 +808,9 @@ impl CommandState {
     ) {
         let token_root = tokens.token_ref();
         let words = stores.tokens(token_root.id());
+        let origins = stores.origin_list(tokens.origin_ref());
         let level = self.push_token_level(
-            TokenPayload::stored(&words, tokens.origin_ref().clone()),
+            TokenPayload::stored(&words, origins.iter()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -1712,8 +1714,9 @@ impl CommandState {
             level.cursor.install_scantokens_eof_context_line();
         }
         let words = stores.tokens(every_eof.token_list());
+        let origins = stores.origin_list(every_eof.origin_ref());
         Some(self.push_token_level(
-            TokenPayload::stored(&words, every_eof.origin_ref().clone()),
+            TokenPayload::stored(&words, origins.iter()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::EveryEof),
@@ -1845,8 +1848,9 @@ impl CommandState {
         trace: ReplayTrace,
     ) -> InputLevelId {
         let words = stores.tokens(template.token_list());
+        let origins = stores.origin_list(template.origin_ref());
         self.push_token_level(
-            TokenPayload::stored(&words, template.origin_ref().clone()),
+            TokenPayload::stored(&words, origins.iter()),
             behavior,
             retirement,
             trace,

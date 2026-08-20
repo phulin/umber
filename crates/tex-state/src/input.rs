@@ -78,7 +78,7 @@ impl AlignmentScannerPhase {
 
 /// A frozen semantic token list paired with the per-instance origins that
 /// should be used when replaying it.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TracedTokenList {
     token_list: TokenListRef,
     origin_list: OriginListRef,
@@ -119,10 +119,10 @@ impl TracedTokenList {
         self.origin_list.id()
     }
 
-    /// Borrows the strong exact-position owner paired with this token list.
+    /// Returns the copy-only exact-position identity paired with this token list.
     #[must_use]
-    pub fn origin_ref(&self) -> &OriginListRef {
-        &self.origin_list
+    pub const fn origin_ref(&self) -> OriginListRef {
+        self.origin_list
     }
 }
 

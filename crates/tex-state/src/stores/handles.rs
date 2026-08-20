@@ -122,7 +122,7 @@ impl Stores {
                     let token_view = self.tokens(token_list.id());
                     if origin_list.id() != crate::ids::OriginListId::EMPTY {
                         assert_eq!(
-                            origin_list.origins().len(),
+                            self.origin_list_len(*origin_list),
                             token_view.len(),
                             "input origin-list length does not match token list"
                         );

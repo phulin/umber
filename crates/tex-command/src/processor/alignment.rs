@@ -506,7 +506,7 @@ impl AlignmentDeliveryState {
         if cell.u_template_installed {
             return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
         }
-        Ok(cell.templates.u_template.clone())
+        Ok(cell.templates.u_template)
     }
 
     pub(crate) fn mark_u_template_installed(
@@ -568,7 +568,7 @@ impl AlignmentDeliveryState {
         Ok(if cell.omit {
             TracedTokenList::synthetic(empty)
         } else {
-            cell.templates.v_template.clone()
+            cell.templates.v_template
         })
     }
 

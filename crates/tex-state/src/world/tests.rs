@@ -8,7 +8,7 @@ fn deferred_write_coordinates_survive_world_clone_rollback_and_journal_detachmen
     let id = root.id();
     drop(universe);
     let mut world = World::memory();
-    world.record_deferred_write(StreamSlot::new(3), root.clone());
+    world.record_deferred_write(StreamSlot::new(3), root);
     let snapshot = world.snapshot();
     world.record_special("suffix", b"discarded".to_vec());
     world.rollback(&snapshot);

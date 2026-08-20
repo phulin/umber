@@ -70,9 +70,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/hot_core/arena/value_region/store/storage.rs`: Fallible whole-bundle
   reservation and one-time admitted slice resolution for concrete regions.
 - `src/hot_core/arena/value_region/store/registry.rs`: Persistent live
-  token/macro/glue candidate, append-only identity tables, dense coordinate
-  maps, fixed rollback marks, incremental region publication, and cold forks
-  that share sealed regions while copying only the private active suffix.
+  token/macro/glue/origin-list candidate, append-only identity tables, dense
+  coordinate maps, fixed rollback marks, incremental region publication, and
+  cold forks that share sealed regions while copying only the private active
+  suffix.
 - `src/hot_core/arena/value_region/store/registry/tests.rs`: Allocation/read,
   stale/foreign identity, all-live growth, and bounded-retry registry controls.
 - `src/hot_core/arena/value_region/store/tests.rs`: Typed-coordinate,
@@ -169,13 +170,13 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/print.rs`: tex.web §54's print `selector`, §§57--65's print primitives, §73's `print_err`, and §82's `error` report channel.
 - `src/print/error_context.rs`: tex.web §§310--318's `show_context` two-line pseudoprint, bounded eager before/after projections captured at the live input seam, §314's token-list labels, and §310's `\errorcontextlines` elision, shared by every input-stack owner.
 - `src/print/tests.rs`: Unit tests for context widths, selector routing, help routing, and error-report completion.
-- `src/provenance.rs`: Reachability-owned structural origin records and lists,
-  bounded incremental weak candidate/slot reclamation with inline-small weak
-  candidate buckets, packed macro-invocation records with cold root
-  materialization, compatibility record storage without a provenance-list arena,
-  demand policy, explicit provenance budgets, and record retry leases.
-- `src/provenance/tests.rs`: Structural sharing, collision, packed-key,
-  allocation, readback, retry, fork, and rollback provenance controls.
+- `src/provenance.rs`: Structural origin-record authority, copy-only
+  `OriginListRef` facade and borrowed aggregate views, packed
+  macro-invocation records with cold root materialization, demand policy,
+  explicit provenance budgets, and record retry leases. Exact list entries
+  live only in the aggregate runtime value region.
+- `src/provenance/tests.rs`: Structural record sharing, packed-key, allocation,
+  readback, retry, fork, list-region budget, and rollback provenance controls.
 - `src/pure_memo.rs`: Optional entry/byte-bounded pure-query caches for pretolerance, page-breaking, and shipout results, bounded eviction telemetry, explicit cache release, and stable output-provenance recipes.
 - `src/resource.rs`: Generic host-resource availability, absence, and stable
   suspension identities plus the state-owned immutable input-content resolver

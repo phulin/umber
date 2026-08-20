@@ -2272,7 +2272,7 @@ fn alignment_preamble_tabskip_assignment_preserves_the_prior_boundary() {
         width: tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY),
         ..tex_state::glue::GlueSpec::ZERO
     });
-    universe.set_glue_param(tex_state::env::banks::GlueParam::TAB_SKIP, &initial);
+    universe.set_glue_param(tex_state::env::banks::GlueParam::TAB_SKIP, initial);
     let tabskip = universe.intern("tabskip").symbol();
     let cr = universe.intern("cr").symbol();
     universe.set_meaning(

@@ -1173,6 +1173,7 @@ fn dropping_private_candidate_releases_its_complete_domain() {
     .expect("session starts");
     let mut inputs = StagedInputResolver::default();
     let mut candidate = session.start_cold_candidate().expect("cold candidate");
+    let initial_values = candidate.universe.testing_ownership_census();
     let probe = candidate
         .universe
         .testing_private_revision_domain_probe()
@@ -1196,14 +1197,23 @@ fn dropping_private_candidate_releases_its_complete_domain() {
         .testing_private_revision_domain_stats()
         .expect("candidate domain remains live across suspension");
     assert_eq!(
-        retained.0, 2,
-        "message tokens and the synthetic probe are owned"
+        retained.0, 1,
+        "only the synthetic probe belongs to the private patch domain"
     );
-    assert!(
-        retained.1 > 64,
-        "the exact token payload charge accompanies the synthetic probe"
+    assert_eq!(
+        retained.1, 64,
+        "the private patch domain retains the exact synthetic probe charge"
     );
     assert!(!retained.3);
+    let retained_values = candidate.universe.testing_ownership_census();
+    assert!(
+        retained_values.token_lists.live_objects > initial_values.token_lists.live_objects,
+        "message tokens are owned by the runtime value region"
+    );
+    assert!(
+        retained_values.provenance_lists > initial_values.provenance_lists,
+        "message provenance lists are owned by the runtime value region"
+    );
     inputs
         .files
         .insert("child".to_owned(), "\\relax".to_owned());

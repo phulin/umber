@@ -1,10 +1,11 @@
-//! Persistent live token, macro, and glue registry over one arena candidate.
+//! Persistent live token, macro, glue, and origin-list registry over one arena candidate.
 
 use core::fmt;
+use core::mem::size_of;
 use core::num::NonZeroU32;
 
 use crate::glue::GlueSpec;
-use crate::identity::{IdentityAllocator, IdentityError};
+use crate::identity::{HandleIdentity, IdentityAllocator, IdentityError};
 use crate::ids::{GlueId, MacroDefinitionId, OriginListId, TokenListId};
 use crate::macro_store::MacroParameterPattern;
 use crate::meaning::MeaningFlags;
@@ -100,6 +101,16 @@ pub(crate) struct RuntimeValueRegistryAccounting {
     pub(crate) retained_identity_slots: usize,
 }
 
+/// Origin-list-specific accounting within the aggregate runtime registry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RuntimeOriginListAccounting {
+    pub(crate) lists: usize,
+    pub(crate) entries: usize,
+    pub(crate) retained_list_slots: usize,
+    pub(crate) retained_entry_slots: usize,
+    pub(crate) retained_bytes: usize,
+}
+
 /// One persistent mutable candidate plus dense, generation-safe family maps.
 pub(crate) struct RuntimeValueRegistry {
     candidate: RuntimeValueCandidate,
@@ -111,6 +122,8 @@ pub(crate) struct RuntimeValueRegistry {
     macro_locations: Vec<RuntimeMacroCoordinate>,
     glue_locations: Vec<RuntimeGlueCoordinate>,
     origin_list_locations: Vec<RuntimeOriginListCoordinate>,
+    origin_list_limit: usize,
+    origin_list_entry_limit: usize,
     next_macro_observation_operand: i64,
     next_macro_allocation_serial: u64,
 }
@@ -148,6 +161,8 @@ impl RuntimeValueRegistry {
             macro_locations: Vec::new(),
             glue_locations: vec![zero],
             origin_list_locations: vec![empty_origins],
+            origin_list_limit: usize::MAX,
+            origin_list_entry_limit: usize::MAX,
             next_macro_observation_operand: 249_985,
             next_macro_allocation_serial: 0,
         })
@@ -372,11 +387,33 @@ impl RuntimeValueRegistry {
         &mut self,
         input: RuntimeOriginListValueInput<'_>,
     ) -> Result<OriginListId, RuntimeValueRegistryError> {
+        #[cfg(feature = "profiling")]
+        let mut comparisons = 0;
         for coordinate in self.origin_list_locations.iter().copied() {
+            #[cfg(feature = "profiling")]
+            {
+                comparisons += 1;
+            }
             let view = self.candidate.admit_origin_list(coordinate)?;
             if view.len() == input.origins.len() && view.iter().eq(input.origins.iter().copied()) {
+                #[cfg(feature = "profiling")]
+                crate::measurement::record_provenance_list_resolution(comparisons);
+                #[cfg(feature = "profiling")]
+                crate::measurement::record_provenance_list_intern(true, false);
                 return Ok(coordinate.id());
             }
+        }
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_provenance_list_resolution(comparisons);
+        let entries = self.origin_list_entry_count()?;
+        if self.origin_list_locations.len().saturating_sub(1) >= self.origin_list_limit
+            || entries
+                .checked_add(input.origins.len())
+                .is_none_or(|entries| entries > self.origin_list_entry_limit)
+        {
+            #[cfg(feature = "profiling")]
+            crate::measurement::record_provenance_list_intern(false, false);
+            return Ok(OriginListId::EMPTY);
         }
         reserve_location(&mut self.origin_list_locations)?;
         let identity_mark = self.origin_list_identities.watermark();
@@ -391,6 +428,8 @@ impl RuntimeValueRegistry {
         };
         debug_assert_eq!(id.raw() as usize, self.origin_list_locations.len());
         self.origin_list_locations.push(coordinate);
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_provenance_list_intern(false, true);
         Ok(id)
     }
 
@@ -618,6 +657,8 @@ impl RuntimeValueRegistry {
             macro_locations: self.macro_locations.clone(),
             glue_locations: self.glue_locations.clone(),
             origin_list_locations: self.origin_list_locations.clone(),
+            origin_list_limit: self.origin_list_limit,
+            origin_list_entry_limit: self.origin_list_entry_limit,
             next_macro_observation_operand: self.next_macro_observation_operand,
             next_macro_allocation_serial: self.next_macro_allocation_serial,
         };
@@ -716,6 +757,42 @@ impl RuntimeValueRegistry {
                 .saturating_add(glue_shape.1)
                 .saturating_add(origin_list_shape.1),
         }
+    }
+
+    pub(crate) fn configure_origin_list_budgets(&mut self, lists: usize, entries: usize) {
+        self.origin_list_limit = lists;
+        self.origin_list_entry_limit = entries;
+    }
+
+    pub(crate) fn origin_list_accounting(
+        &self,
+    ) -> Result<RuntimeOriginListAccounting, RuntimeValueRegistryError> {
+        let entries = self.origin_list_entry_count()?;
+        let identity_shape = self.origin_list_identities.storage_shape();
+        let regions = self.candidate.accounting();
+        let retained_list_bytes = self
+            .origin_list_locations
+            .capacity()
+            .saturating_mul(size_of::<RuntimeOriginListCoordinate>());
+        let retained_identity_bytes = identity_shape.1.saturating_mul(size_of::<HandleIdentity>());
+        Ok(RuntimeOriginListAccounting {
+            lists: self.origin_list_locations.len().saturating_sub(1),
+            entries,
+            retained_list_slots: self.origin_list_locations.capacity(),
+            retained_entry_slots: regions.retained_provenance_values,
+            retained_bytes: retained_list_bytes
+                .saturating_add(retained_identity_bytes)
+                .saturating_add(regions.retained_provenance_bytes),
+        })
+    }
+
+    fn origin_list_entry_count(&self) -> Result<usize, RuntimeValueRegistryError> {
+        self.origin_list_locations
+            .iter()
+            .copied()
+            .try_fold(0_usize, |entries, coordinate| {
+                Ok(entries.saturating_add(self.candidate.admit_origin_list(coordinate)?.len()))
+            })
     }
 
     fn token_coordinate(

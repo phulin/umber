@@ -260,7 +260,7 @@ fn exercise_fork(class: HandleClass) {
             let mut parent = Universe::new();
             let inherited = parent.intern_glue(glue(1));
             let mut child = parent.clone();
-            assert_eq!(parent.glue(&inherited), child.glue(inherited), "{class:?}");
+            assert_eq!(parent.glue(inherited), child.glue(inherited), "{class:?}");
             let parent_only = parent.intern_glue(glue(2));
             let child_only = child.intern_glue(glue(3));
             assert_panics(class, || _ = parent.glue(child_only));

@@ -700,7 +700,7 @@ fn format_round_trip_preserves_every_extended_register_family_at_boundaries() {
             },
             None,
         );
-        stores.set_skip(index, &glue);
+        stores.set_skip(index, glue);
         stores.set_muskip(index, glue);
         let token_list = stores.intern_token_list(&[Token::Char {
             ch: char::from_digit(value as u32, 10).expect("single digit"),

@@ -2866,9 +2866,7 @@ fn internal_token_sources_recover_illegal_requested_levels_and_indexes() {
             .collect();
         assert_eq!(
             scan_internal_with(&mut universe, tokens, |_| {}),
-            InternalValue::Tokens {
-                tokens: zero_ref.clone(),
-            }
+            InternalValue::Tokens { tokens: zero_ref }
         );
     }
 }
@@ -3541,7 +3539,7 @@ fn etex_glue_component_enquiries_scan_registers_and_coerce_mu_glue() {
         shrink_order: Order::Fil,
     };
     let glue = universe.intern_glue(spec);
-    universe.set_skip(7, &glue);
+    universe.set_skip(7, glue);
     universe.set_muskip(8, glue);
 
     for (register, index, primitive, expected) in [
@@ -4067,7 +4065,7 @@ fn internal_coercion_lowers_each_source_level_and_commits_requested_level() {
 fn internal_coercion_balances_glue_references_for_return_lowering_and_error() {
     let mut universe = crate::test_harness::universe();
     let id = universe.intern_glue(glue(9, 8, 7));
-    universe.set_skip(8, &id);
+    universe.set_skip(8, id);
     let skip = universe.intern("skip8").symbol();
     universe.set_meaning(skip, Meaning::SkipRegister(8));
 

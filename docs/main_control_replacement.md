@@ -299,23 +299,25 @@ RuntimeValueRegion {
   macro_records: Vec<PackedMacroRecord>,
   macro_roots: Vec<PackedMacroRoots>,
   glue_specs: Vec<GlueSpec>,
-  provenance_roots: Vec<PackedOriginRoot>,
+  provenance: Vec<RuntimeOriginEntry>,
+  origin_lists: Vec<RuntimeOriginListRow>,
 }
 ```
 
 The concrete implementation may split large columns into aligned physical
 chunks, but `RegionKey` remains the sole allocation and lifetime identity.
-`TokenListRef`, `MacroDefinitionRef`, and `GlueSpecRef` become copy-only typed
-coordinates containing a region key, row or span index, and the semantic id
-needed by their public equality contract. They contain no `Arc`, `Weak`, root
-marker, exact-index entry, or allocation-event owner. Cold format and detached
-publication may compare or hash resolved values, but those indexes never own a
-runtime region.
+`TokenListRef`, `MacroDefinitionRef`, `GlueSpecRef`, and `OriginListRef` are
+copy-only typed id facades. Each generation-tagged id selects one dense
+registry coordinate containing the region key and row or span index; the
+facade itself carries no payload coordinate. These values contain no `Arc`,
+`Weak`, root marker, exact-index entry, or allocation-event owner. Cold format
+and detached publication may compare or hash borrowed resolved values, but
+those indexes never own a runtime region.
 
 The current `hot_core::arena` namespace, slot, generation, reservation, and
 tail-watermark rules are the implementation authority. The migration factors
 that lifecycle into a column-owning runtime region rather than creating a
-second token/macro/glue allocator. One mutable candidate owns the active bump
+second token/macro/glue/provenance-list allocator. One mutable candidate owns the active bump
 region. Filling a physical region seals it by moving its buffers into one
 `Arc<SealedValueRegion>`; payload rows and backing allocations are not copied.
 The next active region reuses a retired slot only after advancing its

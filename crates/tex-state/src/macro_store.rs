@@ -185,8 +185,8 @@ impl MacroDefinitionProvenance {
     }
 
     #[must_use]
-    pub const fn parameter_ref(&self) -> &crate::provenance::OriginListRef {
-        &self.parameter_origins
+    pub const fn parameter_ref(&self) -> crate::provenance::OriginListRef {
+        self.parameter_origins
     }
 
     #[must_use]
@@ -195,8 +195,8 @@ impl MacroDefinitionProvenance {
     }
 
     #[must_use]
-    pub const fn replacement_ref(&self) -> &crate::provenance::OriginListRef {
-        &self.replacement_origins
+    pub const fn replacement_ref(&self) -> crate::provenance::OriginListRef {
+        self.replacement_origins
     }
 }
 

@@ -20,7 +20,7 @@ use crate::{
     math::MathFontSize,
     meaning::{InternalInteger, Meaning},
     page::{PageInteger, PageMark},
-    provenance::SynthesizedOriginKind,
+    provenance::{OriginListRef, OriginListView, OriginRef, SynthesizedOriginKind},
     source_map::{SourceDescriptor, SourceMapError, SourcePos},
     token::{Catcode, OriginId, Token, TracedTokenWord},
     token_store::{TokenListRef, TokenListView},
@@ -461,6 +461,26 @@ impl CommandContext<'_> {
     #[must_use]
     pub fn tokens(&self, id: TokenListId) -> TokenListView<'_> {
         self.universe.tokens(id)
+    }
+
+    #[must_use]
+    pub fn origin_list_len(&self, origins: OriginListRef) -> usize {
+        self.universe.origin_list_len(origins)
+    }
+
+    #[must_use]
+    pub fn origin_list(&self, origins: OriginListRef) -> OriginListView<'_> {
+        self.universe.origin_list(origins)
+    }
+
+    #[must_use]
+    pub fn origin_list_origin(&self, origins: OriginListRef, index: usize) -> Option<OriginId> {
+        self.universe.origin_list_origin(origins, index)
+    }
+
+    #[must_use]
+    pub fn origin_list_root(&self, origins: OriginListRef, index: usize) -> Option<OriginRef> {
+        self.universe.origin_list_root(origins, index)
     }
 
     /// Returns the copy-only identity for a live token list.

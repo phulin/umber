@@ -86,18 +86,18 @@ fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
     stores.set_int_param_global(IntParam::TRACING_ASSIGNS, 1);
 
     let displaced_skip = stores.intern_glue(glue(1));
-    stores.set_skip_global(0, &displaced_skip);
+    stores.set_skip_global(0, displaced_skip);
     AssignmentCommitter::new(&mut stores).skip(0, glue(2), true, false, false, false);
     assert_eq!(stores.glue(stores.skip(0)), glue(2));
 
     let displaced_muskip = stores.intern_glue(glue(3));
-    stores.set_muskip_global(0, &displaced_muskip);
+    stores.set_muskip_global(0, displaced_muskip);
     AssignmentCommitter::new(&mut stores).skip(0, glue(4), true, true, false, false);
     assert_eq!(stores.glue(stores.muskip(0)), glue(4));
 
     let parameter = GlueParam::BASELINE_SKIP;
     let displaced_parameter = stores.intern_glue(glue(5));
-    stores.set_glue_param_global(parameter, &displaced_parameter);
+    stores.set_glue_param_global(parameter, displaced_parameter);
     AssignmentCommitter::new(&mut stores).glue_parameter(
         parameter.raw(),
         glue(6),
@@ -112,7 +112,7 @@ fn local_glue_write_undo_is_the_assignment_trace_liveness_negative_control() {
     let mut stores = Universe::new();
     stores.set_int_param_global(IntParam::TRACING_ASSIGNS, 1);
     let displaced = stores.intern_glue(glue(1));
-    stores.set_skip_global(0, &displaced);
+    stores.set_skip_global(0, displaced);
     stores.enter_group();
 
     AssignmentCommitter::new(&mut stores).skip(0, glue(2), false, false, false, false);

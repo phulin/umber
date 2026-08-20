@@ -1016,7 +1016,7 @@ mod tests {
                 ch: b'c',
             },
             Node::Glue {
-                spec: glue.clone(),
+                spec: glue,
                 kind: GlueKind::Normal,
                 leader: None,
             },

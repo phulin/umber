@@ -381,12 +381,12 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
     ]);
     let nodes = [
         Node::Glue {
-            spec: leader_glue.clone(),
+            spec: leader_glue,
             kind: GlueKind::Cleaders,
             leader: Some(leader.clone()),
         },
         Node::Glue {
-            spec: leader_glue.clone(),
+            spec: leader_glue,
             kind: GlueKind::Xleaders,
             leader: Some(leader),
         },
@@ -595,7 +595,7 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
 
     for (kind, payload, expected) in cases {
         let node = Node::Glue {
-            spec: spec.clone(),
+            spec,
             kind,
             leader: payload,
         };
@@ -612,7 +612,7 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
             expected,
             "wrong dump for {kind:?}",
         );
-        assert_eq!(stores.glue(&spec).width, Scaled::from_raw(Scaled::UNITY));
+        assert_eq!(stores.glue(spec).width, Scaled::from_raw(Scaled::UNITY));
         assert!(empty.is_empty());
     }
 }
@@ -639,7 +639,7 @@ fn zero_glue_dump_distinguishes_nonscript_sentinel_from_printed_specs() {
             dump_node_slice(
                 &stores,
                 &[Node::Glue {
-                    spec: zero.clone(),
+                    spec: zero,
                     kind,
                     leader: payload,
                 }],
@@ -659,7 +659,7 @@ fn zero_glue_dump_distinguishes_nonscript_sentinel_from_printed_specs() {
             &stores,
             &[
                 Node::Glue {
-                    spec: zero.clone(),
+                    spec: zero,
                     kind: GlueKind::NonScript,
                     leader: None,
                 },
@@ -718,7 +718,7 @@ fn glue_unit_order_and_sign_matrix_is_exact_and_immutable() {
         let spec = stores.intern_glue(value);
         for (kind, expected) in [(GlueKind::Normal, ordinary), (GlueKind::MuSkip, math)] {
             let node = Node::Glue {
-                spec: spec.clone(),
+                spec,
                 kind,
                 leader: None,
             };
@@ -739,7 +739,7 @@ fn glue_unit_order_and_sign_matrix_is_exact_and_immutable() {
                 ),
                 format!("{prefix}{expected}\n"),
             );
-            assert_eq!(stores.glue(&spec), value, "dumping must not rewrite glue");
+            assert_eq!(stores.glue(spec), value, "dumping must not rewrite glue");
         }
     }
 
@@ -1576,14 +1576,8 @@ fn etex_numbered_mark_dump_renders_dense_and_sparse_boundary_classes_exactly() {
     }]);
     let tokens = stores.token_list_ref(tokens);
     let list = stores.freeze_node_list(&[
-        Node::Mark {
-            class: 0,
-            tokens: tokens.clone(),
-        },
-        Node::Mark {
-            class: 255,
-            tokens: tokens.clone(),
-        },
+        Node::Mark { class: 0, tokens },
+        Node::Mark { class: 255, tokens },
         Node::Mark { class: 256, tokens },
     ]);
 

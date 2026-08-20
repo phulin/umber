@@ -266,7 +266,7 @@ pub(in crate::main_control) fn begin_replay_alignment_cell(
                 .tabskips
                 .first()
                 .cloned()
-                .unwrap_or_else(|| active.default_tabskip.clone()),
+                .unwrap_or(active.default_tabskip),
             kind: GlueKind::TabSkip,
             leader: None,
         });
@@ -344,7 +344,7 @@ pub(in crate::main_control) fn capture_replay_alignment_cell(
             .tabskips
             .get(active.column.saturating_add(1))
             .cloned()
-            .unwrap_or_else(|| active.default_tabskip.clone()),
+            .unwrap_or(active.default_tabskip),
         kind: GlueKind::TabSkip,
         leader: None,
     });
@@ -456,9 +456,8 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin(
                 .u_template
                 .as_ref()
                 .expect("alignment columns retain u templates")
-                .token_ref()
-                .clone(),
-            v_template: templates.v_template.token_ref().clone(),
+                .token_ref(),
+            v_template: templates.v_template.token_ref(),
         })
         .collect();
     let state = AlignState::new(
@@ -466,7 +465,7 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin(
         active.packing,
         columns,
         active.tabskips.clone(),
-        active.default_tabskip.clone(),
+        active.default_tabskip,
         active.repeat_start,
     );
     // TeX82 §800: `if nest[nest_ptr-1].mode_field=mmode then o:=display_indent

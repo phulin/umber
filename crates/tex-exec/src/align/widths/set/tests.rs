@@ -218,7 +218,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
         columns: vec![sp(4), sp(5)],
         tabskips: vec![
             tex_state::glue::testing_zero_glue_ref(),
-            middle.clone(),
+            middle,
             tex_state::glue::testing_zero_glue_ref(),
         ],
     };

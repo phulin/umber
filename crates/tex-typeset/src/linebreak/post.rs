@@ -202,7 +202,7 @@ fn materialize_channel<S: TypesetState>(
     line.reserve(required);
     if state.glue_spec(params.left_skip) != GlueSpec::ZERO {
         line.push(Node::Glue {
-            spec: params.left_skip.clone(),
+            spec: params.left_skip,
             kind: GlueKind::LeftSkip,
             leader: None,
         });
@@ -243,7 +243,7 @@ fn materialize_channel<S: TypesetState>(
             .map(|direction| Node::Direction(matching_end(direction))),
     );
     line.push(Node::Glue {
-        spec: params.right_skip.clone(),
+        spec: params.right_skip,
         kind: GlueKind::RightSkip,
         leader: None,
     });

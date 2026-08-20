@@ -14,7 +14,7 @@ fn columns(count: usize) -> Vec<AlignColumn> {
     let empty = universe.token_list_ref(TokenListId::EMPTY);
     vec![
         AlignColumn {
-            u_template: empty.clone(),
+            u_template: empty,
             v_template: empty,
         };
         count
@@ -65,11 +65,7 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
         });
         let resolved = ResolvedWidths {
             columns: vec![sp(4), sp(5)],
-            tabskips: vec![
-                flexible.clone(),
-                tex_state::glue::testing_zero_glue_ref(),
-                flexible,
-            ],
+            tabskips: vec![flexible, tex_state::glue::testing_zero_glue_ref(), flexible],
         };
         let empty = NodeListRef::empty();
 

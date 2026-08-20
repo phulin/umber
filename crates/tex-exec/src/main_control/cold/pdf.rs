@@ -52,10 +52,10 @@ pub(in crate::main_control) fn pdf_navigation_identity(
             tex_state::PdfDestinationIdentity::Number(*number)
         }
         tex_state::PdfActionIdentifier::Name(tokens) => tex_state::PdfDestinationIdentity::Name(
-            pdf_graphics_text(TracedTokenList::synthetic(tokens.clone()), stores),
+            pdf_graphics_text(TracedTokenList::synthetic(*tokens), stores),
         ),
         tex_state::PdfActionIdentifier::Raw(tokens) => tex_state::PdfDestinationIdentity::Name(
-            pdf_graphics_text(TracedTokenList::synthetic(tokens.clone()), stores),
+            pdf_graphics_text(TracedTokenList::synthetic(*tokens), stores),
         ),
     }
 }
@@ -84,7 +84,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request(
                 } => {
                     let data = tex_state::PdfAnnotationData {
                         dimensions,
-                        entries: entries.tokens.token_ref().clone(),
+                        entries: entries.tokens.token_ref(),
                     };
                     let record = match use_object {
                         Some(object) => stores
@@ -235,7 +235,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request(
                     dimensions,
                     attributes: attributes.map_or_else(
                         || stores.token_list_ref(TokenListId::EMPTY),
-                        |value| value.tokens.token_ref().clone(),
+                        |value| value.tokens.token_ref(),
                     ),
                     running,
                 })),
@@ -340,7 +340,7 @@ pub(in crate::main_control) fn apply_pdf_graphics_request(
             text,
         } => Node::Whatsit(Whatsit::DeferredPdfLiteral {
             mode,
-            tokens: text.tokens.token_ref().clone(),
+            tokens: text.tokens.token_ref(),
         }),
         PdfGraphicsRequest::Literal { mode, text, .. } => Node::Whatsit(Whatsit::PdfLiteral {
             mode,

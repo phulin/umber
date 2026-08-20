@@ -65,7 +65,7 @@ pub(crate) fn break_current_paragraph(
     }
     nest.current_list_mutation().push(Node::Penalty(10_000));
     nest.current_list_mutation().push(Node::Glue {
-        spec: params.par_fill_skip.clone(),
+        spec: params.par_fill_skip,
         kind: GlueKind::ParFillSkip,
         leader: None,
     });
@@ -997,8 +997,8 @@ fn post_line_break_params(
 ) -> PostLineBreakParams {
     PostLineBreakParams {
         empty_list,
-        left_skip: params.left_skip.clone(),
-        right_skip: params.right_skip.clone(),
+        left_skip: params.left_skip,
+        right_skip: params.right_skip,
         interline_penalty: params.interline_penalty,
         club_penalty: params.club_penalty,
         widow_penalties: tex_typeset::linebreak::WidowPenalties {

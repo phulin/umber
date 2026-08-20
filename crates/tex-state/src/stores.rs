@@ -46,8 +46,8 @@ fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
 }
 use crate::glue::{GlueSpec, GlueSpecRef};
 use crate::hot_core::arena::store::registry::{
-    RuntimeMacroValueInput, RuntimeTokenValueInput, RuntimeTracedTokenValueInput,
-    RuntimeValueRegistry, RuntimeValueRegistryMark,
+    RuntimeMacroValueInput, RuntimeOriginListValueInput, RuntimeTokenValueInput,
+    RuntimeTracedTokenValueInput, RuntimeValueRegistry, RuntimeValueRegistryMark,
 };
 use crate::hot_core::arena::store::{
     RuntimeOriginEntry, RuntimeValueStore, RuntimeValueStorePublicationMark,
@@ -69,8 +69,8 @@ use crate::node::Node;
 use crate::node_arena::{NodeListBuilder, NodeListRef, NodeListWeakIndex};
 use crate::provenance::{
     ExpansionFrameRef, InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginListRef,
-    OriginRecord, OriginRef, ProvenanceStats, ProvenanceStore, ProvenanceStoreMark, SourceOrigin,
-    SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
+    OriginListView, OriginRecord, OriginRef, ProvenanceStats, ProvenanceStore, ProvenanceStoreMark,
+    SourceOrigin, SynthesizedOrigin, SynthesizedOriginKind, SyntheticOrigin, SyntheticOriginKind,
 };
 use crate::scaled::Scaled;
 use crate::source_fragments::{FragmentStore, direct_fragment_span};
@@ -674,6 +674,8 @@ impl Stores {
         budgets: crate::provenance::ProvenanceBudgets,
     ) {
         self.provenance.configure_budgets(budgets);
+        self.runtime_values
+            .configure_origin_list_budgets(budgets.live_origin_lists, budgets.origin_list_entries);
     }
 
     /// TeX82 §§273/275's save depth immediately before the newest checked
@@ -1116,6 +1118,11 @@ impl Stores {
         let mut runtime_values =
             RuntimeValueRegistry::new(RUNTIME_VALUE_REGION_CAPACITY, empty_token_semantic_id)
                 .expect("canonical runtime values must fit an empty registry");
+        let provenance_budgets = crate::provenance::ProvenanceBudgets::default();
+        runtime_values.configure_origin_list_budgets(
+            provenance_budgets.live_origin_lists,
+            provenance_budgets.origin_list_entries,
+        );
         let mut runtime_value_roots = runtime_values.empty_published_store();
         runtime_values
             .publish_into(&mut runtime_value_roots)
@@ -1623,10 +1630,10 @@ impl Stores {
                 value.definition_origin()
             });
         let parameter_origins = provenance.as_ref().map_or_else(Vec::new, |value| {
-            runtime_origin_entries(value.parameter_ref())
+            self.runtime_origin_entries(value.parameter_ref())
         });
         let replacement_origins = provenance.as_ref().map_or_else(Vec::new, |value| {
-            runtime_origin_entries(value.replacement_ref())
+            self.runtime_origin_entries(value.replacement_ref())
         });
         let _ = domain;
         let id = self
@@ -1718,25 +1725,9 @@ impl Stores {
         let definition_origin = self
             .materialize_origin_ref(definition_origin)
             .unwrap_or_else(OriginRef::unknown);
-        let parameter_origins = parameter_origins
-            .into_iter()
-            .map(|origin| {
-                self.materialize_origin_ref(origin)
-                    .unwrap_or_else(|| OriginRef::direct(origin))
-            })
-            .collect::<Vec<_>>();
-        let replacement_origins = replacement_origins
-            .into_iter()
-            .map(|origin| {
-                self.materialize_origin_ref(origin)
-                    .unwrap_or_else(|| OriginRef::direct(origin))
-            })
-            .collect::<Vec<_>>();
-        MacroDefinitionProvenance::new(
-            definition_origin,
-            self.provenance.allocate_rooted_list(&parameter_origins),
-            self.provenance.allocate_rooted_list(&replacement_origins),
-        )
+        let parameter_origins = self.allocate_origin_list_ids(&parameter_origins);
+        let replacement_origins = self.allocate_origin_list_ids(&replacement_origins);
+        MacroDefinitionProvenance::new(definition_origin, parameter_origins, replacement_origins)
     }
 
     pub(crate) fn macro_definition_provenance_roots(
@@ -1746,8 +1737,8 @@ impl Stores {
         let provenance = self.macro_definition_provenance(id);
         Some((
             provenance.definition_ref().clone(),
-            provenance.parameter_ref().clone(),
-            provenance.replacement_ref().clone(),
+            provenance.parameter_ref(),
+            provenance.replacement_ref(),
         ))
     }
 
@@ -1810,12 +1801,12 @@ impl Stores {
         self.assert_live_origin(provenance.definition_origin());
         assert_eq!(
             parameter.len(),
-            provenance.parameter_ref().origins().len(),
+            self.origin_list_len(provenance.parameter_ref()),
             "macro parameter token and origin lengths differ"
         );
         assert_eq!(
             replacement.len(),
-            provenance.replacement_ref().origins().len(),
+            self.origin_list_len(provenance.replacement_ref()),
             "macro replacement token and origin lengths differ"
         );
         let meaning = MacroMeaning::new(flags, parameter_root.id(), replacement_root.id());
@@ -2158,9 +2149,8 @@ impl Stores {
         };
         #[cfg(feature = "profiling")]
         crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
-        let origin_list = self
-            .provenance
-            .allocate_unrooted_origin_ids(traced.iter().map(|word| word.origin()));
+        let origins = traced.iter().map(|word| word.origin()).collect::<Vec<_>>();
+        let origin_list = self.allocate_origin_list_ids(&origins);
         TracedTokenList::new(token_list, origin_list)
     }
 
@@ -2183,9 +2173,11 @@ impl Stores {
         };
         #[cfg(feature = "profiling")]
         crate::measurement::record_traced_list_finish(words.len(), 0, 0);
-        let origin_list = self
-            .provenance
-            .allocate_rooted_origin_words(words.iter().map(|word| word.origin()), traced.roots());
+        for root in traced.roots() {
+            self.assert_live_origin(root.id());
+        }
+        let origins = words.iter().map(|word| word.origin()).collect::<Vec<_>>();
+        let origin_list = self.allocate_origin_list_ids(&origins);
         TracedTokenList::new(token_list, origin_list)
     }
 
@@ -2648,14 +2640,62 @@ impl Stores {
     }
 
     pub fn allocate_origin_list_ref(&mut self, origins: &[OriginRef]) -> OriginListRef {
-        self.provenance.allocate_rooted_list(origins)
+        for origin in origins {
+            self.assert_live_origin(origin.id());
+        }
+        let ids = origins.iter().map(OriginRef::id).collect::<Vec<_>>();
+        self.allocate_origin_list_ids(&ids)
+    }
+
+    fn allocate_origin_list_ids(&mut self, origins: &[OriginId]) -> OriginListRef {
+        for &origin in origins {
+            self.assert_live_origin(origin);
+        }
+        OriginListRef::new(
+            self.runtime_values
+                .intern_origin_list(RuntimeOriginListValueInput { origins })
+                .expect("runtime origin-list allocation must remain representable"),
+        )
+    }
+
+    pub fn origin_list(&self, origins: OriginListRef) -> OriginListView<'_> {
+        OriginListView::new(
+            self.runtime_values
+                .origin_list(origins.id())
+                .expect("origin-list id is not live in the runtime registry"),
+            &self.provenance,
+            &self.source_map,
+        )
+    }
+
+    pub fn origin_list_len(&self, origins: OriginListRef) -> usize {
+        self.origin_list(origins).len()
+    }
+
+    pub fn origin_list_origin(&self, origins: OriginListRef, index: usize) -> Option<OriginId> {
+        self.origin_list(origins).origin(index)
+    }
+
+    pub fn origin_list_root(&self, origins: OriginListRef, index: usize) -> Option<OriginRef> {
+        self.origin_list(origins).root(index)
     }
 
     /// Returns live provenance arena length counters.
     #[must_use]
     pub fn provenance_stats(&self) -> ProvenanceStats {
+        let lists = self
+            .runtime_values
+            .origin_list_accounting()
+            .expect("runtime origin-list accounting must admit every live coordinate");
         self.provenance
             .stats()
+            .with_origin_lists(
+                lists.lists,
+                lists.entries,
+                lists.retained_list_slots,
+                lists.retained_entry_slots,
+                lists.retained_bytes,
+            )
             .with_source_map(self.source_map.stats())
     }
 
@@ -2787,15 +2827,31 @@ impl Stores {
             .map(GeneratedSource::hash)
     }
 
-    fn assert_origin_list_len_matches(&self, token_list: TokenListId, origins: &OriginListRef) {
+    fn assert_origin_list_len_matches(&self, token_list: TokenListId, origins: OriginListRef) {
         if origins.id() == OriginListId::EMPTY {
             return;
         }
         assert_eq!(
             self.tokens(token_list).len(),
-            origins.origins().len(),
+            self.origin_list_len(origins),
             "origin-list length does not match token-list length"
         );
+    }
+
+    fn runtime_origin_entries(&self, origins: OriginListRef) -> Vec<RuntimeOriginEntry> {
+        self.runtime_values
+            .origin_list(origins.id())
+            .expect("origin-list id is not live in the runtime registry")
+            .iter()
+            .enumerate()
+            .filter(|(_, origin)| *origin != OriginId::UNKNOWN)
+            .map(|(index, origin)| {
+                RuntimeOriginEntry::new(
+                    u32::try_from(index).expect("origin-list offset exceeds u32"),
+                    origin,
+                )
+            })
+            .collect()
     }
 
     /// Interns a glue specification and returns its copy-only identity.
@@ -4243,22 +4299,6 @@ impl Default for Stores {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn runtime_origin_entries(origins: &OriginListRef) -> Vec<RuntimeOriginEntry> {
-    origins
-        .origins()
-        .iter()
-        .copied()
-        .enumerate()
-        .filter(|(_, origin)| *origin != OriginId::UNKNOWN)
-        .map(|(index, origin)| {
-            RuntimeOriginEntry::new(
-                u32::try_from(index).expect("origin-list offset exceeds u32"),
-                origin,
-            )
-        })
-        .collect()
 }
 
 #[cfg(test)]

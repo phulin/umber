@@ -117,7 +117,7 @@ fn cell_template_delivery_matrix() {
     assert_eq!(state.align_state, TEMPLATE_ALIGN_STATE);
     assert_eq!(
         state.active_cell_template(alignment),
-        Ok(templates.u_template.clone())
+        Ok(templates.u_template)
     );
 
     let u_level = InputLevelId(7);
@@ -215,7 +215,7 @@ fn cell_template_delivery_matrix() {
             alignment,
             stores.token_list_ref(tex_state::ids::TokenListId::EMPTY),
         ),
-        Ok(templates.v_template.clone()),
+        Ok(templates.v_template),
     );
     let finished = state
         .finish_cell(alignment, v_level)

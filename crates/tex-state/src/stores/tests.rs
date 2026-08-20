@@ -461,10 +461,7 @@ fn compact_and_survivor_nodes_preserve_mark_coordinates_until_rollback() {
     let snapshot = stores.checkpoint();
     let tokens = stores.intern_token_list_ref_in_domain(&[Token::param(1)], None);
     let token_id = tokens.id();
-    let mut nodes = vec![Node::Mark {
-        class: 7,
-        tokens: tokens.clone(),
-    }];
+    let mut nodes = vec![Node::Mark { class: 7, tokens }];
 
     let compact = stores.freeze_node_list_owned(&mut nodes);
     assert!(nodes.is_empty(), "owned freeze must move the token root");
@@ -515,11 +512,11 @@ fn node_semantic_ids_exclude_token_provenance() {
 
     let first = stores.freeze_node_list(&[Node::Mark {
         class: 0,
-        tokens: first_tokens.token_ref().clone(),
+        tokens: first_tokens.token_ref(),
     }]);
     let second = stores.freeze_node_list(&[Node::Mark {
         class: 0,
-        tokens: second_tokens.token_ref().clone(),
+        tokens: second_tokens.token_ref(),
     }]);
     assert!(!first.shares_payload(&second));
     assert_eq!(first.semantic_id(), second.semantic_id());
@@ -1601,7 +1598,7 @@ fn identical_macro_definitions_keep_distinct_provenance() {
         Some(MacroDefinitionProvenance::new(
             first_origin.clone(),
             crate::provenance::OriginListRef::empty(),
-            first_body_origins.clone(),
+            first_body_origins,
         )),
     );
     let second = stores.intern_macro_with_provenance(
@@ -1609,7 +1606,7 @@ fn identical_macro_definitions_keep_distinct_provenance() {
         Some(MacroDefinitionProvenance::new(
             second_origin.clone(),
             crate::provenance::OriginListRef::empty(),
-            second_body_origins.clone(),
+            second_body_origins,
         )),
     );
 
@@ -1896,7 +1893,7 @@ fn freeze_node_list_rejects_noncanonical_owner_retained_across_rollback() {
     stores.rollback(&snapshot);
     let _ = stores.freeze_node_list(&[Node::Mark {
         class: 0,
-        tokens: stale.clone(),
+        tokens: stale,
     }]);
 }
 

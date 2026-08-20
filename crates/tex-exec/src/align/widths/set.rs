@@ -150,9 +150,7 @@ fn set_row_children(
                 out.push(set_cell(config, row, &cell, column, span, stores)?);
                 for offset in 1..span {
                     let spanned_column = column + offset;
-                    out.push(tabskip_node(
-                        config.resolved.tabskips[spanned_column].clone(),
-                    ));
+                    out.push(tabskip_node(config.resolved.tabskips[spanned_column]));
                     out.push(empty_column_box(
                         config.kind,
                         config.resolved.columns[spanned_column],

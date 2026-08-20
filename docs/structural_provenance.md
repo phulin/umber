@@ -9,40 +9,38 @@ results, or diagnostic presentation.
 
 ## Invariant
 
-Persistent provenance is owned only by a live diagnostic consumer, a live
-source-map registration, a token position that may still be replayed, or a
-detached artifact which exposes rendered-source information:
+Structural origin records are owned only by a live diagnostic consumer, a live
+source-map registration, a materialized token position, or a detached artifact
+which exposes rendered-source information. Ordered origin lists instead live
+in the aggregate runtime value regions:
 
 ```text
-typed origin root -> immutable origin atom -> typed child roots
-                         ^
-                         |
-                   bounded weak index
+OriginRef -> immutable origin record -> typed child roots
+OriginListRef -> generation-validated registry coordinate -> region span
 ```
 
-An origin-store coordinate, weak candidate bucket, retry lease, allocation
-serial, cache entry, or checkpoint watermark is not ownership. Provenance
+An origin-store coordinate, retry lease, allocation serial, cache entry, or
+checkpoint watermark is not structural record ownership. Provenance
 does not confer semantic ownership on tokens, macro definitions, nodes, input
 state, or output. It remains excluded from token equality, `\ifx`, formats,
 semantic hashes, convergence, artifact bytes, and artifact content identity.
 
-There is no copying compactor, retained-generation provenance arena,
-post-acceptance graph scan, or history truncation pass. Every strong edge is
-installed or removed at the typed transition which already knows the owner
-and origin.
+There is no provenance graph scan or refcount collection pass. Structural
+record edges are installed at the typed transition which knows the owner and
+origin. Origin-list storage follows the aggregate region lifecycle: marks
+cover list identities and dense locations, rollback truncates the candidate
+suffix, and forks copy the active suffix while sharing sealed regions.
 
 ## Structural values
 
-The first migration slice installs exact structural candidate reuse in the
-existing packed store. `OriginRecord` candidates compare the complete record;
-origin-list candidates use a compact hash only to select a bucket and compare
-every `OriginId` before reuse. Rollback removes discarded candidates before
-identity reuse, forks share inherited values while preserving sibling key
-separation, and exact operation replay preserves its packed identity. This
-foundation eliminates duplicate transition rows, including 10,000 identical
-macro-frame allocations collapsing to one record. The following ownership
-sections govern the subsequent replacement of the remaining append-watermark
-authority with typed roots and weak reusable slots.
+`OriginRecord` candidates compare the complete record. Runtime origin-list
+interning compares every ordered `OriginId` through borrowed registry views;
+there is no hash bucket or parallel candidate authority. Rollback invalidates
+discarded generations before raw slots can be reused, forks preserve inherited
+coordinates while separating sibling suffix identities, and exact operation
+replay preserves its packed identity. This also eliminates duplicate
+transition rows, including 10,000 identical macro-frame allocations collapsing
+to one record.
 
 ### Source registrations and ranges
 
@@ -71,12 +69,14 @@ projects an `OriginId` for `TracedTokenWord` and compact node columns, but the
 id cannot upgrade a dead value. Direct positions use a zero-allocation
 registration-relative owner when they must outlive the live source map.
 
-`OriginListRef` is one immutable exact sequence of `OriginRef` values. Its
-`OriginListId` is a compact coordinate only. The empty list is an immortal
-builtin. Dynamic lists use reusable generation-safe weak slots and a bounded
-weak candidate index; candidate hash collisions perform exact id and child
-comparison. Extending an untraced list preserves the empty-list contract,
-while extending a traced list creates or reuses one complete structural list.
+`OriginListRef` is the `Copy` facade for one immutable exact sequence. Its
+`OriginListId` selects a generation-validated dense registry location whose
+`RuntimeOriginListCoordinate` names the list's span in the single
+`RuntimeValueRegion` provenance column. The empty list is an immortal builtin.
+Dynamic allocation and exact reuse go only through `Stores`; reads go through
+borrowed `Stores`, `Universe`, or `CommandContext` views. Extending an untraced
+list preserves the empty-list contract, while extending a traced list creates
+or reuses one complete region value.
 
 Inserted and synthesized transitions do not create a flattened wrapper for
 every delivery. Expansion-control information which affects delivery remains
@@ -111,22 +111,18 @@ phase growth before accounting for token payloads and allocator rounding.
 
 The replacement invariant is falsifiable:
 
-- The new immutable list stores one compact `OriginId` per position and one
-  strong `OriginRef` per _distinct owned origin_, never per direct or fallback
-  position. Repeated expansion positions share that one root. Direct positions
-  with no source-registration owner allocate no root payload.
-- Freeze consumes packed origins once into the new list's final immutable id
-  span while incrementally collecting only distinct strong owners. It creates
-  no parallel dense id/root scratch, publishes the id span and owner set
-  atomically, and returns no raw coordinate without the `OriginListRef` owner.
-- Exact weak interning may reuse a live immutable list after complete id
-  comparison. Weak slots and candidates remain bounded and non-authoritative.
-  Rollback, retry, rejection, and final-owner drop release the list and its
-  distinct children without an ownership scan.
-- Continuation and format detachment reconstruct an ordered `OriginRef` stream
-  from the compact ids plus the distinct owner set. Detached identity and
-  rendered provenance do not depend on allocation order, capacity, or weak
-  cache state.
+- The immutable list stores one compact `OriginId` per position in the existing
+  shared provenance column. It has no per-list `Arc`, strong-owner set, or weak
+  marker.
+- Freeze consumes packed origins once into the final region span, publishes its
+  identity and dense coordinate atomically, and returns only the copyable
+  facade.
+- Exact interning reuses a live coordinate only after complete ordered id
+  comparison. Rollback, retry, and rejection discard the aggregate suffix;
+  individual handle drop performs no collection.
+- Continuation detachment reads an ordered borrowed registry view and stores
+  handle-free recipes. Detached identity and rendered provenance do not depend
+  on allocation order or retained capacity.
 
 The post-change phase census separates cumulative production, exact peak live
 payload, retained legacy capacity, and process high water:
@@ -157,15 +153,16 @@ behind raw reads, exact-candidate lookup, and handle validation. The runtime
 owners were macro-definition provenance and input-frame summaries; both now
 store `OriginListRef` directly. Transient and inline command buffers already
 own sparse roots through `RootedTracedTokenBuffer`. Consequently there is no
-append-only origin-list span, span hash, historical candidate table, list
-rollback watermark, or raw-id-to-owner bridge. `OriginListId` remains only the
-compact projection of a live immutable list and as a detached serialization
-key; it is not independently resolvable.
+parallel origin-list allocator, span hash, historical candidate table, or
+raw-id-to-owner bridge. `OriginListId` remains only the compact projection of a
+live region value and as a detached serialization key; payload resolution
+requires aggregate registry admission.
 
 Formats require no schema transition because schema 11 never serialized
 provenance. Dumping continues to exclude definition and input provenance.
 Loading constructs macro definitions with absent provenance, and any
-definition scanned after load installs its `OriginRef`/`OriginListRef` owners
+definition scanned after load installs its `OriginRef` roots and
+`OriginListRef` coordinates
 directly. Detached command continuations keep DTO-local origin-list recipe
 keys, validate and stage the entire recipe graph in a destination fork, and
 publish the newly materialized `OriginListRef` values only with the completed
@@ -190,7 +187,7 @@ behind their shared buffer owners.
 | `TokenPayload::BackedUp` and its one-word inline form                                                                             | The exact backed-up spelling roots plus independent committed source-range metadata.                                                                | `back_input` moves the delivered command root into the payload. `back_list` and e-TeX aftergroup prepend merge structural values before publication. Redelivery borrows the root without lookup; consumption, stack conservation, rollback, and retirement drop it. Rehoming changes only source-range metadata.                                                             |
 | `MacroArgumentBuilder`, `MacroArguments`, and `TokenPayload::ArgumentRange`                                                       | One shared structural value for all completed arguments; ranges are nonowning half-open views. Repeated argument positions share one distinct root. | Argument collection appends rooted deliveries. Group stripping and delimiter removal preserve the surviving aligned positions. Activation publication freezes once; parameter substitution clones the value and range; body retirement drops the activation after all parameter ranges retire. Failed matching and retry drop or restore the whole builder/activation value. |
 | Scanner and expansion scratch, `ScannedToks`, and `LiveTokenBuilder`                                                              | The exact unfinished output words and distinct roots accumulated so far. Empty reusable capacity owns no roots.                                     | Append consumes a rooted delivery or a root-preserving transformation. Freeze moves the complete value into a stored traced list. Error, rollback, or builder retirement clears roots before word capacity may return to the bounded scratch pool. A checkpoint remains forbidden while a live builder exists.                                                               |
-| Alignment preamble and row builders, pending recovery tokens, and u/v-template replay inputs                                      | Rooted transient words until they freeze into `TracedTokenList`; stored templates continue to own `OriginListRef`.                                  | Preamble append, token rewrite, row retry, template insertion, and delimiter recovery preserve roots with words. Successful freeze atomically publishes token and origin-list owners; alignment rollback or abandonment drops the live structural value.                                                                                                                     |
+| Alignment preamble and row builders, pending recovery tokens, and u/v-template replay inputs                                      | Rooted transient words until they freeze into `TracedTokenList`; stored templates carry `OriginListRef`.                                            | Preamble append, token rewrite, row retry, template insertion, and delimiter recovery preserve roots with words. Successful freeze atomically publishes token and origin-list coordinates; aggregate rollback discards the corresponding region suffix.                                                                                                                      |
 | Environment aftergroup save entries and backup replay                                                                             | The saved word's non-direct root from assignment until group exit transfers it to command input.                                                    | Save-stack insertion captures the current command root. Group rollback/restoration retains the saved value. Group exit moves values in save order into backup payloads; e-TeX prepend deduplicates roots in the destination. Discarded groups and final environment drop release them.                                                                                       |
 | Live `CommandState`, typed blocked continuations, `CommandSummary`, tex-state `InputSummary`, and macro-argument checkpoint forms | Structural transient values already owned by cursors, source pending input, arguments, alignment state, and permitted quiescent builders.           | A resource boundary moves the exact unfinished scanner or expansion state into its typed continuation; it does not clone or restore an aggregate retry root. Summary projection preserves roots without upgrading ids. Checkpoint pruning and generation retirement drop the durable aggregate closure directly.                                                             |
 | Detached command continuation DTOs                                                                                                | Handle-free logical origin recipes referenced by word-local DTO indices; no runtime `OriginId`, `OriginRef`, or store coordinate.                   | Detachment walks each structural value's aligned roots and emits recipes without lookup. Materialization validates all recipes, builds destination-local roots and structural buffers in staging, and atomically publishes the complete command summary. Failure drops staging and leaves the destination unchanged.                                                         |
@@ -230,7 +227,7 @@ operation-local and are absent from this matrix.
 | Ownership stratum           | Concrete typed roots                                                                                                                                                            | Exact install, restoration, and release transition                                                                                                                                                                                              |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Source registrations        | `SourceMap` regions, live command `SourceLevel`s, source-frame summaries, and detached source recipes own `SourceRegistrationRef`.                                              | Registration publishes the root before the first token. Source pop drops the command owner; rollback or source-map replacement drops the region owner; checkpoint clones share both.                                                            |
-| Frozen token positions      | `TracedTokenList` and stored `TokenPayload` own `OriginListRef`; the list structurally owns one `OriginRef` per nonempty position.                                              | Token-list freeze installs token and origin roots together. Stored replay, macro definition provenance, alignment templates, summaries, and final cursor retirement clone or drop the pair atomically.                                          |
+| Frozen token positions      | `TracedTokenList` carries `OriginListRef`; stored `TokenPayload` copies exact origins from a borrowed registry view into its transient packed buffer.                           | Token-list freeze installs token and origin-list coordinates together. Replay borrows the region span; rollback invalidates a discarded list generation before slot reuse.                                                                      |
 | Transient command positions | Shared macro-argument, insertion, backup, scanner-recovery, pending-source, and inline command buffers own roots aligned with their packed traced words.                        | Push, prepend, replacement, and backup capture the root before publishing a cursor. Consumption, input retirement, snapshot rollback, or buffer replacement drops the same aligned root.                                                        |
 | Expansion frames            | `MacroActivation`, the macro-body input level, `TracedExpansionToken`, and recoverable command diagnostic state own `ExpansionFrameRef`.                                        | Macro-call publication captures call, definition, and parent roots before the activation becomes visible. Retirement, failed matching, retry rollback, summary replacement, and continuation detachment release it.                             |
 | Definition provenance       | A live `MacroDefinitionRef` occurrence owns optional definition, parameter-list, and replacement-list roots; the semantic macro body owns none.                                 | Definition scanning publishes the three roots with the occurrence. Redefinition/undo, group restoration, format-base release, and final occurrence release drop them. Loaded formats publish absent provenance.                                 |
@@ -243,7 +240,7 @@ operation-local and are absent from this matrix.
 | Stratum                   | Strong owner                                                                                                                                                                                                                                                           | Install and release boundary                                                                                                                                                                                                                             |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Source input              | Live source level and source/input checkpoint summary own the registration.                                                                                                                                                                                            | Registration publishes the root before first delivery. Source retirement, rollback, checkpoint eviction, and generation replacement drop it.                                                                                                             |
-| Stored token list         | `TracedTokenList` owns its `OriginListRef` beside `TokenListRef`.                                                                                                                                                                                                      | List freeze captures both values atomically. Replay clones the list root; final replay/list owner release drops it.                                                                                                                                      |
+| Stored token list         | `TracedTokenList` carries `OriginListRef` beside `TokenListRef`; aggregate region roots own storage.                                                                                                                                                                   | List freeze captures both coordinates atomically. Replay copies the facade and borrows payload; individual replay/list drop performs no liveness work.                                                                                                   |
 | Macro definition          | One definition occurrence owns optional definition, parameter-list, and replacement-list roots.                                                                                                                                                                        | Definition scan installs all roots with the macro occurrence. Redefinition, undo release, format-base release, or final definition-owner drop releases them. Loaded formats begin with absent provenance.                                                |
 | Macro invocation          | `MacroActivation` and command summaries own `ExpansionFrameRef`. Argument positions are owned by the activation's structural position lists.                                                                                                                           | Activation publication captures the frame before the body level is visible. Retirement, retry rollback, continuation detachment, checkpoint eviction, or final activation drop releases it.                                                              |
 | Transient command input   | Source pending tokens, backed-up input, scanner recovery, alignment templates, and transient token buffers own the exact position roots they retain.                                                                                                                   | Push/prepend/replace operations attach roots with words. Pop, consumption, rollback, or summary release drops the same slice. No command-state-wide provenance history exists.                                                                           |
@@ -288,53 +285,47 @@ command observations, execution effects, or artifact bytes.
 
 ## Retry, rejection, and acceptance
 
-An aggregate operation mark covers the compatibility origin-record archive,
-while structural provenance ownership is part of the typed aggregate state. A
-failed operation first restores command, mode, node, diagnostic, and artifact
-roots, then drops the rejected typed atoms and lists. Origin lists have no
-rollback watermark or historical coordinate. Exact local record retry may
-lease discarded packed keys in allocation order, but the lease owns no
-accepted history and is abandoned at the first structural divergence.
-Successful earlier candidate roots remain once.
+An aggregate operation mark covers the compatibility origin-record archive and
+the runtime registry's origin-list identities, dense locations, and region
+span. A failed operation first restores command, mode, node, diagnostic, and
+artifact destinations, then truncates the rejected aggregate suffix. Exact
+local record retry may lease discarded packed keys in allocation order, but
+the lease owns no accepted history and is abandoned at the first structural
+divergence. Successful earlier candidate roots remain once.
 
 Dropping `RevisionCandidate` or `RevisionTransaction` releases every private
-provenance root and weak allocation lease. At acceptance, replacement state
+provenance root and allocation lease. At acceptance, replacement state
 already holds its structural roots. Convergence output already owns roots or
 stable recipes, so the scratch Universe can be dropped directly. The existing
 `retain_origin_graph_from` traversal is forbidden and removed.
 
 ## Capacity and accounting
 
-Production uses explicit independent budgets for live structural atoms,
-origin-list entries, weak slot metadata, weak candidate buckets, and detached
-artifact recipes. Exhaustion degrades optional new provenance to unknown and
-never aborts TeX. Weak indexes are bounded and may be cleared at any time. Each
-ordinary intern miss advances the weak-slot cursor by at most one position;
-exact reuse cleans only the candidate bucket it queries and performs no
-unrelated slot sweep. A hard admission limit performs a complete sweep before
-degradation so the limit remains exact. Capacity must plateau at the live-root
-and configured-cache high-water size without making allocation cost
-proportional to an unrelated live prefix.
+Production uses explicit independent budgets for structural origin records,
+runtime origin-list coordinates, origin-list entries, and detached artifact
+recipes. Exhaustion degrades optional new provenance to unknown or the empty
+list and never aborts TeX. Origin-list admission performs collision-safe full
+ordered comparison through the registry, then checks list and entry limits
+before reserving its identity, location, and region span. There is no sweep,
+candidate cache, or second liveness limit.
 
 The common expansion frame owns exactly three child positions, so those roots
 reside inline with the immutable origin atom rather than in a second heap
-allocation. Origin-list candidate hashing is deliberately a cheap fixed-width
-bucket selector; full ordered `OriginId` comparison remains the collision
+allocation. Full ordered `OriginId` comparison is the origin-list collision
 authority. A rooted transient buffer already proves its owner/word alignment,
 so optimized freeze does not repeat the debug-only owner-membership audit.
 These representation choices change neither packed ids nor strong edges.
 
-`ProvenanceStats` reports live rooted atoms, live expansion frames, live
-origin lists and entries, weak slot/index capacity, source registrations,
-retry leases, and detached output charges separately. Measurement scans live
-roots or weak slots on demand and adds no production expansion-path counters.
+`ProvenanceStats` reports structural records and frames, runtime origin lists
+and entries, retained region/location/identity capacity, source registrations,
+retry leases, and detached output charges separately. The retained provenance
+column charge is shared with token and macro sparse origins because those rows
+physically occupy the same `RuntimeValueRegion` column.
 
-The focused plateau is 10,000 accepted/rejected bounded-live macro and token
-position transitions. After warm-up, live objects and retained weak metadata
-must remain constant within the explicit weak-index budgets. The negative
-control retains every root and must grow by the exact object and logical-byte
-charge. Repeated identical macro expansion must keep one structural frame for
-one `(operand, invocation, definition, parent)` tuple.
+The focused controls exercise 10,000 accepted/rejected macro and token-position
+transitions. Rollback must restore logical list and entry counts while retained
+region capacity may remain warm. Repeated identical macro expansion must keep
+one structural frame for one `(operand, invocation, definition, parent)` tuple.
 
 ## Compatibility and validation
 

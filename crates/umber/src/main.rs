@@ -205,7 +205,7 @@ impl Drop for MainMemoryProjectionReport {
         let provenance = tex_state::measurement::provenance_lifecycle_measurement()
             .saturating_sub(self.provenance_before);
         eprintln!(
-            "PROVENANCE_LIFECYCLE atom_intern_calls={} atom_hits={} atom_misses={} atom_allocations={} frame_intern_calls={} frame_hits={} frame_misses={} frame_allocations={} list_intern_calls={} list_hits={} list_misses={} list_allocations={} atom_retains={} atom_releases={} frame_retains={} frame_releases={} list_retains={} list_releases={} atom_reclaim_visits={} atom_reclaims={} list_reclaim_visits={} list_reclaims={} origin_resolutions={} list_resolutions={} list_resolution_comparisons={}",
+            "PROVENANCE_LIFECYCLE atom_intern_calls={} atom_hits={} atom_misses={} atom_allocations={} frame_intern_calls={} frame_hits={} frame_misses={} frame_allocations={} list_intern_calls={} list_hits={} list_misses={} list_allocations={} atom_retains={} atom_releases={} frame_retains={} frame_releases={} origin_resolutions={} list_resolutions={} list_resolution_comparisons={}",
             provenance.atom_intern_calls,
             provenance.atom_intern_hits,
             provenance.atom_intern_misses,
@@ -222,12 +222,6 @@ impl Drop for MainMemoryProjectionReport {
             provenance.atom_releases,
             provenance.frame_retains,
             provenance.frame_releases,
-            provenance.list_retains,
-            provenance.list_releases,
-            provenance.atom_reclaim_visits,
-            provenance.atom_reclaims,
-            provenance.list_reclaim_visits,
-            provenance.list_reclaims,
             provenance.origin_resolutions,
             provenance.list_resolutions,
             provenance.list_resolution_comparisons,

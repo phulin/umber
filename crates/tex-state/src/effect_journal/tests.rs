@@ -133,7 +133,7 @@ fn splice_transfers_deferred_write_token_roots_with_selected_records() {
     let accepted = journal(
         EffectRecord::DeferredWrite {
             stream: StreamSlot::new(2),
-            tokens: root.clone(),
+            tokens: root,
         },
         1,
     );

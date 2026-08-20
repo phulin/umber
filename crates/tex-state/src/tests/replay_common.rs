@@ -39,11 +39,7 @@ impl TestCell {
             .any(|cell| matches!(cell, Self::Toks(_) | Self::TokParam(_)))
         {
             for raw in 1..64 {
-                let ch = char::from_u32(0xE000 + raw).expect("private-use scalar value");
-                let id = stores.intern_token_list(&[Token::Char {
-                    ch,
-                    cat: Catcode::Other,
-                }]);
+                let id = live_token_list(stores, raw);
                 assert_eq!(id.raw(), raw);
             }
         }
@@ -53,7 +49,7 @@ impl TestCell {
             .any(|cell| matches!(cell, Self::Skip(_) | Self::Muskip(_) | Self::GlueParam(_)))
         {
             for raw in 1..64 {
-                let id = stores.testing_intern_glue(glue_spec(raw as i32));
+                let id = live_glue(stores, raw);
                 assert_eq!(id.raw(), raw);
             }
         }
@@ -89,7 +85,7 @@ impl TestCell {
                 }
             }
             Self::Skip(index) => {
-                let value = GlueId::testing_new(word as u32);
+                let value = live_glue(stores, word as u32);
                 if global {
                     stores.set_skip_global(index, value);
                 } else {
@@ -97,7 +93,7 @@ impl TestCell {
                 }
             }
             Self::Muskip(index) => {
-                let value = GlueId::testing_new(word as u32);
+                let value = live_glue(stores, word as u32);
                 if global {
                     stores.set_muskip_global(index, value);
                 } else {
@@ -105,7 +101,7 @@ impl TestCell {
                 }
             }
             Self::Toks(index) => {
-                let value = TokenListId::testing_new(word as u32);
+                let value = live_token_list(stores, word as u32);
                 if global {
                     stores.set_toks_global(index, value);
                 } else {
@@ -129,7 +125,7 @@ impl TestCell {
                 }
             }
             Self::GlueParam(index) => {
-                let value = GlueId::testing_new(word as u32);
+                let value = live_glue(stores, word as u32);
                 if global {
                     stores.set_glue_param_global(GlueParam::new(index), value);
                 } else {
@@ -137,7 +133,7 @@ impl TestCell {
                 }
             }
             Self::TokParam(index) => {
-                let value = TokenListId::testing_new(word as u32);
+                let value = live_token_list(stores, word as u32);
                 if global {
                     stores.set_tok_param_option_global(TokParam::new(index), Some(value));
                 } else {
@@ -170,6 +166,26 @@ impl TestCell {
             Self::TokParam(index) => u64::from(env.tok_param(TokParam::new(index)).raw()),
         }
     }
+}
+
+fn live_token_list(stores: &mut Universe, raw: u32) -> TokenListId {
+    if raw == 0 {
+        return TokenListId::EMPTY;
+    }
+    assert!(raw < 64, "replay token fixture raw id is out of range");
+    let ch = char::from_u32(0xE000 + raw).expect("private-use scalar value");
+    stores.intern_token_list(&[Token::Char {
+        ch,
+        cat: Catcode::Other,
+    }])
+}
+
+fn live_glue(stores: &mut Universe, raw: u32) -> GlueId {
+    if raw == 0 {
+        return GlueId::ZERO;
+    }
+    assert!(raw < 64, "replay glue fixture raw id is out of range");
+    stores.testing_intern_glue(glue_spec(raw as i32))
 }
 
 #[derive(Debug)]

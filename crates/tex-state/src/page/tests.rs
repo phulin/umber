@@ -56,8 +56,8 @@ fn scalar_and_class_marks_keep_exact_coordinates_across_page_clone_and_clear() {
     let root = stores.intern_token_list_ref_in_domain(&[Token::param(3)], None);
     let id = root.id();
     let mut page = PageBuilderState::default();
-    page.set_mark(PageMark::Bot, root.clone());
-    page.set_mark_class(PageMark::SplitFirst, 19, root.clone());
+    page.set_mark(PageMark::Bot, root);
+    page.set_mark_class(PageMark::SplitFirst, 19, root);
     let mut snapshot = page.clone();
 
     page.clear_mark(PageMark::Bot);

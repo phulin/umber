@@ -47,12 +47,12 @@ impl Env {
         if matches!(cell.bank(), BankTag::Toks | BankTag::TokParam) {
             self.journal.attach_token_undo_roots(
                 pos,
-                crate::journal::TokenUndoRoots::new(self.token_root(cell), token_root.clone()),
+                crate::journal::TokenUndoRoots::new(self.token_root(cell), token_root),
             );
         } else if cell.bank() == BankTag::Meaning {
             self.journal.attach_macro_undo_roots(
                 pos,
-                crate::journal::MacroUndoRoots::new(self.macro_root(cell), macro_root.clone()),
+                crate::journal::MacroUndoRoots::new(self.macro_root(cell), macro_root),
             );
         } else if matches!(
             cell.bank(),
@@ -60,7 +60,7 @@ impl Env {
         ) {
             self.journal.attach_glue_undo_roots(
                 pos,
-                crate::journal::GlueUndoRoots::new(self.glue_root(cell), glue_root.clone()),
+                crate::journal::GlueUndoRoots::new(self.glue_root(cell), glue_root),
             );
         } else {
             assert!(

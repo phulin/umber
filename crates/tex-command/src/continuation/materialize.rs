@@ -149,14 +149,14 @@ impl<'a> Materializer<'a> {
 
     fn token_list(&mut self, id: TokenListRecipeId) -> TokenListRef {
         if let Some(root) = &self.token_lists[id.0] {
-            return root.clone();
+            return *root;
         }
         let tokens = self.owned.token_lists[id.0]
             .iter()
             .map(|token| self.token(token))
             .collect::<Vec<_>>();
         let root = self.universe.intern_token_list_ref(&tokens);
-        self.token_lists[id.0] = Some(root.clone());
+        self.token_lists[id.0] = Some(root);
         root
     }
 
@@ -238,21 +238,21 @@ impl<'a> Materializer<'a> {
     }
 
     fn origin_list(&mut self, id: OriginListRecipeId) -> OriginListRef {
-        if let Some(root) = &self.origin_lists[id.0] {
-            return root.clone();
+        if let Some(root) = self.origin_lists[id.0] {
+            return root;
         }
         let origins = self.owned.origin_lists[id.0]
             .iter()
             .map(|origin| self.origin(*origin))
             .collect::<Vec<_>>();
         let root = self.universe.allocate_origin_list_ref(&origins);
-        self.origin_lists[id.0] = Some(root.clone());
+        self.origin_lists[id.0] = Some(root);
         root
     }
 
     fn macro_definition(&mut self, id: MacroRecipeId) -> MacroDefinitionRef {
         if let Some(root) = &self.macros[id.0] {
-            return root.clone();
+            return *root;
         }
         let recipe = self.owned.macros[id.0].clone();
         let parameters = self.token_list(recipe.parameters);

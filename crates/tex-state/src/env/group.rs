@@ -1165,9 +1165,9 @@ impl Env {
             self.restore_raw_with_owners(
                 rec.cell(),
                 rec.new_value(),
-                new_root.clone(),
-                new_macro_root.clone(),
-                new_glue_root.clone(),
+                new_root,
+                new_macro_root,
+                new_glue_root,
                 None,
             );
             let key = cell_key(rec.cell());

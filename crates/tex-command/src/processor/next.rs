@@ -1048,8 +1048,9 @@ impl CommandProcessor<'_> {
         let output = TracedTokenList::synthetic(self.state.token_list_ref(output_id));
         self.report_named_token_list("output", output.token_list());
         let words = self.state.tokens(output_id);
+        let origins = self.state.origin_list(output.origin_ref());
         let level = self.command.push_token_level(
-            TokenPayload::stored(&words, output.origin_ref().clone()),
+            TokenPayload::stored(&words, origins.iter()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),
@@ -3779,7 +3780,7 @@ mod tests {
         command.push_token_level(
             TokenPayload::stored(
                 universe.tokens(stored.token_list()).tokens(),
-                stored.origin_ref().clone(),
+                universe.origin_list(stored.origin_ref()).iter(),
             ),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,

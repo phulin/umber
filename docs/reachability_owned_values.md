@@ -1,7 +1,7 @@
 # Region-owned runtime values
 
 Status: implemented runtime contract for token lists, macro definitions, glue
-specifications, and their sparse traced provenance.
+specifications, origin lists, and their sparse traced provenance.
 
 This document supersedes the former reachability-owned weak-store design. It
 complements [Core Engine State](core_state.md) and
@@ -9,15 +9,10 @@ complements [Core Engine State](core_state.md) and
 
 ## Invariant
 
-Runtime token, macro, glue, and their sparse traced-provenance payloads live in
-one typed value-region substrate. This region-managed path has no weak value
-references, per-value `Arc` marker, refcount garbage collector, liveness index,
-graph scan, or parallel allocation authority.
-
-Structural `OriginListRef` values still use a transitional weak-slot store.
-Issue `umber2-awgc.6.2.2.2` blocks completion of this cutover until those lists
-also become region coordinates; the statements below describe the target
-contract and the family rows that have already crossed that boundary.
+Runtime token, macro, glue, origin-list, and sparse traced-provenance payloads
+live in one typed value-region substrate. This region-managed path has no weak
+value references, per-value `Arc` marker, refcount garbage collector, liveness
+index, graph scan, or parallel allocation authority.
 
 The substrate has two physical parts:
 
@@ -33,10 +28,10 @@ does not walk individual values to infer reachability.
 
 ## Coordinates and views
 
-`TokenListRef`, `MacroDefinitionRef`, and `GlueSpecRef` are `Copy` handles.
-Their generation-tagged ids select compact family coordinates in the aggregate
-runtime registry. A successful admission returns a borrowed view tied to that
-registry borrow:
+`TokenListRef`, `MacroDefinitionRef`, `GlueSpecRef`, and `OriginListRef` are
+`Copy` handles. Their generation-tagged ids select compact family coordinates
+in the aggregate runtime registry. A successful admission returns a borrowed
+view tied to that registry borrow:
 
 - `TokenListView` exposes semantic tokens, cached content identity, and sparse
   traced origins;
@@ -44,6 +39,8 @@ registry borrow:
   parameter and replacement spans, definition origin, sparse traced origins,
   semantic identity, and observation operand;
 - glue admission returns the immutable `GlueSpec` row.
+- `OriginListView` exposes the exact ordered `OriginId` span and materializes
+  structural `OriginRef` values only at a borrowed cold boundary.
 
 Copying a handle never extends storage lifetime. A handle may outlive the
 `Universe` that issued it, but it cannot inspect payload after that Universe is
@@ -91,9 +88,11 @@ Failure exposes none of the composite. Successful publication installs the
 macro coordinate and its provenance together, so there is no interval in
 which a visible macro has missing traced words.
 
-Token lists follow the same rule for semantic words and sparse origins. Glue
-rows are single-column values in the same candidate. Empty tokens and zero
-glue are canonical bootstrap rows, not separately owned sentinels.
+Token lists follow the same rule for semantic words and sparse origins. Exact
+origin lists allocate their identity, location, and provenance-column span as
+one registry operation. Glue rows are single-column values in the same
+candidate. Empty tokens, empty origin lists, and zero glue are canonical
+bootstrap rows, not separately owned sentinels.
 
 ## Mutation, snapshot, and rollback
 
@@ -164,7 +163,5 @@ Tests for this boundary must establish all of the following:
   only coordinates and remain safe when the issuing `Universe` is gone.
 
 The source audit rejects reintroduction of `ReachableValueRef`, packed macro
-owners, weak token/macro/glue stores, or per-value liveness markers in the
-region-managed runtime value path. The remaining structural origin-list weak
-store is explicitly tracked by `umber2-awgc.6.2.2.2`, not accepted as part of
-this architecture.
+owners, weak token/macro/glue/origin-list stores, or per-value liveness markers
+in the region-managed runtime value path.

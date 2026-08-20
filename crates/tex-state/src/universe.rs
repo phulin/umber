@@ -50,7 +50,7 @@ use crate::pdf::{
     PdfStateSnapshot, PdfTokenParameter,
 };
 use crate::provenance::{
-    ExpansionFrameRef, InsertedOriginKind, OriginListRef, OriginRecord, OriginRef,
+    ExpansionFrameRef, InsertedOriginKind, OriginListRef, OriginListView, OriginRecord, OriginRef,
     SynthesizedOriginKind, SyntheticOriginKind,
 };
 use crate::provenance::{
@@ -5935,6 +5935,22 @@ impl Universe {
 
     pub fn allocate_origin_list_ref(&mut self, origins: &[OriginRef]) -> OriginListRef {
         self.stores.allocate_origin_list_ref(origins)
+    }
+
+    pub fn origin_list_len(&self, origins: OriginListRef) -> usize {
+        self.stores.origin_list_len(origins)
+    }
+
+    pub fn origin_list(&self, origins: OriginListRef) -> OriginListView<'_> {
+        self.stores.origin_list(origins)
+    }
+
+    pub fn origin_list_origin(&self, origins: OriginListRef, index: usize) -> Option<OriginId> {
+        self.stores.origin_list_origin(origins, index)
+    }
+
+    pub fn origin_list_root(&self, origins: OriginListRef, index: usize) -> Option<OriginRef> {
+        self.stores.origin_list_root(origins, index)
     }
 
     /// Returns live provenance arena length counters.

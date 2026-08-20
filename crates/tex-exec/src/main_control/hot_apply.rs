@@ -13,6 +13,9 @@ use super::*;
 /// This enum is intentionally private to the fused scan/apply seam. It is not
 /// a second executor or a durable continuation: it exists only long enough to
 /// release `CommandProcessor`'s borrow of `Universe` before stomach mutation.
+/// Keeping the scanned definition inline preserves the allocation-free common
+/// command path despite the deliberate variant size difference.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum HotOperation {
     MacroDefinition {
         definition: tex_command::ScannedMacroDefinition,

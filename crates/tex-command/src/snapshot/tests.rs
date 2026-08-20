@@ -95,7 +95,7 @@ fn durable_continuation_materializes_canonical_stored_content_into_new_roots() {
     state.push_token_level(
         TokenPayload::stored(
             universe.tokens(source_root.id()).tokens(),
-            tex_state::provenance::OriginListRef::empty(),
+            std::iter::empty(),
         ),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
@@ -209,7 +209,7 @@ fn durable_continuation_roundtrips_source_macro_and_frame_recipes() {
     state.push_token_level(
         TokenPayload::stored(
             universe.tokens(replacement_tokens.id()).tokens(),
-            stored_origins,
+            universe.origin_list(stored_origins).iter(),
         ),
         TokenBehavior::MacroBody(MacroActivationId(7)),
         RetirementBehavior::Pop,
@@ -318,10 +318,7 @@ fn invalid_continuation_recipe_rejects_before_publishing_roots() {
     let tokens = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
     let mut state = CommandState::default();
     state.push_token_level(
-        TokenPayload::stored(
-            universe.tokens(tokens.id()).tokens(),
-            tex_state::provenance::OriginListRef::empty(),
-        ),
+        TokenPayload::stored(universe.tokens(tokens.id()).tokens(), std::iter::empty()),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Inserted,

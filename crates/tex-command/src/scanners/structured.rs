@@ -1410,7 +1410,7 @@ impl CommandProcessor<'_> {
     ) -> Result<tex_state::PdfActionIdentifier, CommandError> {
         if self.scan_keyword("name")?.value {
             Ok(tex_state::PdfActionIdentifier::Name(
-                self.scan_balanced_text(true)?.tokens.token_ref().clone(),
+                self.scan_balanced_text(true)?.tokens.token_ref(),
             ))
         } else if self.scan_keyword("num")?.value {
             Ok(tex_state::PdfActionIdentifier::Number(
@@ -1428,7 +1428,7 @@ impl CommandProcessor<'_> {
         use tex_state::{PdfActionDestination, PdfActionSpec, PdfActionTarget, PdfActionWindow};
         if self.scan_keyword("user")?.value {
             return Ok(PdfActionSpec::User(
-                self.scan_balanced_text(true)?.tokens.token_ref().clone(),
+                self.scan_balanced_text(true)?.tokens.token_ref(),
             ));
         }
         let goto = if self.scan_keyword("goto")?.value {
@@ -1445,7 +1445,7 @@ impl CommandProcessor<'_> {
             .value
             .then(|| {
                 self.scan_balanced_text(true)
-                    .map(|text| text.tokens.token_ref().clone())
+                    .map(|text| text.tokens.token_ref())
             })
             .transpose()?;
         let structure = if self.scan_keyword("struct")?.value {
@@ -1456,7 +1456,7 @@ impl CommandProcessor<'_> {
             }
             if file.is_some() {
                 Some(tex_state::PdfActionIdentifier::Raw(
-                    self.scan_balanced_text(true)?.tokens.token_ref().clone(),
+                    self.scan_balanced_text(true)?.tokens.token_ref(),
                 ))
             } else {
                 Some(self.scan_pdf_identifier("struct identifier", false)?)
@@ -1473,11 +1473,11 @@ impl CommandProcessor<'_> {
             let number = self.scan_pdf_positive("page number", false)?;
             PdfActionTarget::Page {
                 number,
-                view: self.scan_balanced_text(true)?.tokens.token_ref().clone(),
+                view: self.scan_balanced_text(true)?.tokens.token_ref(),
             }
         } else if self.scan_keyword("name")?.value {
             PdfActionTarget::Destination(tex_state::PdfActionIdentifier::Name(
-                self.scan_balanced_text(true)?.tokens.token_ref().clone(),
+                self.scan_balanced_text(true)?.tokens.token_ref(),
             ))
         } else if self.scan_keyword("num")?.value {
             if goto && file.is_some() {
@@ -2582,8 +2582,9 @@ impl CommandProcessor<'_> {
         // above it exactly as TeX82's three `ins_list` calls do.
         let stopper_level = self.push_write_recovery([right_brace, endwrite], right_brace);
         let words = self.state.tokens(tokens.token_ref().id());
+        let origins = self.state.origin_list(tokens.origin_ref());
         let write_level = self.command.push_token_level(
-            TokenPayload::stored(&words, tokens.origin_ref().clone()),
+            TokenPayload::stored(&words, origins.iter()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::Write),
@@ -3612,11 +3613,9 @@ impl CommandProcessor<'_> {
             // remain in place while the case-code lookup records its mutable
             // dependency read. Only the rewritten backup list needs storage.
             let token = self.state.tokens(scanned.token_ref().id())[index];
-            let origin = scanned
-                .origin_ref()
-                .origins()
-                .get(index)
-                .copied()
+            let origin = self
+                .state
+                .origin_list_origin(scanned.origin_ref(), index)
                 .unwrap_or(OriginId::UNKNOWN);
             let token = match token {
                 Token::Char { ch, cat } => {

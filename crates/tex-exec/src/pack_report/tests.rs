@@ -67,7 +67,7 @@ fn short_display_skips_the_physical_discretionary_replacement_count() {
     ];
     for _ in 0..3 {
         nodes.push(Node::Glue {
-            spec: space.clone(),
+            spec: space,
             kind: GlueKind::Normal,
             leader: None,
         });
@@ -124,7 +124,7 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
     ];
     for _ in 0..3 {
         nodes.push(Node::Glue {
-            spec: space.clone(),
+            spec: space,
             kind: GlueKind::Normal,
             leader: None,
         });

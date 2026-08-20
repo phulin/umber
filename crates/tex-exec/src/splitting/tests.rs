@@ -85,13 +85,11 @@ fn pdftex_prune_page_top_discards_snapy_but_preserves_other_whatsits() {
     let (pruned, discarded) = prune_page_top_with_discards(
         &mut stores,
         vec![
-            Node::Whatsit(tex_state::node::Whatsit::PdfSnapY {
-                glue: snap_glue.clone(),
-            }),
+            Node::Whatsit(tex_state::node::Whatsit::PdfSnapY { glue: snap_glue }),
             Node::Whatsit(tex_state::node::Whatsit::PdfSnapRefPoint),
             box_node.clone(),
         ],
-        top.clone(),
+        top,
     );
 
     assert_eq!(

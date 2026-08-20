@@ -3493,7 +3493,7 @@ mod tests {
         let root = owned_test_token_ref(6);
         let root_id = root.id();
         let parameter = PdfTokenParameter {
-            tokens: root.clone(),
+            tokens: root,
             semantic_id: test_identity(6),
         };
 
@@ -3503,7 +3503,7 @@ mod tests {
                 annotation.object(),
                 PdfAnnotationData {
                     dimensions: PdfAnnotationDimensions::RUNNING,
-                    entries: root.clone(),
+                    entries: root,
                 },
                 test_identity(6),
             )
@@ -3511,8 +3511,8 @@ mod tests {
         state
             .create_link(
                 PdfAnnotationDimensions::RUNNING,
-                root.clone(),
-                PdfActionSpec::User(root.clone()),
+                root,
+                PdfActionSpec::User(root),
                 test_identity(6),
                 test_identity(7),
                 1,
@@ -3520,10 +3520,10 @@ mod tests {
             .expect("link creation");
         state
             .create_outline(
-                root.clone(),
-                PdfActionSpec::User(root.clone()),
+                root,
+                PdfActionSpec::User(root),
                 0,
-                root.clone(),
+                root,
                 [test_identity(6), test_identity(7), test_identity(8)],
             )
             .expect("outline creation");
@@ -3536,7 +3536,7 @@ mod tests {
             )
             .expect("raw object initialization");
         state.append_document_fragment(PdfDocumentFragmentKind::Names, parameter.clone());
-        let action = PdfActionSpec::User(root.clone());
+        let action = PdfActionSpec::User(root);
         state
             .set_catalog_open_action(
                 action.clone(),
@@ -3546,8 +3546,6 @@ mod tests {
                 None,
             )
             .expect("catalog action reservation");
-        drop(action);
-        drop(parameter);
         assert_eq!(root.id(), root_id);
 
         state.rollback(initial.clone());
@@ -3555,7 +3553,7 @@ mod tests {
         let page_root = owned_test_token_ref(7);
         let page_id = page_root.id();
         let page_parameter = PdfTokenParameter {
-            tokens: page_root.clone(),
+            tokens: page_root,
             semantic_id: test_identity(10),
         };
         state.commit_page(

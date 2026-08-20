@@ -316,7 +316,7 @@ impl NodeRef<'_> {
                 ch: *ch,
             },
             Self::Glue { spec, kind, leader } => Node::Glue {
-                spec: (*spec).clone(),
+                spec: *(*spec),
                 kind: *kind,
                 leader: (*leader).map(|value| value.map_lists(&mut resolve)),
             },
@@ -348,7 +348,7 @@ impl NodeRef<'_> {
             },
             Self::Mark { class, tokens } => Node::Mark {
                 class: *class,
-                tokens: (*tokens).clone(),
+                tokens: *(*tokens),
             },
             Self::Ins {
                 class,
@@ -360,7 +360,7 @@ impl NodeRef<'_> {
             } => Node::Ins {
                 class: *class,
                 size: *size,
-                split_top_skip: (*split_top_skip).clone(),
+                split_top_skip: *(*split_top_skip),
                 split_max_depth: *split_max_depth,
                 floating_penalty: *floating_penalty,
                 content: resolve(*content),

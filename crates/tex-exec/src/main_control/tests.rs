@@ -5283,7 +5283,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::node_arena::NodeListR
             depth: Some(Scaled::from_raw(3)),
         },
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Leaders,
             leader: Some(LeaderPayload::HList(box_node(leaf.clone()))),
         },
@@ -5477,7 +5477,7 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
         matches!(&children[1], Node::Glue { spec, leader: Some(_), .. } if stores.glue(spec).width.raw() == 301)
     );
     assert!(
-        matches!(&children[3], Node::Mark { tokens, .. } if &*stores.tokens(tokens.id()) == [Token::Char { ch: 'm', cat: Catcode::Letter }, Token::Char { ch: '!', cat: Catcode::Other }])
+        matches!(&children[3], Node::Mark { tokens, .. } if *stores.tokens(tokens.id()) == [Token::Char { ch: 'm', cat: Catcode::Letter }, Token::Char { ch: '!', cat: Catcode::Other }])
     );
 
     let mut control = MainControl::tex82_initex(&mut stores);

@@ -895,8 +895,8 @@ impl CommandProcessor<'_> {
         let first_replacement = self.state.tokens(first.replacement_text());
         let second_replacement = self.state.tokens(second.replacement_text());
         first.flags() == second.flags()
-            && &*first_parameters == &*second_parameters
-            && &*first_replacement == &*second_replacement
+            && *first_parameters == *second_parameters
+            && *first_replacement == *second_replacement
     }
 
     fn evaluate_numeric_comparison(&mut self) -> Result<bool, CommandError> {

@@ -411,7 +411,7 @@ impl PageBuilderState {
         nodes.extend(self.split_discards.iter().cloned());
         if let Some(spec) = &self.last_glue {
             nodes.push(Node::Glue {
-                spec: spec.clone(),
+                spec: *spec,
                 kind: crate::node::GlueKind::Normal,
                 leader: None,
             });
@@ -499,7 +499,7 @@ impl PageBuilderState {
         let split_discards = nodes[take(&mut cursor, state.split_discards_len)].to_vec();
         let last_glue = if state.has_last_glue {
             match &nodes[cursor] {
-                Node::Glue { spec, .. } => Some(spec.clone()),
+                Node::Glue { spec, .. } => Some(*spec),
                 _ => return Err(crate::MemoValueError::Invalid("invalid last-glue sentinel")),
             }
         } else {
@@ -958,7 +958,7 @@ impl PageBuilderState {
         self.last_kern = Scaled::from_raw(0);
         self.last_node_type = node.etex_type();
         match node {
-            Node::Glue { spec, .. } => self.last_glue = Some(spec.clone()),
+            Node::Glue { spec, .. } => self.last_glue = Some(*spec),
             Node::Penalty(value) => self.last_penalty = *value,
             Node::Kern { amount, .. } => self.last_kern = *amount,
             _ => {}

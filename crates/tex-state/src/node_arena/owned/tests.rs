@@ -253,7 +253,7 @@ fn every_child_sidecar_resolves_from_the_frozen_owner() {
         Node::HList(box_node.clone()),
         Node::Unset(unset),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Leaders,
             leader: Some(LeaderPayload::HList(box_node)),
         },

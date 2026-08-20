@@ -65,19 +65,19 @@ fn materializes_margin_kerns_inside_paragraph_skip_glue() {
     let zero = state.intern_glue(GlueSpec::ZERO);
     let mut nodes = vec![
         Node::Glue {
-            spec: zero.clone(),
+            spec: zero,
             kind: GlueKind::LeftSkip,
             leader: None,
         },
         character(font, 'A'),
         character(font, '.'),
         Node::Glue {
-            spec: zero.clone(),
+            spec: zero,
             kind: GlueKind::ParFillSkip,
             leader: None,
         },
         Node::Glue {
-            spec: zero.clone(),
+            spec: zero,
             kind: GlueKind::RightSkip,
             leader: None,
         },
@@ -152,7 +152,7 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
             kind: KernKind::Explicit,
         },
         Node::Glue {
-            spec: zero_glue.clone(),
+            spec: zero_glue,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -183,7 +183,7 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
             kind: KernKind::Explicit,
         },
         Node::Glue {
-            spec: wide_glue.clone(),
+            spec: wide_glue,
             kind: GlueKind::Normal,
             leader: None,
         },

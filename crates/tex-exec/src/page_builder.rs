@@ -689,7 +689,7 @@ fn normalize_insert_content_shrink(
     Ok(Some(Node::Ins {
         class: *class,
         size: *size,
-        split_top_skip: split_top_skip.clone(),
+        split_top_skip: *split_top_skip,
         split_max_depth: *split_max_depth,
         floating_penalty: *floating_penalty,
         content,

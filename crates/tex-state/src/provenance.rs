@@ -1,23 +1,23 @@
 //! Diagnostic token-provenance storage.
 //!
 //! Provenance remains outside TeX semantic state. Origin records retain their
-//! rollback-coupled compatibility archive, while origin lists are immutable
-//! reachability-owned values. Allocation never reports capacity errors:
-//! origin-record overflow degrades to [`OriginId::UNKNOWN`], and origin-list
-//! overflow degrades to [`OriginListId::EMPTY`].
+//! rollback-coupled compatibility archive, while exact origin lists live in
+//! the aggregate runtime value registry. Allocation never reports capacity
+//! errors: origin-record overflow degrades to [`OriginId::UNKNOWN`], and
+//! origin-list overflow degrades to [`OriginListId::EMPTY`].
 
-use crate::identity::{HandleIdentity, ReusableIdentityAllocator};
+use crate::hot_core::arena::store::RuntimeOriginListView;
 use crate::ids::{MacroDefinitionId, OriginListId};
 use crate::input::{SourceId, TokenListReplayKind};
-use crate::source_map::{SourceMapStats, SourceRegistrationRef, SourceSpan};
+use crate::source_map::{SourceMap, SourceMapStats, SourceRegistrationRef, SourceSpan};
 use crate::token::{OriginEncoding, OriginId, Token};
 use crate::world::InputRecordId;
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::mem;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Weak};
 
 static NEXT_PACKED_ARENA_ORIGIN: AtomicU32 = AtomicU32::new(0);
 const ORIGIN_RECORD_ARCHIVE_CHUNK: usize = 1024;
@@ -88,8 +88,6 @@ pub struct ProvenanceBudgets {
     pub origin_list_entries: usize,
     pub weak_atom_slots: usize,
     pub weak_atom_candidate_keys: usize,
-    pub weak_list_slots: usize,
-    pub weak_list_candidate_keys: usize,
     pub detached_artifact_recipe_bytes: usize,
 }
 
@@ -101,8 +99,6 @@ impl Default for ProvenanceBudgets {
             origin_list_entries: DEFAULT_ORIGIN_LIST_ENTRY_LIMIT,
             weak_atom_slots: DEFAULT_ORIGIN_RECORD_LIMIT,
             weak_atom_candidate_keys: RECORD_CANDIDATE_KEY_BUDGET,
-            weak_list_slots: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
-            weak_list_candidate_keys: LIST_CANDIDATE_KEY_BUDGET,
             detached_artifact_recipe_bytes: 16 * 1024 * 1024,
         }
     }
@@ -232,6 +228,7 @@ pub struct ProvenanceStats {
     origin_key_run_capacity: usize,
     origin_list_span_capacity: usize,
     origin_list_entry_capacity: usize,
+    origin_list_retained_bytes: usize,
     source_regions: usize,
     generated_source_backings: usize,
     source_map_bytes: usize,
@@ -268,6 +265,7 @@ impl ProvenanceStats {
             origin_key_run_capacity: 0,
             origin_list_span_capacity: 0,
             origin_list_entry_capacity: 0,
+            origin_list_retained_bytes: 0,
             source_regions: 0,
             generated_source_backings: 0,
             source_map_bytes: 0,
@@ -282,6 +280,7 @@ impl ProvenanceStats {
         origin_records_storage: OriginRecordStorageStats,
         origin_list_span_capacity: usize,
         origin_list_entry_capacity: usize,
+        origin_list_retained_bytes: usize,
     ) -> Self {
         Self {
             origin_records,
@@ -294,6 +293,7 @@ impl ProvenanceStats {
             origin_key_run_capacity: origin_records_storage.key_run_capacity,
             origin_list_span_capacity,
             origin_list_entry_capacity,
+            origin_list_retained_bytes,
             source_regions: 0,
             generated_source_backings: 0,
             source_map_bytes: 0,
@@ -306,6 +306,22 @@ impl ProvenanceStats {
         self.generated_source_backings = stats.generated_backings;
         self.source_map_bytes = stats.live_bytes;
         self.source_map_retained_bytes = stats.retained_bytes;
+        self
+    }
+
+    pub(crate) const fn with_origin_lists(
+        mut self,
+        lists: usize,
+        entries: usize,
+        retained_list_slots: usize,
+        retained_entry_slots: usize,
+        retained_bytes: usize,
+    ) -> Self {
+        self.origin_list_spans = lists;
+        self.origin_list_entries = entries;
+        self.origin_list_span_capacity = retained_list_slots;
+        self.origin_list_entry_capacity = retained_entry_slots;
+        self.origin_list_retained_bytes = retained_bytes;
         self
     }
 
@@ -342,7 +358,7 @@ impl ProvenanceStats {
     #[must_use]
     pub const fn estimated_bytes(self) -> usize {
         self.origin_records * mem::size_of::<ArchivedOriginRecord>()
-            + self.origin_list_spans * mem::size_of::<OriginListValue>()
+            + self.origin_list_spans * mem::size_of::<OriginListRef>()
             + self.origin_list_entries * mem::size_of::<OriginId>()
             + self.source_map_bytes
     }
@@ -352,8 +368,7 @@ impl ProvenanceStats {
         self.origin_record_capacity * mem::size_of::<ArchivedOriginRecord>()
             + self.origin_record_archive_metadata_retained_bytes
             + self.origin_key_run_capacity * mem::size_of::<OriginKeyRun>()
-            + self.origin_list_span_capacity * mem::size_of::<RootedOriginListSlot>()
-            + self.origin_list_entry_capacity * mem::size_of::<OriginId>()
+            + self.origin_list_retained_bytes
             + self.source_map_retained_bytes
     }
 
@@ -459,6 +474,7 @@ impl ProvenanceStats {
             && self.origin_key_run_capacity == other.origin_key_run_capacity
             && self.origin_list_span_capacity == other.origin_list_span_capacity
             && self.origin_list_entry_capacity == other.origin_list_entry_capacity
+            && self.origin_list_retained_bytes == other.origin_list_retained_bytes
             && self.source_regions == other.source_regions
             && self.generated_source_backings == other.generated_source_backings
             && self.source_map_bytes == other.source_map_bytes
@@ -513,6 +529,9 @@ impl ProvenanceStats {
             origin_list_entry_capacity: self
                 .origin_list_entry_capacity
                 .saturating_sub(baseline.origin_list_entry_capacity),
+            origin_list_retained_bytes: self
+                .origin_list_retained_bytes
+                .saturating_sub(baseline.origin_list_retained_bytes),
             source_regions: self.source_regions.saturating_sub(baseline.source_regions),
             generated_source_backings: self
                 .generated_source_backings
@@ -1092,59 +1111,10 @@ impl ExpansionFrameRef {
     }
 }
 
-#[derive(Debug)]
-struct OriginListValue {
-    id: OriginListId,
-    origins: Box<[OriginId]>,
-    owners: Box<[OriginRef]>,
-}
-
-impl OriginListValue {
-    fn root(&self, id: OriginId) -> OriginRef {
-        let mut comparisons = 0;
-        let result = self
-            .owners
-            .binary_search_by(|owner| {
-                comparisons += 1;
-                owner.id().cmp(&id)
-            })
-            .map_or_else(
-                |_| OriginRef::direct(id),
-                |index| self.owners[index].clone(),
-            );
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_provenance_list_resolution(comparisons);
-        result
-    }
-}
-
-/// Strong ownership of one immutable exact token-position sequence.
-#[derive(Debug)]
+/// Copy-only identity of one immutable exact token-position sequence.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct OriginListRef {
     id: OriginListId,
-    value: Option<Arc<OriginListValue>>,
-}
-
-impl Clone for OriginListRef {
-    fn clone(&self) -> Self {
-        #[cfg(feature = "profiling")]
-        if self.value.is_some() {
-            crate::measurement::record_provenance_list_retain();
-        }
-        Self {
-            id: self.id,
-            value: self.value.clone(),
-        }
-    }
-}
-
-impl Drop for OriginListRef {
-    fn drop(&mut self) {
-        #[cfg(feature = "profiling")]
-        if self.value.is_some() {
-            crate::measurement::record_provenance_list_release();
-        }
-    }
 }
 
 impl OriginListRef {
@@ -1152,57 +1122,76 @@ impl OriginListRef {
     pub const fn empty() -> Self {
         Self {
             id: OriginListId::EMPTY,
-            value: None,
         }
+    }
+
+    pub(crate) const fn new(id: OriginListId) -> Self {
+        Self { id }
     }
 
     #[must_use]
     pub const fn id(&self) -> OriginListId {
         self.id
     }
+}
 
-    #[must_use]
-    pub fn origins(&self) -> &[OriginId] {
-        self.value.as_ref().map_or(&[], |value| &value.origins)
+/// Borrowed exact origin sequence admitted through one live aggregate store.
+pub struct OriginListView<'a> {
+    runtime: RuntimeOriginListView<'a>,
+    provenance: &'a ProvenanceStore,
+    source_map: &'a SourceMap,
+}
+
+impl<'a> OriginListView<'a> {
+    pub(crate) const fn new(
+        runtime: RuntimeOriginListView<'a>,
+        provenance: &'a ProvenanceStore,
+        source_map: &'a SourceMap,
+    ) -> Self {
+        Self {
+            runtime,
+            provenance,
+            source_map,
+        }
     }
 
     #[must_use]
-    pub fn roots(&self) -> impl ExactSizeIterator<Item = OriginRef> + '_ {
-        self.origins().iter().copied().map(|id| {
-            self.value
-                .as_ref()
-                .map_or_else(|| OriginRef::direct(id), |value| value.root(id))
-        })
+    pub const fn len(&self) -> usize {
+        self.runtime.len()
     }
 
-    /// Returns the typed root aligned with one compact list position.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.runtime.is_empty()
+    }
+
+    #[must_use]
+    pub fn origin(&self, index: usize) -> Option<OriginId> {
+        self.runtime.origin(index)
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = OriginId> + '_ {
+        self.runtime.iter()
+    }
+
+    /// Materializes the structural root aligned with one exact list entry.
     #[must_use]
     pub fn root(&self, index: usize) -> Option<OriginRef> {
-        let id = *self.origins().get(index)?;
+        let id = self.origin(index)?;
         Some(
-            self.value
-                .as_ref()
-                .map_or_else(|| OriginRef::direct(id), |value| value.root(id)),
+            self.provenance
+                .materialize_origin_ref(id, self.source_map)
+                .unwrap_or_else(|| OriginRef::direct(id)),
         )
     }
 
-    #[cfg(test)]
-    fn owned_root_count(&self) -> usize {
-        self.value.as_ref().map_or(0, |value| value.owners.len())
-    }
-}
-
-impl PartialEq for OriginListRef {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for OriginListRef {}
-
-impl Hash for OriginListRef {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
+    /// Materializes structural roots in exact list order.
+    pub fn roots(&self) -> impl ExactSizeIterator<Item = OriginRef> + '_ {
+        self.iter().map(|id| {
+            self.provenance
+                .materialize_origin_ref(id, self.source_map)
+                .unwrap_or_else(|| OriginRef::direct(id))
+        })
     }
 }
 
@@ -1239,13 +1228,6 @@ impl OriginKeyRun {
 #[derive(Clone, Debug, Default)]
 struct OriginKeyRuns {
     runs: Vec<OriginKeyRun>,
-}
-
-#[derive(Debug)]
-struct RootedOriginListSlot {
-    identity: HandleIdentity,
-    entry_len: usize,
-    value: Weak<OriginListValue>,
 }
 
 impl OriginKeyRuns {
@@ -1319,8 +1301,6 @@ const DEFAULT_ORIGIN_RECORD_LIMIT: usize = ORIGIN_RECORD_BUDGET_BYTES / ORIGIN_R
 const DEFAULT_ORIGIN_LIST_SPAN_LIMIT: usize = 262_144;
 const DEFAULT_ORIGIN_LIST_ENTRY_LIMIT: usize = 2_097_152;
 const RECORD_CANDIDATE_KEY_BUDGET: usize = 4_096;
-const LIST_CANDIDATE_KEY_BUDGET: usize = 1_024;
-const ROOTED_RECLAIM_WORK_PER_ALLOCATION: usize = 1;
 
 /// Compatibility origin-record archive plus reachability-owned provenance.
 #[derive(Debug)]
@@ -1334,17 +1314,7 @@ pub(crate) struct ProvenanceStore {
     next_record_key: u32,
     record_key_lease_end: u32,
     unique_candidates: SmallVec<[(OriginRecord, OriginId); 4]>,
-    rooted_list_identities: ReusableIdentityAllocator,
-    rooted_list_slots: Vec<Option<RootedOriginListSlot>>,
-    rooted_list_sweep_cursor: usize,
-    rooted_list_occupied: usize,
-    rooted_list_entries: usize,
-    rooted_list_candidates: HashMap<u64, SmallVec<[Weak<OriginListValue>; 2]>>,
     record_limit: usize,
-    list_span_limit: usize,
-    list_entry_limit: usize,
-    weak_list_slot_limit: usize,
-    weak_list_candidate_key_limit: usize,
 }
 
 impl Clone for ProvenanceStore {
@@ -1356,27 +1326,7 @@ impl Clone for ProvenanceStore {
             next_record_key: 0,
             record_key_lease_end: 0,
             unique_candidates: self.unique_candidates.clone(),
-            rooted_list_identities: self.rooted_list_identities.fork(),
-            rooted_list_slots: self
-                .rooted_list_slots
-                .iter()
-                .map(|slot| {
-                    slot.as_ref().map(|slot| RootedOriginListSlot {
-                        identity: slot.identity,
-                        entry_len: slot.entry_len,
-                        value: slot.value.clone(),
-                    })
-                })
-                .collect(),
-            rooted_list_sweep_cursor: self.rooted_list_sweep_cursor,
-            rooted_list_occupied: self.rooted_list_occupied,
-            rooted_list_entries: self.rooted_list_entries,
-            rooted_list_candidates: self.rooted_list_candidates.clone(),
             record_limit: self.record_limit,
-            list_span_limit: self.list_span_limit,
-            list_entry_limit: self.list_entry_limit,
-            weak_list_slot_limit: self.weak_list_slot_limit,
-            weak_list_candidate_key_limit: self.weak_list_candidate_key_limit,
         }
     }
 }
@@ -1392,29 +1342,12 @@ impl ProvenanceStore {
             next_record_key: 0,
             record_key_lease_end: 0,
             unique_candidates: SmallVec::new(),
-            rooted_list_identities: ReusableIdentityAllocator::new(1),
-            rooted_list_slots: vec![None],
-            rooted_list_sweep_cursor: 1,
-            rooted_list_occupied: 0,
-            rooted_list_entries: 0,
-            rooted_list_candidates: HashMap::new(),
             record_limit: DEFAULT_ORIGIN_RECORD_LIMIT,
-            list_span_limit: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
-            list_entry_limit: DEFAULT_ORIGIN_LIST_ENTRY_LIMIT,
-            weak_list_slot_limit: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
-            weak_list_candidate_key_limit: LIST_CANDIDATE_KEY_BUDGET,
         }
     }
 
     pub(crate) fn configure_budgets(&mut self, budgets: ProvenanceBudgets) {
         self.record_limit = budgets.live_atoms;
-        self.list_span_limit = budgets.live_origin_lists;
-        self.list_entry_limit = budgets.origin_list_entries;
-        self.weak_list_slot_limit = budgets.weak_list_slots;
-        self.weak_list_candidate_key_limit = budgets.weak_list_candidate_keys;
-        if self.rooted_list_candidates.len() > self.weak_list_candidate_key_limit {
-            self.rooted_list_candidates.clear();
-        }
     }
 
     /// Returns the reserved unknown/bootstrap origin id.
@@ -1545,7 +1478,7 @@ impl ProvenanceStore {
     /// diagnostic, and continuation publication call this boundary when the
     /// record must outlive the command arena.
     pub(crate) fn materialize_origin_ref(
-        &mut self,
+        &self,
         id: OriginId,
         source_map: &crate::source_map::SourceMap,
     ) -> Option<OriginRef> {
@@ -1598,245 +1531,10 @@ impl ProvenanceStore {
         })
     }
 
-    pub(crate) fn allocate_rooted_list(&mut self, roots: &[OriginRef]) -> OriginListRef {
-        let mut ids = Vec::with_capacity(roots.len());
-        let mut owners = Vec::new();
-        for root in roots {
-            ids.push(root.id());
-            Self::insert_distinct_owner(&mut owners, root.clone());
-        }
-        self.allocate_rooted_list_value(ids, owners)
-    }
-
     /// Cold atom projections are deliberately not indexed by the store.
     #[cfg(test)]
     const fn rooted_record_shape(&self) -> (usize, usize) {
         (0, 0)
-    }
-
-    pub(crate) fn allocate_unrooted_origin_ids(
-        &mut self,
-        origins: impl ExactSizeIterator<Item = OriginId>,
-    ) -> OriginListRef {
-        let mut ids = Vec::with_capacity(origins.len());
-        for id in origins {
-            assert!(
-                !matches!(id.decode(), OriginEncoding::Arena(_)),
-                "arena-backed origin requires a structural owner"
-            );
-            ids.push(id);
-        }
-        self.allocate_rooted_list_value(ids, Vec::new())
-    }
-
-    /// Publishes an immutable origin list from an already structurally rooted
-    /// buffer without creating a separately resolvable historical span.
-    pub(crate) fn allocate_rooted_origin_words(
-        &mut self,
-        origins: impl ExactSizeIterator<Item = OriginId>,
-        roots: &[OriginRef],
-    ) -> OriginListRef {
-        let ids = origins.collect::<Vec<_>>();
-        for root in roots {
-            debug_assert!(
-                ids.contains(&root.id()),
-                "transient provenance owner has no packed position"
-            );
-        }
-        for &id in &ids {
-            if matches!(id.decode(), OriginEncoding::Arena(_)) {
-                assert!(
-                    self.contains_origin(id)
-                        || roots.binary_search_by_key(&id, OriginRef::id).is_ok(),
-                    "arena-backed transient position {:?} has neither an archive coordinate nor a structural owner",
-                    id.decode(),
-                );
-            }
-        }
-        self.allocate_rooted_list_value(
-            ids,
-            roots
-                .iter()
-                .filter(|root| root.record().is_some())
-                .cloned()
-                .collect(),
-        )
-    }
-
-    fn insert_distinct_owner(owners: &mut Vec<OriginRef>, root: OriginRef) {
-        if root.record().is_none() && root.source_registration().is_none() {
-            return;
-        }
-        match owners.binary_search_by_key(&root.id(), OriginRef::id) {
-            Ok(_) => {}
-            Err(index) => owners.insert(index, root),
-        }
-    }
-
-    fn allocate_rooted_list_value(
-        &mut self,
-        ids: Vec<OriginId>,
-        owners: Vec<OriginRef>,
-    ) -> OriginListRef {
-        if ids.is_empty() {
-            return OriginListRef::empty();
-        }
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_hot_core_content_hash();
-        let hash = origin_list_hash(&ids);
-        let mut exact = None;
-        let mut remove_empty_candidates = false;
-        if let Some(candidates) = self.rooted_list_candidates.get_mut(&hash) {
-            candidates.retain(|candidate| {
-                let Some(value) = candidate.upgrade() else {
-                    return false;
-                };
-                if exact.is_none() && value.origins.as_ref() == ids {
-                    exact = Some(value);
-                }
-                true
-            });
-            remove_empty_candidates = candidates.is_empty();
-        }
-        if remove_empty_candidates {
-            self.rooted_list_candidates.remove(&hash);
-        }
-        if let Some(value) = exact {
-            #[cfg(feature = "profiling")]
-            {
-                crate::measurement::record_provenance_list_intern(true, false);
-                crate::measurement::record_provenance_list_retain();
-            }
-            return OriginListRef {
-                id: value.id,
-                value: Some(value),
-            };
-        }
-        self.reclaim_some_dead_rooted_lists(ROOTED_RECLAIM_WORK_PER_ALLOCATION);
-        if self.rooted_list_occupied >= self.list_span_limit
-            || self.rooted_list_occupied >= self.weak_list_slot_limit
-            || self
-                .rooted_list_entries
-                .checked_add(ids.len())
-                .is_none_or(|entries| entries > self.list_entry_limit)
-        {
-            self.reclaim_dead_rooted_lists();
-        }
-        if self.rooted_list_occupied >= self.list_span_limit
-            || self.rooted_list_occupied >= self.weak_list_slot_limit
-            || self
-                .rooted_list_entries
-                .checked_add(ids.len())
-                .is_none_or(|entries| entries > self.list_entry_limit)
-        {
-            #[cfg(feature = "profiling")]
-            crate::measurement::record_provenance_list_intern(false, false);
-            return OriginListRef::empty();
-        }
-        let identity = self
-            .rooted_list_identities
-            .allocate()
-            .expect("origin-list live capacity checked");
-        let id = OriginListId::from_identity(identity);
-        let entry_len = ids.len();
-        let value = Arc::new(OriginListValue {
-            id,
-            origins: ids.into_boxed_slice(),
-            owners: owners.into_boxed_slice(),
-        });
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_provenance_list_intern(false, true);
-        let raw = identity.slot() as usize;
-        if raw == self.rooted_list_slots.len() {
-            self.rooted_list_slots.push(None);
-        }
-        assert!(self.rooted_list_slots[raw].is_none());
-        self.rooted_list_slots[raw] = Some(RootedOriginListSlot {
-            identity,
-            entry_len,
-            value: Arc::downgrade(&value),
-        });
-        self.rooted_list_occupied += 1;
-        self.rooted_list_entries += entry_len;
-        if self.weak_list_candidate_key_limit == 0 {
-            return OriginListRef {
-                id,
-                value: Some(value),
-            };
-        }
-        if self.rooted_list_candidates.len() >= self.weak_list_candidate_key_limit
-            && !self.rooted_list_candidates.contains_key(&hash)
-        {
-            self.rooted_list_candidates.clear();
-        }
-        self.rooted_list_candidates
-            .entry(hash)
-            .or_default()
-            .push(Arc::downgrade(&value));
-        OriginListRef {
-            id,
-            value: Some(value),
-        }
-    }
-
-    fn reclaim_some_dead_rooted_lists(&mut self, work: usize) -> usize {
-        let mut visited = 0;
-        #[cfg(feature = "profiling")]
-        let mut reclaimed = 0;
-        while visited < work && self.rooted_list_slots.len() > 1 {
-            if self.rooted_list_sweep_cursor < 1
-                || self.rooted_list_sweep_cursor >= self.rooted_list_slots.len()
-            {
-                self.rooted_list_sweep_cursor = 1;
-            }
-            let index = self.rooted_list_sweep_cursor;
-            self.rooted_list_sweep_cursor += 1;
-            visited += 1;
-            let slot = &mut self.rooted_list_slots[index];
-            let Some(occupied) = slot else {
-                continue;
-            };
-            if occupied.value.strong_count() != 0 {
-                continue;
-            }
-            self.rooted_list_identities
-                .release(occupied.identity)
-                .expect("origin-list weak slot and identity table diverged");
-            self.rooted_list_entries -= occupied.entry_len;
-            self.rooted_list_occupied -= 1;
-            *slot = None;
-            #[cfg(feature = "profiling")]
-            {
-                reclaimed += 1;
-            }
-        }
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_provenance_reclaim(true, visited, reclaimed);
-        visited
-    }
-
-    fn reclaim_dead_rooted_lists(&mut self) {
-        let slot_extent = self.rooted_list_slots.len().saturating_sub(1);
-        self.reclaim_some_dead_rooted_lists(slot_extent);
-        self.rooted_list_candidates.retain(|_, candidates| {
-            candidates.retain(|candidate| candidate.strong_count() != 0);
-            !candidates.is_empty()
-        });
-    }
-
-    #[cfg(test)]
-    fn rooted_list_shape(&mut self) -> (usize, usize, usize) {
-        self.reclaim_dead_rooted_lists();
-        let values = self
-            .rooted_list_slots
-            .iter()
-            .filter_map(|slot| slot.as_ref()?.value.upgrade())
-            .collect::<Vec<_>>();
-        (
-            values.len(),
-            values.iter().map(|value| value.origins.len()).sum(),
-            self.rooted_list_slots.len(),
-        )
     }
 
     fn index_record_candidate(&mut self, record: OriginRecord, key: u32) {
@@ -1896,30 +1594,25 @@ impl ProvenanceStore {
         }
     }
 
-    /// Returns live structural provenance counters and retained weak-slot
-    /// capacity. This measurement may scan weak list slots, but production
-    /// ownership and reclamation never do.
+    /// Returns compatibility origin-record counters.
+    ///
+    /// The aggregate store adds runtime-region origin-list accounting because
+    /// this archive is deliberately no longer an origin-list authority.
     #[must_use]
     pub(crate) fn stats(&self) -> ProvenanceStats {
-        let (origin_list_spans, origin_list_entries) = self
-            .rooted_list_slots
-            .iter()
-            .filter_map(|slot| slot.as_ref()?.value.upgrade())
-            .fold((0_usize, 0_usize), |(lists, entries), value| {
-                (lists + 1, entries.saturating_add(value.origins.len()))
-            });
         ProvenanceStats::with_capacities(
             self.records.len(),
-            origin_list_spans,
-            origin_list_entries,
+            0,
+            0,
             OriginRecordStorageStats {
                 capacity: self.records.capacity(),
                 archive_metadata_retained_bytes: self.records.retained_metadata_bytes(),
                 key_runs: self.record_keys.runs.len(),
                 key_run_capacity: self.record_keys.runs.capacity(),
             },
-            self.rooted_list_slots.capacity(),
-            origin_list_entries,
+            0,
+            0,
+            0,
         )
     }
 
@@ -1982,14 +1675,6 @@ impl ProvenanceStore {
         self.record_keys.truncate(mark.records);
         self.records.truncate(records);
     }
-}
-
-fn origin_list_hash(origins: &[OriginId]) -> u64 {
-    // This is a weak candidate-bucket accelerator, not semantic identity.
-    // Exact origin comparison below remains the collision-safety authority.
-    origins.iter().fold(0xcbf2_9ce4_8422_2325, |hash, origin| {
-        (hash ^ u64::from(origin.raw())).wrapping_mul(0x0000_0100_0000_01b3)
-    })
 }
 
 fn u32_len(value: usize) -> Option<u32> {

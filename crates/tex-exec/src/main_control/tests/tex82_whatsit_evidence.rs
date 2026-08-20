@@ -396,7 +396,7 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
                 && *close == tex_state::StreamSlot::new(0)
                 && class == "dvi"
                 && payload == b"early"
-                && &*stores.tokens(tokens.id()) == [Token::Cs(stores.symbol("payload").expect("payload").symbol())]
+                && *stores.tokens(tokens.id()) == [Token::Cs(stores.symbol("payload").expect("payload").symbol())]
         ),
         "constructed nodes: {nodes:#?}"
     );

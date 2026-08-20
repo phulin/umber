@@ -206,12 +206,6 @@ pub struct ProvenanceLifecycleMeasurement {
     pub atom_releases: u64,
     pub frame_retains: u64,
     pub frame_releases: u64,
-    pub list_retains: u64,
-    pub list_releases: u64,
-    pub atom_reclaim_visits: u64,
-    pub atom_reclaims: u64,
-    pub list_reclaim_visits: u64,
-    pub list_reclaims: u64,
     pub origin_resolutions: u64,
     pub list_resolutions: u64,
     pub list_resolution_comparisons: u64,
@@ -261,16 +255,6 @@ impl ProvenanceLifecycleMeasurement {
             atom_releases: self.atom_releases.saturating_sub(baseline.atom_releases),
             frame_retains: self.frame_retains.saturating_sub(baseline.frame_retains),
             frame_releases: self.frame_releases.saturating_sub(baseline.frame_releases),
-            list_retains: self.list_retains.saturating_sub(baseline.list_retains),
-            list_releases: self.list_releases.saturating_sub(baseline.list_releases),
-            atom_reclaim_visits: self
-                .atom_reclaim_visits
-                .saturating_sub(baseline.atom_reclaim_visits),
-            atom_reclaims: self.atom_reclaims.saturating_sub(baseline.atom_reclaims),
-            list_reclaim_visits: self
-                .list_reclaim_visits
-                .saturating_sub(baseline.list_reclaim_visits),
-            list_reclaims: self.list_reclaims.saturating_sub(baseline.list_reclaims),
             origin_resolutions: self
                 .origin_resolutions
                 .saturating_sub(baseline.origin_resolutions),
@@ -380,7 +364,7 @@ static FORMAT_RESTORE_NODES: AtomicU64 = AtomicU64::new(0);
 static FORMAT_RESTORE_VALIDATION_PASSES: AtomicU64 = AtomicU64::new(0);
 static FORMAT_RESTORE_COPIES: AtomicU64 = AtomicU64::new(0);
 static FORMAT_RESTORE_ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
-static PROVENANCE_COUNTERS: [AtomicU64; 25] = [const { AtomicU64::new(0) }; 25];
+static PROVENANCE_COUNTERS: [AtomicU64; 19] = [const { AtomicU64::new(0) }; 19];
 static MAIN_MEMORY_DYNAMIC_OBSERVATIONS: AtomicU64 = AtomicU64::new(0);
 static MAIN_MEMORY_BASE_REQUESTS: AtomicU64 = AtomicU64::new(0);
 static MAIN_MEMORY_BASE_REUSES: AtomicU64 = AtomicU64::new(0);
@@ -592,15 +576,9 @@ const PROV_ATOM_RETAINS: usize = 12;
 const PROV_ATOM_RELEASES: usize = 13;
 const PROV_FRAME_RETAINS: usize = 14;
 const PROV_FRAME_RELEASES: usize = 15;
-const PROV_LIST_RETAINS: usize = 16;
-const PROV_LIST_RELEASES: usize = 17;
-const PROV_ATOM_RECLAIM_VISITS: usize = 18;
-const PROV_ATOM_RECLAIMS: usize = 19;
-const PROV_LIST_RECLAIM_VISITS: usize = 20;
-const PROV_LIST_RECLAIMS: usize = 21;
-const PROV_ORIGIN_RESOLUTIONS: usize = 22;
-const PROV_LIST_RESOLUTIONS: usize = 23;
-const PROV_LIST_RESOLUTION_COMPARISONS: usize = 24;
+const PROV_ORIGIN_RESOLUTIONS: usize = 16;
+const PROV_LIST_RESOLUTIONS: usize = 17;
+const PROV_LIST_RESOLUTION_COMPARISONS: usize = 18;
 
 pub(crate) fn record_provenance_list_intern(hit: bool, allocated: bool) {
     PROVENANCE_COUNTERS[PROV_LIST_INTERN_CALLS].fetch_add(1, Ordering::Relaxed);
@@ -631,24 +609,6 @@ pub(crate) fn record_provenance_root_release(frame: bool) {
         PROV_ATOM_RELEASES
     }]
     .fetch_add(1, Ordering::Relaxed);
-}
-
-pub(crate) fn record_provenance_list_retain() {
-    PROVENANCE_COUNTERS[PROV_LIST_RETAINS].fetch_add(1, Ordering::Relaxed);
-}
-
-pub(crate) fn record_provenance_list_release() {
-    PROVENANCE_COUNTERS[PROV_LIST_RELEASES].fetch_add(1, Ordering::Relaxed);
-}
-
-pub(crate) fn record_provenance_reclaim(list: bool, visits: usize, reclaimed: usize) {
-    let (visit_index, reclaim_index) = if list {
-        (PROV_LIST_RECLAIM_VISITS, PROV_LIST_RECLAIMS)
-    } else {
-        (PROV_ATOM_RECLAIM_VISITS, PROV_ATOM_RECLAIMS)
-    };
-    PROVENANCE_COUNTERS[visit_index].fetch_add(visits as u64, Ordering::Relaxed);
-    PROVENANCE_COUNTERS[reclaim_index].fetch_add(reclaimed as u64, Ordering::Relaxed);
 }
 
 pub(crate) fn record_provenance_origin_resolution() {
@@ -798,12 +758,6 @@ pub fn provenance_lifecycle_measurement() -> ProvenanceLifecycleMeasurement {
         atom_releases: load(PROV_ATOM_RELEASES),
         frame_retains: load(PROV_FRAME_RETAINS),
         frame_releases: load(PROV_FRAME_RELEASES),
-        list_retains: load(PROV_LIST_RETAINS),
-        list_releases: load(PROV_LIST_RELEASES),
-        atom_reclaim_visits: load(PROV_ATOM_RECLAIM_VISITS),
-        atom_reclaims: load(PROV_ATOM_RECLAIMS),
-        list_reclaim_visits: load(PROV_LIST_RECLAIM_VISITS),
-        list_reclaims: load(PROV_LIST_RECLAIMS),
         origin_resolutions: load(PROV_ORIGIN_RESOLUTIONS),
         list_resolutions: load(PROV_LIST_RESOLUTIONS),
         list_resolution_comparisons: load(PROV_LIST_RESOLUTION_COMPARISONS),

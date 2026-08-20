@@ -201,17 +201,15 @@ impl<'a> Detacher<'a> {
         recipe
     }
 
-    fn origin_list(&mut self, root: &OriginListRef) -> OriginListRecipeId {
+    fn origin_list(&mut self, root: OriginListRef) -> OriginListRecipeId {
         if let Some(recipe) = self.origin_list_ids.get(&root.id()) {
             return *recipe;
         }
         let recipe = OriginListRecipeId(self.origin_lists.len());
         self.origin_list_ids.insert(root.id(), recipe);
         self.origin_lists.push(Vec::new());
-        let origins = root
-            .roots()
-            .map(|origin| self.origin_ref(&origin))
-            .collect();
+        let roots = self.universe.origin_list(root).roots().collect::<Vec<_>>();
+        let origins = roots.iter().map(|origin| self.origin_ref(origin)).collect();
         self.origin_lists[recipe.0] = origins;
         recipe
     }

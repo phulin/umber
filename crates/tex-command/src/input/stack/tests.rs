@@ -102,7 +102,7 @@ fn transient_dynamic_words_count_owned_buffers_once() {
                 ch: 's',
                 cat: Catcode::Other,
             }; 4],
-            tex_state::provenance::OriginListRef::empty(),
+            std::iter::empty(),
         ),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
@@ -123,7 +123,7 @@ fn each_popped_level_retires_exactly_once_with_its_trace() {
     let identity = state.push_token_level(
         TokenPayload::stored(
             universe.tokens(TokenListId::EMPTY).tokens(),
-            tex_state::provenance::OriginListRef::empty(),
+            std::iter::empty(),
         ),
         TokenBehavior::Ordinary,
         RetirementBehavior::StopAtEnd,
@@ -624,10 +624,7 @@ fn stored_token_reference_lifetime_survives_redefinition_and_replay() {
     let list = universe.intern_token_list_ref(&[Token::Cs(symbol)]);
     let mut state = CommandState::default();
     let level = state.push_token_level(
-        TokenPayload::stored(
-            universe.tokens(list.id()).tokens(),
-            tex_state::provenance::OriginListRef::empty(),
-        ),
+        TokenPayload::stored(universe.tokens(list.id()).tokens(), std::iter::empty()),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Stored(StoredReplayReason::Mark),
@@ -669,10 +666,7 @@ fn snapshot_restores_strong_stored_root_after_live_cursor_retires() {
     }]);
     let mut state = CommandState::default();
     let level = state.push_token_level(
-        TokenPayload::stored(
-            universe.tokens(root.id()).tokens(),
-            tex_state::provenance::OriginListRef::empty(),
-        ),
+        TokenPayload::stored(universe.tokens(root.id()).tokens(), std::iter::empty()),
         TokenBehavior::Ordinary,
         RetirementBehavior::Pop,
         ReplayTrace::Stored(StoredReplayReason::Mark),
@@ -857,7 +851,7 @@ fn token_list_kind_reference_and_parameter_stack_lifecycle_matrix() {
         let identity = state.push_token_level(
             TokenPayload::stored(
                 universe.tokens(TokenListId::EMPTY).tokens(),
-                tex_state::provenance::OriginListRef::empty(),
+                std::iter::empty(),
             ),
             behavior,
             RetirementBehavior::Pop,

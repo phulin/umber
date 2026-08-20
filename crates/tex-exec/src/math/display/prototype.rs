@@ -103,7 +103,7 @@ pub(super) fn package_directed_display_line(
                 leader: None,
             } => {
                 children.push(Node::Glue {
-                    spec: spec.clone(),
+                    spec,
                     kind,
                     leader: None,
                 });

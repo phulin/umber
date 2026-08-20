@@ -393,7 +393,7 @@ fn glue_current_undo_page_and_checkpoint_edges_are_structural_roots() {
     assert_eq!(universe.stores.testing_glue_live_totals().0, 1);
 
     let outer = universe.intern_glue(glue(201));
-    universe.set_skip(0, &outer);
+    universe.set_skip(0, outer);
     let _ = outer;
     assert_eq!(universe.stores.testing_glue_live_totals().0, 2);
 
@@ -1282,7 +1282,7 @@ fn restore_tracing_preserves_save_stack_order_for_extended_register_banks() {
     universe.set_count(2000, 5);
     universe.set_dimen(21, Scaled::from_raw(5 * Scaled::UNITY));
     universe.set_dimen(2100, Scaled::from_raw(5 * Scaled::UNITY));
-    universe.set_skip(22, &glue);
+    universe.set_skip(22, glue);
     universe.set_muskip(2200, glue);
     universe.set_toks(32767, toks);
     let _ = universe.leave_group();
@@ -2056,11 +2056,17 @@ fn traced_list_finish_uses_fresh_runtime_coordinates_with_equal_semantics() {
     assert_ne!(first_list.origin_list(), second_list.origin_list());
     assert_eq!(universe.tokens(first_list.token_list()), tokens);
     assert_eq!(
-        first_list.origin_ref().origins(),
+        universe
+            .origin_list(first_list.origin_ref())
+            .iter()
+            .collect::<Vec<_>>(),
         vec![first_origin.id(); tokens.len()]
     );
     assert_eq!(
-        second_list.origin_ref().origins(),
+        universe
+            .origin_list(second_list.origin_ref())
+            .iter()
+            .collect::<Vec<_>>(),
         vec![second_origin.id(); tokens.len()]
     );
 
@@ -2432,7 +2438,7 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
         Node::Ins {
             class: 0,
             size: Scaled::from_raw(0),
-            split_top_skip: zero_glue.clone(),
+            split_top_skip: zero_glue,
             split_max_depth: Scaled::from_raw(0),
             floating_penalty: 0,
             content: empty.clone(),
@@ -2475,7 +2481,7 @@ fn pdftex_margin_kern_query_owns_the_complete_skipable_edge_rule() {
         },
         empty_hlist,
         Node::Glue {
-            spec: nonzero_glue.clone(),
+            spec: nonzero_glue,
             kind: GlueKind::LeftSkip,
             leader: None,
         },
@@ -2690,7 +2696,7 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
         shrink: Scaled::from_raw(33),
         shrink_order: Order::Normal,
     });
-    universe.set_skip(0, &base_glue);
+    universe.set_skip(0, base_glue);
 
     let image = universe.dump_format().expect("frozen core format");
     let container = crate::format_container::decode(&image).expect("decode container");
@@ -4261,8 +4267,8 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
     };
     let token_frame = |traced: TracedTokenList, arguments: MacroArguments, invocation| {
         InputFrameSummary::TokenList {
-            token_list: traced.token_ref().clone(),
-            origin_list: traced.origin_ref().clone(),
+            token_list: traced.token_ref(),
+            origin_list: traced.origin_ref(),
             replay_kind: TokenListReplayKind::MacroBody,
             index: 0,
             macro_arguments: arguments,
@@ -4273,11 +4279,7 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
 
     let stale_argument = one_macro_argument(stale_word, 1);
     let structurally_retained = InputSummary::new(
-        vec![token_frame(
-            list.clone(),
-            MacroArguments::new(),
-            OriginId::UNKNOWN,
-        )],
+        vec![token_frame(list, MacroArguments::new(), OriginId::UNKNOWN)],
         None,
         None,
     );
@@ -4305,16 +4307,12 @@ fn input_summary_validation_is_recursive_and_atomic_after_reuse() {
             None,
         ),
         InputSummary::new(
-            vec![token_frame(list.clone(), stale_argument, OriginId::UNKNOWN)],
+            vec![token_frame(list, stale_argument, OriginId::UNKNOWN)],
             None,
             None,
         ),
         InputSummary::new(
-            vec![token_frame(
-                list.clone(),
-                MacroArguments::new(),
-                stale_origin_id,
-            )],
+            vec![token_frame(list, MacroArguments::new(), stale_origin_id)],
             None,
             None,
         ),
@@ -4481,12 +4479,8 @@ fn snapshot_reuses_hash_base_for_origin_only_input_summary_changes() {
         OriginId::UNKNOWN,
     );
     let body_root = universe.token_list_ref(body);
-    let left_summary = macro_replay_summary(
-        body_root.clone(),
-        left_origins,
-        left_invocation,
-        left_origin.id(),
-    );
+    let left_summary =
+        macro_replay_summary(body_root, left_origins, left_invocation, left_origin.id());
     let right_summary = macro_replay_summary(
         body_root,
         right_origins,
@@ -5902,7 +5896,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
         target_replacement,
     ));
     first.set_toks(0, target_replacement);
-    first.set_skip(0, &target_glue);
+    first.set_skip(0, target_glue);
     first.set_meaning(
         macro_target,
         Meaning::Macro {
@@ -5941,7 +5935,7 @@ fn snapshot_state_hash_ignores_content_intern_order() {
     let second_zed = second.intern("z");
     second.set_meaning(second_zed, Meaning::Relax);
     second.set_toks(0, target_replacement);
-    second.set_skip(0, &target_glue);
+    second.set_skip(0, target_glue);
     second.set_meaning(
         macro_target,
         Meaning::Macro {

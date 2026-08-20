@@ -122,12 +122,12 @@ impl GlueUndoRoots {
 
     #[must_use]
     pub(crate) fn old(&self) -> Option<GlueSpecRef> {
-        self.old.clone()
+        self.old
     }
 
     #[must_use]
     pub(crate) fn new_value(&self) -> Option<GlueSpecRef> {
-        self.new.clone()
+        self.new
     }
 }
 
@@ -139,12 +139,12 @@ impl MacroUndoRoots {
 
     #[must_use]
     pub(crate) fn old(&self) -> Option<MacroDefinitionRef> {
-        self.old.clone()
+        self.old
     }
 
     #[must_use]
     pub(crate) fn new_value(&self) -> Option<MacroDefinitionRef> {
-        self.new.clone()
+        self.new
     }
 }
 
@@ -156,12 +156,12 @@ impl TokenUndoRoots {
 
     #[must_use]
     pub(crate) fn old(&self) -> Option<TokenListRef> {
-        self.old.clone()
+        self.old
     }
 
     #[must_use]
     pub(crate) fn new_value(&self) -> Option<TokenListRef> {
-        self.new.clone()
+        self.new
     }
 }
 

@@ -152,6 +152,23 @@ fn group_exit_epoch_amendment_smoke() {
 }
 
 #[test]
+fn replay_cells_use_live_prepared_runtime_value_ids() {
+    let mut stores = Universe::new();
+    let cells = [TestCell::TokParam(9), TestCell::Skip(37)];
+    TestCell::prepare_stores(&mut stores, &cells);
+    let snapshot = stores.snapshot();
+
+    cells[0].set(&mut stores, 55, false);
+    cells[1].set(&mut stores, 24, false);
+    assert_eq!(cells[0].get(&stores), 55);
+    assert_eq!(cells[1].get(&stores), 24);
+
+    stores.rollback(&snapshot);
+    assert_eq!(cells[0].get(&stores), 0);
+    assert_eq!(cells[1].get(&stores), 0);
+}
+
+#[test]
 fn rollback_keeps_box_register_ids_resolvable() {
     let mut stores = Universe::new();
     let baseline = stores.freeze_node_list(&[Node::MathOn(Scaled::from_raw(0))]);
@@ -340,7 +357,7 @@ fn build_nodes(
             kind: tex_state::node::KernKind::Explicit,
         },
         Node::Glue {
-            spec: glue_ref.clone(),
+            spec: *glue_ref,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -505,7 +522,7 @@ fn page_node(glue_ids: &[GlueSpecRef], seed: &NodeSeed) -> Node {
         }
     } else {
         Node::Glue {
-            spec: glue_ids[seed.glue_slot % glue_ids.len()].clone(),
+            spec: glue_ids[seed.glue_slot % glue_ids.len()],
             kind: GlueKind::Normal,
             leader: None,
         }

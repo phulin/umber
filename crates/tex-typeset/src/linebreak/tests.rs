@@ -120,7 +120,7 @@ fn tracing_reports_a_line_class_champion_before_the_next_class_feasible_route() 
     let nodes = vec![
         rule(40),
         Node::Glue {
-            spec: stretch.clone(),
+            spec: stretch,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -195,7 +195,7 @@ fn positive_emergency_stretch_uses_the_real_tolerance_route() {
     let nodes = vec![
         rule(100),
         Node::Glue {
-            spec: zero.clone(),
+            spec: zero,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -297,7 +297,7 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
         }),
         Node::Whatsit(Whatsit::DeferredWrite {
             sink: tex_state::PrintSink::Log,
-            tokens: tokens.clone(),
+            tokens,
         }),
         Node::Whatsit(Whatsit::CloseOut {
             slot: Some(tex_state::StreamSlot::new(0)),
@@ -362,7 +362,7 @@ fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
     ];
     let post = PostLineBreakParams {
         empty_list: empty.clone(),
-        left_skip: zero.clone(),
+        left_skip: zero,
         right_skip: zero,
         interline_penalty: 99,
         club_penalty: 999,
@@ -407,7 +407,7 @@ fn etex_display_widow_selector_survives_to_post_line_break() {
         .collect::<Vec<_>>();
     let mut params = PostLineBreakParams {
         empty_list: empty.clone(),
-        left_skip: zero.clone(),
+        left_skip: zero,
         right_skip: zero,
         interline_penalty: 7,
         club_penalty: 0,
@@ -553,13 +553,13 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
             vec![
                 microtype_char(first, 'A'),
                 Node::Glue {
-                    spec: glue.clone(),
+                    spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
                 microtype_char(first, 'B'),
                 Node::Glue {
-                    spec: glue.clone(),
+                    spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
@@ -583,19 +583,19 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
             vec![
                 microtype_char(first, 'A'),
                 Node::Glue {
-                    spec: glue.clone(),
+                    spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
                 microtype_char(first, 'B'),
                 Node::Glue {
-                    spec: glue.clone(),
+                    spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
                 microtype_char(first, 'C'),
                 Node::Glue {
-                    spec: glue.clone(),
+                    spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
@@ -627,7 +627,7 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
                 },
                 microtype_char(first, 'B'),
                 Node::Glue {
-                    spec: glue.clone(),
+                    spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
@@ -651,13 +651,13 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
             vec![
                 microtype_char(first, 'A'),
                 Node::Glue {
-                    spec: glue.clone(),
+                    spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
                 microtype_char(second, 'B'),
                 Node::Glue {
-                    spec: glue.clone(),
+                    spec: glue,
                     kind: GlueKind::Normal,
                     leader: None,
                 },
@@ -717,13 +717,13 @@ fn pdftex_hz_mode_two_is_inert_without_pdftex_font_configuration() {
     let nodes = vec![
         rule(100),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
             leader: None,
         },
         rule(100),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -772,7 +772,7 @@ fn last_line_fit_paragraph() -> (Universe, Vec<Node>, LineBreakParams) {
         nodes.push(rule(30 * Scaled::UNITY));
         if index != 4 {
             nodes.push(Node::Glue {
-                spec: finite.clone(),
+                spec: finite,
                 kind: GlueKind::Normal,
                 leader: None,
             });
@@ -780,7 +780,7 @@ fn last_line_fit_paragraph() -> (Universe, Vec<Node>, LineBreakParams) {
     }
     nodes.push(Node::Penalty(INF_PENALTY));
     nodes.push(Node::Glue {
-        spec: par_fill.clone(),
+        spec: par_fill,
         kind: GlueKind::ParFillSkip,
         leader: None,
     });
@@ -1080,7 +1080,7 @@ fn etex_last_line_fit_does_not_adjust_a_single_line_paragraph() {
         rule(30 * Scaled::UNITY),
         Node::Penalty(INF_PENALTY),
         Node::Glue {
-            spec: par_fill.clone(),
+            spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
         },
@@ -1166,7 +1166,7 @@ fn breaks_at_legal_glue() {
             kind: KernKind::Explicit,
         },
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
 
             leader: None,
@@ -1176,7 +1176,7 @@ fn breaks_at_legal_glue() {
             kind: KernKind::Explicit,
         },
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
 
             leader: None,
@@ -1208,7 +1208,7 @@ fn tracing_display_includes_the_feasible_glue_breakpoint() {
     let nodes = vec![
         rule(20),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -1383,7 +1383,7 @@ fn paragraph_prefix_widths_remain_exact_past_i32_max() {
         nodes.push(rule(700_000_000));
         if index != 5 {
             nodes.push(Node::Glue {
-                spec: zero.clone(),
+                spec: zero,
                 kind: GlueKind::Normal,
                 leader: None,
             });
@@ -1410,7 +1410,7 @@ fn final_pass_keeps_last_active_route_when_every_route_is_overfull() {
     let nodes = vec![
         rule(100),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -1443,8 +1443,8 @@ fn consecutive_discardable_breakpoints_do_not_form_a_backwards_chain() {
         &result.breaks,
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: zero.clone(),
-            right_skip: zero.clone(),
+            left_skip: zero,
+            right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalties: ordinary_widow_penalties(0, Vec::new()),
@@ -1474,7 +1474,7 @@ fn glue_route_is_considered_at_immediately_following_forced_penalty() {
     let nodes = vec![
         rule(1),
         Node::Glue {
-            spec: zero.clone(),
+            spec: zero,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -1519,7 +1519,7 @@ fn line_break_includes_left_and_right_skip_in_background_widths() {
     let nodes = vec![
         rule(80),
         Node::Glue {
-            spec: break_glue.clone(),
+            spec: break_glue,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -1694,7 +1694,7 @@ fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
         disc(nonempty),
         Node::Penalty(10_000),
         Node::Glue {
-            spec: par_fill.clone(),
+            spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
         },
@@ -1916,7 +1916,7 @@ fn break_glue_does_not_contribute_to_preceding_line_width() {
     let nodes = vec![
         rule(20),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
 
             leader: None,
@@ -1948,18 +1948,18 @@ fn discardable_tail_does_not_create_an_empty_final_line() {
     let nodes = vec![
         rule(100),
         Node::Glue {
-            spec: trailing.clone(),
+            spec: trailing,
             kind: GlueKind::Normal,
             leader: None,
         },
         Node::Glue {
-            spec: trailing.clone(),
+            spec: trailing,
             kind: GlueKind::Normal,
             leader: None,
         },
         Node::Penalty(10_000),
         Node::Glue {
-            spec: par_fill.clone(),
+            spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
         },
@@ -2001,7 +2001,7 @@ fn looseness_can_select_empty_line_after_terminal_discretionary() {
         },
         Node::Penalty(10_000),
         Node::Glue {
-            spec: par_fill.clone(),
+            spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
         },
@@ -2035,7 +2035,7 @@ fn equal_demerit_easy_line_champion_uses_terminal_discretionary_route() {
         },
         Node::Penalty(INF_PENALTY),
         Node::Glue {
-            spec: par_fill.clone(),
+            spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
         },
@@ -2092,14 +2092,14 @@ fn unmet_looseness_retries_after_the_pretolerance_pass() {
     let nodes = vec![
         rule(10),
         Node::Glue {
-            spec: break_glue.clone(),
+            spec: break_glue,
             kind: GlueKind::Normal,
             leader: None,
         },
         rule(10),
         Node::Penalty(10_000),
         Node::Glue {
-            spec: par_fill.clone(),
+            spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
         },
@@ -2129,7 +2129,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
         rule(10),
         Node::MathOff(sp(5)),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
 
             leader: None,
@@ -2161,8 +2161,8 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
         &breaks,
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: zero.clone(),
-            right_skip: zero.clone(),
+            left_skip: zero,
+            right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalties: ordinary_widow_penalties(0, Vec::new()),
@@ -2195,7 +2195,7 @@ fn explicit_kern_break_scores_before_adding_the_kern() {
         rule(10),
         kern(5),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -2224,21 +2224,21 @@ fn math_boundaries_suppress_internal_glue_and_kern_breaks() {
         Node::MathOn(sp(0)),
         rule(10),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::ThinMuSkip,
             leader: None,
         },
         rule(10),
         kern(5),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
             leader: None,
         },
         rule(10),
         Node::MathOff(sp(0)),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -2266,28 +2266,28 @@ fn final_pass_deactivates_unshrinkable_active_line() {
     let nodes = vec![
         rule(30),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
 
             leader: None,
         },
         rule(30),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
 
             leader: None,
         },
         rule(30),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
 
             leader: None,
         },
         rule(30),
         Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
 
             leader: None,
@@ -2391,7 +2391,7 @@ fn existing_discretionary_is_available_on_the_pretolerance_pass() {
         rule(20),
         Node::Penalty(10_000),
         Node::Glue {
-            spec: par_fill.clone(),
+            spec: par_fill,
             kind: GlueKind::ParFillSkip,
             leader: None,
         },
@@ -2507,7 +2507,7 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
         rule(10),
         Node::Mark {
             class: 0,
-            tokens: mark_tokens.clone(),
+            tokens: mark_tokens,
         },
         Node::Adjust(tex_state::node::AdjustNode::ordinary(
             adjust_content.clone(),
@@ -2534,8 +2534,8 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
         &breaks,
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: empty_glue.clone(),
-            right_skip: empty_glue.clone(),
+            left_skip: empty_glue,
+            right_skip: empty_glue,
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalties: ordinary_widow_penalties(0, Vec::new()),
@@ -2601,8 +2601,8 @@ fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
         &breaks,
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: zero.clone(),
-            right_skip: zero.clone(),
+            left_skip: zero,
+            right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalties: ordinary_widow_penalties(0, Vec::new()),
@@ -2703,7 +2703,7 @@ fn next_line_discards_all_discardables_but_retains_font_kern() {
         rule(1),
         Node::Penalty(0),
         Node::Glue {
-            spec: zero.clone(),
+            spec: zero,
             kind: GlueKind::Normal,
             leader: None,
         },
@@ -2744,8 +2744,8 @@ fn next_line_discards_all_discardables_but_retains_font_kern() {
         &breaks,
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: zero.clone(),
-            right_skip: zero.clone(),
+            left_skip: zero,
+            right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalties: ordinary_widow_penalties(0, Vec::new()),
@@ -2789,7 +2789,7 @@ fn two_line_penalty_after_combines_club_widow_and_broken_penalties() {
     ];
     let params = PostLineBreakParams {
         empty_list: empty.clone(),
-        left_skip: zero.clone(),
+        left_skip: zero,
         right_skip: zero,
         interline_penalty: 11,
         club_penalty: 101,
@@ -2841,8 +2841,8 @@ fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
         &breaks,
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: zero.clone(),
-            right_skip: zero.clone(),
+            left_skip: zero,
+            right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalties: ordinary_widow_penalties(0, Vec::new()),
@@ -2896,8 +2896,8 @@ fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count
         &breaks,
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: zero.clone(),
-            right_skip: zero.clone(),
+            left_skip: zero,
+            right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalties: ordinary_widow_penalties(0, Vec::new()),
@@ -2944,8 +2944,8 @@ fn line_materializer_reuses_the_returned_line_buffer() {
         breaks,
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: zero.clone(),
-            right_skip: zero.clone(),
+            left_skip: zero,
+            right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalties: ordinary_widow_penalties(0, Vec::new()),
@@ -3000,8 +3000,8 @@ fn post_line_break_omits_only_zero_leftskip() {
         &breaks,
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: zero.clone(),
-            right_skip: zero.clone(),
+            left_skip: zero,
+            right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalties: ordinary_widow_penalties(0, Vec::new()),
@@ -3032,8 +3032,8 @@ fn post_line_break_omits_only_zero_leftskip() {
         &breaks,
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: nonzero.clone(),
-            right_skip: zero.clone(),
+            left_skip: nonzero,
+            right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalties: ordinary_widow_penalties(0, Vec::new()),
@@ -3073,7 +3073,7 @@ fn paragraph_tape_bounds_analysis_storage_for_large_paragraphs() {
     for _ in 0..50_000 {
         nodes.push(rule(1));
         nodes.push(Node::Glue {
-            spec: glue.clone(),
+            spec: glue,
             kind: GlueKind::Normal,
             leader: None,
         });
@@ -3157,8 +3157,8 @@ fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
         breaks,
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: zero.clone(),
-            right_skip: zero.clone(),
+            left_skip: zero,
+            right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
             widow_penalties: ordinary_widow_penalties(0, Vec::new()),
@@ -3222,7 +3222,7 @@ fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() 
         }],
         PostLineBreakParams {
             empty_list: empty.clone(),
-            left_skip: zero.clone(),
+            left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,

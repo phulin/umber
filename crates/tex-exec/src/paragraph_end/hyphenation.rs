@@ -1036,7 +1036,7 @@ mod tests {
             }),
             Node::Whatsit(tex_state::node::Whatsit::DeferredWrite {
                 sink: tex_state::PrintSink::Log,
-                tokens: tokens.clone(),
+                tokens,
             }),
             Node::Whatsit(tex_state::node::Whatsit::CloseOut {
                 slot: Some(tex_state::StreamSlot::new(0)),

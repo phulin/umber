@@ -59,7 +59,7 @@ fn state(columns: usize, tabskips: Vec<GlueSpecRef>) -> AlignState {
         AlignmentPackSpec::Natural,
         vec![
             AlignColumn {
-                u_template: empty.clone(),
+                u_template: empty,
                 v_template: empty,
             };
             columns
@@ -78,8 +78,8 @@ fn span_width_list_orders_counts_and_keeps_maximum() {
         3,
         vec![
             tex_state::glue::testing_zero_glue_ref(),
-            middle.clone(),
-            middle.clone(),
+            middle,
+            middle,
             tex_state::glue::testing_zero_glue_ref(),
         ],
     );
@@ -122,7 +122,7 @@ fn resolve_alignment_widths_applies_tex82_recurrence() {
         2,
         vec![
             tex_state::glue::testing_zero_glue_ref(),
-            middle.clone(),
+            middle,
             tex_state::glue::testing_zero_glue_ref(),
         ],
     );
@@ -142,7 +142,7 @@ fn resolve_alignment_widths_applies_tex82_recurrence() {
         resolved.tabskips,
         vec![
             tex_state::glue::testing_zero_glue_ref(),
-            middle.clone(),
+            middle,
             tex_state::glue::testing_zero_glue_ref()
         ]
     );
@@ -155,11 +155,7 @@ fn resolve_alignment_widths_zeroes_null_column_tabskip() {
     let trailing = glue(&mut stores, 2);
     let state = state(
         2,
-        vec![
-            tex_state::glue::testing_zero_glue_ref(),
-            middle.clone(),
-            trailing,
-        ],
+        vec![tex_state::glue::testing_zero_glue_ref(), middle, trailing],
     );
     let empty = NodeListRef::empty();
     let rows = [row(&mut stores, &[cell(empty, 4, 1)])];
@@ -184,8 +180,8 @@ fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
         3,
         vec![
             tex_state::glue::testing_zero_glue_ref(),
-            middle.clone(),
-            middle.clone(),
+            middle,
+            middle,
             tex_state::glue::testing_zero_glue_ref(),
         ],
     );
@@ -204,7 +200,7 @@ fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
         2,
         vec![
             tex_state::glue::testing_zero_glue_ref(),
-            middle.clone(),
+            middle,
             tex_state::glue::testing_zero_glue_ref(),
         ],
     );

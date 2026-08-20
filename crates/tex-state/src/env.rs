@@ -413,9 +413,9 @@ impl Env {
             self.restore_raw_with_owners(
                 entry.cell,
                 entry.word,
-                entry.token_root.clone(),
-                entry.macro_root.clone(),
-                entry.glue_root.clone(),
+                entry.token_root,
+                entry.macro_root,
+                entry.glue_root,
                 entry.box_root.clone(),
             );
         }
@@ -530,7 +530,7 @@ impl Env {
         if self.journal.pos() != mark {
             self.journal.attach_macro_undo_roots(
                 mark,
-                crate::journal::MacroUndoRoots::new(old_root, macro_root.clone()),
+                crate::journal::MacroUndoRoots::new(old_root, macro_root),
             );
         }
         self.set_macro_root(cell, macro_root);
@@ -1089,7 +1089,7 @@ impl Env {
         if self.journal.pos() != mark {
             self.journal.attach_token_undo_roots(
                 mark,
-                crate::journal::TokenUndoRoots::new(old_root, new_root.clone()),
+                crate::journal::TokenUndoRoots::new(old_root, new_root),
             );
         }
         self.set_token_root(cell, new_root);
@@ -1105,7 +1105,7 @@ impl Env {
         if self.journal.pos() != mark {
             self.journal.attach_glue_undo_roots(
                 mark,
-                crate::journal::GlueUndoRoots::new(old_root, new_root.clone()),
+                crate::journal::GlueUndoRoots::new(old_root, new_root),
             );
         }
         self.set_glue_root(cell, new_root);
@@ -1150,7 +1150,7 @@ impl Env {
                 BankTag::TokParam => word == u64::from(TokenListId::EMPTY.raw()) + 1,
                 _ => false,
             };
-            is_empty.then(|| self.empty_token_root.clone()).flatten()
+            is_empty.then_some(self.empty_token_root).flatten()
         })
     }
 

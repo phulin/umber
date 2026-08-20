@@ -1665,7 +1665,7 @@ pub(in crate::main_control) fn apply(
                 command.fuel,
                 Whatsit::DeferredWrite {
                     sink: replay_write_sink(stream),
-                    tokens: tokens.token_ref().clone(),
+                    tokens: tokens.token_ref(),
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -1680,7 +1680,7 @@ pub(in crate::main_control) fn apply(
                 command.fuel,
                 Whatsit::DeferredSpecial {
                     class: "dvi".to_owned(),
-                    tokens: tokens.token_ref().clone(),
+                    tokens: tokens.token_ref(),
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -2442,7 +2442,7 @@ pub(in crate::main_control) fn apply(
                 stores,
                 Node::Mark {
                     class,
-                    tokens: tokens.token_ref().clone(),
+                    tokens: tokens.token_ref(),
                 },
             );
             Ok(ReplayStep::Continue)

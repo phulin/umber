@@ -143,7 +143,7 @@ fn token_cursor_classifies_orthogonal_ownership_domains() {
     let cursor = TokenCursor {
         payload: TokenPayload::stored(
             universe.tokens(TokenListId::EMPTY).tokens(),
-            tex_state::provenance::OriginListRef::empty(),
+            std::iter::empty(),
         ),
         behavior,
         retirement,

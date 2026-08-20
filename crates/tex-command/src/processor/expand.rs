@@ -1479,10 +1479,8 @@ impl CommandProcessor<'_> {
         let replacement = scanned.replacement_text;
         let words = self.state.tokens(replacement.token_ref().id());
         let first = words.first().copied();
-        self.insert_expansion_list(
-            TokenPayload::stored(&words, replacement.origin_ref().clone()),
-            first,
-        );
+        let origins = self.state.origin_list(replacement.origin_ref());
+        self.insert_expansion_list(TokenPayload::stored(&words, origins.iter()), first);
         Ok(())
     }
 
@@ -1805,7 +1803,7 @@ impl CommandProcessor<'_> {
                     let words = self.state.tokens(tokens.id());
                     let first = words.first().copied();
                     self.insert_expansion_list(
-                        TokenPayload::stored(&words, tex_state::provenance::OriginListRef::empty()),
+                        TokenPayload::stored(&words, std::iter::empty()),
                         first,
                     );
                 }
@@ -2268,7 +2266,7 @@ impl CommandProcessor<'_> {
     fn push_mark_text(&mut self, tokens: TokenListId) {
         let words = self.state.tokens(tokens);
         let level = self.command.push_token_level(
-            TokenPayload::stored(&words, tex_state::provenance::OriginListRef::empty()),
+            TokenPayload::stored(&words, std::iter::empty()),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::Mark),

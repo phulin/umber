@@ -201,10 +201,10 @@ impl<'a> LoweredMathSink<'a> {
                     let id = if let Some((_, id)) =
                         self.glue_cache.iter().find(|(cached, _)| cached == spec)
                     {
-                        id.clone()
+                        *id
                     } else {
                         let id = self.stores.intern_glue(*spec);
-                        self.glue_cache.push((*spec, id.clone()));
+                        self.glue_cache.push((*spec, id));
                         id
                     };
                     scratch.push(Node::Glue {
