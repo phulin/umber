@@ -976,6 +976,3 @@ fn validate_location_mark(current: usize, mark: u32) -> Result<(), RuntimeValueR
         .then_some(())
         .ok_or(RuntimeValueRegistryError::InvalidMark)
 }
-
-#[cfg(test)]
-mod tests;

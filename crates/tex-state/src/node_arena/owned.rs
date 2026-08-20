@@ -70,22 +70,6 @@ impl core::fmt::Debug for NodeListRef {
 }
 
 impl NodeListRef {
-    #[cfg(test)]
-    pub(crate) fn testing_with_id(id: NodeListId) -> Self {
-        assert!(
-            id.is_empty(),
-            "synthetic Env owner must be a zero-length projection"
-        );
-        let ArenaRef::Owned(root) = id.arena() else {
-            panic!("synthetic Env owner must use an owned projection");
-        };
-        Self::from_payload(
-            id,
-            NodeListPayload::new(root, NodeStorage::default(), Vec::new(), Vec::new(), None),
-            NodeSemanticId::empty(),
-        )
-    }
-
     /// Returns the explicitly owned canonical empty list.
     #[must_use]
     pub fn empty() -> Self {
@@ -240,11 +224,6 @@ impl NodeListRef {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn strong_count(&self) -> usize {
-        Arc::strong_count(self.payload())
-    }
-
     pub(crate) fn shares_payload(&self, other: &Self) -> bool {
         Arc::ptr_eq(self.payload(), other.payload())
     }
@@ -253,13 +232,6 @@ impl NodeListRef {
         self.payload
             .as_ref()
             .expect("live node-list owner must retain its payload")
-    }
-
-    #[cfg(test)]
-    pub(crate) fn runtime_value_roots(
-        &self,
-    ) -> Option<&crate::hot_core::arena::store::RuntimeValueRootSet> {
-        self.payload().runtime_value_roots()
     }
 
     pub(crate) fn freeze_builder(
@@ -506,11 +478,6 @@ impl NodeListPayload {
     ) -> Option<&crate::hot_core::arena::store::RuntimeValueRootSet> {
         self.runtime_value_roots.as_ref()
     }
-
-    #[cfg(test)]
-    fn child_roots(&self) -> impl ExactSizeIterator<Item = NodePayloadId> + '_ {
-        self.children.iter().map(|child| child.payload().root)
-    }
 }
 
 /// A non-owning coordinate projection. Upgrade succeeds only while a typed
@@ -562,11 +529,6 @@ impl NodeListWeakIndex {
         }
         self.entries.push_back(candidate.downgrade());
         candidate
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    pub(crate) fn shape(&self) -> (usize, usize) {
-        (self.entries.len(), self.entries.capacity())
     }
 }
 

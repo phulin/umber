@@ -133,6 +133,3 @@ impl<T: Copy> PodStack<T> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

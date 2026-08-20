@@ -881,11 +881,6 @@ impl Env {
         (old, receipt, outcome)
     }
 
-    #[cfg(test)]
-    fn box_reg_is_local_to_current_group(&self, index: u16) -> bool {
-        self.group_depth != 0 && self.boxes.get(index).is_owned_by(self.group_depth)
-    }
-
     /// Returns an integer parameter value.
     #[must_use]
     pub fn int_param(&self, param: IntParam) -> i32 {

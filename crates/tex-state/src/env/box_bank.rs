@@ -50,11 +50,6 @@ impl BoxSlot {
         self.root.clone()
     }
 
-    #[cfg(test)]
-    pub(super) fn is_owned_by(&self, depth: u32) -> bool {
-        depth != 0 && self.owner_depth == depth
-    }
-
     pub(crate) const fn owner_depth(&self) -> u32 {
         self.owner_depth
     }

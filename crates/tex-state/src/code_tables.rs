@@ -949,15 +949,6 @@ impl<T> Root<T> {
     fn is_empty(&self) -> bool {
         self.chunks.iter().all(Option::is_none)
     }
-
-    #[cfg(test)]
-    fn materialized_page_count(&self) -> usize {
-        self.chunks
-            .iter()
-            .filter_map(Option::as_deref)
-            .map(|chunk| chunk.pages.iter().filter(|page| page.is_some()).count())
-            .sum()
-    }
 }
 
 #[derive(Clone, Debug)]

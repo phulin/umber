@@ -2415,82 +2415,6 @@ impl World {
             )
     }
 
-    #[cfg(test)]
-    fn effect_retention_stats(&self) -> EffectRetentionStats {
-        let mut roots = Vec::new();
-        let mut seen = BTreeSet::new();
-        let mut push_root = |root: Arc<Vec<EffectRecord>>| {
-            let identity = Arc::as_ptr(&root) as usize;
-            if seen.insert(identity) {
-                roots.push(root);
-            }
-        };
-        push_root(Arc::clone(&self.effects));
-        let mut live_mounts = 0;
-        for mount in self.effect_root_ancestry.iter() {
-            if let Some(root) = mount.upgrade() {
-                live_mounts += 1;
-                push_root(root);
-            }
-        }
-
-        EffectRetentionStats {
-            live_records: self.effects.len(),
-            live_record_capacity_bytes: self
-                .effects
-                .capacity()
-                .saturating_mul(std::mem::size_of::<EffectRecord>()),
-            live_payload_capacity_bytes: self.effects.iter().map(effect_payload_capacity).sum(),
-            ancestry_mounts: self.effect_root_ancestry.len(),
-            ancestry_live_mounts: live_mounts,
-            unique_roots: roots.len(),
-            unique_records: roots.iter().map(|root| root.len()).sum(),
-            unique_record_capacity_bytes: roots
-                .iter()
-                .map(|root| {
-                    root.capacity()
-                        .saturating_mul(std::mem::size_of::<EffectRecord>())
-                })
-                .sum(),
-            unique_payload_capacity_bytes: roots
-                .iter()
-                .flat_map(|root| root.iter())
-                .map(effect_payload_capacity)
-                .sum(),
-            metadata_capacity_bytes: self
-                .effect_sequences
-                .capacity()
-                .saturating_mul(std::mem::size_of::<EffectSequence>())
-                .saturating_add(
-                    self.effect_publications
-                        .capacity()
-                        .saturating_mul(std::mem::size_of::<Option<EffectPublicationId>>()),
-                )
-                .saturating_add(
-                    self.effect_publication_record_ordinals
-                        .capacity()
-                        .saturating_mul(
-                            std::mem::size_of::<Option<EffectPublicationRecordOrdinal>>(),
-                        ),
-                )
-                .saturating_add(
-                    self.effect_domains
-                        .capacity()
-                        .saturating_mul(std::mem::size_of::<EffectDomain>()),
-                )
-                .saturating_add(
-                    self.effect_semantic_record_ordinals
-                        .capacity()
-                        .saturating_mul(std::mem::size_of::<EffectSemanticRecordOrdinal>()),
-                )
-                .saturating_add(
-                    self.effect_placement_intra_orders
-                        .capacity()
-                        .saturating_mul(std::mem::size_of::<EffectPlacementIntraOrder>()),
-                ),
-        }
-    }
-
     /// Creates a deterministic in-memory world for tests and hermetic runs.
     #[must_use]
     pub fn memory() -> Self {
@@ -5969,36 +5893,6 @@ fn effect_retained_bytes(effect: &EffectRecord) -> usize {
             EffectRecord::PdfObjectPlaceholder { label } => label.len(),
             EffectRecord::ShellEscape(record) => record.command.len(),
         }
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct EffectRetentionStats {
-    live_records: usize,
-    live_record_capacity_bytes: usize,
-    live_payload_capacity_bytes: usize,
-    ancestry_mounts: usize,
-    ancestry_live_mounts: usize,
-    unique_roots: usize,
-    unique_records: usize,
-    unique_record_capacity_bytes: usize,
-    unique_payload_capacity_bytes: usize,
-    metadata_capacity_bytes: usize,
-}
-
-#[cfg(test)]
-fn effect_payload_capacity(effect: &EffectRecord) -> usize {
-    match effect {
-        EffectRecord::StreamOpen { target, .. } => target.path.as_os_str().len(),
-        EffectRecord::StreamClose { .. } | EffectRecord::DeferredWrite { .. } => 0,
-        EffectRecord::StreamWrite { text, .. } => text.capacity(),
-        EffectRecord::StreamWriteBytes { bytes, .. } => bytes.capacity(),
-        EffectRecord::Special { class, payload } => {
-            class.capacity().saturating_add(payload.capacity())
-        }
-        EffectRecord::PdfObjectPlaceholder { label } => label.capacity(),
-        EffectRecord::ShellEscape(record) => record.command.capacity(),
-    }
 }
 
 fn real_job_clock() -> JobClock {

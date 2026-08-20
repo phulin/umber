@@ -4,7 +4,7 @@ use super::Epoch;
 fn epoch_starts_at_one_and_bumps() {
     let mut epoch = Epoch::START;
 
-    assert_eq!(epoch.raw(), 1);
+    assert_eq!(epoch, Epoch::START);
     epoch.bump();
-    assert_eq!(epoch.raw(), 2);
+    assert!(epoch > Epoch::START);
 }

@@ -175,19 +175,6 @@ impl NodeListId {
         }
     }
 
-    #[cfg(any(test, feature = "testing"))]
-    const fn packed_epoch_span(start: u32, len: u32) -> u64 {
-        assert!(
-            len <= NODE_LIST_EPOCH_LEN_MAX,
-            "epoch node-list length exceeds encoding"
-        );
-        assert!(
-            start.checked_add(len).is_some(),
-            "epoch node-list span overflows storage index"
-        );
-        (start as u64) | ((len as u64) << 32)
-    }
-
     pub(crate) const fn new_owned(root: NodePayloadId, start: u32, len: u32) -> Self {
         assert!(
             root.raw() <= NODE_LIST_OWNED_ROOT_MAX,
@@ -210,32 +197,6 @@ impl NodeListId {
         )
     }
 
-    #[cfg(any(test, feature = "testing"))]
-    pub(crate) const fn format_reference(arena: ArenaRef, start: u32, len: u32) -> Self {
-        match arena {
-            ArenaRef::Epoch => {
-                let _ = Self::packed_epoch_span(start, len);
-                let incremented = match len.checked_add(1) {
-                    Some(value) => value,
-                    None => panic!("epoch node-list length exceeds DTO encoding"),
-                };
-                let encoded_len = match core::num::NonZeroU32::new(incremented) {
-                    Some(value) => value,
-                    None => panic!("epoch node-list DTO length must be nonzero"),
-                };
-                Self(crate::identity::HandleIdentity::reserved(
-                    NODE_LIST_FORMAT_EPOCH_NAMESPACE,
-                    encoded_len,
-                    start,
-                ))
-            }
-            ArenaRef::Owned(root) => Self::from_reserved_word(
-                NODE_LIST_FORMAT_OWNED_NAMESPACE,
-                Self::new_owned(root, start, len).reserved_word(),
-            ),
-        }
-    }
-
     const fn from_reserved_word(namespace: u64, word: u64) -> Self {
         let upper = match core::num::NonZeroU32::new((word >> 32) as u32) {
             Some(value) => value,
@@ -250,20 +211,6 @@ impl NodeListId {
 
     const fn reserved_word(self) -> u64 {
         ((self.0.upper() as u64) << 32) | self.0.lower() as u64
-    }
-
-    /// Creates a test-only epoch id without going through a node arena.
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub const fn testing_epoch(start: u32, len: u32) -> Self {
-        Self::format_reference(ArenaRef::Epoch, start, len)
-    }
-
-    /// Creates a test-only compact coordinate without allocating a payload.
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub const fn testing_owned(root: u32, start: u32, len: u32) -> Self {
-        Self::new_owned(NodePayloadId::new(root), start, len)
     }
 
     #[must_use]
@@ -346,6 +293,3 @@ impl NodeListId {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -101,23 +101,6 @@ impl PageNodeTree {
             }
         }
     }
-
-    #[cfg(test)]
-    fn cached_projection_count(&self) -> usize {
-        match self {
-            Self::Leaf { projection, .. } => usize::from(projection.get().is_some()),
-            Self::Branch {
-                left,
-                right,
-                projection,
-                ..
-            } => {
-                usize::from(projection.get().is_some())
-                    + left.cached_projection_count()
-                    + right.cached_projection_count()
-            }
-        }
-    }
 }
 
 pub(super) struct PageNodeIter<'a> {
@@ -163,22 +146,6 @@ impl PartialEq for PageNodeSequence {
 }
 
 impl PageNodeSequence {
-    #[cfg(test)]
-    pub(super) fn testing_cached_projection_count(&self) -> usize {
-        self.forest
-            .iter()
-            .map(|root| root.cached_projection_count())
-            .sum()
-    }
-
-    #[cfg(test)]
-    pub(super) fn testing_cached_tail_projection_count(&self) -> usize {
-        self.tail
-            .iter()
-            .filter(|tail_node| tail_node.projection.get().is_some())
-            .count()
-    }
-
     pub(super) fn iter(&self) -> PageNodeIter<'_> {
         PageNodeIter {
             nodes: self,

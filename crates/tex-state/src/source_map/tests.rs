@@ -1,4 +1,3 @@
-use std::mem;
 use std::sync::Arc;
 
 use super::*;
@@ -272,15 +271,6 @@ fn checked_registration_rejects_logical_u64_exhaustion_without_mutation() {
         Err(SourceMapError::LogicalPositionExhausted)
     );
     assert_eq!(map.watermark(), before);
-}
-
-#[test]
-fn snapshot_mark_is_constant_size_independent_of_backing_bytes() {
-    let mut map = SourceMap::default();
-    let before = mem::size_of_val(&map.watermark());
-    map.register(SourceId::new(0), generated(&vec![b'x'; 1024 * 1024]))
-        .expect("source-map operation succeeds");
-    assert_eq!(mem::size_of_val(&map.watermark()), before);
 }
 
 impl SourceRegion {

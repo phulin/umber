@@ -25,7 +25,7 @@ fn boxed_penalty_value(root: &NodeListRef) -> i32 {
     };
     let children = root
         .resolve(box_node.children)
-        .expect("box child coordinate belongs to its structural owner");
+        .expect("box child remains readable");
     let Some(tex_state::node_arena::NodeRef::Penalty(value)) = children.nodes().first() else {
         panic!("hbox must contain one penalty")
     };
@@ -35,12 +35,12 @@ fn boxed_penalty_value(root: &NodeListRef) -> i32 {
 fn box_register_penalty(universe: &Universe) -> i32 {
     let root = universe
         .box_reg_ref(0)
-        .expect("box register 0 must retain its structural root");
+        .expect("box register 0 remains populated");
     boxed_penalty_value(&root)
 }
 
 #[test]
-fn checkpoint_and_direct_transitions_use_structural_node_ownership() {
+fn checkpoint_and_direct_transitions_preserve_box_values() {
     let mut universe = Universe::default();
     let baseline = boxed_penalty(&mut universe, 10);
     universe.set_box_reg_ref(0, baseline);
@@ -78,7 +78,7 @@ fn checkpoint_and_direct_transitions_use_structural_node_ownership() {
 }
 
 #[test]
-fn generation_fork_clones_checkpoint_node_roots() {
+fn checkpoint_fork_restores_the_selected_box_value() {
     let mut universe = Universe::default();
     let checkpoint_root = boxed_penalty(&mut universe, 70);
     universe.set_box_reg_ref(0, checkpoint_root);
@@ -89,7 +89,7 @@ fn generation_fork_clones_checkpoint_node_roots() {
     let substrate = universe.freeze_generation();
     let fork = substrate
         .fork_at(&checkpoint)
-        .expect("checkpoint belongs to the frozen generation substrate");
+        .expect("checkpoint can seed a fork");
 
     assert_eq!(box_register_penalty(&fork), 70);
 }

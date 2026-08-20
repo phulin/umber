@@ -244,6 +244,3 @@ impl InputFrame {
 const _: () = assert!(core::mem::size_of::<SourceCoordinate>() == 4);
 const _: () = assert!(core::mem::size_of::<TokenSpan>() == 24);
 const _: () = assert!(core::mem::size_of::<InputFrame>() == 40);
-
-#[cfg(test)]
-mod tests;

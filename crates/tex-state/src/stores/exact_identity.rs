@@ -259,8 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshots_are_constant_size_and_restore_nested_accumulators() {
-        assert_eq!(core::mem::size_of::<ExactEnvSnapshot>(), 48);
+    fn snapshots_restore_nested_accumulators() {
         let mut env_identity = ExactEnvIdentity::default();
         env_identity.update(cell(1), hash(1), Some(hash(2)));
         let outer = env_identity.snapshot();

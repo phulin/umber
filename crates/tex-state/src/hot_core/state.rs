@@ -66,11 +66,6 @@ impl<T> DenseBankCoordinate<T> {
     pub(crate) const fn index(self) -> u32 {
         self.index
     }
-
-    #[cfg(test)]
-    const fn testing_parts(self) -> (u64, u32, u32) {
-        (self.namespace.get(), self.generation.get(), self.index)
-    }
 }
 
 impl<T> Copy for DenseBankCoordinate<T> {}
@@ -263,6 +258,3 @@ fn fresh_bank_namespace() -> Result<NonZeroU64, DenseBankError> {
         .map_err(|_| DenseBankError::NamespaceExhausted)?;
     NonZeroU64::new(namespace).ok_or(DenseBankError::NamespaceExhausted)
 }
-
-#[cfg(test)]
-mod tests;

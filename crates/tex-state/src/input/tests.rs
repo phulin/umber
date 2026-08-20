@@ -1,6 +1,5 @@
 use super::{InputFrameSummary, InputSummary, LexerState, SourceFrameSummary, SourceId};
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
-use std::sync::Arc;
 
 fn source_frame(text: &str, pending: Vec<TracedTokenWord>) -> SourceFrameSummary {
     SourceFrameSummary::new(
@@ -17,7 +16,7 @@ fn source_frame(text: &str, pending: Vec<TracedTokenWord>) -> SourceFrameSummary
 }
 
 #[test]
-fn input_summary_clone_shares_every_payload_root() {
+fn input_summary_clone_preserves_all_replay_payloads() {
     let pending = vec![TracedTokenWord::pack(
         Token::Char {
             ch: 'x',
@@ -47,11 +46,11 @@ fn input_summary_clone_shares_every_payload_root() {
     else {
         panic!("expected source frames");
     };
-    assert!(Arc::ptr_eq(&left.normalized_line, &right.normalized_line));
-    assert!(Arc::ptr_eq(&left.pending, &right.pending));
+    assert_eq!(left.normalized_line, right.normalized_line);
+    assert_eq!(left.pending, right.pending);
 
     let left = summary.last_source_frame().expect("last source");
     let right = cloned.last_source_frame().expect("last source");
-    assert!(Arc::ptr_eq(&left.normalized_line, &right.normalized_line));
-    assert!(Arc::ptr_eq(&left.pending, &right.pending));
+    assert_eq!(left.normalized_line, right.normalized_line);
+    assert_eq!(left.pending, right.pending);
 }

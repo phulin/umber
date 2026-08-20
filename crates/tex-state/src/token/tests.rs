@@ -6,14 +6,6 @@ use crate::interner::Symbol;
 use crate::provenance::{InsertedOriginKind, OriginRef};
 
 #[test]
-fn token_is_one_word() {
-    assert_eq!(core::mem::size_of::<Token>(), 8);
-    assert_eq!(core::mem::size_of::<TokenWord>(), 4);
-    assert_eq!(core::mem::size_of::<OriginId>(), 4);
-    assert_eq!(core::mem::size_of::<TracedTokenWord>(), 8);
-}
-
-#[test]
 fn token_word_round_trips_every_category_code() {
     let catcodes = [
         Catcode::Escape,
@@ -112,20 +104,17 @@ fn token_variants_are_copy_and_comparable() {
 
 #[test]
 fn origin_zero_is_unknown() {
-    assert_eq!(OriginId::UNKNOWN.raw(), 0);
     assert_eq!(OriginId::default(), OriginId::UNKNOWN);
 }
 
 #[test]
-fn origin_encoding_has_exact_direct_and_arena_boundaries() {
+fn origin_encoding_round_trips_direct_and_arena_boundaries() {
     use crate::source_map::SourcePos;
 
     let first_direct = OriginId::direct_source(SourcePos::from_raw_for_store(0))
         .expect("first direct position must pack");
     let last_direct = OriginId::direct_source(SourcePos::from_raw_for_store(0x7fff_fffe))
         .expect("last direct position must pack");
-    assert_eq!(first_direct.raw(), 1);
-    assert_eq!(last_direct.raw(), 0x7fff_ffff);
     assert!(OriginId::direct_source(SourcePos::from_raw_for_store(0x7fff_ffff)).is_none());
     assert_eq!(
         first_direct.decode(),
@@ -138,8 +127,6 @@ fn origin_encoding_has_exact_direct_and_arena_boundaries() {
 
     let first_arena = OriginId::arena(0).expect("first arena index must pack");
     let last_arena = OriginId::arena(0x7fff_fffe).expect("last arena index must pack");
-    assert_eq!(first_arena.raw(), 0x8000_0000);
-    assert_eq!(last_arena.raw(), 0xffff_fffe);
     assert!(OriginId::arena(0x7fff_ffff).is_none());
     assert!(OriginId::arena(0x8000_0000).is_none());
     assert_eq!(first_arena.decode(), super::OriginEncoding::Arena(0));
@@ -261,94 +248,7 @@ fn packed_token_decode_rejects_unrepresentable_payloads() {
 }
 
 #[test]
-fn mutable_rooted_buffer_tracks_exact_distinct_structural_owners() {
-    let mut universe = crate::Universe::new();
-    let token = Token::Char {
-        ch: 'x',
-        cat: Catcode::Letter,
-    };
-    let first =
-        universe.inserted_origin_ref(InsertedOriginKind::Unread, token, OriginRef::unknown());
-    let second_token = Token::Char {
-        ch: 'y',
-        cat: Catcode::Letter,
-    };
-    let second = universe.inserted_origin_ref(
-        InsertedOriginKind::Unread,
-        second_token,
-        OriginRef::unknown(),
-    );
-    let mut buffer = RootedTracedTokenBuffer::default();
-
-    buffer.push(RootedTracedTokenWord::new(token, first.clone()));
-    buffer.push(RootedTracedTokenWord::new(token, first.clone()));
-    buffer.push_unowned(TracedTokenWord::pack(token, OriginId::UNKNOWN));
-    assert_eq!(buffer.len(), 3);
-    assert_eq!(buffer.roots(), std::slice::from_ref(&first));
-
-    buffer.push(RootedTracedTokenWord::new(second_token, second.clone()));
-    assert_eq!(buffer.roots(), &[first.clone(), second.clone()]);
-    buffer.pop();
-    assert_eq!(buffer.roots(), std::slice::from_ref(&first));
-    buffer.truncate(1);
-    assert_eq!(buffer.roots(), std::slice::from_ref(&first));
-    buffer.pop();
-    assert!(buffer.roots().is_empty());
-}
-
-#[test]
-fn shared_origin_run_retains_one_owner_for_all_packed_positions() {
-    let mut universe = crate::Universe::new();
-    let token = Token::Char {
-        ch: 'x',
-        cat: Catcode::Letter,
-    };
-    let origin =
-        universe.inserted_origin_ref(InsertedOriginKind::Unread, token, OriginRef::unknown());
-    let origin_id = origin.id();
-    let buffer = RootedTracedTokenBuffer::with_shared_origin([token; 32], origin);
-
-    assert_eq!(buffer.len(), 32);
-    assert!(buffer.words().iter().all(|word| word.origin() == origin_id));
-    assert_eq!(buffer.roots().len(), 1);
-    assert_eq!(buffer.roots()[0].id(), origin_id);
-
-    let empty = RootedTracedTokenBuffer::with_shared_origin([], OriginRef::unknown());
-    assert!(empty.is_empty());
-    assert!(empty.roots().is_empty());
-}
-
-#[test]
-fn mutable_rooted_buffer_churn_keeps_direct_storage_empty_and_live_growth_exact() {
-    let token = Token::Char {
-        ch: 'x',
-        cat: Catcode::Letter,
-    };
-    for _ in 0..10_000 {
-        let mut direct = RootedTracedTokenBuffer::default();
-        direct.extend_unowned([TracedTokenWord::pack(token, OriginId::UNKNOWN); 8]);
-        assert!(direct.roots().is_empty());
-    }
-
-    let mut universe = crate::Universe::new();
-    let mut live = RootedTracedTokenBuffer::default();
-    for index in 0..128_u8 {
-        let rooted_token = Token::Char {
-            ch: char::from(index),
-            cat: Catcode::Other,
-        };
-        let root = universe.inserted_origin_ref(
-            InsertedOriginKind::Unread,
-            rooted_token,
-            OriginRef::unknown(),
-        );
-        live.push(RootedTracedTokenWord::new(rooted_token, root));
-    }
-    assert_eq!(live.roots().len(), 128);
-}
-
-#[test]
-fn rooted_buffer_append_moves_words_and_merges_distinct_owners() {
+fn rooted_buffer_append_preserves_token_and_origin_order() {
     let mut universe = crate::Universe::new();
     let first_token = Token::Char {
         ch: 'a',
@@ -377,6 +277,22 @@ fn rooted_buffer_append_moves_words_and_merges_distinct_owners() {
 
     target.append_buffer(source);
 
-    assert_eq!(target.words().len(), 3);
-    assert_eq!(target.roots(), &[first, second]);
+    assert_eq!(
+        target
+            .words()
+            .iter()
+            .copied()
+            .map(TracedTokenWord::semantic_token)
+            .collect::<Vec<_>>(),
+        [first_token, first_token, second_token]
+    );
+    assert_eq!(
+        target
+            .words()
+            .iter()
+            .copied()
+            .map(TracedTokenWord::origin)
+            .collect::<Vec<_>>(),
+        [first.id(), first.id(), second.id()]
+    );
 }

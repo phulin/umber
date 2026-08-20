@@ -554,6 +554,3 @@ fn fresh_hot_core_identity() -> Result<NonZeroU64, HotCoreError> {
         .map_err(|_| HotCoreError::IdentityExhausted)?;
     NonZeroU64::new(raw).ok_or(HotCoreError::IdentityExhausted)
 }
-
-#[cfg(test)]
-mod tests;

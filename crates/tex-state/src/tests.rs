@@ -7,7 +7,6 @@ use crate::scaled::Scaled;
 use crate::token::{Catcode, Token};
 use crate::{ParagraphShapeLine, PenaltyArrayKind, Universe, World};
 
-mod handle_matrix;
 mod live_boundary;
 #[cfg(feature = "testing")]
 mod replay;

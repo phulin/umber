@@ -64,54 +64,25 @@ pub(super) fn prepare_bundle(
         active.columns.provenance_roots.len(),
         additions.provenance_roots,
     )?;
-    reserve_additional(
-        &mut active.columns.token_words,
-        additions.tokens,
-        &mut arena.storage_growth_events,
-    )?;
-    reserve_additional(
-        &mut active.columns.token_lists,
-        additions.token_lists,
-        &mut arena.storage_growth_events,
-    )?;
-    reserve_additional(
-        &mut active.columns.macro_records,
-        additions.macro_records,
-        &mut arena.storage_growth_events,
-    )?;
-    reserve_additional(
-        &mut active.columns.macro_roots,
-        additions.macro_roots,
-        &mut arena.storage_growth_events,
-    )?;
-    reserve_additional(
-        &mut active.columns.glue_specs,
-        additions.glue_specs,
-        &mut arena.storage_growth_events,
-    )?;
+    reserve_additional(&mut active.columns.token_words, additions.tokens)?;
+    reserve_additional(&mut active.columns.token_lists, additions.token_lists)?;
+    reserve_additional(&mut active.columns.macro_records, additions.macro_records)?;
+    reserve_additional(&mut active.columns.macro_roots, additions.macro_roots)?;
+    reserve_additional(&mut active.columns.glue_specs, additions.glue_specs)?;
     reserve_additional(
         &mut active.columns.provenance_roots,
         additions.provenance_roots,
-        &mut arena.storage_growth_events,
     )?;
     Ok(active)
 }
 
-fn reserve_additional<T>(
-    column: &mut Vec<T>,
-    additional: usize,
-    storage_growth_events: &mut usize,
-) -> Result<(), RegionArenaError> {
+fn reserve_additional<T>(column: &mut Vec<T>, additional: usize) -> Result<(), RegionArenaError> {
     if additional == 0 || column.capacity().saturating_sub(column.len()) >= additional {
         return Ok(());
     }
-    let old_capacity = column.capacity();
     column
         .try_reserve_exact(additional)
         .map_err(|_| RegionArenaError::AllocationFailed)?;
-    if column.capacity() != old_capacity {
-        *storage_growth_events = storage_growth_events.saturating_add(1);
-    }
     Ok(())
 }
 

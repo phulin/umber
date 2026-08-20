@@ -65,8 +65,6 @@ use crate::state_hash::{
     CachedProjection, INITIAL_STATE_HASH, StateHashComponent, StateHashFragment, StateHasher,
     combine,
 };
-#[cfg(any(test, feature = "testing"))]
-use crate::stores::TestingOwnershipCensus;
 use crate::stores::{DirectStoreOperationMark, StorePatchOperationMark, StoreStateHashCursor};
 use crate::stores::{
     FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, StoreFormatError,
@@ -699,13 +697,6 @@ impl Snapshot {
 }
 
 impl GenerationSubstrate {
-    /// Exact test-only owner census for the frozen accepted generation.
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_ownership_census(&self) -> TestingOwnershipCensus {
-        self.universe.testing_ownership_census()
-    }
-
     /// Freezes one completed mutable timeline as an accepted generation.
     #[must_use]
     pub fn new(universe: Universe) -> Self {
@@ -729,13 +720,6 @@ impl GenerationSubstrate {
         self.universe.accept_private_revision()?;
         self.charged_bytes = generation_charged_bytes(&self.universe);
         Ok(())
-    }
-
-    /// Exact private-domain ownership for cross-crate lifecycle tests.
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_private_revision_domain_stats(&self) -> Option<(usize, usize, usize, bool)> {
-        self.universe.testing_private_revision_domain_stats()
     }
 
     #[must_use]
@@ -1614,15 +1598,6 @@ impl Universe {
         self.stores.observe_line_break_memory_cleanup(memory);
     }
 
-    #[cfg(test)]
-    fn testing_transient_memory_base_projections(&self) -> usize {
-        self.stores.testing_transient_memory_base_projections()
-    }
-
-    #[cfg(test)]
-    fn testing_main_memory_root_traversals(&self) -> usize {
-        self.stores.testing_main_memory_root_traversals()
-    }
     /// Removes an ordered suffix from committed artifact/PDF publication.
     pub fn prepare_page_suffix(&mut self, start: usize) -> PreparedPageSuffix {
         let effect_base = self.world.effect_pos().raw()
@@ -8681,51 +8656,6 @@ impl Universe {
     #[cfg(test)]
     fn testing_input_projection_hash_calls(&self) -> usize {
         self.state_hash_projection_cache.input_hash_calls
-    }
-
-    /// Exact live-owner categories plus bounded weak/allocator metadata.
-    ///
-    /// This projection is test-only and has no role in semantic identity,
-    /// reachability, acceptance, or cache authority.
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_ownership_census(&self) -> TestingOwnershipCensus {
-        self.stores.testing_ownership_census()
-    }
-
-    /// Exact private-domain ownership used by cross-crate operation controls.
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_private_revision_domain_stats(&self) -> Option<(usize, usize, usize, bool)> {
-        self.private_revision_domain.as_ref().map(|domain| {
-            let stats = domain.stats();
-            (
-                stats.allocations,
-                stats.logical_bytes,
-                stats.slot_capacity_bytes,
-                stats.operation_active,
-            )
-        })
-    }
-
-    /// Returns a non-owning liveness probe for candidate rejection tests.
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_private_revision_domain_probe(
-        &self,
-    ) -> Option<crate::TestingPrivateRevisionDomainProbe> {
-        self.private_revision_domain
-            .as_ref()
-            .map(PatchAllocationDomain::testing_probe)
-    }
-
-    /// Arms one exact allocation inside the next real aggregate operation.
-    #[cfg(any(test, feature = "testing"))]
-    pub fn testing_arm_next_private_revision_operation_allocation(&mut self, bytes: usize) {
-        self.private_revision_domain
-            .as_mut()
-            .expect("testing allocation requires a private revision")
-            .testing_arm_next_operation_allocation(bytes);
     }
 
     /// Allocates exact charged bytes in the active private operation. The

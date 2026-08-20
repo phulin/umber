@@ -1531,12 +1531,6 @@ impl ProvenanceStore {
         })
     }
 
-    /// Cold atom projections are deliberately not indexed by the store.
-    #[cfg(test)]
-    const fn rooted_record_shape(&self) -> (usize, usize) {
-        (0, 0)
-    }
-
     fn index_record_candidate(&mut self, record: OriginRecord, key: u32) {
         if self.record_candidates.len() >= RECORD_CANDIDATE_KEY_BUDGET
             && !self.record_candidates.contains_key(&record)

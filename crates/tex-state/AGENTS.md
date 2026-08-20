@@ -16,7 +16,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/cell/tests.rs`: Unit tests for cell id packing, bank decoding, and global-bit handling.
 - `src/code_tables.rs`: Sparse persistent-radix TeX catcode, lc/uc/sf/math/delcode tables whose virtual defaults are INITEX's initial values (tex.web §232 and §240, never a format's), plus generation stamps, groups, and snapshots.
 - `src/code_tables/global.rs`: Persistent global-assignment delta history used to rebase saved group roots without depth-sensitive writes.
-- `src/code_tables/tests.rs`: Unit tests for code-table defaults, writes, sparse pages, generations, and snapshots.
+- `src/code_tables/tests.rs`: Unit tests for code-table defaults, semantic
+  writes, save-stack diagnostics, sparse updates, and snapshot rollback.
 - `src/command_context.rs`: Interpretation-neutral aggregate access boundary
   reserved for the command processor. Exposes `begin_diagnostic`
   (e-TeX `\tracingifs`), `printer` (e-TeX `\tracingnesting`'s
@@ -74,21 +75,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   coordinate maps, fixed rollback marks, incremental region publication, and
   cold forks that share sealed regions while copying only the private active
   suffix.
-- `src/hot_core/arena/value_region/store/registry/tests.rs`: Allocation/read,
-  stale/foreign identity, all-live growth, and bounded-retry registry controls.
-- `src/hot_core/arena/value_region/store/tests.rs`: Typed-coordinate,
-  composite co-location, counted-root, oversized-list, and rollback controls
-  for the concrete runtime value store.
-- `src/hot_core/arena/value_region/tests.rs`: Accept/reject, nested owner,
-  resource retry, old-mark, exact all-live, and 10,000-cycle plateau controls
-  for runtime value regions.
-- `src/hot_core/arena/tests.rs`: Coordinate validation, accepted-base sharing,
-  candidate isolation, rollback, plateau, and exact-growth controls for the
-  HotCore arena substrate.
 - `src/hot_core/journal.rs`: Inline-small first-write inverse records, strictly
   nested marks, exact rollback, and parent-epoch transfer over typed mutable
   targets.
-- `src/hot_core/layout.rs` and `src/hot_core/layout/tests.rs`: Canonical
+- `src/hot_core/layout.rs`: Canonical
   32-bit token words, compact source coordinates, chunk-owned token spans,
   fixed 40-byte input frames, exact TeX input-kind values, and focused layout,
   generation-rejection, and warmed traversal controls.
@@ -97,14 +87,14 @@ All production mutation of live TeX state should pass through `Universe` or simi
   exposing arena ownership, reservations, or runtime coordinates.
 - `src/hot_core/mod.rs`: Private HotCore storage module boundary; command
   semantics remain outside this substrate.
-- `src/hot_core/snapshot.rs` and `src/hot_core/snapshot/tests.rs`: Storage-only
+- `src/hot_core/snapshot.rs`: Storage-only
   HotCore aggregate, 152-byte runtime snapshots, atomic restore preflight,
   accepted-base lifecycle, exact-growth controls, and warmed aggregate plateau
   coverage.
-- `src/hot_core/stack.rs` and `src/hot_core/stack/tests.rs`: Copy-only compact
+- `src/hot_core/stack.rs`: Copy-only compact
   stacks with 32-bit marks, inline common storage, spill reuse, accounting, and
   bounded-cycle controls.
-- `src/hot_core/state.rs` and `src/hot_core/state/tests.rs`: Fixed-length
+- `src/hot_core/state.rs`: Fixed-length
   inline-small dense mutable banks, typed namespace/generation coordinates,
   first-write journal integration, stale rejection, nested rollback, and
   plateau controls.
@@ -114,11 +104,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/hyphenation.rs`: Hyphenation pattern trie and exception table implementing Liang-style position lookup.
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.
-- `src/identity/tests.rs`: Property and boundary tests for rollback, fork, exhaustion, and foreign-handle rejection.
 - `src/ids.rs`: Opaque ids for token lists, live origin-list projections, macros, glue, fonts, snapshots, and borrow-scoped compact node-payload coordinates.
-- `src/ids/tests.rs`: Unit tests for opaque id raw values and node/origin-list span metadata.
 - `src/input.rs`: Snapshot-ready lexer/input stack summaries with copy-only token-list ids, macro replay sites and argument slots, source ids, and generic checkpoint future-state comparison.
-- `src/input/tests.rs`: Structural-sharing tests for frozen input-summary roots and source payloads.
+- `src/input/tests.rs`: Value and snapshot-isolation tests for frozen input
+  summaries and source payloads.
 - `src/interner.rs`: Control-sequence name interner with dense symbols, lookup, hashing, and rollback marks.
 - `src/interner/tests.rs`: Unit tests for symbol interning, resolution, rollback, and content hashing.
 - `src/journal.rs`: Append-only journal records, markers, undo entries, copy-only token/macro/glue old/new sidecars, and rollback/group replay support.
@@ -150,14 +139,15 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/measurement/tests.rs`: Coherence, divergent-maximum, nested-payload, and concurrent peak-measurement tests.
 - `src/node_arena/mutation.rs`: Test-only shape-preserving compact-row replacement support for compact-copy measurement coverage.
 - `src/node_arena/owned.rs`: Direct `NodeListRef` ownership, consuming builder freeze, private borrow-scoped span resolution, exact weak candidate reuse, canonical empty ownership, and retained-byte accounting.
-- `src/node_arena/owned/tests.rs`: Collision, canonical-empty, transactional freeze, child resolution, clone/final-drop, weak-metadata plateau, all-live, and allocation-independent semantic controls for direct node-list ownership.
+- `src/node_arena/owned/tests.rs`: Nested readback and allocation-independent
+  semantic identity controls for direct node-list ownership.
 - `src/node_arena/schema.rs`: Exhaustive allocation-free logical node descriptors, typed handle policies, origins, and ordered child traversal.
 - `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
 - `src/node_arena/storage.rs`: Canonical node words, aligned provenance plus copy-only token/glue coordinate sidecars, and immutable payload encoding.
 - `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.
 - `src/node_arena/view.rs`: Zero-allocation node references, list spans, raw tag predicates, character runs, and iterators.
 - `src/page.rs`: Snapshot-owned page-builder state with copy-only last-glue and scalar/class mark coordinates, page dimensions/integers, contribution/current-page queues, and fire-up records.
-- `src/patch_domain.rs` and `src/patch_domain/tests.rs`: Private-revision aggregate allocation ownership, exact single-operation marks, explicit root-set transfer, and focused lifecycle controls; it contains no per-value liveness marker.
+- `src/patch_domain.rs`: Private-revision aggregate allocation ownership, exact single-operation marks, explicit root-set transfer, and focused lifecycle controls; it contains no per-value liveness marker.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with copy-only token coordinates in catalog/page/form collections, deterministic object allocation, snapshots, suffix transfer, and committed-page ledger.
 - `src/pdf/action.rs`: Typed, checkpointed PDF action model carrying copy-only token coordinates shared by catalog, link, and outline scanners.
 - `src/pdf/annotation.rs`: Checkpointed general-annotation reservations with copy-only token coordinates, running dimension specs, and logical/open-link records.
@@ -166,7 +156,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/pdf/document.rs`: Copy-on-write coordinate-valued raw document dictionary and trailer fragments in source order.
 - `src/page/sequence.rs`: Canonical persistent binary-forest sequence for growing current-page nodes.
 - `src/page/state_hash.rs`: Page semantic cursors, bounded derived projection caches, and component framing.
-- `src/page/tests.rs`: Page snapshot-root sharing and copy-on-write isolation tests.
+- `src/page/tests.rs`: Page snapshot value isolation, mark-value, and semantic
+  hash rollback tests.
 - `src/print.rs`: tex.web §54's print `selector`, §§57--65's print primitives, §73's `print_err`, and §82's `error` report channel.
 - `src/print/error_context.rs`: tex.web §§310--318's `show_context` two-line pseudoprint, bounded eager before/after projections captured at the live input seam, §314's token-list labels, and §310's `\errorcontextlines` elision, shared by every input-stack owner.
 - `src/print/tests.rs`: Unit tests for context widths, selector routing, help routing, and error-report completion.
@@ -215,7 +206,6 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
-- `src/tests/handle_matrix.rs`: Table-driven aggregate rollback, fork, and cross-Universe liveness coverage for every production opaque handle class.
 - `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.
 - `src/tests/replay.rs`: Unit tests for snapshot/replay behavior and semantic state convergence.
 - `src/tests/replay_common.rs`: Shared helpers for replay tests, including model cells and expected hash state.
@@ -244,7 +234,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   coordinate-valued deferred-write effects, artifact-owned rendered-source
   roots/recipes, weak snapshot-root mounts, and field/key-specific
   allocation-independent dependency projections.
-- `src/world/tests.rs`: Unit tests for world snapshots, file records, streams, printing, randomness, shell escape, effect replay, and snapshot-owned effect-root reclamation.
+- `src/world/tests.rs`: Unit tests for world snapshots, file records, streams,
+  printing, randomness, shell escape, deferred-write values, and effect replay.
 - `tests/it.rs`: Integration test harness that includes capability-boundary and live-boundary test modules.
 - `tests/structural_node_lifecycle.rs`: Focused success, committed-failure, rollback, retry, rejection, checkpoint, and generation-fork controls for structural node-list ownership.
 - `tests/it/capability_boundaries.rs`: Compile-fail integration tests asserting restricted input and transaction capabilities fail to compile.
@@ -254,6 +245,18 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `tests/ui/arena_transaction_exclusive.rs`: Compile-fail fixture proving suffix-owning transactions exclusively borrow the aggregate timeline.
 - `tests/ui/*-boundary-forbidden.rs`: Independent compile-fail fixtures attempting to bypass private live-state stores, omit paired editor-layout validation, or bypass the `Universe` facade.
 - `tests/ui/handle_serialization_forbidden.rs`: Compile-fail fixture attempting to serialize, deserialize, or construct live handles downstream.
+
+## Runtime-storage Test Contract
+
+The runtime-lifetime migration preserves observable value, rollback, format,
+effect, source, and diagnostic behavior rather than the outgoing ownership
+substrate. Standalone tests for opaque-id layouts, generation and region
+coordinates, root-set admission, pointer or reference counts, physical store
+growth, and handle lookup internals have been removed. Mixed subsystem tests
+must compare semantic values, portable format sections, semantic hashes,
+rollback results, and diagnostics instead of allocation identities or storage
+topology. Test-only growth, root-traversal, cache-shape, and ownership-census
+facades with no semantic consumers do not belong in this crate.
 
 ## Boundaries
 

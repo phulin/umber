@@ -102,16 +102,6 @@ impl<T> RegionCoordinate<T> {
     pub(crate) const fn offset(self) -> u32 {
         self.offset
     }
-
-    #[cfg(test)]
-    pub(super) const fn testing_parts(self) -> (u64, u32, u32, u32) {
-        (
-            self.key.namespace.get(),
-            self.key.slot,
-            self.key.generation.get(),
-            self.offset,
-        )
-    }
 }
 
 impl<T> Copy for RegionCoordinate<T> {}

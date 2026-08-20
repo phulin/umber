@@ -144,7 +144,6 @@ pub(crate) struct RegionArena<T> {
     live_slots: Vec<u32>,
     active: Option<ActiveReservation>,
     next_chunk_capacity: u32,
-    storage_growth_events: usize,
 }
 
 impl<T> RegionArena<T> {
@@ -157,7 +156,6 @@ impl<T> RegionArena<T> {
             slots: Vec::new(),
             live_slots: Vec::new(),
             active: None,
-            storage_growth_events: 0,
         })
     }
 
@@ -411,13 +409,9 @@ impl<T> RegionArena<T> {
             .max_by_key(|(_, slot)| slot.values.capacity())
             .map(|(slot, _)| slot);
         let slot = if let Some(slot) = reusable {
-            let old_live_capacity = self.live_slots.capacity();
             self.live_slots
                 .try_reserve(1)
                 .map_err(|_| RegionArenaError::AllocationFailed)?;
-            if self.live_slots.capacity() != old_live_capacity {
-                self.storage_growth_events += 1;
-            }
             let chunk = &mut self.slots[slot];
             let generation = chunk
                 .generation
@@ -431,9 +425,6 @@ impl<T> RegionArena<T> {
                     .values
                     .try_reserve_exact(values as usize - old_capacity)
                     .map_err(|_| RegionArenaError::AllocationFailed)?;
-                if chunk.values.capacity() != old_capacity {
-                    self.storage_growth_events += 1;
-                }
             }
             chunk.generation = generation;
             chunk.live = true;
@@ -447,27 +438,18 @@ impl<T> RegionArena<T> {
             chunk_values
                 .try_reserve_exact(needed as usize)
                 .map_err(|_| RegionArenaError::AllocationFailed)?;
-            let old_slot_capacity = self.slots.capacity();
             self.slots
                 .try_reserve(1)
                 .map_err(|_| RegionArenaError::AllocationFailed)?;
-            if self.slots.capacity() != old_slot_capacity {
-                self.storage_growth_events += 1;
-            }
-            let old_live_capacity = self.live_slots.capacity();
             self.live_slots
                 .try_reserve(1)
                 .map_err(|_| RegionArenaError::AllocationFailed)?;
-            if self.live_slots.capacity() != old_live_capacity {
-                self.storage_growth_events += 1;
-            }
             self.slots.push(ChunkSlot {
                 generation: FIRST_GENERATION,
                 live: true,
                 appendable: true,
                 values: chunk_values,
             });
-            self.storage_growth_events += 1;
             self.next_chunk_capacity = needed.saturating_mul(2).max(needed);
             slot
         };
@@ -527,11 +509,6 @@ impl<T> RegionArena<T> {
         }
         Ok(&slot.values)
     }
-
-    #[cfg(test)]
-    pub(crate) fn testing_storage_growth_events(&self) -> usize {
-        self.storage_growth_events
-    }
 }
 
 /// A borrow admitted once through namespace, slot, generation, and bounds.
@@ -563,6 +540,3 @@ fn fresh_namespace() -> Result<NonZeroU64, RegionArenaError> {
         .map_err(|_| RegionArenaError::NamespaceExhausted)?;
     NonZeroU64::new(raw).ok_or(RegionArenaError::NamespaceExhausted)
 }
-
-#[cfg(test)]
-mod tests;

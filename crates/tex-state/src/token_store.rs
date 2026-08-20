@@ -29,17 +29,6 @@ impl TokenSemanticId {
         hasher.u64(self.fingerprint);
         hasher.semantic_identity(self.identity);
     }
-
-    #[cfg(test)]
-    pub(crate) fn testing(fingerprint: u64) -> Self {
-        Self {
-            fingerprint,
-            identity: crate::state_hash::semantic_identity_bytes(
-                b"umber-testing-token-id",
-                &fingerprint.to_le_bytes(),
-            ),
-        }
-    }
 }
 
 impl Hash for TokenSemanticId {

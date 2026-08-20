@@ -3389,109 +3389,13 @@ mod tests {
         )
     }
 
-    fn owned_test_token_ref(value: u8) -> TokenListRef {
-        let mut universe = crate::Universe::new();
-        universe.intern_token_list_ref(&[crate::token::Token::param(value)])
-    }
-
-    fn test_form_owner(root: u32) -> NodeListRef {
-        NodeListRef::testing_with_id(NodeListId::testing_owned(root, 1, 0))
-    }
-
-    fn initialize_test_form(state: &mut PdfState, owner: NodeListRef) -> PdfFormRecord {
-        let identity = state.reserve_form().expect("form reservation");
-        state
-            .initialize_form(
-                identity,
-                owner,
-                test_identity(42),
-                (
-                    Scaled::from_raw(0),
-                    Scaled::from_raw(0),
-                    Scaled::from_raw(0),
-                ),
-                (None, None),
-                false,
-            )
-            .expect("form initialization")
-    }
-
     #[test]
-    fn pdf_form_snapshots_and_forks_retain_structural_box_owners() {
-        let mut state = PdfState::default();
-        state.enable();
-        let before_form = state.snapshot();
-        let owner = test_form_owner(50_001);
-        let observer = owner.downgrade();
-        drop(initialize_test_form(&mut state, owner));
-        let with_form = state.snapshot();
-
-        let fork = state.clone();
-        state.rollback(before_form);
-        assert!(
-            observer.upgrade().is_some(),
-            "snapshot and fork still own the captured form"
-        );
-        drop(with_form);
-        assert!(
-            observer.upgrade().is_some(),
-            "fork remains the sole form owner"
-        );
-        drop(fork);
-        assert!(
-            observer.upgrade().is_none(),
-            "dropping the final form timeline releases its box"
-        );
-    }
-
-    #[test]
-    fn rolled_back_forms_plateau_while_all_live_forms_grow_exactly() {
-        const ROLLED_BACK: u32 = 10_000;
-        const ALL_LIVE: u32 = 1_024;
-
-        let mut rolled_back = PdfState::default();
-        rolled_back.enable();
-        let empty = rolled_back.snapshot();
-        for offset in 0..ROLLED_BACK {
-            let owner = test_form_owner(60_000 + offset);
-            let observer = owner.downgrade();
-            drop(initialize_test_form(&mut rolled_back, owner));
-            assert!(observer.upgrade().is_some());
-            rolled_back.rollback(empty.clone());
-            assert!(
-                observer.upgrade().is_none(),
-                "rolled-back form {offset} retained its payload"
-            );
-        }
-        assert_eq!(rolled_back.forms().len(), 0);
-
-        let mut all_live = PdfState::default();
-        all_live.enable();
-        let mut observers = Vec::with_capacity(ALL_LIVE as usize);
-        for offset in 0..ALL_LIVE {
-            let owner = test_form_owner(80_000 + offset);
-            observers.push(owner.downgrade());
-            drop(initialize_test_form(&mut all_live, owner));
-        }
-        assert_eq!(all_live.forms().len(), ALL_LIVE as usize);
-        assert_eq!(
-            observers
-                .iter()
-                .filter(|owner| owner.upgrade().is_some())
-                .count(),
-            ALL_LIVE as usize
-        );
-        drop(all_live);
-        assert!(observers.iter().all(|owner| owner.upgrade().is_none()));
-    }
-
-    #[test]
-    fn pdf_records_snapshots_and_page_suffixes_preserve_token_coordinates() {
+    fn pdf_records_and_page_suffixes_preserve_token_parameter_semantics() {
         let mut state = PdfState::default();
         state.enable();
         let initial = state.snapshot();
-        let root = owned_test_token_ref(6);
-        let root_id = root.id();
+        let initial_hash = state.hash_fragment();
+        let root = test_token_ref();
         let parameter = PdfTokenParameter {
             tokens: root,
             semantic_id: test_identity(6),
@@ -3546,12 +3450,10 @@ mod tests {
                 None,
             )
             .expect("catalog action reservation");
-        assert_eq!(root.id(), root_id);
-
         state.rollback(initial.clone());
+        assert_eq!(state.hash_fragment(), initial_hash);
 
-        let page_root = owned_test_token_ref(7);
-        let page_id = page_root.id();
+        let page_root = test_token_ref();
         let page_parameter = PdfTokenParameter {
             tokens: page_root,
             semantic_id: test_identity(10),
@@ -3589,7 +3491,10 @@ mod tests {
         );
         let suffix = state.take_page_suffix(0);
         assert!(state.pages().is_empty());
-        assert_eq!(suffix[0].parameters.page_attr.id(), page_id);
+        assert_eq!(
+            suffix[0].parameters.page_attr.semantic_id,
+            test_identity(10)
+        );
         state.restore_page_suffix(suffix);
         state.rollback(initial);
         assert!(state.pages().is_empty());

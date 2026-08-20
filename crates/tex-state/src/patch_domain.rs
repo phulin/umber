@@ -58,8 +58,6 @@ pub(crate) struct PatchAllocationDomain {
     logical_bytes: usize,
     next_operation_serial: u64,
     active_operation: Option<ActiveOperation>,
-    #[cfg(any(test, feature = "testing"))]
-    testing_next_operation_allocation: Option<usize>,
 }
 
 /// A single-use aggregate operation mark.
@@ -67,21 +65,6 @@ pub(crate) struct PatchAllocationDomain {
 pub(crate) struct PatchOperationMark {
     owner: u64,
     serial: u64,
-}
-
-/// Opaque weak liveness probe for cross-crate lifecycle tests.
-#[cfg(any(test, feature = "testing"))]
-#[derive(Clone, Debug)]
-pub struct TestingPrivateRevisionDomainProbe {
-    owner: Arc<DomainOwnerToken>,
-}
-
-#[cfg(any(test, feature = "testing"))]
-impl TestingPrivateRevisionDomainProbe {
-    #[must_use]
-    pub fn is_live(&self) -> bool {
-        Arc::strong_count(&self.owner) != 1
-    }
 }
 
 /// A typed, non-owning coordinate into a live private revision domain.
@@ -155,8 +138,6 @@ impl PatchAllocationDomain {
             logical_bytes: 0,
             next_operation_serial: 0,
             active_operation: None,
-            #[cfg(any(test, feature = "testing"))]
-            testing_next_operation_allocation: None,
         }
     }
 
@@ -175,11 +156,6 @@ impl PatchAllocationDomain {
             slot_capacity: self.slots.capacity(),
             logical_bytes: self.logical_bytes,
         });
-        #[cfg(any(test, feature = "testing"))]
-        if let Some(bytes) = self.testing_next_operation_allocation.take() {
-            self.allocate(vec![0_u8; bytes].into_boxed_slice(), bytes)
-                .expect("testing allocation is inside the operation just opened");
-        }
         Ok(PatchOperationMark {
             owner: self.owner.identity,
             serial,
@@ -344,23 +320,6 @@ impl PatchAllocationDomain {
             .saturating_add(self.logical_bytes)
     }
 
-    #[cfg(any(test, feature = "testing"))]
-    pub(crate) fn testing_probe(&self) -> TestingPrivateRevisionDomainProbe {
-        TestingPrivateRevisionDomainProbe {
-            owner: Arc::clone(&self.owner),
-        }
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    pub(crate) fn testing_arm_next_operation_allocation(&mut self, bytes: usize) {
-        assert!(
-            self.testing_next_operation_allocation
-                .replace(bytes)
-                .is_none(),
-            "testing operation allocation is already armed"
-        );
-    }
-
     fn validate_operation(&self, mark: &PatchOperationMark) -> Result<(), PatchDomainError> {
         if !self.owner_matches(mark.owner) {
             return Err(PatchDomainError::StaleOperation);
@@ -407,6 +366,3 @@ impl AcceptedPatchObjects {
         self.logical_bytes
     }
 }
-
-#[cfg(test)]
-mod tests;

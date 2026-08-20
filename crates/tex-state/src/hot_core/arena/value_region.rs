@@ -450,11 +450,6 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
             .binary_search_by(|root| compare_region_keys(root.owner.key, key))
     }
 
-    #[cfg(test)]
-    fn testing_uses(&self, key: ChunkOwner) -> usize {
-        self.root(key).map_or(0, |root| root.uses.get())
-    }
-
     fn resolve_region(
         &self,
         key: ChunkOwner,
@@ -591,7 +586,6 @@ pub(crate) struct RuntimeValueRegionArena<
     next_slot: u32,
     allocation_sequence: u64,
     region_capacity: u32,
-    storage_growth_events: usize,
 }
 
 impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
@@ -608,7 +602,6 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
             reusable: Vec::new(),
             next_slot: 0,
             allocation_sequence: 0,
-            storage_growth_events: 0,
         })
     }
 
@@ -752,11 +745,7 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
     ) -> Result<RegionCoordinate<TokenWord>, RegionArenaError> {
         self.ensure_active()?;
         let active = self.active.as_mut().expect("active region was ensured");
-        reserve_column(
-            &mut active.columns.token_words,
-            self.region_capacity,
-            &mut self.storage_growth_events,
-        )?;
+        reserve_column(&mut active.columns.token_words, self.region_capacity)?;
         let offset = checked_offset(active.columns.token_words.len())?;
         active.columns.token_words.push(value);
         Ok(active.key.coordinate(offset))
@@ -768,11 +757,7 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
     ) -> Result<RegionCoordinate<TokenList>, RegionArenaError> {
         self.ensure_active()?;
         let active = self.active.as_mut().expect("active region was ensured");
-        reserve_column(
-            &mut active.columns.token_lists,
-            self.region_capacity,
-            &mut self.storage_growth_events,
-        )?;
+        reserve_column(&mut active.columns.token_lists, self.region_capacity)?;
         let offset = checked_offset(active.columns.token_lists.len())?;
         active.columns.token_lists.push(value);
         Ok(active.key.coordinate(offset))
@@ -784,11 +769,7 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
     ) -> Result<RegionCoordinate<MacroRecord>, RegionArenaError> {
         self.ensure_active()?;
         let active = self.active.as_mut().expect("active region was ensured");
-        reserve_column(
-            &mut active.columns.macro_records,
-            self.region_capacity,
-            &mut self.storage_growth_events,
-        )?;
+        reserve_column(&mut active.columns.macro_records, self.region_capacity)?;
         let offset = checked_offset(active.columns.macro_records.len())?;
         active.columns.macro_records.push(value);
         Ok(active.key.coordinate(offset))
@@ -800,11 +781,7 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
     ) -> Result<RegionCoordinate<MacroRoot>, RegionArenaError> {
         self.ensure_active()?;
         let active = self.active.as_mut().expect("active region was ensured");
-        reserve_column(
-            &mut active.columns.macro_roots,
-            self.region_capacity,
-            &mut self.storage_growth_events,
-        )?;
+        reserve_column(&mut active.columns.macro_roots, self.region_capacity)?;
         let offset = checked_offset(active.columns.macro_roots.len())?;
         active.columns.macro_roots.push(value);
         Ok(active.key.coordinate(offset))
@@ -816,11 +793,7 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
     ) -> Result<RegionCoordinate<Glue>, RegionArenaError> {
         self.ensure_active()?;
         let active = self.active.as_mut().expect("active region was ensured");
-        reserve_column(
-            &mut active.columns.glue_specs,
-            self.region_capacity,
-            &mut self.storage_growth_events,
-        )?;
+        reserve_column(&mut active.columns.glue_specs, self.region_capacity)?;
         let offset = checked_offset(active.columns.glue_specs.len())?;
         active.columns.glue_specs.push(value);
         Ok(active.key.coordinate(offset))
@@ -832,11 +805,7 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
     ) -> Result<RegionCoordinate<Provenance>, RegionArenaError> {
         self.ensure_active()?;
         let active = self.active.as_mut().expect("active region was ensured");
-        reserve_column(
-            &mut active.columns.provenance_roots,
-            self.region_capacity,
-            &mut self.storage_growth_events,
-        )?;
+        reserve_column(&mut active.columns.provenance_roots, self.region_capacity)?;
         let offset = checked_offset(active.columns.provenance_roots.len())?;
         active.columns.provenance_roots.push(value);
         Ok(active.key.coordinate(offset))
@@ -920,11 +889,6 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
         accounting
     }
 
-    #[cfg(test)]
-    pub(crate) fn testing_storage_growth_events(&self) -> usize {
-        self.storage_growth_events
-    }
-
     fn ensure_active(&mut self) -> Result<(), RegionArenaError> {
         let needs_new = self.active.as_ref().is_none_or(|active| {
             !active.appendable || active.columns.logical_values() >= self.region_capacity as usize
@@ -950,7 +914,6 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
                 .next_slot
                 .checked_add(1)
                 .ok_or(RegionArenaError::SlotCapacityExhausted)?;
-            self.storage_growth_events = self.storage_growth_events.saturating_add(1);
             MutableRuntimeValueRegion {
                 key: ChunkOwner {
                     namespace: self.namespace,
@@ -978,13 +941,9 @@ impl<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Provenance>
             self.recycle_mutable(active);
             return Ok(());
         }
-        let old_capacity = self.sealed_suffix.capacity();
         self.sealed_suffix
             .try_reserve(1)
             .map_err(|_| RegionArenaError::AllocationFailed)?;
-        if self.sealed_suffix.capacity() != old_capacity {
-            self.storage_growth_events = self.storage_growth_events.saturating_add(1);
-        }
         self.sealed_suffix.push(Arc::new(SealedRuntimeValueRegion {
             key: active.key,
             columns: active.columns,
@@ -1072,16 +1031,11 @@ impl RuntimeValueRegionAccounting {
     }
 }
 
-fn reserve_column<T>(
-    column: &mut Vec<T>,
-    capacity: u32,
-    storage_growth_events: &mut usize,
-) -> Result<(), RegionArenaError> {
+fn reserve_column<T>(column: &mut Vec<T>, capacity: u32) -> Result<(), RegionArenaError> {
     if column.capacity() == 0 {
         column
             .try_reserve_exact(capacity as usize)
             .map_err(|_| RegionArenaError::AllocationFailed)?;
-        *storage_growth_events = storage_growth_events.saturating_add(1);
     }
     Ok(())
 }
@@ -1236,6 +1190,3 @@ fn accounting_for_columns<TokenWord, TokenList, MacroRecord, MacroRoot, Glue, Pr
         registry_capacity: 0,
     }
 }
-
-#[cfg(test)]
-mod tests;

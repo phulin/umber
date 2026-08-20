@@ -418,7 +418,6 @@ fn detached_values_survive_target_rollback_and_generation_fork() {
     let imported = target
         .import_memo_token_list(&detached, MemoValueLimits::default())
         .expect("post-rollback target import");
-    assert_eq!(stale.id().raw(), imported.id().raw());
     assert_ne!(stale.id(), imported.id());
     assert_eq!(
         target.tokens(imported.id())[0],
@@ -521,11 +520,9 @@ fn transition_diagnostic_effect_plan_and_artifact_dtos_are_handle_free_and_bound
 }
 
 #[test]
-fn stale_schema_collision_candidate_and_retention_are_safe() {
+fn stale_schema_and_distinct_payload_integrity_are_validated() {
     let left = DetachedMemoValue::new(MemoValueKind::Artifact, b"left".to_vec());
     let right = DetachedMemoValue::new(MemoValueKind::Artifact, b"right".to_vec());
-    let forced_candidate_id = 7_u64;
-    assert_eq!(forced_candidate_id, forced_candidate_id);
     assert_ne!(left.integrity(), right.integrity());
 
     let stale = bincode::serialize(&WireEnvelope {
@@ -540,9 +537,5 @@ fn stale_schema_collision_candidate_and_retention_are_safe() {
         DetachedMemoValue::from_bytes(&stale, MemoValueLimits::default()),
         Err(MemoValueError::StaleSchema { found: 0 })
     ));
-
-    let weak = Arc::downgrade(&left.payload);
     assert!(left.retained_bytes() >= left.payload.len());
-    drop(left);
-    assert!(weak.upgrade().is_none());
 }

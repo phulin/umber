@@ -116,14 +116,6 @@ impl RootSpanId {
     }
 }
 
-impl FragmentId {
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) const fn raw(self) -> u32 {
-        self.slot
-    }
-}
-
 /// Immutable source text and its permanently reserved logical range.
 #[derive(Clone, Debug)]
 struct SourceFragment {

@@ -154,8 +154,6 @@ pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,
     PageFireUp, PageInteger,
 };
-#[cfg(any(test, feature = "testing"))]
-pub use patch_domain::TestingPrivateRevisionDomainProbe;
 pub use provenance::{ProvenanceBudgets, ProvenanceDemand};
 pub use provenance_resolver::{
     DetachedGeneratedSourceSpan, ProvenanceResolver, ResolvedSourceLocation,
@@ -171,8 +169,6 @@ pub use source_fragments::{
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
 pub use stores::{FontParameterError, GroupFrame, GroupKind, GroupMismatch, PrepareMagDiagnostic};
-#[cfg(any(test, feature = "testing"))]
-pub use stores::{TestingOwnershipCensus, TestingValuePoolCensus};
 pub use universe::{
     BoxBuildTransaction, BoxDimension, DirectOperationMark, EngineBoundaryHasher, FormatError,
     GenerationForkError, GenerationSubstrate, GeometryObservation, InputOpenContext,

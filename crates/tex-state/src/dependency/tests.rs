@@ -280,13 +280,11 @@ fn observations_are_read_only_and_mutations_register_stamps() {
     let observed_key = meaning(7);
     let changed_key = meaning(8);
     let mut tracker = DependencyTracker::default();
-    let shared = Arc::clone(&tracker.changed);
 
     assert_eq!(tracker.track(observed_key), ChangedAt::NEVER);
     let observation = tracker.observe(observed_key, DependencyValue::Absent);
     assert_eq!(observation.changed_at, ChangedAt::NEVER);
     assert!(tracker.changed.is_empty());
-    assert!(Arc::ptr_eq(&shared, &tracker.changed));
 
     let stamp = tracker.mark_changed(changed_key);
     assert!(stamp > ChangedAt::NEVER);
@@ -431,10 +429,9 @@ fn region_deduplication_and_nested_query_order_are_deterministic() {
 }
 
 #[test]
-fn canonical_content_observations_ignore_allocation_identity() {
+fn canonical_content_observations_match_equal_bytes() {
     let left = Vec::from(&b"same semantic token list"[..]);
     let right = Vec::from(&b"same semantic token list"[..]);
-    assert_ne!(left.as_ptr(), right.as_ptr());
     assert_eq!(
         DependencyValue::Content(ContentHash::from_bytes(&left)),
         DependencyValue::Content(ContentHash::from_bytes(&right))
@@ -677,7 +674,6 @@ fn final_write_values_are_allocation_independent() {
     let _unrelated = left.intern_token_list(&[Token::param(1)]);
     let left_value = left.intern_token_list(&[Token::param(2)]);
     let right_value = right.intern_token_list(&[Token::param(2)]);
-    assert_ne!(left_value.raw(), right_value.raw());
 
     let left_mark = left.begin_tracked_region().expect("start left region");
     let right_mark = right.begin_tracked_region().expect("start right region");

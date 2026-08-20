@@ -406,60 +406,6 @@ pub struct EngineStackUsage {
     pub save_stack: usize,
 }
 
-/// Test-only census of one weak immutable-value pool.
-///
-/// Live objects and logical bytes are ownership authority. The remaining
-/// fields describe bounded, non-owning lookup and slot metadata so long-run
-/// tests can distinguish live-root growth from allocator retention.
-#[cfg(any(test, feature = "testing"))]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct TestingValuePoolCensus {
-    pub live_objects: usize,
-    pub logical_bytes: usize,
-    pub slot_extent: usize,
-    pub slot_capacity: usize,
-    pub index_keys: usize,
-    pub index_capacity: usize,
-    pub max_bucket_capacity: usize,
-    pub free_slots: usize,
-}
-
-#[cfg(any(test, feature = "testing"))]
-impl TestingValuePoolCensus {
-    fn new(live: (usize, usize), shape: (usize, usize, usize, usize, usize, usize)) -> Self {
-        Self {
-            live_objects: live.0,
-            logical_bytes: live.1,
-            slot_extent: shape.0,
-            slot_capacity: shape.1,
-            index_keys: shape.2,
-            index_capacity: shape.3,
-            max_bucket_capacity: shape.4,
-            free_slots: shape.5,
-        }
-    }
-}
-
-/// Test-only logical-owner and bounded-metadata census for a live generation.
-#[cfg(any(test, feature = "testing"))]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct TestingOwnershipCensus {
-    pub token_lists: TestingValuePoolCensus,
-    pub macro_bodies: TestingValuePoolCensus,
-    pub macro_definitions: TestingValuePoolCensus,
-    pub glue_specs: TestingValuePoolCensus,
-    pub node_weak_entries: usize,
-    pub node_weak_capacity: usize,
-    pub provenance_records: usize,
-    pub provenance_lists: usize,
-    pub provenance_entries: usize,
-    pub provenance_retained_bytes: usize,
-    pub source_regions: usize,
-    pub source_bytes: usize,
-    pub journal_entries: usize,
-    pub journal_retained_bytes: usize,
-}
-
 /// Web2C TeX82's configured main-memory arena profile.
 const TEX82_MEMORY_WORD_CAPACITY: usize = 250_000;
 const TEX82_LOW_MEMORY_GROWTH: usize = 1_000;
@@ -1149,17 +1095,6 @@ impl Stores {
             );
             false
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn testing_transient_memory_base_projections(&self) -> usize {
-        self.transient_memory_base_projections
-    }
-
-    #[cfg(test)]
-    pub(crate) fn testing_main_memory_root_traversals(&self) -> usize {
-        self.main_memory_root_traversals
-            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn record_main_memory_usage(
@@ -3038,12 +2973,6 @@ impl Stores {
             .expect("runtime glue allocation must remain representable")
     }
 
-    #[cfg(test)]
-    pub(crate) fn testing_glue_live_totals(&self) -> (usize, usize) {
-        let len = self.runtime_values.glue_len() as usize;
-        (len, len)
-    }
-
     pub(crate) fn glue_ref(&self, id: GlueId) -> GlueSpecRef {
         self.runtime_values
             .glue(id)
@@ -4435,44 +4364,6 @@ impl Stores {
             snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos(),
             "Stores snapshots are invalidated by journal truncation before their checkpoint position"
         );
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    #[must_use]
-    pub fn testing_ownership_census(&self) -> TestingOwnershipCensus {
-        let token_len = self.runtime_values.token_len() as usize;
-        let macro_len = self.runtime_values.macro_len() as usize;
-        let glue_len = self.runtime_values.glue_len() as usize;
-        let provenance = self.provenance_stats();
-        let (node_weak_entries, node_weak_capacity) = self.node_ref_index.shape();
-        TestingOwnershipCensus {
-            token_lists: TestingValuePoolCensus::new(
-                (token_len, token_len),
-                (token_len, token_len, 0, 0, 0, 0),
-            ),
-            macro_bodies: TestingValuePoolCensus::new(
-                (macro_len, macro_len),
-                (macro_len, macro_len, 0, 0, 0, 0),
-            ),
-            macro_definitions: TestingValuePoolCensus::new(
-                (macro_len, macro_len),
-                (macro_len, macro_len, 0, 0, 0, 0),
-            ),
-            glue_specs: TestingValuePoolCensus::new(
-                (glue_len, glue_len),
-                (glue_len, glue_len, 0, 0, 0, 0),
-            ),
-            node_weak_entries,
-            node_weak_capacity,
-            provenance_records: provenance.origin_records(),
-            provenance_lists: provenance.origin_list_spans(),
-            provenance_entries: provenance.origin_list_entries(),
-            provenance_retained_bytes: provenance.retained_bytes(),
-            source_regions: provenance.source_regions(),
-            source_bytes: provenance.source_map_bytes(),
-            journal_entries: self.env.journal_entry_count(),
-            journal_retained_bytes: self.env.journal_retained_bytes(),
-        }
     }
 }
 

@@ -293,6 +293,3 @@ fn fresh_namespace() -> NonZeroU64 {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

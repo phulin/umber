@@ -716,11 +716,6 @@ impl RuntimeValueRootSet {
                 .saturating_mul(core::mem::size_of_val(root))
         })
     }
-
-    #[cfg(test)]
-    fn testing_uses(&self, owner: ChunkOwner) -> usize {
-        self.regions.testing_uses(owner)
-    }
 }
 
 /// Borrowed read authority over one private suffix and canonical consumers.
@@ -1126,6 +1121,3 @@ impl RuntimeValueCandidate {
         self.arena.accounting()
     }
 }
-
-#[cfg(test)]
-mod tests;

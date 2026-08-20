@@ -1,10 +1,8 @@
 use super::{PrepareMagDiagnostic, Stores};
-use crate::cell::{BankTag, CellId};
 use crate::env::banks::{DimenParam, GlueParam, IntParam};
 use crate::font::NULL_FONT;
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
-use crate::ids::{ArenaRef, NodeListId, TokenListId};
 use crate::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use crate::math::{
     FractionThickness, MathChoice, MathField, MathFraction, MathListNode, MathNoad, MathStyle,
@@ -33,10 +31,7 @@ use crate::{
 
 trait StructuralBoxTestExt {
     fn install_box(&mut self, index: u16, root: NodeListRef);
-    fn install_box_global(&mut self, index: u16, root: NodeListRef);
     fn box_owner(&self, index: u16) -> Option<NodeListRef>;
-    fn take_box_owner(&mut self, index: u16) -> Option<NodeListRef>;
-    fn take_box_owner_same_level(&mut self, index: u16) -> Option<NodeListRef>;
 }
 
 impl StructuralBoxTestExt for Stores {
@@ -44,20 +39,8 @@ impl StructuralBoxTestExt for Stores {
         let _ = self.write_box_reg_ref(index, Some(root), false);
     }
 
-    fn install_box_global(&mut self, index: u16, root: NodeListRef) {
-        let _ = self.write_box_reg_ref(index, Some(root), true);
-    }
-
     fn box_owner(&self, index: u16) -> Option<NodeListRef> {
         self.box_reg_ref(index)
-    }
-
-    fn take_box_owner(&mut self, index: u16) -> Option<NodeListRef> {
-        self.take_box_reg_ref_with_receipt(index).0
-    }
-
-    fn take_box_owner_same_level(&mut self, index: u16) -> Option<NodeListRef> {
-        self.take_box_reg_ref_same_level_with_receipt(index).0
     }
 }
 
@@ -85,7 +68,7 @@ fn recursive_box_copy_below_existing_coordinates_does_not_raise_extents() {
 }
 
 #[test]
-fn engine_stack_usage_merges_runtime_high_water_by_owner() {
+fn engine_stack_usage_merges_runtime_high_water_by_category() {
     let mut stores = Stores::new();
     stores.record_engine_stack_usage(EngineStackUsage {
         input_stack: 7,
@@ -111,34 +94,17 @@ fn engine_stack_usage_merges_runtime_high_water_by_owner() {
 }
 
 #[test]
-fn string_pool_checkpoint_marks_recycled_strings_without_cloning_them() {
+fn string_pool_checkpoint_restores_recycled_string_state() {
     let mut stores = Stores::new();
     stores.string_pool.recycling_enabled = true;
     stores.remember_pool_string("format-name");
     let journal_before = stores.string_pool_recycled_journal.len();
-    let owners_before = std::sync::Arc::strong_count(
-        stores
-            .string_pool
-            .recycled
-            .get("format-name")
-            .expect("retained format name"),
-    );
     let snapshot = stores.checkpoint();
 
     // Web2C tex.ch [29.517] searches the retained pool without changing it.
     // Aggregate operation checkpoints therefore retain only the append mark,
     // not a cloned membership tree or another owner for every pooled string.
     assert_eq!(snapshot.string_pool_recycled_mark, journal_before);
-    assert_eq!(
-        std::sync::Arc::strong_count(
-            stores
-                .string_pool
-                .recycled
-                .get("format-name")
-                .expect("retained format name"),
-        ),
-        owners_before
-    );
     let baseline = stores.engine_usage_statistics();
     stores.slow_make_pool_string("format-name");
     assert_eq!(stores.engine_usage_statistics(), baseline);
@@ -176,7 +142,6 @@ fn rollback_restores_env_and_interner_as_one_tuple() {
     assert_eq!(stores.resolve(kept), "kept");
     assert_eq!(stores.meaning(kept), Meaning::Relax);
     let reused = stores.intern("temporary");
-    assert_eq!(reused.raw(), temporary.raw());
     assert_eq!(stores.meaning(reused), Meaning::Undefined);
 }
 
@@ -378,31 +343,6 @@ fn box_lr_is_part_of_canonical_node_semantic_identity() {
 }
 
 #[test]
-fn owned_node_freeze_reuses_the_source_vector_and_preserves_identity() {
-    let mut borrowed = Stores::new();
-    let expected = vec![
-        Node::Penalty(17),
-        Node::Whatsit(Whatsit::Special {
-            class: "owned".into(),
-            payload: vec![1, 2, 3, 4],
-        }),
-        Node::Penalty(23),
-    ];
-    let borrowed_id = borrowed.freeze_node_list(&expected);
-
-    let mut owned = Stores::new();
-    let mut nodes = Vec::with_capacity(8);
-    nodes.extend(expected.clone());
-    let capacity = nodes.capacity();
-    let owned_id = owned.freeze_node_list_owned(&mut nodes);
-
-    assert!(nodes.is_empty());
-    assert_eq!(nodes.capacity(), capacity);
-    assert_eq!(borrowed_id.semantic_id(), owned_id.semantic_id());
-    assert_eq!(owned_id.nodes().to_vec(), expected);
-}
-
-#[test]
 fn frozen_font_semantics_exclude_mutable_identifier_names() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
@@ -430,7 +370,7 @@ fn frozen_font_semantics_exclude_mutable_identifier_names() {
 }
 
 #[test]
-fn node_semantic_ids_and_owners_survive_store_rollback() {
+fn node_values_and_semantic_ids_survive_store_rollback() {
     let mut stores = Stores::new();
     let snapshot = stores.checkpoint();
     let retained = stores.freeze_node_list(&[Node::Penalty(1)]);
@@ -453,93 +393,6 @@ fn node_semantic_ids_and_owners_survive_store_rollback() {
         .box_reg_ref(0)
         .expect("box assignment retains the list owner");
     assert_eq!(stored.semantic_id(), semantic_id);
-}
-
-#[test]
-fn compact_and_survivor_nodes_preserve_mark_coordinates_until_rollback() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
-    let tokens = stores.intern_token_list_ref_in_domain(&[Token::param(1)], None);
-    let token_id = tokens.id();
-    let mut nodes = vec![Node::Mark { class: 7, tokens }];
-
-    let compact = stores.freeze_node_list_owned(&mut nodes);
-    assert!(nodes.is_empty(), "owned freeze must move the token root");
-    let crate::node_arena::NodeRef::Mark { class, tokens } =
-        compact.nodes().first().expect("compact mark")
-    else {
-        panic!("compact node must retain the mark sidecar")
-    };
-    assert_eq!(class, 7);
-    assert_eq!(tokens.id(), token_id);
-
-    stores.install_box(0, compact);
-    assert!(stores.runtime_values.contains_token(token_id));
-    let survivor_node = stores
-        .box_reg_ref(0)
-        .expect("box assignment owns the list")
-        .get(0)
-        .expect("survivor mark");
-    assert!(matches!(
-        survivor_node,
-        Node::Mark { class: 7, tokens } if tokens.id() == token_id
-    ));
-    drop(survivor_node);
-
-    stores.rollback(&snapshot);
-    assert!(
-        !stores.runtime_values.contains_token(token_id),
-        "rollback must reject the discarded token coordinate"
-    );
-}
-
-#[test]
-fn frozen_node_payload_retains_its_deduplicated_runtime_value_regions() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
-    let tokens = stores.intern_token_list_ref_in_domain(
-        &[Token::Char {
-            ch: 'r',
-            cat: Catcode::Other,
-        }],
-        None,
-    );
-    let coordinate = stores
-        .runtime_values
-        .token_coordinate(tokens.id())
-        .expect("new token coordinate resolves");
-    let frozen = stores.freeze_node_list(&[
-        Node::Mark { class: 0, tokens },
-        Node::Mark { class: 1, tokens },
-    ]);
-
-    let roots = frozen
-        .runtime_value_roots()
-        .expect("nonempty value-bearing node payload owns a root set");
-    assert_eq!(roots.accounting().region_owners, 1);
-    let retained = roots.accounting().retained_payload_bytes;
-
-    stores.rollback(&snapshot);
-    assert_eq!(
-        frozen
-            .runtime_value_roots()
-            .expect("payload root set survives registry rollback")
-            .admit_token_list(coordinate)
-            .expect("payload-owned coordinate remains directly admissible")
-            .tokens(),
-        [Token::Char {
-            ch: 'r',
-            cat: Catcode::Other,
-        }]
-    );
-    assert_eq!(
-        frozen
-            .runtime_value_roots()
-            .expect("payload root set survives registry rollback")
-            .accounting()
-            .retained_payload_bytes,
-        retained
-    );
 }
 
 #[test]
@@ -567,7 +420,6 @@ fn node_semantic_ids_exclude_token_provenance() {
         class: 0,
         tokens: second_tokens.token_ref(),
     }]);
-    assert!(!first.shares_payload(&second));
     assert_eq!(first.semantic_id(), second.semantic_id());
 }
 
@@ -779,7 +631,7 @@ fn exact_environment_identity_raw_scalar_restore_is_atomic_and_noop_is_free() {
 }
 
 #[test]
-fn exact_environment_identity_raw_restore_and_journal_rollback_have_one_owner() {
+fn exact_environment_identity_stays_consistent_across_raw_restore_and_rollback() {
     let mut stores = Stores::new();
     let baseline_cursor = stores.state_hash_cursor();
     let mut baseline = stores.checkpoint();
@@ -976,7 +828,7 @@ fn exact_environment_identity_ignores_intern_allocation_order() {
 }
 
 #[test]
-fn env_token_coordinates_follow_save_stack_rollback_and_generation_fork() {
+fn token_values_follow_save_stack_rollback_and_store_fork() {
     let mut stores = Stores::new();
     let outer = stores.intern_token_list(&[Token::Char {
         ch: 'o',
@@ -1015,18 +867,11 @@ fn env_token_coordinates_follow_save_stack_rollback_and_generation_fork() {
 
     let fork = stores.clone();
     assert_eq!(fork.toks(0), global);
-    assert_eq!(
-        fork.env
-            .token_root(CellId::new(BankTag::Toks, 0))
-            .expect("forked Env token coordinate")
-            .id(),
-        global
-    );
     assert_eq!(fork.tokens(global).tokens(), stores.tokens(global).tokens());
 }
 
 #[test]
-fn macro_definitions_preserve_parameter_and_replacement_coordinates() {
+fn macro_definitions_preserve_parameter_and_replacement_values() {
     let mut stores = Stores::new();
     let parameter = stores.intern_token_list(&[Token::param(1)]);
     let replacement = stores.intern_token_list(&[Token::Char {
@@ -1205,7 +1050,7 @@ fn oversized_and_cumulative_sources_use_wide_fallback_without_narrowing_position
 }
 
 #[test]
-fn direct_and_fallback_liveness_tracks_aggregate_rollback() {
+fn source_origins_disappear_after_aggregate_rollback() {
     let mut stores = Stores::new();
     stores.source_map.set_next_position_for_test(0x7fff_fffe);
     let checkpoint = stores.checkpoint();
@@ -1263,7 +1108,7 @@ fn group_exit_restores_all_code_tables() {
 }
 
 #[test]
-fn checked_save_stack_projection_samples_before_each_owner_push() {
+fn checked_save_stack_projection_samples_before_each_physical_push() {
     // TeX82 §§273/275 check save_ptr before pushing boundaries and restore
     // records. Section 276's aftergroup token is likewise checked before its
     // one-word push. The projection must identify the newest physical record
@@ -1334,8 +1179,6 @@ fn rollback_restores_token_store_as_part_of_snapshot_tuple() {
 
     stores.rollback(&snapshot);
     let reused = stores.intern_token_list(&[crate::token::Token::param(2)]);
-
-    assert_eq!(reused.raw(), stale.id().raw());
     assert_ne!(reused, stale.id());
     assert_eq!(stores.tokens(reused), &[crate::token::Token::param(2)]);
 }
@@ -1389,57 +1232,6 @@ fn builder_and_bulk_token_list_identities_match() {
         stores.testing_token_semantic_id(built),
         stores.testing_token_semantic_id(bulk)
     );
-}
-
-#[test]
-fn token_list_ingress_rejects_equal_slot_foreign_symbols_before_interning() {
-    let mut foreign = Stores::new();
-    let foreign_symbol = foreign.intern("foreign");
-    let token = Token::Cs(foreign_symbol.symbol());
-    let mut stores = Stores::new();
-    let local = stores.intern("local");
-    assert_eq!(foreign_symbol.raw(), local.raw());
-    assert_ne!(foreign_symbol.symbol(), local.symbol());
-
-    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        stores.intern_token_list(&[token]);
-    }));
-    assert!(rejected.is_err());
-
-    let accepted = stores.intern_token_list(&[Token::Cs(local.symbol())]);
-    assert_eq!(
-        accepted.raw(),
-        1,
-        "rejected ingress must not allocate a list"
-    );
-}
-
-#[test]
-fn token_list_builder_rejects_equal_slot_foreign_symbol_atomically() {
-    let mut foreign = Stores::new();
-    let foreign_symbol = foreign.intern("foreign");
-    let mut stores = Stores::new();
-    let local = stores.intern("local");
-    assert_eq!(foreign_symbol.raw(), local.raw());
-    assert_ne!(foreign_symbol.symbol(), local.symbol());
-    let mut builder = stores.token_list_builder();
-    builder.push(Token::Cs(foreign_symbol.symbol()));
-
-    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        stores.finish_token_list(&mut builder);
-    }));
-    assert!(rejected.is_err());
-    assert_eq!(builder.len(), 1, "rejected builder must remain reusable");
-
-    builder.clear();
-    builder.push(Token::Cs(local.symbol()));
-    let accepted = stores.finish_token_list(&mut builder);
-    assert_eq!(
-        accepted.raw(),
-        1,
-        "rejected builder must not allocate a list"
-    );
-    assert!(builder.is_empty());
 }
 
 #[test]
@@ -1514,8 +1306,6 @@ fn rollback_restores_provenance_as_part_of_snapshot_tuple() {
 
     stores.rollback(&snapshot);
     let reused = stores.synthetic_origin(SyntheticOriginKind::Format);
-
-    assert_ne!(reused.raw(), stale.raw());
     assert_eq!(stores.origin_if_live(stale), None);
     assert_eq!(
         stores.origin(reused),
@@ -1716,40 +1506,12 @@ fn rollback_restores_macro_store_as_part_of_snapshot_tuple() {
         stores.macro_definition(kept.id()).replacement_text(),
         kept_body
     );
-    assert_eq!(reused.raw(), stale_id.raw());
     assert_ne!(reused.id(), stale_id);
     assert!(!stores.runtime_values.contains_macro(stale_id));
     assert_eq!(
         stores.macro_definition(reused.id()).replacement_text(),
         reused_body
     );
-}
-
-#[test]
-fn older_checkpoint_rollback_releases_newer_candidate_owner_without_dropping_snapshot_storage() {
-    let mut stores = Stores::new();
-    let old = stores.checkpoint();
-    let newer = stores.intern_token_list(&[Token::Char {
-        ch: 'n',
-        cat: Catcode::Other,
-    }]);
-    stores.set_toks_global(0, newer);
-    let retained_newer_checkpoint = stores.checkpoint();
-
-    stores.rollback(&old);
-    assert_eq!(stores.toks(0), TokenListId::EMPTY);
-    assert!(!stores.runtime_values.contains_token(newer));
-
-    // The newer checkpoint's RegionRootSet may outlive its invalidated mark;
-    // candidate rollback must not require unique Arc ownership to discard the
-    // whole suffix from the live generation.
-    drop(retained_newer_checkpoint);
-    let replacement = stores.intern_token_list(&[Token::Char {
-        ch: 'r',
-        cat: Catcode::Other,
-    }]);
-    assert_eq!(replacement.raw(), newer.raw());
-    assert_ne!(replacement, newer);
 }
 
 #[test]
@@ -1760,8 +1522,6 @@ fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
 
     stores.rollback(&snapshot);
     let reused = stores.intern_glue(glue_spec(2));
-
-    assert_eq!(reused.raw(), stale.raw());
     assert_ne!(reused, stale);
     assert!(!stores.runtime_values.contains_glue(stale));
     assert_eq!(stores.glue(reused), glue_spec(2));
@@ -1909,7 +1669,7 @@ fn compact_builder_freezes_with_owned_semantics_and_promotes_for_mixed_material(
     assert_eq!(frozen.nodes(), &expected);
     let owned = stores.freeze_node_list(&expected);
     assert_eq!(frozen.semantic_fingerprint(), owned.semantic_fingerprint());
-    assert!(frozen.shares_payload(&owned));
+    assert_eq!(frozen.nodes().to_vec(), owned.nodes().to_vec());
 
     let mut mixed = stores.node_list_builder();
     mixed.push_unknown_character(NULL_FONT, 'B');
@@ -1926,104 +1686,6 @@ fn compact_builder_freezes_with_owned_semantics_and_promotes_for_mixed_material(
             Node::Penalty(9),
         ]
     );
-}
-
-#[test]
-#[should_panic(expected = "glue id is not live in this Universe timeline")]
-fn freeze_node_list_rejects_stale_rolled_back_glue_id() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
-    let stale = stores.intern_glue(glue_spec(1));
-
-    stores.rollback(&snapshot);
-    stores.freeze_node_list(&[Node::Glue {
-        spec: crate::glue::GlueSpecRef::testing_new(stale),
-        kind: crate::node::GlueKind::Normal,
-        leader: None,
-    }]);
-}
-
-#[test]
-#[should_panic(expected = "glue id is not live in this Universe timeline")]
-fn finish_node_list_rejects_foreign_glue_id() {
-    let mut stores = Stores::new();
-    let mut foreign = stores.clone();
-    let foreign_glue = foreign.intern_glue(glue_spec(1));
-    let mut builder = stores.node_list_builder();
-    builder.push(Node::Glue {
-        spec: crate::glue::GlueSpecRef::testing_new(foreign_glue),
-        kind: crate::node::GlueKind::Normal,
-        leader: None,
-    });
-
-    let _ = stores.finish_node_list(&mut builder);
-}
-
-#[test]
-#[should_panic(expected = "stored token-list slot is not live")]
-fn freeze_node_list_rejects_noncanonical_owner_retained_across_rollback() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
-    let stale = stores.intern_token_list_ref_in_domain(&[crate::token::Token::param(1)], None);
-
-    stores.rollback(&snapshot);
-    let _ = stores.freeze_node_list(&[Node::Mark {
-        class: 0,
-        tokens: stale,
-    }]);
-}
-
-#[test]
-#[should_panic(expected = "token list is not live in this Universe timeline")]
-fn finish_node_list_rejects_foreign_whatsit_token_list() {
-    let mut stores = Stores::new();
-    let mut foreign = stores.clone();
-    let foreign_tokens =
-        foreign.intern_token_list_ref_in_domain(&[crate::token::Token::param(1)], None);
-    let mut builder = stores.node_list_builder();
-    builder.push(Node::Whatsit(crate::node::Whatsit::DeferredWrite {
-        sink: crate::world::PrintSink::TerminalAndLog,
-        tokens: foreign_tokens,
-    }));
-
-    let _ = stores.finish_node_list(&mut builder);
-}
-
-#[test]
-fn direct_child_owner_survives_aggregate_rollback() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
-    let stale = one_char(&mut stores, 'x');
-
-    stores.rollback(&snapshot);
-    stores.freeze_node_list(&[Node::Penalty(1), Node::Penalty(2)]);
-    let root = stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(stale))]);
-    assert!(matches!(
-        root.nodes().first(),
-        Some(crate::node_arena::NodeRef::Adjust(_))
-    ));
-}
-
-#[test]
-fn direct_child_owner_can_cross_universe_boundaries() {
-    let mut stores = Stores::new();
-    let mut foreign = Stores::new();
-    let foreign_child = one_char(&mut foreign, 'x');
-    let mut builder = stores.node_list_builder();
-    builder.push(Node::HList(BoxNode::new(BoxNodeFields {
-        width: scaled(10),
-        height: scaled(7),
-        depth: scaled(3),
-        shift: scaled(0),
-        box_lr: crate::node::BoxLr::Normal,
-        glue_set: GlueSetRatio::ZERO,
-        glue_sign: Sign::Normal,
-        glue_order: Order::Normal,
-        children: foreign_child,
-    })));
-
-    let root = stores.freeze_node_list_ref(builder);
-    assert!(matches!(root.get(0), Some(Node::HList(_))));
 }
 
 #[test]
@@ -2083,80 +1745,6 @@ fn rollback_rejects_exited_group_replaced_at_same_depth() {
 }
 
 #[test]
-#[should_panic(expected = "Stores snapshot belongs to a different Stores instance")]
-fn rollback_rejects_snapshot_from_different_store() {
-    let mut first = Stores::new();
-    let mut second = Stores::new();
-    let snapshot = first.checkpoint();
-
-    second.rollback(&snapshot);
-}
-
-#[test]
-#[should_panic(expected = "Stores snapshot belongs to a different Stores instance")]
-fn rollback_rejects_snapshot_from_cloned_store() {
-    let mut first = Stores::new();
-    let mut second = first.clone();
-    let snapshot = first.checkpoint();
-
-    second.rollback(&snapshot);
-}
-
-#[test]
-#[should_panic(expected = "token list is not live in this Universe timeline")]
-fn stale_rolled_back_token_list_cannot_mutate_toks_register() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
-    let stale = stores.intern_token_list(&[crate::token::Token::param(1)]);
-
-    stores.rollback(&snapshot);
-    stores.set_toks(0, stale);
-}
-
-#[test]
-#[should_panic(expected = "macro definition id is not live in this Universe timeline")]
-fn stale_rolled_back_macro_definition_cannot_mutate_meaning() {
-    let mut stores = Stores::new();
-    let symbol = stores.intern("macro");
-    let params = stores.intern_token_list(&[]);
-    let snapshot = stores.checkpoint();
-    let body = stores.intern_token_list(&[Token::param(1)]);
-    let stale = stores.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, params, body));
-    let stale_id = stale.id();
-
-    stores.rollback(&snapshot);
-    stores.set_meaning(
-        symbol,
-        Meaning::Macro {
-            flags: MeaningFlags::EMPTY,
-            definition: stale_id,
-        },
-    );
-}
-
-#[test]
-#[should_panic(expected = "glue id is not live in this Universe timeline")]
-fn stale_rolled_back_glue_cannot_mutate_skip_register() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
-    let stale = stores.intern_glue(glue_spec(1));
-
-    stores.rollback(&snapshot);
-    stores.set_skip(0, stale);
-}
-
-#[test]
-#[should_panic(expected = "glue id is not live in this Universe timeline")]
-fn stale_rolled_back_glue_cannot_mutate_muskip_register() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
-    let stale = stores.intern_glue(glue_spec(1));
-
-    stores.rollback(&snapshot);
-    stores.set_muskip(0, stale);
-}
-
-#[test]
 fn checkpoint_rollback_restores_muskip_register_and_glue_tuple() {
     let mut stores = Stores::new();
     let original = stores.intern_glue(glue_spec(1));
@@ -2205,650 +1793,6 @@ fn rollback_restores_afterassignment_slot() {
 
     assert_eq!(stores.take_afterassignment(), Some(original));
     assert_eq!(stores.take_afterassignment(), None);
-}
-
-#[test]
-fn equal_slot_foreign_aftergroup_token_preserves_payload_order() {
-    let mut foreign = Stores::new();
-    let foreign_symbol = foreign.intern("foreign");
-    let mut stores = Stores::new();
-    let local = stores.intern("local");
-    assert_eq!(foreign_symbol.raw(), local.raw());
-    assert_ne!(foreign_symbol.symbol(), local.symbol());
-    let first = Token::param(1);
-    let last = Token::Cs(local.symbol());
-    stores.enter_group();
-    stores.push_aftergroup(first);
-
-    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        stores.push_aftergroup(Token::Cs(foreign_symbol.symbol()));
-    }));
-    assert!(rejected.is_err());
-
-    stores.push_aftergroup(last);
-    assert_eq!(stores.leave_group(), vec![first, last]);
-}
-
-#[test]
-fn equal_slot_foreign_afterassignment_token_preserves_previous_payload() {
-    let mut foreign = Stores::new();
-    let foreign_symbol = foreign.intern("foreign");
-    let mut stores = Stores::new();
-    let local = stores.intern("local");
-    assert_eq!(foreign_symbol.raw(), local.raw());
-    assert_ne!(foreign_symbol.symbol(), local.symbol());
-    let original = Token::Cs(local.symbol());
-    stores.set_afterassignment(original);
-
-    let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        stores.set_afterassignment(Token::Cs(foreign_symbol.symbol()));
-    }));
-    assert!(rejected.is_err());
-    assert_eq!(stores.take_afterassignment(), Some(original));
-}
-
-#[test]
-fn post_reuse_symbol_token_is_rejected_at_every_scoped_ingress() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
-    let stale = stores.intern("stale");
-    stores.rollback(&snapshot);
-    let replacement = stores.intern("replacement");
-    assert_eq!(stale.raw(), replacement.raw());
-    assert_ne!(stale.symbol(), replacement.symbol());
-    let token = Token::Cs(stale.symbol());
-    stores.enter_group();
-
-    for ingress in ["intern", "builder", "aftergroup", "afterassignment"] {
-        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match ingress {
-            "intern" => {
-                stores.intern_token_list(&[token]);
-            }
-            "builder" => {
-                let mut builder = stores.token_list_builder();
-                builder.push(token);
-                stores.finish_token_list(&mut builder);
-            }
-            "aftergroup" => stores.push_aftergroup(token),
-            "afterassignment" => stores.set_afterassignment(token),
-            _ => unreachable!(),
-        }));
-        assert!(rejected.is_err(), "{ingress} accepted a rolled-back symbol");
-    }
-
-    assert_eq!(stores.take_afterassignment(), None);
-    let replacement_token = Token::Cs(replacement.symbol());
-    let accepted = stores.intern_token_list(&[replacement_token]);
-    assert_eq!(
-        accepted.raw(),
-        1,
-        "rejections must not allocate token lists"
-    );
-    stores.push_aftergroup(replacement_token);
-    assert_eq!(stores.leave_group(), vec![replacement_token]);
-    stores.set_afterassignment(replacement_token);
-    assert_eq!(stores.take_afterassignment(), Some(replacement_token));
-}
-
-#[test]
-#[should_panic(expected = "symbol is not live in this Universe timeline")]
-fn stale_rolled_back_symbol_cannot_write_reused_meaning_cell() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
-    let stale = stores.intern("rolled-back");
-
-    stores.rollback(&snapshot);
-    stores.set_meaning(stale, Meaning::Relax);
-}
-
-#[test]
-fn same_epoch_list_stored_twice_reuses_one_direct_payload() {
-    let mut stores = Stores::new();
-    let list = one_char(&mut stores, 'a');
-
-    stores.install_box(0, list.clone());
-    stores.install_box(1, list);
-
-    let first = stores.box_reg_ref(0).expect("box 0 should be non-void");
-    let second = stores.box_reg_ref(1).expect("box 1 should be non-void");
-    assert_eq!(first.id(), second.id());
-    assert!(first.shares_payload(&second));
-}
-
-#[test]
-fn box_cells_and_undo_retain_direct_owners() {
-    let mut stores = Stores::new();
-    let baseline = one_char(&mut stores, 'b');
-    stores.install_box(0, baseline);
-    let baseline = stores.box_reg_ref(0).expect("baseline box owner");
-    drop(baseline);
-    assert_eq!(
-        stores.box_reg_ref(0).expect("Env owns baseline").to_vec(),
-        [one_char_node('b')]
-    );
-
-    stores.enter_group();
-    let replacement = one_char(&mut stores, 'r');
-    stores.install_box(0, replacement);
-    let replacement = stores.box_reg_ref(0).expect("replacement box owner");
-    drop(replacement);
-    assert_eq!(
-        stores
-            .box_reg_ref(0)
-            .expect("Env owns replacement")
-            .to_vec(),
-        [one_char_node('r')]
-    );
-
-    assert_eq!(stores.leave_group(), Vec::<Token>::new());
-    assert_eq!(
-        stores
-            .box_reg_ref(0)
-            .expect("undo restored baseline owner")
-            .to_vec(),
-        [one_char_node('b')]
-    );
-}
-
-#[test]
-fn direct_box_fork_keeps_inherited_roots_and_separates_new_roots() {
-    let mut parent = Stores::new();
-    let inherited = one_char(&mut parent, 'i');
-    let mut child = parent.clone();
-
-    assert_eq!(inherited.to_vec(), [one_char_node('i')]);
-
-    let parent_only = one_char(&mut parent, 'p');
-    let child_only = one_char(&mut child, 'c');
-
-    assert_ne!(parent_only.id().arena(), child_only.id().arena());
-    assert_eq!(parent_only.to_vec(), [one_char_node('p')]);
-    assert_eq!(child_only.to_vec(), [one_char_node('c')]);
-}
-
-#[test]
-fn released_direct_box_key_cannot_upgrade_after_final_drop() {
-    let mut stores = Stores::new();
-    let stale_owner = one_char(&mut stores, 'o');
-    let stale = stale_owner.id();
-    let observer = stale_owner.downgrade();
-    drop(stale_owner);
-    assert!(observer.upgrade().is_none());
-
-    let replacement = one_char(&mut stores, 'n');
-
-    assert_ne!(stale.arena(), replacement.id().arena());
-    assert_eq!(replacement.to_vec(), [one_char_node('n')]);
-}
-
-#[test]
-fn repeated_direct_box_preparation_bounds_weak_metadata() {
-    const REPLACEMENTS: usize = 20_000;
-
-    let mut stores = Stores::new();
-    let mut live = one_char(&mut stores, 'a');
-    let stale = live.id();
-    let stale_observer = live.downgrade();
-
-    for index in 1..REPLACEMENTS {
-        let replacement = one_char(&mut stores, if index % 2 == 0 { 'a' } else { 'b' });
-        drop(live);
-        live = replacement;
-    }
-
-    assert!(stale_observer.upgrade().is_none());
-    assert_ne!(stale.arena(), live.id().arena());
-    let (weak_len, weak_capacity) = stores.node_ref_index.shape();
-    assert!(weak_len <= 64);
-    assert!(weak_capacity <= 64);
-}
-
-#[test]
-fn direct_box_replacement_carries_word_and_box_rule_sidecars_together() {
-    let mut stores = Stores::new();
-    let mut stale = None;
-    let mut live = None;
-
-    for raw in 0..32 {
-        let child = stores.freeze_node_list(&[Node::Rule {
-            width: Some(Scaled::from_raw(raw)),
-            height: None,
-            depth: Some(Scaled::from_raw(-raw)),
-        }]);
-        let root = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
-            width: Scaled::from_raw(raw),
-            height: Scaled::from_raw(0),
-            depth: Scaled::from_raw(0),
-            shift: Scaled::from_raw(0),
-            box_lr: crate::node::BoxLr::Normal,
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: Sign::Normal,
-            glue_order: Order::Normal,
-            children: child,
-        }))]);
-        let promoted = root;
-        if let Some(previous) = live.replace(promoted) {
-            stale.get_or_insert_with(|| previous.downgrade());
-            drop(previous);
-        }
-    }
-
-    let live = live.expect("one survivor remains");
-    let Some(crate::node_arena::NodeRef::HList(box_node)) = live.nodes().first() else {
-        panic!("survivor root should retain its box sidecar")
-    };
-    assert_eq!(box_node.width, Scaled::from_raw(31));
-    assert_eq!(
-        live.resolve(box_node.children)
-            .expect("box child belongs to direct owner")
-            .nodes(),
-        &[Node::Rule {
-            width: Some(Scaled::from_raw(31)),
-            height: None,
-            depth: Some(Scaled::from_raw(-31)),
-        }]
-    );
-    assert!(stale.expect("a stale root exists").upgrade().is_none());
-}
-
-#[test]
-fn coalesced_box_replacements_roll_back_to_the_checkpoint_owner() {
-    const REPLACEMENTS: usize = 20_000;
-
-    let mut stores = Stores::new();
-    let baseline = one_char(&mut stores, 'o');
-    stores.install_box(0, baseline);
-    let baseline = stores.box_owner(0).expect("baseline box should be stored");
-    let snapshot = stores.checkpoint();
-    let mut stale = None;
-
-    for index in 0..REPLACEMENTS {
-        let replacement = one_char(&mut stores, if index % 2 == 0 { 'a' } else { 'b' });
-        stores.install_box(0, replacement);
-        stale.get_or_insert_with(|| stores.box_owner(0).expect("replacement should be stored"));
-    }
-
-    let _stale = stale.expect("at least one replacement should be stored");
-
-    stores.rollback(&snapshot);
-    assert_eq!(stores.box_owner(0).as_ref(), Some(&baseline));
-    assert_eq!(
-        stores
-            .box_reg_ref(0)
-            .expect("restored direct owner")
-            .to_vec(),
-        [one_char_node('o')]
-    );
-}
-
-#[test]
-fn storing_direct_owner_in_second_register_shares_payload_until_release() {
-    let mut stores = Stores::new();
-    let list = one_char(&mut stores, 'a');
-
-    stores.install_box(0, list);
-    let owner = stores.box_reg_ref(0).expect("box should be non-void");
-    let observer = owner.downgrade();
-    stores.write_box_reg_ref(1, Some(owner.clone()), false);
-
-    assert!(
-        stores
-            .box_reg_ref(1)
-            .expect("second owner")
-            .shares_payload(&owner)
-    );
-
-    assert_eq!(stores.take_box_owner(0).as_ref(), Some(&owner));
-    drop(owner);
-    assert!(observer.upgrade().is_some());
-
-    let replacement = one_char(&mut stores, 'b');
-    stores.install_box(1, replacement);
-}
-
-#[test]
-fn group_exit_and_rollback_restore_box_refs_once() {
-    let mut stores = Stores::new();
-    let outer = one_char(&mut stores, 'o');
-    stores.install_box(0, outer);
-    let baseline = stores.box_owner(0).expect("outer box should be stored");
-    let snapshot = stores.checkpoint();
-
-    stores.enter_group();
-    let inner = one_char(&mut stores, 'i');
-    stores.install_box(0, inner);
-
-    assert_eq!(stores.leave_group(), Vec::<Token>::new());
-    assert_eq!(stores.box_owner(0).as_ref(), Some(&baseline));
-    assert_eq!(
-        stores.box_reg_ref(0).expect("restored owner").to_vec(),
-        [one_char_node('o')]
-    );
-
-    stores.rollback(&snapshot);
-    assert_eq!(stores.box_owner(0).as_ref(), Some(&baseline));
-}
-
-#[test]
-fn same_level_box_journal_keeps_value_live_across_nested_group_exit() {
-    let mut stores = Stores::new();
-    let outer = one_char(&mut stores, 'o');
-    stores.install_box(0, outer);
-    let baseline = stores.box_owner(0).expect("outer box should be stored");
-
-    stores.enter_group();
-    let inner = one_char(&mut stores, 'i');
-    stores.install_box(0, inner);
-    let local = stores.box_reg_ref(0).expect("local box should be stored");
-    let observer = local.downgrade();
-    stores.enter_group();
-    assert_eq!(stores.take_box_owner_same_level(0).as_ref(), Some(&local));
-    drop(local);
-    assert!(observer.upgrade().is_some());
-
-    assert_eq!(stores.leave_group(), Vec::<Token>::new());
-    assert_eq!(stores.box_owner(0), None);
-    assert!(observer.upgrade().is_some());
-
-    assert_eq!(stores.leave_group(), Vec::<Token>::new());
-    assert!(observer.upgrade().is_none());
-    assert_eq!(stores.box_owner(0).as_ref(), Some(&baseline));
-    assert_eq!(
-        stores.box_reg_ref(0).expect("baseline restored").id(),
-        baseline.id()
-    );
-}
-
-#[test]
-fn global_box_assignment_survives_group_and_journal_owner_survives_rollback() {
-    let mut stores = Stores::new();
-    let outer = one_char(&mut stores, 'o');
-    stores.install_box(0, outer);
-    let baseline = stores.box_owner(0).expect("outer box should be stored");
-    let snapshot = stores.checkpoint();
-
-    stores.enter_group();
-    let global = one_char(&mut stores, 'g');
-    stores.install_box_global(0, global);
-    let global = stores.box_owner(0).expect("global box should be stored");
-
-    assert_eq!(stores.leave_group(), Vec::<Token>::new());
-    assert_eq!(stores.box_owner(0).as_ref(), Some(&global));
-
-    stores.rollback(&snapshot);
-    assert_eq!(stores.box_owner(0).as_ref(), Some(&baseline));
-}
-
-#[test]
-fn same_value_global_box_adds_only_journal_owner() {
-    let mut stores = Stores::new();
-    let list = one_char(&mut stores, 'a');
-    stores.install_box(0, list);
-    let survivor = stores.box_owner(0).expect("box should be stored");
-    let snapshot = stores.checkpoint();
-
-    stores.enter_group();
-    stores.install_box_global(0, survivor.clone());
-    assert_eq!(stores.leave_group(), Vec::<Token>::new());
-    assert_eq!(stores.box_owner(0).as_ref(), Some(&survivor));
-
-    stores.rollback(&snapshot);
-    assert_eq!(stores.box_owner(0).as_ref(), Some(&survivor));
-}
-
-#[test]
-fn same_value_local_box_assignment_preserves_live_register_owner() {
-    let mut stores = Stores::new();
-    let list = one_char(&mut stores, 'a');
-    stores.install_box(0, list);
-    let survivor = stores.box_owner(0).expect("box should be stored");
-
-    stores.install_box(0, survivor.clone());
-
-    assert_eq!(stores.box_owner(0).as_ref(), Some(&survivor));
-    assert_eq!(
-        stores.box_reg_ref(0).expect("direct owner").to_vec(),
-        [one_char_node('a')]
-    );
-}
-
-#[test]
-fn local_box_after_global_drops_local_survivor_on_group_exit() {
-    let mut stores = Stores::new();
-    let outer = one_char(&mut stores, 'o');
-    stores.install_box(0, outer);
-    let baseline = stores.box_owner(0).expect("outer box should be stored");
-    let snapshot = stores.checkpoint();
-
-    stores.enter_group();
-    let global = one_char(&mut stores, 'g');
-    stores.install_box_global(0, global);
-    let global = stores.box_owner(0).expect("global box should be stored");
-    let local = one_char(&mut stores, 'l');
-    stores.install_box(0, local);
-
-    assert_eq!(stores.leave_group(), Vec::<Token>::new());
-    assert_eq!(stores.box_owner(0).as_ref(), Some(&global));
-
-    stores.rollback(&snapshot);
-    assert_eq!(stores.box_owner(0).as_ref(), Some(&baseline));
-}
-
-#[test]
-fn promoted_nested_box_retains_local_child_payloads() {
-    let mut stores = Stores::new();
-    let inner = one_char(&mut stores, 'x');
-    let middle = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
-        width: scaled(10),
-        height: scaled(7),
-        depth: scaled(3),
-        shift: scaled(0),
-        box_lr: crate::node::BoxLr::Normal,
-        glue_set: GlueSetRatio::ZERO,
-        glue_sign: Sign::Normal,
-        glue_order: Order::Normal,
-        children: inner,
-    }))]);
-    let outer = stores.freeze_node_list(&[Node::VList(BoxNode::new(BoxNodeFields {
-        width: scaled(20),
-        height: scaled(9),
-        depth: scaled(4),
-        shift: scaled(0),
-        box_lr: crate::node::BoxLr::Normal,
-        glue_set: GlueSetRatio::ZERO,
-        glue_sign: Sign::Normal,
-        glue_order: Order::Normal,
-        children: middle,
-    }))]);
-
-    stores.install_box(0, outer);
-    let promoted_outer = stores.box_reg_ref(0).expect("box should be promoted");
-    let Some(crate::node_arena::NodeRef::VList(outer_box)) = promoted_outer.nodes().first() else {
-        panic!("outer survivor list should contain one vlist");
-    };
-    assert_different_roots(promoted_outer.id(), outer_box.children);
-    let middle = promoted_outer
-        .resolve(outer_box.children)
-        .expect("owned middle list");
-    let Some(crate::node_arena::NodeRef::HList(middle_box)) = middle.nodes().first() else {
-        panic!("middle survivor list should contain one hlist");
-    };
-    assert_different_roots(middle.id(), middle_box.children);
-    assert!(
-        promoted_outer.resolve(middle_box.children).is_none(),
-        "the outer payload must not scan through its direct child owner"
-    );
-    assert_eq!(
-        middle
-            .resolve(middle_box.children)
-            .expect("owned inner list")
-            .nodes(),
-        &[Node::Char {
-            font: NULL_FONT,
-            ch: 'x',
-            origin: crate::provenance::OriginRef::unknown(),
-        }]
-    );
-}
-
-#[test]
-fn promotion_retains_one_shared_direct_child_owner() {
-    let mut stores = Stores::new();
-    let child = one_char(&mut stores, 'x');
-    stores.install_box(0, child);
-    let child = stores.box_reg_ref(0).expect("child box should be promoted");
-    let fields = BoxNodeFields {
-        width: scaled(10),
-        height: scaled(7),
-        depth: scaled(3),
-        shift: scaled(0),
-        box_lr: crate::node::BoxLr::Normal,
-        glue_set: GlueSetRatio::ZERO,
-        glue_sign: Sign::Normal,
-        glue_order: Order::Normal,
-        children: child.clone(),
-    };
-    let outer = stores.freeze_node_list(&[
-        Node::HList(BoxNode::new(fields.clone())),
-        Node::VList(BoxNode::new(fields)),
-    ]);
-
-    stores.install_box(255, outer);
-    let promoted = stores
-        .box_reg_ref(255)
-        .expect("outer box should be promoted");
-    let nodes = promoted.nodes();
-    let (
-        Some(crate::node_arena::NodeRef::HList(first)),
-        Some(crate::node_arena::NodeRef::VList(second)),
-    ) = (nodes.get(0), nodes.get(1))
-    else {
-        panic!("promoted root should preserve both wrapper boxes");
-    };
-
-    assert_different_roots(promoted.id(), first.children);
-    assert_eq!(
-        first.children, second.children,
-        "shared child has one direct structural owner"
-    );
-    assert_eq!(
-        promoted
-            .resolve(first.children)
-            .expect("owned shared child")
-            .nodes(),
-        &[Node::Char {
-            font: NULL_FONT,
-            ch: 'x',
-            origin: crate::provenance::OriginRef::unknown(),
-        }]
-    );
-}
-
-#[test]
-fn promotion_resolves_every_direct_child_bearing_compact_row() {
-    let mut stores = Stores::new();
-    let child = one_char(&mut stores, 'c');
-    let box_node = BoxNode::new(BoxNodeFields {
-        width: scaled(1),
-        height: scaled(2),
-        depth: scaled(3),
-        shift: scaled(4),
-        box_lr: crate::node::BoxLr::Normal,
-        glue_set: GlueSetRatio::ZERO,
-        glue_sign: Sign::Normal,
-        glue_order: Order::Normal,
-        children: child.clone(),
-    });
-    let noad = MathNoad {
-        kind: NoadKind::Normal(NoadClass::Ord),
-        nucleus: MathField::SubBox(child.clone()),
-        subscript: MathField::SubMlist(child.clone()),
-        superscript: MathField::SubBox(child.clone()),
-    };
-    let root = stores.freeze_node_list(&[
-        Node::HList(box_node.clone()),
-        Node::VList(box_node.clone()),
-        Node::Unset(UnsetNode::new(UnsetNodeFields {
-            kind: UnsetKind::HBox,
-            width: scaled(5),
-            height: scaled(6),
-            depth: scaled(7),
-            span_count: 2,
-            stretch: scaled(8),
-            stretch_order: Order::Fil,
-            shrink: scaled(9),
-            shrink_order: Order::Fill,
-            children: child.clone(),
-        })),
-        Node::Glue {
-            spec: crate::glue::testing_zero_glue_ref(),
-            kind: GlueKind::Leaders,
-            leader: Some(LeaderPayload::HList(box_node)),
-        },
-        Node::Disc {
-            kind: DiscKind::Discretionary,
-            pre: child.clone(),
-            post: child.clone(),
-            replace: child.clone(),
-            physical_replace_count: 3,
-        },
-        Node::Ins {
-            class: 1,
-            size: scaled(10),
-            split_top_skip: crate::glue::testing_zero_glue_ref(),
-            split_max_depth: scaled(11),
-            floating_penalty: 12,
-            content: child.clone(),
-        },
-        Node::MathNoad(noad),
-        Node::FractionNoad(MathFraction {
-            numerator: child.clone(),
-            denominator: child.clone(),
-            thickness: FractionThickness::Default,
-            left_delimiter: None,
-            right_delimiter: None,
-        }),
-        Node::MathChoice(MathChoice {
-            display: child.clone(),
-            text: child.clone(),
-            script: child.clone(),
-            script_script: child.clone(),
-        }),
-        Node::MathList(MathListNode {
-            display: false,
-            content: child.clone(),
-        }),
-        Node::Adjust(crate::node::AdjustNode::ordinary(child)),
-    ]);
-
-    stores.install_box(17, root);
-    let promoted = stores.box_reg_ref(17).expect("root should be promoted");
-    assert!(promoted.nodes().into_iter().any(|node| matches!(
-        node,
-        crate::node_arena::NodeRef::Disc {
-            physical_replace_count: 3,
-            ..
-        }
-    )));
-    let mut child_count = 0;
-    for node in promoted.nodes() {
-        for child in node.children() {
-            assert_different_roots(promoted.id(), child);
-            assert_eq!(
-                promoted
-                    .resolve(child)
-                    .expect("owned promoted child")
-                    .nodes(),
-                &[Node::Char {
-                    font: NULL_FONT,
-                    ch: 'c',
-                    origin: crate::provenance::OriginRef::unknown(),
-                }]
-            );
-            child_count += 1;
-        }
-    }
-    assert_eq!(child_count, 19);
 }
 
 #[test]
@@ -2907,46 +1851,6 @@ fn prepare_mag_retain_first_job_magnification() {
     );
 }
 
-#[test]
-fn promotion_handles_pathologically_deep_box_nesting() {
-    let mut stores = Stores::new();
-    let mut current = one_char(&mut stores, 'x');
-    for _ in 0..4096 {
-        let current_ref = current;
-        current = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
-            width: scaled(1),
-            height: scaled(1),
-            depth: scaled(0),
-            shift: scaled(0),
-            box_lr: crate::node::BoxLr::Normal,
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: Sign::Normal,
-            glue_order: Order::Normal,
-            children: current_ref,
-        }))]);
-    }
-
-    stores.install_box(0, current);
-    let mut promoted = stores.box_reg_ref(0).expect("box should be promoted");
-    for _ in 0..4096 {
-        let Some(crate::node_arena::NodeRef::HList(box_node)) = promoted.nodes().first() else {
-            panic!("deep promoted chain should remain hlist nodes");
-        };
-        assert_different_roots(promoted.id(), box_node.children);
-        promoted = promoted
-            .resolve(box_node.children)
-            .expect("owned nested box");
-    }
-    assert_eq!(
-        promoted.nodes(),
-        &[Node::Char {
-            font: NULL_FONT,
-            ch: 'x',
-            origin: crate::provenance::OriginRef::unknown(),
-        }]
-    );
-}
-
 fn glue_spec(width: i32) -> GlueSpec {
     GlueSpec {
         width: Scaled::from_raw(width),
@@ -2955,25 +1859,6 @@ fn glue_spec(width: i32) -> GlueSpec {
         shrink: Scaled::from_raw(3),
         shrink_order: Order::Fill,
     }
-}
-
-fn one_char(stores: &mut Stores, ch: char) -> NodeListRef {
-    stores.freeze_node_list(&[one_char_node(ch)])
-}
-
-fn one_char_node(ch: char) -> Node {
-    Node::Char {
-        font: NULL_FONT,
-        ch,
-        origin: crate::provenance::OriginRef::unknown(),
-    }
-}
-
-fn assert_different_roots(a: NodeListId, b: NodeListId) {
-    let (ArenaRef::Owned(a), ArenaRef::Owned(b)) = (a.arena(), b.arena()) else {
-        panic!("expected survivor ids");
-    };
-    assert_ne!(a, b);
 }
 
 fn scaled(raw: i32) -> Scaled {

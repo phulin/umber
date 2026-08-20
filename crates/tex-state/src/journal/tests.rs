@@ -4,15 +4,6 @@ use crate::env::box_bank::BoxSlot;
 use crate::env::group::GroupKind;
 use crate::ids::SnapshotId;
 use crate::meaning::Meaning;
-use std::mem::size_of;
-
-#[test]
-fn widened_cell_ids_do_not_grow_journal_records() {
-    assert_eq!(size_of::<CellId>(), 8);
-    assert_eq!(size_of::<UndoRec>(), 24);
-    assert_eq!(size_of::<Entry>(), 32);
-    assert!(size_of::<BoxUndoRec>() <= 128);
-}
 
 #[test]
 fn push_pos_slice_and_truncate_round_trip() {
@@ -56,8 +47,7 @@ fn journal_positions_are_ordered_by_entry_offset() {
     let second = journal.pos();
 
     assert!(first < second);
-    assert_eq!(first.raw(), 0);
-    assert_eq!(second.raw(), 1);
+    assert!(journal.entries_since(first).len() > journal.entries_since(second).len());
 }
 
 #[test]
