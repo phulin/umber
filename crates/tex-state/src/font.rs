@@ -230,9 +230,14 @@ impl FontStore {
                 }
             };
             let identifier_text = match identifier {
-                Some(symbol) if interner.contains_id(symbol) => {
-                    Some((interner.kind_id(symbol), interner.resolve_id(symbol)))
-                }
+                Some(symbol) if interner.contains_id(symbol) => Some((
+                    interner
+                        .kind_id(symbol)
+                        .map_err(|_| "frozen font identifier kind is unavailable")?,
+                    interner
+                        .resolve_id(symbol)
+                        .map_err(|_| "frozen font identifier text is unavailable")?,
+                )),
                 Some(_) => return Err("frozen font identifier is not live"),
                 None => None,
             };

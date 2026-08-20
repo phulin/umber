@@ -568,25 +568,25 @@ impl PageBuilderState {
     pub(crate) fn is_format_empty(&self) -> bool {
         self.contribution.is_empty()
             && self.current_page.len() == 0
-            && self.page_goal == Scaled::ZERO
-            && self.page_total == Scaled::ZERO
-            && self.page_stretch == Scaled::ZERO
-            && self.page_fil_stretch == Scaled::ZERO
-            && self.page_fill_stretch == Scaled::ZERO
-            && self.page_filll_stretch == Scaled::ZERO
-            && self.page_shrink == Scaled::ZERO
-            && self.page_depth == Scaled::ZERO
-            && self.page_max_depth == Scaled::ZERO
+            && self.page_goal == Scaled::from_raw(0)
+            && self.page_total == Scaled::from_raw(0)
+            && self.page_stretch == Scaled::from_raw(0)
+            && self.page_fil_stretch == Scaled::from_raw(0)
+            && self.page_fill_stretch == Scaled::from_raw(0)
+            && self.page_filll_stretch == Scaled::from_raw(0)
+            && self.page_shrink == Scaled::from_raw(0)
+            && self.page_depth == Scaled::from_raw(0)
+            && self.page_max_depth == Scaled::from_raw(0)
             && self.contents == PageContents::Empty
             && self.last_glue.is_none()
             && self.last_penalty == 0
-            && self.last_kern == Scaled::ZERO
+            && self.last_kern == Scaled::from_raw(0)
             && self.last_node_type == -1
             && self.insert_penalties == 0
             && self.dead_cycles == 0
             && self.least_page_cost == AWFUL_BAD
             && self.best_page_break.is_none()
-            && self.best_size == Scaled::ZERO
+            && self.best_size == Scaled::from_raw(0)
             && self.fire_up.is_none()
             && self.insertions.is_empty()
             && self.top_mark.is_none()

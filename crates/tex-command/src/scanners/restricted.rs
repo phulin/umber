@@ -103,7 +103,7 @@ pub struct RestrictedInteger {
     pub provenance: ScalarProvenance,
 }
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Performs TeX82 §433-§437's restricted integer scan.
     ///
     /// The ordinary `scan_int` runs first and completes its normal delivery

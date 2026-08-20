@@ -2310,18 +2310,22 @@ impl<G> CommandProcessor<'_, G> {
                                 .builders
                                 .iter()
                                 .find(|builder| builder.identity == context.builder.0)
-                                .map_or_else(String::new, |builder| {
-                                    builder
-                                        .tokens
-                                        .iter()
-                                        .fold(String::new(), |mut text, token| {
-                                            super::expand::append_token_list_token_text(
-                                                &self.state,
-                                                token.semantic_token(),
-                                                &mut text,
-                                            );
-                                            text
-                                        })
+                                .and_then(|builder| {
+                                    self.command
+                                        .attempt
+                                        .arena()
+                                        .token_buffer(builder.tokens)
+                                        .ok()
+                                })
+                                .map_or_else(String::new, |tokens| {
+                                    tokens.iter().fold(String::new(), |mut text, token| {
+                                        super::expand::append_token_list_token_text(
+                                            &self.state,
+                                            token.semantic_token(),
+                                            &mut text,
+                                        );
+                                        text
+                                    })
                                 }),
                             _ => String::new(),
                         },
@@ -2546,7 +2550,8 @@ impl<G> CommandProcessor<'_, G> {
             // its original control-sequence spelling.
             crate::observation::ObservedToken::ControlSequence("relax".into())
         } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
-            && let Some(name) = self.state.primitive_name(command.meaning())
+            && let tex_state::ResolvedMeaning::Static(meaning) = command.meaning()
+            && let Some(name) = self.state.primitive_name(meaning)
         {
             crate::observation::ObservedToken::ControlSequence(name.into())
         } else {
@@ -2685,11 +2690,11 @@ fn drains_for_stack_conservation(behavior: &TokenBehavior) -> bool {
 /// [`tex_state::CommandContext`] borrowed mutably twice at once, which is
 /// what forced them into one trait rather than any relationship between the
 /// two reads.
-struct LiveSourceQueries<'a, 'b> {
-    state: &'a mut tex_state::CommandContext<'b>,
+struct LiveSourceQueries<'a, 'b, G> {
+    state: &'a mut tex_state::CommandContext<'b, G>,
 }
 
-impl crate::SourceStepQueries for LiveSourceQueries<'_, '_> {
+impl<G> crate::SourceStepQueries for LiveSourceQueries<'_, '_, G> {
     fn catcode(&mut self, code: CharacterCode) -> Catcode {
         self.state.catcode(character_from_code(code))
     }

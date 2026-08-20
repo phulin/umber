@@ -52,7 +52,7 @@ pub use tokenizer::{
 /// This state owns only future deliveries and semantic identity allocation.
 /// Conditions, scanner policy, meanings, and host capabilities belong to
 /// other ownership classes.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputState<G> {
     pub(crate) levels: Vec<InputLevel<G>>,
     /// TeX82 §331's bottom terminal buffer after the startup line has been
@@ -69,6 +69,19 @@ pub(crate) struct InputState<G> {
     pub(crate) next_source_identity: u64,
     /// TeX82 §362's process-global `force_eof`.
     pub(crate) force_eof: bool,
+}
+
+impl<G> Default for InputState<G> {
+    fn default() -> Self {
+        Self {
+            levels: Vec::new(),
+            terminal_context_line: None,
+            pending_sources: BTreeMap::new(),
+            next_level_identity: 0,
+            next_source_identity: 0,
+            force_eof: false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -887,7 +900,7 @@ impl<G> InputState<G> {
             }
         }
 
-        fn render_token(
+        fn render_token<G>(
             stores: &tex_state::CommandContext<'_, G>,
             token: tex_state::token::Token,
             raw: &mut String,
@@ -901,7 +914,7 @@ impl<G> InputState<G> {
             note_token_context_projection(raw, rendered);
         }
 
-        fn render_selector_text(
+        fn render_selector_text<G>(
             stores: &tex_state::CommandContext<'_, G>,
             text: &str,
             rendered: &mut String,

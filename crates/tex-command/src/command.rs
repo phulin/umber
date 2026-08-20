@@ -15,7 +15,7 @@ use crate::{SourceLocation, SourceProvenance, SourceRange};
 /// current command as its typed continuation; its delivery stamp identifies
 /// that exact live cursor transition and is never reconstructed from token
 /// equality.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct CurrentCommand<G> {
     spelling: TracedTokenWord,
     meaning: ResolvedMeaning<G>,
@@ -27,6 +27,46 @@ pub struct CurrentCommand<G> {
     direct_source: bool,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
     outer_recovery_space: bool,
+}
+
+impl<G> Clone for CurrentCommand<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for CurrentCommand<G> {}
+
+impl<G> PartialEq for CurrentCommand<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.spelling == other.spelling
+            && self.meaning == other.meaning
+            && self.macro_observation_operand == other.macro_observation_operand
+            && self.identity == other.identity
+            && self.control_sequence == other.control_sequence
+            && self.delivery == other.delivery
+            && self.source_provenance == other.source_provenance
+            && self.direct_source == other.direct_source
+            && self.alignment_adjustment == other.alignment_adjustment
+            && self.outer_recovery_space == other.outer_recovery_space
+    }
+}
+
+impl<G> Eq for CurrentCommand<G> {}
+
+impl<G> core::hash::Hash for CurrentCommand<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.spelling.hash(state);
+        self.meaning.hash(state);
+        self.macro_observation_operand.hash(state);
+        self.identity.hash(state);
+        self.control_sequence.hash(state);
+        self.delivery.hash(state);
+        self.source_provenance.hash(state);
+        self.direct_source.hash(state);
+        self.alignment_adjustment.hash(state);
+        self.outer_recovery_space.hash(state);
+    }
 }
 
 /// The command-code identity of a current delivery.
@@ -181,12 +221,7 @@ impl<G> CurrentCommand<G> {
     ) -> Self {
         let token = spelling.semantic_token();
         let (control_sequence, meaning) = match token {
-            Token::Cs(symbol) => (
-                Some(symbol),
-                state
-                    .meaning(symbol)
-                    .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined)),
-            ),
+            Token::Cs(symbol) => (Some(symbol), state.meaning(symbol)),
             Token::Char {
                 ch,
                 cat: Catcode::Active,
@@ -195,7 +230,7 @@ impl<G> CurrentCommand<G> {
                 (
                     symbol,
                     symbol
-                        .and_then(|symbol| state.meaning(symbol).ok())
+                        .map(|symbol| state.meaning(symbol))
                         .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined)),
                 )
             }

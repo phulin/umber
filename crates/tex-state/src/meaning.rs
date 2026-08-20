@@ -236,6 +236,34 @@ impl<G> PartialEq for ResolvedMeaning<G> {
 
 impl<G> Eq for ResolvedMeaning<G> {}
 
+impl<G> PartialEq<Meaning> for ResolvedMeaning<G> {
+    fn eq(&self, other: &Meaning) -> bool {
+        matches!(self, Self::Static(meaning) if meaning == other)
+    }
+}
+
+impl<G> PartialEq<ResolvedMeaning<G>> for Meaning {
+    fn eq(&self, other: &ResolvedMeaning<G>) -> bool {
+        other == self
+    }
+}
+
+impl<G> core::hash::Hash for ResolvedMeaning<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        match *self {
+            Self::Static(meaning) => {
+                0u8.hash(state);
+                meaning.hash(state);
+            }
+            Self::Macro { flags, definition } => {
+                1u8.hash(state);
+                flags.hash(state);
+                definition.hash(state);
+            }
+        }
+    }
+}
+
 /// Read-only internal integer quantities.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum InternalInteger {

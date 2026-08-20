@@ -426,14 +426,12 @@ impl<G> Universe<G> {
         &self,
         id: TokenListId<G>,
     ) -> Result<DetachedMemoValue, MemoValueError> {
-        let context = self
-            .command_context()
-            .map_err(|_| MemoValueError::LiveState)?;
-        let tokens = context
+        let admitted = self.admitted().map_err(|_| MemoValueError::LiveState)?;
+        let tokens = admitted
             .token_list(id)
             .iter()
             .copied()
-            .map(|word| detach_token(&context, word.semantic_token()))
+            .map(|word| detach_token(self, word.semantic_token()))
             .collect::<Result<Vec<_>, _>>()?;
         DetachedMemoValue::encode(MemoValueKind::Tokens, &tokens)
     }
@@ -460,12 +458,9 @@ impl<G> Universe<G> {
     }
 
     pub fn detach_glue(&self, id: GlueId<G>) -> Result<DetachedMemoValue, MemoValueError> {
-        let context = self
-            .command_context()
-            .map_err(|_| MemoValueError::LiveState)?;
         DetachedMemoValue::encode(
             MemoValueKind::Glue,
-            &DetachedGlue::from_glue(context.glue(id)),
+            &DetachedGlue::from_glue(self.glue_value(id)),
         )
     }
 
@@ -488,21 +483,19 @@ impl<G> Universe<G> {
         flags: MeaningFlags,
         id: DefinitionId<G>,
     ) -> Result<DetachedMemoValue, MemoValueError> {
-        let context = self
-            .command_context()
-            .map_err(|_| MemoValueError::LiveState)?;
-        let definition = context.definition(id);
+        let admitted = self.admitted().map_err(|_| MemoValueError::LiveState)?;
+        let definition = admitted.definition(id);
         let parameter_text = definition
             .parameter_text()
             .iter()
             .copied()
-            .map(|word| detach_token(&context, word.semantic_token()))
+            .map(|word| detach_token(self, word.semantic_token()))
             .collect::<Result<Vec<_>, _>>()?;
         let replacement_text = definition
             .replacement_text()
             .iter()
             .copied()
-            .map(|word| detach_token(&context, word.semantic_token()))
+            .map(|word| detach_token(self, word.semantic_token()))
             .collect::<Result<Vec<_>, _>>()?;
         DetachedMemoValue::encode(
             MemoValueKind::MacroMeaning,
@@ -550,16 +543,13 @@ impl<G> Universe<G> {
     }
 }
 
-fn detach_token<G>(
-    context: &crate::CommandContext<'_, G>,
-    token: Token,
-) -> Result<DetachedToken, MemoValueError> {
+fn detach_token<G>(universe: &Universe<G>, token: Token) -> Result<DetachedToken, MemoValueError> {
     Ok(match token {
         Token::Char { ch, cat } => DetachedToken::Char { ch, cat: cat as u8 },
         Token::Cs(symbol) => DetachedToken::Cs {
-            active: context.control_sequence_kind(symbol)
+            active: universe.control_sequence_kind(symbol)
                 == Some(ControlSequenceKind::ActiveCharacter),
-            name: context
+            name: universe
                 .resolve(symbol)
                 .ok_or(MemoValueError::LiveState)?
                 .to_owned(),
@@ -572,9 +562,9 @@ fn detach_token<G>(
             raw if raw == u16::MAX - 1 => DetachedFrozenToken::UndefinedControlSequence,
             u16::MAX => DetachedFrozenToken::ExpandedTextBoundary,
             _ => DetachedFrozenToken::Primitive(
-                context
+                universe
                     .frozen_primitive_meaning(Token::Frozen(frozen))
-                    .and_then(|meaning| context.primitive_name(meaning))
+                    .and_then(|meaning| universe.primitive_name(meaning))
                     .ok_or(MemoValueError::Invalid("unknown frozen primitive"))?
                     .to_owned(),
             ),

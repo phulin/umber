@@ -4,12 +4,12 @@
 //! never a retained current command or an input cursor.
 
 use tex_state::ids::FontId;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
 
 use crate::scanners::MathFamilySize;
 use crate::{CommandError, CommandProcessor};
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Scans TeX82 §577's `scan_font_ident` through canonical expanded
     /// delivery.
     ///
@@ -26,7 +26,7 @@ impl CommandProcessor<'_> {
         let command = loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             if !matches!(
-                command.meaning(),
+                static_meaning(command.meaning()),
                 Meaning::CharToken {
                     cat: tex_state::token::Catcode::Space,
                     ..
@@ -35,7 +35,7 @@ impl CommandProcessor<'_> {
                 break command;
             }
         };
-        match command.meaning() {
+        match static_meaning(command.meaning()) {
             Meaning::Font(font) => Ok(font),
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Font) => {
                 Ok(self.state.current_font())
@@ -75,5 +75,12 @@ impl CommandProcessor<'_> {
                 Ok(tex_state::font::NULL_FONT)
             }
         }
+    }
+}
+
+const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
+    match meaning {
+        ResolvedMeaning::Static(meaning) => meaning,
+        ResolvedMeaning::Macro { .. } => Meaning::Undefined,
     }
 }

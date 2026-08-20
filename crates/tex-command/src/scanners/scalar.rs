@@ -505,14 +505,9 @@ impl<G> CommandProcessor<'_, G> {
         self.back_list(
             matched
                 .into_iter()
-                .map(|command| {
-                    crate::input::RootedBackedUpToken::new(
-                        crate::input::BackedUpToken {
-                            spelling: command.spelling(),
-                            source_provenance: command.source_provenance(),
-                        },
-                        command.origin_ref().clone(),
-                    )
+                .map(|command| crate::input::BackedUpToken {
+                    spelling: command.spelling(),
+                    source_provenance: command.source_provenance(),
                 })
                 .collect(),
         );
@@ -667,7 +662,7 @@ impl<G> CommandProcessor<'_, G> {
                 InternalScan::Value(_) => {
                     unreachable!("TeX82 §429 lowers an int_val request to an integer")
                 }
-                InternalScan::NotInternal => match first.meaning() {
+                InternalScan::NotInternal => match scalar_meaning(first.meaning()) {
                     Meaning::CharToken {
                         ch,
                         cat: Catcode::Other,
@@ -1577,7 +1572,10 @@ impl<G> CommandProcessor<'_, G> {
             let Some(first) = self.get_x_token()? else {
                 return Err(CommandError::input_invariant());
             };
-            if !matches!(first.meaning(), Meaning::CharToken { ch: 'f', .. }) {
+            if !matches!(
+                scalar_meaning(first.meaning()),
+                Meaning::CharToken { ch: 'f', .. }
+            ) {
                 return Err(CommandError::input_invariant());
             }
             (self.scan_infinite_unit_from_fil()?, None)
@@ -1713,7 +1711,7 @@ impl<G> CommandProcessor<'_, G> {
             if self.command.profile().capabilities().supports_pdftex()
                 && self.scan_keyword("px")?.value
             {
-                let unit = self.state.dimen_param(DimenParam::PDF_PX_DIMEN.raw());
+                let unit = self.state.dimen_param(DimenParam::PDF_PX_DIMEN);
                 self.scan_optional_space()?;
                 return Ok((DimensionUnit::Internal(unit), None));
             }
@@ -2274,7 +2272,7 @@ impl<G> CommandProcessor<'_, G> {
             // outer scalar scanner's result.
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
                 let index = self.scan_profile_register_index()?;
-                InternalValue::Integer(self.state.count(index))
+                InternalValue::Integer(self.state.count(index).unwrap_or(0))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
                 let index = self.scan_profile_register_index()?;
@@ -2282,16 +2280,20 @@ impl<G> CommandProcessor<'_, G> {
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
                 let index = self.scan_profile_register_index()?;
-                let identity = self.state.skip(index);
-                self.scanned_glue_identity = Some(identity);
+                let identity = self.state.glue_register(index).ok().flatten();
+                self.scanned_glue_identity = identity;
                 self.scanned_glue_skip_index = Some(index);
-                InternalValue::Glue(self.state.glue(identity))
+                InternalValue::Glue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
                 let index = self.scan_profile_register_index()?;
                 let identity = self.state.muskip(index);
-                self.scanned_glue_identity = Some(identity);
-                InternalValue::MuGlue(self.state.glue(identity))
+                self.scanned_glue_identity = identity;
+                InternalValue::MuGlue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
                 let index = self.scan_profile_register_index()?;
@@ -2579,7 +2581,9 @@ impl<G> CommandProcessor<'_, G> {
                 }));
                 InternalValue::Integer(value)
             }
-            Meaning::CountRegister(index) => InternalValue::Integer(self.state.count(index)),
+            Meaning::CountRegister(index) => {
+                InternalValue::Integer(self.state.count(index).unwrap_or(0))
+            }
             Meaning::IntParam(index) => InternalValue::Integer(
                 self.state
                     .int_param(tex_state::env::banks::IntParam::new(index)),
@@ -2588,30 +2592,44 @@ impl<G> CommandProcessor<'_, G> {
                 InternalValue::Integer(self.state.page_integer(integer))
             }
             Meaning::DimenRegister(index) => InternalValue::Dimension(self.state.dimen(index)),
-            Meaning::DimenParam(index) => InternalValue::Dimension(self.state.dimen_param(index)),
+            Meaning::DimenParam(index) => {
+                InternalValue::Dimension(self.state.dimen_param(DimenParam::new(index)))
+            }
             Meaning::PageDimension(dimension) => {
                 InternalValue::Dimension(self.state.page_dimension(dimension))
             }
             Meaning::SkipRegister(index) => {
-                let identity = self.state.skip(index);
-                self.scanned_glue_identity = Some(identity);
+                let identity = self.state.glue_register(index).ok().flatten();
+                self.scanned_glue_identity = identity;
                 self.scanned_glue_skip_index = Some(index);
-                InternalValue::Glue(self.state.glue(identity))
+                InternalValue::Glue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
             }
             Meaning::MuskipRegister(index) => {
                 let identity = self.state.muskip(index);
-                self.scanned_glue_identity = Some(identity);
-                InternalValue::MuGlue(self.state.glue(identity))
+                self.scanned_glue_identity = identity;
+                InternalValue::MuGlue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
             }
             Meaning::GlueParam(index) => {
-                let identity = self.state.glue_param(index);
-                self.scanned_glue_identity = Some(identity);
-                InternalValue::Glue(self.state.glue(identity))
+                let identity = self
+                    .state
+                    .glue_param(tex_state::env::banks::GlueParam::new(index));
+                self.scanned_glue_identity = identity;
+                InternalValue::Glue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
             }
             Meaning::MuGlueParam(index) => {
-                let identity = self.state.glue_param(index);
-                self.scanned_glue_identity = Some(identity);
-                InternalValue::MuGlue(self.state.glue(identity))
+                let identity = self
+                    .state
+                    .glue_param(tex_state::env::banks::GlueParam::new(index));
+                self.scanned_glue_identity = identity;
+                InternalValue::MuGlue(
+                    identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
+                )
             }
             Meaning::ToksRegister(index) => {
                 let tokens = self

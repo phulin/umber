@@ -98,12 +98,20 @@ pub(crate) enum MacroParameterEscape {
     EscapedParameter,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 struct MacroDelimiter<G> {
     definition: DefinitionId<G>,
     start: usize,
     len: usize,
 }
+
+impl<G> Clone for MacroDelimiter<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for MacroDelimiter<G> {}
 
 impl MacroParameterEscape {
     pub(crate) const fn classify(token: Token) -> Option<Self> {

@@ -61,10 +61,29 @@ impl<'a, G> Diagnostic<'a, G> {
         }
     }
 
-    /// The state being traced. Diagnostics read live state while printing.
-    #[must_use]
-    pub fn state(&self) -> &Universe<G> {
-        self.printer.state()
+    pub(crate) fn from_parts(
+        world: &'a mut crate::World,
+        interaction_mode_slot: &'a mut crate::InteractionMode,
+        widths: crate::print::ErrorContextWidths,
+        tracing_online: i32,
+        newline_char: i32,
+        escape_char: i32,
+    ) -> Self {
+        let mut selector = Selector::for_interaction(*interaction_mode_slot);
+        if tracing_online <= 0 && selector == Selector::TermAndLog {
+            selector = selector.decr();
+            world.error_channel_mut().record_warning_history();
+        }
+        Self {
+            printer: Printer::from_parts(
+                world,
+                interaction_mode_slot,
+                newline_char,
+                escape_char,
+                widths.max_print_line(),
+                selector,
+            ),
+        }
     }
 
     /// tex.web §59's `print`.

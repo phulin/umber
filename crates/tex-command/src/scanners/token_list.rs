@@ -7,7 +7,7 @@
 
 use tex_state::env::banks::TokParam;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::scan_toks::ScanToksMode;
@@ -108,7 +108,7 @@ impl<G> CommandProcessor<'_, G> {
         let command = self
             .next_non_blank_non_relax_x_token()?
             .ok_or_else(CommandError::input_invariant)?;
-        let collected = match command.meaning() {
+        let collected = match static_meaning(command.meaning()) {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
                 // e-TeX 2.6 [49.1227] widens this RHS enquiry alongside
                 // [49.1226]'s assignment target; both select the same sparse
@@ -235,6 +235,13 @@ impl<G> CommandProcessor<'_, G> {
                 .map_err(crate::scan_toks::attempt_command_error)?,
             pointer_present: true,
         })
+    }
+}
+
+const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
+    match meaning {
+        ResolvedMeaning::Static(meaning) => meaning,
+        ResolvedMeaning::Macro { .. } => Meaning::Undefined,
     }
 }
 

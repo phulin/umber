@@ -11,7 +11,9 @@ mod tests;
 
 use tex_state::CommandContext;
 
-use crate::{CommandFuel, CommandFuelLedger, CommandHostContext, CommandState, DeliveryStamp};
+use crate::{
+    CommandError, CommandFuel, CommandFuelLedger, CommandHostContext, CommandState, DeliveryStamp,
+};
 
 use crate::input::InputLevelId;
 

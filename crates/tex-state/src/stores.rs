@@ -180,12 +180,36 @@ pub(crate) struct AdmittedStateMut<'a, G> {
 }
 
 impl<'a, G> AdmittedStateMut<'a, G> {
+    pub(crate) const fn state_ref(&self) -> &DenseState<G> {
+        self.state
+    }
+
     pub(crate) fn state(&mut self) -> &mut DenseState<G> {
         self.state
     }
 
     pub(crate) fn nodes_mut(&mut self) -> &mut DurableNodeArena<G> {
         self.nodes
+    }
+
+    #[inline(always)]
+    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
+        self.generation.definitions().get(id)
+    }
+
+    #[inline(always)]
+    pub(crate) fn token_list(&self, id: TokenListId<G>) -> &[TokenWord] {
+        self.generation.token_lists().get(id)
+    }
+
+    #[inline(always)]
+    pub(crate) fn glue(&self, id: GlueId<G>) -> GlueSpec {
+        self.generation.glue().get(id)
+    }
+
+    #[inline(always)]
+    pub(crate) fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
+        self.generation.provenance().get(id)
     }
 
     pub(crate) fn allocate_definition(

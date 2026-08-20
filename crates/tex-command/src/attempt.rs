@@ -885,6 +885,16 @@ pub struct CommandAttempt<G> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CommandAttemptMark(AttemptMark);
 
+impl CommandAttemptMark {
+    pub(crate) const fn new(mark: AttemptMark) -> Self {
+        Self(mark)
+    }
+
+    pub(crate) const fn attempt_mark(self) -> AttemptMark {
+        self.0
+    }
+}
+
 impl<G> core::fmt::Debug for CommandAttempt<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str("CommandAttempt(..)")

@@ -71,6 +71,39 @@ pub struct ScannedBalancedText {
     pub provenance: StructuredProvenance,
 }
 
+/// Attempt-local PDF action identifier. Token text remains in the sole live
+/// command attempt until the executor promotes the completed request.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfActionIdentifier {
+    Name(AttemptTokenListId),
+    Number(u32),
+    Raw(AttemptTokenListId),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfActionTarget {
+    Page {
+        number: u32,
+        view: AttemptTokenListId,
+    },
+    Destination(PdfActionIdentifier),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PdfActionDestination {
+    pub file: Option<AttemptTokenListId>,
+    pub structure: Option<PdfActionIdentifier>,
+    pub target: PdfActionTarget,
+    pub window: tex_state::PdfActionWindow,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfActionSpec {
+    User(AttemptTokenListId),
+    GoTo(PdfActionDestination),
+    Thread(PdfActionDestination),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExpandedWriteText {
     pub tokens: AttemptTokenListId,
@@ -338,7 +371,7 @@ pub struct PdfReferenceObjectRequest {
 pub struct PdfDocumentFragmentRequest {
     pub kind: tex_state::PdfDocumentFragmentKind,
     pub text: ScannedBalancedText,
-    pub open_action: Option<tex_state::PdfActionSpec>,
+    pub open_action: Option<PdfActionSpec>,
 }
 
 /// Fully scanned pdfTeX navigation whatsit.  All general text is frozen in
@@ -369,14 +402,14 @@ pub enum PdfAnnotationRequest {
 pub struct PdfStartLinkRequest {
     pub dimensions: tex_state::PdfAnnotationDimensions,
     pub attributes: Option<ScannedBalancedText>,
-    pub action: tex_state::PdfActionSpec,
+    pub action: PdfActionSpec,
 }
 
 /// Fully scanned `\\pdfoutline` document-state mutation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfOutlineRequest {
     pub attributes: Option<ScannedBalancedText>,
-    pub action: tex_state::PdfActionSpec,
+    pub action: PdfActionSpec,
     pub count: i32,
     pub title: ScannedBalancedText,
 }
@@ -384,7 +417,7 @@ pub struct PdfOutlineRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfDestinationRequest {
     pub structure: Option<u32>,
-    pub identifier: tex_state::PdfActionIdentifier,
+    pub identifier: PdfActionIdentifier,
     pub kind: tex_state::node::PdfDestinationKind,
 }
 
@@ -395,7 +428,7 @@ pub struct PdfDestinationRequest {
 pub struct PdfThreadRequest {
     pub dimensions: tex_state::PdfAnnotationDimensions,
     pub attributes: Option<ScannedBalancedText>,
-    pub identifier: tex_state::PdfActionIdentifier,
+    pub identifier: PdfActionIdentifier,
     pub running: bool,
 }
 
@@ -1132,10 +1165,7 @@ impl<G> CommandProcessor<'_, G> {
         provisional_global: bool,
     ) -> Result<ScannedCharacterDefinition<G>, CommandError> {
         let target = self.scan_definition_target()?;
-        let provisional_old = self
-            .state
-            .meaning(target)
-            .map_err(|_| CommandError::input_invariant())?;
+        let provisional_old = self.state.meaning(target);
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         observe!(
@@ -1169,10 +1199,7 @@ impl<G> CommandProcessor<'_, G> {
         provisional_global: bool,
     ) -> Result<ScannedRegisterDefinition<G>, CommandError> {
         let target = self.scan_definition_target()?;
-        let provisional_old = self
-            .state
-            .meaning(target)
-            .map_err(|_| CommandError::input_invariant())?;
+        let provisional_old = self.state.meaning(target);
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         observe!(
@@ -1415,13 +1442,13 @@ impl<G> CommandProcessor<'_, G> {
         &mut self,
         kind: &'static str,
         bounded_by_halfword: bool,
-    ) -> Result<tex_state::PdfActionIdentifier, CommandError> {
+    ) -> Result<PdfActionIdentifier, CommandError> {
         if self.scan_keyword("name")?.value {
-            Ok(tex_state::PdfActionIdentifier::Name(
-                self.scan_balanced_text(true)?.tokens.token_ref(),
+            Ok(PdfActionIdentifier::Name(
+                self.scan_balanced_text(true)?.tokens,
             ))
         } else if self.scan_keyword("num")?.value {
-            Ok(tex_state::PdfActionIdentifier::Number(
+            Ok(PdfActionIdentifier::Number(
                 self.scan_pdf_positive(kind, bounded_by_halfword)?,
             ))
         } else {
@@ -1432,12 +1459,10 @@ impl<G> CommandProcessor<'_, G> {
         }
     }
 
-    fn scan_pdf_action(&mut self) -> Result<tex_state::PdfActionSpec, CommandError> {
-        use tex_state::{PdfActionDestination, PdfActionSpec, PdfActionTarget, PdfActionWindow};
+    fn scan_pdf_action(&mut self) -> Result<PdfActionSpec, CommandError> {
+        use tex_state::PdfActionWindow;
         if self.scan_keyword("user")?.value {
-            return Ok(PdfActionSpec::User(
-                self.scan_balanced_text(true)?.tokens.token_ref(),
-            ));
+            return Ok(PdfActionSpec::User(self.scan_balanced_text(true)?.tokens));
         }
         let goto = if self.scan_keyword("goto")?.value {
             true
@@ -1451,10 +1476,7 @@ impl<G> CommandProcessor<'_, G> {
         let file = self
             .scan_keyword("file")?
             .value
-            .then(|| {
-                self.scan_balanced_text(true)
-                    .map(|text| text.tokens.token_ref())
-            })
+            .then(|| self.scan_balanced_text(true).map(|text| text.tokens))
             .transpose()?;
         let structure = if self.scan_keyword("struct")?.value {
             if !goto {
@@ -1463,8 +1485,8 @@ impl<G> CommandProcessor<'_, G> {
                 ));
             }
             if file.is_some() {
-                Some(tex_state::PdfActionIdentifier::Raw(
-                    self.scan_balanced_text(true)?.tokens.token_ref(),
+                Some(PdfActionIdentifier::Raw(
+                    self.scan_balanced_text(true)?.tokens,
                 ))
             } else {
                 Some(self.scan_pdf_identifier("struct identifier", false)?)
@@ -1481,11 +1503,11 @@ impl<G> CommandProcessor<'_, G> {
             let number = self.scan_pdf_positive("page number", false)?;
             PdfActionTarget::Page {
                 number,
-                view: self.scan_balanced_text(true)?.tokens.token_ref(),
+                view: self.scan_balanced_text(true)?.tokens,
             }
         } else if self.scan_keyword("name")?.value {
-            PdfActionTarget::Destination(tex_state::PdfActionIdentifier::Name(
-                self.scan_balanced_text(true)?.tokens.token_ref(),
+            PdfActionTarget::Destination(PdfActionIdentifier::Name(
+                self.scan_balanced_text(true)?.tokens,
             ))
         } else if self.scan_keyword("num")?.value {
             if goto && file.is_some() {
@@ -1493,7 +1515,7 @@ impl<G> CommandProcessor<'_, G> {
                     "pdfTeX error (ext1): `goto' option cannot be used with both `file' and `num'",
                 ));
             }
-            PdfActionTarget::Destination(tex_state::PdfActionIdentifier::Number(
+            PdfActionTarget::Destination(PdfActionIdentifier::Number(
                 self.scan_pdf_positive("num identifier", false)?,
             ))
         } else {
@@ -2839,8 +2861,14 @@ impl<G> CommandProcessor<'_, G> {
             InternalValue::Font(symbol) => print_cs_text(&mut self.state, symbol),
             InternalValue::Tokens { tokens, .. } => {
                 let mut text = String::new();
-                for token in self.state.token_list(tokens) {
-                    self.state.append_token_selector_text(token, &mut text);
+                let words = self
+                    .command
+                    .attempt_token_words(tokens)
+                    .map_err(crate::scan_toks::attempt_command_error)?
+                    .to_vec();
+                for token in words {
+                    self.state
+                        .append_token_selector_text(token.semantic_token(), &mut text);
                 }
                 text
             }
@@ -3322,8 +3350,8 @@ impl<G> CommandProcessor<'_, G> {
             },),
         );
         let mut columns = Vec::new();
-        let tabskip = self.state.glue_param(GlueParam::TAB_SKIP.raw());
-        let mut current_tabskip = self.state.glue(tabskip);
+        let tabskip = self.state.glue_param(GlueParam::TAB_SKIP);
+        let mut current_tabskip = tabskip.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id));
         let mut tabskips = vec![current_tabskip];
         let mut repeat_start = None;
         loop {

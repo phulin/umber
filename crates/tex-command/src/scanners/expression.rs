@@ -1,8 +1,8 @@
 //! Canonical e-TeX expression and glue-conversion scanners.
 
+use tex_state::GlueId;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::GlueId;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::scaled::Scaled;
 use tex_state::token::Catcode;
 
@@ -52,7 +52,7 @@ impl ExpressionKind {
         }
     }
 
-    fn zero(self) -> ExpressionValue {
+    fn zero<G>(self) -> ExpressionValue<G> {
         match self {
             Self::Integer | Self::Dimension => ExpressionValue::Number(0),
             Self::Glue | Self::MuGlue => ExpressionValue::Glue(ExpressionGlue::ZERO),
@@ -60,18 +60,26 @@ impl ExpressionKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ExpressionGlue {
+#[derive(Debug, Eq, PartialEq)]
+struct ExpressionGlue<G> {
     width: i64,
     stretch: i64,
     stretch_order: Order,
     shrink: i64,
     shrink_order: Order,
-    identity: Option<GlueId>,
+    identity: Option<GlueId<G>>,
     skip_index: Option<u16>,
 }
 
-impl ExpressionGlue {
+impl<G> Clone for ExpressionGlue<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for ExpressionGlue<G> {}
+
+impl<G> ExpressionGlue<G> {
     const ZERO: Self = Self {
         width: 0,
         stretch: 0,
@@ -82,7 +90,7 @@ impl ExpressionGlue {
         skip_index: None,
     };
 
-    fn from_spec(spec: GlueSpec, identity: Option<GlueId>, skip_index: Option<u16>) -> Self {
+    fn from_spec(spec: GlueSpec, identity: Option<GlueId<G>>, skip_index: Option<u16>) -> Self {
         Self {
             width: i64::from(spec.width.raw()),
             stretch: i64::from(spec.stretch.raw()),
@@ -116,13 +124,21 @@ impl ExpressionGlue {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ExpressionValue {
+#[derive(Debug, Eq, PartialEq)]
+enum ExpressionValue<G> {
     Number(i64),
-    Glue(ExpressionGlue),
+    Glue(ExpressionGlue<G>),
 }
 
-impl ExpressionValue {
+impl<G> Clone for ExpressionValue<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for ExpressionValue<G> {}
+
+impl<G> ExpressionValue<G> {
     fn integer(self) -> i64 {
         let Self::Number(value) = self else {
             unreachable!("e-TeX expression multipliers are integer-valued")
@@ -147,17 +163,25 @@ impl ExpressionOperator {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ExpressionFrame {
+#[derive(Debug, Eq, PartialEq)]
+struct ExpressionFrame<G> {
     kind: ExpressionKind,
     expression_operator: ExpressionOperator,
-    expression: ExpressionValue,
+    expression: ExpressionValue<G>,
     term_operator: ExpressionOperator,
-    term: ExpressionValue,
+    term: ExpressionValue<G>,
     scale_numerator: i64,
 }
 
-impl ExpressionFrame {
+impl<G> Clone for ExpressionFrame<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for ExpressionFrame<G> {}
+
+impl<G> ExpressionFrame<G> {
     fn new(kind: ExpressionKind) -> Self {
         Self {
             kind,
@@ -178,12 +202,12 @@ impl ExpressionFrame {
     }
 }
 
-enum ScannedFactor {
-    Value(ExpressionValue),
+enum ScannedFactor<G> {
+    Value(ExpressionValue<G>),
     OpenParenthesis,
 }
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// e-TeX 2.6 `scan_expr`, from the already-delivered expression primitive
     /// through its committed typed result (etex.ch [53a.4945--5360]).
     pub(super) fn scan_expression_primitive(
@@ -252,7 +276,7 @@ impl CommandProcessor<'_> {
     fn scan_expression(
         &mut self,
         kind: ExpressionKind,
-    ) -> Result<(ExpressionValue, bool), CommandError> {
+    ) -> Result<(ExpressionValue<G>, bool), CommandError> {
         let mut stack = Vec::new();
         let mut frame = ExpressionFrame::new(kind);
         let mut overflow = false;
@@ -297,7 +321,7 @@ impl CommandProcessor<'_> {
     fn scan_expression_factor(
         &mut self,
         kind: ExpressionKind,
-    ) -> Result<ScannedFactor, CommandError> {
+    ) -> Result<ScannedFactor<G>, CommandError> {
         let first = self.next_non_blank_x_token()?;
         if first
             .as_ref()
@@ -358,7 +382,7 @@ impl CommandProcessor<'_> {
                 self.back_input(command)?;
                 self.missing_expression_parenthesis_error()?;
             }
-        } else if !matches!(command.meaning(), Meaning::Relax) {
+        } else if !matches!(static_meaning(command.meaning()), Meaning::Relax) {
             self.back_input(command)?;
         }
         Ok(ExpressionOperator::None)
@@ -389,7 +413,7 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    fn observe_expression(&mut self, kind: ExpressionKind, value: ExpressionValue) {
+    fn observe_expression(&mut self, kind: ExpressionKind, value: ExpressionValue<G>) {
         let value = match value {
             ExpressionValue::Number(value) => match kind {
                 ExpressionKind::Integer => ObservationValue::Integer(value),
@@ -405,9 +429,9 @@ impl CommandProcessor<'_> {
     }
 }
 
-fn is_other_character(command: &CurrentCommand, expected: char) -> bool {
+fn is_other_character<G>(command: &CurrentCommand<G>, expected: char) -> bool {
     matches!(
-        command.meaning(),
+        static_meaning(command.meaning()),
         Meaning::CharToken {
             ch,
             cat: Catcode::Other,
@@ -415,12 +439,19 @@ fn is_other_character(command: &CurrentCommand, expected: char) -> bool {
     )
 }
 
-fn validate_factor(
-    factor: ExpressionValue,
+const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
+    match meaning {
+        ResolvedMeaning::Static(meaning) => meaning,
+        ResolvedMeaning::Macro { .. } => Meaning::Undefined,
+    }
+}
+
+fn validate_factor<G>(
+    factor: ExpressionValue<G>,
     kind: ExpressionKind,
     term_operator: ExpressionOperator,
     overflow: &mut bool,
-) -> ExpressionValue {
+) -> ExpressionValue<G> {
     let limit = if term_operator.continues_term() {
         INTEGER_LIMIT
     } else {
@@ -448,9 +479,9 @@ fn bounded_number(value: i64, limit: i64, overflow: &mut bool) -> i64 {
     }
 }
 
-fn apply_factor(
-    frame: &mut ExpressionFrame,
-    factor: ExpressionValue,
+fn apply_factor<G>(
+    frame: &mut ExpressionFrame<G>,
+    factor: ExpressionValue<G>,
     mut operator: ExpressionOperator,
     overflow: &mut bool,
 ) -> ExpressionOperator {
@@ -495,7 +526,7 @@ fn apply_factor(
     operator
 }
 
-fn evaluate_term(frame: &mut ExpressionFrame, next: ExpressionOperator, overflow: &mut bool) {
+fn evaluate_term<G>(frame: &mut ExpressionFrame<G>, next: ExpressionOperator, overflow: &mut bool) {
     frame.expression = match frame.expression_operator {
         ExpressionOperator::None => frame.term,
         ExpressionOperator::Add => {
@@ -512,13 +543,13 @@ fn evaluate_term(frame: &mut ExpressionFrame, next: ExpressionOperator, overflow
     frame.expression_operator = next;
 }
 
-fn add_value(
-    left: ExpressionValue,
-    right: ExpressionValue,
+fn add_value<G>(
+    left: ExpressionValue<G>,
+    right: ExpressionValue<G>,
     subtract: bool,
     kind: ExpressionKind,
     overflow: &mut bool,
-) -> ExpressionValue {
+) -> ExpressionValue<G> {
     match (left, right) {
         (ExpressionValue::Number(left), ExpressionValue::Number(right)) => {
             let right = if subtract { -right } else { right };
@@ -577,46 +608,46 @@ fn add_ordered_component(
     }
 }
 
-fn multiply_value(
-    value: ExpressionValue,
+fn multiply_value<G>(
+    value: ExpressionValue<G>,
     factor: i64,
     kind: ExpressionKind,
     overflow: &mut bool,
-) -> ExpressionValue {
+) -> ExpressionValue<G> {
     map_components(value, kind.limit(), overflow, |component, limit| {
         bounded_i128(i128::from(component) * i128::from(factor), limit)
     })
 }
 
-fn divide_value(
-    value: ExpressionValue,
+fn divide_value<G>(
+    value: ExpressionValue<G>,
     divisor: i64,
     kind: ExpressionKind,
     overflow: &mut bool,
-) -> ExpressionValue {
+) -> ExpressionValue<G> {
     map_components(value, kind.limit(), overflow, |component, limit| {
         rounded_fraction(component, 1, divisor, limit)
     })
 }
 
-fn scale_value(
-    value: ExpressionValue,
+fn scale_value<G>(
+    value: ExpressionValue<G>,
     numerator: i64,
     denominator: i64,
     kind: ExpressionKind,
     overflow: &mut bool,
-) -> ExpressionValue {
+) -> ExpressionValue<G> {
     map_components(value, kind.limit(), overflow, |component, limit| {
         rounded_fraction(component, numerator, denominator, limit)
     })
 }
 
-fn map_components(
-    value: ExpressionValue,
+fn map_components<G>(
+    value: ExpressionValue<G>,
     number_limit: i64,
     overflow: &mut bool,
     mut map: impl FnMut(i64, i64) -> Option<i64>,
-) -> ExpressionValue {
+) -> ExpressionValue<G> {
     let mut apply = |value, limit| match map(value, limit) {
         Some(value) => value,
         None => {
@@ -663,7 +694,7 @@ fn rounded_fraction(value: i64, numerator: i64, denominator: i64, limit: i64) ->
     bounded_i128(quotient, limit)
 }
 
-fn expression_internal_value(kind: ExpressionKind, value: ExpressionValue) -> InternalValue {
+fn expression_internal_value<G>(kind: ExpressionKind, value: ExpressionValue<G>) -> InternalValue {
     match (kind, value) {
         (ExpressionKind::Integer, ExpressionValue::Number(value)) => {
             InternalValue::Integer(i32::try_from(value).expect("checked integer fits i32"))

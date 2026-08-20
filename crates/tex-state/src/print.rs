@@ -221,25 +221,60 @@ impl Selector {
 
 /// tex.web §§57-65's print primitives over one [`Selector`].
 pub struct Printer<'a, G> {
-    universe: &'a mut Universe<G>,
+    world: &'a mut crate::World,
+    interaction_mode: &'a mut InteractionMode,
+    newline_char: i32,
+    escape_char: i32,
+    max_print_line: usize,
     selector: Selector,
+    generation: core::marker::PhantomData<fn(G) -> G>,
 }
 
 impl<'a, G> Printer<'a, G> {
     /// Opens a print scope routed by `selector`.
     pub fn new(universe: &'a mut Universe<G>, selector: Selector) -> Self {
-        Self { universe, selector }
+        let newline_char = universe.int_param(IntParam::NEWLINE_CHAR);
+        let escape_char = universe.int_param(IntParam::ESCAPE_CHAR);
+        let max_print_line = universe.error_context_widths().max_print_line();
+        Self::from_parts(
+            &mut universe.world,
+            &mut universe.interaction_mode,
+            newline_char,
+            escape_char,
+            max_print_line,
+            selector,
+        )
     }
 
-    /// The state being printed from. Printing reads live state.
-    #[must_use]
-    pub fn state(&self) -> &Universe<G> {
-        self.universe
+    pub(crate) const fn from_parts(
+        world: &'a mut crate::World,
+        interaction_mode: &'a mut InteractionMode,
+        newline_char: i32,
+        escape_char: i32,
+        max_print_line: usize,
+        selector: Selector,
+    ) -> Self {
+        Self {
+            world,
+            interaction_mode,
+            newline_char,
+            escape_char,
+            max_print_line,
+            selector,
+            generation: core::marker::PhantomData,
+        }
     }
 
-    /// Mutable state, for callers that must render from and then update it.
-    pub fn state_mut(&mut self) -> &mut Universe<G> {
-        self.universe
+    fn interaction_mode(&self) -> InteractionMode {
+        *self.interaction_mode
+    }
+
+    fn set_interaction_mode(&mut self, mode: InteractionMode) {
+        *self.interaction_mode = mode;
+    }
+
+    fn world_mut(&mut self) -> &mut crate::World {
+        self.world
     }
 
     #[must_use]
@@ -307,15 +342,14 @@ impl<'a, G> Printer<'a, G> {
     pub fn print_encoded_bytes(&mut self, bytes: &[u8]) -> &mut Self {
         if let Some(sink) = self.selector.sink() {
             let max_print_line = self.max_print_line();
-            self.universe
-                .world_mut()
+            self.world
                 .write_encoded_bytes_with_line_limit(sink, bytes, max_print_line);
         }
         self
     }
 
     fn is_newline_character(&self, character: char) -> bool {
-        u32::try_from(self.universe.int_param(IntParam::NEWLINE_CHAR))
+        u32::try_from(self.newline_char)
             .ok()
             .and_then(char::from_u32)
             == Some(character)
@@ -324,8 +358,7 @@ impl<'a, G> Printer<'a, G> {
     fn write_raw(&mut self, text: &str) -> &mut Self {
         if let Some(sink) = self.selector.sink() {
             let max_print_line = self.max_print_line();
-            self.universe
-                .world_mut()
+            self.world
                 .write_text_with_line_limit(sink, text, max_print_line);
         }
         self
@@ -370,7 +403,7 @@ impl<'a, G> Printer<'a, G> {
     /// tex.web §63's `print_esc`: `\escapechar` followed by the name, with
     /// the escape omitted when `\escapechar` is outside `0..255`.
     pub fn print_esc(&mut self, name: &str) -> &mut Self {
-        let escape = self.universe.int_param(IntParam::ESCAPE_CHAR);
+        let escape = self.escape_char;
         if (0..256).contains(&escape)
             && let Some(character) = u32::try_from(escape).ok().and_then(char::from_u32)
         {
@@ -400,8 +433,7 @@ impl<'a, G> Printer<'a, G> {
     /// tex.web §54's `term_offset`.
     #[must_use]
     pub fn terminal_offset(&self) -> usize {
-        self.universe
-            .world()
+        self.world
             .stream_bufs()
             .terminal_partial_line()
             .chars()
@@ -411,18 +443,13 @@ impl<'a, G> Printer<'a, G> {
     /// tex.web §54's `file_offset`.
     #[must_use]
     pub fn log_offset(&self) -> usize {
-        self.universe
-            .world()
-            .stream_bufs()
-            .log_partial_line()
-            .chars()
-            .count()
+        self.world.stream_bufs().log_partial_line().chars().count()
     }
 
     /// The process-selected tex.web §3 `max_print_line`.
     #[must_use]
     pub const fn max_print_line(&self) -> usize {
-        self.universe.error_context_widths().max_print_line()
+        self.max_print_line
     }
 
     /// tex.web §62's guard, `(term_offset>0)and(odd(selector))` or
@@ -527,6 +554,83 @@ impl<'a, G> ErrorReport<'a, G> {
             help: Vec::new(),
             err_help: None,
             context: None,
+        }
+    }
+
+    pub(crate) fn begin_from_parts(
+        world: &'a mut crate::World,
+        interaction_mode_slot: &'a mut InteractionMode,
+        widths: ErrorContextWidths,
+        newline_char: i32,
+        escape_char: i32,
+        text: &str,
+    ) -> Self {
+        let selector = Selector::for_interaction(*interaction_mode_slot);
+        let mut printer = Printer::from_parts(
+            world,
+            interaction_mode_slot,
+            newline_char,
+            escape_char,
+            widths.max_print_line(),
+            selector,
+        );
+        printer.print_nl("! ").print(text);
+        Self {
+            printer,
+            help: Vec::new(),
+            err_help: None,
+            context: None,
+        }
+    }
+
+    pub(crate) fn resume_from_parts(
+        world: &'a mut crate::World,
+        interaction_mode_slot: &'a mut InteractionMode,
+        widths: ErrorContextWidths,
+        newline_char: i32,
+        escape_char: i32,
+        deferred: DeferredErrorReport,
+    ) -> Self {
+        Self {
+            printer: Printer::from_parts(
+                world,
+                interaction_mode_slot,
+                newline_char,
+                escape_char,
+                widths.max_print_line(),
+                deferred.selector,
+            ),
+            help: deferred.help,
+            err_help: deferred.err_help,
+            context: deferred.context,
+        }
+    }
+
+    pub(crate) fn continue_from_parts(
+        world: &'a mut crate::World,
+        interaction_mode_slot: &'a mut InteractionMode,
+        widths: ErrorContextWidths,
+        newline_char: i32,
+        escape_char: i32,
+        context: &str,
+    ) -> ErrorOutcome {
+        let selector = Selector::for_interaction(*interaction_mode_slot);
+        let mut report = Self {
+            printer: Printer::from_parts(
+                world,
+                interaction_mode_slot,
+                newline_char,
+                escape_char,
+                widths.max_print_line(),
+                selector,
+            ),
+            help: Vec::new(),
+            err_help: None,
+            context: None,
+        };
+        match report.users_advice(Some(context)) {
+            Some(jump) => ErrorOutcome::JumpOut(jump),
+            None => ErrorOutcome::Continue,
         }
     }
 
@@ -640,7 +744,6 @@ impl<'a, G> ErrorReport<'a, G> {
     /// tex.web §82's `error`.
     pub fn error(mut self) -> ErrorOutcome {
         self.printer
-            .universe
             .world_mut()
             .error_channel_mut()
             .record_error_history();
@@ -659,7 +762,7 @@ impl<'a, G> ErrorReport<'a, G> {
         // an error tex.web does not count, printing help tex.web does not
         // print, and continuing past the point tex.web ends the job
         // (`umber2-er8c`).
-        if self.printer.universe.interaction_mode() == InteractionMode::ErrorStop {
+        if self.printer.interaction_mode() == InteractionMode::ErrorStop {
             return match self.users_advice(context.as_deref()) {
                 Some(jump) => ErrorOutcome::JumpOut(jump),
                 None => ErrorOutcome::Continue,
@@ -667,7 +770,6 @@ impl<'a, G> ErrorReport<'a, G> {
         }
         let error_count = self
             .printer
-            .universe
             .world_mut()
             .error_channel_mut()
             .record_scrolled_error();
@@ -675,7 +777,6 @@ impl<'a, G> ErrorReport<'a, G> {
             self.printer
                 .print_nl("(That makes 100 errors; please try again.)");
             self.printer
-                .universe
                 .world_mut()
                 .error_channel_mut()
                 .record_fatal_history();
@@ -688,7 +789,7 @@ impl<'a, G> ErrorReport<'a, G> {
     /// tex.web §90's `<Put help message on the transcript file>`.
     fn help_on_transcript(&mut self) {
         let restore = self.printer.selector();
-        let redirect = self.printer.universe.interaction_mode() != InteractionMode::Batch;
+        let redirect = self.printer.interaction_mode() != InteractionMode::Batch;
         if redirect {
             self.printer.set_selector(restore.decr());
         }
@@ -719,7 +820,7 @@ impl<'a, G> ErrorReport<'a, G> {
     /// returning to `error`'s caller.
     fn users_advice(&mut self, context: Option<&str>) -> Option<JumpOut> {
         loop {
-            if self.printer.universe.interaction_mode() != InteractionMode::ErrorStop {
+            if self.printer.interaction_mode() != InteractionMode::ErrorStop {
                 return None;
             }
             // §330's `clear_for_error_prompt`. Its `clear_terminal` flushes
@@ -743,7 +844,6 @@ impl<'a, G> ErrorReport<'a, G> {
                         count = count * 10 + second - b'0';
                     }
                     self.printer
-                        .universe
                         .world_mut()
                         .error_channel_mut()
                         .request_recovery(ErrorRecoveryRequest::Delete(count));
@@ -760,7 +860,6 @@ impl<'a, G> ErrorReport<'a, G> {
                         line
                     };
                     self.printer
-                        .universe
                         .world_mut()
                         .error_channel_mut()
                         .request_recovery(ErrorRecoveryRequest::Insert(insertion));
@@ -776,9 +875,7 @@ impl<'a, G> ErrorReport<'a, G> {
                 // §84's `X`: `interaction:=scroll_mode; jump_out`. It prints
                 // nothing on the way out.
                 b'X' => {
-                    self.printer
-                        .universe
-                        .set_interaction_mode(InteractionMode::Scroll);
+                    self.printer.set_interaction_mode(InteractionMode::Scroll);
                     return Some(JumpOut::Quit);
                 }
                 // §84's `othercases do_nothing`, then §85's menu.
@@ -794,7 +891,7 @@ impl<'a, G> ErrorReport<'a, G> {
         // §72's `normalize_selector`. `log_opened` is constantly true here
         // (see this module's header), so this only re-derives the selector
         // from the interaction mode still in force.
-        let selector = Selector::for_interaction(self.printer.universe.interaction_mode());
+        let selector = Selector::for_interaction(self.printer.interaction_mode());
         self.printer.set_selector(selector);
         self.printer.print_nl("! ").print("Emergency stop");
         self.help = vec![help.to_owned()];
@@ -826,13 +923,10 @@ impl<'a, G> ErrorReport<'a, G> {
         // §93: `if interaction=error_stop_mode then interaction:=scroll_mode`.
         // Only from errorstop -- a batch or nonstop job keeps the mode it was
         // given, which is what §1335's own note then branches on.
-        if self.printer.universe.interaction_mode() == InteractionMode::ErrorStop {
-            self.printer
-                .universe
-                .set_interaction_mode(InteractionMode::Scroll);
+        if self.printer.interaction_mode() == InteractionMode::ErrorStop {
+            self.printer.set_interaction_mode(InteractionMode::Scroll);
         }
         self.printer
-            .universe
             .world_mut()
             .error_channel_mut()
             .record_error_history();
@@ -846,13 +940,11 @@ impl<'a, G> ErrorReport<'a, G> {
         // branches end the job here, and §93's own history wins below.
         let _ = self
             .printer
-            .universe
             .world_mut()
             .error_channel_mut()
             .record_scrolled_error();
         self.help_on_transcript();
         self.printer
-            .universe
             .world_mut()
             .error_channel_mut()
             .record_fatal_history();
@@ -862,7 +954,6 @@ impl<'a, G> ErrorReport<'a, G> {
     fn terminal_input(&mut self) -> Option<String> {
         let line = self
             .printer
-            .universe
             .world_mut()
             .read_terminal_line()
             .ok()
@@ -906,11 +997,10 @@ impl<'a, G> ErrorReport<'a, G> {
             _ => (InteractionMode::Scroll, "scrollmode"),
         };
         self.printer
-            .universe
             .world_mut()
             .error_channel_mut()
             .clear_error_count();
-        self.printer.universe.set_interaction_mode(mode);
+        self.printer.set_interaction_mode(mode);
         self.printer.print("OK, entering ").print_esc(name);
         if mode == InteractionMode::Batch {
             let selector = self.printer.selector().decr();

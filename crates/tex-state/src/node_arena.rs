@@ -510,7 +510,7 @@ impl<L, Glue, Tokens> core::fmt::Debug for NodeList<'_, L, Glue, Tokens> {
 impl<'a, L, Glue, Tokens> NodeList<'a, L, Glue, Tokens> {
     /// Returns the immutable logical nodes in source order.
     #[must_use]
-    pub fn nodes(self) -> &'a [Node<NodeListId<L>, Glue, Tokens>] {
+    pub fn nodes(&self) -> &'a [Node<NodeListId<L>, Glue, Tokens>] {
         self.id.index().map_or(&[], |index| {
             self.arena.rows[index]
                 .as_ref()
@@ -520,7 +520,7 @@ impl<'a, L, Glue, Tokens> NodeList<'a, L, Glue, Tokens> {
     }
 
     #[must_use]
-    pub fn len(self) -> usize {
+    pub fn len(&self) -> usize {
         self.nodes().len()
     }
 
@@ -555,7 +555,7 @@ impl<'a, L, Glue, Tokens> NodeList<'a, L, Glue, Tokens> {
 
 impl<'a> NodeList<'a, PageLifetime> {
     #[must_use]
-    pub fn get(self, index: usize) -> Option<NodeRef<'a>> {
+    pub fn get(&self, index: usize) -> Option<NodeRef<'a>> {
         self.nodes().get(index).map(NodeRef::from)
     }
 
@@ -940,8 +940,8 @@ impl NodeRef<'_> {
             PackedNode::Box(node) => Some((node.height, node.depth)),
             PackedNode::Unset(node) => Some((node.height, node.depth)),
             PackedNode::Rule { height, depth, .. } => Some((
-                height.unwrap_or(crate::scaled::Scaled::ZERO),
-                depth.unwrap_or(crate::scaled::Scaled::ZERO),
+                height.unwrap_or(crate::scaled::Scaled::from_raw(0)),
+                depth.unwrap_or(crate::scaled::Scaled::from_raw(0)),
             )),
             _ => None,
         }

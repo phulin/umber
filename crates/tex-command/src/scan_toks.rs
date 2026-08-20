@@ -362,14 +362,14 @@ pub(crate) struct ScannedToksBuffers {
 
 /// TeX82 §403's result after a mandatory left-brace scan.
 #[derive(Debug)]
-pub(crate) enum ScannedLeftBrace {
+pub(crate) enum ScannedLeftBrace<G> {
     /// A real source or replay token supplied the brace.
-    Consumed(crate::CurrentCommand),
+    Consumed(crate::CurrentCommand<G>),
     /// §403 inserted the brace after backing up the offending command.
     Inserted,
 }
 
-impl ScannedLeftBrace {
+impl<G> ScannedLeftBrace<G> {
     pub(crate) fn origin(&self) -> OriginId {
         match self {
             Self::Consumed(command) => command.origin(),
@@ -764,7 +764,7 @@ impl<G> CommandProcessor<'_, G> {
     pub(crate) fn scan_left_brace(
         &mut self,
         expanded: bool,
-    ) -> Result<ScannedLeftBrace, CommandError> {
+    ) -> Result<ScannedLeftBrace<G>, CommandError> {
         loop {
             let command = if expanded {
                 self.get_x_token()?
@@ -1314,11 +1314,12 @@ impl<G> CommandProcessor<'_, G> {
                 vec![TracedTokenWord::pack(Token::Cs(symbol), OriginId::UNKNOWN)]
             }
             crate::InternalValue::Tokens { tokens, .. } => self
-                .state
-                .tokens(tokens.id())
+                .command
+                .attempt_token_words(tokens)
+                .map_err(crate::scan_toks::attempt_command_error)?
                 .iter()
                 .copied()
-                .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
+                .map(|token| TracedTokenWord::pack(token.semantic_token(), OriginId::UNKNOWN))
                 .collect::<Vec<_>>(),
             value => crate::processor::render_the_value(&value)
                 .expect("non-token internal values render")

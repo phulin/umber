@@ -3,11 +3,14 @@
 use crate::checkpoint::{BoundedStateMark, GenerationCheckpoint, RestoreTarget, prepare_restore};
 use crate::command_context::CommandContext;
 use crate::definition_arena::{DefinitionAllocationError, DefinitionId};
+use crate::dependency::DependencyRuntime;
 use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
 use crate::env::group::{GroupFrame, GroupKind};
 use crate::env::{AssignmentScope, CodeTableKind, StateError};
+use crate::font::FontStore;
 use crate::generation::{GenerationBrand, GenerationOwner, with_generation};
 use crate::glue::GlueSpec;
+use crate::hyphenation::HyphenationTable;
 use crate::interner::{
     ControlSequenceKind, Interner, InternerAccessError, InternerBudget, InternerError,
     InternerRetirement, InternerUsage, Symbol, SymbolId,
@@ -19,8 +22,12 @@ use crate::node_arena::{
     DurableListId, NodeArenaCursor, NodeArenaError, NodeList, PageLifetime, PageListId,
     PageNodeArena,
 };
+use crate::page::PageBuilderState;
+use crate::pdf::PdfState;
+use crate::print::ErrorContextWidths;
 use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
+use crate::source_map::SourceMap;
 use crate::stores::{StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
 use crate::world::World;
@@ -166,13 +173,20 @@ impl From<NodeArenaError> for UniverseError {
 
 /// Coarse owner of one session interning epoch and current generation.
 pub struct Universe<G> {
-    interner: Interner,
+    pub(crate) interner: Interner,
     core: Option<StateCore<G>>,
     page_nodes: PageNodeArena,
-    world: World,
-    interaction_mode: InteractionMode,
-    primitive_names: Vec<String>,
-    primitive_meanings: Vec<Meaning>,
+    fonts: FontStore,
+    page: PageBuilderState,
+    pdf: PdfState<G>,
+    sources: SourceMap,
+    hyphenation: HyphenationTable,
+    pub(crate) world: World,
+    dependencies: DependencyRuntime,
+    pub(crate) interaction_mode: InteractionMode,
+    error_context_widths: ErrorContextWidths,
+    pub(crate) primitive_names: Vec<String>,
+    pub(crate) primitive_meanings: Vec<MeaningWord<G>>,
     restore_owner: Option<GenerationOwner<G>>,
 }
 
@@ -182,8 +196,15 @@ impl<G> Universe<G> {
             interner,
             core: Some(core),
             page_nodes: PageNodeArena::new(),
+            fonts: FontStore::new(),
+            page: PageBuilderState::default(),
+            pdf: PdfState::default(),
+            sources: SourceMap::default(),
+            hyphenation: HyphenationTable::new(),
             world: World::default(),
+            dependencies: DependencyRuntime::default(),
             interaction_mode: InteractionMode::default(),
+            error_context_widths: ErrorContextWidths::default(),
             primitive_names: Vec::new(),
             primitive_meanings: Vec::new(),
             restore_owner: None,
@@ -244,6 +265,11 @@ impl<G> Universe<G> {
 
     /// Records one immutable primitive-table row without changing eqtb.
     pub fn register_primitive_meaning(&mut self, name: &str, meaning: Meaning) {
+        self.register_primitive_word(name, MeaningWord::from_static(meaning));
+    }
+
+    /// Records a static or generation-local frozen primitive meaning.
+    pub fn register_primitive_word(&mut self, name: &str, meaning: MeaningWord<G>) {
         if let Some(index) = self
             .primitive_names
             .iter()
@@ -280,14 +306,19 @@ impl<G> Universe<G> {
         self.primitive_names
             .iter()
             .position(|candidate| candidate == name)
-            .map(|index| self.primitive_meanings[index])
+            .and_then(|index| match self.primitive_meanings[index].resolve() {
+                crate::ResolvedMeaning::Static(meaning) => Some(meaning),
+                crate::ResolvedMeaning::Macro { .. } => None,
+            })
     }
 
     #[must_use]
     pub fn primitive_name(&self, meaning: Meaning) -> Option<&str> {
         self.primitive_meanings
             .iter()
-            .position(|&candidate| candidate == meaning)
+            .position(|candidate| {
+                matches!(candidate.resolve(), crate::ResolvedMeaning::Static(value) if value == meaning)
+            })
             .map(|index| self.primitive_names[index].as_str())
     }
 
@@ -320,20 +351,32 @@ impl<G> Universe<G> {
 
     #[must_use]
     pub fn frozen_primitive_meaning(&self, token: crate::token::Token) -> Option<Meaning> {
+        match self.frozen_primitive_resolved(token)? {
+            crate::ResolvedMeaning::Static(meaning) => Some(meaning),
+            crate::ResolvedMeaning::Macro { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn frozen_primitive_resolved(
+        &self,
+        token: crate::token::Token,
+    ) -> Option<crate::ResolvedMeaning<G>> {
         let crate::token::Token::Frozen(frozen) = token else {
             return None;
         };
         self.primitive_meanings
             .get(usize::from(frozen.primitive_index()?))
             .copied()
+            .map(MeaningWord::resolve)
     }
 
     #[must_use]
     pub fn catcode(&self, ch: char) -> crate::token::Catcode {
         let raw = self
-            .command_context()
+            .live_state()
             .ok()
-            .and_then(|context| context.code(CodeTableKind::Catcode, ch).ok())
+            .and_then(|state| state.code(CodeTableKind::Catcode, ch).ok())
             .unwrap_or(crate::token::Catcode::Other as i64);
         u8::try_from(raw)
             .ok()
@@ -350,7 +393,15 @@ impl<G> Universe<G> {
         &self,
         symbol: Symbol,
     ) -> Result<crate::meaning::ResolvedMeaning<G>, UniverseError> {
-        Ok(self.command_context()?.meaning(symbol)?)
+        self.interner
+            .resolve_local(symbol)
+            .ok_or(UniverseError::State(StateError::ForeignSession))?;
+        Ok(self
+            .core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .state()
+            .meaning(symbol)?)
     }
 
     #[must_use]
@@ -369,6 +420,17 @@ impl<G> Universe<G> {
 
     pub const fn set_interaction_mode(&mut self, mode: InteractionMode) {
         self.interaction_mode = mode;
+    }
+
+    /// Returns the process-selected tex.web §3 display widths.
+    #[must_use]
+    pub const fn error_context_widths(&self) -> ErrorContextWidths {
+        self.error_context_widths
+    }
+
+    /// Replaces operational error-display widths outside semantic state.
+    pub const fn set_error_context_widths(&mut self, widths: ErrorContextWidths) {
+        self.error_context_widths = widths;
     }
 
     #[must_use]
@@ -390,6 +452,22 @@ impl<G> Universe<G> {
             .ok_or(UniverseError::Retired)?
             .admit_mut()?
             .allocate_definition(parameter_text, replacement_text)?)
+    }
+
+    pub(crate) fn glue_value(&self, id: GlueId<G>) -> GlueSpec {
+        self.core.as_ref().expect("live universe").admit().glue(id)
+    }
+
+    pub(crate) fn provenance_record(&self, id: ProvenanceId<G>) -> OriginRecord {
+        self.core
+            .as_ref()
+            .expect("live universe")
+            .admit()
+            .provenance(id)
+    }
+
+    pub(crate) fn admitted(&self) -> Result<crate::stores::AdmittedState<'_, G>, UniverseError> {
+        Ok(self.core.as_ref().ok_or(UniverseError::Retired)?.admit())
     }
 
     pub fn allocate_token_list(
@@ -644,6 +722,17 @@ impl<G> Universe<G> {
         Ok(())
     }
 
+    pub fn assign_int_param(
+        &mut self,
+        parameter: crate::env::banks::IntParam,
+        value: i32,
+        scope: AssignmentScope,
+    ) -> Result<(), UniverseError> {
+        self.live_state_mut()?
+            .assign_integer_parameter(parameter, value, scope)?;
+        Ok(())
+    }
+
     pub fn assign_dimension(
         &mut self,
         index: u16,
@@ -870,13 +959,22 @@ impl<G> Universe<G> {
     }
 
     /// Admits matching coarse owners once for a command episode.
-    pub fn command_context(&self) -> Result<CommandContext<'_, G>, UniverseError> {
-        let core = self.core.as_ref().ok_or(UniverseError::Retired)?;
+    pub fn command_context(&mut self) -> Result<CommandContext<'_, G>, UniverseError> {
+        let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
         Ok(CommandContext::new(
-            &self.interner,
-            core.admit(),
+            &mut self.interner,
+            core.admit_mut()?,
             &self.primitive_names,
             &self.primitive_meanings,
+            &mut self.world,
+            &mut self.dependencies,
+            &self.fonts,
+            &mut self.page,
+            &mut self.pdf,
+            &mut self.sources,
+            &self.hyphenation,
+            &mut self.interaction_mode,
+            self.error_context_widths,
         ))
     }
 
@@ -904,6 +1002,13 @@ impl<G> Universe<G> {
             .as_mut()
             .ok_or(UniverseError::Retired)?
             .state_mut())
+    }
+
+    pub(crate) fn live_state(&self) -> Result<&crate::env::DenseState<G>, StateError> {
+        self.core
+            .as_ref()
+            .ok_or(StateError::InvalidCursor)
+            .map(StateCore::state)
     }
 
     /// Retires the session epoch and revision generation together. The

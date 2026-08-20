@@ -49,11 +49,11 @@ impl FileFraming {
         self.open_parens
     }
 
-    const fn incr(&mut self) {
+    pub(crate) const fn open(&mut self) {
         self.open_parens = self.open_parens.saturating_add(1);
     }
 
-    const fn decr(&mut self) {
+    pub(crate) const fn close(&mut self) {
         self.open_parens = self.open_parens.saturating_sub(1);
     }
 }
@@ -75,20 +75,20 @@ pub fn print_file_open<G>(universe: &mut Universe<G>, name: &str) {
     }
     printer.print_char('(');
     printer.print(name);
-    universe.world_mut().file_framing_mut().incr();
+    universe.world_mut().file_framing_mut().open();
 }
 
 /// tex.web §362's bare `)`.
 pub fn print_file_close<G>(universe: &mut Universe<G>) {
     universe.printer().print_char(')');
-    universe.world_mut().file_framing_mut().decr();
+    universe.world_mut().file_framing_mut().close();
 }
 
 /// tex.web §1335's `while open_parens>0 do begin print("␣)"); decr(open_parens); end`.
 pub fn print_remaining_file_closes<G>(universe: &mut Universe<G>) {
     while universe.world().file_framing().open_parens() > 0 {
         universe.printer().print(" )");
-        universe.world_mut().file_framing_mut().decr();
+        universe.world_mut().file_framing_mut().close();
     }
 }
 
@@ -104,12 +104,12 @@ pub fn print_startup_file_open<G>(universe: &mut Universe<G>, name: &str) {
     Printer::new(universe, Selector::TermOnly)
         .print_char('(')
         .print(name);
-    universe.world_mut().file_framing_mut().incr();
+    universe.world_mut().file_framing_mut().open();
 }
 
 /// §537's startup opening after §536 has opened the transcript.
 pub fn print_startup_file_open_after_log<G>(universe: &mut Universe<G>, name: &str) {
     let selector = Selector::for_interaction(universe.interaction_mode());
     Printer::new(universe, selector).print_char('(').print(name);
-    universe.world_mut().file_framing_mut().incr();
+    universe.world_mut().file_framing_mut().open();
 }

@@ -52,7 +52,7 @@ impl ScannerState {
 }
 
 #[allow(dead_code)] // invoked by the ordered scanner, macro-call, and conditional milestones
-impl CommandState {
+impl<G> CommandState<G> {
     pub(crate) fn begin_scanner_status(&mut self, status: ScannerStatus) -> ScannerState {
         std::mem::replace(
             &mut self.scanner,
@@ -83,7 +83,7 @@ impl CommandState {
     }
 }
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Enters one processor-owned scanner episode.
     ///
     /// The returned value retains both the installed semantic status and the

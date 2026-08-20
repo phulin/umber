@@ -204,10 +204,7 @@ impl<'a, G> ProvenanceResolver<'a, G> {
     }
 
     fn record(&self, coordinate: ProvenanceId<G>) -> Option<OriginRecord> {
-        self.universe
-            .command_context()
-            .ok()
-            .map(|context| context.provenance(coordinate))
+        Some(self.universe.provenance_record(coordinate))
     }
 
     fn resolve_record(&self, record: OriginRecord) -> Option<ResolvedSourceLocation> {

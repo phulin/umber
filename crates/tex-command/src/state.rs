@@ -412,7 +412,7 @@ impl<G> CommandState<G> {
     /// an executor operation.
     #[must_use]
     pub fn begin_attempt_operation(&self) -> crate::CommandAttemptMark {
-        crate::CommandAttemptMark(self.attempt.arena().mark())
+        crate::CommandAttemptMark::new(self.attempt.arena().mark())
     }
 
     /// Rejects the attempt-local suffix created after `mark`.
@@ -422,7 +422,7 @@ impl<G> CommandState<G> {
     pub fn discard_attempt_operation(&mut self, mark: crate::CommandAttemptMark) {
         self.attempt
             .arena_mut()
-            .truncate(mark.0)
+            .truncate(mark.attempt_mark())
             .expect("command operation mark belongs to the installed attempt");
     }
 
@@ -962,9 +962,11 @@ impl<G> CommandState<G> {
                         &mut text,
                     );
                     text.push_str("->");
-                    let token_count = state.tokens(tokens.id()).len();
+                    let token_count = state.token_list(tokens).len();
                     for index in 0..token_count {
-                        let token = state.tokens(tokens.id())[index];
+                        let token = state.token_list(tokens)[index]
+                            .token()
+                            .expect("durable token word is valid");
                         crate::processor::expand::append_token_list_token_text(
                             state, token, &mut text,
                         );
@@ -1389,24 +1391,20 @@ impl<G> CommandState<G> {
         // v_template) else begin_token_list(v_part(cur_align),v_template)`.
         // Both levels are `token_type=v_template`; only the list differs, and
         // that is what names the level in the pinned observer's trace.
-        let level = template.map_or_else(
-            || {
-                self.push_token_level(
-                    TokenPayload::transient([]),
-                    TokenBehavior::VTemplate,
-                    RetirementBehavior::RetainExhaustedVTemplate,
-                    ReplayTrace::OmitTemplate,
-                )
-            },
-            |template| {
-                self.push_alignment_template(
-                    template,
-                    TokenBehavior::VTemplate,
-                    RetirementBehavior::RetainExhaustedVTemplate,
-                    ReplayTrace::VTemplate,
-                )
-            },
-        );
+        let level = match template {
+            None => self.push_token_level(
+                TokenPayload::transient([]),
+                TokenBehavior::VTemplate,
+                RetirementBehavior::RetainExhaustedVTemplate,
+                ReplayTrace::OmitTemplate,
+            ),
+            Some(template) => self.push_alignment_template(
+                template,
+                TokenBehavior::VTemplate,
+                RetirementBehavior::RetainExhaustedVTemplate,
+                ReplayTrace::VTemplate,
+            ),
+        };
         self.alignment.begin_v_template(alignment, level, delimiter)
     }
 

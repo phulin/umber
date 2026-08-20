@@ -78,6 +78,14 @@ impl SessionEpochKey {
 }
 
 impl Symbol {
+    /// Reconstructs a compact coordinate from an already validated packed
+    /// token word. Admission into a session still occurs at the aggregate
+    /// state boundary.
+    #[must_use]
+    pub(crate) const fn from_packed_slot(slot: u32) -> Self {
+        Self(slot)
+    }
+
     /// Returns the compact slot for same-session packed storage.
     #[must_use]
     pub(crate) const fn raw(self) -> u32 {
@@ -348,6 +356,18 @@ impl Interner {
             name,
         )
         .map(|slot| SymbolId::new(self.epoch, slot))
+    }
+
+    pub(crate) fn known(&self, name: &str) -> Option<SymbolId> {
+        let kind = named_kind(name);
+        self.lookup_slot(EntryKind::ControlSequence(kind), name)
+            .or_else(|| {
+                self.lookup_slot(
+                    EntryKind::ControlSequence(ControlSequenceKind::Internal),
+                    name,
+                )
+            })
+            .map(|slot| SymbolId::new(self.epoch, slot))
     }
 
     /// Interns an inaccessible engine-owned fixed control sequence.

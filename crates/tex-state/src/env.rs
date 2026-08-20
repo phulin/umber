@@ -248,6 +248,61 @@ impl<G> DenseState<G> {
             .value)
     }
 
+    pub(crate) fn assign_integer_parameter(
+        &mut self,
+        parameter: IntParam,
+        value: i32,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(
+            StateCell::IntegerParameter(parameter.raw()),
+            StateWord::Integer(value),
+            scope,
+        )
+    }
+
+    pub(crate) fn dimension_parameter(
+        &self,
+        parameter: banks::DimenParam,
+    ) -> Result<Scaled, StateError> {
+        Ok(self
+            .dimension_parameters
+            .get(u32::from(parameter.raw()))?
+            .value)
+    }
+
+    pub(crate) fn glue_parameter(
+        &self,
+        parameter: banks::GlueParam,
+    ) -> Result<Option<GlueId<G>>, StateError> {
+        Ok(self.glue_parameters.get(u32::from(parameter.raw()))?.value)
+    }
+
+    pub(crate) fn assign_glue_parameter(
+        &mut self,
+        parameter: banks::GlueParam,
+        value: Option<GlueId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(
+            StateCell::GlueParameter(parameter.raw()),
+            StateWord::Glue(value),
+            scope,
+        )
+    }
+
+    pub(crate) fn mu_glue_register(&self, index: u16) -> Result<Option<GlueId<G>>, StateError> {
+        Ok(self.mu_glue_registers.get(index)?.value)
+    }
+
+    pub(crate) const fn current_font(&self) -> FontId {
+        self.current_font.value
+    }
+
+    pub(crate) fn math_family_font(&self, index: u8) -> Result<FontId, StateError> {
+        Ok(self.math_family_fonts.get(u32::from(index))?.value)
+    }
+
     pub(crate) fn assign_dimension(
         &mut self,
         index: u16,

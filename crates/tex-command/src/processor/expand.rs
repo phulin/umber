@@ -4,7 +4,6 @@ use std::fmt::Write as _;
 
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::MacroDefinitionId;
 use tex_state::interner::ControlSequenceKind;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::page::PageMark;
@@ -562,10 +561,10 @@ impl<G> CommandProcessor<'_, G> {
             };
             if matches!(
                 lookahead.command().meaning(),
-                Meaning::CharToken {
+                ResolvedMeaning::Static(Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
-                }
+                })
             ) {
                 let _ = self.commit_alignment_lookahead_delivery(lookahead);
                 continue;
@@ -1101,290 +1100,300 @@ impl<G> CommandProcessor<'_, G> {
             ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
                 ExpandablePrimitive::ExpandAfter,
             )) => self.expand_expandafter(),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
-                self.expand_csname(command)
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
-                self.expand_string(command)
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning) => {
-                self.expand_meaning(command)
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number) => {
-                self.expand_number(command, false)
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::RomanNumeral) => {
-                self.expand_number(command, true)
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => self.expand_the(command),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
-                self.expand_unexpanded()
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded) => self.expand_expanded(),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize) => {
-                self.expand_detokenize(command)
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
-                self.expand_scantokens()
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
-                self.expand_fontname(command.copy_for_backup())
-            }
-            // pdftex.web §470's `pdf_font_size_code` conversion prints the
-            // selected font size as an ordinary scaled dimension.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFontSize) => {
-                let font = self.scan_font_selector()?;
-                let size = format_scaled(self.state.tracked_font_size(font));
-                self.push_rendered_text(&size, command.origin());
-                Ok(())
-            }
-            // pdftex.web §470 scans e-TeX's extended box-register domain,
-            // then queries typed hlist state for the first non-skipable node
-            // at the requested edge.
-            Meaning::ExpandablePrimitive(
-                primitive @ (ExpandablePrimitive::LeftMarginKern
-                | ExpandablePrimitive::RightMarginKern),
-            ) => {
-                let index = self.scan_extended_register_index()?;
-                let side = match primitive {
-                    ExpandablePrimitive::LeftMarginKern => tex_state::node::MarginKernSide::Left,
-                    ExpandablePrimitive::RightMarginKern => tex_state::node::MarginKernSide::Right,
-                    _ => unreachable!("the dispatch pattern admits only margin-kern enquiries"),
-                };
-                let Some(amount) = self.state.box_margin_kern(index, side) else {
-                    return Err(CommandError::PdfNavigation(
-                        "pdfTeX error (marginkern): a non-empty hbox expected",
-                    ));
-                };
-                self.push_rendered_text(&format_scaled(amount), command.origin());
-                Ok(())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
-                self.expand_input(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => self.expand_endinput(),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => {
-                self.state.unsupported_host_capability();
-                let job_name = self.host.job_name().to_owned();
-                self.push_rendered_text(&job_name, command.origin());
-                Ok(())
-            }
-            // e-TeX 2.6 etex.ch §3211 installs `\eTeXrevision` as a
-            // `convert` command; §1387 prints the immutable revision string
-            // through TeX82 §470's ordinary conversion-token path.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::ETeXRevision) => {
-                self.push_rendered_text(".6", command.origin());
-                Ok(())
-            }
-            // pdfTeX §57.4 exposes the revision suffix independently of the
-            // integer `\pdftexversion` parameter.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision) => {
-                self.push_rendered_text("27", command.origin());
-                Ok(())
-            }
-            // pdftex.web §§494 and 496--498 install `\pdftexbanner` as an
-            // operand-free `convert`: `conv_toks` prints the process banner,
-            // then returns it through the ordinary `str_toks`/`ins_list`
-            // conversion path. `utils.c::makepdftexbanner` appends the pinned
-            // TeX Live and kpathsea identities to pdftex.web §2's banner.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXBanner) => {
-                self.push_rendered_text(
+            ResolvedMeaning::Static(meaning) => match meaning {
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName) => {
+                    self.expand_csname(command)
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
+                    self.expand_string(command)
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning) => {
+                    self.expand_meaning(command)
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Number) => {
+                    self.expand_number(command, false)
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::RomanNumeral) => {
+                    self.expand_number(command, true)
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::The) => self.expand_the(command),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded) => {
+                    self.expand_unexpanded()
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded) => {
+                    self.expand_expanded()
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize) => {
+                    self.expand_detokenize(command)
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
+                    self.expand_scantokens()
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
+                    self.expand_fontname(command.copy_for_backup())
+                }
+                // pdftex.web §470's `pdf_font_size_code` conversion prints the
+                // selected font size as an ordinary scaled dimension.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFontSize) => {
+                    let font = self.scan_font_selector()?;
+                    let size = format_scaled(self.state.tracked_font_size(font));
+                    self.push_rendered_text(&size, command.origin());
+                    Ok(())
+                }
+                // pdftex.web §470 scans e-TeX's extended box-register domain,
+                // then queries typed hlist state for the first non-skipable node
+                // at the requested edge.
+                Meaning::ExpandablePrimitive(
+                    primitive @ (ExpandablePrimitive::LeftMarginKern
+                    | ExpandablePrimitive::RightMarginKern),
+                ) => {
+                    let index = self.scan_extended_register_index()?;
+                    let side = match primitive {
+                        ExpandablePrimitive::LeftMarginKern => {
+                            tex_state::node::MarginKernSide::Left
+                        }
+                        ExpandablePrimitive::RightMarginKern => {
+                            tex_state::node::MarginKernSide::Right
+                        }
+                        _ => unreachable!("the dispatch pattern admits only margin-kern enquiries"),
+                    };
+                    let Some(amount) = self.state.box_margin_kern(index, side) else {
+                        return Err(CommandError::PdfNavigation(
+                            "pdfTeX error (marginkern): a non-empty hbox expected",
+                        ));
+                    };
+                    self.push_rendered_text(&format_scaled(amount), command.origin());
+                    Ok(())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
+                    self.expand_input(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
+                    self.expand_endinput()
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => {
+                    self.state.unsupported_host_capability();
+                    let job_name = self.host.job_name().to_owned();
+                    self.push_rendered_text(&job_name, command.origin());
+                    Ok(())
+                }
+                // e-TeX 2.6 etex.ch §3211 installs `\eTeXrevision` as a
+                // `convert` command; §1387 prints the immutable revision string
+                // through TeX82 §470's ordinary conversion-token path.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::ETeXRevision) => {
+                    self.push_rendered_text(".6", command.origin());
+                    Ok(())
+                }
+                // pdfTeX §57.4 exposes the revision suffix independently of the
+                // integer `\pdftexversion` parameter.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision) => {
+                    self.push_rendered_text("27", command.origin());
+                    Ok(())
+                }
+                // pdftex.web §§494 and 496--498 install `\pdftexbanner` as an
+                // operand-free `convert`: `conv_toks` prints the process banner,
+                // then returns it through the ordinary `str_toks`/`ins_list`
+                // conversion path. `utils.c::makepdftexbanner` appends the pinned
+                // TeX Live and kpathsea identities to pdftex.web §2's banner.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXBanner) => {
+                    self.push_rendered_text(
                     "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) kpathsea version 6.4.2",
                     command.origin(),
                 );
-                Ok(())
-            }
-            // pdftex.web §§1587--1588 use the ordinary integer scanner for
-            // the signed uniform bound, then advance the single checkpointed
-            // MetaPost-derived stream shared with the operand-free normal
-            // deviate conversion.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUniformDeviate) => {
-                let bound = self.scan_integer()?.value;
-                let value = self.state.pdf_uniform_deviate(bound);
-                self.push_rendered_text(&value.to_string(), command.origin());
-                Ok(())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfNormalDeviate) => {
-                let value = self.state.pdf_normal_deviate();
-                self.push_rendered_text(&value.to_string(), command.origin());
-                Ok(())
-            }
-            // pdftex.web §1590's `pdf_creation_date_code` conversion calls
-            // `getcreationdate`, then returns the fixed job-start timestamp
-            // through the ordinary `str_toks`/`ins_list` conversion path.
-            // Both the LaTeX-compatible `\creationdate` spelling and
-            // pdfTeX's `\pdfcreationdate` spelling share this meaning.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::CreationDate) => {
-                let clock = self.state.job_clock();
-                self.push_rendered_text(&format_pdf_date(clock, 0), command.origin());
-                Ok(())
-            }
-            // pdfTeX and XeTeX change section [53a] report shell escape as
-            // 0 (disabled), 1 (unrestricted), or 2 (restricted). Umber's
-            // LaTeX compatibility spelling is an expandable alias over the
-            // same tracked World policy used by `\pdfshellescape`.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::ShellEscape) => {
-                let status = self
-                    .state
-                    .internal_integer(tex_state::meaning::InternalInteger::PdfShellEscape)
-                    .expect("the shell-escape status is an integer enquiry");
-                self.push_rendered_text(&status.to_string(), command.origin());
-                Ok(())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
-                self.expand_string_compare(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeString) => {
-                self.expand_pdf_escape_string(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeHex) => {
-                self.expand_pdf_escape_hex(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUnescapeHex) => {
-                self.expand_pdf_unescape_hex(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfColorStackInit) => {
-                self.expand_pdf_color_stack_init(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMatch) => {
-                self.expand_pdf_match(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch) => {
-                self.expand_pdf_last_match(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileDump) => {
-                self.expand_pdf_file_dump(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize) => {
-                self.expand_pdf_file_size(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileModificationDate) => {
-                self.expand_pdf_file_modification_date(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMdFiveSum) => {
-                self.expand_pdf_md_five_sum(command.copy_for_backup())
-            }
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => {
-                self.expand_pdf_insert_height(command.copy_for_backup())
-            }
-            // pdftex.web §470's `pdf_ximage_bbox_code` conversion scans an
-            // existing image object before its one-based page-box coordinate.
-            // The enquiry reads detached metadata only; it never reserves an
-            // image or writer object while expanding.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXImageBBox) => {
-                let object = self.scan_integer()?.value;
-                let id = u32::try_from(object)
-                    .ok()
-                    .and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok());
-                let Some(metadata) = id.and_then(|id| self.state.pdf_external_image(id)) else {
-                    return Err(CommandError::PdfNavigation(
-                        "pdfTeX error (ext1): cannot find referenced object.",
-                    ));
-                };
-                let index = self.scan_integer()?.value;
-                let Some(coordinate) = u8::try_from(index)
-                    .ok()
-                    .and_then(|index| metadata.bbox_coordinate(index))
-                else {
-                    return Err(CommandError::PdfNavigation(
-                        "pdfTeX error (pdfximagebbox): invalid parameter.",
-                    ));
-                };
-                self.push_rendered_text(&format_scaled(coordinate), command.origin());
-                Ok(())
-            }
-            // pdftex.web §1549's `pdf_xform_name_code` conversion scans a
-            // form object number and prints its independent resource identity.
-            // Unknown object numbers produce zero, matching the other PDF
-            // object enquiries rather than manufacturing ledger state.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXFormName) => {
-                let object = self.scan_integer()?.value;
-                let resource = u32::try_from(object)
-                    .ok()
-                    .and_then(|object| self.state.pdf_form_resource(object))
-                    .unwrap_or(0);
-                self.push_rendered_text(&resource.to_string(), command.origin());
-                Ok(())
-            }
-            // pdftex.web §470's `pdf_page_ref_code` conversion scans a one-based
-            // shipped-page number and prints its page-object identity. Pages
-            // that do not exist yet expand to zero without reserving
-            // speculative writer state; nonpositive operands are rejected by
-            // the conversion's `pdf_error` guard.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPageRef) => {
-                let page = self.scan_integer()?.value;
-                if page <= 0 {
-                    return Err(CommandError::PdfNavigation(
-                        "pdfTeX error (pageref): invalid page number",
-                    ));
+                    Ok(())
                 }
-                let object = u32::try_from(page)
-                    .ok()
-                    .and_then(|page| self.state.pdf_page_object(page))
-                    .unwrap_or(0);
-                self.push_rendered_text(&object.to_string(), command.origin());
-                Ok(())
-            }
-            // pdfTeX §57.1 consumes one raw token and, only for a registered
-            // primitive spelling, replays the immutable frozen primitive.
-            // The ordinary expanded loop then dispatches that original
-            // meaning without consulting the shadowable live cell.
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
-                let Some(target) = self.get_next()? else {
-                    return Err(CommandError::input_invariant());
-                };
-                let Some(symbol) = target.control_sequence() else {
-                    return Ok(());
-                };
-                let name = self.state.resolve(symbol);
-                let Some(frozen) = self.state.primitive_token(name) else {
-                    return Ok(());
-                };
-                self.back_input_token(TracedTokenWord::pack(frozen, target.origin()))
-            }
-            Meaning::ExpandablePrimitive(
-                primitive @ (ExpandablePrimitive::TopMark
-                | ExpandablePrimitive::FirstMark
-                | ExpandablePrimitive::BotMark
-                | ExpandablePrimitive::SplitFirstMark
-                | ExpandablePrimitive::SplitBotMark),
-            ) => self.expand_mark(primitive),
-            Meaning::ExpandablePrimitive(
-                primitive @ (ExpandablePrimitive::TopMarks
-                | ExpandablePrimitive::FirstMarks
-                | ExpandablePrimitive::BotMarks
-                | ExpandablePrimitive::SplitFirstMarks
-                | ExpandablePrimitive::SplitBotMarks),
-            ) => self.expand_mark_class(primitive),
-            Meaning::ExpandablePrimitive(primitive) => {
-                Err(CommandError::UnsupportedExpandablePrimitive(primitive))
-            }
-            // TeX82 §207 puts `undefined_cs` immediately above
-            // `max_command`, so it reaches §366's `expand` and §367's
-            // `othercases`. §370 reports the error and returns without
-            // inserting a replacement token; §380 then restarts its one
-            // expanded-fetch loop at the following input token.
-            Meaning::Undefined => {
-                // §370 reports synchronously at this point. The executor
-                // owns the deferred report, so commit any earlier §537 open
-                // framing now; a later §362 close must remain queued behind
-                // this diagnostic instead of overtaking it.
-                self.command.render_file_framing_events(&mut self.state);
-                let context = self.command.output_open_context(&self.state);
-                self.command
-                    .semantic_diagnostics
-                    .push(crate::CommandSemanticDiagnostic::UndefinedControlSequence { context });
-                if !self.command.profile().capabilities().supports_etex() {
-                    // TeX82 §370 still owns the recoverable user-visible
-                    // error above. The pinned e-TeX 2.6 observer has no
-                    // diagnostic seam at that error site, so its detached
-                    // event stream advances directly to the next input
-                    // transition.
-                    self.observe_command_diagnostic("undefined_control_sequence", command);
+                // pdftex.web §§1587--1588 use the ordinary integer scanner for
+                // the signed uniform bound, then advance the single checkpointed
+                // MetaPost-derived stream shared with the operand-free normal
+                // deviate conversion.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUniformDeviate) => {
+                    let bound = self.scan_integer()?.value;
+                    let value = self.state.pdf_uniform_deviate(bound);
+                    self.push_rendered_text(&value.to_string(), command.origin());
+                    Ok(())
                 }
-                Ok(())
-            }
-            _ => Err(CommandError::input_invariant()),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfNormalDeviate) => {
+                    let value = self.state.pdf_normal_deviate();
+                    self.push_rendered_text(&value.to_string(), command.origin());
+                    Ok(())
+                }
+                // pdftex.web §1590's `pdf_creation_date_code` conversion calls
+                // `getcreationdate`, then returns the fixed job-start timestamp
+                // through the ordinary `str_toks`/`ins_list` conversion path.
+                // Both the LaTeX-compatible `\creationdate` spelling and
+                // pdfTeX's `\pdfcreationdate` spelling share this meaning.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::CreationDate) => {
+                    let clock = self.state.job_clock();
+                    self.push_rendered_text(&format_pdf_date(clock, 0), command.origin());
+                    Ok(())
+                }
+                // pdfTeX and XeTeX change section [53a] report shell escape as
+                // 0 (disabled), 1 (unrestricted), or 2 (restricted). Umber's
+                // LaTeX compatibility spelling is an expandable alias over the
+                // same tracked World policy used by `\pdfshellescape`.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::ShellEscape) => {
+                    let status = self
+                        .state
+                        .internal_integer(tex_state::meaning::InternalInteger::PdfShellEscape)
+                        .expect("the shell-escape status is an integer enquiry");
+                    self.push_rendered_text(&status.to_string(), command.origin());
+                    Ok(())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare) => {
+                    self.expand_string_compare(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeString) => {
+                    self.expand_pdf_escape_string(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfEscapeHex) => {
+                    self.expand_pdf_escape_hex(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUnescapeHex) => {
+                    self.expand_pdf_unescape_hex(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfColorStackInit) => {
+                    self.expand_pdf_color_stack_init(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMatch) => {
+                    self.expand_pdf_match(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch) => {
+                    self.expand_pdf_last_match(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileDump) => {
+                    self.expand_pdf_file_dump(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize) => {
+                    self.expand_pdf_file_size(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileModificationDate) => {
+                    self.expand_pdf_file_modification_date(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMdFiveSum) => {
+                    self.expand_pdf_md_five_sum(command.copy_for_backup())
+                }
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => {
+                    self.expand_pdf_insert_height(command.copy_for_backup())
+                }
+                // pdftex.web §470's `pdf_ximage_bbox_code` conversion scans an
+                // existing image object before its one-based page-box coordinate.
+                // The enquiry reads detached metadata only; it never reserves an
+                // image or writer object while expanding.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXImageBBox) => {
+                    let object = self.scan_integer()?.value;
+                    let id = u32::try_from(object)
+                        .ok()
+                        .and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok());
+                    let Some(metadata) = id.and_then(|id| self.state.pdf_external_image(id)) else {
+                        return Err(CommandError::PdfNavigation(
+                            "pdfTeX error (ext1): cannot find referenced object.",
+                        ));
+                    };
+                    let index = self.scan_integer()?.value;
+                    let Some(coordinate) = u8::try_from(index)
+                        .ok()
+                        .and_then(|index| metadata.bbox_coordinate(index))
+                    else {
+                        return Err(CommandError::PdfNavigation(
+                            "pdfTeX error (pdfximagebbox): invalid parameter.",
+                        ));
+                    };
+                    self.push_rendered_text(&format_scaled(coordinate), command.origin());
+                    Ok(())
+                }
+                // pdftex.web §1549's `pdf_xform_name_code` conversion scans a
+                // form object number and prints its independent resource identity.
+                // Unknown object numbers produce zero, matching the other PDF
+                // object enquiries rather than manufacturing ledger state.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXFormName) => {
+                    let object = self.scan_integer()?.value;
+                    let resource = u32::try_from(object)
+                        .ok()
+                        .and_then(|object| self.state.pdf_form_resource(object))
+                        .unwrap_or(0);
+                    self.push_rendered_text(&resource.to_string(), command.origin());
+                    Ok(())
+                }
+                // pdftex.web §470's `pdf_page_ref_code` conversion scans a one-based
+                // shipped-page number and prints its page-object identity. Pages
+                // that do not exist yet expand to zero without reserving
+                // speculative writer state; nonpositive operands are rejected by
+                // the conversion's `pdf_error` guard.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPageRef) => {
+                    let page = self.scan_integer()?.value;
+                    if page <= 0 {
+                        return Err(CommandError::PdfNavigation(
+                            "pdfTeX error (pageref): invalid page number",
+                        ));
+                    }
+                    let object = u32::try_from(page)
+                        .ok()
+                        .and_then(|page| self.state.pdf_page_object(page))
+                        .unwrap_or(0);
+                    self.push_rendered_text(&object.to_string(), command.origin());
+                    Ok(())
+                }
+                // pdfTeX §57.1 consumes one raw token and, only for a registered
+                // primitive spelling, replays the immutable frozen primitive.
+                // The ordinary expanded loop then dispatches that original
+                // meaning without consulting the shadowable live cell.
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
+                    let Some(target) = self.get_next()? else {
+                        return Err(CommandError::input_invariant());
+                    };
+                    let Some(symbol) = target.control_sequence() else {
+                        return Ok(());
+                    };
+                    let name = self.state.resolve(symbol);
+                    let Some(frozen) = self.state.primitive_token(name) else {
+                        return Ok(());
+                    };
+                    self.back_input_token(TracedTokenWord::pack(frozen, target.origin()))
+                }
+                Meaning::ExpandablePrimitive(
+                    primitive @ (ExpandablePrimitive::TopMark
+                    | ExpandablePrimitive::FirstMark
+                    | ExpandablePrimitive::BotMark
+                    | ExpandablePrimitive::SplitFirstMark
+                    | ExpandablePrimitive::SplitBotMark),
+                ) => self.expand_mark(primitive),
+                Meaning::ExpandablePrimitive(
+                    primitive @ (ExpandablePrimitive::TopMarks
+                    | ExpandablePrimitive::FirstMarks
+                    | ExpandablePrimitive::BotMarks
+                    | ExpandablePrimitive::SplitFirstMarks
+                    | ExpandablePrimitive::SplitBotMarks),
+                ) => self.expand_mark_class(primitive),
+                Meaning::ExpandablePrimitive(primitive) => {
+                    Err(CommandError::UnsupportedExpandablePrimitive(primitive))
+                }
+                // TeX82 §207 puts `undefined_cs` immediately above
+                // `max_command`, so it reaches §366's `expand` and §367's
+                // `othercases`. §370 reports the error and returns without
+                // inserting a replacement token; §380 then restarts its one
+                // expanded-fetch loop at the following input token.
+                Meaning::Undefined => {
+                    // §370 reports synchronously at this point. The executor
+                    // owns the deferred report, so commit any earlier §537 open
+                    // framing now; a later §362 close must remain queued behind
+                    // this diagnostic instead of overtaking it.
+                    self.command.render_file_framing_events(&mut self.state);
+                    let context = self.command.output_open_context(&self.state);
+                    self.command.semantic_diagnostics.push(
+                        crate::CommandSemanticDiagnostic::UndefinedControlSequence { context },
+                    );
+                    if !self.command.profile().capabilities().supports_etex() {
+                        // TeX82 §370 still owns the recoverable user-visible
+                        // error above. The pinned e-TeX 2.6 observer has no
+                        // diagnostic seam at that error site, so its detached
+                        // event stream advances directly to the next input
+                        // transition.
+                        self.observe_command_diagnostic("undefined_control_sequence", command);
+                    }
+                    Ok(())
+                }
+                _ => Err(CommandError::input_invariant()),
+            },
         }
     }
 
@@ -1529,8 +1538,7 @@ impl<G> CommandProcessor<'_, G> {
     /// digits. The result reenters expansion as category-12 characters.
     fn expand_pdf_escape_string(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
-        let text =
-            stored_token_list_string_text(&mut self.state, scanned.replacement_text.token_ref());
+        let text = self.attempt_token_list_string_text(scanned.replacement_text)?;
         let escaped = escape_pdf_literal_string(&text);
         observe!(
             self,
@@ -1563,8 +1571,7 @@ impl<G> CommandProcessor<'_, G> {
     /// TeX82 §464's `str_toks` returns those digits as category-12 characters.
     fn expand_pdf_escape_hex(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
-        let bytes =
-            pdftex_stored_token_list_bytes(&mut self.state, scanned.replacement_text.token_ref());
+        let bytes = self.attempt_token_list_bytes(scanned.replacement_text)?;
         let escaped = escape_pdf_hex(&bytes);
         observe!(
             self,
@@ -1598,8 +1605,7 @@ impl<G> CommandProcessor<'_, G> {
     /// every other decoded byte category 12.
     fn expand_pdf_unescape_hex(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
-        let bytes =
-            pdftex_stored_token_list_bytes(&mut self.state, scanned.replacement_text.token_ref());
+        let bytes = self.attempt_token_list_bytes(scanned.replacement_text)?;
         let unescaped = unescape_pdf_hex(&bytes);
         observe!(
             self,
@@ -1719,8 +1725,10 @@ impl<G> CommandProcessor<'_, G> {
                     }
                 };
                 match command.meaning() {
-                    Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName) => break,
-                    Meaning::CharToken { ch, .. } => name.push(ch),
+                    ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                        ExpandablePrimitive::EndCsName,
+                    )) => break,
+                    ResolvedMeaning::Static(Meaning::CharToken { ch, .. }) => name.push(ch),
                     _ => {
                         let rendered = print_esc_text(&self.state, "endcsname");
                         self.back_error_reporting(
@@ -1898,8 +1906,8 @@ impl<G> CommandProcessor<'_, G> {
     }
 
     fn expand_mark(&mut self, primitive: ExpandablePrimitive) -> Result<(), CommandError> {
-        if let Some(tokens) = self.state.page_mark_value(page_mark(primitive)) {
-            self.push_mark_text(tokens);
+        if let Some(tokens) = self.state.page_mark_value(page_mark(primitive)).cloned() {
+            self.push_mark_text(&tokens);
         }
         Ok(())
     }
@@ -1913,8 +1921,8 @@ impl<G> CommandProcessor<'_, G> {
         let tokens = self
             .state
             .page_mark_class_value(page_mark(primitive), class);
-        if let Some(tokens) = tokens {
-            self.push_mark_text(tokens);
+        if let Some(tokens) = tokens.cloned() {
+            self.push_mark_text(&tokens);
         }
         Ok(())
     }
@@ -1938,14 +1946,8 @@ impl<G> CommandProcessor<'_, G> {
         }
         let pattern = self.scan_balanced_text(true)?.tokens;
         let haystack = self.scan_balanced_text(true)?.tokens;
-        let pattern = pdftex_c_string(pdftex_stored_token_list_bytes(
-            &mut self.state,
-            pattern.token_ref(),
-        ));
-        let haystack = pdftex_c_string(pdftex_stored_token_list_bytes(
-            &mut self.state,
-            haystack.token_ref(),
-        ));
+        let pattern = pdftex_c_string(self.attempt_token_list_bytes(pattern)?);
+        let haystack = pdftex_c_string(self.attempt_token_list_bytes(haystack)?);
         let regex = match PosixRegexBuilder::new(&pattern)
             .with_default_classes()
             .extended(true)
@@ -1993,7 +1995,7 @@ impl<G> CommandProcessor<'_, G> {
             tex_state::PdfColorStackMode::Origin
         };
         let initial = self.scan_balanced_text(true)?.tokens;
-        let initial = pdftex_stored_token_list_bytes(&mut self.state, initial.token_ref());
+        let initial = self.attempt_token_list_bytes(initial)?;
         let id = match self
             .state
             .allocate_pdf_color_stack(mode, restore_at_page_start, initial)
@@ -2066,7 +2068,8 @@ impl<G> CommandProcessor<'_, G> {
                 }
             }
             let name = self.scan_balanced_text(true)?.tokens;
-            let name = pdftex_stored_token_list_bytes(&mut self.state, name.token_ref())
+            let name = self
+                .attempt_token_list_bytes(name)?
                 .into_iter()
                 .map(char::from)
                 .collect::<String>();
@@ -2116,7 +2119,8 @@ impl<G> CommandProcessor<'_, G> {
             pending.request
         } else {
             let name = self.scan_balanced_text(true)?.tokens;
-            let name = pdftex_stored_token_list_bytes(&mut self.state, name.token_ref())
+            let name = self
+                .attempt_token_list_bytes(name)?
                 .into_iter()
                 .map(char::from)
                 .collect::<String>();
@@ -2190,7 +2194,7 @@ impl<G> CommandProcessor<'_, G> {
             pending.request.name.as_bytes().to_vec()
         } else {
             let tokens = self.scan_balanced_text(true)?.tokens;
-            pdftex_stored_token_list_bytes(&mut self.state, tokens.token_ref())
+            self.attempt_token_list_bytes(tokens)?
         };
         if file {
             let request = pending.map_or_else(
@@ -2227,12 +2231,11 @@ impl<G> CommandProcessor<'_, G> {
 
     fn scan_pdf_file_name(&mut self) -> Result<String, CommandError> {
         let tokens = self.scan_balanced_text(true)?.tokens;
-        Ok(
-            pdftex_stored_token_list_bytes(&mut self.state, tokens.token_ref())
-                .into_iter()
-                .map(char::from)
-                .collect(),
-        )
+        Ok(self
+            .attempt_token_list_bytes(tokens)?
+            .into_iter()
+            .map(char::from)
+            .collect())
     }
 
     /// pdftex.web §1590's `pdf_insert_ht_code` conversion reads the height
@@ -2278,8 +2281,8 @@ impl<G> CommandProcessor<'_, G> {
         );
     }
 
-    fn push_mark_text(&mut self, tokens: tex_state::TokenListId<G>) {
-        let words = self.state.token_list(tokens);
+    fn push_mark_text(&mut self, tokens: &tex_state::node::NodeTokenList) {
+        let words = tokens.words();
         let level = self.command.push_token_level(
             TokenPayload::durable(words),
             TokenBehavior::Ordinary,
@@ -2317,6 +2320,20 @@ impl<G> CommandProcessor<'_, G> {
                 .append_token_string_text(word.semantic_token(), &mut text);
         }
         Ok(text)
+    }
+
+    fn attempt_token_list_bytes(
+        &mut self,
+        tokens: crate::AttemptTokenListId,
+    ) -> Result<Vec<u8>, CommandError> {
+        Ok(self
+            .attempt_token_list_string_text(tokens)?
+            .chars()
+            .map(|ch| {
+                u8::try_from(u32::from(ch))
+                    .expect("pdfTeX profile expanded strings contain only byte characters")
+            })
+            .collect())
     }
 
     /// Installs TeX82 §470 `conv_toks` output as an inserted recovery level.
@@ -2360,13 +2377,13 @@ impl<G> CommandProcessor<'_, G> {
     /// choosing its own token type. `first` is the inserted list's leading
     /// token: §323's trace seam reports the current token of the level it just
     /// pushed, and an empty inserted list has none to report.
-    pub(crate) fn insert_expansion_list(&mut self, payload: TokenPayload, first: Option<Token>) {
+    pub(crate) fn insert_expansion_list(&mut self, payload: TokenPayload<G>, first: Option<Token>) {
         self.insert_expansion_list_with_behavior(payload, first, TokenBehavior::Recovery);
     }
 
     fn insert_expansion_list_with_behavior(
         &mut self,
-        payload: TokenPayload,
+        payload: TokenPayload<G>,
         first: Option<Token>,
         behavior: TokenBehavior,
     ) {
@@ -2650,7 +2667,7 @@ fn append_meaning_text_with_token_selector<G>(
     text: &mut String,
 ) {
     if let ResolvedMeaning::Macro { flags, definition } = command.meaning() {
-        let macro_meaning = state.macro_definition(definition).meaning();
+        let macro_meaning = state.definition(definition);
         if flags.contains(MeaningFlags::PROTECTED) {
             append_print_esc_text(state, "protected", text);
         }
@@ -2667,9 +2684,9 @@ fn append_meaning_text_with_token_selector<G>(
             text.push(' ');
         }
         text.push_str("macro:");
-        append_meaning_token_list(state, macro_meaning.parameter_text(), active_selector, text);
+        append_meaning_token_words(state, macro_meaning.parameter_text(), active_selector, text);
         text.push_str("->");
-        append_meaning_token_list(
+        append_meaning_token_words(
             state,
             macro_meaning.replacement_text(),
             active_selector,
@@ -2744,7 +2761,7 @@ fn append_meaning_text_with_token_selector<G>(
             );
             text.push(':');
             let tokens = state.page_mark(page_mark(primitive));
-            append_meaning_token_list(state, tokens, active_selector, text);
+            append_meaning_token_words(state, tokens.words(), active_selector, text);
         }
         meaning @ (Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_)) => {
             append_meaning_control_sequence_text(state, command, meaning, text);
@@ -2764,6 +2781,41 @@ fn append_meaning_token_list<G>(
         append_selector_token_list_text(state, tokens, text);
     } else {
         append_token_list_text(state, tokens, text);
+    }
+}
+
+fn append_meaning_token_words<G>(
+    state: &tex_state::CommandContext<'_, G>,
+    tokens: &[tex_state::token::TokenWord],
+    active_selector: bool,
+    text: &mut String,
+) {
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = tokens[index].token().expect("durable token word is valid");
+        if let Token::Char {
+            ch,
+            cat: Catcode::Parameter,
+        } = token
+            && let Some(Token::Param(slot)) = tokens.get(index + 1).and_then(|word| word.token())
+        {
+            let raw = [ch, char::from(b'0' + slot)]
+                .into_iter()
+                .collect::<String>();
+            if active_selector {
+                state.append_selector_string_text(&raw, text);
+            } else {
+                text.push_str(&raw);
+            }
+            index += 2;
+            continue;
+        }
+        if active_selector {
+            state.append_token_selector_text(token, text);
+        } else {
+            state.append_token_show_text(token, text);
+        }
+        index += 1;
     }
 }
 
@@ -2788,7 +2840,7 @@ impl<G> PrintCommand<G> {
     }
 
     #[must_use]
-    pub(crate) const fn meaning(self) -> ResolvedMeaning<G> {
+    pub(crate) const fn meaning(&self) -> ResolvedMeaning<G> {
         self.meaning
     }
 }
@@ -3035,9 +3087,11 @@ pub fn append_command_token_text<G>(
         Token::Frozen(_) => text.push_str("end of alignment template"),
         Token::Cs(symbol) => {
             let meaning = state.meaning(symbol);
-            let name = state
-                .primitive_name(meaning)
-                .unwrap_or_else(|| state.resolve(symbol));
+            let name = match meaning {
+                ResolvedMeaning::Static(meaning) => state.primitive_name(meaning),
+                ResolvedMeaning::Macro { .. } => None,
+            }
+            .unwrap_or_else(|| state.resolve(symbol));
             append_print_esc_text(state, name, text);
         }
     }
@@ -3058,7 +3112,7 @@ pub(crate) fn append_token_list_text<G>(
             && let Some(Token::Param(slot)) = tokens.get(index + 1).and_then(|word| word.token())
         {
             text.push(ch);
-            text.push(char::from(b'0' + *slot));
+            text.push(char::from(b'0' + slot));
             index += 2;
             continue;
         }
@@ -3086,7 +3140,7 @@ fn append_selector_token_list_text<G>(
         } = tokens[index].token().expect("durable token word is valid")
             && let Some(Token::Param(slot)) = tokens.get(index + 1).and_then(|word| word.token())
         {
-            let raw = [ch, char::from(b'0' + *slot)]
+            let raw = [ch, char::from(b'0' + slot)]
                 .into_iter()
                 .collect::<String>();
             state.append_selector_string_text(&raw, text);

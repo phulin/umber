@@ -84,6 +84,7 @@ pub mod memo;
 pub mod node;
 pub mod node_arena;
 pub mod node_sequence;
+pub mod packed_input;
 pub mod page;
 mod pdf;
 pub mod print;
@@ -128,7 +129,10 @@ pub use resource::{
     ResourceResult,
 };
 
-pub use command_context::CommandContext;
+pub use command_context::{
+    BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, PenaltyArrayKind,
+    PrepareMagDiagnostic,
+};
 pub use definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
 pub use dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
@@ -143,12 +147,7 @@ pub use env::group::{GroupFrame, GroupKind, GroupMismatch};
 pub use env::{AssignmentScope, CodeTableKind, StateError};
 pub use font::PdfFontCode;
 pub use generation::GenerationBrand;
-pub use input::{
-    AlignmentScannerPhase, ConditionFrameSummary, ConditionFrameToken, ConditionKind,
-    ConditionLimb, InputFrameSummary, InputSummary, LexerState, LiteralSpanPolicy,
-    MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments, MacroReplaySite, SourceFrameSummary,
-    SourceId, TokenListReplayKind, TokenListReplayMarker, TracedExpansionToken, TracedTokenList,
-};
+pub use input::{AlignmentScannerPhase, LiteralSpanPolicy, SourceId, TokenListReplayKind};
 pub use journal::JournalCursor;
 pub use meaning::{MeaningWord, ResolvedMeaning};
 pub use memo::{

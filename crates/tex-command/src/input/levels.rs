@@ -61,7 +61,6 @@ pub(crate) fn packed_token_frame(
     retirement: RetirementBehavior,
     trace: &ReplayTrace,
 ) -> PackedInputFrame {
-    let len = u32::try_from(len).expect("input token chunk exceeds the packed offset domain");
     let mut flags = match behavior {
         TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence) => {
             InputFrameFlags::SUPPRESS_EXPANDABLE_CONTROL_SEQUENCE
@@ -81,14 +80,14 @@ pub(crate) fn packed_token_frame(
 ///
 /// Conditions, caches, scanner policy, and paragraph transitions cannot be
 /// represented here. Both character profiles use this same level structure.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) enum InputLevel<G> {
     Source(SourceLevel<G>),
     Tokens(TokenCursor<G>),
 }
 
 /// One registered-source level and its exact delivery identity.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceLevel<G> {
     pub(crate) frame: PackedInputFrame,
     pub(crate) cursor: SourceCursor,
@@ -144,7 +143,7 @@ pub(crate) enum SourceRetirement {
 ///
 /// The four classified fields deliberately keep storage ownership, delivery
 /// semantics, end-of-level handling, and diagnostic explanation independent.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct TokenCursor<G> {
     pub(crate) payload: TokenPayload<G>,
     pub(crate) behavior: TokenBehavior,
@@ -164,7 +163,7 @@ impl<G> TokenCursor<G> {
 }
 
 /// Storage owning the tokens delivered by a token-list level.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 // Boxing the packed chunk would add a separate allocation and owner to the
 // canonical live representation this cutover is specifically designed to
 // avoid. Compact coordinate-only variants are intentionally smaller.
@@ -181,6 +180,56 @@ pub(crate) enum TokenPayload<G> {
     },
     /// One already materialized macro argument, replayed literally by range.
     Argument { list: AttemptTokenListId, len: u32 },
+}
+
+impl<G> Clone for TokenPayload<G> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Packed(chunk) => Self::Packed(chunk.clone()),
+            Self::MacroReplacement { definition, len } => Self::MacroReplacement {
+                definition: *definition,
+                len: *len,
+            },
+            Self::Argument { list, len } => Self::Argument {
+                list: *list,
+                len: *len,
+            },
+        }
+    }
+}
+
+impl<G> Clone for TokenCursor<G> {
+    fn clone(&self) -> Self {
+        Self {
+            payload: self.payload.clone(),
+            behavior: self.behavior.clone(),
+            retirement: self.retirement,
+            trace: self.trace.clone(),
+            frame: self.frame,
+        }
+    }
+}
+
+impl<G> Clone for SourceLevel<G> {
+    fn clone(&self) -> Self {
+        Self {
+            frame: self.frame,
+            cursor: self.cursor.clone(),
+            name_class: self.name_class,
+            retirement: self.retirement,
+            every_eof: self.every_eof,
+            open_depths: self.open_depths.clone(),
+        }
+    }
+}
+
+impl<G> Clone for InputLevel<G> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Source(source) => Self::Source(source.clone()),
+            Self::Tokens(tokens) => Self::Tokens(tokens.clone()),
+        }
+    }
 }
 
 /// One packed token chunk and the cold source coordinates needed only when a

@@ -172,7 +172,6 @@ impl<G> CommandState<G> {
         replacement_len: usize,
     ) -> InputLevelId {
         let parameter_count = self
-            .parameters
             .attempt
             .arena()
             .arguments(arguments.record().expect("macro call allocated arguments"))

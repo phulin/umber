@@ -18,10 +18,17 @@ use std::collections::BTreeMap;
 
 use tex_state::env::banks::IntParam;
 use tex_state::hyphenation::PatternSpec;
-use tex_state::meaning::{Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::token::Catcode;
 
 use crate::{CommandError, CommandProcessor};
+
+const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
+    match meaning {
+        ResolvedMeaning::Static(meaning) => meaning,
+        ResolvedMeaning::Macro { .. } => Meaning::Undefined,
+    }
+}
 
 #[cfg(test)]
 mod tests;
@@ -58,7 +65,7 @@ pub struct ScannedHyphenationData {
     pub patterns: Vec<PatternSpec>,
 }
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Reports whether TeX82 §960 may still add patterns to the uninitialized
     /// hyphenation trie.
     #[must_use]
@@ -89,7 +96,7 @@ impl CommandProcessor<'_> {
         let mut pending_pattern_paths = BTreeMap::<Vec<char>, bool>::new();
         loop {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-            let character = match command.meaning() {
+            let character = match static_meaning(command.meaning()) {
                 // §935/§961's `letter,other_char`.
                 Meaning::CharToken {
                     ch,

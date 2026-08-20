@@ -1,5 +1,4 @@
 use tex_state::Universe;
-use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::Meaning;
 use tex_state::meaning::MeaningFlags;
 
@@ -13,7 +12,7 @@ use super::{
 };
 
 /// Installs TeX82's enum-backed unexpandable primitive meanings.
-pub fn install_tex82_unexpandable_primitives(universe: &mut Universe) {
+pub fn install_tex82_unexpandable_primitives<G>(universe: &mut Universe<G>) {
     configure_generated(
         universe,
         true,
@@ -30,7 +29,7 @@ pub fn install_tex82_unexpandable_primitives(universe: &mut Universe) {
 }
 
 /// Registers TeX82's enum-backed primitive meanings without shadowing a format.
-pub fn register_tex82_unexpandable_primitives(universe: &mut Universe) {
+pub fn register_tex82_unexpandable_primitives<G>(universe: &mut Universe<G>) {
     configure_generated(
         universe,
         false,
@@ -47,8 +46,7 @@ pub fn register_tex82_unexpandable_primitives(universe: &mut Universe) {
 }
 
 /// Installs e-TeX's enum-backed unexpandable primitive meanings.
-pub fn install_etex_unexpandable_primitives(universe: &mut Universe) {
-    universe.select_string_pool_profile(tex_state::StringPoolProfile::Etex26);
+pub fn install_etex_unexpandable_primitives<G>(universe: &mut Universe<G>) {
     configure_generated(
         universe,
         true,
@@ -59,8 +57,7 @@ pub fn install_etex_unexpandable_primitives(universe: &mut Universe) {
 }
 
 /// Registers e-TeX's enum-backed primitive meanings without shadowing a format.
-pub fn register_etex_unexpandable_primitives(universe: &mut Universe) {
-    universe.select_string_pool_profile(tex_state::StringPoolProfile::Etex26);
+pub fn register_etex_unexpandable_primitives<G>(universe: &mut Universe<G>) {
     configure_generated(
         universe,
         false,
@@ -71,7 +68,7 @@ pub fn register_etex_unexpandable_primitives(universe: &mut Universe) {
 }
 
 /// Installs pdfTeX's enum-backed unexpandable primitive meanings.
-pub fn install_pdftex_unexpandable_primitives(universe: &mut Universe) {
+pub fn install_pdftex_unexpandable_primitives<G>(universe: &mut Universe<G>) {
     configure_generated(
         universe,
         true,
@@ -85,7 +82,7 @@ pub fn install_pdftex_unexpandable_primitives(universe: &mut Universe) {
 }
 
 /// Registers pdfTeX's enum-backed primitive meanings without shadowing a format.
-pub fn register_pdftex_unexpandable_primitives(universe: &mut Universe) {
+pub fn register_pdftex_unexpandable_primitives<G>(universe: &mut Universe<G>) {
     configure_generated(
         universe,
         false,
@@ -99,16 +96,16 @@ pub fn register_pdftex_unexpandable_primitives(universe: &mut Universe) {
 }
 
 /// Installs TeX82's expandable primitive meanings for a fresh INITEX state.
-pub fn install_tex82_expandable_primitives(universe: &mut Universe) {
+pub fn install_tex82_expandable_primitives<G>(universe: &mut Universe<G>) {
     configure_tex82_expandable_primitives(universe, true);
 }
 
 /// Reconstructs TeX82's immutable primitive lookup table after format load.
-pub fn register_tex82_expandable_primitives(universe: &mut Universe) {
+pub fn register_tex82_expandable_primitives<G>(universe: &mut Universe<G>) {
     configure_tex82_expandable_primitives(universe, false);
 }
 
-fn configure_tex82_expandable_primitives(universe: &mut Universe, install: bool) {
+fn configure_tex82_expandable_primitives<G>(universe: &mut Universe<G>, install: bool) {
     configure_generated(
         universe,
         install,
@@ -118,19 +115,23 @@ fn configure_tex82_expandable_primitives(universe: &mut Universe, install: bool)
 }
 
 /// Installs e-TeX 2.6's expandable primitive meanings for a fresh INITEX state.
-pub fn install_etex_expandable_primitives(universe: &mut Universe) {
-    universe.select_string_pool_profile(tex_state::StringPoolProfile::Etex26);
-    universe.set_int_param_global(tex_state::env::banks::IntParam::ETEX_EXTENDED_MODE, 1);
+pub fn install_etex_expandable_primitives<G>(universe: &mut Universe<G>) {
+    universe
+        .assign_int_param(
+            tex_state::env::banks::IntParam::ETEX_EXTENDED_MODE,
+            1,
+            tex_state::AssignmentScope::Global,
+        )
+        .expect("e-TeX mode parameter is admitted");
     configure_etex_expandable_primitives(universe, true);
 }
 
 /// Reconstructs e-TeX 2.6's immutable primitive lookup table after format load.
-pub fn register_etex_expandable_primitives(universe: &mut Universe) {
-    universe.select_string_pool_profile(tex_state::StringPoolProfile::Etex26);
+pub fn register_etex_expandable_primitives<G>(universe: &mut Universe<G>) {
     configure_etex_expandable_primitives(universe, false);
 }
 
-fn configure_etex_expandable_primitives(universe: &mut Universe, install: bool) {
+fn configure_etex_expandable_primitives<G>(universe: &mut Universe<G>, install: bool) {
     configure_generated(
         universe,
         install,
@@ -142,16 +143,16 @@ fn configure_etex_expandable_primitives(universe: &mut Universe, install: bool) 
 
 /// Installs expandable primitives required by Umber's supported LaTeX
 /// compatibility profile but not provided by e-TeX 2.6 itself.
-pub fn install_latex_expandable_primitives(universe: &mut Universe) {
+pub fn install_latex_expandable_primitives<G>(universe: &mut Universe<G>) {
     configure_latex_expandable_primitives(universe, true);
 }
 
 /// Reconstructs the LaTeX compatibility primitive table after format load.
-pub fn register_latex_expandable_primitives(universe: &mut Universe) {
+pub fn register_latex_expandable_primitives<G>(universe: &mut Universe<G>) {
     configure_latex_expandable_primitives(universe, false);
 }
 
-fn configure_latex_expandable_primitives(universe: &mut Universe, install: bool) {
+fn configure_latex_expandable_primitives<G>(universe: &mut Universe<G>, install: bool) {
     configure_generated(
         universe,
         install,
@@ -161,16 +162,16 @@ fn configure_latex_expandable_primitives(universe: &mut Universe, install: bool)
 }
 
 /// Installs pdfTeX 1.40.29's implemented expandable identity surface.
-pub fn install_pdftex_expandable_primitives(universe: &mut Universe) {
+pub fn install_pdftex_expandable_primitives<G>(universe: &mut Universe<G>) {
     configure_pdftex_expandable_primitives(universe, true);
 }
 
 /// Reconstructs pdfTeX 1.40.29's expandable primitive lookup table after a format load.
-pub fn register_pdftex_expandable_primitives(universe: &mut Universe) {
+pub fn register_pdftex_expandable_primitives<G>(universe: &mut Universe<G>) {
     configure_pdftex_expandable_primitives(universe, false);
 }
 
-fn configure_pdftex_expandable_primitives(universe: &mut Universe, install: bool) {
+fn configure_pdftex_expandable_primitives<G>(universe: &mut Universe<G>, install: bool) {
     configure_generated(
         universe,
         install,
@@ -182,14 +183,14 @@ fn configure_pdftex_expandable_primitives(universe: &mut Universe, install: bool
     });
 }
 
-fn configure_parameters(universe: &mut Universe, install: bool, profile: PrimitiveProfile) {
+fn configure_parameters<G>(universe: &mut Universe<G>, install: bool, profile: PrimitiveProfile) {
     for row in primitive_parameter_views(profile) {
         configure_primitive(universe, install, row.name, row.meaning);
     }
 }
 
-fn configure_specials(
-    universe: &mut Universe,
+fn configure_specials<G>(
+    universe: &mut Universe<G>,
     install: bool,
     profile: PrimitiveProfile,
     include: impl Fn(&str) -> bool,
@@ -204,52 +205,41 @@ fn configure_specials(
     }
 }
 
-fn configure_nullfont(universe: &mut Universe, install: bool, meaning: Meaning) {
+fn configure_nullfont<G>(universe: &mut Universe<G>, install: bool, meaning: Meaning) {
     // TeX82 §§259/1334 count the ordinary primitive's hash entry even though
     // §222 also gives `frozen_null_font` a fixed alias with the same spelling.
-    let _ = universe.intern_hash_control_sequence("nullfont");
-    let symbol = universe.intern_internal_control_sequence("nullfont");
     universe.register_primitive_meaning("nullfont", meaning);
     if install {
-        universe.set_meaning(symbol, meaning);
-        universe.set_font_identifier_symbol(tex_state::font::NULL_FONT, symbol);
-        universe.set_current_font_selector_global(symbol, tex_state::font::NULL_FONT);
+        universe.install_primitive_meaning("nullfont", meaning);
     }
 }
 
 /// Registers TeX82's inaccessible outer `\endwrite` sentinel. Its macro
 /// handles are store-local, so the catalogue owns the spelling and policy
 /// while this installation seam constructs the meaning in the target store.
-fn configure_write_stopper(universe: &mut Universe) {
-    if let Some(meaning) = universe.primitive_meaning("endwrite") {
-        universe.register_primitive_meaning("endwrite", meaning);
+fn configure_write_stopper<G>(universe: &mut Universe<G>) {
+    if universe.primitive_token("endwrite").is_some() {
         return;
     }
-    let empty = universe.intern_token_list_ref(&[]);
-    let definition = universe.intern_macro(MacroMeaning::new(
-        MeaningFlags::OUTER,
-        empty.id(),
-        empty.id(),
-    ));
-    universe.register_primitive_meaning(
+    let definition = universe
+        .allocate_definition(&[], &[])
+        .expect("frozen write stopper allocation");
+    universe.register_primitive_word(
         "endwrite",
-        Meaning::Macro {
-            flags: MeaningFlags::OUTER,
-            definition: definition.id(),
-        },
+        tex_state::MeaningWord::macro_definition(MeaningFlags::OUTER, definition),
     );
 }
 
-fn configure_primitive(universe: &mut Universe, install: bool, name: &str, meaning: Meaning) {
-    universe.register_primitive_meaning(name, meaning);
+fn configure_primitive<G>(universe: &mut Universe<G>, install: bool, name: &str, meaning: Meaning) {
     if install {
-        let symbol = universe.intern(name);
-        universe.set_meaning(symbol, meaning);
+        universe.install_primitive_meaning(name, meaning);
+    } else {
+        universe.register_primitive_meaning(name, meaning);
     }
 }
 
-fn configure_generated(
-    universe: &mut Universe,
+fn configure_generated<G>(
+    universe: &mut Universe<G>,
     install: bool,
     profile: PrimitiveProfile,
     expansion: ExpansionClass,

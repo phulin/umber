@@ -21,6 +21,13 @@ use crate::observation::{
     InputTransition, ObservedToken, RecoveryKind, RecoveryRecord,
 };
 
+const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
+    match meaning {
+        ResolvedMeaning::Static(meaning) => Some(meaning),
+        ResolvedMeaning::Macro { .. } => None,
+    }
+}
+
 /// Stable pending-diagnostic identities for TeX.web part 28 recovery.
 const INCOMPLETE_IF_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0001;
 const EXTRA_DELIMITER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0002;
@@ -761,7 +768,7 @@ impl<G> CommandProcessor<'_, G> {
                 };
                 let name = self.state.resolve(symbol);
                 Ok(operand.meaning() != Meaning::Undefined
-                    && self.state.primitive_meaning(name) == Some(operand.meaning()))
+                    && self.state.primitive_resolved(name) == Some(operand.meaning()))
             }
             // pdfTeX §57.3 applies comparison to mathematical magnitudes;
             // widening first preserves abs(INT_MIN) without overflow.
@@ -896,15 +903,10 @@ impl<G> CommandProcessor<'_, G> {
         if first_flags != second_flags {
             return false;
         }
-        let first = self.state.macro_definition(first_definition).meaning();
-        let second = self.state.macro_definition(second_definition).meaning();
-        let first_parameters = self.state.tokens(first.parameter_text());
-        let second_parameters = self.state.tokens(second.parameter_text());
-        let first_replacement = self.state.tokens(first.replacement_text());
-        let second_replacement = self.state.tokens(second.replacement_text());
-        first.flags() == second.flags()
-            && *first_parameters == *second_parameters
-            && *first_replacement == *second_replacement
+        let first = self.state.definition(first_definition);
+        let second = self.state.definition(second_definition);
+        first.parameter_text() == second.parameter_text()
+            && first.replacement_text() == second.replacement_text()
     }
 
     fn evaluate_numeric_comparison(&mut self) -> Result<bool, CommandError> {
@@ -929,10 +931,10 @@ impl<G> CommandProcessor<'_, G> {
     /// so the second operand is still scanned and the comparison completes.
     fn scan_if_relation(&mut self, conditional: &str) -> Result<IfRelation, CommandError> {
         let relation = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-        match relation.meaning() {
-            Meaning::CharToken { ch: '<', .. } => Ok(IfRelation::Less),
-            Meaning::CharToken { ch: '=', .. } => Ok(IfRelation::Equal),
-            Meaning::CharToken { ch: '>', .. } => Ok(IfRelation::Greater),
+        match static_meaning(relation.meaning()) {
+            Some(Meaning::CharToken { ch: '<', .. }) => Ok(IfRelation::Less),
+            Some(Meaning::CharToken { ch: '=', .. }) => Ok(IfRelation::Equal),
+            Some(Meaning::CharToken { ch: '>', .. }) => Ok(IfRelation::Greater),
             _ => {
                 // §503's `print_cmd_chr(if_test,this_if)` names the
                 // conditional whose relation is missing, so the message ends
@@ -1400,7 +1402,10 @@ impl<G> CommandProcessor<'_, G> {
 
     /// e-TeX's additions to TeX82 §299 when §367 traces an expandable
     /// conditional or delimiter before its expansion routine runs.
-    pub(crate) fn command_trace_conditional_suffix(&self, meaning: Meaning) -> String {
+    pub(crate) fn command_trace_conditional_suffix(&self, meaning: ResolvedMeaning<G>) -> String {
+        let Some(meaning) = static_meaning(meaning) else {
+            return String::new();
+        };
         if self.state.untracked_int_param(IntParam::TRACING_IFS) <= 0 {
             return String::new();
         }
@@ -1489,13 +1494,15 @@ impl<G> CommandProcessor<'_, G> {
             let Some(command) = self.get_next()? else {
                 return Err(CommandError::input_invariant());
             };
-            if let Meaning::ExpandablePrimitive(primitive) = command.meaning()
+            if let Some(Meaning::ExpandablePrimitive(primitive)) = static_meaning(command.meaning())
                 && ConditionalKind::from_primitive(primitive).is_some()
             {
                 nested_conditions = nested_conditions.saturating_add(1);
                 continue;
             }
-            let Some(delimiter) = ConditionalDelimiter::from_meaning(command.meaning()) else {
+            let Some(delimiter) =
+                static_meaning(command.meaning()).and_then(ConditionalDelimiter::from_meaning)
+            else {
                 continue;
             };
             if nested_conditions != 0 {
@@ -1530,7 +1537,7 @@ fn conditional_trace_suffix(level: usize, condition: Option<String>, source_line
 
 /// e-TeX 2.6 [49.3715]'s `print_if_line`: `if #<>0 then begin print(" entered
 /// on line "); print_int(#); end`, shared by `\tracingifs` and `\showifs`.
-fn print_if_line(diagnostic: &mut tex_state::diagnostic::Diagnostic<'_>, source_line: u32) {
+fn print_if_line<G>(diagnostic: &mut tex_state::diagnostic::Diagnostic<'_, G>, source_line: u32) {
     if source_line != 0 {
         diagnostic
             .print(" entered on line ")

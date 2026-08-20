@@ -326,13 +326,16 @@ pub(crate) fn canonical_command_identity_for_profile(
 /// e-TeX 2.6 [49.1221--1224] stores a sparse register shorthand's array-node
 /// pointer in `cur_chr`. Sections [49.5508--5523] define the portable identity
 /// encoded by that node as its register type and `print_sa_num` index.
-pub(crate) fn canonical_sparse_register_operand(
+pub(crate) fn canonical_sparse_register_operand<G>(
     profile: CommandProfile,
-    meaning: Meaning,
+    meaning: tex_state::ResolvedMeaning<G>,
 ) -> Option<String> {
     if !profile.capabilities().supports_etex() {
         return None;
     }
+    let tex_state::ResolvedMeaning::Static(meaning) = meaning else {
+        return None;
+    };
     canonical_names::sparse_register_operand_name(meaning)
 }
 

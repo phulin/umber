@@ -222,7 +222,7 @@ impl TokenWord {
         let payload = self.0 & Self::PAYLOAD_MASK;
         match kind {
             Self::KIND_CHAR => unpack_char_payload(payload),
-            Self::KIND_CS => Some(Token::Cs(Symbol::new(payload))),
+            Self::KIND_CS => Some(Token::Cs(Symbol::from_packed_slot(payload))),
             Self::KIND_PARAM => match payload {
                 1..=9 => Some(Token::Param(payload as u8)),
                 _ => None,
@@ -251,7 +251,7 @@ impl TokenWord {
                     cat: ALL_CATCODES[raw_cat],
                 }
             }
-            Self::KIND_CS => Token::Cs(Symbol::new(payload)),
+            Self::KIND_CS => Token::Cs(Symbol::from_packed_slot(payload)),
             Self::KIND_PARAM => Token::Param(payload as u8),
             Self::KIND_FROZEN => Token::Frozen(FrozenToken::from_raw(payload as u16)),
             _ => unreachable!("two-bit packed-token kind"),
@@ -453,7 +453,7 @@ fn unpack_char_payload(payload: u32) -> Option<Token> {
     })
 }
 
-fn catcode_from_raw(raw: u8) -> Option<Catcode> {
+const fn catcode_from_raw(raw: u8) -> Option<Catcode> {
     match raw {
         0 => Some(Catcode::Escape),
         1 => Some(Catcode::BeginGroup),
