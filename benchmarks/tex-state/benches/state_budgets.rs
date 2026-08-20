@@ -16,7 +16,8 @@ use tex_state::math::{MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::Meaning;
 use tex_state::meaning::MeaningFlags;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, KernKind, Node, Sign};
-use tex_state::provenance::ProvenanceStats;
+use tex_state::node_arena::NodeListRef;
+use tex_state::provenance::{OriginRef, ProvenanceStats};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::source_map::SourceDescriptor;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
@@ -39,7 +40,6 @@ const MACRO_PROVENANCE_RETAINED_BYTES_PER_INVOCATION_BUDGET: usize = 64;
 const SCANNER_REPETITIONS: usize = 1_024;
 const TRANSIENT_BOX_OVERWRITES: usize = 20_000;
 const DEEP_BOX_LOCALITY_JOURNAL: usize = 20_000;
-const ALLOCATION_GRAPH_DEPTH: usize = 128;
 const ALLOCATION_LIST_LEN: usize = 1_024;
 const PAGE_QUEUE_LEN: usize = 65_536;
 const TOKEN_PROJECTION_SIZES: [usize; 3] = [64, 1_024, 16_384];
@@ -146,7 +146,7 @@ fn allocation_append_case(shape: &str) -> (Universe, Vec<Node>) {
                 amount: Scaled::from_raw(index as i32),
                 kind: KernKind::Explicit,
             },
-            "box" => Node::HList(benchmark_box(empty, index as i32)),
+            "box" => Node::HList(benchmark_box(empty.clone(), index as i32)),
             "math" => Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
                 MathField::MathChar(MathChar {
@@ -159,9 +159,9 @@ fn allocation_append_case(shape: &str) -> (Universe, Vec<Node>) {
                 0 => Node::Char {
                     font,
                     ch: char::from(b'a' + (index % 26) as u8),
-                    origin: OriginId::UNKNOWN,
+                    origin: OriginRef::unknown(),
                 },
-                1 => Node::HList(benchmark_box(empty, index as i32)),
+                1 => Node::HList(benchmark_box(empty.clone(), index as i32)),
                 2 => Node::MathNoad(MathNoad::new(
                     NoadKind::Normal(NoadClass::Ord),
                     MathField::Empty,
@@ -178,60 +178,6 @@ fn allocation_append_case(shape: &str) -> (Universe, Vec<Node>) {
     (stores, nodes)
 }
 
-fn allocation_graph_transfer(c: &mut Criterion) {
-    let mut group = c.benchmark_group("allocation_graph_transfer");
-
-    group.bench_function("promote_fresh/deep", |b| {
-        b.iter_batched(
-            || {
-                let mut stores = Universe::new();
-                let root = deep_epoch_graph(&mut stores, ALLOCATION_GRAPH_DEPTH);
-                (stores, root)
-            },
-            |(mut stores, root)| {
-                stores.set_box_reg(0, root);
-                black_box(stores.box_reg(0))
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("promote_recycled/deep", |b| {
-        b.iter_batched(
-            recycled_promotion_case,
-            |(mut stores, root)| {
-                stores.set_box_reg(0, root);
-                black_box(stores.box_reg(0))
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("promote_fresh/shared_dag", |b| {
-        b.iter_batched(
-            shared_graph_case,
-            |(mut stores, root)| {
-                stores.set_box_reg(0, root);
-                black_box(stores.box_reg(0))
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.bench_function("promote_fresh/mixed_ownership", |b| {
-        b.iter_batched(
-            mixed_ownership_case,
-            |(mut stores, root)| {
-                stores.set_box_reg(1, root);
-                black_box(stores.box_reg(1))
-            },
-            BatchSize::SmallInput,
-        );
-    });
-
-    group.finish();
-}
-
 fn deep_journal_box_locality(c: &mut Criterion) {
     c.bench_function("box_locality/same_level_after_20000_entries", |b| {
         b.iter_batched(
@@ -239,7 +185,7 @@ fn deep_journal_box_locality(c: &mut Criterion) {
                 let mut stores = Universe::new();
                 let value = stores.freeze_node_list(&[Node::Penalty(1)]);
                 stores.enter_group();
-                stores.set_box_reg(0, value);
+                stores.set_box_reg_ref(0, value);
                 for write in 0..DEEP_BOX_LOCALITY_JOURNAL {
                     let symbol = stores.intern(&format!("deepbox{write}"));
                     stores.set_meaning(symbol, Meaning::Relax);
@@ -247,11 +193,13 @@ fn deep_journal_box_locality(c: &mut Criterion) {
                 stores
             },
             |mut stores| {
-                let value = stores.box_reg(0).expect("benchmark box remains live");
+                let value = stores
+                    .box_reg_ref(0)
+                    .expect("benchmark box remains live");
                 for _ in 0..1_000 {
-                    stores.set_box_reg_same_level(0, value);
+                    stores.set_box_reg_same_level(0, value.clone());
                 }
-                black_box(stores.box_reg(0))
+                black_box(stores.box_reg_ref(0))
             },
             BatchSize::LargeInput,
         );
@@ -280,7 +228,7 @@ fn allocation_traced_freeze(c: &mut Criterion) {
     group.finish();
 }
 
-fn benchmark_box(children: tex_state::ids::NodeListId, value: i32) -> BoxNode {
+fn benchmark_box(children: NodeListRef, value: i32) -> BoxNode {
     BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(value),
         height: Scaled::from_raw(0),
@@ -292,47 +240,6 @@ fn benchmark_box(children: tex_state::ids::NodeListId, value: i32) -> BoxNode {
         glue_order: Order::Normal,
         children,
     })
-}
-
-fn deep_epoch_graph(stores: &mut Universe, depth: usize) -> tex_state::ids::NodeListId {
-    let mut child = stores.freeze_node_list(&[Node::Penalty(0)]);
-    for level in 0..depth {
-        child = stores.freeze_node_list(&[Node::HList(benchmark_box(child, level as i32))]);
-    }
-    child
-}
-
-fn recycled_promotion_case() -> (Universe, tex_state::ids::NodeListId) {
-    let mut stores = Universe::new();
-    let first = deep_epoch_graph(&mut stores, ALLOCATION_GRAPH_DEPTH);
-    stores.set_box_reg(0, first);
-    let second = deep_epoch_graph(&mut stores, ALLOCATION_GRAPH_DEPTH / 2);
-    stores.set_box_reg(0, second);
-    let third = deep_epoch_graph(&mut stores, ALLOCATION_GRAPH_DEPTH);
-    (stores, third)
-}
-
-fn shared_graph_case() -> (Universe, tex_state::ids::NodeListId) {
-    let mut stores = Universe::new();
-    let shared = deep_epoch_graph(&mut stores, 16);
-    let root = stores.freeze_node_list(&[
-        Node::HList(benchmark_box(shared, 1)),
-        Node::VList(benchmark_box(shared, 2)),
-    ]);
-    (stores, root)
-}
-
-fn mixed_ownership_case() -> (Universe, tex_state::ids::NodeListId) {
-    let mut stores = Universe::new();
-    let survivor_source = deep_epoch_graph(&mut stores, 16);
-    stores.set_box_reg(0, survivor_source);
-    let survivor = stores.box_reg(0).expect("survivor should be live");
-    let epoch = deep_epoch_graph(&mut stores, 16);
-    let root = stores.freeze_node_list(&[
-        Node::HList(benchmark_box(survivor, 1)),
-        Node::VList(benchmark_box(epoch, 2)),
-    ]);
-    (stores, root)
 }
 
 fn traced_freeze_case(len: usize, preintern: bool) -> (Universe, Vec<TracedTokenWord>) {
@@ -443,11 +350,11 @@ fn checkpoint_state_hash(c: &mut Criterion) {
                     .map(|index| Node::Char {
                         font,
                         ch: char::from(b'a' + (index % 26) as u8),
-                        origin: OriginId::UNKNOWN,
+                        origin: OriginRef::unknown(),
                     })
                     .collect::<Vec<_>>();
                 let list = stores.freeze_node_list(&chars);
-                stores.set_box_reg(0, list);
+                stores.set_box_reg_ref(0, list);
                 stores
             },
             |mut stores| black_box(stores.snapshot().state_hash()),
@@ -723,46 +630,12 @@ fn transient_box_overwrite_checkpoint(c: &mut Criterion) {
                             glue_order: Order::Normal,
                             children,
                         }))]);
-                    stores.set_box_reg(0, list);
+                    stores.set_box_reg_ref(0, list);
                 }
                 stores
             },
             |mut stores| black_box(stores.snapshot().state_hash()),
             BatchSize::LargeInput,
-        );
-    });
-}
-
-fn survivor_root_recycling(c: &mut Criterion) {
-    c.bench_function("survivor_root_recycling/fixed_shape_overwrites", |b| {
-        b.iter_batched(
-            Universe::new,
-            |mut stores| {
-                for amount in 0..TRANSIENT_BOX_OVERWRITES {
-                    let children = stores.freeze_node_list(&[Node::Kern {
-                        amount: Scaled::from_raw(amount as i32),
-                        kind: KernKind::Explicit,
-                    }]);
-                    let list =
-                        stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
-                            width: Scaled::from_raw(amount as i32),
-                            height: Scaled::from_raw(0),
-                            depth: Scaled::from_raw(0),
-                            shift: Scaled::from_raw(0),
-                            box_lr: BoxLr::Normal,
-                            glue_set: GlueSetRatio::ZERO,
-                            glue_sign: Sign::Normal,
-                            glue_order: Order::Normal,
-                            children,
-                        }))]);
-                    stores.set_box_reg(0, list);
-                }
-                assert!(
-                    stores.testing_survivor_recycled_buffer_uses() >= TRANSIENT_BOX_OVERWRITES - 2
-                );
-                black_box(stores);
-            },
-            BatchSize::SmallInput,
         );
     });
 }
@@ -1320,7 +1193,7 @@ fn macro_heavy_case() -> ExpansionCase {
     let calls = stores.finish_traced_token_list(&traced_calls);
     let baseline = stores.provenance_stats();
     let mut command = CommandState::default();
-    command.push_everyjob(calls);
+    command.push_everyjob(&stores.command_context(), calls);
     (
         stores,
         command,
@@ -1370,7 +1243,7 @@ fn traced_token_list_input(mut stores: Universe, tokens: Vec<Token>) -> Expansio
     let token_list = stores.finish_traced_token_list(&traced);
     let baseline = stores.provenance_stats();
     let mut command = CommandState::default();
-    command.push_everyjob(token_list);
+    command.push_everyjob(&stores.command_context(), token_list);
     (
         stores,
         command,
@@ -1473,7 +1346,6 @@ criterion_group!(
     benches,
     dependency_recording,
     allocation_node_append,
-    allocation_graph_transfer,
     deep_journal_box_locality,
     allocation_traced_freeze,
     page_contribution_queue,
@@ -1484,7 +1356,6 @@ criterion_group!(
     token_semantic_projection,
     token_projection_freeze_cost,
     transient_box_overwrite_checkpoint,
-    survivor_root_recycling,
     group_cycle,
     rollback_scaling,
     group_global_compaction,

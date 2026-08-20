@@ -67,6 +67,12 @@ page-map allocation, while diagnostic bytes and protected overage increase only
 by the retained line-index allocation. Neither cache changes the point-in-time
 metrics copied into the accepted output.
 
+The gate does not maintain a survivor-pin churn row. That row measured the
+size of the retired per-value survivor ownership log rather than snapshot
+behavior. Durable generation and aggregate roots now provide node liveness;
+reintroducing a pin log or a testing-only ownership census would contradict
+the runtime-storage lifetime contract.
+
 ## Budgets
 
 The expected asymptotic capture cost is O(1) in every payload dimension. A large
