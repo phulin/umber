@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use tex_state::meaning::Meaning;
+use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning};
 
 use crate::command::{CommandIdentity, CurrentCommand};
 use crate::profile::CommandProfile;
@@ -185,21 +185,6 @@ pub(crate) fn canonical_command_identity_for_profile(
         // but remains observable at both raw and expanded delivery.
         Meaning::Relax => ("relax".into(), Some(256)),
         Meaning::EndV => ("endv".into(), Some(249_988)),
-        Meaning::Macro { flags, .. } => (
-            if flags.contains(tex_state::meaning::MeaningFlags::LONG)
-                && flags.contains(tex_state::meaning::MeaningFlags::OUTER)
-            {
-                "long_outer_call"
-            } else if flags.contains(tex_state::meaning::MeaningFlags::LONG) {
-                "long_call"
-            } else if flags.contains(tex_state::meaning::MeaningFlags::OUTER) {
-                "outer_call"
-            } else {
-                "call"
-            }
-            .into(),
-            None,
-        ),
         // Every `ExpandablePrimitive` variant (including `The`/`NoExpand`/
         // `EndTemplate`, which used to have their own arms here) has a real
         // tex.web/e-TeX/pdfTeX command identity, computed exhaustively by
@@ -360,20 +345,24 @@ pub(crate) fn canonical_sparse_register_operand(
 /// (257). Both distinctions are carried by `CurrentCommand`, so observation
 /// merely projects command state.
 #[cfg(test)]
-pub(crate) fn canonical_current_command_identity(
-    command: &CurrentCommand,
+pub(crate) fn canonical_current_command_identity<G>(
+    command: &CurrentCommand<G>,
 ) -> (String, Option<i64>) {
     canonical_current_command_identity_for_profile(CommandProfile::TEX82, command)
 }
 
-pub(crate) fn canonical_current_command_identity_for_profile(
+pub(crate) fn canonical_current_command_identity_for_profile<G>(
     profile: CommandProfile,
-    command: &CurrentCommand,
+    command: &CurrentCommand<G>,
 ) -> (String, Option<i64>) {
     match command.identity() {
         CommandIdentity::Ordinary => {
-            let (name, operand) =
-                canonical_command_identity_for_profile(profile, command.meaning());
+            let (name, operand) = match command.meaning() {
+                ResolvedMeaning::Static(meaning) => {
+                    canonical_command_identity_for_profile(profile, meaning)
+                }
+                ResolvedMeaning::Macro { flags, .. } => (macro_command_name(flags).into(), None),
+            };
             (name, command.macro_observation_operand().or(operand))
         }
         // TeX82 §25 dispatches `\expandafter` through the dedicated
@@ -405,9 +394,21 @@ pub(crate) fn canonical_current_command_identity_for_profile(
         // though the executor later dispatches each typed diagnostic action.
         CommandIdentity::XRay(selector) => ("xray".into(), Some(selector.operand())),
         CommandIdentity::NoExpandFrozenRelax => {
-            debug_assert_eq!(command.meaning(), Meaning::Relax);
+            debug_assert_eq!(command.meaning(), ResolvedMeaning::Static(Meaning::Relax));
             ("relax".into(), Some(257))
         }
+    }
+}
+
+fn macro_command_name(flags: MeaningFlags) -> &'static str {
+    if flags.contains(MeaningFlags::LONG) && flags.contains(MeaningFlags::OUTER) {
+        "long_outer_call"
+    } else if flags.contains(MeaningFlags::LONG) {
+        "long_call"
+    } else if flags.contains(MeaningFlags::OUTER) {
+        "outer_call"
+    } else {
+        "call"
     }
 }
 

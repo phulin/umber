@@ -5,7 +5,6 @@
 //! the two explicit entry points below; they do not add another lexical path.
 
 use tex_state::env::banks::{IntParam, TokParam};
-use tex_state::input::TracedTokenList;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -1025,13 +1024,21 @@ impl<G> CommandProcessor<'_, G> {
     /// §1054's `its_all_over` never starts it directly, it only appends the
     /// end-job contribution trio and lets §994's `build_page` decide.
     pub fn begin_selected_output_routine(&mut self) -> Result<(), CommandError> {
-        let output_id = self.state.tok_param(TokParam::OUTPUT);
-        let output = TracedTokenList::synthetic(self.state.token_list_ref(output_id));
-        self.report_named_token_list("output", output.token_list());
-        let words = self.state.tokens(output_id);
-        let origins = self.state.origin_list(output.origin_ref());
+        let output = self
+            .state
+            .token_parameter(TokParam::OUTPUT)
+            .expect("output is an admitted token parameter")
+            .expect("output routine entry requires a configured token list");
+        self.report_named_token_list("output", output);
+        let words = self
+            .state
+            .token_list(output)
+            .iter()
+            .copied()
+            .map(|word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN))
+            .collect::<Vec<_>>();
         let level = self.command.push_token_level(
-            TokenPayload::stored(&words, origins.iter()),
+            TokenPayload::transient(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),
