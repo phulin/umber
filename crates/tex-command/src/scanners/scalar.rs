@@ -4,7 +4,7 @@ use tex_state::env::banks::DimenParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
-use tex_state::meaning::{InternalInteger, Meaning, UnexpandablePrimitive};
+use tex_state::meaning::{InternalInteger, Meaning, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::scaled::{
     PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction, scale_true_dimension_parts,
     scaled_from_decimal_parts, xn_over_d,
@@ -186,6 +186,17 @@ impl InternalValue {
     }
 }
 
+/// Returns the static command code used by scalar scanners.
+///
+/// Macros are outside the scalar-internal command ranges, so a scalar scan
+/// treats a generation-branded macro exactly like any other non-operand.
+const fn scalar_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
+    match meaning {
+        ResolvedMeaning::Static(meaning) => meaning,
+        ResolvedMeaning::Macro { .. } => Meaning::Undefined,
+    }
+}
+
 /// The outcome of one TeX82 §413 `scan_something_internal` call.
 ///
 /// §413 distinguishes an internal result from a token that never entered its
@@ -307,9 +318,9 @@ const DECIMAL_RADIX: u8 = 10;
 /// `continental_point_token` to `point_token` twice, so a comma behaves
 /// exactly like a period: `3,5pt` is `3.5pt`, and a leading `,5pt` is
 /// `0.5pt`.
-fn is_point_token(command: &CurrentCommand<G>) -> bool {
+fn is_point_token<G>(command: &CurrentCommand<G>) -> bool {
     matches!(
-        command.meaning(),
+        scalar_meaning(command.meaning()),
         Meaning::CharToken {
             ch: '.' | ',',
             cat: Catcode::Other,
@@ -365,7 +376,7 @@ impl<G> CommandProcessor<'_, G> {
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
             }
-            match command.meaning() {
+            match scalar_meaning(command.meaning()) {
                 Meaning::CharToken {
                     ch: ' ',
                     cat: Catcode::Space,
@@ -457,7 +468,7 @@ impl<G> CommandProcessor<'_, G> {
             }
             if command.control_sequence().is_none()
                 && matches!(
-                    command.meaning(),
+                    scalar_meaning(command.meaning()),
                     Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&letter)
                 )
             {
@@ -465,7 +476,7 @@ impl<G> CommandProcessor<'_, G> {
                 letters.next();
             } else if matched.is_empty()
                 && matches!(
-                    command.meaning(),
+                    scalar_meaning(command.meaning()),
                     Meaning::CharToken {
                         cat: Catcode::Space,
                         ..
@@ -613,7 +624,7 @@ impl<G> CommandProcessor<'_, G> {
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
             }
-            match command.meaning() {
+            match scalar_meaning(command.meaning()) {
                 Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
                 Meaning::CharToken { ch: '-', .. } => negative = !negative,
                 _ => break command,
@@ -829,7 +840,7 @@ impl<G> CommandProcessor<'_, G> {
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
             }
-            match command.meaning() {
+            match scalar_meaning(command.meaning()) {
                 Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
                 Meaning::CharToken { ch: '-', .. } => negative = !negative,
                 _ => break Some(command),
@@ -1140,7 +1151,7 @@ impl<G> CommandProcessor<'_, G> {
             if provenance == OriginId::UNKNOWN {
                 provenance = command.origin();
             }
-            match command.meaning() {
+            match scalar_meaning(command.meaning()) {
                 Meaning::CharToken { ch: ' ', .. } | Meaning::CharToken { ch: '+', .. } => {}
                 Meaning::CharToken { ch: '-', .. } => negative = !negative,
                 _ => break Some(command),
@@ -1464,7 +1475,7 @@ impl<G> CommandProcessor<'_, G> {
     }
 
     fn radix_digit(command: &CurrentCommand<G>) -> Option<u8> {
-        match command.meaning() {
+        match scalar_meaning(command.meaning()) {
             Meaning::CharToken {
                 ch: ch @ '0'..='9',
                 cat: Catcode::Other,
@@ -1527,7 +1538,7 @@ impl<G> CommandProcessor<'_, G> {
                 let Some(command) = self.get_x_token()? else {
                     break;
                 };
-                match command.meaning() {
+                match scalar_meaning(command.meaning()) {
                     Meaning::CharToken {
                         ch,
                         cat: Catcode::Other,
@@ -1555,7 +1566,10 @@ impl<G> CommandProcessor<'_, G> {
                 .last_integer_terminator
                 .as_ref()
                 .is_some_and(|command| {
-                    matches!(command.meaning(), Meaning::CharToken { ch: 'f', .. })
+                    matches!(
+                        scalar_meaning(command.meaning()),
+                        Meaning::CharToken { ch: 'f', .. }
+                    )
                 }) {
             // `scan_int` has already observed and backed up the leading `f`.
             // Replay it once, then finish the `fil` suffix without routing the
@@ -1782,7 +1796,7 @@ impl<G> CommandProcessor<'_, G> {
                 return Ok(None);
             };
             if !matches!(
-                command.meaning(),
+                scalar_meaning(command.meaning()),
                 Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
@@ -1857,7 +1871,7 @@ impl<G> CommandProcessor<'_, G> {
         command: CurrentCommand<G>,
     ) -> Result<bool, CommandError> {
         if matches!(
-            command.meaning(),
+            scalar_meaning(command.meaning()),
             Meaning::CharToken {
                 cat: Catcode::Space,
                 ..
@@ -1888,7 +1902,7 @@ impl<G> CommandProcessor<'_, G> {
         for expected in ['i', 'l'] {
             let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
             if !matches!(
-                command.meaning(),
+                scalar_meaning(command.meaning()),
                 Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&expected)
             ) {
                 return Err(CommandError::input_invariant());
@@ -2183,7 +2197,9 @@ impl<G> CommandProcessor<'_, G> {
         // would run §415's own `scan_eight_bit_int`, §577's
         // `scan_four_bit_int`, and §415's `back_input; scan_font_ident` on a
         // path tex.web never reaches, consuming tokens TeX leaves in place.
-        if level != InternalLevel::Tokens && is_token_list_or_font_identifier(command.meaning()) {
+        if level != InternalLevel::Tokens
+            && is_token_list_or_font_identifier(scalar_meaning(command.meaning()))
+        {
             return self.missing_number_internal_result(command, level);
         }
         let Some(value) = self.fetch_internal_value(command)? else {
@@ -2205,7 +2221,7 @@ impl<G> CommandProcessor<'_, G> {
         // the requesting `scan_int`/`scan_dimen`/`scan_glue` publishes the
         // outer typed result.
         if !matches!(
-            command.meaning(),
+            scalar_meaning(command.meaning()),
             Meaning::UnexpandablePrimitive(
                 UnexpandablePrimitive::NumExpr
                     | UnexpandablePrimitive::DimExpr
@@ -2248,7 +2264,7 @@ impl<G> CommandProcessor<'_, G> {
         &mut self,
         command: &CurrentCommand<G>,
     ) -> Result<Option<InternalValue>, CommandError> {
-        let value = match command.meaning() {
+        let value = match scalar_meaning(command.meaning()) {
             // TeX82 `scan_something_internal` owns a register primitive's
             // restricted (`scan_eight_bit_int`) index scan. e-TeX 2.6
             // [26.415], [26.420], and [26.427] replace it with
@@ -2742,7 +2758,6 @@ impl<G> CommandProcessor<'_, G> {
             // classification is decided, instead of silently becoming zero.
             Meaning::Undefined
             | Meaning::Relax
-            | Meaning::Macro { .. }
             | Meaning::CharToken { .. }
             | Meaning::ExpandablePrimitive(_)
             | Meaning::EndV

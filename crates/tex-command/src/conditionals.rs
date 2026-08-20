@@ -5,7 +5,7 @@
 //! condition is still evaluating its operands.
 
 use tex_state::env::banks::IntParam;
-use tex_state::meaning::{ExpandablePrimitive, Meaning};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, ResolvedMeaning};
 use tex_state::token::{OriginId, TracedTokenWord};
 
 use crate::input::{ReplayTrace, RetirementBehavior, TokenBehavior, TokenPayload};
@@ -397,7 +397,7 @@ impl ConditionStack {
     }
 }
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Detaches the active stack from innermost to outermost for `\showifs`.
     #[must_use]
     pub fn active_conditions(&self) -> Vec<ActiveCondition> {
@@ -405,7 +405,7 @@ impl CommandProcessor<'_> {
     }
 }
 
-impl CommandState {
+impl<G> CommandState<G> {
     /// Number of condition frames whose delimiters remain future input.
     #[must_use]
     pub fn active_condition_depth(&self) -> usize {
@@ -482,16 +482,17 @@ impl IfRelation {
     }
 }
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// TeX.web part 28's `conditional`, entered after delivery of an `if`
     /// primitive.  The frame is installed before any operand scan because
     /// those scans may recursively expand another conditional.
     pub(crate) fn expand_conditional(
         &mut self,
-        command: &crate::CurrentCommand,
+        command: &crate::CurrentCommand<G>,
         inverted: bool,
     ) -> Result<(), CommandError> {
-        let Meaning::ExpandablePrimitive(primitive) = command.meaning() else {
+        let ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) = command.meaning()
+        else {
             return Err(CommandError::input_invariant());
         };
         let kind =
@@ -528,14 +529,16 @@ impl CommandProcessor<'_> {
     /// prefix diagnostic, and leaves the conditional stack untouched.
     pub(crate) fn expand_unless(
         &mut self,
-        _command: &crate::CurrentCommand,
+        _command: &crate::CurrentCommand<G>,
     ) -> Result<(), CommandError> {
         // The following conditional is an operand of `\unless`, not an
         // ordinary expansion result: preserve its primitive command for the
         // shared evaluator to install the one inverted frame.
         let next = self.get_token()?.ok_or(CommandError::input_invariant())?;
         let kind = match next.meaning() {
-            Meaning::ExpandablePrimitive(primitive) => ConditionalKind::from_primitive(primitive),
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => {
+                ConditionalKind::from_primitive(primitive)
+            }
             _ => None,
         };
         let Some(_kind) = kind.filter(|kind| *kind != ConditionalKind::IfCase) else {
@@ -792,7 +795,8 @@ impl CommandProcessor<'_> {
             self.begin_scanner_episode(ScannerStatus::Normal, ScannerStatusVisibility::Observed);
         let operand = self.get_next();
         self.finish_scanner_episode(episode);
-        Ok(operand?.ok_or(CommandError::input_invariant())?.meaning() != Meaning::Undefined)
+        Ok(operand?.ok_or(CommandError::input_invariant())?.meaning()
+            != ResolvedMeaning::Static(Meaning::Undefined))
     }
 
     fn evaluate_if(&mut self) -> Result<bool, CommandError> {
@@ -816,31 +820,35 @@ impl CommandProcessor<'_> {
     /// `cur_chr` from the retained `cur_tok`, so `\\if\\noexpand~` compares
     /// against the active character's own code and `\\ifcat\\noexpand~`
     /// against category 13.
-    fn get_x_token_or_active_char(&mut self) -> Result<Meaning, CommandError> {
+    fn get_x_token_or_active_char(&mut self) -> Result<ResolvedMeaning<G>, CommandError> {
         let command = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
         Ok(match command.no_expand_active_character() {
-            Some(ch) => Meaning::CharToken {
+            Some(ch) => ResolvedMeaning::Static(Meaning::CharToken {
                 ch,
                 cat: tex_state::token::Catcode::Active,
-            },
+            }),
             None => command.meaning(),
         })
     }
 
     /// TeX.web part 28 maps every non-character `\\if` operand to the
     /// shared sentinel 256 before comparing character codes.
-    fn if_character_code(meaning: Meaning) -> u32 {
+    fn if_character_code(meaning: ResolvedMeaning<G>) -> u32 {
         match meaning {
-            Meaning::CharToken { ch, .. } if (ch as u32) <= u32::from(u8::MAX) => ch as u32,
+            ResolvedMeaning::Static(Meaning::CharToken { ch, .. })
+                if (ch as u32) <= u32::from(u8::MAX) =>
+            {
+                ch as u32
+            }
             _ => 256,
         }
     }
 
     /// TeX.web part 28 maps every non-character `\\ifcat` operand to the
     /// shared `relax` command sentinel before comparing category commands.
-    fn if_category_code(meaning: Meaning) -> Option<tex_state::token::Catcode> {
+    fn if_category_code(meaning: ResolvedMeaning<G>) -> Option<tex_state::token::Catcode> {
         match meaning {
-            Meaning::CharToken { cat, .. } => Some(cat),
+            ResolvedMeaning::Static(Meaning::CharToken { cat, .. }) => Some(cat),
             _ => None,
         }
     }
@@ -870,13 +878,13 @@ impl CommandProcessor<'_> {
     /// TeX compares macro meanings by their defining token lists, not by the
     /// engine's allocation identity for the macro definition. All other
     /// meanings retain their direct raw-meaning equality.
-    fn ifx_meaning_eq(&self, first: Meaning, second: Meaning) -> bool {
+    fn ifx_meaning_eq(&self, first: ResolvedMeaning<G>, second: ResolvedMeaning<G>) -> bool {
         let (
-            Meaning::Macro {
+            ResolvedMeaning::Macro {
                 flags: first_flags,
                 definition: first_definition,
             },
-            Meaning::Macro {
+            ResolvedMeaning::Macro {
                 flags: second_flags,
                 definition: second_definition,
             },
@@ -1087,7 +1095,7 @@ impl CommandProcessor<'_> {
 
     pub(crate) fn expand_conditional_delimiter(
         &mut self,
-        command: &crate::CurrentCommand,
+        command: &crate::CurrentCommand<G>,
         primitive: ExpandablePrimitive,
     ) -> Result<(), CommandError> {
         let delimiter = match primitive {
