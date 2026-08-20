@@ -86,7 +86,9 @@ template retirement, and recovery.
 canonical TeX82/e-TeX/pdfTeX command-machine replacement tracked by Beads epic
 `umber2-johp`, including state ownership, exact and Unicode profiles, input
 levels, command delivery, expansion, scanners, extensions, provenance,
-incrementality, reference oracles, and optimization promotion.
+incrementality, one-owner bounded command snapshots, exact in-session suspended
+attempts, handle-free detached continuations, reference oracles, and
+optimization promotion.
 
 `engine_architecture_decision.md` selects bounded mutable semantic episodes
 inside the one canonical engine from the `umber2-64v2` prototype evidence. It

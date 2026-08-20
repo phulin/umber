@@ -2795,14 +2795,21 @@ particular, pdftex.web §1590's `\pdfcreationdate` and the LaTeX-compatible
 `\creationdate` alias read the current job's clock after a format load and
 return it through the ordinary conversion-token path.
 
-A missing resource returns a typed `NeedResource`. No async future, callback,
-or scanner continuation is stored in `CommandState`. The enclosing executor
-restores its complete pre-step savepoint and retries after the host binds a
-stable positive or negative response.
+A missing resource returns a typed `NeedResource`. No async future or callback
+is stored in `CommandState`. The unfinished operation moves exactly once into
+`PendingCommandAttempt<G, R>`, the sole in-session suspension package: it owns
+the complete `AttemptArena`, one coarse `GenerationOwner<G>`, the typed request,
+and integer-only command, scanner, expansion, and subordinate resume cursors.
+Resume consumes that package, validates the generation, reinstalls the same
+attempt, and continues without rescanning the request operands. Cancellation
+drops the package wholesale. Before a suspension leaves the session it detaches
+to the handle-free command-continuation schema; the detached form contains
+logical recipes and DTO-local indices rather than the arena, owner, or runtime
+coordinates.
 
 For canonical `\input`, that negative response is evidence, not presentation:
-the fresh retry reaches `open_registered_input` with the live filename scan,
-input stack, and `CommandContext`. Only there can TeX82 §530 render the missing
+the resumed opener reaches `open_registered_input` with the retained filename,
+live input stack, and `CommandContext`. Only there can TeX82 §530 render the missing
 name and `show_context`, acquire an interactive replacement, or enter §93's
 fatal-history transition in batch/nonstop mode. A replacement that is not yet
 registered suspends under its own ordinary `ResourceNeed::Input` identity; the
@@ -2832,8 +2839,8 @@ Input streams follow the same transaction boundary. `\openin`, `\closein`,
 command or source cursor crosses to replay. The bounded replay borrows the
 registered immutable bytes only to pin an input record in `World`, whose stream
 state owns nested targets and line cursors. A missing `\openin` registration is
-an input suspension, so the whole command aggregate rolls back before a fresh
-processor episode retries.
+an input suspension, so unpublished semantic destinations remain unchanged
+while the retained command attempt waits for the stable result.
 
 At ordinary EOF, TeX82 §343 calls `end_file_reading`, checks outer validity,
 and restarts raw delivery at the caller. Thus a nested `\input` retirement and
@@ -2974,18 +2981,36 @@ only aggregate restoration authority. They preserve the exact committed
 command and provenance prefix, while durable command summaries serialize no
 second provenance arena or raw provenance watermark.
 
+The command component of such a retained boundary is generation-generic. A
+`CommandStateSnapshot<G>` and a live `CommandSummary<G>` each retain exactly
+one coarse `GenerationOwner<G>` beside a fixed `CommandSnapshotCursor` of
+command-journal, arena-watermark, stack-length, and ordered-ledger positions.
+Cloning either value retains that one owner and copies the cursor tuple; it does
+not clone input, token, definition, provenance, macro-activation, or attempt
+storage. Restore validates the complete aggregate before acquiring the target
+owner and follows the owner-before-roots-before-truncation ordering in
+`runtime_storage_lifetimes.md`.
+
 ### 28.2 Durable summary
 
-`CommandSummary` contains only validated restartable data:
+The generation-owned restartable rows selected by `CommandSummary` contain
+only validated command data:
 
 - source cursors and stable backing identities;
 - token cursors and immutable payload identities;
 - macro activations and live argument ranges;
 - condition frames;
 - quiescent alignment brace state, without active or suspended templates;
-- profile and source-id high-water marks;
+- the portable profile fingerprint and source-allocation high-water marks;
 - persistent expansion counters; and
 - required provenance/source roots.
+
+The live summary reaches those rows only through its retained coarse owner and
+fixed cursor. Detachment walks the selected roots once and replaces every live
+name, source, token list, macro, glue value, provenance record, input frame,
+and suspended-attempt root with an owned logical recipe connected by a dense
+DTO-local index. The resulting continuation carries no live identifier, owner,
+arena position, journal cursor, or borrow.
 
 Host capabilities, `CurrentCommand`, delivery stamps, cache contents, spare
 buffer capacity, timers, and profiling counters are absent.

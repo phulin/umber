@@ -262,14 +262,15 @@ print channel of its own outside the borrowed
   `last_item` layouts, while `primitive_identity.rs` owns profile-dependent
   conversion selectors. Never classify an observed command through a
   profile-free dialect approximation.
-- `src/snapshot.rs` and `src/snapshot/tests.rs`: command snapshot, quiescent
-  summary ownership including the rebound root source identity, canonical
-  detached-continuation materialization, and focused internal
-  roundtrip/rejection tests.
+- `src/snapshot.rs` and `src/snapshot/tests.rs`: generation-generic command
+  snapshots and named summaries containing one coarse generation owner plus
+  fixed scalar journal, arena, stack, source-anchor, and profile coordinates;
+  capture never clones a live command graph.
 - `src/continuation.rs` and `src/continuation/`: handle-free command-summary
-  DTOs, recursive schema audit, logical detachment, and staged atomic
-  destination-generation materialization of source, symbol, token, macro,
-  origin-list, and expansion-frame roots.
+  and suspended-attempt recipes, dense DTO-local indices, recursive schema
+  validation and budgets, cold detachment construction, destination-stamped
+  staging, atomic publication, and focused rejection/retry tests. The schema
+  contains no runtime identity, owner, storage coordinate, or borrow.
 - `tests/`: external dependency, visibility, and capability-boundary tests.
   Character/input integration coverage binds the exact shared-domain tokenizer
   to the pinned TeX82 fixture and compile-fail gates profile immutability.
