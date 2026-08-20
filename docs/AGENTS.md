@@ -109,6 +109,11 @@ interning epochs, dense journaled TeX state, generation-scoped immutable
 definitions, operation and node arenas, promotion, checkpoints, compaction,
 provenance, and handle-free boundaries.
 
+`runtime_storage_contract_tests.md` maps the external TRIP/e-TRIP, tracer,
+artifact, CLI, format, retry, diagnostic, checkpoint, rollback, and incremental
+contracts that survive the runtime-storage rewrite and records the deleted
+ownership-era compatibility assertions.
+
 `writeback/` records concise issue-scoped authority notes required by command
 conformance work; each note names the governing TeX82 section and the adopted
 semantic boundary, not temporary implementation plans.
