@@ -30,10 +30,10 @@ fn header_and_directory_are_fixed_width_little_endian_and_canonical() {
     assert_eq!(decoded.sections.len(), 2);
     assert_eq!(decoded.sections[0].kind, 2);
     assert_eq!(decoded.sections[0].alignment, 8);
-    assert_eq!(decoded.sections[0].bytes.as_ref(), b"first");
+    assert_eq!(decoded.sections[0].bytes.as_slice(), b"first");
     assert_eq!(decoded.sections[1].kind, 9);
     assert_eq!(decoded.sections[1].alignment, 32);
-    assert_eq!(decoded.sections[1].bytes.as_ref(), b"second");
+    assert_eq!(decoded.sections[1].bytes.as_slice(), b"second");
     let first_stored_len = read_u64(&encoded, HEADER_LEN + 16) as usize;
     assert!(
         encoded[decoded.sections[0].offset + first_stored_len..decoded.sections[1].offset]
@@ -121,24 +121,27 @@ fn codec_rejects_native_shaped_or_ambiguous_geometry() {
 }
 
 #[test]
-fn decoder_accepts_legacy_uncompressed_sections() {
-    let mut legacy = encode_with_compression(
-        &[SectionInput {
-            kind: 1,
-            alignment: 8,
-            bytes: b"legacy payload",
-        }],
-        false,
-    )
-    .expect("encode legacy container");
-    legacy[40..48].copy_from_slice(&LEGACY_ABI_FINGERPRINT.to_le_bytes());
-    legacy[48..56].copy_from_slice(&LEGACY_LOOKUP_CONFIGURATION_FINGERPRINT.to_le_bytes());
-    refresh_checksum(&mut legacy);
-    assert_eq!(read_u32(&legacy, HEADER_LEN + 4), 0);
+fn decoder_rejects_compatibility_fingerprints_and_uncompressed_sections() {
+    let encoded = encode(&[SectionInput {
+        kind: 1,
+        alignment: 8,
+        bytes: b"payload",
+    }])
+    .expect("encode current container");
+
+    let mut stale_abi = encoded.clone();
+    stale_abi[40..48].copy_from_slice(&0x44f8_959d_0de4_3d0f_u64.to_le_bytes());
+    refresh_checksum(&mut stale_abi);
+    assert!(matches!(
+        decode(&stale_abi),
+        Err(ContainerError::IncompatibleAbi(_))
+    ));
+
+    let mut uncompressed = encoded;
+    uncompressed[HEADER_LEN + 4..HEADER_LEN + 8].copy_from_slice(&0_u32.to_le_bytes());
+    refresh_checksum(&mut uncompressed);
     assert_eq!(
-        decode(&legacy).expect("decode legacy container").sections[0]
-            .bytes
-            .as_ref(),
-        b"legacy payload"
+        decode(&uncompressed),
+        Err(ContainerError::Invalid("unsupported section flags"))
     );
 }

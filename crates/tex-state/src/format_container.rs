@@ -1,10 +1,9 @@
 //! Portable, versioned container for frozen format-image sections.
 //!
 //! This module owns only the outer wire contract. Section payload schemas are
-//! deliberately independent so they can migrate from the schema-v9 semantic
-//! reconstruction path to runtime-ready frozen stores incrementally.
+//! deliberately independent and must validate before destination-local
+//! materialization begins.
 
-use std::borrow::Cow;
 use std::fmt;
 use std::io::{Read, Write};
 
@@ -28,13 +27,6 @@ pub(crate) const ABI_FINGERPRINT: u64 = fingerprint(
 pub(crate) const LOOKUP_CONFIGURATION_FINGERPRINT: u64 = fingerprint(
     b"umber.format.lookup.v2;fnv1a64;seed=cbf29ce484222325;capacity=pow2-lte-3/4;probe=linear;empty=ffffffff;tokens=direct-target-u32",
 );
-const LEGACY_ABI_FINGERPRINT: u64 = fingerprint(
-    b"umber.format.container.v1;le;header=80;directory=40;refs=relative-or-index;checksum=fnv1a64-zero-field",
-);
-const LEGACY_LOOKUP_CONFIGURATION_FINGERPRINT: u64 = fingerprint(
-    b"umber.format.lookup.v1;fnv1a64;seed=cbf29ce484222325;capacity=pow2-lte-3/4;probe=linear;empty=ffffffff",
-);
-
 const fn fingerprint(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     let mut index = 0;
@@ -54,23 +46,23 @@ pub(crate) struct SectionInput<'a> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DecodedSection<'a> {
+pub(crate) struct DecodedSection {
     pub kind: u32,
     #[cfg_attr(not(test), allow(dead_code))]
     pub alignment: u32,
     #[cfg_attr(not(test), allow(dead_code))]
     pub offset: usize,
-    pub bytes: Cow<'a, [u8]>,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) struct DecodedContainer<'a> {
+pub(crate) struct DecodedContainer {
     pub checksum: u64,
-    pub sections: Vec<DecodedSection<'a>>,
+    pub sections: Vec<DecodedSection>,
 }
 
-impl<'a> DecodedContainer<'a> {
-    pub fn section(&self, kind: u32) -> Option<&DecodedSection<'a>> {
+impl DecodedContainer {
+    pub fn section(&self, kind: u32) -> Option<&DecodedSection> {
         self.sections.iter().find(|section| section.kind == kind)
     }
 }
@@ -105,13 +97,6 @@ impl fmt::Display for ContainerError {
 }
 
 pub(crate) fn encode(sections: &[SectionInput<'_>]) -> Result<Vec<u8>, ContainerError> {
-    encode_with_compression(sections, true)
-}
-
-fn encode_with_compression(
-    sections: &[SectionInput<'_>],
-    compress_sections: bool,
-) -> Result<Vec<u8>, ContainerError> {
     if sections.is_empty() || sections.len() > MAX_SECTIONS {
         return Err(ContainerError::Invalid("invalid section count"));
     }
@@ -125,13 +110,7 @@ fn encode_with_compression(
         .ok_or(ContainerError::Invalid("directory length overflow"))?;
     let stored_sections = sections
         .iter()
-        .map(|section| {
-            if compress_sections {
-                compress(section.bytes)
-            } else {
-                Ok(section.bytes.to_vec())
-            }
-        })
+        .map(|section| compress(section.bytes))
         .collect::<Result<Vec<_>, _>>()?;
     let mut cursor = HEADER_LEN
         .checked_add(directory_len)
@@ -167,8 +146,7 @@ fn encode_with_compression(
     {
         let record = HEADER_LEN + index * DIRECTORY_ENTRY_LEN;
         bytes[record..record + 4].copy_from_slice(&section.kind.to_le_bytes());
-        bytes[record + 4..record + 8]
-            .copy_from_slice(&(if compress_sections { DEFLATE_FLAG } else { 0 }).to_le_bytes());
+        bytes[record + 4..record + 8].copy_from_slice(&DEFLATE_FLAG.to_le_bytes());
         bytes[record + 8..record + 16].copy_from_slice(&(offset as u64).to_le_bytes());
         bytes[record + 16..record + 24].copy_from_slice(&(stored.len() as u64).to_le_bytes());
         bytes[record + 24..record + 32]
@@ -181,7 +159,7 @@ fn encode_with_compression(
     Ok(bytes)
 }
 
-pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerError> {
+pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer, ContainerError> {
     if bytes.len() < HEADER_LEN {
         return Err(ContainerError::Truncated);
     }
@@ -211,15 +189,11 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerErro
         return Err(ContainerError::Checksum);
     }
     let abi = read_u64(bytes, 40);
-    if abi != ABI_FINGERPRINT && abi != LEGACY_ABI_FINGERPRINT {
+    if abi != ABI_FINGERPRINT {
         return Err(ContainerError::IncompatibleAbi(abi));
     }
     let configuration = read_u64(bytes, 48);
-    let compatible_pair = (abi == ABI_FINGERPRINT
-        && configuration == LOOKUP_CONFIGURATION_FINGERPRINT)
-        || (abi == LEGACY_ABI_FINGERPRINT
-            && configuration == LEGACY_LOOKUP_CONFIGURATION_FINGERPRINT);
-    if !compatible_pair {
+    if configuration != LOOKUP_CONFIGURATION_FINGERPRINT {
         return Err(ContainerError::IncompatibleLookupConfiguration(
             configuration,
         ));
@@ -256,7 +230,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerErro
         }
         previous_kind = kind;
         let flags = read_u32(bytes, record + 4);
-        if flags & !DEFLATE_FLAG != 0 || read_u32(bytes, record + 36) != 0 {
+        if flags != DEFLATE_FLAG {
+            return Err(ContainerError::Invalid("unsupported section flags"));
+        }
+        if read_u32(bytes, record + 36) != 0 {
             return Err(ContainerError::Invalid("nonzero reserved section field"));
         }
         let alignment = read_u32(bytes, record + 32);
@@ -267,11 +244,6 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerErro
             .map_err(|_| ContainerError::Invalid("section length exceeds usize"))?;
         let logical_len = usize::try_from(read_u64(bytes, record + 24))
             .map_err(|_| ContainerError::Invalid("section length exceeds usize"))?;
-        if flags == 0 && logical_len != stored_len {
-            return Err(ContainerError::Invalid(
-                "uncompressed section length mismatch",
-            ));
-        }
         let canonical_offset = align_up(cursor, alignment)?;
         if offset != canonical_offset {
             return Err(ContainerError::Invalid("non-canonical section offset"));
@@ -286,11 +258,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerErro
             return Err(ContainerError::Truncated);
         }
         let payload = &bytes[offset..end];
-        let section_bytes = if flags == DEFLATE_FLAG {
-            Cow::Owned(decompress(payload, logical_len)?)
-        } else {
-            Cow::Borrowed(payload)
-        };
+        let section_bytes = decompress(payload, logical_len)?;
         sections.push(DecodedSection {
             kind,
             alignment,
@@ -303,15 +271,6 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedContainer<'_>, ContainerErro
         return Err(ContainerError::Invalid(
             "non-canonical bytes after final section",
         ));
-    }
-    #[cfg(feature = "profiling")]
-    {
-        let owned_sections = sections
-            .iter()
-            .filter(|section| matches!(&section.bytes, Cow::Owned(_)))
-            .count();
-        crate::measurement::record_format_restore_container(bytes.len(), 1 + owned_sections);
-        crate::measurement::record_format_restore_work(2, 0, 0);
     }
     Ok(DecodedContainer {
         checksum: expected_checksum,
@@ -414,4 +373,5 @@ pub(crate) fn refresh_checksum(bytes: &mut [u8]) {
 }
 
 #[cfg(test)]
+#[path = "format_container/tests.rs"]
 mod tests;

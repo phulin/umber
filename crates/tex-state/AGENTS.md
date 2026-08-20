@@ -17,6 +17,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/code_tables.rs`: Storage-independent code-table value vocabulary; the
   live cat/lc/uc/sf/math/delcode banks and INITEX virtual defaults are owned by
   `DenseState`.
+- `src/checkpoint.rs` and `src/checkpoint/tests.rs`: Move-only coarse-owner
+  checkpoints, bounded cursor tuples, mutation-free restore planning, and the
+  owner/state/root/truncation/release ordering barrier.
 - `src/command_context.rs`: Already-admitted session/generation borrow for
   direct meaning, register, code-table, definition, token-list, and glue reads.
 - `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, registered World-backed mutation keys, semantic backdating, and opaque cross-Universe memo validation stamps.
@@ -48,8 +51,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/etex_tracing.rs` and `src/etex_tracing/tests.rs`: e-TeX 2.6's `\tracinggroups` group-enter/leave transcript trace, printed through the shared `\tracing*` diagnostic channel; `\tracingassigns`'s value rendering lives in `tex-exec` instead, against the primitives declared here, and `\tracingifs` renders directly in `tex-command` through the same channel.
 - `src/file_framing.rs` and `src/file_framing/tests.rs`: tex.web §54's `open_parens` and the §537/§362/§1335 prints that maintain it, held as print-adjacent `World` state so the command core can close a file's paren at §362's own point, ahead of the `check_outer_validity` diagnostic that follows it.
 - `src/font.rs`: Stateful loaded-font store, font handles, null font, missing-character records, and rollback marks.
-- `src/format_container.rs`: Portable schema-11 format-image header, section directory, compatibility fingerprints, checksum, and structural validation.
-- `src/format_container/tests.rs`: Focused frozen-container header, directory, checksum-coverage, fingerprint, and geometry tests.
+- `src/format.rs` and `src/format/tests.rs`: Destination-stamped format
+  staging and infallible atomic publication after complete validation.
+- `src/format_container.rs`: Portable schema-11 format-image header, section directory, authoritative fingerprints, checksum, compression, and structural validation; no compatibility codec is retained.
+- `src/format_container/tests.rs`: Focused frozen-container header, directory, checksum-coverage, fingerprint, compression, and geometry tests.
 - `src/frozen_lookup.rs`: Versioned portable literal bucket/index codecs used to encode and validate cold format structures; decoded token lookup tables own no runtime liveness.
 - `src/frozen_lookup/tests.rs`: Deterministic generation, lookup equivalence, and malformed literal-table validation tests.
 - `src/glue.rs`: Storage-independent immutable TeX glue values.

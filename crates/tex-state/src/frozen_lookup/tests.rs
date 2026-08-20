@@ -66,6 +66,18 @@ fn duplicate_complete_keys_are_rejected() {
 }
 
 #[test]
+fn duplicate_or_missing_destination_rows_are_rejected() {
+    let mut malformed = encode(entries()).expect("encode lookup");
+    let entries_offset = HEADER_LEN + read_u32(&malformed, 16) as usize * 4;
+    put_u32(&mut malformed, entries_offset + ENTRY_LEN + 8, 0);
+
+    assert_eq!(
+        decode(&malformed, 3).unwrap_err(),
+        "duplicate frozen lookup target"
+    );
+}
+
+#[test]
 fn direct_buckets_preserve_every_linear_probe_candidate() {
     let hashes = [0_u64, 8, 16];
     let encoded = encode_direct(&hashes).expect("encode direct lookup");

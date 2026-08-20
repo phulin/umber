@@ -1,5 +1,6 @@
 //! Session epoch plus one admitted revision-generation state core.
 
+use crate::checkpoint::{BoundedStateMark, GenerationCheckpoint, RestoreTarget, prepare_restore};
 use crate::command_context::CommandContext;
 use crate::definition_arena::{DefinitionAllocationError, DefinitionId};
 use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
@@ -107,6 +108,14 @@ pub enum NodePromotionError {
     Nodes(NodeArenaError),
 }
 
+/// Fixed-size tex-state portion of a retained aggregate checkpoint.
+pub type StateCheckpointMark<G, Input = ()> =
+    BoundedStateMark<JournalCursor<G>, NodeArenaCursor<G>, NodeArenaCursor<PageLifetime>, Input>;
+
+/// Coarse generation owner plus bounded state cursors.
+pub type StateCheckpoint<G, Input = ()> =
+    GenerationCheckpoint<GenerationOwner<G>, StateCheckpointMark<G, Input>>;
+
 impl From<PromotionError> for NodePromotionError {
     fn from(error: PromotionError) -> Self {
         Self::Values(error)
@@ -164,6 +173,7 @@ pub struct Universe<G> {
     interaction_mode: InteractionMode,
     primitive_names: Vec<String>,
     primitive_meanings: Vec<Meaning>,
+    restore_owner: Option<GenerationOwner<G>>,
 }
 
 impl<G> Universe<G> {
@@ -176,6 +186,7 @@ impl<G> Universe<G> {
             interaction_mode: InteractionMode::default(),
             primitive_names: Vec::new(),
             primitive_meanings: Vec::new(),
+            restore_owner: None,
         }
     }
 
@@ -814,6 +825,38 @@ impl<G> Universe<G> {
         Ok(())
     }
 
+    /// Retains one coarse generation beside bounded state and arena cursors.
+    ///
+    /// Command, mode, source, effect, and output owners compose their own
+    /// bounded cursor fields around this state-layer foundation.
+    pub fn state_checkpoint(&self) -> Result<StateCheckpoint<G>, UniverseError> {
+        let core = self.core.as_ref().ok_or(UniverseError::Retired)?;
+        Ok(GenerationCheckpoint::new(
+            core.generation_owner(),
+            BoundedStateMark::new(
+                core.state().journal_cursor(),
+                core.durable_node_cursor(),
+                self.page_nodes.cursor(),
+                (),
+            ),
+        ))
+    }
+
+    /// Restores the state-owned portion of a retained checkpoint atomically.
+    ///
+    /// Validation is complete before the first mutation. The retained owner is
+    /// installed before dense words can expose restored coordinates, and both
+    /// durable and page suffixes truncate only after root-bearing dense state
+    /// has been restored.
+    pub fn restore_state_checkpoint(
+        &mut self,
+        checkpoint: &StateCheckpoint<G>,
+    ) -> Result<(), UniverseError> {
+        let plan = prepare_restore(self, checkpoint.clone())?;
+        plan.apply(self);
+        Ok(())
+    }
+
     pub fn begin_group(
         &mut self,
         kind: GroupKind,
@@ -885,6 +928,65 @@ impl<G> Universe<G> {
     #[must_use]
     pub const fn is_retired(&self) -> bool {
         self.core.is_none()
+    }
+}
+
+impl<G> RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>> for Universe<G> {
+    type Error = UniverseError;
+    type Output = ();
+
+    fn validate_restore(
+        &self,
+        owner: &GenerationOwner<G>,
+        mark: &StateCheckpointMark<G>,
+    ) -> Result<(), Self::Error> {
+        let core = self.core.as_ref().ok_or(UniverseError::Retired)?;
+        if !core.owns_generation(owner) || self.restore_owner.is_some() {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
+        core.state().validate_restore(*mark.journal())?;
+        core.validate_durable_node_cursor(*mark.durable())?;
+        self.page_nodes.validate_cursor(*mark.page())?;
+        Ok(())
+    }
+
+    fn acquire_target_owner(&mut self, owner: GenerationOwner<G>) {
+        debug_assert!(self.restore_owner.is_none());
+        self.restore_owner = Some(owner);
+    }
+
+    fn restore_dense_state(&mut self, mark: &StateCheckpointMark<G>) {
+        self.core
+            .as_mut()
+            .expect("restore plan validated a live state core")
+            .state_mut()
+            .restore(*mark.journal())
+            .expect("restore plan prevalidated dense state");
+    }
+
+    fn transfer_roots(&mut self, _mark: &StateCheckpointMark<G>) {
+        // Dense state owns every state-layer root. Command, mode, source,
+        // effect, and output roots are transferred by the aggregate plan
+        // composed in later migration stages.
+    }
+
+    fn truncate_suffixes(&mut self, mark: &StateCheckpointMark<G>) {
+        self.core
+            .as_mut()
+            .expect("restore plan validated a live state core")
+            .truncate_durable_nodes(*mark.durable())
+            .expect("restore plan prevalidated durable-node suffix");
+        self.page_nodes
+            .truncate(*mark.page())
+            .expect("restore plan prevalidated page-node suffix");
+    }
+
+    fn release_replaced_owners(&mut self) {
+        drop(
+            self.restore_owner
+                .take()
+                .expect("restore acquired its target generation owner"),
+        );
     }
 }
 

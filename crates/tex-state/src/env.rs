@@ -634,7 +634,7 @@ impl<G> DenseState<G> {
         Ok(())
     }
 
-    fn validate_restore(&self, cursor: JournalCursor<G>) -> Result<(), StateError> {
+    pub(crate) fn validate_restore(&self, cursor: JournalCursor<G>) -> Result<(), StateError> {
         if !self.journal.validate_cursor(cursor) {
             return Err(StateError::InvalidCursor);
         }

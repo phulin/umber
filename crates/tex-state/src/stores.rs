@@ -7,7 +7,8 @@ use crate::generation::{Generation, GenerationOwner, GenerationRetirement};
 use crate::glue::GlueSpec;
 use crate::node::NodeTokenList;
 use crate::node_arena::{
-    DurableListId, DurableNodeArena, NodeArenaError, NodeList, PageListId, PageNodeArena,
+    DurableListId, DurableNodeArena, NodeArenaCursor, NodeArenaError, NodeList, PageListId,
+    PageNodeArena,
 };
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
@@ -59,6 +60,30 @@ impl<G> StateCore<G> {
 
     pub(crate) const fn state_mut(&mut self) -> &mut DenseState<G> {
         &mut self.state
+    }
+
+    #[must_use]
+    pub(crate) const fn state(&self) -> &DenseState<G> {
+        &self.state
+    }
+
+    #[must_use]
+    pub(crate) fn durable_node_cursor(&self) -> NodeArenaCursor<G> {
+        self.nodes.cursor()
+    }
+
+    pub(crate) fn validate_durable_node_cursor(
+        &self,
+        cursor: NodeArenaCursor<G>,
+    ) -> Result<(), NodeArenaError> {
+        self.nodes.validate_cursor(cursor)
+    }
+
+    pub(crate) fn truncate_durable_nodes(
+        &mut self,
+        cursor: NodeArenaCursor<G>,
+    ) -> Result<(), NodeArenaError> {
+        self.nodes.truncate(cursor)
     }
 
     /// Retires the complete generation after all admitted borrows end.

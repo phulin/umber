@@ -47,6 +47,7 @@
 pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 28;
 
 pub mod cell;
+mod checkpoint;
 pub mod code_tables;
 mod command_context;
 pub(crate) mod definition_arena;
@@ -62,6 +63,8 @@ mod expansion_diagnostic;
 mod expansion_recovery;
 pub mod file_framing;
 pub mod font;
+#[allow(dead_code)] // Atomic format consumers land after this state foundation.
+mod format;
 mod format_container;
 mod frozen_lookup;
 pub(crate) mod generation;
@@ -172,8 +175,9 @@ pub use source_fragments::{
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
 pub use universe::{
-    DefinitionPromotion, InteractionMode, PromotionError, PromotionReceipt, TokenListPromotion,
-    Universe, UniverseError, UniverseRetirement, with_universe,
+    DefinitionPromotion, InteractionMode, PromotionError, PromotionReceipt, StateCheckpoint,
+    StateCheckpointMark, TokenListPromotion, Universe, UniverseError, UniverseRetirement,
+    with_universe,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

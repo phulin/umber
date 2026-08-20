@@ -288,6 +288,7 @@ pub(crate) fn decode(bytes: &[u8], target_count: usize) -> Result<FrozenLookup, 
     }
     let mut buckets = Vec::with_capacity(bucket_count);
     let mut seen = vec![false; entry_count];
+    let mut seen_targets = vec![false; target_count];
     for index in 0..bucket_count {
         let entry = read_u32(bytes, HEADER_LEN + index * 4);
         if entry != EMPTY {
@@ -313,6 +314,10 @@ pub(crate) fn decode(bytes: &[u8], target_count: usize) -> Result<FrozenLookup, 
         if start != cursor || target as usize >= target_count || read_u32(bytes, record + 12) != 0 {
             return Err("invalid frozen lookup entry");
         }
+        if seen_targets[target as usize] {
+            return Err("duplicate frozen lookup target");
+        }
+        seen_targets[target as usize] = true;
         cursor = start.checked_add(len).ok_or("frozen lookup key range")?;
         if keys_offset
             .checked_add(cursor)
@@ -325,6 +330,9 @@ pub(crate) fn decode(bytes: &[u8], target_count: usize) -> Result<FrozenLookup, 
     }
     if keys_offset + cursor != bytes.len() || keys.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err("non-canonical frozen lookup keys");
+    }
+    if seen_targets.iter().any(|seen| !seen) {
+        return Err("missing frozen lookup target");
     }
     let expected = encode(keys.iter().cloned().zip(targets.iter().copied()))?;
     if expected != bytes {
@@ -384,4 +392,5 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
 }
 
 #[cfg(test)]
+#[path = "frozen_lookup/tests.rs"]
 mod tests;
