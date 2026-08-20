@@ -42,9 +42,9 @@ use crate::observation::{
 /// Operand state held by TeX82 §368 while `\expandafter` expands its second
 /// command across an immutable host suspension.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct PendingExpandAfter {
-    first: CurrentCommand,
-    second: CurrentCommand,
+pub(crate) struct PendingExpandAfter<G> {
+    first: CurrentCommand<G>,
+    second: CurrentCommand<G>,
 }
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
@@ -259,7 +259,7 @@ const fn is_ranked_fused_expansion(meaning: Meaning) -> bool {
     )
 }
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Settles one raw command already delivered by the same processor
     /// episode. This is the capability-preflight seam: macro/expandable
     /// nesting, undefined-command recovery, and ordered raw/expanded
@@ -267,8 +267,8 @@ impl CommandProcessor<'_> {
     #[doc(hidden)]
     pub fn settle_current_command(
         &mut self,
-        command: CurrentCommand,
-    ) -> Result<Option<CurrentCommand>, CommandError> {
+        command: CurrentCommand<G>,
+    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
         let result = self.delivery_driver(
             Some(command),
             DeliveryPolicy {
@@ -296,7 +296,7 @@ impl CommandProcessor<'_> {
     /// shared raw/expanded delivery driver. Expansion mutates canonical
     /// command state and restarts in that one driver; it never returns a
     /// push-bearing dispatch result or enters a second interpreter.
-    pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+    pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
         self.apply_error_stop_recovery()?;
         self.get_x_token_from(None, ExpandedFetch::GetXToken)
     }
@@ -305,7 +305,7 @@ impl CommandProcessor<'_> {
     /// in e-TeX/pdfTeX exactly as `get_x_or_protected` does.
     pub(crate) fn get_x_or_protected_with_replay_completion(
         &mut self,
-    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
+    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
         self.apply_error_stop_recovery()?;
         let preserve = self.command.profile().capabilities().supports_etex();
         let result = self.delivery_driver(
@@ -344,7 +344,7 @@ impl CommandProcessor<'_> {
     /// TeX82 §370's undefined command instead of consuming it after recovery.
     pub fn get_x_token_preserving_undefined(
         &mut self,
-    ) -> Result<Option<CurrentCommand>, CommandError> {
+    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
         self.apply_error_stop_recovery()?;
         let result = self.delivery_driver(
             None,
@@ -376,9 +376,9 @@ impl CommandProcessor<'_> {
     /// expanded without ever having been delivered raw.
     fn get_x_token_from(
         &mut self,
-        mut pending: Option<CurrentCommand>,
+        mut pending: Option<CurrentCommand<G>>,
         fetch: ExpandedFetch,
-    ) -> Result<Option<CurrentCommand>, CommandError> {
+    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
         let result = self.delivery_driver(
             pending.take(),
             DeliveryPolicy {
@@ -437,7 +437,7 @@ impl CommandProcessor<'_> {
         );
         let stamp = DeliveryStamp::new(0, 0, self.next_delivery_sequence);
         self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-        let command = CurrentCommand::resolve(spelling, stamp, None, false, &mut self.state);
+        let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, &mut self.state);
         let Some(settled) = self.get_x_token_from(Some(command), ExpandedFetch::XToken)? else {
             return Ok(());
         };
@@ -459,7 +459,7 @@ impl CommandProcessor<'_> {
     /// than as a skipped filler would scan as an invalid delimiter.
     pub fn next_non_blank_non_relax_x_token(
         &mut self,
-    ) -> Result<Option<CurrentCommand>, CommandError> {
+    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
         loop {
             let Some(command) = self.get_x_token()? else {
                 return Ok(None);
@@ -483,7 +483,7 @@ impl CommandProcessor<'_> {
     /// returned command is the exact expanded delivery that stopped the
     /// loop: callers such as §1045's `\ignorespaces` dispatch it in place
     /// without backing it up or rebuilding its provenance.
-    pub fn next_non_blank_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+    pub fn next_non_blank_x_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
         loop {
             let Some(command) = self.get_x_token()? else {
                 return Ok(None);
@@ -514,7 +514,9 @@ impl CommandProcessor<'_> {
     /// `\noalign`, `\crcr`, `\omit`, or closing brace has an expanded
     /// delivery. A protected macro is likewise terminal and is backed up as
     /// the first command of the next cell.
-    pub fn next_alignment_lookahead(&mut self) -> Result<Option<AlignmentLookahead>, CommandError> {
+    pub fn next_alignment_lookahead(
+        &mut self,
+    ) -> Result<Option<AlignmentLookahead<G>>, CommandError> {
         loop {
             let etex_protected_fetch = self.command.profile().capabilities().supports_etex();
             let result = self.delivery_driver(
@@ -568,8 +570,8 @@ impl CommandProcessor<'_> {
     /// consumes instead of passing to an ordinary `back_input` branch.
     pub fn commit_alignment_lookahead_delivery(
         &mut self,
-        lookahead: AlignmentLookahead,
-    ) -> CurrentCommand {
+        lookahead: AlignmentLookahead<G>,
+    ) -> CurrentCommand<G> {
         match lookahead {
             AlignmentLookahead::Committed(command) => command,
             AlignmentLookahead::PendingExpanded(command) => {
@@ -587,7 +589,7 @@ impl CommandProcessor<'_> {
     /// the later replay above the u-template is a distinct delivery.
     pub fn back_alignment_lookahead(
         &mut self,
-        lookahead: AlignmentLookahead,
+        lookahead: AlignmentLookahead<G>,
     ) -> Result<(), CommandError> {
         let command = self.commit_alignment_lookahead_delivery(lookahead);
         self.back_input(command)
@@ -602,7 +604,7 @@ impl CommandProcessor<'_> {
     /// lifecycle before requesting another delivery.
     pub fn get_x_token_with_replay_completion(
         &mut self,
-    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
+    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
         self.apply_error_stop_recovery()?;
         let result = self.delivery_driver(
             None,
@@ -633,9 +635,9 @@ impl CommandProcessor<'_> {
     /// character fast-path policy for the first command only.
     pub fn settle_preflight_command(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
         main_loop: bool,
-    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
+    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
         self.apply_error_stop_recovery()?;
         let result = self.delivery_driver(
             Some(command),
@@ -676,7 +678,9 @@ impl CommandProcessor<'_> {
     ///
     /// `char_num` is deliberately *not* in the raw set: §1038 accepts it only
     /// after `x_token`, because `\char` can be reached by expansion.
-    pub fn main_loop_lookahead(&mut self) -> Result<Option<CommandReplayDelivery>, CommandError> {
+    pub fn main_loop_lookahead(
+        &mut self,
+    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
         self.apply_error_stop_recovery()?;
         let result = self.delivery_driver(
             None,
@@ -705,9 +709,9 @@ impl CommandProcessor<'_> {
     /// lookahead has already fetched.
     pub(super) fn delivery_driver(
         &mut self,
-        mut pending: Option<CurrentCommand>,
+        mut pending: Option<CurrentCommand<G>>,
         policy: DeliveryPolicy,
-    ) -> Result<Option<DeliveryEvent>, CommandError> {
+    ) -> Result<Option<DeliveryEvent<G>>, CommandError> {
         self.last_delivery = None;
         match policy.mode {
             DeliveryMode::Raw => self.raw_delivery_driver(pending, policy),
@@ -746,9 +750,9 @@ impl CommandProcessor<'_> {
 
     fn raw_delivery_driver(
         &mut self,
-        mut pending: Option<CurrentCommand>,
+        mut pending: Option<CurrentCommand<G>>,
         policy: DeliveryPolicy,
-    ) -> Result<Option<DeliveryEvent>, CommandError> {
+    ) -> Result<Option<DeliveryEvent<G>>, CommandError> {
         loop {
             let command = match pending.take() {
                 Some(command) => command,
@@ -787,11 +791,11 @@ impl CommandProcessor<'_> {
 
     fn expanded_delivery_driver(
         &mut self,
-        mut pending: Option<CurrentCommand>,
+        mut pending: Option<CurrentCommand<G>>,
         policy: DeliveryPolicy,
         expanded: ExpandedDeliveryPolicy,
         resumed_pending: bool,
-    ) -> Result<Option<DeliveryEvent>, CommandError> {
+    ) -> Result<Option<DeliveryEvent<G>>, CommandError> {
         let expansions_before = self.command.expansion.cumulative_expansions;
         let mut first = true;
         let mut suppress_first_expansion_trace = resumed_pending;
@@ -910,11 +914,11 @@ impl CommandProcessor<'_> {
 
     fn finish_expanded_delivery(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
         policy: ExpandedDeliveryPolicy,
         expansions_before: u64,
         alignment: AlignmentInterceptionPolicy,
-    ) -> DeliveryEvent {
+    ) -> DeliveryEvent<G> {
         self.record_expanded_delivery();
         let pending = policy.observation == ExpandedObservationPolicy::DeferIfExpanded
             && self.command.expansion.cumulative_expansions != expansions_before;
@@ -939,7 +943,7 @@ impl CommandProcessor<'_> {
     }
 
     #[doc(hidden)]
-    pub fn observe_expanded_delivery(&mut self, command: &CurrentCommand) {
+    pub fn observe_expanded_delivery(&mut self, command: &CurrentCommand<G>) {
         observe!(self, {
             #[cfg(test)]
             {
@@ -995,7 +999,7 @@ impl CommandProcessor<'_> {
 
     /// TeX.web's scalar `expand`: each case changes the active input/state
     /// directly, then returns to [`Self::get_x_token_scalar`].
-    pub(crate) fn expand(&mut self, command: &CurrentCommand) -> Result<(), CommandError> {
+    pub(crate) fn expand(&mut self, command: &CurrentCommand<G>) -> Result<(), CommandError> {
         self.expand_with_trace(command, true)
     }
 
@@ -1003,7 +1007,7 @@ impl CommandProcessor<'_> {
     /// emitted trace across an immutable-resource suspension.
     fn expand_with_trace(
         &mut self,
-        command: &CurrentCommand,
+        command: &CurrentCommand<G>,
         report_trace: bool,
     ) -> Result<(), CommandError> {
         #[cfg(feature = "profiling")]
@@ -1458,7 +1462,7 @@ impl CommandProcessor<'_> {
     /// the frozen spelling exactly as for `\scantokens`, and `str_toks`
     /// projects the resulting string to category-10 spaces and category-12
     /// other characters.
-    fn expand_detokenize(&mut self, opener: &CurrentCommand) -> Result<(), CommandError> {
+    fn expand_detokenize(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::GeneralText {
             purpose: "detokenize",
         })?;
@@ -1490,7 +1494,7 @@ impl CommandProcessor<'_> {
     /// rendered through `tokens_to_string`, and compared lexicographically as
     /// pdfTeX string-pool bytes. Canonical pdfTeX input is byte-valued; UTF-8
     /// preserves that ordering for Umber's extended scalar domain as well.
-    fn expand_string_compare(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_string_compare(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let left = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
         let left =
             stored_token_list_string_text(&mut self.state, left.replacement_text.token_ref());
@@ -1513,7 +1517,7 @@ impl CommandProcessor<'_> {
     /// writes a PDF literal-string body: parentheses and backslashes gain an
     /// escape prefix, while bytes outside `!` through `~` use three octal
     /// digits. The result reenters expansion as category-12 characters.
-    fn expand_pdf_escape_string(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_pdf_escape_string(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
         let text =
             stored_token_list_string_text(&mut self.state, scanned.replacement_text.token_ref());
@@ -1547,7 +1551,7 @@ impl CommandProcessor<'_> {
     /// projects that list to pdfTeX bytes, then `escapehex` writes exactly two
     /// uppercase hexadecimal digits for every byte, without angle brackets.
     /// TeX82 §464's `str_toks` returns those digits as category-12 characters.
-    fn expand_pdf_escape_hex(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_pdf_escape_hex(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
         let bytes =
             pdftex_stored_token_list_bytes(&mut self.state, scanned.replacement_text.token_ref());
@@ -1582,7 +1586,7 @@ impl CommandProcessor<'_> {
     /// remaining digits case-insensitively, and pads a final high nibble with
     /// zero. TeX82 §464's `str_toks` makes a decoded space category 10 and
     /// every other decoded byte category 12.
-    fn expand_pdf_unescape_hex(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_pdf_unescape_hex(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let scanned = self.scan_toks(crate::scan_toks::ScanToksMode::General { expanded: true })?;
         let bytes =
             pdftex_stored_token_list_bytes(&mut self.state, scanned.replacement_text.token_ref());
@@ -1631,7 +1635,7 @@ impl CommandProcessor<'_> {
     /// an enclosing `\edef` is collecting replacement text.
     fn get_token_with_normal_scanner_status(
         &mut self,
-    ) -> Result<Option<CurrentCommand>, CommandError> {
+    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
         if matches!(self.command.scanner.status(), ScannerStatus::Normal) {
             return self.get_token();
         }
@@ -1676,7 +1680,7 @@ impl CommandProcessor<'_> {
     /// TeX.web's `\\csname`: collect ordinary expanded character commands
     /// until the inaccessible `\\endcsname` boundary, then inject the one
     /// named control-sequence token through normal input delivery.
-    fn expand_csname(&mut self, opener: &CurrentCommand) -> Result<(), CommandError> {
+    fn expand_csname(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
         let name = self.scan_csname_characters()?;
         let symbol = self.state.intern_relaxed_control_sequence(&name);
         let origin = self
@@ -1736,7 +1740,7 @@ impl CommandProcessor<'_> {
     }
 
     /// `\\string` observes spelling, never an effective control-sequence meaning.
-    fn expand_string(&mut self, opener: &CurrentCommand) -> Result<(), CommandError> {
+    fn expand_string(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
         let target = self
             .get_token_with_normal_scanner_status()?
             .ok_or(CommandError::input_invariant())?;
@@ -1747,7 +1751,7 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    fn expand_meaning(&mut self, opener: &CurrentCommand) -> Result<(), CommandError> {
+    fn expand_meaning(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
         let target = self
             .get_token_with_normal_scanner_status()?
             .ok_or(CommandError::input_invariant())?;
@@ -1756,7 +1760,11 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    fn expand_number(&mut self, opener: &CurrentCommand, roman: bool) -> Result<(), CommandError> {
+    fn expand_number(
+        &mut self,
+        opener: &CurrentCommand<G>,
+        roman: bool,
+    ) -> Result<(), CommandError> {
         let value = self.scan_expanded_integer()?.value;
         let text = if roman {
             roman_numeral(value)
@@ -1774,7 +1782,7 @@ impl CommandProcessor<'_> {
     /// before it backs up the next source token and installs rendered output.
     /// Reaching into the target meaning here would leave that index to a later
     /// scanner and changes the observable input ordering.
-    fn expand_the(&mut self, opener: &CurrentCommand) -> Result<(), CommandError> {
+    fn expand_the(&mut self, opener: &CurrentCommand<G>) -> Result<(), CommandError> {
         let target = self.scan_internal_value_or_zero()?;
         self.expand_the_value(opener.origin_ref(), target.value)
     }
@@ -1822,14 +1830,14 @@ impl CommandProcessor<'_> {
     /// `\fontname` owns no operand reading of its own: §577's
     /// `scan_font_ident` is the only routine that turns a command into a
     /// font, including its invalid-identifier recovery to `nullfont`.
-    fn expand_fontname(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_fontname(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let font = self.scan_font_selector()?;
         let name = self.state.font_name(font);
         self.push_rendered_text(&name, opener.origin_ref());
         Ok(())
     }
 
-    fn expand_input(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_input(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         if self.command.name_in_progress() {
             // TeX82 §§378/527 call §378's `insert_relax`: two distinct
             // `back_input` operations first restore the recursively
@@ -1909,7 +1917,7 @@ impl CommandProcessor<'_> {
     /// §386 is `begin_token_list(cur_mark[cur_chr], mark_text)`, a distinct
     /// §307 token type from §467's `inserted`: a mark's text is the stored list
     /// itself, never a copy handed back through `ins_list`.
-    fn expand_pdf_match(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_pdf_match(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let mut case_insensitive = false;
         let mut subcount = 10_u32;
         loop {
@@ -1965,7 +1973,10 @@ impl CommandProcessor<'_> {
     }
 
     /// pdftex.web §495's `pdf_colorstack_init_code` conversion.
-    fn expand_pdf_color_stack_init(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_pdf_color_stack_init(
+        &mut self,
+        opener: CurrentCommand<G>,
+    ) -> Result<(), CommandError> {
         let restore_at_page_start = self.scan_keyword("page")?.value;
         let mode = if self.scan_keyword("direct")?.value {
             tex_state::PdfColorStackMode::Direct
@@ -1997,7 +2008,7 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    fn expand_pdf_last_match(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_pdf_last_match(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let mut index = self.scan_integer()?.value;
         if index < 0 {
             self.pdftex_match_number_diagnostic(index);
@@ -2024,7 +2035,7 @@ impl CommandProcessor<'_> {
     /// consulted. An absent capability retains the corrected range and typed
     /// request, so the host retry neither repeats diagnostics nor rescans the
     /// consumed operands.
-    fn expand_pdf_file_dump(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_pdf_file_dump(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let pending = self
             .command
             .take_pending_file_enquiry(crate::FileEnquiryIntent::Dump)?;
@@ -2090,7 +2101,7 @@ impl CommandProcessor<'_> {
     }
 
     /// pdftex.web §1590's `pdf_file_size_code` conversion.
-    fn expand_pdf_file_size(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_pdf_file_size(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let request = if let Some(pending) = self
             .command
             .take_pending_file_enquiry(crate::FileEnquiryIntent::Size)?
@@ -2128,7 +2139,7 @@ impl CommandProcessor<'_> {
     /// pdftex.web §1590's `pdf_file_mod_date_code` conversion.
     fn expand_pdf_file_modification_date(
         &mut self,
-        opener: CurrentCommand,
+        opener: CurrentCommand<G>,
     ) -> Result<(), CommandError> {
         let request = if let Some(pending) = self
             .command
@@ -2165,7 +2176,7 @@ impl CommandProcessor<'_> {
     }
 
     /// pdftex.web §1590's string/file MD5 conversion.
-    fn expand_pdf_md_five_sum(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_pdf_md_five_sum(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         use md5::{Digest, Md5};
         let pending = self
             .command
@@ -2224,7 +2235,7 @@ impl CommandProcessor<'_> {
     /// accumulated in the live page-builder insertion record. Missing classes
     /// use pdfTeX's literal `0pt`; present zero heights use `print_scaled` and
     /// therefore remain distinguishable as `0.0pt`.
-    fn expand_pdf_insert_height(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+    fn expand_pdf_insert_height(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let class = self.scan_extended_register_index()?;
         let rendered = self
             .host
@@ -2367,7 +2378,7 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn replay_expandafter_first(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+    fn replay_expandafter_first(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
         self.conserve_input_stack()?;
         self.undo_alignment_delivery(&command);
         let level = self.command.push_token_level(
@@ -2517,7 +2528,7 @@ fn is_expandable(meaning: Meaning) -> bool {
 /// out-parameter token also carries that meaning as its invalid-slot recovery,
 /// but its command remains `out_param<max_command`; its token spelling keeps
 /// the two command identities distinct here.
-pub(crate) fn is_expandable_command(command: &CurrentCommand) -> bool {
+pub(crate) fn is_expandable_command<G>(command: &CurrentCommand<G>) -> bool {
     is_expandable(command.meaning())
         || (matches!(command.meaning(), Meaning::Undefined)
             && !matches!(command.spelling().semantic_token(), Token::Param(_)))
@@ -2609,7 +2620,7 @@ pub(crate) fn append_print_cs_text(
 
 pub(crate) fn meaning_text(
     state: &mut tex_state::CommandContext<'_>,
-    command: &CurrentCommand,
+    command: &CurrentCommand<G>,
 ) -> String {
     let mut text = String::new();
     append_meaning_text_with_token_selector(state, command, false, &mut text);
@@ -2623,7 +2634,7 @@ pub(crate) fn meaning_text(
 /// `\newlinechar` instead of always using their context-free `^^` spelling.
 pub(crate) fn selector_meaning_text(
     state: &mut tex_state::CommandContext<'_>,
-    command: &CurrentCommand,
+    command: &CurrentCommand<G>,
 ) -> String {
     let mut text = String::new();
     append_meaning_text_with_token_selector(state, command, true, &mut text);
@@ -2632,7 +2643,7 @@ pub(crate) fn selector_meaning_text(
 
 fn append_meaning_text_with_token_selector(
     state: &mut tex_state::CommandContext<'_>,
-    command: &CurrentCommand,
+    command: &CurrentCommand<G>,
     active_selector: bool,
     text: &mut String,
 ) {
@@ -2751,7 +2762,7 @@ fn append_meaning_token_list(
 
 /// The copyable portion of a delivered command needed by TeX82 §298.
 ///
-/// This is captured from `CurrentCommand`, not reconstructed from `Meaning`,
+/// This is captured from `CurrentCommand<G>`, not reconstructed from `Meaning`,
 /// so the delivered control-sequence identity remains available across the
 /// executor's transactional scan/apply seam.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2762,7 +2773,7 @@ pub struct PrintCommand {
 
 impl PrintCommand {
     #[must_use]
-    pub const fn from_current(command: &CurrentCommand) -> Self {
+    pub const fn from_current(command: &CurrentCommand<G>) -> Self {
         Self {
             meaning: command.meaning(),
             control_sequence: command.control_sequence(),
@@ -2889,7 +2900,7 @@ fn append_print_command_control_sequence_text(
 
 fn append_meaning_control_sequence_text(
     state: &tex_state::CommandContext<'_>,
-    command: &CurrentCommand,
+    command: &CurrentCommand<G>,
     meaning: Meaning,
     text: &mut String,
 ) {

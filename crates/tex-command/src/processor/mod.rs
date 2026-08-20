@@ -48,14 +48,14 @@ pub(crate) use next::stored_input_reason;
 /// to preserve the canonical observation-before-backup order; e-TeX's
 /// `get_x_or_protected` terminal path has no expanded observation at all.
 #[derive(Debug)]
-pub enum AlignmentLookahead {
-    Committed(crate::CurrentCommand),
-    PendingExpanded(crate::CurrentCommand),
+pub enum AlignmentLookahead<G> {
+    Committed(crate::CurrentCommand<G>),
+    PendingExpanded(crate::CurrentCommand<G>),
 }
 
-impl AlignmentLookahead {
+impl<G> AlignmentLookahead<G> {
     #[must_use]
-    pub const fn command(&self) -> &crate::CurrentCommand {
+    pub const fn command(&self) -> &crate::CurrentCommand<G> {
         match self {
             Self::Committed(command) | Self::PendingExpanded(command) => command,
         }
@@ -118,11 +118,11 @@ pub(super) struct DeliveryPolicy {
 }
 
 #[derive(Debug)]
-pub(super) enum DeliveryEvent {
-    Command(crate::CurrentCommand),
-    PendingExpanded(crate::CurrentCommand),
+pub(super) enum DeliveryEvent<G> {
+    Command(crate::CurrentCommand<G>),
+    PendingExpanded(crate::CurrentCommand<G>),
     ReplayCompleted(crate::CommandReplayEpisode),
-    Alignment(AlignmentDeliveryEvent),
+    Alignment(AlignmentDeliveryEvent<G>),
 }
 pub(crate) use status::ConditionId;
 #[cfg(test)]
@@ -139,9 +139,9 @@ pub(crate) use status::{ScannerState, ScannerStatus};
 /// scanners, conditionals, and primitives operate through this single
 /// aggregate facade.
 #[allow(dead_code)] // later canonical command operations consume every capability
-pub struct CommandProcessor<'a> {
-    pub(crate) command: &'a mut CommandState,
-    pub(crate) state: CommandContext<'a>,
+pub struct CommandProcessor<'a, G> {
+    pub(crate) command: &'a mut CommandState<G>,
+    pub(crate) state: CommandContext<'a, G>,
     pub(crate) host: CommandHostContext<'a>,
     observer: Option<&'a mut dyn CommandObserver>,
     fuel: ProcessorFuel<'a>,
@@ -157,7 +157,7 @@ pub struct CommandProcessor<'a> {
     /// The non-numeric command that completed the most recent integer scan.
     /// It remains backed up in input; dimension scanning uses the semantic
     /// fact to decide whether that replay is a decimal point or a unit.
-    pub(crate) last_integer_terminator: Option<crate::CurrentCommand>,
+    pub(crate) last_integer_terminator: Option<crate::CurrentCommand<G>>,
     next_delivery_sequence: u64,
     /// Set only by canonical outer-validity recovery while a scalar macro
     /// matcher owns `ScannerStatus::Matching`.
@@ -183,7 +183,7 @@ pub struct CommandProcessor<'a> {
     pub(crate) is_in_csname: bool,
     /// Canonical glue-node identity retained only while an internal glue or
     /// e-TeX expression result remains pointer-identical to its source.
-    pub(crate) scanned_glue_identity: Option<tex_state::ids::GlueId>,
+    pub(crate) scanned_glue_identity: Option<tex_state::GlueId<G>>,
     pub(crate) scanned_glue_skip_index: Option<u16>,
     /// Nesting of TeX82's artificial deferred-write expansion episode.
     /// This is operational call-stack state, never snapshot state.
@@ -204,7 +204,7 @@ pub struct CommandProcessor<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct CommandDeliveryCursor(u64);
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Captures the next observation delivery sequence for a typed retry.
     #[must_use]
     pub const fn delivery_cursor(&self) -> CommandDeliveryCursor {
@@ -225,7 +225,7 @@ impl CommandProcessor<'_> {
     /// across its mutation-free preflight seam without backing up or
     /// redelivering the token. The next scanner delivery remains strictly
     /// later than the resumed stamp.
-    pub fn resume_current_command(&mut self, command: &crate::CurrentCommand) {
+    pub fn resume_current_command(&mut self, command: &crate::CurrentCommand<G>) {
         let stamp = command.delivery_stamp();
         self.last_delivery = Some(stamp);
         self.next_delivery_sequence = self
@@ -237,7 +237,7 @@ impl CommandProcessor<'_> {
     /// suspension. The executor uses this exact command, rather than the
     /// command that originally entered settlement, as its typed retry seam.
     #[must_use]
-    pub fn pending_expansion_command(&self) -> Option<&crate::CurrentCommand> {
+    pub fn pending_expansion_command(&self) -> Option<&crate::CurrentCommand<G>> {
         self.command.pending_expansion_command()
     }
 
@@ -259,17 +259,14 @@ impl CommandProcessor<'_> {
     /// observation, and continuation boundaries materialize or detach it only
     /// when they actually publish provenance.
     #[must_use]
-    pub fn active_macro_origin(&self) -> Option<tex_state::provenance::OriginRef> {
-        self.command
-            .parameters
-            .active_invocation_origin()
-            .map(tex_state::provenance::OriginRef::direct)
+    pub fn active_macro_origin(&self) -> Option<tex_state::token::OriginId> {
+        self.command.parameters.active_invocation_origin()
     }
 
     /// Returns the glue node retained by the most recent glue scan when the
     /// result is still pointer-identical to an internal source quantity.
     #[must_use]
-    pub const fn scanned_glue_identity(&self) -> Option<tex_state::ids::GlueId> {
+    pub const fn scanned_glue_identity(&self) -> Option<tex_state::GlueId<G>> {
         self.scanned_glue_identity
     }
 
@@ -323,7 +320,7 @@ impl ProcessorFuel<'_> {
     }
 }
 
-impl<'a> CommandProcessor<'a> {
+impl<'a, G> CommandProcessor<'a, G> {
     /// Prints TeX82 §§299/1030's command trace at the fetch boundary.
     ///
     /// This must run before operand scanning because restricted scanners can
@@ -415,8 +412,8 @@ impl<'a> CommandProcessor<'a> {
     /// Borrows every ownership domain needed by one command operation.
     #[must_use]
     pub fn new(
-        command: &'a mut CommandState,
-        state: CommandContext<'a>,
+        command: &'a mut CommandState<G>,
+        state: CommandContext<'a, G>,
         host: CommandHostContext<'a>,
     ) -> Self {
         Self::from_parts(
@@ -436,8 +433,8 @@ impl<'a> CommandProcessor<'a> {
     /// observer all remain owned by the persistent engine session.
     #[must_use]
     pub fn borrowed(
-        command: &'a mut CommandState,
-        state: CommandContext<'a>,
+        command: &'a mut CommandState<G>,
+        state: CommandContext<'a, G>,
         host: CommandHostContext<'a>,
         fuel: &'a mut CommandFuel,
         observer: Option<&'a mut dyn CommandObserver>,
@@ -446,8 +443,8 @@ impl<'a> CommandProcessor<'a> {
     }
 
     fn from_parts(
-        command: &'a mut CommandState,
-        mut state: CommandContext<'a>,
+        command: &'a mut CommandState<G>,
+        mut state: CommandContext<'a, G>,
         host: CommandHostContext<'a>,
         fuel: ProcessorFuel<'a>,
         observer: Option<&'a mut dyn CommandObserver>,

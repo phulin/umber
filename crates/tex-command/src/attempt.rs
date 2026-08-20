@@ -763,6 +763,12 @@ pub struct CommandAttempt<G> {
     arena: AttemptArena<G>,
 }
 
+impl<G> core::fmt::Debug for CommandAttempt<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("CommandAttempt(..)")
+    }
+}
+
 impl<G> Default for CommandAttempt<G> {
     fn default() -> Self {
         Self {

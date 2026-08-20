@@ -24,8 +24,11 @@ use crate::input::InputLevelId;
 /// 760's command-code tests, while the separate spelling match in
 /// [`AlignmentDeliveryState::classify_delivery`] keeps literal-brace
 /// `align_state` accounting physical.
-pub(crate) fn is_character_command(command: &CurrentCommand, cat: Catcode) -> bool {
-    matches!(command.meaning(), Meaning::CharToken { cat: actual, .. } if actual == cat)
+pub(crate) fn is_character_command<G>(command: &CurrentCommand<G>, cat: Catcode) -> bool {
+    matches!(
+        command.meaning(),
+        tex_state::ResolvedMeaning::Static(Meaning::CharToken { cat: actual, .. }) if actual == cat
+    )
 }
 
 pub(crate) const PREAMBLE_ALIGN_STATE: i32 = -1_000_000;
@@ -159,14 +162,14 @@ pub enum AlignmentRequestResult {
 /// to [`crate::CommandProcessor::begin_alignment_v_template`], which backs up
 /// the exact delivery before installing the v-template.
 #[derive(Debug, Eq, PartialEq)]
-pub enum AlignmentDeliveryEvent {
+pub enum AlignmentDeliveryEvent<G> {
     /// `get_next` intercepted an active-cell delimiter and delivered frozen
     /// `end_template` instead.
-    EndTemplate(crate::CurrentCommand),
+    EndTemplate(crate::CurrentCommand<G>),
     /// A right brace reached the active entry `align_group` at depth `-1`.
     /// The executor selects the structural branch; command recovery owns the
     /// exact backup correction and frozen-row-terminator insertion.
-    ClosingBrace(crate::CurrentCommand),
+    ClosingBrace(crate::CurrentCommand<G>),
 }
 
 /// One expanded delivery while the executor is running an alignment cell.
@@ -175,11 +178,11 @@ pub enum AlignmentDeliveryEvent {
 /// represented separately so that only the command processor decides when to
 /// enter the v-template transition.
 #[derive(Debug, Eq, PartialEq)]
-pub enum AlignmentDelivery {
+pub enum AlignmentDelivery<G> {
     /// An ordinary expanded command for executor main control.
-    Command(crate::CurrentCommand),
+    Command(crate::CurrentCommand<G>),
     /// A command-core alignment event.
-    Event(AlignmentDeliveryEvent),
+    Event(AlignmentDeliveryEvent<G>),
     /// An executor-requested stored replay episode (a math field, math
     /// group/choice branch, or discretionary part) retired during this
     /// delivery. This must be surfaced rather than silently continuing to
@@ -304,7 +307,7 @@ pub(crate) struct ActiveCellDelivery {
 
 /// The one semantic alignment adjustment made by a raw delivery.
 ///
-/// It is stored on `CurrentCommand`, so `back_input` can reverse exactly that
+/// It is stored on `CurrentCommand<G>`, so `back_input` can reverse exactly that
 /// transition without inspecting the replayed spelling.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) enum AlignmentDeliveryAdjustment {
@@ -397,15 +400,15 @@ impl AlignmentDeliveryState {
         }
     }
 
-    pub(crate) fn needs_closing_brace_recovery(&self, command: &CurrentCommand) -> bool {
+    pub(crate) fn needs_closing_brace_recovery<G>(&self, command: &CurrentCommand<G>) -> bool {
         self.active_cell.is_some()
             && self.align_state == -1
             && matches!(
                 command.meaning(),
-                Meaning::CharToken {
+                tex_state::ResolvedMeaning::Static(Meaning::CharToken {
                     cat: Catcode::EndGroup,
                     ..
-                }
+                })
             )
     }
     /// TeX82 §774's `init_align` prologue: `push_alignment` (§772) saves the
@@ -682,9 +685,9 @@ impl AlignmentDeliveryState {
         Ok(())
     }
 
-    pub(crate) fn classify_delivery(
+    pub(crate) fn classify_delivery<G>(
         &mut self,
-        command: &mut CurrentCommand,
+        command: &mut CurrentCommand<G>,
     ) -> AlignmentDeliveryAdjustment {
         match command.spelling().semantic_token() {
             Token::Char {
@@ -711,23 +714,23 @@ impl AlignmentDeliveryState {
                 && self.align_state == CELL_ALIGN_STATE
                 && matches!(
                     command.meaning(),
-                    Meaning::UnexpandablePrimitive(
+                    tex_state::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                         UnexpandablePrimitive::Cr
                             | UnexpandablePrimitive::CrCr
                             | UnexpandablePrimitive::Span
-                    )
+                    ))
                 ) =>
             {
                 let delimiter = match command.meaning() {
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span) => {
-                        AlignmentDelimiter::Span
-                    }
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr) => {
-                        AlignmentDelimiter::Cr
-                    }
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr) => {
-                        AlignmentDelimiter::CrCr
-                    }
+                    tex_state::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                        UnexpandablePrimitive::Span,
+                    )) => AlignmentDelimiter::Span,
+                    tex_state::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                        UnexpandablePrimitive::Cr,
+                    )) => AlignmentDelimiter::Cr,
+                    tex_state::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                        UnexpandablePrimitive::CrCr,
+                    )) => AlignmentDelimiter::CrCr,
                     _ => unreachable!("alignment delimiter was classified above"),
                 };
                 self.intercept_delimiter(command, delimiter)
@@ -744,7 +747,7 @@ impl AlignmentDeliveryState {
     /// reads the token's own category. §326 (`cur_tok:=p; back_input`) is
     /// exactly why that matters -- its token was saved long before, or, as
     /// with §372's `\\csname`, was never delivered at all -- so a caller
-    /// without a live [`CurrentCommand`] classifies here instead of recalling
+    /// without a live [`CurrentCommand<G>`] classifies here instead of recalling
     /// an adjustment. Control-sequence and active tokens carry
     /// `cs_token_flag`, so they exceed `right_brace_limit` and never adjust.
     ///
@@ -781,9 +784,9 @@ impl AlignmentDeliveryState {
         self.align_state -= 1;
     }
 
-    fn intercept_delimiter(
+    fn intercept_delimiter<G>(
         &mut self,
-        command: &mut CurrentCommand,
+        command: &mut CurrentCommand<G>,
         delimiter: AlignmentDelimiter,
     ) -> AlignmentDeliveryAdjustment {
         self.align_state = TEMPLATE_ALIGN_STATE;

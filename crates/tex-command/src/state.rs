@@ -55,8 +55,8 @@ fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
 /// and rollback-coupled provenance state only: host capabilities, aggregate
 /// engine state, call-local accumulators, and discardable accelerations are
 /// deliberately absent.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct CommandState {
+#[derive(Debug)]
+pub struct CommandState<G> {
     /// Canonical compiled implementation executing the format's command
     /// profile. Unlike the profile, this is job configuration and is not part
     /// of portable format identity.
@@ -107,11 +107,11 @@ pub struct CommandState {
     /// Expandable current commands whose host-dependent expansion suspended.
     /// Nested expansion unwinds inner-to-outer and appends at each layer, so
     /// popping resumes the outermost exact delivery first without redelivery.
-    pub(crate) pending_expansions: Vec<crate::CurrentCommand>,
+    pub(crate) pending_expansions: Vec<crate::CurrentCommand<G>>,
     /// TeX82 §368 `\expandafter` operands held while its second command waits
     /// on an immutable host resource. Nested frames unwind inner-to-outer and
     /// are popped outermost-first when the retained expandable command resumes.
-    pub(crate) pending_expandafters: Vec<crate::processor::expand::PendingExpandAfter>,
+    pub(crate) pending_expandafters: Vec<crate::processor::expand::PendingExpandAfter<G>>,
     /// Accumulated TeX82 §372 `\csname` characters held across immutable host
     /// suspension. Nested names unwind inner-to-outer and resume in that order.
     pub(crate) pending_csnames: Vec<String>,
@@ -132,11 +132,8 @@ pub struct CommandState {
     /// after the borrowed command-processor episode has ended, so the record
     /// waits here until the same operation publishes its trace and other
     /// committed observations.
-    pub(crate) named_token_list_pushes: Vec<(
-        InputLevelId,
-        StoredReplayReason,
-        tex_state::token_store::TokenListRef,
-    )>,
+    pub(crate) named_token_list_pushes:
+        Vec<(InputLevelId, StoredReplayReason, tex_state::TokenListId<G>)>,
     /// tex.web §537/§362 file-bracketing transitions, in the order they
     /// happened, waiting for the engine to render them as `(name`/`)`.
     ///
@@ -169,6 +166,9 @@ pub struct CommandState {
     /// diagnostic high-water marks survive a retried step without becoming
     /// command semantics, checkpoint identity, or format state.
     pub(crate) usage: CommandUsageTracker,
+    /// Storage for every scanner, expansion, and retry coordinate in the
+    /// current command operation.
+    pub(crate) attempt: crate::CommandAttempt<G>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -176,6 +176,36 @@ pub(crate) struct PendingFileEnquiry {
     pub(crate) request: crate::FileEnquiryRequest,
     pub(crate) offset: i32,
     pub(crate) length: i32,
+}
+
+impl<G> Default for CommandState<G> {
+    fn default() -> Self {
+        Self {
+            engine_semantics: CommandEngineSemantics::default(),
+            input: InputState::default(),
+            parameters: ParameterState::default(),
+            scanner: ScannerState::default(),
+            conditions: ConditionStack::default(),
+            alignment: AlignmentDeliveryState::default(),
+            expansion: ExpansionState::default(),
+            transient: TransientState::default(),
+            replay_completions: Vec::new(),
+            pending_replay_completions: Vec::new(),
+            semantic_diagnostics: Vec::new(),
+            name_in_progress: false,
+            pending_input_open: None,
+            pending_file_enquiry: None,
+            pending_integer_scans: Vec::new(),
+            pending_scan_toks: Vec::new(),
+            pending_expansions: Vec::new(),
+            pending_expandafters: Vec::new(),
+            pending_csnames: Vec::new(),
+            named_token_list_pushes: Vec::new(),
+            file_framing_events: Vec::new(),
+            usage: CommandUsageTracker::default(),
+            attempt: crate::CommandAttempt::default(),
+        }
+    }
 }
 
 /// TeX82 §§31/321/374/390 command-owned stack maxima for §1334.
@@ -331,13 +361,13 @@ pub struct CommandReplayEpisode(InputLevelId);
 /// finalize its isolated mode or group without peeking at, or backing up,
 /// parent source.
 #[derive(Debug)]
-pub enum CommandReplayDelivery {
-    Command(crate::CurrentCommand),
+pub enum CommandReplayDelivery<G> {
+    Command(crate::CurrentCommand<G>),
     Completed(CommandReplayEpisode),
 }
 
-impl CommandState {
-    pub(crate) fn observe_active_source_dependencies(&self, state: &mut CommandContext<'_>) {
+impl<G> CommandState<G> {
+    pub(crate) fn observe_active_source_dependencies(&self, state: &mut CommandContext<'_, G>) {
         if !state.tracked_region_is_active() {
             return;
         }
@@ -350,7 +380,7 @@ impl CommandState {
     /// Publishes the command-owned dependency roots read by one processor
     /// episode. Complex continuations without a complete canonical projection
     /// poison the outer region before the processor can inspect them.
-    pub(crate) fn observe_tracked_dependencies(&self, state: &mut CommandContext<'_>) {
+    pub(crate) fn observe_tracked_dependencies(&self, state: &mut CommandContext<'_, G>) {
         if !state.tracked_region_is_active() {
             return;
         }
@@ -487,30 +517,30 @@ impl CommandState {
         self.pending_file_enquiry = Some(pending);
     }
 
-    pub(crate) fn take_pending_expansion(&mut self) -> Option<crate::CurrentCommand> {
+    pub(crate) fn take_pending_expansion(&mut self) -> Option<crate::CurrentCommand<G>> {
         self.pending_expansions.pop()
     }
 
-    pub(crate) fn retain_pending_expansion(&mut self, command: crate::CurrentCommand) {
+    pub(crate) fn retain_pending_expansion(&mut self, command: crate::CurrentCommand<G>) {
         self.pending_expansions.push(command);
     }
 
     /// Returns the outermost expandable command retained by resource
     /// suspension without consuming its command-owned continuation.
     #[must_use]
-    pub fn pending_expansion_command(&self) -> Option<&crate::CurrentCommand> {
+    pub fn pending_expansion_command(&self) -> Option<&crate::CurrentCommand<G>> {
         self.pending_expansions.last()
     }
 
     pub(crate) fn take_pending_expandafter(
         &mut self,
-    ) -> Option<crate::processor::expand::PendingExpandAfter> {
+    ) -> Option<crate::processor::expand::PendingExpandAfter<G>> {
         self.pending_expandafters.pop()
     }
 
     pub(crate) fn retain_pending_expandafter(
         &mut self,
-        pending: crate::processor::expand::PendingExpandAfter,
+        pending: crate::processor::expand::PendingExpandAfter<G>,
     ) {
         self.pending_expandafters.push(pending);
     }
@@ -552,7 +582,7 @@ impl CommandState {
     /// Captures TeX82 §530's current input display before deferred shipout
     /// releases the command processor borrow.
     #[must_use]
-    pub fn output_open_context(&self, stores: &tex_state::CommandContext<'_>) -> String {
+    pub fn output_open_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
         self.input.output_open_context(stores, &self.parameters)
     }
 
@@ -571,7 +601,7 @@ impl CommandState {
 
     pub(crate) fn open_context_starts_with_print_ln(
         &self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
     ) -> bool {
         self.input
             .open_context_starts_with_print_ln(stores, &self.parameters)
@@ -580,7 +610,7 @@ impl CommandState {
     pub(crate) fn output_retiring_source_context(
         &self,
         source: &crate::input::SourceLevel,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
     ) -> String {
         self.input
             .output_retiring_source_context(source, stores, &self.parameters)
@@ -593,7 +623,7 @@ impl CommandState {
     /// synchronous post-output error nevertheless sees the levels below it,
     /// exactly as it would after §1026's `end_token_list`.
     #[must_use]
-    pub fn output_close_context(&self, stores: &tex_state::CommandContext<'_>) -> String {
+    pub fn output_close_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
         self.input.output_close_context(stores, &self.parameters)
     }
 
@@ -616,7 +646,7 @@ impl CommandState {
     /// lifecycle.
     pub fn push_discretionary_episode(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         tokens: TracedTokenList,
     ) -> CommandReplayEpisode {
         self.push_stored_episode(
@@ -633,7 +663,7 @@ impl CommandState {
     /// page or PDF form it is staging.
     pub fn push_output_replay_episode(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         tokens: TracedTokenList,
     ) -> CommandReplayEpisode {
         self.push_stored_episode(stores, tokens, crate::input::StoredReplayReason::Write)
@@ -641,7 +671,7 @@ impl CommandState {
 
     fn push_stored_episode(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         tokens: TracedTokenList,
         reason: StoredReplayReason,
     ) -> CommandReplayEpisode {
@@ -725,7 +755,7 @@ impl CommandState {
     /// input stack for token-list replay.
     pub fn push_everypar(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         tokens: TracedTokenList,
     ) {
         self.push_named_token_list(stores, tokens, StoredReplayReason::EveryPar);
@@ -736,7 +766,7 @@ impl CommandState {
     /// so macro expansion, origins, and retirement stay canonical.
     pub fn push_everymath(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         tokens: TracedTokenList,
         display: bool,
     ) {
@@ -755,7 +785,7 @@ impl CommandState {
     /// canonical replay has entered the corresponding box group and mode.
     pub fn push_everybox(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         tokens: TracedTokenList,
         horizontal: bool,
     ) {
@@ -776,7 +806,7 @@ impl CommandState {
     /// which both run immediately before `align_peek`.
     pub fn push_everycr(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         tokens: TracedTokenList,
     ) {
         self.push_named_token_list(stores, tokens, StoredReplayReason::EveryCr);
@@ -788,7 +818,7 @@ impl CommandState {
     /// which runs once before the first `big_switch` fetch.
     pub fn push_everyjob(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         tokens: TracedTokenList,
     ) {
         self.push_named_token_list(stores, tokens, StoredReplayReason::EveryJob);
@@ -802,7 +832,7 @@ impl CommandState {
     /// token-list class every stored level used to share.
     fn push_named_token_list(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         tokens: TracedTokenList,
         reason: StoredReplayReason,
     ) {
@@ -827,7 +857,7 @@ impl CommandState {
     #[must_use]
     pub fn publish_named_token_list_pushes(
         &mut self,
-        state: &mut tex_state::CommandContext<'_>,
+        state: &mut tex_state::CommandContext<'_, G>,
     ) -> Vec<crate::InputRecord> {
         self.named_token_list_pushes
             .drain(..)
@@ -913,7 +943,7 @@ impl CommandState {
     /// restores the whole [`CommandState`] to its pre-step value and the
     /// `Universe` snapshot takes both the prints and `open_parens` back with
     /// it.
-    pub fn render_file_framing_events(&mut self, context: &mut CommandContext<'_>) {
+    pub fn render_file_framing_events(&mut self, context: &mut CommandContext<'_, G>) {
         for event in self.file_framing_events.drain(..) {
             match event {
                 FileFramingEvent::Open { name } => context.print_file_open(&name),
@@ -1032,7 +1062,7 @@ impl CommandState {
     /// by [`crate::CommandProcessor`].
     pub fn apply_alignment_request(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         request: AlignmentRequest,
     ) -> Result<AlignmentRequestResult, AlignmentLifecycleError> {
         match request {
@@ -1120,7 +1150,7 @@ impl CommandState {
     /// typed opener phase has completed command-owned brace replay.
     pub fn install_alignment_cell_template(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
         let template = self.alignment.active_cell_template(alignment)?;
@@ -1266,7 +1296,7 @@ impl CommandState {
     /// the canonical raw-delivery loop.
     pub fn begin_alignment_v_template(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         alignment: AlignmentIdentity,
         delimiter: AlignmentCellDelimiter,
         empty: tex_state::token_store::TokenListRef,
@@ -1700,7 +1730,7 @@ impl CommandState {
     /// Pushes e-TeX §24.362's `\everyeof` above its exhausted pseudo-file.
     pub(crate) fn begin_pending_every_eof(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         source: InputLevelId,
     ) -> Option<InputLevelId> {
         let InputLevel::Source(level) = self.input.levels.last_mut()? else {
@@ -1841,7 +1871,7 @@ impl CommandState {
 
     fn push_alignment_template(
         &mut self,
-        stores: &tex_state::CommandContext<'_>,
+        stores: &tex_state::CommandContext<'_, G>,
         template: TracedTokenList,
         behavior: TokenBehavior,
         retirement: RetirementBehavior,

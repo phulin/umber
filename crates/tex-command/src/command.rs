@@ -2,9 +2,8 @@
 
 use tex_state::CommandContext;
 use tex_state::interner::Symbol;
-use tex_state::meaning::Meaning;
-use tex_state::provenance::OriginRef;
-use tex_state::token::{Catcode, RootedTracedTokenWord, Token, TracedTokenWord};
+use tex_state::meaning::{Meaning, ResolvedMeaning};
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::{SourceLocation, SourceProvenance, SourceRange};
 
@@ -16,11 +15,10 @@ use crate::{SourceLocation, SourceProvenance, SourceRange};
 /// current command as its typed continuation; its delivery stamp identifies
 /// that exact live cursor transition and is never reconstructed from token
 /// equality.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct CurrentCommand {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CurrentCommand<G> {
     spelling: TracedTokenWord,
-    origin: OriginRef,
-    meaning: Meaning,
+    meaning: ResolvedMeaning<G>,
     macro_observation_operand: Option<i64>,
     identity: CommandIdentity,
     control_sequence: Option<Symbol>,
@@ -135,25 +133,25 @@ impl XRaySelector {
 }
 
 impl CommandIdentity {
-    const fn from_meaning(meaning: Meaning) -> Self {
+    const fn from_meaning<G>(meaning: ResolvedMeaning<G>) -> Self {
         match meaning {
-            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::ExpandAfter) => {
-                Self::ExpandAfter
-            }
-            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::CsName) => {
-                Self::CsName
-            }
-            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndCsName) => {
-                Self::EndCsName
-            }
-            Meaning::ExpandablePrimitive(primitive) => {
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                tex_state::meaning::ExpandablePrimitive::ExpandAfter,
+            )) => Self::ExpandAfter,
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                tex_state::meaning::ExpandablePrimitive::CsName,
+            )) => Self::CsName,
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                tex_state::meaning::ExpandablePrimitive::EndCsName,
+            )) => Self::EndCsName,
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(primitive)) => {
                 if let Some(selector) = ConvertSelector::from_primitive(primitive) {
                     Self::Convert(selector)
                 } else {
                     Self::Ordinary
                 }
             }
-            Meaning::UnexpandablePrimitive(primitive) => {
+            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) => {
                 if let Some(selector) = XRaySelector::from_primitive(primitive) {
                     Self::XRay(selector)
                 } else {
@@ -165,7 +163,7 @@ impl CommandIdentity {
     }
 }
 
-impl CurrentCommand {
+impl<G> CurrentCommand<G> {
     /// Resolves one delivered spelling into TeX's effective current command.
     ///
     /// TeX82's `get_next` preserves the input token as `cur_tok` while it
@@ -179,68 +177,67 @@ impl CurrentCommand {
         delivery: DeliveryStamp,
         source_provenance: Option<SourceProvenance>,
         direct_source: bool,
-        state: &mut CommandContext<'_>,
+        state: &CommandContext<'_, G>,
     ) -> Self {
-        Self::resolve_rooted(
-            RootedTracedTokenWord::from_word(spelling, OriginRef::direct(spelling.origin())),
-            delivery,
-            source_provenance,
-            direct_source,
-            state,
-        )
-    }
-
-    pub(crate) fn resolve_rooted(
-        spelling: RootedTracedTokenWord,
-        delivery: DeliveryStamp,
-        source_provenance: Option<SourceProvenance>,
-        direct_source: bool,
-        state: &mut CommandContext<'_>,
-    ) -> Self {
-        let (spelling, structural_origin) = spelling.into_parts();
-        let origin = OriginRef::direct(structural_origin.id());
         let token = spelling.semantic_token();
         let (control_sequence, meaning) = match token {
-            Token::Cs(symbol) => (Some(symbol), state.meaning(symbol)),
+            Token::Cs(symbol) => (
+                Some(symbol),
+                state
+                    .meaning(symbol)
+                    .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined)),
+            ),
             Token::Char {
                 ch,
                 cat: Catcode::Active,
             } => {
-                let symbol = state.intern_active_character(ch);
-                (Some(symbol), state.meaning(symbol))
+                let symbol = state.active_character_symbol(ch);
+                (
+                    symbol,
+                    symbol
+                        .and_then(|symbol| state.meaning(symbol).ok())
+                        .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined)),
+                )
             }
-            Token::Char { ch, cat } => (None, Meaning::CharToken { ch, cat }),
+            Token::Char { ch, cat } => (
+                None,
+                ResolvedMeaning::Static(Meaning::CharToken { ch, cat }),
+            ),
             // `out_param` is converted to a literal replay token before
             // meaning resolution (TeX.web, get_next). A stray parameter token
             // is nevertheless represented deterministically while recovery
             // remains the responsibility of the raw delivery loop.
-            Token::Param(_) => (None, Meaning::Undefined),
+            Token::Param(_) => (None, ResolvedMeaning::Static(Meaning::Undefined)),
             // TeX82 §222 keeps `eq_type(undefined_control_sequence)` at
             // `undefined_cs` and `equiv` at `null` for the whole run: the
             // dummy location has no meaning cell an assignment could reach.
-            Token::Frozen(_) if token.is_undefined_control_sequence() => (None, Meaning::Undefined),
+            Token::Frozen(_) if token.is_undefined_control_sequence() => {
+                (None, ResolvedMeaning::Static(Meaning::Undefined))
+            }
             Token::Frozen(_) if token.is_frozen_end_template() => (
                 None,
-                Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate),
+                ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                    tex_state::meaning::ExpandablePrimitive::EndTemplate,
+                )),
             ),
-            Token::Frozen(_) if token.is_frozen_endv() => (None, Meaning::EndV),
-            Token::Frozen(_) if token.is_frozen_relax() => (None, Meaning::Relax),
+            Token::Frozen(_) if token.is_frozen_endv() => {
+                (None, ResolvedMeaning::Static(Meaning::EndV))
+            }
+            Token::Frozen(_) if token.is_frozen_relax() => {
+                (None, ResolvedMeaning::Static(Meaning::Relax))
+            }
             Token::Frozen(_) => (
                 None,
-                state
-                    .frozen_primitive_meaning(token)
-                    .unwrap_or(Meaning::Undefined),
+                ResolvedMeaning::Static(
+                    state
+                        .frozen_primitive_meaning(token)
+                        .unwrap_or(Meaning::Undefined),
+                ),
             ),
         };
-        let macro_observation_operand = match meaning {
-            Meaning::Macro { definition, .. } => {
-                Some(state.macro_definition_observation_operand(definition))
-            }
-            _ => None,
-        };
+        let macro_observation_operand = None;
         Self {
             spelling,
-            origin,
             meaning,
             macro_observation_operand,
             identity: CommandIdentity::from_meaning(meaning),
@@ -263,10 +260,12 @@ impl CurrentCommand {
         if !matches!(self.identity, CommandIdentity::EndCsName)
             && matches!(
                 self.meaning,
-                Meaning::Undefined | Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_)
+                ResolvedMeaning::Static(Meaning::Undefined)
+                    | ResolvedMeaning::Macro { .. }
+                    | ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_))
             )
         {
-            self.meaning = Meaning::Relax;
+            self.meaning = ResolvedMeaning::Static(Meaning::Relax);
             self.identity = CommandIdentity::NoExpandFrozenRelax;
         }
     }
@@ -311,11 +310,10 @@ impl CurrentCommand {
             },
             tex_state::token::OriginId::UNKNOWN,
         );
-        self.origin = OriginRef::unknown();
-        self.meaning = Meaning::CharToken {
+        self.meaning = ResolvedMeaning::Static(Meaning::CharToken {
             ch: ' ',
             cat: Catcode::Space,
-        };
+        });
         self.macro_observation_operand = None;
         self.control_sequence = None;
         self.source_provenance = None;
@@ -326,8 +324,9 @@ impl CurrentCommand {
     /// Replaces an intercepted alignment terminator's effective meaning while
     /// preserving its spelling and delivery proof (TeX.web `get_next`).
     pub(crate) fn convert_to_end_template(&mut self) {
-        self.meaning =
-            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate);
+        self.meaning = ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+            tex_state::meaning::ExpandablePrimitive::EndTemplate,
+        ));
         self.macro_observation_operand = None;
         self.control_sequence = None;
     }
@@ -351,7 +350,7 @@ impl CurrentCommand {
     /// (`endtemplate`), while retaining distinct input semantics.
     pub(crate) fn convert_end_template_to_endv(&mut self, frozen_endv: Token) {
         self.spelling = TracedTokenWord::pack(frozen_endv, self.spelling.origin());
-        self.meaning = Meaning::EndV;
+        self.meaning = ResolvedMeaning::Static(Meaning::EndV);
         self.macro_observation_operand = None;
         self.control_sequence = None;
         // The preceding tab/span/cr adjustment belongs to the intercepted
@@ -378,10 +377,12 @@ impl CurrentCommand {
     pub(crate) const fn is_outer(&self) -> bool {
         matches!(
             self.meaning,
-            Meaning::Macro { flags, .. } if flags.contains(tex_state::meaning::MeaningFlags::OUTER)
+            ResolvedMeaning::Macro { flags, .. } if flags.contains(tex_state::meaning::MeaningFlags::OUTER)
         ) || matches!(
             self.meaning,
-            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate)
+            ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                tex_state::meaning::ExpandablePrimitive::EndTemplate
+            ))
         )
     }
 
@@ -393,7 +394,7 @@ impl CurrentCommand {
 
     /// Returns the effective meaning resolved at this delivery.
     #[must_use]
-    pub const fn meaning(&self) -> Meaning {
+    pub const fn meaning(&self) -> ResolvedMeaning<G> {
         self.meaning
     }
 
@@ -412,15 +413,6 @@ impl CurrentCommand {
     #[must_use]
     pub const fn origin(&self) -> tex_state::token::OriginId {
         self.spelling.origin()
-    }
-
-    pub fn origin_ref(&self) -> &OriginRef {
-        &self.origin
-    }
-
-    /// Clones the spelling together with its structural provenance owner.
-    pub fn rooted_spelling(&self) -> RootedTracedTokenWord {
-        RootedTracedTokenWord::from_word(self.spelling, self.origin.clone())
     }
 
     /// Returns the execution-local proof of this exact input delivery.
@@ -472,7 +464,6 @@ impl CurrentCommand {
     pub(crate) fn copy_for_backup(&self) -> Self {
         Self {
             spelling: self.spelling,
-            origin: self.origin.clone(),
             meaning: self.meaning,
             macro_observation_operand: self.macro_observation_operand,
             identity: self.identity,

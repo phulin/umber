@@ -1,6 +1,6 @@
 //! Canonical raw command delivery.
 //!
-//! This is the sole scalar path from input levels to `CurrentCommand`, after
+//! This is the sole scalar path from input levels to `CurrentCommand<G>`, after
 //! TeX.web §341 (`get_next`).  Later scanner and alignment milestones extend
 //! the two explicit entry points below; they do not add another lexical path.
 
@@ -63,7 +63,7 @@ use crate::observation::{
     InputTransition, RecoveryKind, RecoveryRecord, observed_token,
 };
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Reports TeX82 §1096's `hmode+par_end` recovery predicate.
     ///
     /// `align_state` belongs to raw command delivery, so the stomach asks
@@ -211,7 +211,7 @@ impl CommandProcessor<'_> {
     pub fn get_x_alignment_delivery(
         &mut self,
         main_loop_active: bool,
-    ) -> Result<Option<AlignmentDelivery>, CommandError> {
+    ) -> Result<Option<AlignmentDelivery<G>>, CommandError> {
         let fetch = if main_loop_active {
             ExpandedFetch::XToken
         } else {
@@ -253,14 +253,16 @@ impl CommandProcessor<'_> {
     pub fn begin_alignment_v_template(
         &mut self,
         alignment: crate::AlignmentIdentity,
-        event: AlignmentDeliveryEvent,
+        event: AlignmentDeliveryEvent<G>,
     ) -> Result<(), CommandError> {
         let saved_delimiter = match event {
             AlignmentDeliveryEvent::EndTemplate(delimiter) => {
                 if self.last_delivery != Some(delimiter.delivery_stamp())
                     || !matches!(
                         delimiter.meaning(),
-                        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
+                        tex_state::ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                            ExpandablePrimitive::EndTemplate
+                        ))
                     )
                 {
                     return Err(CommandError::StaleDelivery);
@@ -346,7 +348,7 @@ impl CommandProcessor<'_> {
     /// `align_error` from `main_control`, not from `get_next`.
     pub fn recover_align_error(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
     ) -> Result<Option<Token>, CommandError> {
         let previous = self.command.alignment.align_state;
         if previous.unsigned_abs() > 2 {
@@ -394,17 +396,17 @@ impl CommandProcessor<'_> {
     /// inserted row terminator reaches alignment delivery before brace replay.
     pub fn recover_alignment_closing_brace(
         &mut self,
-        event: AlignmentDeliveryEvent,
+        event: AlignmentDeliveryEvent<G>,
     ) -> Result<(), CommandError> {
         let AlignmentDeliveryEvent::ClosingBrace(command) = event else {
             return Err(CommandError::input_invariant());
         };
         if !matches!(
             command.meaning(),
-            Meaning::CharToken {
+            tex_state::ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::EndGroup,
                 ..
-            }
+            })
         ) {
             return Err(CommandError::input_invariant());
         }
@@ -446,7 +448,7 @@ impl CommandProcessor<'_> {
     }
 
     fn saved_alignment_delimiter(
-        command: &CurrentCommand,
+        command: &CurrentCommand<G>,
     ) -> Result<crate::AlignmentCellDelimiter, CommandError> {
         match command.alignment_adjustment() {
             crate::processor::AlignmentDeliveryAdjustment::Delimiter(
@@ -529,8 +531,8 @@ impl CommandProcessor<'_> {
     /// [`Self::begin_alignment_v_template`] to perform the same insertion.
     pub(super) fn insert_alignment_entry_v_template(
         &mut self,
-        command: CurrentCommand,
-    ) -> Result<Option<CurrentCommand>, CommandError> {
+        command: CurrentCommand<G>,
+    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
         if matches!(
             command.alignment_adjustment(),
             crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
@@ -542,7 +544,7 @@ impl CommandProcessor<'_> {
     }
 
     /// Delivers one unexpanded raw command through canonical `get_next`.
-    pub fn get_next(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+    pub fn get_next(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
         self.apply_error_stop_recovery()?;
         let delivery = self.delivery_driver(
             None,
@@ -564,7 +566,7 @@ impl CommandProcessor<'_> {
     /// [`Self::get_x_token_with_replay_completion`].
     pub fn get_next_with_replay_completion(
         &mut self,
-    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
+    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
         let delivery = self.delivery_driver(
             None,
             DeliveryPolicy {
@@ -599,7 +601,7 @@ impl CommandProcessor<'_> {
     /// hash table exactly as any other `get_token` reader would.
     pub(crate) fn get_next_character_code(
         &mut self,
-    ) -> Result<Option<CurrentCommand>, CommandError> {
+    ) -> Result<Option<CurrentCommand<G>>, CommandError> {
         let command = self.get_token()?;
         if let Some(command) = &command
             && matches!(
@@ -626,7 +628,7 @@ impl CommandProcessor<'_> {
     /// control-sequence spelling. The present interner records a spelling
     /// without assigning it a meaning, so the policy boundary is explicit
     /// even before diagnostic-only interning is separated further.
-    pub fn get_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+    pub fn get_token(&mut self) -> Result<Option<CurrentCommand<G>>, CommandError> {
         self.apply_error_stop_recovery()?;
         let delivery = self.delivery_driver(
             None,
@@ -675,7 +677,7 @@ impl CommandProcessor<'_> {
     /// equal spellings can be delivered by distinct input transitions. The
     /// consumed command proves the exact live transition and ensures literal
     /// brace accounting is undone at most once.
-    pub fn back_input(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+    pub fn back_input(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
         self.back_input_with_treatment(command, BackupTreatment::Ordinary)
     }
 
@@ -791,7 +793,7 @@ impl CommandProcessor<'_> {
     ///   cleared off, long after that token was scanned.
     ///
     /// [`Self::back_input_saved`] is the sibling for a caller that still holds
-    /// the `CurrentCommand`: §342's alignment interception records transitions
+    /// the `CurrentCommand<G>`: §342's alignment interception records transitions
     /// that set `align_state` outright rather than stepping it, so a delivery
     /// that is available must have its own adjustment reversed, not one
     /// recomputed from the token.
@@ -912,7 +914,7 @@ impl CommandProcessor<'_> {
     /// remain here.
     pub fn recover_stop_for_vertical_mode(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
     ) -> Result<(), CommandError> {
         self.insert_par_before(command)
     }
@@ -924,11 +926,14 @@ impl CommandProcessor<'_> {
     /// control sequence is installed above it with `inserted` ownership.
     /// This is the same raw-input transition as TeX82 §1095's
     /// `head_for_vmode`; only the caller's boundary predicate differs.
-    pub fn insert_partoken_before(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+    pub fn insert_partoken_before(
+        &mut self,
+        command: CurrentCommand<G>,
+    ) -> Result<(), CommandError> {
         self.insert_par_before(command)
     }
 
-    fn insert_par_before(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+    fn insert_par_before(&mut self, command: CurrentCommand<G>) -> Result<(), CommandError> {
         self.back_input(command)?;
         let par = TracedTokenWord::pack(
             Token::Cs(
@@ -997,7 +1002,7 @@ impl CommandProcessor<'_> {
     /// inserted" diagnostic text; only the raw input recovery lives here.
     pub fn recover_missing_math_shift(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
     ) -> Result<(), CommandError> {
         self.back_input(command)?;
         let dollar_token = Token::Char {
@@ -1194,7 +1199,7 @@ impl CommandProcessor<'_> {
     /// intervening group.
     pub fn recover_off_save(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
         closing: &[Token],
     ) -> Result<(), CommandError> {
         observe!(
@@ -1245,14 +1250,14 @@ impl CommandProcessor<'_> {
     /// The command remains on its existing backup level, which raw input
     /// retires on the following delivery attempt. Keeping the diagnostic here
     /// makes that observer order command-owned just like replay recovery.
-    pub fn report_off_save_bottom_drop(&mut self, command: &CurrentCommand) {
+    pub fn report_off_save_bottom_drop(&mut self, command: &CurrentCommand<G>) {
         self.observe_command_diagnostic("off_save_bottom_drop", command);
     }
 
     /// Performs TeX82 §1131's end-v instance of [`Self::recover_off_save`].
     pub fn recover_endv_off_save(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
         closing: Token,
     ) -> Result<(), CommandError> {
         self.recover_off_save(command, &[closing])
@@ -1277,7 +1282,7 @@ impl CommandProcessor<'_> {
     /// remains ordinary input after the one backup transition.
     pub(crate) fn back_error(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
         diagnostic: u64,
     ) -> Result<(), CommandError> {
         self.back_input(command)?;
@@ -1293,7 +1298,7 @@ impl CommandProcessor<'_> {
     /// offending token.
     pub(crate) fn back_error_reporting(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
         diagnostic: u64,
         message: String,
         help: &'static [&'static str],
@@ -1338,7 +1343,7 @@ impl CommandProcessor<'_> {
     /// or the returned command.
     pub(crate) fn back_input_with_treatment(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
         treatment: BackupTreatment,
     ) -> Result<(), CommandError> {
         let stamp = command.delivery_stamp();
@@ -1363,13 +1368,16 @@ impl CommandProcessor<'_> {
     /// restored by the ordinary `back_input` above and the saved first token
     /// by this one, so the pair is reread in its original order from two
     /// separate backup levels.
-    pub(crate) fn back_input_saved(&mut self, command: CurrentCommand) -> Result<(), CommandError> {
+    pub(crate) fn back_input_saved(
+        &mut self,
+        command: CurrentCommand<G>,
+    ) -> Result<(), CommandError> {
         self.back_input_unchecked(command, BackupTreatment::Ordinary)
     }
 
     fn back_input_unchecked(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
         treatment: BackupTreatment,
     ) -> Result<(), CommandError> {
         self.last_delivery = None;
@@ -1436,7 +1444,7 @@ impl CommandProcessor<'_> {
     /// typed adjustment and never reclassifies its spelling.
     pub(crate) fn begin_scalar_alignment_v_template(
         &mut self,
-        command: CurrentCommand,
+        command: CurrentCommand<G>,
     ) -> Result<(), CommandError> {
         let alignment = self
             .command
@@ -1454,7 +1462,7 @@ impl CommandProcessor<'_> {
     pub(super) fn get_next_with_control_sequence_creation(
         &mut self,
         allow_control_sequence_creation: bool,
-    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
+    ) -> Result<Option<CommandReplayDelivery<G>>, CommandError> {
         loop {
             if let Some(episode) = self.take_ready_replay_completion() {
                 return Ok(Some(CommandReplayDelivery::Completed(episode)));
@@ -1518,7 +1526,7 @@ impl CommandProcessor<'_> {
             ) {
                 self.record_meaning_lookup();
             }
-            let mut command = CurrentCommand::resolve(
+            let mut command = CurrentCommand::<G>::resolve(
                 spelling,
                 delivery_stamp,
                 source_provenance,
@@ -2136,7 +2144,7 @@ impl CommandProcessor<'_> {
 
     fn check_outer_validity_entry(
         &mut self,
-        command: &mut CurrentCommand,
+        command: &mut CurrentCommand<G>,
     ) -> Result<(), CommandError> {
         if !command.is_outer() || matches!(self.command.scanner.status(), ScannerStatus::Normal) {
             return Ok(());
@@ -2525,7 +2533,7 @@ impl CommandProcessor<'_> {
 
     pub(crate) fn observed_command_spelling(
         &self,
-        command: &CurrentCommand,
+        command: &CurrentCommand<G>,
     ) -> crate::observation::ObservedToken {
         if let Some(symbol) = command.control_sequence() {
             // §353's `get_next` resolves an active character through its own
@@ -2533,7 +2541,7 @@ impl CommandProcessor<'_> {
             // in `cur_cs`, so §365's `cur_tok` is `cs_token_flag + cur_cs`.
             // Observations expose that identity at the current-command
             // boundary, just as they do for escaped control sequences.  The
-            // raw token spelling remains available on `CurrentCommand` for
+            // raw token spelling remains available on `CurrentCommand<G>` for
             // token-sensitive consumers.
             crate::observation::ObservedToken::ControlSequence(
                 self.state.resolve(symbol).to_owned(),
@@ -2550,7 +2558,10 @@ impl CommandProcessor<'_> {
             // separate `frozen_endv` token through §366 `expand` instead.
             crate::observation::ObservedToken::ControlSequence("endtemplate".into())
         } else if matches!(command.spelling().semantic_token(), Token::Frozen(_))
-            && matches!(command.meaning(), Meaning::Relax)
+            && matches!(
+                command.meaning(),
+                tex_state::ResolvedMeaning::Static(Meaning::Relax)
+            )
         {
             // TeX82's observer presents the inaccessible frozen `\relax`
             // inserted by incomplete-conditional recovery as `\relax`.
@@ -2566,7 +2577,7 @@ impl CommandProcessor<'_> {
         }
     }
 
-    fn observe_raw_delivery(&mut self, command: &CurrentCommand) {
+    fn observe_raw_delivery(&mut self, command: &CurrentCommand<G>) {
         observe!(self, {
             #[cfg(test)]
             {
@@ -2597,7 +2608,7 @@ impl CommandProcessor<'_> {
         });
     }
 
-    pub(crate) fn undo_alignment_delivery(&mut self, command: &CurrentCommand) {
+    pub(crate) fn undo_alignment_delivery(&mut self, command: &CurrentCommand<G>) {
         self.command
             .alignment
             .undo_delivery(command.alignment_adjustment());
@@ -2744,13 +2755,13 @@ fn character_from_code(code: CharacterCode) -> char {
 /// Whether a delivered command is TeX82's `math_shift` command code -- the
 /// single test both §1138's opener and §1197's closer apply to their peeked
 /// token, and the reason neither may grow a private notion of "a `$`".
-fn is_math_shift(command: &CurrentCommand) -> bool {
+fn is_math_shift<G>(command: &CurrentCommand<G>) -> bool {
     matches!(
         command.meaning(),
-        Meaning::CharToken {
+        tex_state::ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::MathShift,
             ..
-        }
+        })
     )
 }
 

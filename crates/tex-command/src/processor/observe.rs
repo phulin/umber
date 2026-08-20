@@ -23,7 +23,7 @@ use crate::observation::{
     InputRecord, InputTransition, RecoveryKind, RecoveryRecord,
 };
 
-impl CommandProcessor<'_> {
+impl<G> CommandProcessor<'_, G> {
     /// Records a recovery level that replays one inserted token.
     ///
     /// TeX's trace names the input push and the recovery insertion separately,
@@ -136,7 +136,7 @@ impl CommandProcessor<'_> {
     pub(crate) fn observe_command_diagnostic(
         &mut self,
         diagnostic: &'static str,
-        command: &CurrentCommand,
+        command: &CurrentCommand<G>,
     ) {
         if !self.is_observed() {
             return;
