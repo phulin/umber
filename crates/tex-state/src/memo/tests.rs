@@ -145,8 +145,8 @@ fn envelope_rejects_corruption_stale_schema_and_wrong_kind() {
 
 #[test]
 fn malformed_values_fail_during_staging_before_publication() {
-    let malformed =
-        DetachedMemoValue::encode(MemoValueKind::Tokens, &[DetachedToken::Param(0)]).unwrap();
+    let tokens = [DetachedToken::Param(0)];
+    let malformed = DetachedMemoValue::encode(MemoValueKind::Tokens, &tokens[..]).unwrap();
     assert!(matches!(
         malformed.stage_token_list(MemoValueLimits::default()),
         Err(MemoValueError::Invalid("invalid parameter slot"))

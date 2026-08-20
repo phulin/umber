@@ -22,7 +22,7 @@ impl PdfRawObjectId {
     }
 }
 
-/// Detached engine-side payload for an initialized `\pdfobj`.
+/// Generation-local engine payload for an initialized `\pdfobj`.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub struct PdfRawObjectData<G> {
     stream: bool,
