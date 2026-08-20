@@ -104,6 +104,11 @@ macro storage, fixed-size journal/arena marks, persistent fused dispatch, cold
 evidence publication, module boundaries, migration order, and pinned arXiv
 performance gates.
 
+`runtime_storage_lifetimes.md` is the normative end-state contract for session
+interning epochs, dense journaled TeX state, generation-scoped immutable
+definitions, operation and node arenas, promotion, checkpoints, compaction,
+provenance, and handle-free boundaries.
+
 `writeback/` records concise issue-scoped authority notes required by command
 conformance work; each note names the governing TeX82 section and the adopted
 semantic boundary, not temporary implementation plans.
