@@ -193,7 +193,7 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
                 Search::Glyph(Glyph { font: *font, code })
             }),
         Node::HList(box_node) => {
-            let children = box_node.children.to_vec();
+            let children = state.page_nodes(box_node.children).to_vec();
             edge_glyph(state, &children, edge).map_or_else(
                 || {
                     if box_node.width.raw() == 0 {
@@ -213,7 +213,7 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
                 Edge::Right if !pre.is_empty() => pre,
                 _ => replace,
             };
-            let children = list.to_vec();
+            let children = state.page_nodes(*list).to_vec();
             edge_glyph(state, &children, edge).map_or(Search::Skip, Search::Glyph)
         }
         Node::Kern { amount, .. } | Node::MathOn(amount) | Node::MathOff(amount)
@@ -221,7 +221,7 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
         {
             Search::Skip
         }
-        Node::Glue { spec, .. } if state.glue_spec(*spec).width.raw() == 0 => Search::Skip,
+        Node::Glue { spec, .. } if spec.width.raw() == 0 => Search::Skip,
         Node::Penalty(_)
         | Node::MarginKern { .. }
         | Node::Mark { .. }

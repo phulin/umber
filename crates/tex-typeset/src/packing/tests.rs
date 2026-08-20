@@ -1,5 +1,5 @@
 use super::*;
-use crate::FreezeNodeListRefForTest;
+use crate::PageListTestExt;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
@@ -164,7 +164,7 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
                 }),
             }
         }
-        let id = universe.freeze_node_list_ref_for_test(&nodes);
+        let id = universe.publish_page_nodes_for_test(&nodes);
         let view = id.nodes();
         let fast = measure_hlist(&universe, NodeCursor::compact(view), None);
         let scalar = scalar_hlist(&universe, view);
@@ -198,7 +198,7 @@ fn packing_overflow_fails_loudly() {
             kind: KernKind::Explicit,
         },
     ];
-    let id = universe.freeze_node_list_ref_for_test(&nodes);
+    let id = universe.publish_page_nodes_for_test(&nodes);
     let _ = hpack(
         &universe,
         id,
@@ -214,7 +214,7 @@ fn packing_overflow_fails_loudly() {
 #[test]
 fn hpack_records_zero_badness_for_empty_underfull_box() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let empty_packed = hpack(
         &universe,
         empty,
@@ -235,7 +235,7 @@ fn hpack_records_zero_badness_for_empty_underfull_box() {
         shrink: sp(0),
         shrink_order: Order::Normal,
     });
-    let list = universe.freeze_node_list_ref_for_test(&[Node::Glue {
+    let list = universe.publish_page_nodes_for_test(&[Node::Glue {
         spec: zero_glue,
         kind: GlueKind::Normal,
         leader: None,
@@ -252,7 +252,7 @@ fn hpack_records_zero_badness_for_empty_underfull_box() {
     );
     assert_eq!(glue_packed.badness, INF_BAD);
 
-    let kern_list = universe.freeze_node_list_ref_for_test(&[Node::Kern {
+    let kern_list = universe.publish_page_nodes_for_test(&[Node::Kern {
         amount: sp(1),
         kind: KernKind::Explicit,
     }]);
@@ -279,7 +279,7 @@ fn hpack_sets_finite_stretch_order_and_ratio() {
         shrink: sp(2),
         shrink_order: Order::Normal,
     });
-    let list = universe.freeze_node_list_ref_for_test(&[
+    let list = universe.publish_page_nodes_for_test(&[
         Node::Kern {
             amount: sp(20),
             kind: KernKind::Explicit,
@@ -335,7 +335,7 @@ fn spread_target_and_highest_glue_order() {
             leader: None,
         })
         .collect();
-    let list = universe.freeze_node_list_ref_for_test(&nodes);
+    let list = universe.publish_page_nodes_for_test(&nodes);
     let params = HpackParams {
         hbadness: INF_BAD,
         hfuzz: sp(0),
@@ -371,7 +371,7 @@ fn hpack_infinite_shrink_has_zero_badness_and_no_diagnostic() {
         shrink: sp(1),
         shrink_order: Order::Fil,
     });
-    let list = universe.freeze_node_list_ref_for_test(&[
+    let list = universe.publish_page_nodes_for_test(&[
         Node::Glue {
             spec: hss,
             kind: GlueKind::Normal,
@@ -410,7 +410,7 @@ fn leader_glue_participates_in_packing_like_ordinary_glue() {
         shrink: sp(2),
         shrink_order: Order::Normal,
     });
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let payload = LeaderPayload::HList(BoxNode::new(BoxNodeFields {
         width: sp(3),
         height: sp(1),
@@ -422,7 +422,7 @@ fn leader_glue_participates_in_packing_like_ordinary_glue() {
         glue_order: Order::Normal,
         children: empty.clone(),
     }));
-    let hlist = universe.freeze_node_list_ref_for_test(&[Node::Glue {
+    let hlist = universe.publish_page_nodes_for_test(&[Node::Glue {
         spec: glue,
         kind: GlueKind::Xleaders,
         leader: Some(payload),
@@ -446,7 +446,7 @@ fn leader_glue_participates_in_packing_like_ordinary_glue() {
     assert_eq!(packed.node.glue_order, Order::Normal);
     assert_eq!(packed.node.glue_set, GlueSetRatio::from_raw(2_000_000));
 
-    let vlist = universe.freeze_node_list_ref_for_test(&[Node::Glue {
+    let vlist = universe.publish_page_nodes_for_test(&[Node::Glue {
         spec: glue,
         kind: GlueKind::Cleaders,
         leader: Some(LeaderPayload::Rule {
@@ -483,7 +483,7 @@ fn hpack_clamps_overfull_normal_shrink_ratio_to_one() {
         shrink: sp(2),
         shrink_order: Order::Normal,
     });
-    let list = universe.freeze_node_list_ref_for_test(&[
+    let list = universe.publish_page_nodes_for_test(&[
         Node::Kern {
             amount: sp(20),
             kind: KernKind::Explicit,
@@ -530,7 +530,7 @@ fn hpack_reports_insufficient_normal_shrink_even_below_infinite_badness() {
         shrink: sp(4),
         shrink_order: Order::Normal,
     });
-    let list = universe.freeze_node_list_ref_for_test(&[
+    let list = universe.publish_page_nodes_for_test(&[
         Node::Kern {
             amount: sp(9),
             kind: KernKind::Explicit,
@@ -564,7 +564,7 @@ fn hpack_reports_insufficient_normal_shrink_even_below_infinite_badness() {
 #[test]
 fn vpack_records_overfull_badness_when_normal_shrink_is_insufficient() {
     let mut universe = Universe::new();
-    let list = universe.freeze_node_list_ref_for_test(&[Node::Kern {
+    let list = universe.publish_page_nodes_for_test(&[Node::Kern {
         amount: sp(20),
         kind: KernKind::Explicit,
     }]);
@@ -586,7 +586,7 @@ fn vpack_records_overfull_badness_when_normal_shrink_is_insufficient() {
 #[test]
 fn hpack_measures_shifted_child_boxes() {
     let mut universe = Universe::new();
-    let child = universe.freeze_node_list_ref_for_test(&[]);
+    let child = universe.publish_page_nodes_for_test(&[]);
     let raised = Node::HList(BoxNode::new(BoxNodeFields {
         width: sp(5),
         height: sp(10),
@@ -609,7 +609,7 @@ fn hpack_measures_shifted_child_boxes() {
         glue_order: Order::Normal,
         children: child.clone(),
     }));
-    let list = universe.freeze_node_list_ref_for_test(&[raised, lowered]);
+    let list = universe.publish_page_nodes_for_test(&[raised, lowered]);
 
     let packed = hpack(
         &universe,
@@ -629,19 +629,18 @@ fn hpack_measures_shifted_child_boxes() {
 #[test]
 fn vpack_measures_shifted_child_width() {
     let mut universe = Universe::new();
-    let child = universe.freeze_node_list_ref_for_test(&[]);
-    let list =
-        universe.freeze_node_list_ref_for_test(&[Node::VList(BoxNode::new(BoxNodeFields {
-            width: sp(4),
-            height: sp(9),
-            depth: sp(7),
-            shift: sp(2),
-            box_lr: tex_state::node::BoxLr::Normal,
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: Sign::Normal,
-            glue_order: Order::Normal,
-            children: child.clone(),
-        }))]);
+    let child = universe.publish_page_nodes_for_test(&[]);
+    let list = universe.publish_page_nodes_for_test(&[Node::VList(BoxNode::new(BoxNodeFields {
+        width: sp(4),
+        height: sp(9),
+        depth: sp(7),
+        shift: sp(2),
+        box_lr: tex_state::node::BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child.clone(),
+    }))]);
 
     let packed = vpack(
         &universe,
@@ -682,7 +681,7 @@ fn pdf_image_reference_contributes_its_declared_box_dimensions() {
         (sp(30), sp(20), sp(5))
     );
 
-    let list = universe.freeze_node_list_ref_for_test(&[image]);
+    let list = universe.publish_page_nodes_for_test(&[image]);
     let hbox = hpack(
         &universe,
         list.clone(),
@@ -717,19 +716,18 @@ fn pdf_image_reference_contributes_its_declared_box_dimensions() {
 #[test]
 fn vpack_clamps_depth_to_box_max_depth() {
     let mut universe = Universe::new();
-    let child = universe.freeze_node_list_ref_for_test(&[]);
-    let list =
-        universe.freeze_node_list_ref_for_test(&[Node::HList(BoxNode::new(BoxNodeFields {
-            width: sp(5),
-            height: sp(10),
-            depth: sp(8),
-            shift: sp(0),
-            box_lr: tex_state::node::BoxLr::Normal,
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: Sign::Normal,
-            glue_order: Order::Normal,
-            children: child.clone(),
-        }))]);
+    let child = universe.publish_page_nodes_for_test(&[]);
+    let list = universe.publish_page_nodes_for_test(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: sp(5),
+        height: sp(10),
+        depth: sp(8),
+        shift: sp(0),
+        box_lr: tex_state::node::BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child.clone(),
+    }))]);
     let packed = vpack(
         &universe,
         list,
@@ -747,12 +745,12 @@ fn vpack_clamps_depth_to_box_max_depth() {
 #[test]
 fn vtop_with_leading_glue_has_zero_height() {
     let mut universe = Universe::new();
-    let child = universe.freeze_node_list_ref_for_test(&[]);
+    let child = universe.publish_page_nodes_for_test(&[]);
     let glue = universe.intern_glue(GlueSpec {
         width: sp(7),
         ..GlueSpec::ZERO
     });
-    let list = universe.freeze_node_list_ref_for_test(&[
+    let list = universe.publish_page_nodes_for_test(&[
         Node::Glue {
             spec: glue,
             kind: GlueKind::Normal,
@@ -789,19 +787,18 @@ fn vtop_with_leading_glue_has_zero_height() {
 #[test]
 fn vtop_preserves_total_size_when_first_box_exceeds_target() {
     let mut universe = Universe::new();
-    let child = universe.freeze_node_list_ref_for_test(&[]);
-    let list =
-        universe.freeze_node_list_ref_for_test(&[Node::HList(BoxNode::new(BoxNodeFields {
-            width: sp(5),
-            height: sp(10),
-            depth: sp(3),
-            shift: sp(0),
-            box_lr: tex_state::node::BoxLr::Normal,
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: Sign::Normal,
-            glue_order: Order::Normal,
-            children: child.clone(),
-        }))]);
+    let child = universe.publish_page_nodes_for_test(&[]);
+    let list = universe.publish_page_nodes_for_test(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: sp(5),
+        height: sp(10),
+        depth: sp(3),
+        shift: sp(0),
+        box_lr: tex_state::node::BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: child.clone(),
+    }))]);
 
     let packed = vtop(
         &universe,
@@ -821,7 +818,7 @@ fn vtop_preserves_total_size_when_first_box_exceeds_target() {
 #[test]
 fn vertical_spacing_consumes_previous_depth() {
     let mut universe = Universe::new();
-    let child = universe.freeze_node_list_ref_for_test(&[]);
+    let child = universe.publish_page_nodes_for_test(&[]);
     let glue = universe.intern_glue(GlueSpec {
         width: sp(7),
         stretch: sp(0),
@@ -840,7 +837,7 @@ fn vertical_spacing_consumes_previous_depth() {
         glue_order: Order::Normal,
         children: child.clone(),
     }));
-    let list = universe.freeze_node_list_ref_for_test(&[
+    let list = universe.publish_page_nodes_for_test(&[
         hbox.clone(),
         Node::Glue {
             spec: glue,
@@ -867,7 +864,7 @@ fn vertical_spacing_consumes_previous_depth() {
 #[test]
 fn packed_box_can_round_trip_through_structural_box_register() {
     let mut universe = Universe::new();
-    let list = universe.freeze_node_list(&[Node::Kern {
+    let list = universe.publish_page_nodes(&[Node::Kern {
         amount: sp(12),
         kind: KernKind::Explicit,
     }]);
@@ -881,7 +878,7 @@ fn packed_box_can_round_trip_through_structural_box_register() {
             overfull_rule: sp(0),
         },
     );
-    let boxed = universe.freeze_node_list(&[Node::HList(packed.node)]);
+    let boxed = universe.publish_page_nodes(&[Node::HList(packed.node)]);
     universe.set_box_reg_ref(0, boxed);
     let owner = universe.box_reg_ref(0).expect("box should be stored");
     assert!(matches!(owner.nodes().first(), Some(NodeRef::HList(_))));

@@ -3,7 +3,7 @@ use tex_state::node::Node;
 use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Sign, UnsetKind};
 #[cfg(test)]
 use tex_state::node_arena::NodeList;
-use tex_state::node_arena::{NodeCursor, NodeListRef, NodeRef, PackedNode};
+use tex_state::node_arena::{NodeCursor, NodeRef, PackedNode, PageListId};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 #[cfg(test)]
@@ -80,7 +80,7 @@ pub struct HpackPlan {
 
 impl HpackPlan {
     #[must_use]
-    pub fn finish(self, children: NodeListRef) -> PackedBox {
+    pub fn finish(self, children: PageListId) -> PackedBox {
         PackedBox {
             node: BoxNode::new(BoxNodeFields {
                 width: self.width,
@@ -114,12 +114,12 @@ pub struct UnsetMetrics {
 #[must_use]
 pub fn measure_unset(
     state: &impl TypesetState,
-    list: &NodeListRef,
+    list: &PageListId,
     kind: UnsetKind,
 ) -> UnsetMetrics {
     let meas = match kind {
-        UnsetKind::HBox => measure_hlist(state, NodeCursor::compact(list.nodes()), Some(list)),
-        UnsetKind::VBox => measure_vlist(state, NodeCursor::compact(list.nodes())),
+        UnsetKind::HBox => measure_hlist(state, NodeCursor::compact(state.page_nodes(*list))),
+        UnsetKind::VBox => measure_vlist(state, NodeCursor::compact(state.page_nodes(*list))),
     };
     let stretch_order = highest_order(meas.stretch);
     let shrink_order = highest_order(meas.shrink);
@@ -137,13 +137,13 @@ pub fn measure_unset(
 #[must_use]
 pub fn hpack(
     state: &impl TypesetState,
-    list: NodeListRef,
+    list: PageListId,
     spec: PackSpec,
     params: HpackParams,
 ) -> PackedBox {
-    let nodes = list.nodes();
+    let nodes = state.page_nodes(list);
     let has_content = !nodes.is_empty();
-    let meas = measure_hlist(state, NodeCursor::compact(nodes), Some(&list));
+    let meas = measure_hlist(state, NodeCursor::compact(nodes));
     let width = target_size(meas.width, spec);
     let glue = set_glue(width, meas.width, &meas, has_content);
     let diagnostics = hpack_diagnostics(glue, params);
@@ -187,11 +187,11 @@ pub fn plan_hpack_nodes(
 #[must_use]
 pub fn vpack(
     state: &impl TypesetState,
-    list: NodeListRef,
+    list: PageListId,
     spec: PackSpec,
     params: VpackParams,
 ) -> PackedBox {
-    let nodes = list.nodes();
+    let nodes = state.page_nodes(list);
     let has_content = !nodes.is_empty();
     let mut meas = measure_vlist(state, NodeCursor::compact(nodes));
     clamp_depth(&mut meas, params.box_max_depth);
@@ -218,19 +218,19 @@ pub fn vpack(
 #[must_use]
 pub fn vtop(
     state: &impl TypesetState,
-    list: NodeListRef,
+    list: PageListId,
     spec: PackSpec,
     params: VpackParams,
 ) -> PackedBox {
     let mut packed = vpack(state, list, spec, params);
     let children = packed.node.children.clone();
-    readjust_vtop(&children, &mut packed);
+    readjust_vtop(state, &children, &mut packed);
     packed
 }
 
 /// Applies TeX82 §1087's post-`vpackage` height/depth adjustment for `\vtop`.
-pub fn readjust_vtop(list: &NodeListRef, packed: &mut PackedBox) {
-    let (height, depth) = vtop_split(list, packed.node.height, packed.node.depth);
+pub fn readjust_vtop(state: &impl TypesetState, list: &PageListId, packed: &mut PackedBox) {
+    let (height, depth) = vtop_split(state, list, packed.node.height, packed.node.depth);
     packed.node.height = height;
     packed.node.depth = depth;
 }
@@ -353,11 +353,7 @@ fn common_diagnostics(
     }
 }
 
-fn measure_hlist(
-    state: &impl TypesetState,
-    nodes: NodeCursor<'_>,
-    owner: Option<&NodeListRef>,
-) -> Measurement {
+fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
     let mut index = 0;
     while index < nodes.len() {
@@ -405,10 +401,7 @@ fn measure_hlist(
                 meas.observe_horizontal(MetricEvent::Kern(amount), MetricOverflow::PACKING);
             }
             PackedNode::Glue { spec, leader } => {
-                meas.observe_horizontal(
-                    MetricEvent::Glue(state.glue(spec)),
-                    MetricOverflow::PACKING,
-                );
+                meas.observe_horizontal(MetricEvent::Glue(spec), MetricOverflow::PACKING);
                 if let Some(leader) = leader {
                     add_hleader_perpendicular_dimensions(&mut meas, leader);
                 }
@@ -464,17 +457,8 @@ fn measure_hlist(
                 );
             }
             PackedNode::Disc(replace) => {
-                let replacement = if let Some(Node::Disc { replace, .. }) = nodes.owned_node(index)
-                {
-                    measure_hlist(state, NodeCursor::compact(replace.nodes()), Some(replace))
-                } else if let Some(owner) = owner {
-                    let replacement = owner
-                        .child_nodes(replace)
-                        .expect("discretionary replacement belongs to its owner payload");
-                    measure_hlist(state, NodeCursor::compact(replacement), Some(owner))
-                } else {
-                    unreachable!("compact discretionary nodes require a structural owner")
-                };
+                let replacement =
+                    measure_hlist(state, NodeCursor::compact(state.page_nodes(replace)));
                 // A discretionary replacement contributes its natural box
                 // dimensions here, but its inner glue is not outer hpack glue.
                 meas.merge_horizontal_dimensions(replacement, MetricOverflow::PACKING);
@@ -490,7 +474,7 @@ fn measure_hlist(
 }
 
 fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
-    measure_hlist(state, NodeCursor::owned(nodes), None)
+    measure_hlist(state, NodeCursor::owned(nodes))
 }
 
 fn measure_vlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
@@ -539,7 +523,7 @@ fn measure_vlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measuremen
                 meas.observe_vertical(MetricEvent::Kern(amount), MetricOverflow::PACKING);
             }
             PackedNode::Glue { spec, leader } => {
-                meas.observe_vertical(MetricEvent::Glue(state.glue(spec)), MetricOverflow::PACKING);
+                meas.observe_vertical(MetricEvent::Glue(spec), MetricOverflow::PACKING);
                 if let Some(leader) = leader {
                     add_vleader_perpendicular_dimensions(&mut meas, leader);
                 }
@@ -611,10 +595,15 @@ fn clamp_depth(meas: &mut Measurement, box_max_depth: Scaled) {
     }
 }
 
-fn vtop_split(list: &NodeListRef, total_height: Scaled, total_depth: Scaled) -> (Scaled, Scaled) {
-    let first_height = match list.nodes().first() {
-        Some(NodeRef::HList(box_node) | NodeRef::VList(box_node)) => box_node.height,
-        Some(NodeRef::Rule { height, .. }) => height.unwrap_or(Scaled::from_raw(0)),
+fn vtop_split(
+    state: &impl TypesetState,
+    list: &PageListId,
+    total_height: Scaled,
+    total_depth: Scaled,
+) -> (Scaled, Scaled) {
+    let first_height = match state.page_nodes(*list).first() {
+        Some(Node::HList(box_node) | Node::VList(box_node)) => box_node.height,
+        Some(Node::Rule { height, .. }) => height.unwrap_or(Scaled::from_raw(0)),
         _ => Scaled::from_raw(0),
     };
     let depth = sub(add(total_height, total_depth), first_height);

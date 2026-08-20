@@ -7,7 +7,7 @@ use tex_state::font::NULL_FONT;
 use tex_state::ids::FontId;
 use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{GlueKind, KernKind, Node};
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 use tex_state::scaled::Scaled;
 
 use super::{
@@ -40,7 +40,7 @@ pub(crate) enum SourceListRole {
 #[must_use]
 pub fn mlist_to_hlist(
     state: &impl MathTypesetState,
-    input: NodeListRef,
+    input: PageListId,
     style: Style,
     penalties: bool,
     params: &MathParams,
@@ -50,7 +50,7 @@ pub fn mlist_to_hlist(
 
 fn build_math_layout(
     state: &impl MathTypesetState,
-    input: NodeListRef,
+    input: PageListId,
     style: Style,
     penalties: bool,
     params: &MathParams,
@@ -80,7 +80,7 @@ fn build_math_layout(
 
 pub(super) fn convert_mlist<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
-    input: NodeListRef,
+    input: PageListId,
     style: Style,
     _penalties: bool,
 ) -> FrozenHList {
@@ -210,14 +210,14 @@ fn captured_replay<T: Clone>(
 
 fn convert_mlist_uncached<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
-    input: NodeListRef,
+    input: PageListId,
     style: Style,
     penalties: bool,
 ) -> FrozenHList {
     let saved_style = ctx.style;
     ctx.set_style(style);
     let mut input_view = std::mem::take(&mut ctx.scratch.expansion);
-    expand_math_choices_into(input, style, &mut input_view);
+    expand_math_choices_into(ctx.state, input, style, &mut input_view);
     let mut work = std::mem::take(&mut ctx.scratch.work);
     work.reserve(input_view.nodes.len().saturating_sub(work.capacity()));
     let mut max_height = Scaled::from_raw(0);
@@ -336,12 +336,9 @@ fn first_pass<S: MathTypesetState>(
                     // and `subtype(q):=normal` records that the result is now
                     // ordinary glue. Named math spacing and leader subtypes do
                     // not enter this branch.
-                    (
-                        spacing::math_glue(ctx.state.glue_spec(*spec), ctx.mu),
-                        GlueKind::Normal,
-                    )
+                    (spacing::math_glue(*spec, ctx.mu), GlueKind::Normal)
                 } else {
-                    (ctx.state.glue_spec(*spec), *kind)
+                    (*spec, *kind)
                 };
                 out.push(WorkItem::Node(MathNode::Glue {
                     spec,
@@ -481,11 +478,16 @@ impl ExpandedMathView {
 
 #[derive(Clone)]
 struct ExpansionFrame {
-    list: NodeListRef,
+    list: PageListId,
     index: usize,
 }
 
-fn expand_math_choices_into(root: NodeListRef, starting_style: Style, view: &mut ExpandedMathView) {
+fn expand_math_choices_into(
+    state: &impl MathTypesetState,
+    root: PageListId,
+    starting_style: Style,
+    view: &mut ExpandedMathView,
+) {
     view.clear();
     let mut style = starting_style;
     view.stack.push(ExpansionFrame {
@@ -493,7 +495,7 @@ fn expand_math_choices_into(root: NodeListRef, starting_style: Style, view: &mut
         index: 0,
     });
     while let Some(frame) = view.stack.last_mut() {
-        let Some(node) = frame.list.get(frame.index) else {
+        let Some(node) = state.page_nodes(frame.list).get(frame.index).cloned() else {
             view.stack.pop();
             continue;
         };
@@ -547,7 +549,7 @@ fn expand_math_choices_into(root: NodeListRef, starting_style: Style, view: &mut
 /// scanned as inline views, matching rule 4, rather than converted separately.
 fn prepare_nested_mlists<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
-    root: NodeListRef,
+    root: PageListId,
     root_style: Style,
 ) {
     let root = (root, root_style);
@@ -574,6 +576,7 @@ fn prepare_nested_mlists<S: MathTypesetState>(
         );
         stack.push((list.clone(), true));
         nested_mlist_requests(
+            ctx.state,
             list.0.clone(),
             list.1,
             &mut request_view,
@@ -619,17 +622,18 @@ fn prepare_nested_mlists<S: MathTypesetState>(
 }
 
 fn nested_mlist_requests(
-    root: NodeListRef,
+    state: &impl MathTypesetState,
+    root: PageListId,
     starting_style: Style,
     view: &mut ExpandedMathView,
-    out: &mut Vec<(NodeListRef, Style)>,
-    seen: &mut AHashSet<(NodeListRef, Style)>,
+    out: &mut Vec<(PageListId, Style)>,
+    seen: &mut AHashSet<(PageListId, Style)>,
 ) {
     fn add_field(
         field: &MathField,
         style: Style,
-        out: &mut Vec<(NodeListRef, Style)>,
-        seen: &mut AHashSet<(NodeListRef, Style)>,
+        out: &mut Vec<(PageListId, Style)>,
+        seen: &mut AHashSet<(PageListId, Style)>,
     ) {
         if let MathField::SubMlist(list) = field {
             let request = (list.clone(), style);
@@ -639,7 +643,7 @@ fn nested_mlist_requests(
         }
     }
 
-    expand_math_choices_into(root, starting_style, view);
+    expand_math_choices_into(state, root, starting_style, view);
     let mut style = starting_style;
     let mut markers = view.marker_styles.iter().copied();
     out.clear();
@@ -1065,21 +1069,21 @@ pub(crate) fn fetch(
 
 pub(crate) fn source_list(
     ctx: &mut Context<'_, impl MathTypesetState>,
-    list: NodeListRef,
+    list: PageListId,
 ) -> FrozenHList {
     convert_source_list(ctx, list, SourceListRole::HorizontalField)
 }
 
 pub(crate) fn source_box_payload(
     ctx: &mut Context<'_, impl MathTypesetState>,
-    list: NodeListRef,
+    list: PageListId,
 ) -> FrozenHList {
     convert_source_list(ctx, list, SourceListRole::BoxPayload)
 }
 
 fn convert_source_list(
     ctx: &mut Context<'_, impl MathTypesetState>,
-    list: NodeListRef,
+    list: PageListId,
     role: SourceListRole,
 ) -> FrozenHList {
     if let Some(converted) = ctx.source_lists.get(&(list.clone(), role)) {
@@ -1095,7 +1099,9 @@ fn convert_source_list(
         }
         if expanded {
             visiting.remove(&key);
-            let nodes = current
+            let nodes = ctx
+                .state
+                .page_nodes(current)
                 .to_vec()
                 .into_iter()
                 .map(|node| source_node(ctx, node))
@@ -1112,12 +1118,12 @@ fn convert_source_list(
             "source box lists must not contain structural cycles"
         );
         stack.push((current.clone(), current_role, true));
-        let mut children = current
-            .nodes()
+        let mut children = ctx
+            .state
+            .page_nodes(current)
             .iter()
             .filter_map(|node| match node {
-                tex_state::node_arena::NodeRef::HList(boxed)
-                | tex_state::node_arena::NodeRef::VList(boxed) => current.resolve(boxed.children),
+                Node::HList(boxed) | Node::VList(boxed) => Some(boxed.children),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -1154,11 +1160,7 @@ pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: No
         node @ Node::Kern { .. } | node @ Node::Penalty(_) | node @ Node::Rule { .. } => {
             MathNode::Native(Box::new(node))
         }
-        Node::Glue { spec, kind, leader } => MathNode::Glue {
-            spec: ctx.state.glue_spec(spec),
-            kind,
-            leader,
-        },
+        Node::Glue { spec, kind, leader } => MathNode::Glue { spec, kind, leader },
         node @ (Node::HList(_) | Node::VList(_)) => {
             let horizontal = matches!(node, Node::HList(_));
             let box_node = match node {
@@ -1236,8 +1238,8 @@ pub(crate) struct Context<'a, S> {
     pub(crate) style: Style,
     pub(crate) mu: Scaled,
     pub(crate) layout: NativeNodeTransaction,
-    pub(crate) converted: AHashMap<(NodeListRef, Style), ConvertedMlist>,
-    pub(crate) source_lists: AHashMap<(NodeListRef, SourceListRole), FrozenHList>,
+    pub(crate) converted: AHashMap<(PageListId, Style), ConvertedMlist>,
+    pub(crate) source_lists: AHashMap<(PageListId, SourceListRole), FrozenHList>,
     pub(crate) conversion_events: RefCell<Vec<MathConversionEvent>>,
     pub(crate) capture_replay: bool,
     pub(crate) pack_replays: Vec<ReplayMarker<MathPackObservation>>,

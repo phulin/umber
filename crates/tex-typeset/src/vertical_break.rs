@@ -187,7 +187,7 @@ fn update_spacing_node(
     let width = match node {
         Some(Node::Kern { amount, .. }) => *amount,
         Some(Node::Glue { spec, .. }) => {
-            let spec = state.glue_spec(*spec);
+            let spec = *spec;
             let order = spec.stretch_order as usize;
             acc.stretch[order] = add(acc.stretch[order], spec.stretch)?;
             acc.shrink = add(acc.shrink, spec.shrink)?;
@@ -255,7 +255,7 @@ fn sub(lhs: Scaled, rhs: Scaled) -> Result<Scaled, VerticalBreakError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::FreezeNodeListRefForTest;
+    use crate::PageListTestExt;
     use tex_state::Universe;
     use tex_state::glue::{GlueSpec, Order};
     use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Sign};
@@ -268,7 +268,7 @@ mod tests {
     }
 
     fn hbox(universe: &mut Universe, height: i32, depth: i32) -> Node {
-        let children = universe.freeze_node_list_ref_for_test(&[]);
+        let children = universe.publish_page_nodes_for_test(&[]);
         Node::HList(BoxNode::new(BoxNodeFields {
             width: sp(10),
             height: sp(height),

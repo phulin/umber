@@ -6,7 +6,7 @@ use tex_state::ids::FontId;
 use tex_state::ids::GlueId;
 use tex_state::math::MathListNode;
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node};
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 use tex_state::scaled::Scaled;
 use tex_state::{GeometryObservation, Universe};
 use tex_typeset::TypesetState;
@@ -96,7 +96,7 @@ fn finish_math_list_node_with_reads(
 
 pub(super) fn convert_math_hlist_with_error_context(
     stores: &mut Universe,
-    input: NodeListRef,
+    input: PageListId,
     style: Style,
     penalties: bool,
     params: &MathParams,
@@ -108,7 +108,7 @@ pub(super) fn convert_math_hlist_with_error_context(
 
 fn convert_math_hlist_with_sink(
     sink: &mut LoweredMathSink<'_>,
-    input: NodeListRef,
+    input: PageListId,
     style: Style,
     penalties: bool,
     params: &MathParams,
@@ -122,7 +122,7 @@ struct LoweredMathSink<'a> {
     stores: &'a mut Universe,
     error_context: Option<&'a MathConversionErrorContext>,
     root_nodes: Vec<Node>,
-    glue_cache: Vec<(GlueSpec, tex_state::glue::GlueSpecRef)>,
+    glue_cache: Vec<(GlueSpec, GlueSpec)>,
     family_mask: Cell<u64>,
 }
 
@@ -161,7 +161,7 @@ impl<'a> LoweredMathSink<'a> {
                 else {
                     unreachable!()
                 };
-                let children = self.stores.freeze_node_list(&scratch[start..]);
+                let children = self.stores.publish_page_nodes(&scratch[start..]);
                 scratch.truncate(start);
                 let boxed_node = lower_math_box(&boxed, children);
                 scratch.push(if vertical {
@@ -198,17 +198,16 @@ impl<'a> LoweredMathSink<'a> {
                     kind: *kind,
                 }),
                 MathNode::Glue { spec, kind, leader } => {
-                    let id = if let Some((_, id)) =
+                    let value = if let Some((_, value)) =
                         self.glue_cache.iter().find(|(cached, _)| cached == spec)
                     {
-                        *id
+                        *value
                     } else {
-                        let id = self.stores.intern_glue(*spec);
-                        self.glue_cache.push((*spec, id));
-                        id
+                        self.glue_cache.push((*spec, *spec));
+                        *spec
                     };
                     scratch.push(Node::Glue {
-                        spec: id,
+                        spec: value,
                         kind: lower_math_glue_kind(*kind),
                         leader: leader.clone(),
                     });
@@ -236,10 +235,6 @@ impl<'a> LoweredMathSink<'a> {
 impl TypesetState for LoweredMathSink<'_> {
     fn glue(&self, id: GlueId) -> GlueSpec {
         self.stores.glue(id)
-    }
-
-    fn glue_spec(&self, reference: tex_state::glue::GlueSpecRef) -> GlueSpec {
-        self.stores.glue_spec(reference)
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {
@@ -416,7 +411,7 @@ pub(crate) fn finish_math_lists_owned(
     out
 }
 
-fn lower_math_box(boxed: &MathBox, children: NodeListRef) -> BoxNode {
+fn lower_math_box(boxed: &MathBox, children: PageListId) -> BoxNode {
     BoxNode::new(BoxNodeFields {
         width: boxed.width,
         height: boxed.height,

@@ -1,5 +1,5 @@
 use super::*;
-use crate::FreezeNodeListRefForTest;
+use crate::PageListTestExt;
 use crate::math::tests::{list_nodes, math_char, noad, root_nodes, sc, setup_universe};
 use crate::math::{MathParams, Style, mlist_to_hlist};
 use tex_state::math::{FractionThickness, MathFontSize, MathFraction};
@@ -10,7 +10,7 @@ fn character_operator_observes_temporary_clean_and_dimensions_packs() {
     // temporary noad crosses §724 before §720 packages the result, and the
     // completed operator then reaches the enclosing §724 dimensions pack.
     let mut stores = setup_universe();
-    let input = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let input = stores.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Operator(LimitType::NoLimits),
         MathField::MathChar(math_char('o')),
     ))]);
@@ -59,7 +59,7 @@ fn missing_character_operator_still_centers_its_empty_box() {
     let params = MathParams::read(&stores);
     let expected = -params.for_size(MathFontSize::Text).symbols.axis_height;
 
-    let operator = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let operator = stores.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Operator(LimitType::NoLimits),
         MathField::MathChar(missing),
     ))]);
@@ -78,7 +78,7 @@ fn missing_character_operator_still_centers_its_empty_box() {
         "failed §749 fetch reaches only the enclosing §724 dimensions pack"
     );
 
-    let ordinary = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let ordinary = stores.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::MathChar(missing),
     ))]);
@@ -93,9 +93,9 @@ fn displayed_limits_use_shared_rebox_completion() {
     // exact package; the shared vertical-source test also proves its preceding
     // natural hpack.
     let mut stores = setup_universe();
-    let children = stores.freeze_node_list_ref_for_test(&[]);
-    let script = stores.freeze_node_list_ref_for_test(&[Node::VList(
-        tex_state::node::BoxNode::new(tex_state::node::BoxNodeFields {
+    let children = stores.publish_page_nodes_for_test(&[]);
+    let script = stores.publish_page_nodes_for_test(&[Node::VList(tex_state::node::BoxNode::new(
+        tex_state::node::BoxNodeFields {
             width: sc(5),
             height: sc(40),
             depth: sc(10),
@@ -105,14 +105,14 @@ fn displayed_limits_use_shared_rebox_completion() {
             glue_sign: tex_state::node::Sign::Normal,
             glue_order: tex_state::glue::Order::Normal,
             children,
-        }),
-    )]);
+        },
+    ))]);
     let mut op = MathNoad::new(
         NoadKind::Operator(LimitType::Limits),
         MathField::SubBox(script.clone()),
     );
     op.superscript = MathField::MathChar(math_char('o'));
-    let input = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(op)]);
+    let input = stores.publish_page_nodes_for_test(&[Node::MathNoad(op)]);
     let params = MathParams::read(&stores);
 
     let layout = mlist_to_hlist(&stores, input, Style::TEXT, false, &params);
@@ -124,8 +124,8 @@ fn displayed_limits_use_shared_rebox_completion() {
 #[test]
 fn boxed_operator_nucleus_is_not_character_axis_centered() {
     let mut stores = setup_universe();
-    let children = stores.freeze_node_list_ref_for_test(&[]);
-    let source_box = stores.freeze_node_list_ref_for_test(&[Node::HList(
+    let children = stores.publish_page_nodes_for_test(&[]);
+    let source_box = stores.publish_page_nodes_for_test(&[Node::HList(
         tex_state::node::BoxNode::new(tex_state::node::BoxNodeFields {
             width: sc(0),
             height: sc(0),
@@ -140,7 +140,7 @@ fn boxed_operator_nucleus_is_not_character_axis_centered() {
     )]);
     let params = MathParams::read(&stores);
     for limit_type in [LimitType::NoLimits, LimitType::Limits] {
-        let input = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+        let input = stores.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
             NoadKind::Operator(limit_type),
             MathField::SubBox(source_box.clone()),
         ))]);
@@ -167,7 +167,7 @@ fn tex82_noad_constructor_clearance_and_italic_matrix() {
     );
     limits.superscript = MathField::MathChar(math_char('b'));
     limits.subscript = MathField::MathChar(math_char('c'));
-    let limits_list = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(limits)]);
+    let limits_list = stores.publish_page_nodes_for_test(&[Node::MathNoad(limits)]);
     let layout = mlist_to_hlist(&stores, limits_list, Style::DISPLAY, false, &params);
     let [MathNode::VList(limits)] = root_nodes(&layout).as_slice() else {
         panic!("limits operator builds one vertical box");
@@ -191,7 +191,7 @@ fn tex82_noad_constructor_clearance_and_italic_matrix() {
     );
     side.superscript = MathField::MathChar(math_char('b'));
     side.subscript = MathField::MathChar(math_char('c'));
-    let side_list = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(side)]);
+    let side_list = stores.publish_page_nodes_for_test(&[Node::MathNoad(side)]);
     let layout = mlist_to_hlist(&stores, side_list, Style::DISPLAY, false, &params);
     let [MathNode::HList(operator), MathNode::VList(scripts)] = root_nodes(&layout).as_slice()
     else {
@@ -206,7 +206,7 @@ fn tex82_noad_constructor_clearance_and_italic_matrix() {
     let mut scripted = noad(NoadClass::Ord, 'a');
     scripted.superscript = MathField::MathChar(math_char('b'));
     scripted.subscript = MathField::MathChar(math_char('c'));
-    let scripted = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(scripted)]);
+    let scripted = stores.publish_page_nodes_for_test(&[Node::MathNoad(scripted)]);
     let layout = mlist_to_hlist(&stores, scripted, Style::TEXT, false, &params);
     assert!(matches!(
         root_nodes(&layout).as_slice(),
@@ -214,9 +214,9 @@ fn tex82_noad_constructor_clearance_and_italic_matrix() {
     ));
 
     let numerator =
-        stores.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+        stores.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
     let denominator =
-        stores.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
+        stores.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
     let constructors = [
         Node::FractionNoad(MathFraction {
             numerator,
@@ -245,7 +245,7 @@ fn tex82_noad_constructor_clearance_and_italic_matrix() {
         )),
     ];
     for constructor in constructors {
-        let input = stores.freeze_node_list_ref_for_test(&[constructor]);
+        let input = stores.publish_page_nodes_for_test(&[constructor]);
         let layout = mlist_to_hlist(&stores, input, Style::TEXT, false, &params);
         assert!(
             matches!(
@@ -274,7 +274,7 @@ fn radical_and_accent_clearance_skew_and_script_matrix() {
             NoadKind::Radical { delimiter: 0 },
             MathField::MathChar(math_char('a')),
         );
-        let input = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(radical)]);
+        let input = stores.publish_page_nodes_for_test(&[Node::MathNoad(radical)]);
         let layout = mlist_to_hlist(&stores, input, style, false, &params);
         let [MathNode::HList(radical)] = root_nodes(&layout).as_slice() else {
             panic!("radical lowers to one hbox");
@@ -307,7 +307,7 @@ fn radical_and_accent_clearance_skew_and_script_matrix() {
         );
         accent.subscript = subscript;
         accent.superscript = superscript;
-        let input = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(accent)]);
+        let input = stores.publish_page_nodes_for_test(&[Node::MathNoad(accent)]);
         let layout = mlist_to_hlist(&stores, input, Style::TEXT, false, &params);
         assert_eq!(root_nodes(&layout).len(), 1);
         let [MathNode::VList(accented)] = root_nodes(&layout).as_slice() else {
@@ -335,8 +335,8 @@ fn fraction_rule_delimiter_style_and_rebox_matrix() {
     // thickness, delimiter-target, clearance, and unequal-width rebox paths.
     let mut stores = setup_universe();
     let numerator =
-        stores.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
-    let denominator = stores.freeze_node_list_ref_for_test(&[
+        stores.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+    let denominator = stores.publish_page_nodes_for_test(&[
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
         Node::MathNoad(noad(NoadClass::Ord, 'c')),
     ]);
@@ -362,7 +362,7 @@ fn fraction_rule_delimiter_style_and_rebox_matrix() {
                     left_delimiter: delimiter,
                     right_delimiter: delimiter,
                 };
-                let input = stores.freeze_node_list_ref_for_test(&[Node::FractionNoad(fraction)]);
+                let input = stores.publish_page_nodes_for_test(&[Node::FractionNoad(fraction)]);
                 let layout = mlist_to_hlist(&stores, input, style, false, &params);
                 let [MathNode::HList(outer)] = root_nodes(&layout).as_slice() else {
                     panic!("fraction lowers to one hbox");
@@ -430,7 +430,7 @@ fn operator_ligature_and_script_attachment_matrix() {
             NoadKind::Operator(limit),
             MathField::MathChar(math_char('o')),
         );
-        let input = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(op)]);
+        let input = stores.publish_page_nodes_for_test(&[Node::MathNoad(op)]);
         let layout = mlist_to_hlist(&stores, input, style, false, &params);
         assert_eq!(
             matches!(root_nodes(&layout)[0], MathNode::VList(_)),
@@ -440,7 +440,7 @@ fn operator_ligature_and_script_attachment_matrix() {
 
     for (left, right, expected_chars, expected_kern) in [('a', 'a', 1, false), ('a', 'b', 2, true)]
     {
-        let input = stores.freeze_node_list_ref_for_test(&[
+        let input = stores.publish_page_nodes_for_test(&[
             Node::MathNoad(noad(NoadClass::Ord, left)),
             Node::MathNoad(noad(NoadClass::Ord, right)),
         ]);
@@ -473,7 +473,7 @@ fn operator_ligature_and_script_attachment_matrix() {
         let mut base = noad(NoadClass::Ord, 'a');
         base.subscript = subscript;
         base.superscript = superscript;
-        let input = stores.freeze_node_list_ref_for_test(&[Node::MathNoad(base)]);
+        let input = stores.publish_page_nodes_for_test(&[Node::MathNoad(base)]);
         let layout = mlist_to_hlist(&stores, input, Style::TEXT, false, &params);
         assert_eq!(
             root_nodes(&layout)

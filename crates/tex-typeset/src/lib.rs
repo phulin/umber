@@ -26,24 +26,20 @@ pub use packing::{
 pub use vertical_break::{VerticalBreak, VerticalBreakError, vert_break};
 
 #[cfg(test)]
-pub(crate) trait FreezeNodeListRefForTest {
-    fn freeze_node_list_ref_for_test(
+pub(crate) trait PageListTestExt {
+    fn publish_page_nodes_for_test(
         &mut self,
         nodes: &[tex_state::node::Node],
-    ) -> tex_state::node_arena::NodeListRef;
+    ) -> tex_state::node_arena::PageListId;
 }
 
 #[cfg(test)]
-impl FreezeNodeListRefForTest for Universe {
-    fn freeze_node_list_ref_for_test(
+impl PageListTestExt for Universe {
+    fn publish_page_nodes_for_test(
         &mut self,
         nodes: &[tex_state::node::Node],
-    ) -> tex_state::node_arena::NodeListRef {
-        let mut builder = self.node_list_builder();
-        for node in nodes {
-            builder.push(node.clone());
-        }
-        self.freeze_node_list_ref(builder)
+    ) -> tex_state::node_arena::PageListId {
+        self.publish_page_nodes(nodes)
     }
 }
 
@@ -55,8 +51,8 @@ pub const OVERFULL_BADNESS: i32 = 1_000_000;
 
 /// Immutable state access needed by the packing kernels.
 pub trait TypesetState {
+    fn page_nodes(&self, list: tex_state::node_arena::PageListId) -> &[tex_state::node::Node];
     fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec;
-    fn glue_spec(&self, reference: tex_state::glue::GlueSpecRef) -> GlueSpec;
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;
     fn font_character_metrics(&self, font: FontId, ch: char) -> Option<tex_fonts::CharMetrics> {
         self.font_char_metrics(font, u8::try_from(ch as u32).ok()?)
@@ -81,12 +77,14 @@ pub trait TypesetState {
 }
 
 impl TypesetState for Universe {
-    fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec {
-        Universe::glue(self, id)
+    fn page_nodes(&self, list: tex_state::node_arena::PageListId) -> &[tex_state::node::Node] {
+        self.page_node_list(list)
+            .expect("typesetting list belongs to the live page arena")
+            .nodes()
     }
 
-    fn glue_spec(&self, reference: tex_state::glue::GlueSpecRef) -> GlueSpec {
-        Universe::glue_spec(self, reference)
+    fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec {
+        Universe::glue(self, id)
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {

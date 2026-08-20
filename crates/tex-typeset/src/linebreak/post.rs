@@ -200,7 +200,7 @@ fn materialize_channel<S: TypesetState>(
     line.clear();
     lineages.clear();
     line.reserve(required);
-    if state.glue_spec(params.left_skip) != GlueSpec::ZERO {
+    if params.left_skip != GlueSpec::ZERO {
         line.push(Node::Glue {
             spec: params.left_skip,
             kind: GlueKind::LeftSkip,
@@ -300,7 +300,7 @@ pub fn post_line_break_owned<S: TypesetState>(
 }
 
 fn push_owned_line_segment<S: TypesetState>(
-    _state: &S,
+    state: &S,
     source: (
         &mut std::vec::IntoIter<Node>,
         &mut std::vec::IntoIter<Vec<DirectHighCellLineage>>,
@@ -309,7 +309,7 @@ fn push_owned_line_segment<S: TypesetState>(
     ),
     end: usize,
     decision: &BreakDecision,
-    empty_list: &tex_state::node_arena::NodeListRef,
+    empty_list: &tex_state::node_arena::PageListId,
     actions: Option<&[MaterializationAction]>,
     output: (&mut Vec<Node>, &mut Vec<DirectHighCellLineage>),
 ) -> (Vec<Node>, Vec<DirectHighCellLineage>) {
@@ -342,10 +342,14 @@ fn push_owned_line_segment<S: TypesetState>(
                     replace: empty_list.clone(),
                     physical_replace_count: 0,
                 });
-                out.extend(pre.to_vec());
-                out_lineages.extend(frozen_high_cell_lineages(&pre, FrozenListRole::Pre));
-                post.extend(post_list.to_vec());
-                post_lineages.extend(frozen_high_cell_lineages(&post_list, FrozenListRole::Post));
+                out.extend(state.page_nodes(pre).to_vec());
+                out_lineages.extend(frozen_high_cell_lineages(state, &pre, FrozenListRole::Pre));
+                post.extend(state.page_nodes(post_list).to_vec());
+                post_lineages.extend(frozen_high_cell_lineages(
+                    state,
+                    &post_list,
+                    FrozenListRole::Post,
+                ));
             }
             Node::Disc {
                 kind,
@@ -361,8 +365,12 @@ fn push_owned_line_segment<S: TypesetState>(
                     replace: replace.clone(),
                     physical_replace_count,
                 });
-                out.extend(replace.to_vec());
-                out_lineages.extend(frozen_high_cell_lineages(&replace, FrozenListRole::Replace));
+                out.extend(state.page_nodes(replace).to_vec());
+                out_lineages.extend(frozen_high_cell_lineages(
+                    state,
+                    &replace,
+                    FrozenListRole::Replace,
+                ));
             }
             Node::Glue { .. }
                 if absolute + 1 == end
@@ -386,17 +394,19 @@ fn push_owned_line_segment<S: TypesetState>(
     (post, post_lineages)
 }
 
-fn frozen_high_cell_lineages(
-    list: &tex_state::node_arena::NodeListRef,
+fn frozen_high_cell_lineages<S: TypesetState>(
+    state: &S,
+    list: &tex_state::node_arena::PageListId,
     role: FrozenListRole,
 ) -> Vec<DirectHighCellLineage> {
-    list.nodes()
+    state
+        .page_nodes(*list)
         .iter()
         .enumerate()
         .flat_map(|(row, node)| {
             let count = match node {
-                NodeRef::Char { .. } => 1,
-                NodeRef::Lig { orig, .. } => orig.len(),
+                Node::Char { .. } => 1,
+                Node::Lig { orig, .. } => orig.len(),
                 _ => 0,
             };
             (0..count).map(move |unit| DirectHighCellLineage::Frozen {

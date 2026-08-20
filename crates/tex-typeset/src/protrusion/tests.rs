@@ -1,5 +1,5 @@
 use super::*;
-use crate::FreezeNodeListRefForTest;
+use crate::PageListTestExt;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
@@ -138,7 +138,7 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
     let font = state.intern_font(protruding_font());
     state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
     state.set_pdf_font_code(PdfFontCode::Rp, font, b'A', 500);
-    let empty = state.freeze_node_list_ref_for_test(&[]);
+    let empty = state.publish_page_nodes_for_test(&[]);
     let zero_glue = state.intern_glue(GlueSpec::ZERO);
     let wide_glue = state.intern_glue(GlueSpec {
         width: sp(1),

@@ -1,5 +1,5 @@
 use super::*;
-use crate::FreezeNodeListRefForTest;
+use crate::PageListTestExt;
 
 #[test]
 fn tex82_vert_break_cost_depth_and_tie_matrix() {
@@ -29,7 +29,7 @@ fn tex82_vert_break_cost_depth_and_tie_matrix() {
 #[test]
 fn vertical_break_ignores_perpendicular_box_overflow() {
     let mut universe = Universe::new();
-    let children = universe.freeze_node_list_ref_for_test(&[]);
+    let children = universe.publish_page_nodes_for_test(&[]);
     let nodes = vec![Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(i32::MAX),
         height: sp(0),

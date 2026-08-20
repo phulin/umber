@@ -25,7 +25,8 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/metrics.rs`: neutral metric-event IR and shared horizontal, vertical, and wide accumulators; domain modules retain glue, breakpoint, font-expansion, and observation policy.
 - `src/math/arithmetic.rs`: shared checked scaled-arithmetic guards for Appendix G.
 - `src/math/rebox.rs`: shared TeX82 §715 exact-width math-box centering and vertical-source packaging.
-- `src/packing.rs`: hpack/vpack/vtop kernels, pack parameters, measurements, glue setting, and diagnostics.
+- `src/packing.rs`: hpack/vpack/vtop kernels over page-arena list coordinates,
+  pack parameters, measurements, glue setting, and diagnostics.
 - `src/packing/tests.rs`: unit tests for badness, packing dimensions, glue settings, diagnostics, and vtop behavior.
 - `src/vertical_break.rs`: pure TeX.web `vert_break` page/split breakpoint costing over immutable vertical lists.
 - `src/vertical_break/tests/planned.rs`: direct TeX82 vertical-break depth, cost, forced-end, and tie-policy tests.
@@ -38,7 +39,9 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 
 - Do not mutate `Universe` from this crate.
 - Do not handle primitive dispatch, grouping, mode transitions, file effects, or artifact commits here.
-- Keep font and glue access through narrow immutable traits; node-producing algorithms clone typed glue owners while read-only calculations borrow exact values.
+- Keep font and durable parameter access through narrow immutable traits;
+  page nodes carry glue values directly, and nested lists resolve only through
+  the borrowed page arena.
 - Preserve TeX.web arithmetic and badness rules exactly; route shared fixed-point operations through `tex-arith`/`tex-state::scaled` as appropriate.
 
 ## Validation

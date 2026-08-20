@@ -1,5 +1,5 @@
 use super::*;
-use crate::FreezeNodeListRefForTest;
+use crate::PageListTestExt;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
@@ -275,7 +275,7 @@ fn pdf_image_reference_contributes_width_to_line_measurement() {
     let decoded = line_widths_nodes(&universe, std::slice::from_ref(&image));
     assert_eq!(decoded.natural, tex_arith::WideScaled::from_scaled(sp(30)));
 
-    let list = universe.freeze_node_list_ref_for_test(&[image]);
+    let list = universe.publish_page_nodes_for_test(&[image]);
     let compact = line_widths_view(&universe, &list, 0, 1, false);
     assert_eq!(compact.natural, tex_arith::WideScaled::from_scaled(sp(30)));
 }
@@ -336,7 +336,7 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
 #[test]
 fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let zero = universe.intern_glue(GlueSpec::ZERO);
     let breaks = vec![
         BreakDecision {
@@ -396,7 +396,7 @@ fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
 #[test]
 fn etex_display_widow_selector_survives_to_post_line_break() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let zero = universe.intern_glue(GlueSpec::ZERO);
     let breaks = (1..=4)
         .map(|position| BreakDecision {
@@ -544,8 +544,8 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
         shrink: sp(10),
         shrink_order: Order::Normal,
     });
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
-    let pre = universe.freeze_node_list_ref_for_test(&[microtype_char(first, '-')]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
+    let pre = universe.publish_page_nodes_for_test(&[microtype_char(first, '-')]);
     let scenarios = [
         (
             "stretch",
@@ -1239,9 +1239,9 @@ fn tracing_display_retains_structural_successors_after_discretionary_cluster() {
     // current discretionary is displayed. The pure breaker's detached cursor
     // must still begin its next fragment at the structural successor.
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
-    let first_replace = universe.freeze_node_list_ref_for_test(&[]);
-    let second_replace = universe.freeze_node_list_ref_for_test(&[kern(2), rule(3)]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
+    let first_replace = universe.publish_page_nodes_for_test(&[]);
+    let second_replace = universe.publish_page_nodes_for_test(&[kern(2), rule(3)]);
     let nodes = vec![
         rule(1),
         Node::Disc {
@@ -1287,9 +1287,9 @@ fn tracing_display_does_not_repeat_successors_rendered_with_a_discretionary_clus
     // The extended current slice therefore renders nodes beyond its own
     // hidden replacement and advances §851's `printed_node` through them.
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
-    let first_replace = universe.freeze_node_list_ref_for_test(&[kern(1)]);
-    let second_replace = universe.freeze_node_list_ref_for_test(&[kern(2), rule(3)]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
+    let first_replace = universe.publish_page_nodes_for_test(&[kern(1)]);
+    let second_replace = universe.publish_page_nodes_for_test(&[kern(2), rule(3)]);
     let nodes = vec![
         rule(1),
         Node::Disc {
@@ -1335,8 +1335,8 @@ fn tracing_display_includes_automatic_discretionary_replacement_after_font_kern(
     // discretionary after a font kern; §851 displays that replacement before
     // reporting the feasible discretionary.
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
-    let replace = universe.freeze_node_list_ref_for_test(&[rule(2)]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
+    let replace = universe.publish_page_nodes_for_test(&[rule(2)]);
     let nodes = vec![
         rule(1),
         Node::Kern {
@@ -1430,7 +1430,7 @@ fn final_pass_keeps_last_active_route_when_every_route_is_overfull() {
 fn consecutive_discardable_breakpoints_do_not_form_a_backwards_chain() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let nodes = vec![rule(1), Node::Penalty(0), Node::Penalty(0), rule(1)];
     let mut break_params = params(100);
     break_params.looseness = 2;
@@ -1660,8 +1660,8 @@ fn equivalent_line_classes_discard_noncompetitive_fitness_routes() {
 #[test]
 fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
-    let nonempty = universe.freeze_node_list_ref_for_test(&[kern(0)]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
+    let nonempty = universe.publish_page_nodes_for_test(&[kern(0)]);
     let right_skip = GlueSpec {
         stretch: sp(1),
         stretch_order: Order::Fil,
@@ -1981,8 +1981,8 @@ fn discardable_tail_does_not_create_an_empty_final_line() {
 #[test]
 fn looseness_can_select_empty_line_after_terminal_discretionary() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
-    let hyphen = universe.freeze_node_list_ref_for_test(&[rule(5)]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
+    let hyphen = universe.publish_page_nodes_for_test(&[rule(5)]);
     let par_fill = universe.intern_glue(GlueSpec {
         width: sp(0),
         stretch: sp(1),
@@ -2023,7 +2023,7 @@ fn equal_demerit_easy_line_champion_uses_terminal_discretionary_route() {
     // line/fitness class, and `d<=minimal_demerits` lets the later route via
     // this terminal discretionary replace the direct route.
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let par_fill = universe.intern_glue(GlueSpec::ZERO);
     let nodes = vec![
         Node::Disc {
@@ -2142,7 +2142,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
     assert_eq!(breakpoints[0].line_width.natural.raw(), 10);
     assert_eq!(breakpoints[0].next_width.natural.raw(), 1015);
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let breaks = vec![
         BreakDecision {
             position: 2,
@@ -2312,8 +2312,8 @@ fn final_pass_deactivates_unshrinkable_active_line() {
 #[test]
 fn discretionary_penalty_depends_on_pre_break_text() {
     let mut universe = Universe::new();
-    let pre = universe.freeze_node_list_ref_for_test(&[kern(0)]);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let pre = universe.publish_page_nodes_for_test(&[kern(0)]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let mut params = params(20);
     params.pretolerance = -1;
     params.hyphen_penalty = 321;
@@ -2370,8 +2370,8 @@ fn existing_discretionary_is_available_on_the_pretolerance_pass() {
     }
 
     let mut universe = Universe::new();
-    let pre = universe.freeze_node_list_ref_for_test(&[kern(1)]);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let pre = universe.publish_page_nodes_for_test(&[kern(1)]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let par_fill = universe.intern_glue(GlueSpec {
         width: sp(0),
         stretch: sp(1),
@@ -2407,7 +2407,7 @@ fn existing_discretionary_is_available_on_the_pretolerance_pass() {
 #[test]
 fn final_hyphen_demerits_apply_to_penultimate_hyphenated_line() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let nodes = vec![
         kern(20),
         Node::Disc {
@@ -2497,12 +2497,12 @@ fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
 fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
     let mut universe = Universe::new();
     let empty_glue = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let mark_tokens = universe.intern_token_list_ref(&[Token::Char {
         ch: 'm',
         cat: Catcode::Letter,
     }]);
-    let adjust_content = universe.freeze_node_list_ref_for_test(&[kern(7)]);
+    let adjust_content = universe.publish_page_nodes_for_test(&[kern(7)]);
     let nodes = vec![
         rule(10),
         Node::Mark {
@@ -2566,10 +2566,10 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
 fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
-    let pre = universe.freeze_node_list_ref_for_test(&[rule(11), kern(12)]);
-    let post = universe.freeze_node_list_ref_for_test(&[rule(21), kern(22)]);
-    let replacement = universe.freeze_node_list_ref_for_test(&[rule(99)]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
+    let pre = universe.publish_page_nodes_for_test(&[rule(11), kern(12)]);
+    let post = universe.publish_page_nodes_for_test(&[rule(21), kern(22)]);
+    let replacement = universe.publish_page_nodes_for_test(&[rule(99)]);
     let nodes = vec![
         rule(1),
         Node::Disc {
@@ -2652,9 +2652,9 @@ fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
 #[test]
 fn discretionary_post_break_width_participates_in_the_next_line() {
     let mut universe = Universe::new();
-    let pre = universe.freeze_node_list_ref_for_test(&[rule(7)]);
-    let post = universe.freeze_node_list_ref_for_test(&[rule(4)]);
-    let replace = universe.freeze_node_list_ref_for_test(&[rule(6)]);
+    let pre = universe.publish_page_nodes_for_test(&[rule(7)]);
+    let post = universe.publish_page_nodes_for_test(&[rule(4)]);
+    let replace = universe.publish_page_nodes_for_test(&[rule(6)]);
     let nodes = vec![
         rule(3),
         Node::Disc {
@@ -2698,7 +2698,7 @@ fn discretionary_post_break_width_participates_in_the_next_line() {
 fn next_line_discards_all_discardables_but_retains_font_kern() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let nodes = vec![
         rule(1),
         Node::Penalty(0),
@@ -2773,7 +2773,7 @@ fn next_line_discards_all_discardables_but_retains_font_kern() {
 #[test]
 fn two_line_penalty_after_combines_club_widow_and_broken_penalties() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let zero = universe.intern_glue(GlueSpec::ZERO);
     let breaks = vec![
         BreakDecision {
@@ -2814,7 +2814,7 @@ fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
 
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let nodes = vec![
         Node::Direction(Direction::BeginR),
         rule(1),
@@ -2871,8 +2871,8 @@ fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
 fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
-    let replacement = universe.freeze_node_list_ref_for_test(&[rule(7)]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
+    let replacement = universe.publish_page_nodes_for_test(&[rule(7)]);
     let nodes = vec![
         rule(3),
         Node::Disc {
@@ -2925,7 +2925,7 @@ fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count
 fn line_materializer_reuses_the_returned_line_buffer() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let nodes = vec![rule(1), rule(2), rule(3), rule(4)];
     let breaks = vec![
         BreakDecision {
@@ -2979,7 +2979,7 @@ fn line_materializer_reuses_the_returned_line_buffer() {
 fn post_line_break_omits_only_zero_leftskip() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let nonzero = universe.intern_glue(GlueSpec {
         width: sp(3),
         stretch: sp(0),
@@ -3093,10 +3093,10 @@ fn paragraph_tape_bounds_analysis_storage_for_large_paragraphs() {
 #[test]
 fn paragraph_tape_analyzes_twenty_thousand_nested_replacements_iteratively() {
     let mut universe = Universe::new();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
-    let mut replacement = universe.freeze_node_list_ref_for_test(&[rule(1)]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
+    let mut replacement = universe.publish_page_nodes_for_test(&[rule(1)]);
     for _ in 0..20_000 {
-        replacement = universe.freeze_node_list_ref_for_test(&[Node::Disc {
+        replacement = universe.publish_page_nodes_for_test(&[Node::Disc {
             kind: DiscKind::Discretionary,
             pre: empty.clone(),
             post: empty.clone(),
@@ -3129,7 +3129,7 @@ fn paragraph_tape_analyzes_twenty_thousand_nested_replacements_iteratively() {
 fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let parameters = params(100);
     let tape = ParagraphTape::analyze(
         &universe,
@@ -3184,7 +3184,7 @@ fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
 fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let lig = |ch, orig: [char; 2]| Node::Lig {
         font: NULL_FONT,
         ch,
@@ -3193,8 +3193,8 @@ fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() 
         right_hit: false,
         origins: vec![OriginRef::unknown(); 2],
     };
-    let bb = universe.freeze_node_list_ref_for_test(&[lig('A', ['B', 'B'])]);
-    let ca = universe.freeze_node_list_ref_for_test(&[lig('\u{82}', ['C', 'A'])]);
+    let bb = universe.publish_page_nodes_for_test(&[lig('A', ['B', 'B'])]);
+    let ca = universe.publish_page_nodes_for_test(&[lig('\u{82}', ['C', 'A'])]);
     let character = |ch| Node::Char {
         font: NULL_FONT,
         ch,

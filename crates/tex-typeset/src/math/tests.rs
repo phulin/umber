@@ -1,5 +1,5 @@
 use super::*;
-use crate::FreezeNodeListRefForTest;
+use crate::PageListTestExt;
 use sha2::{Digest, Sha256};
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{
@@ -82,7 +82,7 @@ fn undefined_family_discards_only_the_offending_math_character() {
     // whole-formula `danger` state, which is reserved for deficient families
     // 2 and 3 symbol/extension fonts.
     let mut universe = setup_universe();
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(noad(NoadClass::Ord, 'a')),
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
@@ -122,7 +122,7 @@ fn missing_family_character_discards_only_the_offending_math_character() {
     // TeX82 §§722--724's `fetch` diagnoses a character absent from a defined
     // family font, empties only that field, and converts the sibling noads.
     let mut universe = setup_universe();
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(noad(NoadClass::Ord, 'a')),
         Node::MathNoad(noad(NoadClass::Ord, '\u{7f}')),
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
@@ -231,9 +231,9 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
         }
     }
     let numerator =
-        universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'A'))]);
+        universe.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'A'))]);
     let denominator =
-        universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'B'))]);
+        universe.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'B'))]);
     let mut scripted = noad(NoadClass::Ord, 'f');
     scripted.superscript = MathField::MathChar(math_char('A'));
     scripted.subscript = MathField::MathChar(math_char('B'));
@@ -243,7 +243,7 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
     );
     operator.superscript = MathField::MathChar(math_char('A'));
     operator.subscript = MathField::MathChar(math_char('B'));
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(scripted),
         Node::FractionNoad(MathFraction {
             numerator,
@@ -265,8 +265,7 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
     // Observe the operator in isolation: packs from the preceding scripted,
     // fraction, and accent noads are intentionally interleaved in the full
     // formula, so their count is not an operator-selection contract.
-    let isolated_operator_input =
-        universe.freeze_node_list_ref_for_test(&[Node::MathNoad(operator)]);
+    let isolated_operator_input = universe.publish_page_nodes_for_test(&[Node::MathNoad(operator)]);
     let isolated_operator = mlist_to_hlist(
         &universe,
         isolated_operator_input,
@@ -294,12 +293,12 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
     assert!(!all_math_glyphs(&formula).contains(&Some(base_sum)));
 
     let delimiter = delimiter_code(1, b'(', 1, b'(');
-    let tall = universe.freeze_node_list_ref_for_test(&[Node::Rule {
+    let tall = universe.publish_page_nodes_for_test(&[Node::Rule {
         width: Some(sc(4 * Scaled::UNITY)),
         height: Some(sc(80 * Scaled::UNITY)),
         depth: Some(sc(20 * Scaled::UNITY)),
     }]);
-    let delimiter_input = universe.freeze_node_list_ref_for_test(&[
+    let delimiter_input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::LeftDelimiter { delimiter },
             MathField::Empty,
@@ -317,19 +316,19 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
         mlist_to_hlist(&universe, delimiter_input, Style::DISPLAY, false, &params);
     assert!(all_math_glyphs(&delimiter_layout).len() > 1);
 
-    let radical_input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let radical_input = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Radical { delimiter },
         MathField::MathChar(math_char('A')),
     ))]);
     let radical = mlist_to_hlist(&universe, radical_input, Style::DISPLAY, false, &params);
     assert!(all_math_glyphs(&radical).len() >= 2);
 
-    let wide_base = universe.freeze_node_list_ref_for_test(
+    let wide_base = universe.publish_page_nodes_for_test(
         &(0..20)
             .map(|_| Node::MathNoad(noad(NoadClass::Ord, 'A')))
             .collect::<Vec<_>>(),
     );
-    let wide_accent = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let wide_accent = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Accent {
             accent: math_char('⏞'),
         },
@@ -464,9 +463,9 @@ fn all_math_glyphs(layout: &MathLayout) -> Vec<Option<u16>> {
 #[test]
 fn deeply_nested_math_choices_use_an_explicit_work_stack() {
     let mut universe = Universe::new();
-    let mut selected = universe.freeze_node_list_ref_for_test(&[]);
+    let mut selected = universe.publish_page_nodes_for_test(&[]);
     for _ in 0..20_000 {
-        selected = universe.freeze_node_list_ref_for_test(&[Node::MathChoice(MathChoice {
+        selected = universe.publish_page_nodes_for_test(&[Node::MathChoice(MathChoice {
             display: selected.clone(),
             text: selected.clone(),
             script: selected.clone(),
@@ -483,9 +482,9 @@ fn deeply_nested_math_choices_use_an_explicit_work_stack() {
 #[test]
 fn deeply_nested_sub_mlists_use_an_explicit_work_stack() {
     let mut universe = Universe::new();
-    let mut nested = universe.freeze_node_list_ref_for_test(&[]);
+    let mut nested = universe.publish_page_nodes_for_test(&[]);
     for _ in 0..20_000 {
-        nested = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+        nested = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::SubMlist(nested.clone()),
         ))]);
@@ -506,9 +505,9 @@ fn deeply_nested_sub_mlists_use_an_explicit_work_stack() {
 fn nested_sub_mlist_transaction_storage_is_linear_in_depth() {
     fn entry_count(depth: usize) -> usize {
         let mut universe = Universe::new();
-        let mut nested = universe.freeze_node_list_ref_for_test(&[]);
+        let mut nested = universe.publish_page_nodes_for_test(&[]);
         for _ in 0..depth {
-            nested = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+            nested = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
                 MathField::SubMlist(nested.clone()),
             ))]);
@@ -529,7 +528,7 @@ fn nested_sub_mlist_transaction_storage_is_linear_in_depth() {
 #[test]
 fn deeply_nested_sub_boxes_use_an_explicit_work_stack() {
     let mut universe = Universe::new();
-    let mut children = universe.freeze_node_list_ref_for_test(&[]);
+    let mut children = universe.publish_page_nodes_for_test(&[]);
     for _ in 0..20_000 {
         let boxed = Node::HList(BoxNode::new(BoxNodeFields {
             width: sc(1),
@@ -542,9 +541,9 @@ fn deeply_nested_sub_boxes_use_an_explicit_work_stack() {
             glue_order: Order::Normal,
             children,
         }));
-        children = universe.freeze_node_list_ref_for_test(&[boxed]);
+        children = universe.publish_page_nodes_for_test(&[boxed]);
     }
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::SubBox(children.clone()),
     ))]);
@@ -560,8 +559,8 @@ fn math_choice_preserves_the_full_cramped_style() {
     let mut universe = setup_universe();
     let mut scripted = noad(NoadClass::Ord, 'b');
     scripted.superscript = MathField::MathChar(math_char('c'));
-    let selected = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(scripted)]);
-    let choice = universe.freeze_node_list_ref_for_test(&[Node::MathChoice(MathChoice {
+    let selected = universe.publish_page_nodes_for_test(&[Node::MathNoad(scripted)]);
+    let choice = universe.publish_page_nodes_for_test(&[Node::MathChoice(MathChoice {
         display: selected.clone(),
         text: selected.clone(),
         script: selected.clone(),
@@ -579,10 +578,9 @@ fn math_choice_preserves_the_full_cramped_style() {
 #[test]
 fn structural_dependency_order_is_deterministic() {
     let mut universe = setup_universe();
-    let left = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
-    let right =
-        universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'c'))]);
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let left = universe.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
+    let right = universe.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'c'))]);
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::SubMlist(left.clone()),
@@ -606,13 +604,12 @@ fn structural_dependency_order_is_deterministic() {
 #[test]
 fn delimiter_noad_ignores_structural_fields_during_planning() {
     let mut universe = setup_universe();
-    let unused =
-        universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
-    let plain = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let unused = universe.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
+    let plain = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::LeftDelimiter { delimiter: 0 },
         MathField::Empty,
     ))]);
-    let malformed = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad {
+    let malformed = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad {
         kind: NoadKind::LeftDelimiter { delimiter: 0 },
         nucleus: MathField::SubMlist(unused.clone()),
         subscript: MathField::SubMlist(unused.clone()),
@@ -650,7 +647,7 @@ fn mlist_second_pass_inserts_spacing_and_penalties() {
     let mut universe = setup_universe();
     universe.set_int_param(IntParam::BIN_OP_PENALTY, 700);
     universe.set_int_param(IntParam::REL_PENALTY, 500);
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
         Node::MathNoad(noad(NoadClass::Bin, '+')),
         Node::MathNoad(noad(NoadClass::Ord, 'c')),
@@ -699,7 +696,7 @@ fn mlist_penalties_use_current_parameters_and_infinite_threshold() {
     let mut universe = setup_universe();
     universe.set_int_param(IntParam::BIN_OP_PENALTY, 12_345);
     universe.set_int_param(IntParam::REL_PENALTY, 99);
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
         Node::MathNoad(noad(NoadClass::Bin, '+')),
         Node::MathNoad(noad(NoadClass::Ord, 'c')),
@@ -736,7 +733,7 @@ fn script_pair_uses_italic_delta_scriptspace_and_cramped_substyle() {
     let mut noad = noad(NoadClass::Ord, 'a');
     noad.subscript = MathField::MathChar(math_char('b'));
     noad.superscript = MathField::MathChar(math_char('c'));
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(noad)]);
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
@@ -771,7 +768,7 @@ fn script_pair_uses_italic_delta_scriptspace_and_cramped_substyle() {
 #[test]
 fn make_ord_inserts_font_kern_between_adjacent_math_chars() {
     let mut universe = setup_universe();
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(noad(NoadClass::Ord, 'a')),
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
     ]);
@@ -801,7 +798,7 @@ fn make_ord_inserts_font_kern_between_adjacent_math_chars() {
 #[test]
 fn bin_normalization_runs_math_ligatures_before_translation() {
     let mut universe = setup_universe();
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(noad(NoadClass::Op, 'a')),
         Node::MathNoad(noad(NoadClass::Bin, 'a')),
         Node::MathNoad(noad(NoadClass::Open, 'a')),
@@ -1175,10 +1172,10 @@ fn clean_box_physically_removes_only_a_trailing_italic_kern_after_packing() {
     // retains hpack's width, and unlinks the kern from the box's owned list.
     let mut universe = setup_universe();
     let numerator =
-        universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+        universe.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
     let denominator =
-        universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
-    let input = universe.freeze_node_list_ref_for_test(&[Node::FractionNoad(MathFraction {
+        universe.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
+    let input = universe.publish_page_nodes_for_test(&[Node::FractionNoad(MathFraction {
         numerator,
         denominator,
         thickness: FractionThickness::Default,
@@ -1293,7 +1290,7 @@ fn scripts_observe_noncharacter_nucleus_measurement_hpack() {
     let mut universe = setup_universe();
     let mut scripted = MathNoad::new(NoadKind::Normal(NoadClass::Ord), MathField::Empty);
     scripted.superscript = MathField::MathChar(math_char('a'));
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(scripted)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(scripted)]);
     let params = MathParams::read(&universe);
 
     let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
@@ -1316,10 +1313,10 @@ fn scripts_observe_noncharacter_nucleus_measurement_hpack() {
 fn make_fraction_uses_default_rule_and_delimiter_target() {
     let mut universe = setup_universe();
     let numerator =
-        universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+        universe.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
     let denominator =
-        universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
-    let input = universe.freeze_node_list_ref_for_test(&[Node::FractionNoad(MathFraction {
+        universe.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
+    let input = universe.publish_page_nodes_for_test(&[Node::FractionNoad(MathFraction {
         numerator,
         denominator,
         thickness: FractionThickness::Default,
@@ -1383,9 +1380,9 @@ fn make_fraction_uses_default_rule_and_delimiter_target() {
 fn fraction_rebox_keeps_an_empty_denominator_structurally_empty() {
     let mut universe = setup_universe();
     let numerator =
-        universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
-    let denominator = universe.freeze_node_list_ref_for_test(&[]);
-    let input = universe.freeze_node_list_ref_for_test(&[Node::FractionNoad(MathFraction {
+        universe.publish_page_nodes_for_test(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+    let denominator = universe.publish_page_nodes_for_test(&[]);
+    let input = universe.publish_page_nodes_for_test(&[Node::FractionNoad(MathFraction {
         numerator,
         denominator,
         thickness: FractionThickness::Default,
@@ -1419,7 +1416,7 @@ fn fraction_rebox_keeps_an_empty_denominator_structurally_empty() {
 #[test]
 fn fraction_reuses_single_explicit_numerator_box() {
     let mut universe = setup_universe();
-    let children = universe.freeze_node_list_ref_for_test(&[]);
+    let children = universe.publish_page_nodes_for_test(&[]);
     let explicit = Node::HList(BoxNode::new(BoxNodeFields {
         width: sc(40),
         height: sc(12),
@@ -1431,17 +1428,17 @@ fn fraction_reuses_single_explicit_numerator_box() {
         glue_order: Order::Fil,
         children,
     }));
-    let explicit_list = universe.freeze_node_list_ref_for_test(&[explicit]);
+    let explicit_list = universe.publish_page_nodes_for_test(&[explicit]);
     let field = MathField::SubBox(explicit_list.clone());
-    let numerator = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let numerator = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         field.clone(),
     ))]);
-    let denominator = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let denominator = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         field,
     ))]);
-    let input = universe.freeze_node_list_ref_for_test(&[Node::FractionNoad(MathFraction {
+    let input = universe.publish_page_nodes_for_test(&[Node::FractionNoad(MathFraction {
         numerator,
         denominator,
         thickness: FractionThickness::Default,
@@ -1471,9 +1468,9 @@ fn fraction_reuses_single_explicit_numerator_box() {
 #[test]
 fn direct_sub_box_nucleus_does_not_republish_its_source_pack() {
     let mut universe = setup_universe();
-    let children = universe.freeze_node_list_ref_for_test(&[]);
+    let children = universe.publish_page_nodes_for_test(&[]);
     let explicit =
-        universe.freeze_node_list_ref_for_test(&[Node::HList(BoxNode::new(BoxNodeFields {
+        universe.publish_page_nodes_for_test(&[Node::HList(BoxNode::new(BoxNodeFields {
             width: sc(120),
             height: sc(7),
             depth: sc(1),
@@ -1484,7 +1481,7 @@ fn direct_sub_box_nucleus_does_not_republish_its_source_pack() {
             glue_order: Order::Normal,
             children,
         }))]);
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::SubBox(explicit.clone()),
     ))]);
@@ -1502,7 +1499,7 @@ fn direct_sub_box_nucleus_does_not_republish_its_source_pack() {
         }]
     );
 
-    let empty = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let empty = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::Empty,
     ))]);
@@ -1521,8 +1518,8 @@ fn direct_sub_box_nucleus_does_not_republish_its_source_pack() {
 #[test]
 fn nested_sub_mlist_records_its_structural_hpack() {
     let mut universe = setup_universe();
-    let nested = universe.freeze_node_list_ref_for_test(&[]);
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let nested = universe.publish_page_nodes_for_test(&[]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::SubMlist(nested.clone()),
     ))]);
@@ -1553,12 +1550,12 @@ fn nested_sub_mlist_records_its_structural_hpack() {
 #[test]
 fn shared_nested_sub_mlist_replays_hpack_observations_per_occurrence() {
     let mut universe = setup_universe();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
-    let shared = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let empty = universe.publish_page_nodes_for_test(&[]);
+    let shared = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::SubMlist(empty.clone()),
     ))]);
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::SubMlist(shared.clone()),
@@ -1582,7 +1579,7 @@ fn shared_nested_sub_mlist_replays_hpack_observations_per_occurrence() {
 #[test]
 fn shared_nested_sub_mlist_replays_conversion_events_per_occurrence() {
     let mut universe = setup_universe();
-    let shared = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let shared = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::MathChar(MathChar {
             family: 13,
@@ -1590,7 +1587,7 @@ fn shared_nested_sub_mlist_replays_conversion_events_per_occurrence() {
             origin: tex_state::token::OriginId::UNKNOWN,
         }),
     ))]);
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::SubMlist(shared.clone()),
@@ -1625,7 +1622,7 @@ fn shared_nested_sub_mlist_replays_conversion_events_per_occurrence() {
 #[test]
 fn fraction_retains_box_around_nested_sub_mlist_nucleus() {
     let mut universe = setup_universe();
-    let children = universe.freeze_node_list_ref_for_test(&[]);
+    let children = universe.publish_page_nodes_for_test(&[]);
     let explicit = Node::HList(BoxNode::new(BoxNodeFields {
         width: sc(40),
         height: sc(12),
@@ -1637,21 +1634,21 @@ fn fraction_retains_box_around_nested_sub_mlist_nucleus() {
         glue_order: Order::Fil,
         children,
     }));
-    let explicit_list = universe.freeze_node_list_ref_for_test(&[explicit]);
-    let nested = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let explicit_list = universe.publish_page_nodes_for_test(&[explicit]);
+    let nested = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::SubBox(explicit_list.clone()),
     ))]);
     let field = MathField::SubMlist(nested.clone());
-    let numerator = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let numerator = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         field.clone(),
     ))]);
-    let denominator = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let denominator = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         field,
     ))]);
-    let input = universe.freeze_node_list_ref_for_test(&[Node::FractionNoad(MathFraction {
+    let input = universe.publish_page_nodes_for_test(&[Node::FractionNoad(MathFraction {
         numerator,
         denominator,
         thickness: FractionThickness::Default,
@@ -1687,13 +1684,13 @@ fn fraction_retains_box_around_nested_sub_mlist_nucleus() {
 #[test]
 fn left_right_delimiters_size_to_enclosed_list() {
     let mut universe = setup_universe();
-    let tall_box = universe.freeze_node_list_ref_for_test(&[Node::Rule {
+    let tall_box = universe.publish_page_nodes_for_test(&[Node::Rule {
         width: Some(sc(4)),
         height: Some(sc(40)),
         depth: Some(sc(10)),
     }]);
     let delimiter = delimiter_code(1, b'(', 1, b'|');
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::LeftDelimiter { delimiter },
             MathField::Empty,
@@ -1729,13 +1726,13 @@ fn middle_delimiter_uses_common_extent_and_boundary_spacing() {
     // left/middle/right run through the shared `make_left_right` extent.  The
     // rule applies in all four style sizes, including nested script formulas.
     let mut universe = setup_universe();
-    let tall_box = universe.freeze_node_list_ref_for_test(&[Node::Rule {
+    let tall_box = universe.publish_page_nodes_for_test(&[Node::Rule {
         width: Some(sc(4)),
         height: Some(sc(40)),
         depth: Some(sc(10)),
     }]);
     let delimiter = delimiter_code(1, b'(', 1, b'|');
-    let input = universe.freeze_node_list_ref_for_test(&[
+    let input = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::LeftDelimiter { delimiter },
             MathField::Empty,
@@ -1788,7 +1785,7 @@ fn middle_delimiter_uses_common_extent_and_boundary_spacing() {
 #[test]
 fn ordinary_sub_box_nucleus_is_not_repacked() {
     let mut universe = setup_universe();
-    let children = universe.freeze_node_list_ref_for_test(&[]);
+    let children = universe.publish_page_nodes_for_test(&[]);
     let sub_box = Node::VList(BoxNode::new(BoxNodeFields {
         width: sc(4),
         height: sc(40),
@@ -1800,8 +1797,8 @@ fn ordinary_sub_box_nucleus_is_not_repacked() {
         glue_order: Order::Normal,
         children,
     }));
-    let sub_box = universe.freeze_node_list_ref_for_test(&[sub_box]);
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let sub_box = universe.publish_page_nodes_for_test(&[sub_box]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
         MathField::SubBox(sub_box.clone()),
     ))]);
@@ -1823,7 +1820,7 @@ fn ordinary_sub_box_nucleus_is_not_repacked() {
 #[test]
 fn vcenter_preserves_prepacked_vertical_payload_without_horizontal_remeasurement() {
     let mut universe = setup_universe();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let wide_box = Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::MAX_DIMEN,
         height: sc(1),
@@ -1836,7 +1833,7 @@ fn vcenter_preserves_prepacked_vertical_payload_without_horizontal_remeasurement
         children: empty.clone(),
     }));
     let vertical_payload =
-        universe.freeze_node_list_ref_for_test(&[wide_box.clone(), wide_box.clone(), wide_box]);
+        universe.publish_page_nodes_for_test(&[wide_box.clone(), wide_box.clone(), wide_box]);
     let source_vbox = Node::VList(BoxNode::new(BoxNodeFields {
         width: sc(25),
         height: sc(40),
@@ -1848,8 +1845,8 @@ fn vcenter_preserves_prepacked_vertical_payload_without_horizontal_remeasurement
         glue_order: Order::Normal,
         children: vertical_payload.clone(),
     }));
-    let source_vbox = universe.freeze_node_list_ref_for_test(&[source_vbox]);
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let source_vbox = universe.publish_page_nodes_for_test(&[source_vbox]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::VCenter,
         MathField::SubBox(source_vbox.clone()),
     ))]);
@@ -1874,7 +1871,7 @@ fn display_operator_uses_larger_variant_and_places_limits() {
     );
     op.subscript = MathField::MathChar(math_char('b'));
     op.superscript = MathField::MathChar(math_char('c'));
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(op)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
@@ -1901,7 +1898,7 @@ fn display_operator_uses_larger_variant_and_places_limits() {
 #[test]
 fn display_limits_does_not_rewrap_clean_compound_operator() {
     let mut universe = setup_universe();
-    let nucleus = universe.freeze_node_list_ref_for_test(&[
+    let nucleus = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
         Node::MathNoad(noad(NoadClass::Ord, 'c')),
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
@@ -1910,7 +1907,7 @@ fn display_limits_does_not_rewrap_clean_compound_operator() {
         NoadKind::Operator(LimitType::Limits),
         MathField::SubMlist(nucleus.clone()),
     );
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(op)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
 
     let layout = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
@@ -1937,7 +1934,7 @@ fn display_limits_does_not_rewrap_clean_compound_operator() {
 #[test]
 fn display_limits_preserve_same_width_source_vbox_axis() {
     let mut universe = setup_universe();
-    let children = universe.freeze_node_list_ref_for_test(&[]);
+    let children = universe.publish_page_nodes_for_test(&[]);
     let source_vbox = Node::VList(BoxNode::new(BoxNodeFields {
         width: sc(30),
         height: sc(40),
@@ -1949,13 +1946,13 @@ fn display_limits_preserve_same_width_source_vbox_axis() {
         glue_order: Order::Normal,
         children,
     }));
-    let source_vbox = universe.freeze_node_list_ref_for_test(&[source_vbox]);
+    let source_vbox = universe.publish_page_nodes_for_test(&[source_vbox]);
     let mut op = MathNoad::new(
         NoadKind::Operator(LimitType::Limits),
         MathField::MathChar(math_char('o')),
     );
     op.superscript = MathField::SubBox(source_vbox.clone());
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(op)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
 
     let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
@@ -1979,7 +1976,7 @@ fn display_limits_operator_without_scripts_keeps_italic_correction_width() {
         NoadKind::Operator(LimitType::DisplayLimits),
         MathField::MathChar(math_char('o')),
     );
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(op)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
@@ -2003,7 +2000,7 @@ fn nolimits_operator_splits_italic_correction_into_script_placement() {
     );
     op.subscript = MathField::MathChar(math_char('b'));
     op.superscript = MathField::MathChar(math_char('c'));
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(op)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
@@ -2033,7 +2030,7 @@ fn nolimits_operator_centers_nucleus_on_math_axis() {
         NoadKind::Operator(LimitType::NoLimits),
         MathField::MathChar(math_char('c')),
     );
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(op)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
@@ -2051,7 +2048,7 @@ fn nolimits_operator_centers_nucleus_on_math_axis() {
 #[test]
 fn nolimits_operator_does_not_center_compound_nucleus() {
     let mut universe = setup_universe();
-    let nucleus = universe.freeze_node_list_ref_for_test(&[
+    let nucleus = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(noad(NoadClass::Ord, 'l')),
         Node::MathNoad(noad(NoadClass::Ord, 'i')),
         Node::MathNoad(noad(NoadClass::Ord, 'm')),
@@ -2060,7 +2057,7 @@ fn nolimits_operator_does_not_center_compound_nucleus() {
         NoadKind::Operator(LimitType::NoLimits),
         MathField::SubMlist(nucleus.clone()),
     );
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(op)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
@@ -2078,7 +2075,7 @@ fn nolimits_operator_does_not_center_compound_nucleus() {
 #[test]
 fn nolimits_operator_hpacks_a_single_box_sub_mlist_nucleus() {
     let mut universe = setup_universe();
-    let inner = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let inner = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Underline,
         MathField::MathChar(math_char('b')),
     ))]);
@@ -2086,7 +2083,7 @@ fn nolimits_operator_hpacks_a_single_box_sub_mlist_nucleus() {
         NoadKind::Operator(LimitType::NoLimits),
         MathField::SubMlist(inner.clone()),
     );
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(op)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
 
     let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
@@ -2110,7 +2107,7 @@ fn mathchar_operator_centers_inline_nucleus_and_places_side_scripts() {
     );
     op.subscript = MathField::MathChar(math_char('b'));
     op.superscript = MathField::MathChar(math_char('c'));
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(op)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
@@ -2133,7 +2130,7 @@ fn radical_clearance_uses_display_and_nondisplay_formulas() {
         NoadKind::Radical { delimiter: 0 },
         MathField::MathChar(math_char('a')),
     );
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(noad)]);
     let params = MathParams::read(&universe);
 
     let display = mlist_to_hlist(&universe, input.clone(), Style::DISPLAY, false, &params);
@@ -2154,7 +2151,7 @@ fn math_accent_uses_skewchar_kern_and_larger_accent() {
         },
         MathField::MathChar(math_char('a')),
     );
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(noad)]);
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
@@ -2198,7 +2195,7 @@ fn missing_math_accent_with_empty_nucleus_has_only_dimensions_pack() {
         },
         MathField::Empty,
     );
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(noad)]);
     let params = MathParams::read(&universe);
 
     let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
@@ -2219,7 +2216,7 @@ fn missing_math_accent_preserves_a_nonempty_nucleus_box() {
     // TeX82 §738 does nothing when `fetch(accent_chr(q))` fails; the
     // nucleus remains available to the ordinary second-pass conversion.
     let mut universe = setup_universe();
-    let empty = universe.freeze_node_list_ref_for_test(&[]);
+    let empty = universe.publish_page_nodes_for_test(&[]);
     let noad = MathNoad::new(
         NoadKind::Accent {
             accent: MathChar {
@@ -2230,7 +2227,7 @@ fn missing_math_accent_preserves_a_nonempty_nucleus_box() {
         },
         MathField::SubBox(empty.clone()),
     );
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(noad)]);
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(noad)]);
     let params = MathParams::read(&universe);
 
     let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
@@ -2244,13 +2241,13 @@ fn missing_math_accent_preserves_a_nonempty_nucleus_box() {
 #[test]
 fn nested_math_accent_preserves_the_inner_vertical_box() {
     let mut universe = setup_universe();
-    let inner = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let inner = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Accent {
             accent: math_char('^'),
         },
         MathField::MathChar(math_char('a')),
     ))]);
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Accent {
             accent: math_char('^'),
         },
@@ -2270,16 +2267,16 @@ fn nested_math_accent_preserves_the_inner_vertical_box() {
 #[test]
 fn nested_under_overline_retains_inner_vertical_box() {
     let mut universe = setup_universe();
-    let sum = universe.freeze_node_list_ref_for_test(&[
+    let sum = universe.publish_page_nodes_for_test(&[
         Node::MathNoad(noad(NoadClass::Ord, 'x')),
         Node::MathNoad(noad(NoadClass::Bin, '+')),
         Node::MathNoad(noad(NoadClass::Ord, 'y')),
     ]);
-    let overline = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let overline = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Overline,
         MathField::SubMlist(sum.clone()),
     ))]);
-    let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+    let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
         NoadKind::Underline,
         MathField::SubMlist(overline.clone()),
     ))]);
@@ -2324,7 +2321,7 @@ fn under_and_overline_rules_retain_running_width_after_packing() {
     let mut universe = setup_universe();
     let params = MathParams::read(&universe);
     for kind in [NoadKind::Underline, NoadKind::Overline] {
-        let input = universe.freeze_node_list_ref_for_test(&[Node::MathNoad(MathNoad::new(
+        let input = universe.publish_page_nodes_for_test(&[Node::MathNoad(MathNoad::new(
             kind,
             MathField::MathChar(math_char('a')),
         ))]);
@@ -2355,7 +2352,7 @@ fn assert_inserted_math_glue_kind(classes: &[NoadClass], expected_kind: MathGlue
         .enumerate()
         .map(|(index, class)| Node::MathNoad(noad(*class, char::from(b'a' + index as u8))))
         .collect::<Vec<_>>();
-    let input = universe.freeze_node_list_ref_for_test(&input_nodes);
+    let input = universe.publish_page_nodes_for_test(&input_nodes);
     let params = MathParams::read(&universe);
 
     let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);

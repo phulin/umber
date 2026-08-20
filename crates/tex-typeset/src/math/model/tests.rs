@@ -1,4 +1,4 @@
-use crate::FreezeNodeListRefForTest;
+use crate::PageListTestExt;
 use tex_state::Universe;
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathNoad,
@@ -20,8 +20,7 @@ fn math_char(ch: char) -> MathChar {
 
 #[test]
 fn tex82_noad_field_layout_initialization_and_release_matrix() {
-    let nucleus: MathField<tex_state::node_arena::NodeListRef> =
-        MathField::MathChar(math_char('x'));
+    let nucleus: MathField<tex_state::node_arena::PageListId> = MathField::MathChar(math_char('x'));
     let classes = [
         NoadClass::Ord,
         NoadClass::Op,
@@ -66,7 +65,7 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
 
     let mut stores = Universe::new();
     let arms =
-        [1, 2, 3, 4].map(|penalty| stores.freeze_node_list_ref_for_test(&[Node::Penalty(penalty)]));
+        [1, 2, 3, 4].map(|penalty| stores.publish_page_nodes_for_test(&[Node::Penalty(penalty)]));
     let choice = MathChoice {
         display: arms[0].clone(),
         text: arms[1].clone(),

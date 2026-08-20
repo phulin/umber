@@ -1,8 +1,8 @@
 use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
-use tex_state::glue::GlueSpecRef;
+use tex_state::glue::GlueSpec;
 use tex_state::node::{KernKind, Node};
-use tex_state::node_arena::NodeListRef;
+use tex_state::node_arena::PageListId;
 use tex_state::node_sequence::NodeSequence;
 use tex_state::scaled::Scaled;
 
@@ -52,9 +52,9 @@ pub struct LineBreakParams {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PostLineBreakParams {
-    pub empty_list: NodeListRef,
-    pub left_skip: GlueSpecRef,
-    pub right_skip: GlueSpecRef,
+    pub empty_list: PageListId,
+    pub left_skip: GlueSpec,
+    pub right_skip: GlueSpec,
     pub interline_penalty: i32,
     pub club_penalty: i32,
     pub widow_penalties: WidowPenalties,
@@ -208,7 +208,7 @@ struct BreakSite {
 struct TraceSpan {
     display_end: usize,
     next_start: usize,
-    display_suffix: Option<NodeListRef>,
+    display_suffix: Option<PageListId>,
     breakpoint: TraceBreakpoint,
 }
 
@@ -257,7 +257,7 @@ impl ParagraphTape {
         self.sequence.semantic()
     }
 
-    pub fn replace_last_par_fill(&mut self, spec: GlueSpecRef) {
+    pub fn replace_last_par_fill(&mut self, spec: GlueSpec) {
         let (mut semantic, physical, boundaries) = std::mem::take(&mut self.sequence).into_parts();
         if let Some(Node::Glue { spec: par_fill, .. }) = semantic.iter_mut().rev().find(|node| {
             matches!(
@@ -285,7 +285,7 @@ pub enum LineBreakTrace {
     Pass(LineBreakPass),
     Feasible {
         display: core::ops::Range<usize>,
-        display_suffix: Option<NodeListRef>,
+        display_suffix: Option<PageListId>,
         breakpoint: TraceBreakpoint,
         via: usize,
         badness: Option<i32>,
@@ -575,7 +575,7 @@ fn observe_expansion_fonts<S: TypesetState>(
                 pre, post, replace, ..
             } => {
                 for list in [pre, post, replace] {
-                    let owned = list.to_vec();
+                    let owned = state.page_nodes(*list).to_vec();
                     observe_expansion_fonts(state, &owned, paragraph)?;
                 }
             }
@@ -992,7 +992,7 @@ fn run_pass<S: TypesetState>(
     Some(reconstruct(active[chosen], &passive, last_line_fit, memory))
 }
 
-fn trace_display_suffix(nodes: &[Node], bp: Breakpoint) -> Option<NodeListRef> {
+fn trace_display_suffix(nodes: &[Node], bp: Breakpoint) -> Option<PageListId> {
     // §903's boundary-kern reconstitution keeps the displaced ligature in
     // the automatic discretionary's side list. TeX82's linked list exposes
     // it to §851; Umber carries it as this detached trace suffix instead.
