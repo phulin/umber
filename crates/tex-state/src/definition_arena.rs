@@ -17,7 +17,7 @@ pub(super) enum DefinitionNamespace {}
 ///
 /// There is deliberately no raw constructor or integer projection. Only a
 /// successful `DefinitionArena::allocate` can publish an id.
-pub(crate) struct DefinitionId<G> {
+pub struct DefinitionId<G> {
     row: NonZeroU32,
     _brand: PhantomData<fn(&G) -> &G>,
 }
@@ -79,7 +79,7 @@ struct DefinitionRecord {
 
 /// Failure to stage a complete definition row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum DefinitionAllocationError {
+pub enum DefinitionAllocationError {
     CapacityOverflow,
     AllocationFailed,
 }
@@ -182,7 +182,7 @@ impl<G> DefinitionArena<G> {
 }
 
 /// Borrowed view of one complete definition row.
-pub(crate) struct DefinitionView<'arena, G> {
+pub struct DefinitionView<'arena, G> {
     record: &'arena DefinitionRecord,
     words: &'arena [TokenWord],
     _brand: PhantomData<fn(&G) -> &G>,
@@ -190,17 +190,17 @@ pub(crate) struct DefinitionView<'arena, G> {
 
 impl<G> DefinitionView<'_, G> {
     #[must_use]
-    pub(crate) const fn parameter_pattern(&self) -> MacroParameterPattern {
+    pub const fn parameter_pattern(&self) -> MacroParameterPattern {
         self.record.parameters
     }
 
     #[must_use]
-    pub(crate) fn parameter_text(&self) -> &[TokenWord] {
+    pub fn parameter_text(&self) -> &[TokenWord] {
         self.record.parameter_text.resolve(self.words)
     }
 
     #[must_use]
-    pub(crate) fn replacement_text(&self) -> &[TokenWord] {
+    pub fn replacement_text(&self) -> &[TokenWord] {
         self.record.replacement_text.resolve(self.words)
     }
 }

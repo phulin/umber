@@ -58,10 +58,12 @@ fn invalid_parameter_program_does_not_publish_a_partial_row() {
         assert!(generation.definitions().is_empty());
 
         let valid = generation.definitions_mut().allocate(&[], &[]).unwrap();
-        assert!(generation
-            .definitions()
-            .get(valid)
-            .replacement_text()
-            .is_empty());
+        assert!(
+            generation
+                .definitions()
+                .get(valid)
+                .replacement_text()
+                .is_empty()
+        );
     });
 }

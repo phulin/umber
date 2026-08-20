@@ -18,7 +18,7 @@ pub(super) enum ProvenanceNamespace {}
 
 macro_rules! dense_id {
     ($name:ident) => {
-        pub(crate) struct $name<G> {
+        pub struct $name<G> {
             row: NonZeroU32,
             _brand: PhantomData<fn(&G) -> &G>,
         }
@@ -72,7 +72,7 @@ dense_id!(ProvenanceId);
 
 /// Failure to stage a complete durable row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum DurableAllocationError {
+pub enum DurableAllocationError {
     CapacityOverflow,
     AllocationFailed,
 }

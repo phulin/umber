@@ -49,8 +49,10 @@ pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 28;
 pub mod cell;
 pub mod code_tables;
 mod command_context;
+pub(crate) mod definition_arena;
 pub mod dependency;
 pub mod diagnostic;
+pub(crate) mod durable_arena;
 mod effect_journal;
 mod engine_state;
 pub mod env;
@@ -62,6 +64,7 @@ pub mod file_framing;
 pub mod font;
 mod format_container;
 mod frozen_lookup;
+pub(crate) mod generation;
 pub mod glue;
 #[allow(dead_code)] // Storage substrate is consumed as HotCore families migrate.
 pub(crate) mod hot_core;
@@ -111,9 +114,6 @@ pub use pdf::{
     PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
     PdfThreadBeadRecord, PdfThreadRecord,
 };
-pub use stores::{
-    EngineStackUsage, EngineUsageStatistics, StringPoolAccounting, StringPoolProfile,
-};
 pub mod world;
 
 pub use expansion_diagnostic::RecoverableExpansionDiagnostic;
@@ -121,22 +121,29 @@ pub use expansion_recovery::ExpansionRecovery;
 pub use read_observation::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};
 pub use resource::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
 
-pub use command_context::{CommandBoxKind, CommandContext, CommandLineSource};
+pub use command_context::CommandContext;
+pub use definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
 pub use dependency::{
     ChangedAt, DependencyCodeTable, DependencyEngineField, DependencyFontField, DependencyKey,
     DependencyPageField, DependencyRegion, DependencyRegionError, DependencyRegionToken,
     DependencyRuntime, DependencyTracker, DependencyValidation, DependencyValue,
     DependencyWorldField, ObservedDependency, TrackedRegionBarrier,
 };
+pub use durable_arena::{DurableAllocationError, GlueId, TokenListId};
 pub use effect_journal::EffectJournal;
 pub use engine_state::{EngineMode, EngineStateSnapshot};
+pub use env::group::{GroupFrame, GroupKind, GroupMismatch};
+pub use env::{AssignmentScope, CodeTableKind, StateError};
 pub use font::PdfFontCode;
+pub use generation::GenerationBrand;
 pub use input::{
     AlignmentScannerPhase, ConditionFrameSummary, ConditionFrameToken, ConditionKind,
     ConditionLimb, InputFrameSummary, InputSummary, LexerState, LiteralSpanPolicy,
     MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments, MacroReplaySite, SourceFrameSummary,
     SourceId, TokenListReplayKind, TokenListReplayMarker, TracedExpansionToken, TracedTokenList,
 };
+pub use journal::JournalCursor;
+pub use meaning::{MeaningWord, ResolvedMeaning};
 pub use memo::{
     DetachedArtifact, DetachedDiagnostic, DetachedInputTransition, DetachedMemoValue,
     DetachedPageTransition, DetachedPureKernelPlan, DetachedVirtualEffect,
@@ -160,14 +167,7 @@ pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
-pub use stores::{FontParameterError, GroupFrame, GroupKind, GroupMismatch, PrepareMagDiagnostic};
-pub use universe::{
-    BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, FormatError, GeometryObservation,
-    InputOpenContext, InputOpenState, InputReadState, InteractionMode, ParagraphShapeLine,
-    PenaltyArrayKind, PreparedPageSuffix, ReplayProbeTransaction, ShipoutTransaction,
-    TakeUnboxResult, TrackedEnvironmentWrite, TrackedRegionError, TrackedRegionMark,
-    TrackedRegionRecord, UnboxKind, Universe, WorldMut,
-};
+pub use universe::{Universe, UniverseError, UniverseRetirement, with_universe};
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;
 pub use world::{

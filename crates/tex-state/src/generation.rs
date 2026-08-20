@@ -14,7 +14,7 @@ mod tests;
 /// The constructor is private. `with_generation` introduces a fresh late-bound
 /// lifetime on every call, so ids from independently admitted generations
 /// cannot have the same Rust type.
-pub(crate) struct GenerationBrand<'id> {
+pub struct GenerationBrand<'id> {
     _invariant: PhantomData<fn(&'id ()) -> &'id ()>,
 }
 
@@ -46,6 +46,15 @@ pub(crate) struct Generation<G> {
     token_lists: TokenListArena<G>,
     glue: GlueArena<G>,
     provenance: ProvenanceArena<G>,
+}
+
+/// Logical rows released when one coarse generation owner retires.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct GenerationRetirement {
+    pub(crate) definitions: usize,
+    pub(crate) token_lists: usize,
+    pub(crate) glue_values: usize,
+    pub(crate) provenance_records: usize,
 }
 
 impl<G> Generation<G> {
@@ -92,6 +101,17 @@ impl<G> Generation<G> {
 
     pub(crate) const fn provenance_mut(&mut self) -> &mut ProvenanceArena<G> {
         &mut self.provenance
+    }
+
+    /// Retires every immutable arena in this generation together.
+    #[must_use]
+    pub(crate) fn retire(self) -> GenerationRetirement {
+        GenerationRetirement {
+            definitions: self.definitions.len(),
+            token_lists: self.token_lists.len(),
+            glue_values: self.glue.len(),
+            provenance_records: self.provenance.len(),
+        }
     }
 }
 
