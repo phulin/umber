@@ -1,6 +1,10 @@
 //! Storage-independent macro parameter-program semantics.
 
-use crate::token::{Token, TracedTokenWord};
+use crate::token::{Token, TokenWord, TracedTokenWord};
+
+#[cfg(test)]
+#[path = "macro_definition/tests.rs"]
+mod tests;
 
 const MACRO_PARAMETER_SLOTS: usize = 9;
 
@@ -18,6 +22,10 @@ impl MacroParameterPattern {
     }
 
     pub(crate) fn from_traced_words(words: &[TracedTokenWord]) -> Self {
+        Self::from_token_iter(words.iter().map(|word| word.semantic_token()))
+    }
+
+    pub(crate) fn from_words(words: &[TokenWord]) -> Self {
         Self::from_token_iter(words.iter().map(|word| word.semantic_token()))
     }
 
