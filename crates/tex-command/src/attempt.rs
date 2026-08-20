@@ -410,6 +410,17 @@ impl<G> AttemptArena<G> {
         row.value.resolve(&self.traced_words)
     }
 
+    pub(crate) fn token_word(
+        &self,
+        id: AttemptTokenListId,
+        index: usize,
+    ) -> Result<TracedTokenWord, AttemptError> {
+        self.token_words(id)?
+            .get(index)
+            .copied()
+            .ok_or(AttemptError::InvalidCoordinate)
+    }
+
     pub(crate) fn allocate_glue(&mut self, value: GlueSpec) -> Result<AttemptGlueId, AttemptError> {
         let id = AttemptGlueId::new(self.key, self.glue_values.len())?;
         self.glue_values
@@ -539,6 +550,17 @@ impl<G> AttemptArena<G> {
             .filter(|row| row.serial == id.serial)
             .ok_or(AttemptError::InvalidCoordinate)?;
         row.value.resolve(&self.argument_words)
+    }
+
+    pub(crate) fn argument(
+        &self,
+        id: AttemptArgumentRecordId,
+        slot: u8,
+    ) -> Result<Option<AttemptTokenListId>, AttemptError> {
+        if !(1..=9).contains(&slot) {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        Ok(self.arguments(id)?.get(usize::from(slot - 1)).copied())
     }
 
     pub(crate) fn allocate_name(&mut self, name: &str) -> Result<AttemptNameId, AttemptError> {

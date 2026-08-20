@@ -367,6 +367,32 @@ pub enum CommandReplayDelivery<G> {
 }
 
 impl<G> CommandState<G> {
+    /// Moves the complete operation arena into a resource continuation.
+    pub fn suspend_attempt<R>(
+        &mut self,
+        universe: &tex_state::Universe<G>,
+        resume: crate::AttemptResumePoint,
+        pending: R,
+    ) -> Result<crate::PendingCommandAttempt<G, R>, tex_state::UniverseError> {
+        Ok(crate::PendingCommandAttempt::new(
+            core::mem::take(&mut self.attempt),
+            universe.generation_owner()?,
+            resume,
+            pending,
+        ))
+    }
+
+    /// Reinstalls a returned arena after validating its coarse generation.
+    pub fn resume_attempt<R>(
+        &mut self,
+        universe: &tex_state::Universe<G>,
+        pending: crate::PendingCommandAttempt<G, R>,
+    ) -> Result<(crate::AttemptResumePoint, R), crate::PendingCommandAttempt<G, R>> {
+        let (attempt, resume, pending) = pending.resume(universe)?;
+        self.attempt = attempt;
+        Ok((resume, pending))
+    }
+
     pub(crate) fn observe_active_source_dependencies(&self, state: &mut CommandContext<'_, G>) {
         if !state.tracked_region_is_active() {
             return;
