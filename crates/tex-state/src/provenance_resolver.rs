@@ -345,9 +345,12 @@ fn render_location(out: &mut String, prefix: &str, location: &ResolvedSourceLoca
 
 fn line_starts(bytes: &[u8]) -> Vec<usize> {
     let mut starts = vec![0];
-    starts.extend(bytes.iter().enumerate().filter_map(|(index, &byte)| {
-        (byte == b'\n' && index + 1 <= bytes.len()).then_some(index + 1)
-    }));
+    starts.extend(
+        bytes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &byte)| (byte == b'\n').then_some(index + 1)),
+    );
     starts
 }
 
