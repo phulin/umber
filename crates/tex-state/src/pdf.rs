@@ -31,8 +31,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::ContentHash;
-use crate::ids::{FontId, NodeListId, TokenListId};
-use crate::node_arena::NodeListRef;
+use crate::ids::{FontId, TokenListId};
+use crate::node_arena::DurableListId;
 use crate::scaled::Scaled;
 use crate::state_hash::{StateHashFragment, StateHasher};
 use crate::token_store::TokenListRef;
@@ -750,10 +750,10 @@ pub struct PdfPageRecord {
 
 /// Immutable captured box and canonical identities for one `\pdfxform`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfFormRecord {
+pub struct PdfFormRecord<G> {
     object: u32,
     resource: u32,
-    box_list: NodeListRef,
+    box_list: DurableListId<G>,
     box_semantic_id: StateHashFragment,
     width: Scaled,
     height: Scaled,
@@ -797,7 +797,7 @@ impl PdfFormArtifact {
     }
 }
 
-impl PdfFormRecord {
+impl<G> PdfFormRecord<G> {
     #[must_use]
     pub const fn object(&self) -> u32 {
         self.object
@@ -807,13 +807,8 @@ impl PdfFormRecord {
         self.resource
     }
     #[must_use]
-    pub fn box_list(&self) -> NodeListId {
-        self.box_list.id()
-    }
-    /// Borrows the captured box's structural node-list owner.
-    #[must_use]
-    pub fn box_list_ref(&self) -> &NodeListRef {
-        &self.box_list
+    pub const fn box_list(&self) -> DurableListId<G> {
+        self.box_list
     }
     #[must_use]
     pub const fn width(&self) -> Scaled {
@@ -937,7 +932,7 @@ pub(crate) struct PdfStateCursor {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct PdfStateSnapshot {
+pub(crate) struct PdfStateSnapshot<G> {
     cursor: PdfStateCursor,
     match_state: Arc<PdfMatchState>,
     external_images: Arc<Vec<PdfExternalImageRecord>>,
@@ -948,7 +943,7 @@ pub(crate) struct PdfStateSnapshot {
     links: Arc<Vec<PdfLinkRecord>>,
     open_links: Arc<Vec<PdfOpenLink>>,
     color_stacks: Arc<Vec<PdfColorStack>>,
-    forms: Arc<Vec<PdfFormRecord>>,
+    forms: Arc<Vec<PdfFormRecord<G>>>,
     form_artifacts: Arc<BTreeMap<u32, PdfFormArtifact>>,
     destinations: Arc<Vec<PdfDestinationRecord>>,
     structure_destinations: Arc<Vec<PdfDestinationRecord>>,
@@ -979,7 +974,7 @@ impl Default for PdfMatchState {
 
 /// Live append-only PDF allocation state owned by one Universe timeline.
 #[derive(Clone, Debug)]
-pub(crate) struct PdfState {
+pub(crate) struct PdfState<G> {
     enabled: bool,
     next_object: u32,
     pages: Vec<PdfPageRecord>,
@@ -1012,7 +1007,7 @@ pub(crate) struct PdfState {
     color_stack_fingerprint: StateHashFragment,
     last_position: (Scaled, Scaled),
     snap_reference: (Scaled, Scaled),
-    forms: Arc<Vec<PdfFormRecord>>,
+    forms: Arc<Vec<PdfFormRecord<G>>>,
     form_fingerprint: StateHashFragment,
     next_form_resource: u32,
     form_artifacts: Arc<BTreeMap<u32, PdfFormArtifact>>,
@@ -1028,7 +1023,7 @@ pub(crate) struct PdfState {
     thread_fingerprint: StateHashFragment,
 }
 
-impl Default for PdfState {
+impl<G> Default for PdfState<G> {
     fn default() -> Self {
         let default_space_font = b"pdftexspace".to_vec();
         Self {
@@ -1084,7 +1079,7 @@ impl Default for PdfState {
     }
 }
 
-impl PdfState {
+impl<G> PdfState<G> {
     pub(crate) fn enable(&mut self) {
         if self.enabled {
             return;
@@ -1140,7 +1135,7 @@ impl PdfState {
     pub(crate) fn capture_format(
         &self,
         mut detach_tokens: impl FnMut(TokenListId) -> Result<Vec<u8>, String>,
-        mut detach_nodes: impl FnMut(&NodeListRef) -> Result<Vec<u8>, String>,
+        mut detach_nodes: impl FnMut(DurableListId<G>) -> Result<Vec<u8>, String>,
     ) -> Result<Option<PdfFormatState>, String> {
         let glyph_to_unicode = self
             .font_operations
@@ -1208,7 +1203,7 @@ impl PdfState {
                 Ok(PdfFormatForm {
                     object: form.object,
                     resource: form.resource,
-                    nodes: detach_nodes(&form.box_list)?,
+                    nodes: detach_nodes(form.box_list)?,
                     width: form.width,
                     height: form.height,
                     depth: form.depth,
@@ -1254,7 +1249,7 @@ impl PdfState {
     pub(crate) fn restore_format(
         format: PdfFormatState,
         mut import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter, String>,
-        mut import_nodes: impl FnMut(&[u8]) -> Result<(NodeListRef, StateHashFragment), String>,
+        mut import_nodes: impl FnMut(&[u8]) -> Result<(DurableListId<G>, StateHashFragment), String>,
     ) -> Result<Self, String> {
         if format.version != 1 || format.next_object == 0 || format.next_form_resource == 0 {
             return Err("unsupported or invalid PDF format resource state".to_owned());
@@ -2301,12 +2296,12 @@ impl PdfState {
     pub(crate) fn initialize_form(
         &mut self,
         identity: (u32, u32),
-        box_list: NodeListRef,
+        box_list: DurableListId<G>,
         box_semantic_id: StateHashFragment,
         dimensions: (Scaled, Scaled, Scaled),
         options: (Option<PdfTokenParameter>, Option<PdfTokenParameter>),
         immediate: bool,
-    ) -> Result<PdfFormRecord, PdfObjectCapacityError> {
+    ) -> Result<PdfFormRecord<G>, PdfObjectCapacityError> {
         let (object, resource) = identity;
         let (attr, resources) = options;
         let record = PdfFormRecord {
@@ -2327,14 +2322,14 @@ impl PdfState {
     }
 
     #[must_use]
-    pub(crate) fn form(&self, object: u32) -> Option<PdfFormRecord> {
+    pub(crate) fn form(&self, object: u32) -> Option<PdfFormRecord<G>> {
         self.forms
             .iter()
             .find(|form| form.object == object)
             .cloned()
     }
 
-    pub(crate) fn forms(&self) -> impl ExactSizeIterator<Item = PdfFormRecord> + '_ {
+    pub(crate) fn forms(&self) -> impl ExactSizeIterator<Item = PdfFormRecord<G>> + '_ {
         self.forms.iter().cloned()
     }
 
@@ -2548,7 +2543,7 @@ impl PdfState {
         }
     }
     #[must_use]
-    pub(crate) fn snapshot(&self) -> PdfStateSnapshot {
+    pub(crate) fn snapshot(&self) -> PdfStateSnapshot<G> {
         PdfStateSnapshot {
             cursor: self.cursor(),
             match_state: Arc::clone(&self.match_state),
@@ -2569,7 +2564,7 @@ impl PdfState {
         }
     }
 
-    pub(crate) fn rollback(&mut self, snapshot: PdfStateSnapshot) {
+    pub(crate) fn rollback(&mut self, snapshot: PdfStateSnapshot<G>) {
         let cursor = snapshot.cursor;
         assert!(
             cursor.page_count <= self.pages.len(),
@@ -3315,9 +3310,9 @@ fn append_fingerprint(previous: StateHashFragment, record: &PdfPageRecord) -> St
     hasher.finish_fragment()
 }
 
-fn append_form_fingerprint(
+fn append_form_fingerprint<G>(
     previous: StateHashFragment,
-    record: &PdfFormRecord,
+    record: &PdfFormRecord<G>,
 ) -> StateHashFragment {
     let mut hasher = StateHasher::new_exact(PDF_FORM_DOMAIN);
     previous.apply(&mut hasher);
@@ -3391,7 +3386,7 @@ mod tests {
 
     #[test]
     fn pdf_records_and_page_suffixes_preserve_token_parameter_semantics() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let initial = state.snapshot();
         let initial_hash = state.hash_fragment();
@@ -3502,7 +3497,7 @@ mod tests {
 
     #[test]
     fn annotation_and_link_objects_are_typed_hashed_and_rollback_safe() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let base = state.snapshot();
         let base_hash = state.hash_fragment();
@@ -3683,7 +3678,7 @@ mod tests {
 
     #[test]
     fn rollback_reuses_page_object_suffix_and_fingerprint() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let snapshot = state.snapshot();
         let hash = ContentHash::new([7; 32]);
@@ -3724,7 +3719,7 @@ mod tests {
 
     #[test]
     fn font_output_log_rolls_back_and_projects_last_attribute_and_char_union() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let font = crate::font::NULL_FONT;
         state.set_font_attribute(font, b"/StemV 70".to_vec());
@@ -3777,7 +3772,7 @@ mod tests {
         bytes.push(245);
         let font = tex_fonts::PdfPkFont::parse(&bytes).expect("synthetic PK parses");
         let request = tex_fonts::PdfPkFontRequest::new(b"cmr10".to_vec(), 300, b"cx".to_vec());
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         let before = state.hash_fragment();
         let snapshot = state.snapshot();
         state.provide_pk_font(request.clone(), font.clone());
@@ -3790,7 +3785,7 @@ mod tests {
 
     #[test]
     fn map_line_resolution_keeps_first_duplicate_and_honors_replace_and_remove() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         for line in [
             b"cmr10 First <cmr10.pfb".as_slice(),
             b"+cmr10 Ignored <ignored.pfb",
@@ -3810,7 +3805,7 @@ mod tests {
 
     #[test]
     fn implicit_pdftex_map_is_requested_and_resolved_from_provisioned_bytes() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         assert_eq!(state.font_map_file_requests(), [b"pdftex.map"]);
         state.provide_font_map_file(
             b"pdftex.map".to_vec(),
@@ -3827,13 +3822,13 @@ mod tests {
 
     #[test]
     fn first_unmodified_map_suppresses_default_but_modified_map_preserves_it() {
-        let mut replacement = PdfState::default();
+        let mut replacement = PdfState::<()>::default();
         replacement.push_font_map(PdfFontMapOperation::File(
             tex_fonts::PdfFontMapFile::parse(b"custom.map").expect("map request parses"),
         ));
         assert_eq!(replacement.font_map_file_requests(), [b"custom.map"]);
 
-        let mut additive = PdfState::default();
+        let mut additive = PdfState::<()>::default();
         additive.push_font_map(PdfFontMapOperation::File(
             tex_fonts::PdfFontMapFile::parse(b"+custom.map").expect("map request parses"),
         ));
@@ -3845,7 +3840,7 @@ mod tests {
 
     #[test]
     fn empty_map_primitive_blocks_the_implicit_default_map() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.push_font_map(PdfFontMapOperation::BlockDefault);
         assert!(state.font_map_file_requests().is_empty());
         assert!(state.resolved_font_map_lines().is_empty());
@@ -3853,7 +3848,7 @@ mod tests {
 
     #[test]
     fn external_image_metadata_is_typed_hashed_and_rollback_safe() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let initial = state.snapshot();
         let initial_hash = state.hash_fragment();
@@ -3907,7 +3902,7 @@ mod tests {
 
     #[test]
     fn allocated_external_images_share_the_object_ledger_and_replay_exactly() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let snapshot = state.snapshot();
         let source = PdfExternalImageSource {
@@ -3951,7 +3946,7 @@ mod tests {
     fn alpha_external_images_reserve_their_companion_and_replay_exactly() {
         // pdftex.web §1552 allocates the image object before `read_image`;
         // an alpha PNG then reserves its companion in that shared PDF ledger.
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let snapshot = state.snapshot();
         let source = PdfExternalImageSource {
@@ -3997,7 +3992,7 @@ mod tests {
 
     #[test]
     fn raw_object_reservation_initialization_and_rollback_share_one_ledger() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let initial = state.snapshot();
         let initial_hash = state.hash_fragment();
@@ -4056,7 +4051,7 @@ mod tests {
 
     #[test]
     fn document_fragments_preserve_kind_order_hash_and_rollback() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let initial = state.snapshot();
         let initial_hash = state.hash_fragment();
@@ -4098,7 +4093,7 @@ mod tests {
 
     #[test]
     fn return_value_is_checkpointed_hashed_and_excluded_from_formats() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         assert_eq!(state.return_value(), 0);
         assert!(state.is_format_empty());
         let initial = state.snapshot();
@@ -4120,7 +4115,7 @@ mod tests {
 
     #[test]
     fn space_font_names_are_interned_checkpointed_and_page_addressable() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         assert_eq!(state.space_font_name(0), Some(b"pdftexspace".as_slice()));
         assert!(state.is_format_empty());
         let initial = state.snapshot();
@@ -4187,7 +4182,7 @@ mod tests {
             omit_procset: 0,
             space_font_name: 0,
         };
-        let exercise = |state: &mut PdfState| {
+        let exercise = |state: &mut PdfState<()>| {
             state.provide_pk_font(pk_request.clone(), pk_font.clone());
             state
                 .register_external_image(
@@ -4234,7 +4229,7 @@ mod tests {
             ]
         };
 
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let initial = state.snapshot();
         let first = exercise(&mut state);
@@ -4251,7 +4246,7 @@ mod tests {
 
     #[test]
     fn final_document_objects_allocate_once_through_the_shared_ledger() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let token = test_token_parameter(7);
         let raw = state.reserve_raw_object().expect("raw object");
@@ -4285,7 +4280,7 @@ mod tests {
 
     #[test]
     fn catalog_page_action_reserves_and_replays_the_target_page_identity() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let initial = state.snapshot();
         let initial_hash = state.hash_fragment();
@@ -4369,7 +4364,7 @@ mod tests {
 
     #[test]
     fn catalog_thread_action_reuses_the_checkpointed_thread_identity() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let initial = state.snapshot();
         let action = PdfActionSpec::Thread(PdfActionDestination {
@@ -4409,7 +4404,7 @@ mod tests {
 
     #[test]
     fn thread_beads_are_typed_hashed_and_rollback_owned() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let checkpoint = state.snapshot();
         let initial_hash = state.hash_fragment();
@@ -4443,7 +4438,7 @@ mod tests {
 
     #[test]
     fn color_stacks_are_checkpointed_and_page_and_form_state_stay_independent() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         let before_hash = state.hash_fragment();
         let before = state.snapshot();
         let id = state
@@ -4480,7 +4475,7 @@ mod tests {
 
     #[test]
     fn disabled_page_color_restoration_query_is_observationally_inert() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         let before = state.cursor();
         let before_hash = state.hash_fragment();
 
@@ -4492,7 +4487,7 @@ mod tests {
 
     #[test]
     fn saved_positions_and_snap_reference_rollback_and_replay_exactly() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         let before = state.snapshot();
         state.publish_traversal_positions(
             Some((Scaled::from_raw(17), Scaled::from_raw(-23))),
@@ -4521,7 +4516,7 @@ mod tests {
 
     #[test]
     fn destination_maps_are_disjoint_duplicate_aware_and_rollback_safe() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let checkpoint = state.snapshot();
         let initial_hash = state.hash_fragment();
@@ -4595,7 +4590,7 @@ mod tests {
 
     #[test]
     fn outlines_allocate_action_item_title_and_rollback_as_one_ledger_entry() {
-        let mut state = PdfState::default();
+        let mut state = PdfState::<()>::default();
         state.enable();
         let checkpoint = state.snapshot();
         let record = state

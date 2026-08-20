@@ -27,11 +27,11 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 | Environment           | meanings, parameters, registers, current fonts      | journaled writes         |
 | Sparse registers      | e-TeX register overflow                             | journaled map/page roots |
 | Code tables           | cat/lc/uc/sf/math/del codes                         | copy-on-write pages      |
-| Runtime value regions | token lists, macros, glue, and exact origin lists   | sealed region root sets  |
-| Provenance            | origins, frames, source ranges, and sparse entries  | roots + watermarks       |
+| Durable value arenas  | token lists, definitions, glue, and provenance      | generation owner         |
+| Provenance            | origins, frames, and source ranges                  | typed arena coordinates  |
 | Source fragments/map  | immutable bytes and current editor layout           | roots + watermarks       |
 | Glue store            | canonical immutable glue specs                      | frozen + watermark       |
-| Node payloads         | compact node words, sidecars, semantic identities   | structural `NodeListRef` |
+| Node payloads         | scratch, mode/page, and durable list arenas          | typed arena coordinates  |
 | Fonts                 | immutable TFM/OpenType selections                   | frozen + watermark       |
 | Hyphenation           | patterns, exceptions, language state                | snapshot-owned roots     |
 | Page state            | contribution queue, marks, insertions, best break   | copy-on-write roots      |
@@ -180,11 +180,10 @@ semantic hashing, and format serialization apply without a PDF-specific side
 store.
 
 Box slots additionally retain the group depth that owns their visible value.
-Each nonvoid slot owns an `Option<NodeListRef>` beside its packed semantic word,
-and each box undo record owns its complete old/new slot pair. The word is never
-lifetime authority. Coalescing replaces the undo record's new owner, same-level
-takes move the current owner to their caller, and group exit, rollback, journal
-retirement, and fork cloning drop or clone owners as ordinary typed values.
+Each nonvoid slot contains an `Option<DurableListId<G>>` into the admitted
+generation's durable node arena. The generation owner, not the packed word or
+individual box cell, is lifetime authority. Box undo records journal the old
+and new coordinates with their exact TeX levels.
 Destructive `\box`, `\unhbox`, `\unvbox`, and `\vsplit` updates preserve that
 owner depth even when executed inside a nested box-construction group: the
 void or remainder value crosses inner boundaries, then the prior value is
@@ -386,19 +385,16 @@ Glue specs and font selections are immutable content. Font program identity is
 derived from validated OpenType data and remains separate from host paths or
 transport policy.
 
-Node lists live in immutable compact payloads with typed sidecars. `NodeListRef`
-is the sole lifetime owner. `NodeListId` is only a borrow-scoped payload span or
-a dense detached encoding key; it cannot recover a dropped payload. Each
-frozen list has a canonical semantic identity composed from decoded node
-values and child identities, excluding provenance.
+Node lists live in scratch, mode/page, or generation-durable arenas. Their
+copy-only `NodeListId<L>` coordinates contain no lifetime authority. Explicit
+promotion walks only declared escaping closures, densely relocates child
+coordinates, and changes payload coordinates at the lifetime boundary.
 
-Env box cells and undo records directly retain immutable `NodeListRef` payloads;
-their raw words are projections used by semantic hashing and format encoding.
-PDF forms, mode/page/control state, checkpoints, generations, retry snapshots,
-revision candidates, and shipout scratch likewise carry structural refs.
-Related Universe forks share payloads through `Arc`; losing every aggregate
-owner releases the complete typed closure without a root table, discovery
-walk, promotion, or timeline pin.
+Box cells and undo records contain generation-branded durable coordinates.
+PDF form records do likewise. Open modes and the page builder contain
+page-lifetime coordinates, while synchronous transforms use operation scratch.
+Only a whole generation, page arena, or operation owns storage; no list or
+payload has an individual reference count or root-set entry.
 
 ## 8. External effects: the virtualized world
 

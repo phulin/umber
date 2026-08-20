@@ -9,7 +9,6 @@ pub(crate) use state_hash::{PageHashCache, PageStateHashCursor};
 
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
-use crate::node_arena::{NodeArenaCursor, NodeArenaError, PageLifetime, PageListId, PageNodeArena};
 use crate::scaled::Scaled;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -300,7 +299,6 @@ impl PageInsertion {
 /// Snapshot-owned state for TeX.web's page builder.
 #[derive(Debug)]
 pub(crate) struct PageBuilderState {
-    arena: PageNodeArena,
     contribution: VecDeque<Node>,
     current_page: PageNodeSequence,
     page_discards: Vec<Node>,
@@ -361,7 +359,6 @@ pub(crate) struct PageMemoState {
 impl Default for PageBuilderState {
     fn default() -> Self {
         Self {
-            arena: PageNodeArena::new(),
             contribution: VecDeque::new(),
             current_page: PageNodeSequence::default(),
             page_discards: Vec::new(),
@@ -598,30 +595,6 @@ impl PageBuilderState {
             && self.split_first_mark.is_none()
             && self.split_bot_mark.is_none()
             && self.mark_classes.is_empty()
-    }
-
-    /// Publishes one completed nested list into the current page lifetime.
-    pub(crate) fn publish_list(&mut self, nodes: Vec<Node>) -> Result<PageListId, NodeArenaError> {
-        self.arena.publish(nodes)
-    }
-
-    #[must_use]
-    pub(crate) const fn node_arena(&self) -> &PageNodeArena {
-        &self.arena
-    }
-
-    #[must_use]
-    pub(crate) fn node_arena_cursor(&self) -> NodeArenaCursor<PageLifetime> {
-        self.arena.cursor()
-    }
-
-    /// Truncates page storage only after the aggregate caller has restored
-    /// every page and mode root to the supplied cursor.
-    pub(crate) fn truncate_node_arena(
-        &mut self,
-        cursor: NodeArenaCursor<PageLifetime>,
-    ) -> Result<(), NodeArenaError> {
-        self.arena.truncate(cursor)
     }
 
     pub(crate) fn dimension(

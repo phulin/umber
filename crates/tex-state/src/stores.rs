@@ -5,7 +5,10 @@ use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenLi
 use crate::env::{DenseState, StateError};
 use crate::generation::{Generation, GenerationOwner, GenerationRetirement};
 use crate::glue::GlueSpec;
-use crate::node_arena::{DurableListId, DurableNodeArena, NodeArenaError, NodeList};
+use crate::node::NodeTokenList;
+use crate::node_arena::{
+    DurableListId, DurableNodeArena, NodeArenaError, NodeList, PageListId, PageNodeArena,
+};
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
 
@@ -126,6 +129,19 @@ impl<'a, G> AdmittedState<'a, G> {
         id: DurableListId<G>,
     ) -> Result<NodeList<'a, G, GlueId<G>, TokenListId<G>>, NodeArenaError> {
         self.nodes.get(id)
+    }
+
+    pub(crate) fn copy_nodes_into_page(
+        &self,
+        roots: &[DurableListId<G>],
+        destination: &mut PageNodeArena,
+    ) -> Result<Vec<PageListId>, NodeArenaError> {
+        self.nodes.promote_into_with(
+            roots,
+            destination,
+            |id| self.glue(id),
+            |id| NodeTokenList::new(self.token_list(id)),
+        )
     }
 
     pub(crate) fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {

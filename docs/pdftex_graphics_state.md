@@ -62,10 +62,10 @@ the shared ledger as 1, 3, 5, ... when no other objects intervene, while
 The typed backend may inline the resource dictionary, but its reserved ledger
 identity remains observable and checkpointed. A
 nonvoid box is consumed with ordinary same-level assignment semantics and its
-direct immutable `NodeListRef`, dimensions, expanded attributes, and expanded
-resources are retained checkpointably by the form record. The packed box word
-is only a projection; form snapshot/COW and rollback need no survivor or
-timeline pin. `\pdfrefxform` validates the object and appends a
+generation-branded durable list coordinate, dimensions, expanded attributes,
+and expanded resources are retained checkpointably by the form record. The
+coarse generation owner is the only lifetime authority. `\pdfrefxform`
+validates the object and appends a
 dimensioned reusable node; horizontal traversal advances by the form width,
 while vertical traversal advances by height, places the form at its baseline,
 then advances by depth. Normal forms are traversed lazily when their owning

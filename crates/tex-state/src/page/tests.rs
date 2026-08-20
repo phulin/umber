@@ -59,18 +59,6 @@ fn scalar_and_class_marks_store_handle_free_page_values() {
     assert!(page.mark_class(PageMark::SplitFirst, 19).is_empty());
 }
 
-#[test]
-fn page_arena_rollback_keeps_prefix_and_rejects_suffix_coordinates() {
-    let mut page = PageBuilderState::default();
-    let retained = page.publish_list(vec![kern(1)]).unwrap();
-    let cursor = page.node_arena_cursor();
-    let rejected = page.publish_list(vec![kern(2)]).unwrap();
-
-    page.truncate_node_arena(cursor).unwrap();
-    assert_eq!(page.node_arena().get(retained).unwrap().nodes(), [kern(1)]);
-    assert!(page.node_arena().get(rejected).is_err());
-}
-
 fn hash_page(page: &PageBuilderState) -> u64 {
     let mut hasher = StateHasher::new_exact(0x7061_6765_5f74_6573);
     page.hash_semantic(

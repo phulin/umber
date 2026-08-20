@@ -315,6 +315,37 @@ impl<G> DenseState<G> {
         )
     }
 
+    /// Replaces a box value without changing its current TeX eq level.
+    pub(crate) fn replace_box_register(
+        &mut self,
+        index: u16,
+        value: Option<DurableListId<G>>,
+    ) -> Result<(), StateError> {
+        let cell = StateCell::BoxRegister(index);
+        let before = self.read_cell(cell)?;
+        let StateWord::NodeList(old) = before.value else {
+            return Err(StateError::CellKindMismatch);
+        };
+        let after = StateWord::NodeList(value);
+        self.write_cell(
+            cell,
+            BankCell {
+                value: after,
+                level: before.level,
+            },
+        )?;
+        self.journal.push(JournalEntry::Mutation(Mutation {
+            cell,
+            before: StateWord::NodeList(old),
+            before_level: before.level,
+            after,
+            after_level: before.level,
+            saved_at: None,
+            kind: MutationKind::Assignment,
+        }));
+        Ok(())
+    }
+
     #[inline(always)]
     pub(crate) fn code(&self, kind: CodeTableKind, scalar: char) -> Result<i64, StateError> {
         Ok(self.code_bank(kind).get(scalar as u32)?.value)

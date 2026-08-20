@@ -97,17 +97,18 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node.rs`: Storage-independent TeX node and box values with copy-only
   provenance, directly owned glue, arena-owned token payloads, and typed list
   coordinates.
-- `src/node_sequence.rs`: Paired semantic and TeX-physical projections over
-  the sole mutable `NodeListBuilder`, barrier-frozen immutable sidecars,
-  TeX-cell lineage metadata, and semantic-only equality.
+- `src/node_sequence.rs`: Paired semantic and TeX-physical operation buffers,
+  page-arena sidecar publication, TeX-cell lineage metadata, and semantic-only
+  equality.
 - `src/node_arena.rs`: Scratch, page, and generation-branded durable node-list
   arenas; copy-only typed coordinates; owner-checked suffix cursors; borrowed
   resolution; and exact-root dense relocation between lifetimes.
-- `src/node_arena/tests.rs`: Exact escaping-closure relocation, owner-checked
-  rollback, and invalid-publication controls.
+- `src/node_arena/tests.rs`: Scratch/page/durable exact-closure relocation,
+  owner-checked rollback, invalid-publication controls, completed-page release,
+  and stale-coordinate rejection after bounded row reuse.
 - `src/page.rs`: Page-lifetime builder state with directly owned contribution,
-  current-page, discard, insertion, and mark buffers plus page-arena list
-  publication, dimensions/integers, and fire-up records.
+  current-page, discard, insertion, and mark buffers; the aggregate Universe
+  owns immutable page-list publication and rollback cursors.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with copy-only token
   coordinates in catalog/page collections, deterministic object allocation,
   durable form-list coordinates, suffix transfer, and committed-page ledger.

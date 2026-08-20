@@ -4,7 +4,7 @@
 
 This document defines the node-specific implementation of
 [Runtime storage lifetimes](runtime_storage_lifetimes.md). The former
-structural `NodeListRef` payload-owner model is deleted. Runtime lists are now
+structural per-list payload-owner model is deleted. Runtime lists are now
 copy-only coordinates whose storage is owned by operation, page, or revision
 generation arenas.
 
@@ -14,9 +14,10 @@ ordinary resolution remains direct, safe Rust and allocation-free.
 
 ## Lifetime-specific coordinates
 
-`NodeListId<L>` is a private-construction dense row coordinate branded by its
-semantic lifetime. Row zero is the canonical empty list and resolves without
-storage. The public lifetime families are:
+`NodeListId<L>` is a private-construction owner, row, and row-generation
+coordinate branded by
+its semantic lifetime. Row zero is the canonical empty list and resolves
+without storage. The public lifetime families are:
 
 - `ScratchListId` for unfinished shaping, transforms, packing probes, and
   speculative operation material;
@@ -27,10 +28,10 @@ storage. The public lifetime families are:
 
 A coordinate is not an owner. It contains no `Arc`, `Weak`, root slot,
 registry key, reference count, or drop-driven reachability action. Resolution
-borrows the one matching `NodeArena` and indexes its row directly. Arena
-constructors and coordinate constructors remain private to the storage layer,
-so a caller cannot resolve a coordinate against an unrelated arena of the same
-semantic class.
+borrows the one matching `NodeArena`, validates its compact owner identity, and
+indexes its row directly. Arena and coordinate constructors remain private to
+the storage layer, so a coordinate from an unrelated arena of the same
+semantic class is rejected rather than aliasing an equal row number.
 
 ## Payload placement
 
@@ -60,8 +61,9 @@ page restore follows this order:
 4. release replaced coarse owners after no restored root can name them.
 
 A foreign cursor or a cursor beyond the current suffix is rejected without
-mutation. Reusing an arena object assigns a fresh owner identity before any new
-coordinate can be issued.
+mutation. Reusing released trailing storage assigns a fresh row generation, so
+a stale copied coordinate cannot alias a later page even when its physical row
+number is reused.
 
 ## Exact promotion
 
@@ -102,9 +104,10 @@ and any requested stable source recipes. `tex-out` receives no node id, arena
 cursor, arena owner, generation owner, runtime handle, or engine borrow.
 
 Only after detachment and artifact validation succeed does execution remove
-the page root and release or reset the bounded page storage. Failed detachment
-keeps the canonical page root and arena together so operation rollback can
-restore them atomically.
+the page root, drop its exact exclusively owned closure, and trim its trailing
+row storage. Failed detachment truncates only shipout's speculative root and
+normalization suffix; the original child closure remains live so operation
+rollback can restore its canonical mode/page root atomically.
 
 ## Semantic identity and detached boundaries
 

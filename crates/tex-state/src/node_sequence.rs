@@ -1,7 +1,7 @@
 //! Paired semantic and TeX-physical node sequences.
 
 use crate::node::Node;
-use crate::node_arena::{NodeArenaError, PageListId, PageNodeArena};
+use crate::node_arena::PageListId;
 
 /// Allocation identity for one direct TeX82 high-memory cell.
 ///
@@ -228,14 +228,13 @@ impl NodeSequence {
     /// Materializes immutable node/reachability/provenance sidecars at an
     /// externally visible episode boundary while retaining this builder as
     /// the sole mutable continuation.
-    pub fn freeze_sidecars(&mut self, arena: &mut PageNodeArena) -> Result<(), NodeArenaError> {
+    pub fn publish_sidecars<G>(&mut self, universe: &mut crate::Universe<G>) {
         if self.frozen_semantic.is_none() {
-            self.frozen_semantic = Some(arena.publish(self.semantic.clone())?);
+            self.frozen_semantic = Some(universe.publish_page_nodes(&self.semantic));
         }
         if self.frozen_physical.is_none() {
-            self.frozen_physical = Some(arena.publish(self.physical.clone())?);
+            self.frozen_physical = Some(universe.publish_page_nodes(&self.physical));
         }
-        Ok(())
     }
 
     #[must_use]

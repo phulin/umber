@@ -108,16 +108,14 @@ image, form, and graphics-state resources are referenced rather than copied.
 Future primitive issues may add object kinds without adding a second PDF
 state store.
 
-A staged form record directly owns the `NodeListRef` moved from its consumed box
-register. The PDF ledger's copy-on-write collections and snapshots share that
-owner; rollback before `\pdfxform`, suffix rejection, or final record drop
-releases it. No box-build, local survivor, or timeline pin participates, so
-direct shipout may normalize forms recursively through the record's owner.
-The traversal borrows compact child coordinates only through that owner and
-finishes by emitting detached positioned/form artifacts. Neither the
-finalization input nor the validated `tex-out` PDF graph retains a
-`NodeListRef`, `NodeListId`, payload root, weak-index entry, or other engine
-lifetime metadata.
+A staged form record stores a `DurableListId<G>` in the admitted generation's
+node arena after consuming its box register. The coarse generation owner keeps
+that closure admissible across PDF snapshots and rollback; the form adds no
+per-list owner. Direct form traversal copies the closure into bounded
+page-lifetime scratch, emits detached positioned/form artifacts, and truncates
+that scratch on both success and failure. Neither finalization input nor the
+validated `tex-out` PDF graph retains a runtime node coordinate, arena key,
+generation owner, or engine borrow.
 
 Finalization detaches only forms that have traversal artifacts (plus immediate
 forms, whose creation performs that traversal). An unreferenced lazy form
