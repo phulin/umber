@@ -74,7 +74,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/hyphenation/tests.rs`: Unit tests for hyphenation patterns, exceptions, bounds, and overlapping matches.
 - `src/identity.rs`: Shared generation-tagged runtime identity allocator for rollback-truncated stores.
 - `src/generation.rs`: Fresh invariant generation brands, sealed arena
-  construction, coarse generation ownership, and whole-generation retirement.
+  construction, episode-level guarded admission, cloneable coarse generation
+  ownership, and whole-generation retirement.
 - `src/ids.rs`: Opaque snapshot and font handles retained outside the deleted runtime-value ownership substrate.
 - `src/input.rs`: Snapshot-ready lexer/input stack summaries with copy-only token-list ids, macro replay sites and argument slots, source ids, and generic checkpoint future-state comparison.
 - `src/input/tests.rs`: Value and snapshot-isolation tests for frozen input

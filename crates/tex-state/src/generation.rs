@@ -1,7 +1,7 @@
 //! Fresh brands and coarse owners for one revision generation.
 
 use core::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::definition_arena::DefinitionArena;
 use crate::durable_arena::{GlueArena, ProvenanceArena, TokenListArena};
@@ -55,7 +55,7 @@ pub(crate) struct Generation<G> {
 /// backing arenas remain private, ids carry no owner, and ordinary admitted
 /// reads borrow the already-owned generation without retaining this `Arc`.
 pub struct GenerationOwner<G> {
-    generation: Arc<Generation<G>>,
+    generation: Arc<RwLock<Generation<G>>>,
 }
 
 impl<G> Clone for GenerationOwner<G> {
@@ -75,7 +75,7 @@ impl<G> core::fmt::Debug for GenerationOwner<G> {
 impl<G> GenerationOwner<G> {
     pub(crate) fn new(generation: Generation<G>) -> Self {
         Self {
-            generation: Arc::new(generation),
+            generation: Arc::new(RwLock::new(generation)),
         }
     }
 
@@ -85,12 +85,16 @@ impl<G> GenerationOwner<G> {
     }
 
     #[must_use]
-    pub(crate) fn generation(&self) -> &Generation<G> {
-        &self.generation
+    pub(crate) fn generation(&self) -> RwLockReadGuard<'_, Generation<G>> {
+        self.generation
+            .read()
+            .expect("generation lock poisoned by a failed admitted episode")
     }
 
-    pub(crate) fn generation_mut(&mut self) -> Option<&mut Generation<G>> {
-        Arc::get_mut(&mut self.generation)
+    pub(crate) fn generation_mut(&self) -> RwLockWriteGuard<'_, Generation<G>> {
+        self.generation
+            .write()
+            .expect("generation lock poisoned by a failed admitted episode")
     }
 
     /// Returns whether this is the only coarse owner of the generation.
@@ -103,7 +107,10 @@ impl<G> GenerationOwner<G> {
 
     pub(crate) fn retire(self) -> Result<GenerationRetirement, Self> {
         match Arc::try_unwrap(self.generation) {
-            Ok(generation) => Ok(generation.retire()),
+            Ok(generation) => Ok(generation
+                .into_inner()
+                .expect("generation lock poisoned by a failed admitted episode")
+                .retire()),
             Err(generation) => Err(Self { generation }),
         }
     }

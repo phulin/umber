@@ -12,6 +12,7 @@ use crate::node_arena::{
 };
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
+use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 #[cfg(test)]
 #[path = "stores/tests.rs"]
@@ -49,10 +50,7 @@ impl<G> StateCore<G> {
     #[must_use]
     pub(crate) fn admit_mut(&mut self) -> Result<AdmittedStateMut<'_, G>, StateError> {
         Ok(AdmittedStateMut {
-            generation: self
-                .generation
-                .generation_mut()
-                .ok_or(StateError::GenerationInUse)?,
+            generation: self.generation.generation_mut(),
             nodes: &mut self.nodes,
             state: &mut self.state,
         })
@@ -122,7 +120,7 @@ impl<G> StateCore<G> {
 
 /// Immutable, already-admitted hot view.
 pub(crate) struct AdmittedState<'a, G> {
-    generation: &'a Generation<G>,
+    generation: RwLockReadGuard<'a, Generation<G>>,
     nodes: &'a DurableNodeArena<G>,
     state: &'a DenseState<G>,
 }
@@ -134,12 +132,12 @@ impl<'a, G> AdmittedState<'a, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'a, G> {
+    pub(crate) fn definition(&self, id: DefinitionId<G>) -> DefinitionView<'_, G> {
         self.generation.definitions().get(id)
     }
 
     #[inline(always)]
-    pub(crate) fn token_list(&self, id: TokenListId<G>) -> &'a [TokenWord] {
+    pub(crate) fn token_list(&self, id: TokenListId<G>) -> &[TokenWord] {
         self.generation.token_lists().get(id)
     }
 
@@ -176,7 +174,7 @@ impl<'a, G> AdmittedState<'a, G> {
 
 /// Unique admitted view used for assignment and commit publication.
 pub(crate) struct AdmittedStateMut<'a, G> {
-    generation: &'a mut Generation<G>,
+    generation: RwLockWriteGuard<'a, Generation<G>>,
     nodes: &'a mut DurableNodeArena<G>,
     state: &'a mut DenseState<G>,
 }
