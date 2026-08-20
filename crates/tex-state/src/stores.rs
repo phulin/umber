@@ -80,45 +80,12 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 mod exact_identity;
-mod format;
 mod low_memory;
 mod node_semantic;
 mod state_hash;
 
-pub(crate) use format::{
-    CODE_TABLES_SECTION, FONTS_SECTION, FROZEN_ENV_SECTION, FROZEN_NODES_SECTION,
-    FrozenCoreSections, FrozenNodeSection, FrozenNonNodeSections, GLUE_SECTION,
-    HYPHENATION_SECTION, MACROS_SECTION, NAMES_LOOKUP_SECTION, NAMES_SECTION, StoreFormatError,
-    TOKEN_LISTS_SECTION,
-};
-#[cfg(test)]
-pub(crate) use format::{
-    TestingFontFormatCorruption, testing_corrupt_environment_box_reference,
-    testing_corrupt_environment_global_cell, testing_corrupt_environment_macro_reference,
-    testing_corrupt_font_format, testing_frozen_environment_shape,
-};
-
 pub use crate::env::group::{GroupFrame, GroupKind, GroupMismatch};
 pub(crate) use state_hash::StoreStateHashCursor;
-
-/// A rollback snapshot for all currently implemented state stores.
-#[derive(Clone, Debug)]
-pub(crate) struct StoreSnapshot {
-    owner: SnapshotOwner,
-    env_snapshot: EnvSnapshot,
-    interner_mark: InternerMark,
-    string_pool: StringPoolSnapshot,
-    string_pool_recycled_mark: usize,
-    provenance_mark: ProvenanceStoreMark,
-    source_map_mark: SourceMapMark,
-    font_mark: FontStoreMark,
-    code_tables_snapshot: CodeTablesSnapshot,
-    hyphenation: Arc<HyphenationTable>,
-    prepared_mag: Option<i32>,
-    last_loaded_font: FontId,
-    exact_env_identity: exact_identity::ExactEnvSnapshot,
-    exact_projection_cache: state_hash::StoreProjectionCache,
-}
 
 /// Fixed-size direct-operation cursor. This is not a rollback snapshot and
 /// owns no aggregate state root.
@@ -131,13 +98,6 @@ pub(crate) struct DirectStoreOperationMark {
 struct PendingLowMemoryBreak {
     arena: low_memory::LowMemoryArena,
     owners: Vec<(crate::PureBreakMemoryOwner, low_memory::Allocation)>,
-}
-
-impl StoreSnapshot {
-    #[must_use]
-    pub(crate) const fn epoch(&self) -> crate::epoch::Epoch {
-        self.env_snapshot.epoch()
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -944,13 +904,6 @@ impl Stores {
         self.source_fragments.source_span_for_root(span)
     }
 
-    pub(crate) fn can_restore_snapshot(&self, snapshot: &StoreSnapshot) -> bool {
-        snapshot.owner == self.owner.snapshot_owner()
-            && self.env.can_rollback_to(&snapshot.env_snapshot)
-            && snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos()
-            && snapshot.string_pool_recycled_mark <= self.string_pool_recycled_journal.len()
-    }
-
     pub(crate) fn env_group_depth(&self) -> u32 {
         self.env.group_depth()
     }
@@ -1438,58 +1391,6 @@ impl Stores {
         self.intern_macro_with_provenance_in_domain(macro_meaning, provenance, None)
     }
 
-    pub(crate) fn intern_macro_with_provenance_in_domain(
-        &mut self,
-        macro_meaning: MacroMeaning,
-        provenance: Option<MacroDefinitionProvenance>,
-        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
-    ) -> MacroDefinitionRef {
-        self.assert_live_token_list(macro_meaning.parameter_text());
-        self.assert_live_token_list(macro_meaning.replacement_text());
-        if let Some(provenance) = &provenance {
-            self.assert_live_origin(provenance.definition_origin());
-            self.assert_origin_list_len_matches(
-                macro_meaning.parameter_text(),
-                provenance.parameter_ref(),
-            );
-            self.assert_origin_list_len_matches(
-                macro_meaning.replacement_text(),
-                provenance.replacement_ref(),
-            );
-        }
-        let parameter = self.tokens(macro_meaning.parameter_text());
-        let replacement = self.tokens(macro_meaning.replacement_text());
-        let parameter_pattern = MacroParameterPattern::from_tokens(&parameter);
-        let observation_width = u32::try_from(2_usize + parameter.len() + replacement.len())
-            .expect("macro token list length exceeds u32");
-        let definition_origin = provenance
-            .as_ref()
-            .map_or(crate::token::OriginId::UNKNOWN, |value| {
-                value.definition_origin()
-            });
-        let parameter_origins = provenance.as_ref().map_or_else(Vec::new, |value| {
-            self.runtime_origin_entries(value.parameter_ref())
-        });
-        let replacement_origins = provenance.as_ref().map_or_else(Vec::new, |value| {
-            self.runtime_origin_entries(value.replacement_ref())
-        });
-        let _ = domain;
-        let id = self
-            .runtime_values
-            .allocate_macro(RuntimeMacroValueInput {
-                flags: macro_meaning.flags(),
-                parameter_pattern,
-                parameter_text: macro_meaning.parameter_text(),
-                replacement_text: macro_meaning.replacement_text(),
-                definition_origin,
-                parameter_origins: &parameter_origins,
-                replacement_origins: &replacement_origins,
-                observation_width,
-            })
-            .expect("runtime macro allocation must remain representable");
-        MacroDefinitionRef::new(id)
-    }
-
     pub(crate) fn macro_definition_ref(&self, id: MacroDefinitionId) -> MacroDefinitionRef {
         self.runtime_values
             .macro_definition(id)
@@ -1926,29 +1827,6 @@ impl Stores {
         self.intern_token_list_in_domain(tokens, None)
     }
 
-    pub(crate) fn intern_token_list_in_domain(
-        &mut self,
-        tokens: &[Token],
-        _domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
-    ) -> TokenListId {
-        let semantic_id = self.token_list_semantic_id(tokens.iter().copied());
-        self.runtime_values
-            .intern_token_list(RuntimeTokenValueInput {
-                semantic_id,
-                tokens,
-                provenance: &[],
-            })
-            .expect("runtime token-list allocation must remain representable")
-    }
-
-    pub(crate) fn intern_token_list_ref_in_domain(
-        &mut self,
-        tokens: &[Token],
-        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
-    ) -> TokenListRef {
-        TokenListRef::new(self.intern_token_list_in_domain(tokens, domain))
-    }
-
     /// Interns the current token-list builder value and clears it for reuse.
     #[cfg(test)]
     pub fn finish_token_list(&mut self, builder: &mut TokenListBuilder) -> TokenListId {
@@ -1956,68 +1834,6 @@ impl Stores {
     }
 
     #[cfg(any(test, feature = "testing"))]
-    pub(crate) fn finish_token_list_in_domain(
-        &mut self,
-        builder: &mut TokenListBuilder,
-        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
-    ) -> TokenListId {
-        let id = self.intern_token_list_in_domain(builder.as_slice(), domain);
-        builder.clear();
-        id
-    }
-
-    pub(crate) fn finish_traced_token_list_in_domain(
-        &mut self,
-        traced: &[TracedTokenWord],
-        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
-    ) -> TracedTokenList {
-        let semantic_id = self.traced_token_list_semantic_id(traced);
-        let _ = domain;
-        let token_list = if traced.is_empty() {
-            TokenListRef::new(TokenListId::EMPTY)
-        } else {
-            TokenListRef::new(
-                self.runtime_values
-                    .allocate_traced_token_list(RuntimeTracedTokenValueInput {
-                        semantic_id,
-                        words: traced,
-                    })
-                    .expect("runtime traced token-list allocation must remain representable"),
-            )
-        };
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_traced_list_finish(traced.len(), 0, 0);
-        let origins = traced.iter().map(|word| word.origin()).collect::<Vec<_>>();
-        let origin_list = self.allocate_origin_list_ids(&origins);
-        TracedTokenList::new(token_list, origin_list)
-    }
-
-    pub(crate) fn finish_rooted_traced_token_list_in_domain(
-        &mut self,
-        traced: &crate::token::RootedTracedTokenBuffer,
-        domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
-    ) -> TracedTokenList {
-        let words = traced.words();
-        let semantic_id = self.traced_token_list_semantic_id(words);
-        let _ = domain;
-        let token_list = if words.is_empty() {
-            TokenListRef::new(TokenListId::EMPTY)
-        } else {
-            TokenListRef::new(
-                self.runtime_values
-                    .allocate_traced_token_list(RuntimeTracedTokenValueInput { semantic_id, words })
-                    .expect("runtime rooted token-list allocation must remain representable"),
-            )
-        };
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_traced_list_finish(words.len(), 0, 0);
-        for root in traced.roots() {
-            self.assert_live_origin(root.id());
-        }
-        let origins = words.iter().map(|word| word.origin()).collect::<Vec<_>>();
-        let origin_list = self.allocate_origin_list_ids(&origins);
-        TracedTokenList::new(token_list, origin_list)
-    }
 
     pub(crate) fn token_list_ref(&self, id: TokenListId) -> TokenListRef {
         self.runtime_values
@@ -2057,34 +1873,6 @@ impl Stores {
     #[cfg(test)]
     pub(crate) fn testing_token_semantic_id(&self, id: TokenListId) -> TokenSemanticId {
         self.tokens(id).semantic_id()
-    }
-
-    pub(crate) fn selected_patch_roots(
-        &self,
-        _domain: &crate::patch_domain::PatchAllocationDomain,
-    ) -> Vec<crate::patch_domain::PatchRoot> {
-        Vec::new()
-    }
-
-    pub(crate) fn patch_allocation_count(&self) -> usize {
-        0
-    }
-
-    pub(crate) fn clear_patch_allocations(&mut self) {}
-
-    pub(crate) fn begin_patch_operation(&self) -> StorePatchOperationMark {
-        StorePatchOperationMark {
-            runtime_values: self
-                .runtime_values
-                .mark()
-                .expect("runtime value mark must remain representable"),
-        }
-    }
-
-    pub(crate) fn discard_patch_operation_allocations(&mut self, mark: StorePatchOperationMark) {
-        self.runtime_values
-            .rollback(mark.runtime_values)
-            .expect("patch runtime value mark belongs to this store");
     }
 
     fn token_list_semantic_id(&self, tokens: impl IntoIterator<Item = Token>) -> TokenSemanticId {
@@ -2693,17 +2481,6 @@ impl Stores {
     }
 
     /// Interns a glue specification and returns its copy-only identity.
-    pub fn intern_glue_in_domain(
-        &mut self,
-        spec: GlueSpec,
-        _domain: Option<&mut crate::patch_domain::PatchAllocationDomain>,
-    ) -> GlueSpecRef {
-        GlueSpecRef::new(
-            self.runtime_values
-                .intern_glue(spec)
-                .expect("runtime glue allocation must remain representable"),
-        )
-    }
 
     #[cfg(any(test, feature = "testing"))]
     #[allow(dead_code)]
@@ -3397,33 +3174,6 @@ impl Stores {
     /// Consumes one operation-local builder and publishes a directly owned,
     /// immutable compact graph. No aggregate destination is changed if
     /// validation fails.
-    pub fn freeze_node_list_ref(&mut self, builder: NodeListBuilder) -> NodeListRef {
-        // A node payload is a canonical value-coordinate consumer. Seal once
-        // at this publication boundary and retain only the regions named by
-        // its direct token/glue fields; child payloads retain their own sets.
-        self.seal_runtime_value_regions();
-        let children = builder.direct_children();
-        let (semantic_id, needs) = self.validate_and_plan_direct_node_list(&builder, &children);
-        let mut runtime_value_roots = self.runtime_values.empty_root_set();
-        if builder.compact_rows().is_none() {
-            self.retain_runtime_value_roots_in_nodes(&mut runtime_value_roots, builder.as_slice());
-        }
-        let frozen = match builder.into_compact_rows() {
-            Ok(rows) => {
-                debug_assert!(children.is_empty());
-                debug_assert_eq!(needs, crate::node_arena::SidecarNeeds::default());
-                NodeListRef::freeze_compact_builder(rows, semantic_id)
-            }
-            Err(nodes) => NodeListRef::freeze_builder(
-                nodes,
-                children,
-                Some(runtime_value_roots),
-                semantic_id,
-                needs,
-            ),
-        };
-        self.node_ref_index.intern(frozen)
-    }
 
     /// Enters a TeX group.
     pub fn enter_group(&mut self) {
@@ -3874,48 +3624,6 @@ impl Stores {
         self.env.set_tok_param_option_global(param, root)
     }
 
-    /// Takes a checkpoint for the rollback-coupled store tuple.
-    ///
-    /// Most fields remain O(1) marks/roots. The hyphenation table is cloned in
-    /// v1 because pattern loading is rare and rollback soundness is more
-    /// important than a premature journal for this INITEX-style state.
-    #[must_use]
-    pub(crate) fn checkpoint(&mut self) -> StoreSnapshot {
-        self.synchronize_exact_env_identity();
-        self.seal_runtime_value_regions();
-        StoreSnapshot {
-            owner: self.owner.snapshot_owner(),
-            env_snapshot: self.env.checkpoint(),
-            interner_mark: self.interner.watermark(),
-            string_pool: self.string_pool.checkpoint(),
-            string_pool_recycled_mark: self.string_pool_recycled_journal.len(),
-            provenance_mark: self.provenance.watermark(),
-            source_map_mark: self.source_map.watermark(),
-            runtime_value_mark: self
-                .runtime_values
-                .mark()
-                .expect("runtime value mark must remain representable"),
-            runtime_value_roots: self.runtime_values.roots.clone(),
-            runtime_values_inherited: false,
-            font_mark: self.fonts.watermark(),
-            code_tables_snapshot: self.code_tables.checkpoint(),
-            hyphenation: self.hyphenation.clone(),
-            prepared_mag: self.prepared_mag,
-            last_loaded_font: self.last_loaded_font,
-            exact_env_identity: self.exact_env_identity.snapshot(),
-            exact_projection_cache: self.semantic_hash_cache.projections.clone(),
-        }
-    }
-
-    /// Seals the active runtime-value tail into the canonical root set without
-    /// copying payload rows. Cold forks and detached publication call this
-    /// before cloning the aggregate generation.
-    pub(crate) fn seal_runtime_value_regions(&mut self) {
-        self.runtime_values
-            .publish()
-            .expect("runtime values must publish at an owner barrier");
-    }
-
     /// Retires direct-operation history when no group, checkpoint, or fork
     /// still owns the current journal baseline.
     pub(crate) fn commit_direct_operation(
@@ -3943,11 +3651,6 @@ impl Stores {
         true
     }
 
-    fn retire_unrooted_region_values(&mut self) {
-        // Runtime-value liveness is region-root based. There is no per-value
-        // weak sweep or operation event journal to retire here.
-    }
-
     /// Finishes one executor operation without discarding its live-root projection.
     ///
     /// Transient node and box-copy observations compose usage without adding
@@ -3969,75 +3672,6 @@ impl Stores {
         }
     }
 
-    /// Rolls all stores back to `snapshot` as one atomic tuple.
-    pub(crate) fn rollback(&mut self, snapshot: &StoreSnapshot) -> MutationReceipts {
-        self.rollback_inner(snapshot)
-    }
-
-    fn rollback_inner(&mut self, snapshot: &StoreSnapshot) -> MutationReceipts {
-        self.assert_valid_snapshot(snapshot);
-        let _ = self.engine_usage_statistics();
-        let mut receipts = self.env.rollback_to(snapshot.env_snapshot.clone());
-        // Env restoration still owns every destination root here, before the
-        // rejected immutable-store suffix is truncated. Apply the O(delta)
-        // receipt walk now and mark successful updates so Universe's semantic
-        // mutation fanout does not apply the allocator delta twice.
-        for receipt in &mut receipts {
-            if receipt.changed() && self.update_main_memory_roots(*receipt) {
-                *receipt = receipt.with_main_memory_roots_updated();
-            }
-        }
-        self.interner.truncate_to(snapshot.interner_mark);
-        while self.string_pool_recycled_journal.len() > snapshot.string_pool_recycled_mark {
-            let retained = self
-                .string_pool_recycled_journal
-                .pop()
-                .expect("checked string-pool journal length");
-            assert!(
-                self.string_pool.recycled.remove(retained.as_ref()),
-                "string-pool journal entry is absent from the recycling index"
-            );
-        }
-        self.string_pool.rollback_to(snapshot.string_pool);
-        self.runtime_values
-            .roots
-            .restore_from(&snapshot.runtime_value_roots);
-        if snapshot.runtime_values_inherited {
-            self.runtime_values
-                .rollback_inherited(snapshot.runtime_value_mark)
-                .expect("inherited runtime value prefix belongs to this store");
-        } else {
-            self.runtime_values
-                .rollback(snapshot.runtime_value_mark)
-                .expect("snapshot runtime value mark belongs to this store");
-        }
-        self.provenance.truncate_to(snapshot.provenance_mark);
-        self.source_map.truncate_to(snapshot.source_map_mark);
-        self.fonts.truncate_to(snapshot.font_mark);
-        self.code_tables
-            .rollback_to(snapshot.code_tables_snapshot.clone());
-        self.hyphenation = snapshot.hyphenation.clone();
-        self.prepared_mag = snapshot.prepared_mag;
-        self.last_loaded_font = snapshot.last_loaded_font;
-        for receipt in &receipts {
-            let cell = receipt.cell();
-            self.update_exact_env_cell(cell, self.env.semantic_word(cell));
-        }
-        self.mark_exact_env_journal_current();
-        self.exact_env_identity.restore(snapshot.exact_env_identity);
-        debug_assert_eq!(
-            self.exact_env_identity.snapshot(),
-            snapshot.exact_env_identity,
-            "exact environment deltas did not restore the checkpoint accumulator"
-        );
-        // The cache is derived from the checkpoint timeline rather than part
-        // of semantic state. Rebuild baselines lazily from the restored
-        // journal slice instead of adding it to the O(1) snapshot tuple.
-        self.semantic_hash_cache.clear();
-        self.semantic_hash_cache.projections = snapshot.exact_projection_cache.clone();
-        receipts
-    }
-
     #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_clear_semantic_hash_cache(&mut self) {
         self.semantic_hash_cache.clear();
@@ -4046,16 +3680,6 @@ impl Stores {
     #[cfg(test)]
     pub(crate) fn testing_hyphenation_projection_hash_calls(&self) -> usize {
         self.semantic_hash_cache.testing_hyphenation_hash_calls()
-    }
-
-    /// Returns the number of journal bytes appended since `snapshot`.
-    #[must_use]
-    pub(crate) fn env_journal_bytes_since(&self, snapshot: &StoreSnapshot) -> usize {
-        self.assert_valid_snapshot(snapshot);
-        mem::size_of_val(
-            self.env
-                .journal_entries_since(snapshot.env_snapshot.journal_pos()),
-        )
     }
 
     /// Current live environment-journal storage used by grouping and rollback.
@@ -4069,41 +3693,10 @@ impl Stores {
         self.env.journal_entry_count()
     }
 
-    pub(crate) fn generation_retained_bytes(&self) -> usize {
-        let serialized = self
-            .encode_frozen_format()
-            .map_or(0, |format| format.payload_len());
-        let provenance = self.provenance_stats().retained_bytes();
-        let source_map = self.source_map.stats().retained_bytes;
-        let source_fragment_metadata = self.source_fragments.metadata_retained_bytes();
-        std::mem::size_of::<Self>()
-            .saturating_add(serialized)
-            .saturating_add(self.env.journal_retained_bytes())
-            .saturating_add(provenance)
-            .saturating_add(source_map)
-            .saturating_add(source_fragment_metadata)
-    }
-
     /// Verifies the shadow mirror against real environment storage.
     #[cfg(feature = "shadow")]
     pub fn verify_shadow(&self) {
         self.env.verify_shadow();
-    }
-
-    fn assert_valid_snapshot(&self, snapshot: &StoreSnapshot) {
-        assert_eq!(
-            snapshot.owner,
-            self.owner.snapshot_owner(),
-            "Stores snapshot belongs to a different Stores instance"
-        );
-        assert!(
-            self.env.can_rollback_to(&snapshot.env_snapshot),
-            "Stores snapshots are invalidated by exiting a group that encloses them"
-        );
-        assert!(
-            snapshot.env_snapshot.journal_pos() <= self.env.current_journal_pos(),
-            "Stores snapshots are invalidated by journal truncation before their checkpoint position"
-        );
     }
 }
 

@@ -121,8 +121,6 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/provenance.rs`: Storage-independent provenance demand, budget, source,
   invocation, insertion, synthesis, related-location, and origin-record values;
   live storage and ownership are deliberately absent pending the final arenas.
-- `src/provenance/tests.rs`: Structural record sharing, packed-key, allocation,
-  readback, retry, fork, list-region budget, and rollback provenance controls.
 - `src/pure_memo.rs`: Optional entry/byte-bounded pure-query caches for pretolerance, page-breaking, and shipout results, bounded eviction telemetry, explicit cache release, and stable output-provenance recipes.
 - `src/resource.rs`: Generic host-resource availability, absence, and stable
   suspension identities plus the state-owned immutable input-content resolver
@@ -146,14 +144,6 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/low_memory.rs`: Compact TeX variable-size free-ring and rover projection.
 - `src/stores/exact_identity.rs`: Commutative current-cell accumulator and constant-size rollback image for canonical identities of non-default environment cells.
 - `src/stores/node_semantic.rs`: Canonical node encoding and bottom-up semantic-identity composition at aggregate freeze.
-- `src/stores/format.rs`: Deterministic versioned format-image DTO capture, reachable token/macro/glue/node closure remapping, direct Env/PDF node-owner installation, validation, and fresh-store reconstruction.
-- `src/stores/format/frozen_core.rs`: Fixed-width schema-11 names, token-list, macro, and glue section codecs plus direct validated dense-store restoration.
-- `src/stores/format/frozen_non_node.rs`: Schema-11 font, code-table, and hyphenation section codecs plus direct validated store restoration.
-- `src/stores/format/frozen_node.rs`: Schema-11 fixed-record reachable node-graph codec, semantic-identity validation, and frozen arena installation metadata.
-- `src/stores/format/frozen_env.rs`: Schema-11 fixed-record environment-cell codec and validated immutable-base installation input.
-- `src/stores/format/node.rs`: Handle-free serialized node/math DTO graph and validated conversion to and from live nodes.
-- `src/stores/format/tests.rs`: Focused schema-11 frozen-store round-trip tests for nodes, registers, e-TeX reset behavior, and control-sequence namespaces.
-- `src/stores/format/font_validation.rs`: Pre-publication validation of detached font metrics, identifiers, and serialized Env font banks, plus test-only corruption fixtures.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.

@@ -41,6 +41,7 @@ use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
     PageInsertion, PageInteger, PageMark, PageMemoState, PageStateHashCursor,
 };
+
 use crate::pdf::{
     PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageMetadata,
     PdfExternalImageRegistrationError, PdfFontResourceRecord, PdfFormatState,
@@ -65,10 +66,7 @@ use crate::state_hash::{
     combine,
 };
 use crate::stores::StoreStateHashCursor;
-use crate::stores::{
-    FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, StoreFormatError,
-    StoreSnapshot, Stores,
-};
+use crate::stores::{FontParameterError, GroupKind, GroupMismatch, PrepareMagDiagnostic, Stores};
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{TokenListBuilder, TokenListRef, TokenListView};
 use crate::world::{
@@ -280,7 +278,6 @@ impl<'a> InputOpenContext<'a> {
     }
 }
 
-#[derive(Debug)]
 pub struct ShipoutTransaction<'a> {
     universe: &'a mut Universe,
     rollback: Option<ScopedRollback>,
@@ -337,7 +334,7 @@ pub struct ReplayProbeTransaction<'a> {
     rollback: Option<ScopedRollback>,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 struct PageMemoWire {
     state: PageMemoState,
     detached_nodes: Vec<u8>,
@@ -671,6 +668,8 @@ struct PrimitiveMeaningOwner {
 #[derive(Debug)]
 pub struct Universe {
     owner: UniverseOwner,
+    /// Disposable allocations owned by one private incremental revision.
+    /// Absent from templates and accepted generations at rest.
     stores: Stores,
     /// Immutable job-level selection and admission limits for optional
     /// provenance consumers. Excluded from semantic state and formats.
@@ -697,7 +696,6 @@ pub struct Universe {
     primitive_indices: HashMap<String, u16>,
     state_hash_base: StateHashBase,
     state_hash_projection_cache: StateHashProjectionCache,
-    next_snapshot_serial: u64,
     /// Operational memo metadata; excluded from snapshots and semantic hashes.
     dependencies: Mutex<DependencyRuntime>,
     /// Allocation-free inactive fast path for dependency-aware getters.
@@ -981,72 +979,6 @@ impl PenaltyArrayKind {
     }
 }
 
-impl Clone for Universe {
-    fn clone(&self) -> Self {
-        assert!(
-            self.private_revision_domain.is_none(),
-            "a private revision allocation domain cannot be cloned"
-        );
-        let stores = self.stores.clone();
-        self.clone_with_stores(stores)
-    }
-}
-
-impl Universe {
-    fn clone_with_stores(&self, stores: Stores) -> Self {
-        assert!(
-            self.private_revision_domain.is_none(),
-            "a private revision allocation domain cannot be cloned"
-        );
-        let state_hash_base = StateHashBase {
-            store: stores.retarget_state_hash_cursor(&self.state_hash_base.store),
-            world: self.state_hash_base.world.clone(),
-            input_summary: self.state_hash_base.input_summary.clone(),
-            input_fragment: self.state_hash_base.input_fragment,
-            interaction_mode: self.state_hash_base.interaction_mode,
-            page: self.state_hash_base.page.clone(),
-            pdf: self.state_hash_base.pdf.clone(),
-            checkpoint_hash: self.state_hash_base.checkpoint_hash,
-        };
-        Self {
-            owner: UniverseOwner::new(),
-            private_revision_domain: None,
-            stores,
-            provenance_demand: self.provenance_demand,
-            provenance_budgets: self.provenance_budgets,
-            world: self.world.clone(),
-            interaction_mode: self.interaction_mode,
-            error_context_widths: self.error_context_widths,
-            input_summary: self.input_summary.clone(),
-            pending_every_job: self.pending_every_job,
-            editor_content_hash: self.editor_content_hash,
-            page: self.page.clone(),
-            pdf: self.pdf.clone(),
-            primitive_meanings: self.primitive_meanings.clone(),
-            primitive_meanings_by_index: self.primitive_meanings_by_index.clone(),
-            primitive_names_by_index: self.primitive_names_by_index.clone(),
-            primitive_indices: self.primitive_indices.clone(),
-            state_hash_base,
-            state_hash_projection_cache: self.state_hash_projection_cache.clone(),
-            next_snapshot_serial: self.next_snapshot_serial,
-            fork_origin: self.fork_origin,
-            dependencies: Mutex::new(
-                self.dependencies
-                    .lock()
-                    .expect("dependency runtime mutex is not poisoned")
-                    .clone(),
-            ),
-            dependency_region_active: AtomicBool::new(false),
-            dependency_projection_active: AtomicBool::new(false),
-            pure_memo_config: self.pure_memo_config,
-            pure_memo_capability: self.pure_memo_capability.clone(),
-            geometry_observations: self.geometry_observations.clone(),
-            geometry_observation_enabled: self.geometry_observation_enabled,
-            diagnostic_position: DiagnosticPosition::default(),
-        }
-    }
-}
-
 impl Default for Universe {
     fn default() -> Self {
         Self::new()
@@ -1094,13 +1026,6 @@ impl Universe {
     /// active private domain rejects staging instead of panicking in `Clone`.
     #[doc(hidden)]
     #[must_use]
-    pub fn stage_detached_import(&mut self) -> Option<Self> {
-        if self.private_revision_domain.is_some() {
-            return None;
-        }
-        self.stores.seal_runtime_value_regions();
-        Some(self.clone())
-    }
 
     /// Applies the process-selected Web2C font-memory bound.
     ///
@@ -1347,7 +1272,6 @@ impl Universe {
         };
         Self {
             owner: UniverseOwner::new(),
-            private_revision_domain: None,
             stores,
             provenance_demand: ProvenanceDemand::default(),
             provenance_budgets: ProvenanceBudgets::default(),
@@ -1365,8 +1289,6 @@ impl Universe {
             primitive_indices: HashMap::new(),
             state_hash_base,
             state_hash_projection_cache: StateHashProjectionCache::default(),
-            next_snapshot_serial: 0,
-            fork_origin: None,
             dependencies: Mutex::new(DependencyRuntime::default()),
             dependency_region_active: AtomicBool::new(false),
             dependency_projection_active: AtomicBool::new(false),
@@ -2389,262 +2311,16 @@ impl Universe {
     /// cursors are intentionally absent. The image is deterministic for one
     /// semantic state across the portable schema-11 frozen stores and its
     /// fixed node arena and portable frozen environment base.
-    pub fn dump_format(&self) -> Result<Vec<u8>, FormatError> {
-        if !self.input_summary.is_empty() {
-            return Err(FormatError::NonEmptyInput);
-        }
-        // e-TeX deliberately does not dump its saved vertical-discard lists.
-        if !self.page.is_format_empty() {
-            return Err(FormatError::NonEmptyPage);
-        }
-        let pdf = self
-            .pdf
-            .capture_format(
-                |tokens| {
-                    self.detach_token_list(tokens)
-                        .and_then(|value| value.to_bytes())
-                        .map_err(|error| format!("{error:?}"))
-                },
-                |nodes| {
-                    self.detach_node_list(nodes)
-                        .and_then(|value| value.to_bytes())
-                        .map_err(|error| format!("{error:?}"))
-                },
-            )
-            .map_err(FormatError::InvalidState)?;
-        let Some(pdf) = pdf else {
-            return Err(FormatError::NonEmptyPdfDocument);
-        };
-        let mut stores = self.stores.clone();
-        stores
-            .mark_string_pool_format_baseline()
-            .map_err(map_store_format_error)?;
-        let string_pool = stores.string_pool_accounting();
-        let stores = stores
-            .encode_frozen_format()
-            .map_err(map_store_format_error)?;
-        let payload = bincode::serialize(&UniverseFormatPayload {
-            interaction_mode: encode_interaction_mode(self.interaction_mode),
-            pdf,
-            string_pool,
-        })
-        .map_err(|error| FormatError::InvalidState(error.to_string()))?;
-        crate::format_container::encode(&[
-            crate::format_container::SectionInput {
-                kind: crate::format_container::TRANSITIONAL_SEMANTIC_SECTION,
-                alignment: 8,
-                bytes: &payload,
-            },
-            crate::format_container::SectionInput {
-                kind: crate::stores::NAMES_SECTION,
-                alignment: 8,
-                bytes: &stores.names,
-            },
-            crate::format_container::SectionInput {
-                kind: crate::stores::NAMES_LOOKUP_SECTION,
-                alignment: 8,
-                bytes: &stores.names_lookup,
-            },
-            crate::format_container::SectionInput {
-                kind: crate::stores::TOKEN_LISTS_SECTION,
-                alignment: 8,
-                bytes: &stores.token_lists,
-            },
-            crate::format_container::SectionInput {
-                kind: crate::stores::MACROS_SECTION,
-                alignment: 8,
-                bytes: &stores.macros,
-            },
-            crate::format_container::SectionInput {
-                kind: crate::stores::GLUE_SECTION,
-                alignment: 8,
-                bytes: &stores.glue,
-            },
-            crate::format_container::SectionInput {
-                kind: crate::stores::FONTS_SECTION,
-                alignment: 8,
-                bytes: &stores.fonts,
-            },
-            crate::format_container::SectionInput {
-                kind: crate::stores::CODE_TABLES_SECTION,
-                alignment: 8,
-                bytes: &stores.code_tables,
-            },
-            crate::format_container::SectionInput {
-                kind: crate::stores::HYPHENATION_SECTION,
-                alignment: 8,
-                bytes: &stores.hyphenation,
-            },
-            crate::format_container::SectionInput {
-                kind: crate::stores::FROZEN_NODES_SECTION,
-                alignment: 8,
-                bytes: &stores.nodes,
-            },
-            crate::format_container::SectionInput {
-                kind: crate::stores::FROZEN_ENV_SECTION,
-                alignment: 8,
-                bytes: &stores.env,
-            },
-        ])
-        .map_err(map_container_error)
-    }
 
     /// Constructs a fresh timeline from a validated semantic format image.
-    pub fn from_format(world: World, bytes: &[u8]) -> Result<Self, FormatError> {
-        let container = crate::format_container::decode(bytes).map_err(map_container_error)?;
-        if container.sections.len() != 11 {
-            return Err(FormatError::InvalidState(
-                "schema-11 core format requires exactly eleven sections".to_owned(),
-            ));
-        }
-        let payload = container
-            .section(crate::format_container::TRANSITIONAL_SEMANTIC_SECTION)
-            .ok_or_else(|| {
-                FormatError::InvalidState(
-                    "schema-11 transition is missing its semantic section".to_owned(),
-                )
-            })?;
-        let format: UniverseFormatPayload = bincode::deserialize(payload.bytes.as_ref())
-            .map_err(|error| FormatError::InvalidState(error.to_string()))?;
-        if !format.string_pool.has_current_profile() {
-            return Err(FormatError::InvalidState(
-                "unsupported string-pool accounting profile".to_owned(),
-            ));
-        }
-        let mode = decode_interaction_mode(format.interaction_mode)?;
-        let frozen = crate::stores::FrozenCoreSections {
-            names: required_format_section(&container, crate::stores::NAMES_SECTION)?,
-            names_lookup: required_format_section(&container, crate::stores::NAMES_LOOKUP_SECTION)?,
-            token_lists: required_format_section(&container, crate::stores::TOKEN_LISTS_SECTION)?,
-            macros: required_format_section(&container, crate::stores::MACROS_SECTION)?,
-            glue: required_format_section(&container, crate::stores::GLUE_SECTION)?,
-            checksum: container.checksum,
-        };
-        let non_node = crate::stores::FrozenNonNodeSections {
-            fonts: required_format_section(&container, crate::stores::FONTS_SECTION)?,
-            code_tables: required_format_section(&container, crate::stores::CODE_TABLES_SECTION)?,
-            hyphenation: required_format_section(&container, crate::stores::HYPHENATION_SECTION)?,
-        };
-        let nodes = crate::stores::FrozenNodeSection {
-            bytes: required_format_section(&container, crate::stores::FROZEN_NODES_SECTION)?,
-        };
-        let environment = required_format_section(&container, crate::stores::FROZEN_ENV_SECTION)?;
-        let mut stores = Stores::decode_frozen_format(environment, frozen, non_node, nodes)
-            .map_err(map_store_format_error)?;
-        stores.restore_string_pool_accounting(format.string_pool);
-        let clock = world.job_clock();
-        install_job_clock_params(
-            &mut |param, value| {
-                let _ = stores.set_int_param(param, value);
-            },
-            clock,
-        );
-        let input_summary = InputSummary::default();
-        let page = PageBuilderState::default();
-        let pdf_format = format.pdf;
-        let pdf = PdfState::default();
-        let input_fragment = hash_input_summary_fragment(&stores, &world, &input_summary);
-        let state_hash_base = StateHashBase {
-            store: stores.state_hash_cursor(),
-            world: world.state_hash_cursor(),
-            input_summary: input_summary.semantic_root(),
-            input_fragment,
-            interaction_mode: mode,
-            page: page.state_hash_cursor(),
-            pdf: pdf.cursor(),
-            checkpoint_hash: container.checksum,
-        };
-        let mut universe = Self {
-            owner: UniverseOwner::new(),
-            private_revision_domain: None,
-            stores,
-            provenance_demand: ProvenanceDemand::default(),
-            provenance_budgets: ProvenanceBudgets::default(),
-            world,
-            interaction_mode: mode,
-            error_context_widths: crate::print::ErrorContextWidths::default(),
-            input_summary,
-            pending_every_job: true,
-            editor_content_hash: None,
-            page,
-            pdf,
-            primitive_meanings: HashMap::new(),
-            primitive_meanings_by_index: Vec::new(),
-            primitive_names_by_index: Vec::new(),
-            primitive_indices: HashMap::new(),
-            state_hash_base,
-            state_hash_projection_cache: StateHashProjectionCache::default(),
-            next_snapshot_serial: 0,
-            fork_origin: None,
-            dependencies: Mutex::new(DependencyRuntime::default()),
-            dependency_region_active: AtomicBool::new(false),
-            dependency_projection_active: AtomicBool::new(false),
-            pure_memo_config: None,
-            pure_memo_capability: std::sync::Weak::new(),
-            geometry_observations: Vec::new(),
-            geometry_observation_enabled: false,
-            diagnostic_position: DiagnosticPosition::default(),
-        };
-        let pdf = {
-            let cell = std::cell::RefCell::new(&mut universe);
-            PdfState::restore_format(
-                pdf_format,
-                |bytes| {
-                    let value = crate::DetachedMemoValue::from_bytes(
-                        bytes,
-                        crate::MemoValueLimits::default(),
-                    )
-                    .map_err(|error| format!("{error:?}"))?;
-                    let mut universe = cell.borrow_mut();
-                    let tokens = universe
-                        .import_memo_token_list(&value, crate::MemoValueLimits::default())
-                        .map_err(|error| format!("{error:?}"))?;
-                    let semantic_id = universe.stores.token_list_semantic_fragment(tokens.id());
-                    Ok(PdfTokenParameter {
-                        tokens,
-                        semantic_id,
-                    })
-                },
-                |bytes| {
-                    let value = crate::DetachedMemoValue::from_bytes(
-                        bytes,
-                        crate::MemoValueLimits::default(),
-                    )
-                    .map_err(|error| format!("{error:?}"))?;
-                    let mut universe = cell.borrow_mut();
-                    let nodes = universe
-                        .import_memo_node_list(&value, crate::MemoValueLimits::default())
-                        .map_err(|error| format!("{error:?}"))?;
-                    let semantic = nodes.semantic_id().fragment();
-                    Ok((nodes, semantic))
-                },
-            )
-            .map_err(FormatError::InvalidState)?
-        };
-        universe.pdf = pdf;
-        universe.state_hash_base.pdf = universe.pdf.cursor();
-        // Format-carried PDF token parameters may upgrade an existing named
-        // control sequence to its inaccessible internal namespace while they
-        // are imported. Build exact Env identity after that canonicalization
-        // so the initial loaded timeline matches a freshly constructed one.
-        universe.stores.initialize_exact_env_identity();
-        universe.stores.discard_exact_env_undo_history();
-        Ok(universe)
-    }
 
     /// Takes an O(1) snapshot of the whole timeline tuple.
     #[must_use]
-    pub fn snapshot(&mut self) -> Snapshot {
-        self.checkpoint_from_hash_base(self.state_hash_base.clone(), false)
-    }
 
     /// Captures the strong optional identities used only by incremental suffix
     /// adoption. Ordinary rollback snapshots must remain O(1).
     #[doc(hidden)]
     #[must_use]
-    pub fn snapshot_with_exact_identity(&mut self) -> Snapshot {
-        self.checkpoint_from_hash_base(self.state_hash_base.clone(), true)
-    }
 
     /// Returns whether `snapshot` still names a rollback point on this
     /// Universe's live timeline.
@@ -2653,129 +2329,34 @@ impl Universe {
     /// that save-stack level (tex.web §283), so aggregate operation drivers
     /// must commit rather than attempt to roll back after such an exit.
     #[must_use]
-    pub fn can_rollback_to(&self, snapshot: &Snapshot) -> bool {
-        snapshot.owner == self.owner.snapshot_owner()
-            && self.stores.can_restore_snapshot(&snapshot.store)
-            && self.world.snapshot_is_retained(&snapshot.world)
-    }
 
-    fn capture_scoped_rollback(&mut self) -> ScopedRollback {
-        ScopedRollback {
-            owner: self.owner.snapshot_owner(),
-            store: self.stores.checkpoint(),
-            world: self.world.snapshot(),
-            input_summary: self.input_summary.clone(),
-            interaction_mode: self.interaction_mode,
-            page: self.page.clone(),
-            pdf: self.pdf.snapshot(),
-            state_hash_base: self.state_hash_base.clone(),
-            state_hash_projection_cache: self.state_hash_projection_cache.clone(),
-            dependency_tracker: self
-                .dependencies
-                .lock()
-                .expect("dependency runtime mutex is not poisoned")
-                .snapshot_tracker(),
-            geometry_observations_len: self.geometry_observations.len(),
-        }
-    }
+    /// Installs one fresh allocation owner for a private revision.
+    ///
+    /// This is an engine/session lifecycle hook, not a store or host
+    /// capability. Templates and accepted generations must not carry it.
+    #[doc(hidden)]
 
-    fn rollback_scoped(&mut self, rollback: ScopedRollback) {
-        assert_eq!(
-            rollback.owner,
-            self.owner.snapshot_owner(),
-            "scoped rollback belongs to a different Universe instance"
-        );
-        self.world.assert_snapshot_retained(&rollback.world);
-        // Restore every coordinate-bearing canonical consumer while the
-        // snapshot's region-root set still owns its sealed regions. Stores is
-        // deliberately last: its rollback restores Env/journal roots and then
-        // discards the rejected runtime-value suffix.
-        self.world.rollback(&rollback.world);
-        self.input_summary = rollback.input_summary;
-        self.interaction_mode = rollback.interaction_mode;
-        self.page = rollback.page;
-        self.pdf.rollback(rollback.pdf);
-        self.state_hash_base = rollback.state_hash_base;
-        self.state_hash_projection_cache = rollback.state_hash_projection_cache;
-        self.dependencies
-            .get_mut()
-            .expect("dependency runtime mutex is not poisoned")
-            .restore_tracker(&rollback.dependency_tracker);
-        self.geometry_observations
-            .truncate(rollback.geometry_observations_len);
-        let receipts = self.stores.rollback(&rollback.store);
-        self.consume_env_mutations(receipts);
-    }
+    /// Closes an accepted private revision after its typed owners have
+    /// transferred every explicit root.
 
-    fn checkpoint_from_hash_base(&mut self, hash_base: StateHashBase, exact: bool) -> Snapshot {
-        let world = self.world.snapshot();
-        let mut store = self.stores.checkpoint();
-        let store_cursor = self.stores.state_hash_cursor_from_snapshot(&store);
-        let world_cursor = World::state_hash_cursor_from_snapshot(&world);
-        let input_cursor = self.input_summary.semantic_root();
-        let input_fragment = if hash_base.input_summary == input_cursor {
-            hash_base.input_fragment
-        } else {
-            let mut cache = std::mem::take(&mut self.state_hash_projection_cache);
-            let fragment = self.hash_input_summary(&mut cache);
-            self.state_hash_projection_cache = cache;
-            fragment
-        };
-        let page_cursor = self.page.state_hash_cursor();
-        let pdf_cursor = self.pdf.cursor();
-        let state_hash = if hash_base.store == store_cursor
-            && hash_base.world == world_cursor
-            && hash_base.input_fragment == input_fragment
-            && hash_base.interaction_mode == self.interaction_mode
-            && hash_base.page == page_cursor
-            && hash_base.pdf == pdf_cursor
-        {
-            hash_base.checkpoint_hash
-        } else {
-            let slice_hash = self.state_hash_slice(&hash_base, &mut store, input_fragment);
-            combine(hash_base.checkpoint_hash, slice_hash)
-        };
-        let next_hash_base = StateHashBase {
-            store: store_cursor,
-            world: world_cursor,
-            input_summary: input_cursor,
-            input_fragment,
-            interaction_mode: self.interaction_mode,
-            page: page_cursor,
-            pdf: pdf_cursor,
-            checkpoint_hash: state_hash,
-        };
-        self.state_hash_base = next_hash_base.clone();
-        let serial = self.next_snapshot_serial;
-        self.next_snapshot_serial = self
-            .next_snapshot_serial
-            .checked_add(1)
-            .expect("Universe snapshot serial exhausted");
-        let exact_state_identity = exact
-            .then(|| self.exact_checkpoint_identity().ok())
-            .flatten();
-        Snapshot {
-            owner: self.owner.snapshot_owner(),
-            serial,
-            epoch: store.epoch(),
-            store,
-            world,
-            input_summary: self.input_summary.clone(),
-            interaction_mode: self.interaction_mode,
-            page: self.page.clone(),
-            pdf: self.pdf.snapshot(),
-            exact_state_identity,
-            state_hash_projection_cache: self.state_hash_projection_cache.clone(),
-            dependency_tracker: self
-                .dependencies
-                .lock()
-                .expect("dependency runtime mutex is not poisoned")
-                .snapshot_tracker(),
-            state_hash,
-            state_hash_base: next_hash_base,
-            geometry_observations_len: self.geometry_observations.len(),
-        }
-    }
+    /// Commits an ordinary successful executor operation without creating an
+    /// aggregate rollback snapshot.
+    #[must_use]
+    #[doc(hidden)]
+
+    /// Opens an ordinary operation after capability preflight has established
+    /// that it needs no rollback mark.
+    #[doc(hidden)]
+    #[must_use]
+
+    /// Commits an ordinary successful executor operation without creating an
+    /// aggregate rollback snapshot.
+    #[doc(hidden)]
+
+    /// Discards private-revision allocations from a failed direct operation.
+    /// Canonical partial semantic state is retained.
+    #[doc(hidden)]
+    #[must_use]
 
     fn retarget_hash_base_after_committed_boundary(
         &self,
@@ -2804,51 +2385,6 @@ impl Universe {
     }
 
     /// Rolls the whole timeline back to `snapshot` atomically.
-    pub fn rollback(&mut self, snapshot: &Snapshot) {
-        self.assert_valid_snapshot(snapshot);
-        self.world.assert_snapshot_retained(&snapshot.world);
-        // Page, PDF, effects, and input summaries carry only copy coordinates.
-        // Restore them before Stores replaces its canonical RegionRootSet and
-        // truncates the candidate/sealed suffix.
-        self.world.rollback(&snapshot.world);
-        self.input_summary = snapshot.input_summary.clone();
-        self.interaction_mode = snapshot.interaction_mode;
-        self.page = snapshot.page.clone();
-        self.pdf.rollback(snapshot.pdf.clone());
-        self.state_hash_base = snapshot.state_hash_base.clone();
-        self.state_hash_projection_cache = snapshot.state_hash_projection_cache.clone();
-        self.dependencies
-            .get_mut()
-            .expect("dependency runtime mutex is not poisoned")
-            .restore_tracker(&snapshot.dependency_tracker);
-        self.geometry_observations
-            .truncate(snapshot.geometry_observations_len);
-        let receipts = self.stores.rollback(&snapshot.store);
-        self.consume_env_mutations(receipts);
-    }
-
-    fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {
-        self.assert_valid_snapshot(snapshot);
-        assert!(
-            self.world.snapshot_is_forkable(&snapshot.world),
-            "World snapshot effect root is not a valid generation fork"
-        );
-        self.world.rollback_generation_fork(&snapshot.world);
-        self.input_summary = snapshot.input_summary.clone();
-        self.interaction_mode = snapshot.interaction_mode;
-        self.page = snapshot.page.clone();
-        self.pdf.rollback(snapshot.pdf.clone());
-        self.state_hash_base = snapshot.state_hash_base.clone();
-        self.state_hash_projection_cache = snapshot.state_hash_projection_cache.clone();
-        self.dependencies
-            .get_mut()
-            .expect("dependency runtime mutex is not poisoned")
-            .restore_tracker(&snapshot.dependency_tracker);
-        self.geometry_observations
-            .truncate(snapshot.geometry_observations_len);
-        let receipts = self.stores.rollback(&snapshot.store);
-        self.consume_env_mutations(receipts);
-    }
 
     pub fn enable_geometry_observation(&mut self) {
         self.geometry_observation_enabled = true;
@@ -2867,38 +2403,6 @@ impl Universe {
         if self.geometry_observation_enabled {
             self.geometry_observations.push(observation);
         }
-    }
-
-    fn state_hash_slice(
-        &mut self,
-        hash_base: &StateHashBase,
-        store: &mut StoreSnapshot,
-        input: StateHashFragment,
-    ) -> u64 {
-        let store = self.stores.state_hash_slice(&hash_base.store, store);
-        let mut cache = std::mem::take(&mut self.state_hash_projection_cache);
-        let world = self.hash_world_state_slice(&hash_base.world, &mut cache);
-        let interaction = StateHashFragment::from_measured_builder(
-            INTERACTION_PROJECTION_DOMAIN,
-            StateHashComponent::Interaction,
-            1,
-            |projection| {
-                hash_interaction_mode(self.interaction_mode, projection);
-            },
-        );
-        let page = self.hash_page_state(&mut cache.page);
-        let pdf = self.pdf.hash_fragment();
-        self.state_hash_projection_cache = cache;
-
-        let mut hasher = StateHasher::new_exact(UNIVERSE_SLICE_DOMAIN);
-        hasher.u32(crate::CHECKPOINT_STATE_HASH_SCHEMA_VERSION);
-        hasher.u64(store);
-        world.apply(&mut hasher);
-        input.apply(&mut hasher);
-        interaction.apply(&mut hasher);
-        page.apply(&mut hasher);
-        pdf.apply(&mut hasher);
-        hasher.finish()
     }
 
     fn hash_world_state_slice(
@@ -3082,65 +2586,12 @@ impl Universe {
         })
     }
 
-    fn exact_checkpoint_identity(&mut self) -> Result<u64, StoreFormatError> {
-        #[cfg(feature = "profiling")]
-        let started = World::start_profiling_timer();
-        #[cfg(feature = "profiling")]
-        let projections_before = crate::measurement::state_hash_measurement();
-        let store = self.stores.semantic_identity()?;
-        let mut cache = std::mem::take(&mut self.state_hash_projection_cache);
-        let input = self.hash_input_summary(&mut cache);
-        let world = self.hash_exact_world_state(&mut cache);
-        let interaction =
-            StateHashFragment::from_exact_builder(INTERACTION_PROJECTION_DOMAIN, |projection| {
-                hash_interaction_mode(self.interaction_mode, projection)
-            });
-        let page = self.hash_page_state(&mut cache.page);
-        let pdf = self.pdf.hash_fragment();
-        self.state_hash_projection_cache = cache;
-
-        let mut framed = Vec::with_capacity(192);
-        framed.extend_from_slice(b"umber-exact-checkpoint-v4");
-        framed.extend_from_slice(&store.to_le_bytes());
-        for component in [input, world, interaction, page, pdf] {
-            framed.extend_from_slice(&component.exact_identity().to_le_bytes());
-        }
-        let identity =
-            crate::state_hash::exact_identity_bytes(b"umber-exact-checkpoint-v5", &framed);
-        #[cfg(feature = "profiling")]
-        {
-            let projections_after = crate::measurement::state_hash_measurement();
-            let mut calls = 0;
-            let mut visits = 0;
-            let mut nanos = 0;
-            for (before, after) in projections_before
-                .components
-                .iter()
-                .zip(projections_after.components)
-            {
-                calls += after.calls.saturating_sub(before.calls);
-                visits += after.visits.saturating_sub(before.visits);
-                nanos += after.nanos.saturating_sub(before.nanos);
-            }
-            crate::measurement::record_exact_identity(started.elapsed(), calls, visits, nanos);
-        }
-        Ok(identity)
-    }
-
     /// Canonical allocation-independent identity of the complete live page root.
     #[doc(hidden)]
     #[must_use]
     pub fn page_memo_fingerprint(&self) -> u64 {
         self.hash_page_state(&mut PageHashCache::default())
             .fingerprint()
-    }
-
-    fn assert_valid_snapshot(&self, snapshot: &Snapshot) {
-        assert_eq!(
-            snapshot.owner,
-            self.owner.snapshot_owner(),
-            "Universe snapshot belongs to a different Universe instance"
-        );
     }
 
     /// Reads the owned environment for crate-local replay oracles.
@@ -3371,6 +2822,11 @@ impl Universe {
     pub fn retained_output_bytes(&self) -> usize {
         self.world.retained_output_bytes()
     }
+
+    /// Approximate ownership charge for a live private execution generation.
+    /// This uses the same aggregate roots as accepted-generation accounting,
+    /// before any additional accepted diagnostic-origin map is installed.
+    #[must_use]
 
     /// Rehomes the stable root editor frame without registering a document-sized backing.
     pub fn rebind_root_editor_layout(
@@ -8054,10 +7510,6 @@ impl Universe {
     }
 
     #[must_use]
-    pub fn env_journal_bytes_since(&self, snapshot: &Snapshot) -> usize {
-        self.assert_valid_snapshot(snapshot);
-        self.stores.env_journal_bytes_since(&snapshot.store)
-    }
 
     /// Current live bytes retained by the environment mutation journal.
     #[must_use]
@@ -8084,36 +7536,6 @@ impl Universe {
     #[cfg(test)]
     fn testing_input_projection_hash_calls(&self) -> usize {
         self.state_hash_projection_cache.input_hash_calls
-    }
-
-    /// Allocates exact charged bytes in the active private operation. The
-    /// payload has no semantic consumer and exists only to prove aggregate
-    /// operation and candidate lifecycle behavior.
-    #[cfg(any(test, feature = "testing"))]
-    pub fn testing_allocate_private_revision_bytes(&mut self, bytes: usize) {
-        self.private_revision_domain
-            .as_mut()
-            .expect("testing allocation requires a private revision")
-            .allocate(vec![0_u8; bytes].into_boxed_slice(), bytes)
-            .expect("testing allocation requires an active operation");
-    }
-
-    /// Commits one synthetic allocation as earlier successful private work.
-    #[cfg(any(test, feature = "testing"))]
-    pub fn testing_commit_private_revision_allocation(&mut self, bytes: usize) {
-        let domain = self
-            .private_revision_domain
-            .as_mut()
-            .expect("testing allocation requires a private revision");
-        let mark = domain
-            .begin_operation()
-            .expect("testing allocation requires no active operation");
-        domain
-            .allocate(vec![0_u8; bytes].into_boxed_slice(), bytes)
-            .expect("testing allocation belongs to the synthetic operation");
-        domain
-            .commit_operation(mark)
-            .expect("synthetic allocation operation commits");
     }
 }
 
@@ -8797,17 +8219,6 @@ fn hash_condition_limb(limb: ConditionLimb, hasher: &mut StateHasher) {
     });
 }
 
-fn map_store_format_error(error: StoreFormatError) -> FormatError {
-    match error {
-        StoreFormatError::OpenGroups(depth) => FormatError::OpenGroups(depth),
-        StoreFormatError::Codec(message) => FormatError::InvalidState(message),
-        StoreFormatError::Invalid(message) => FormatError::InvalidState(message.to_owned()),
-        StoreFormatError::InvalidFontMetrics { font, source } => {
-            FormatError::InvalidState(format!("font {font} metrics: {source}"))
-        }
-    }
-}
-
 fn map_container_error(error: crate::format_container::ContainerError) -> FormatError {
     use crate::format_container::ContainerError;
 
@@ -8825,16 +8236,6 @@ fn map_container_error(error: crate::format_container::ContainerError) -> Format
             FormatError::InvalidState(format!("invalid portable container: {message}"))
         }
     }
-}
-
-fn required_format_section<'a>(
-    container: &'a crate::format_container::DecodedContainer<'_>,
-    kind: u32,
-) -> Result<&'a [u8], FormatError> {
-    container
-        .section(kind)
-        .map(|section| section.bytes.as_ref())
-        .ok_or_else(|| FormatError::InvalidState(format!("missing format section {kind}")))
 }
 
 const fn encode_interaction_mode(mode: InteractionMode) -> u8 {
