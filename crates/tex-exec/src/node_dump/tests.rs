@@ -337,7 +337,7 @@ fn physical_character_nodes_use_tex_eight_bit_print_ascii_spelling() {
 
 #[test]
 fn ligature_semantic_equality_ignores_original_character_provenance() {
-    let with_unknown_origins = Node::Lig {
+    let with_unknown_origins: Node = Node::Lig {
         font: tex_state::font::NULL_FONT,
         ch: 'X',
         orig: vec!['a', 'b'],
@@ -345,7 +345,7 @@ fn ligature_semantic_equality_ignores_original_character_provenance() {
         left_hit: false,
         right_hit: false,
     };
-    let without_origins = Node::Lig {
+    let without_origins: Node = Node::Lig {
         font: tex_state::font::NULL_FONT,
         ch: 'X',
         orig: vec!['a', 'b'],
@@ -786,7 +786,7 @@ fn glue_unit_order_and_sign_matrix_is_exact_and_immutable() {
                     ),
                     format!("{prefix}{expected}\n"),
                 );
-                assert_eq!(spec, &value, "dumping must not rewrite glue");
+                assert_eq!(spec, value, "dumping must not rewrite glue");
             }
         }
 
@@ -986,7 +986,7 @@ fn default_show_box_breadth_renders_top_level_box_instead_of_etc() {
         assert_eq!(context.int_param(IntParam::SHOW_BOX_BREADTH), 0);
         assert_eq!(context.int_param(IntParam::SHOW_BOX_DEPTH), 0);
 
-        let list = hbox_with_one_point_kern(&mut context);
+        let list = hbox_with_one_point_kern(context);
         let config = DumpConfig::read(&context);
         let text = dump_page_list(&context, list, config);
 
@@ -1003,7 +1003,7 @@ fn default_show_box_breadth_renders_top_level_box_instead_of_etc() {
 fn negative_show_box_breadth_also_falls_back_to_five() {
     with_context(|context| {
         assign_int(context, IntParam::SHOW_BOX_BREADTH, -3);
-        let list = hbox_with_one_point_kern(&mut context);
+        let list = hbox_with_one_point_kern(context);
         let config = DumpConfig::read(&context);
         assert_eq!(config.breadth, 5);
         let text = dump_page_list(&context, list, config);
@@ -1131,11 +1131,11 @@ fn showbox_depth_limits_nested_boxes_at_exact_thresholds() {
             amount: Scaled::from_raw(Scaled::UNITY),
             kind: KernKind::Explicit,
         };
-        let inner_children = context.publish_page_nodes(std::slice::from_ref(&kern));
+        let inner_children = context.publish_page_nodes(vec![kern.clone()]);
         let inner = Node::HList(zero_sized_hbox(inner_children.clone()));
-        let outer_children = context.publish_page_nodes(std::slice::from_ref(&inner));
+        let outer_children = context.publish_page_nodes(vec![inner.clone()]);
         let outer = Node::HList(zero_sized_hbox(outer_children.clone()));
-        let root = context.publish_page_nodes(std::slice::from_ref(&outer));
+        let root = context.publish_page_nodes(vec![outer.clone()]);
 
         let before_root = vec![outer];
         let before_outer = vec![inner];
@@ -1364,7 +1364,7 @@ fn diagnostic_box_reorders_boundary_disc_and_retains_multi_disc_spans() {
             amount: Scaled::from_raw(1),
             kind: KernKind::Font,
         };
-        let boundary_replace = context.publish_page_nodes(std::slice::from_ref(&boundary_kern));
+        let boundary_replace = context.publish_page_nodes(vec![boundary_kern.clone()]);
         let font = context.current_font();
         let ligature = || Node::Lig {
             font,
@@ -1591,7 +1591,7 @@ fn insertion_node_dump_prints_all_web_fields() {
             floating_penalty: 100,
             content: content.clone(),
         };
-        let source = context.publish_page_nodes(std::slice::from_ref(&insertion));
+        let source = context.publish_page_nodes(vec![insertion.clone()]);
 
         assert_eq!(
             dump_page_list(
@@ -1980,10 +1980,10 @@ fn math_dump_depth_and_choice_arms() {
                 MathField::MathChar(math_char(0, ch)),
             ))])
         };
-        let display = arm(&mut context, 'D');
-        let text = arm(&mut context, 'T');
-        let script = arm(&mut context, 'S');
-        let script_script = arm(&mut context, 's');
+        let display = arm(&mut *context, 'D');
+        let text = arm(&mut *context, 'T');
+        let script = arm(&mut *context, 'S');
+        let script_script = arm(&mut *context, 's');
         let list = context.publish_page_nodes(vec![Node::MathChoice(MathChoice {
             display,
             text,
