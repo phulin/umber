@@ -1223,6 +1223,48 @@ impl<'a, G> CommandContext<'a, G> {
         self.pdf.form(object).map(|form| form.resource())
     }
 
+    pub fn ensure_pdf_font_resource(
+        &mut self,
+        font: crate::ids::FontId,
+    ) -> Result<crate::PdfFontResourceRecord, crate::PdfObjectCapacityError> {
+        let recipe = self.fonts.artifact_recipe(font);
+        let identity = tex_fonts::PdfFontResourceIdentity::new(
+            recipe.tfm_content_hash,
+            recipe.opentype.map(|opentype| opentype.program_identity),
+        );
+        self.pdf
+            .ensure_font_resource(font, recipe.semantic_identity, identity)
+    }
+
+    pub fn reference_pdf_raw_object(
+        &mut self,
+        raw: u32,
+    ) -> Result<(), crate::PdfRawObjectInitializeError> {
+        self.pdf
+            .reference_raw_object(crate::PdfRawObjectId::from_allocated(raw))
+    }
+
+    #[must_use]
+    pub fn pdf_form(&self, object: u32) -> Option<crate::PdfFormRecord<G>> {
+        self.pdf.form(object)
+    }
+
+    pub fn define_pdf_destination(
+        &mut self,
+        identity: crate::PdfDestinationIdentity,
+        structure_target: Option<u32>,
+    ) -> Result<crate::PdfDestinationDefinition, crate::PdfObjectCapacityError> {
+        self.pdf.define_destination(identity, structure_target)
+    }
+
+    pub fn append_pdf_thread_bead(
+        &mut self,
+        identity: crate::PdfDestinationIdentity,
+    ) -> Result<(crate::PdfThreadRecord, crate::PdfThreadBeadRecord), crate::PdfObjectCapacityError>
+    {
+        self.pdf.append_thread_bead(identity)
+    }
+
     #[must_use]
     pub fn pdf_page_object(&self, page: u32) -> Option<u32> {
         page.checked_sub(1)
