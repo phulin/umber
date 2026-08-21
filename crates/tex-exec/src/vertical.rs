@@ -5,7 +5,6 @@ use tex_state::node::{GlueKind, Node};
 use tex_state::node_arena::NodeRef;
 use tex_state::scaled::Scaled;
 
-use crate::mode::ignored_depth;
 use crate::{ExecError, Mode, ModeNest};
 
 pub(crate) fn append_node_to_current_list<G>(
@@ -30,8 +29,13 @@ pub(crate) fn append_node_to_vertical_list<G>(
         append_vertical_contribution(nest, stores, node);
         return Ok(());
     };
+    let ignored_depth = if stores.primitive_resolved("pdfignoreddimen").is_some() {
+        stores.dimen_param(DimenParam::PDF_IGNORED_DIMEN)
+    } else {
+        crate::mode::IGNORE_DEPTH
+    };
     if let Some(prev_depth) = nest.current_list().prev_depth()
-        && prev_depth.raw() > ignored_depth(stores).raw()
+        && prev_depth.raw() > ignored_depth.raw()
     {
         let baseline = stores
             .glue_param(GlueParam::BASELINE_SKIP)

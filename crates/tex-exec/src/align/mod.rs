@@ -28,8 +28,12 @@ pub(crate) fn init_span_aux<G>(nest: &mut ModeNest, stores: &mut CommandContext<
     ) {
         nest.current_list_mutation().set_space_factor(1000);
     } else {
-        nest.current_list_mutation()
-            .set_prev_depth(crate::mode::ignored_depth(stores));
+        let ignored_depth = if stores.primitive_resolved("pdfignoreddimen").is_some() {
+            stores.dimen_param(tex_state::env::banks::DimenParam::PDF_IGNORED_DIMEN)
+        } else {
+            crate::mode::IGNORE_DEPTH
+        };
+        nest.current_list_mutation().set_prev_depth(ignored_depth);
         crate::paragraph_end::normal_paragraph(nest, stores);
     }
 }
