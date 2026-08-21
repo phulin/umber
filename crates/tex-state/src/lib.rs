@@ -63,7 +63,6 @@ mod expansion_diagnostic;
 mod expansion_recovery;
 pub mod file_framing;
 pub mod font;
-#[allow(dead_code)] // Atomic format consumers land after this state foundation.
 mod format;
 mod format_container;
 mod frozen_lookup;
@@ -130,6 +129,11 @@ pub use expansion_recovery::ExpansionRecovery;
 pub use font::{
     FontArtifactConstructionRecipe, FontArtifactRecipe, FontStoreCapacityError,
     OpenTypeArtifactRecipe,
+};
+pub use format::{
+    DetachedFormatImage, FORMAT_ABI_FINGERPRINT, FORMAT_LOOKUP_CONFIGURATION_FINGERPRINT,
+    FORMAT_SCHEMA_VERSION, FormatDestination, FormatError, FormatMaterializationConfig,
+    FormatPublicationError, FormatStaging, with_format_destination, with_materialized_format,
 };
 pub use generation::GenerationOwner;
 pub use read_observation::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};

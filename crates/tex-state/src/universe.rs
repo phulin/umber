@@ -378,11 +378,11 @@ impl From<NodeArenaError> for UniverseError {
 /// Coarse owner of one session interning epoch and current generation.
 pub struct Universe<G> {
     pub(crate) interner: Interner,
-    core: Option<StateCore<G>>,
+    pub(crate) core: Option<StateCore<G>>,
     page_nodes: PageNodeArena,
     fonts: FontStore,
-    page: PageBuilderState,
-    pdf: PdfState<G>,
+    pub(crate) page: PageBuilderState,
+    pub(crate) pdf: PdfState<G>,
     sources: SourceMap,
     hyphenation: HyphenationTable,
     pub(crate) world: World,
@@ -390,8 +390,8 @@ pub struct Universe<G> {
     pub(crate) interaction_mode: InteractionMode,
     error_context_widths: ErrorContextWidths,
     engine_usage: crate::command_context::EngineUsageRuntime,
-    provenance_demand: crate::ProvenanceDemand,
-    provenance_budgets: crate::ProvenanceBudgets,
+    pub(crate) provenance_demand: crate::ProvenanceDemand,
+    pub(crate) provenance_budgets: crate::ProvenanceBudgets,
     pub(crate) primitive_names: Vec<String>,
     pub(crate) primitive_meanings: Vec<MeaningWord<G>>,
     /// Driver-requested cache policy consumed exactly once by MainControl.
@@ -485,7 +485,7 @@ impl<G> Universe<G> {
         self.dependencies.poison(barrier);
     }
 
-    fn new(interner: Interner, mut core: StateCore<G>) -> Self {
+    pub(crate) fn new(interner: Interner, mut core: StateCore<G>) -> Self {
         let fonts = FontStore::new();
         let null_font = fonts.get(crate::font::NULL_FONT);
         let prepared = core
