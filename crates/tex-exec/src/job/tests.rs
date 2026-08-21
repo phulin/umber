@@ -462,10 +462,9 @@ fn usage_report_separates_a_partial_final_cleanup_line_before_breaking() {
     crate::test_harness::with_universe(|universe| {
         assign_global_int(universe, IntParam::TRACING_STATS, 1);
         crate::test_harness::with_admitted(universe, |context| {
-            context
-                .printer()
-                .set_selector(Selector::LogOnly)
-                .print("unfinished)");
+            let mut printer = context.printer();
+            printer.set_selector(Selector::LogOnly);
+            printer.print("unfinished)");
         });
 
         finish_test_job(
@@ -492,10 +491,9 @@ fn usage_report_closes_log_before_shared_dvi_line_break() {
     crate::test_harness::with_universe(|universe| {
         assign_global_int(universe, IntParam::TRACING_STATS, 1);
         crate::test_harness::with_admitted(universe, |context| {
-            context
-                .printer()
-                .set_selector(Selector::TermOnly)
-                .print("terminal tail");
+            let mut printer = context.printer();
+            printer.set_selector(Selector::TermOnly);
+            printer.print("terminal tail");
         });
 
         finish_test_job(
@@ -525,10 +523,9 @@ fn direct_usage_report_preserves_the_open_log_cursor_for_the_dvi_break() {
         universe.set_interaction_mode(InteractionMode::Batch);
         assign_global_int(universe, IntParam::TRACING_STATS, 1);
         crate::test_harness::with_admitted(universe, |context| {
-            context
-                .printer()
-                .set_selector(Selector::LogOnly)
-                .print(" )");
+            let mut printer = context.printer();
+            printer.set_selector(Selector::LogOnly);
+            printer.print(" )");
         });
 
         finish_test_job(

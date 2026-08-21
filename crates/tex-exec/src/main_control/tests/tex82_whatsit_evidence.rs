@@ -278,7 +278,10 @@ fn extension_dispatch_executes_every_selector_in_every_tex82_mode() {
             let mut control = MainControl::tex82_initex(universe);
             let mut recorder = ObservationRecorder::default();
             register_source(&mut control, source.as_bytes());
-            while crate::test_harness::with_admitted(universe, |context| context.count(0)) == 0 {
+            while crate::test_harness::with_admitted(universe, |context| {
+                context.count(0).expect("count register")
+            }) == 0
+            {
                 assert_eq!(
                     control
                         .step_with_observer(universe, &mut recorder)
@@ -348,7 +351,9 @@ fn extension_dispatch_executes_every_selector_in_every_tex82_mode() {
             );
             run_to_end_observed(&mut control, universe, &mut recorder);
             assert_eq!(
-                crate::test_harness::with_admitted(universe, |context| context.count(0)),
+                crate::test_harness::with_admitted(universe, |context| {
+                    context.count(0).expect("count register")
+                }),
                 1,
                 "{mode}: immediate backed up relax"
             );
@@ -493,7 +498,9 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
         );
         run_to_end(&mut malformed_control, malformed);
         assert_eq!(
-            crate::test_harness::with_admitted(malformed, |context| context.count(0)),
+            crate::test_harness::with_admitted(malformed, |context| {
+                context.count(0).expect("count register")
+            }),
             41,
             "scanner recovery preserves following input"
         );
@@ -521,16 +528,20 @@ fn base_whatsits_are_passive_for_page_and_vertical_break_visits() {
                 context.page_contents(),
                 tex_state::page::PageContents::Empty
             );
-            assert_eq!(context.current_page_nodes(), whatsits);
+            assert_eq!(
+                context.current_page_nodes().cloned().collect::<Vec<_>>(),
+                whatsits
+            );
 
             let bare = vec![Node::Penalty(tex_state::page::EJECT_PENALTY)];
             let mut decorated = whatsits.clone();
             decorated.extend(bare.clone());
+            let typeset = crate::typeset_context::TypesetContext::new(context);
             let bare_break =
-                tex_typeset::vert_break(context, &bare, Scaled::from_raw(0), Scaled::from_raw(0))
+                tex_typeset::vert_break(&typeset, &bare, Scaled::from_raw(0), Scaled::from_raw(0))
                     .expect("bare vertical break");
             let decorated_break = tex_typeset::vert_break(
-                context,
+                &typeset,
                 &decorated,
                 Scaled::from_raw(0),
                 Scaled::from_raw(0),
@@ -567,7 +578,7 @@ fn hlist_and_vlist_visit_each_base_whatsit_once_in_position() {
             let staged = crate::shipout::direct::stage_shipout(
                 trace_root,
                 crate::shipout::ShipoutOrigin {
-                    output_open_context: Some(String::new()),
+                    output_open_context: String::new(),
                     announce_openout: false,
                 },
                 0,
@@ -623,7 +634,9 @@ fn hlist_and_vlist_visit_each_base_whatsit_once_in_position() {
                 let nodes = base_whatsits(context);
                 let root = state_box(context, &nodes, vertical);
                 let register = context.publish_page_nodes(vec![root]);
-                context.assign_page_box_local(0, register);
+                context
+                    .assign_page_box(0, Some(register), tex_state::AssignmentScope::Local)
+                    .expect("shipout test box assignment");
             });
             let mut control = MainControl::tex82_initex(universe);
             register_source(&mut control, br"\shipout\box0\end");
@@ -683,7 +696,9 @@ fn deferred_write_projects_stopper_selector_mode_stream_and_recovery_matrix() {
         \global\count0=73\end";
     with_observed_run(source, |universe, control, observations| {
         assert_eq!(
-            crate::test_harness::with_admitted(universe, |context| context.count(0)),
+            crate::test_harness::with_admitted(universe, |context| {
+                context.count(0).expect("count register")
+            }),
             73,
             "following source survives write recovery: {:?}",
             terminal_text(universe)

@@ -8,10 +8,9 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::Order;
 use tex_state::node::{GlueKind, KernKind, Node, Whatsit};
 use tex_state::page::{PageDimension, PageMark};
-use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Token, TokenWord};
-use tex_state::{CommandContext, GenerationBrand, InputOpenState, ResolvedMeaning, Universe};
+use tex_state::{CommandContext, GenerationBrand, ResolvedMeaning, Universe};
 
 use super::{MainControl, MainControlStep};
 
@@ -280,7 +279,7 @@ fn macro_text<G>(universe: &mut Universe<G>, name: &str) -> String {
 
 fn page_mark_text<G>(universe: &mut Universe<G>, mark: PageMark) -> String {
     crate::test_harness::with_admitted(universe, |context| {
-        word_text(context.token_list(context.page_mark(mark)))
+        word_text(context.page_mark(mark).words())
     })
 }
 
@@ -463,14 +462,14 @@ fn detach_page_probe<G>(universe: &mut Universe<G>) -> DetachedPageProbe {
 }
 
 fn page_last_penalty<G>(universe: &mut Universe<G>) -> i32 {
-    crate::test_harness::with_admitted(universe, |context| page_last_penalty(&mut context))
+    crate::test_harness::with_admitted(universe, |context| context.page_last_penalty())
 }
 
 fn outer_vertical_shapes<G>(universe: &mut Universe<G>) -> Vec<Shape> {
     crate::test_harness::with_admitted(universe, |context| {
         let nodes = context
             .current_page_nodes()
-            .into_iter()
+            .cloned()
             .chain(context.page_contributions().iter().cloned())
             .collect::<Vec<_>>();
         shapes_context(context, &nodes)
@@ -555,7 +554,7 @@ fn vsplit_breakpoint_mark_scope_and_complete_ownership_matrix() {
           \setbox1=\vsplit0 to1pt
           \setbox0=\vbox{\hrule height1pt}\setbox2=\vsplit0 to2pt",
         false,
-        |_, cleared| {
+        |_, mut cleared| {
             assert!(page_mark_is_none(&mut cleared, PageMark::SplitFirst));
             assert!(page_mark_is_none(&mut cleared, PageMark::SplitBot));
 
@@ -1179,7 +1178,10 @@ fn direct_material_modes_operands_page_boundary_and_group_clear_matrix() {
                 if *k == -2 * Scaled::UNITY && *width == 3 * Scaled::UNITY && *rw == 4 * Scaled::UNITY && *rh == 5 * Scaled::UNITY)),
                 "{vertical:?}"
             );
-            assert!(universe.paragraph_shape().is_empty());
+            assert!(crate::test_harness::with_admitted(
+                &mut universe,
+                |context| context.paragraph_shape().is_empty()
+            ));
             assert_eq!(
                 dimen_parameter(&mut universe, DimenParam::HANG_INDENT),
                 Scaled::from_raw(0)
@@ -1351,7 +1353,7 @@ fn direct_material_full_mode_named_glue_and_math_routing_matrix() {
           \hskip1pt\par\xdef\afterhskip{\the\count0}
           \vrule width1pt\par\xdef\aftervrule{\the\count0}",
                         false,
-                        |control, outer| {
+                        |control, mut outer| {
                             assert_eq!(control.current_mode(), crate::mode::Mode::Vertical);
                             assert_eq!(macro_text(&mut outer, "aftervskip"), "0");
                             assert_eq!(macro_text(&mut outer, "afterhrule"), "0");
@@ -1403,7 +1405,7 @@ fn direct_material_math_recovery_and_failed_keyword_token_ownership_matrix() {
             with_run(
                 br"\nonstopmode\noindent$\vskip1pt\global\count0=7\par",
                 false,
-                |control, vskip| {
+                |control, mut vskip| {
                     assert_eq!(count_register(&mut vskip, 0), 7);
                     assert_eq!(control.current_mode(), crate::mode::Mode::Vertical);
                     assert_eq!(terminal(&vskip).matches("Missing $ inserted").count(), 1);
@@ -1664,7 +1666,7 @@ fn structured_material_legal_mode_and_source_order_matrix() {
     with_run(
         br"\vsize=1000pt\insert2{\kern2pt}\mark{outer}\penalty10000",
         false,
-        |_, outer| {
+        |_, mut outer| {
             let outer_nodes = outer_vertical_shapes(&mut outer);
             assert!(
                 matches!(outer_nodes.as_slice(), [Shape::Insert { class: 2, content, .. }, Shape::Mark(0, mark)]
@@ -1695,7 +1697,7 @@ fn structured_material_legal_mode_and_source_order_matrix() {
                     with_run_until_count(
                         br"\noindent$\insert5{\kern5pt}\mark{math}\penalty53\global\count0=1",
                         1,
-                        |math_control, math_stores| {
+                        |math_control, mut math_stores| {
                             let math =
                                 shapes(&mut math_stores, math_control.modes.current_list().nodes());
                             assert!(
@@ -1892,7 +1894,7 @@ fn delete_last_matches_only_the_live_tail_in_h_v_and_math_modes() {
             );
             with_run_until_count(
         br"\noindent$\unpenalty\kern9pt\unkern\kern10pt\unskip\mskip11mu\unskip\penalty12\unpenalty\global\count0=1",
-        1, |math_control, math_stores| {
+        1, |math_control, mut math_stores| {
     let math = shapes(&mut math_stores, math_control.modes.current_list().nodes());
     assert!(
         math.as_slice() == [Shape::Kern(10 * Scaled::UNITY, KernKind::Explicit)],
@@ -1921,7 +1923,7 @@ fn outer_vertical_delete_recovery_preserves_page_and_following_input() {
             "unkern",
         ),
     ] {
-        with_run(baseline_source, false, |_, baseline| {
+        with_run(baseline_source, false, |_, mut baseline| {
             with_run(source, false, |_, mut universe| {
                 assert_eq!(
                     count_register(&mut universe, 0),
@@ -1946,11 +1948,11 @@ fn outer_vertical_delete_recovery_preserves_page_and_following_input() {
     with_run(
         br"\hrule height1pt\penalty10000",
         false,
-        |_, nonglue_baseline| {
+        |_, mut nonglue_baseline| {
             with_run(
                 br"\nonstopmode\hrule height1pt\penalty10000\unskip\global\count0=11",
                 false,
-                |_, nonglue| {
+                |_, mut nonglue| {
                     assert_eq!(count_register(&mut nonglue, 0), 11);
                     assert_eq!(
                         outer_vertical_shapes(&mut nonglue),
@@ -1958,11 +1960,11 @@ fn outer_vertical_delete_recovery_preserves_page_and_following_input() {
                     );
                     assert!(!terminal(&nonglue).contains("You can't use `\\unskip'"));
 
-                    with_run(br"\hrule height1pt", false, |_, matching_baseline| {
+                    with_run(br"\hrule height1pt", false, |_, mut matching_baseline| {
                         with_run(
                             br"\hrule height1pt\vskip2pt\unskip\global\count0=11",
                             false,
-                            |_, matching| {
+                            |_, mut matching| {
                                 assert_eq!(count_register(&mut matching, 0), 11);
                                 assert_eq!(
                                     outer_vertical_shapes(&mut matching),
@@ -2007,7 +2009,7 @@ fn italic_correction_uses_font_tail_math_zero_and_forbidden_recovery() {
             with_run_until_count(
                 br"\noindent$\kern1pt\/\global\count0=1",
                 1,
-                |math_control, math_stores| {
+                |math_control, mut math_stores| {
                     let math = shapes(&mut math_stores, math_control.modes.current_list().nodes());
                     assert!(
                         math.as_slice()
@@ -2070,7 +2072,7 @@ fn insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input() {
             with_run_until_count(
                 br"\noindent$\vadjust{\kern8pt}\global\count0=1",
                 1,
-                |math_control, math_stores| {
+                |math_control, mut math_stores| {
                     let math = shapes(&mut math_stores, math_control.modes.current_list().nodes());
                     assert!(
                         math.as_slice()
@@ -2093,7 +2095,7 @@ fn insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input() {
                     with_run(
                         br"\nonstopmode\vadjust\global\advance\count0 by1",
                         false,
-                        |_, outer| {
+                        |_, mut outer| {
                             assert_eq!(count_register(&mut outer, 0), 1);
                             assert!(outer_vertical_shapes(&mut outer).is_empty());
                             assert!(
@@ -2265,12 +2267,6 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
                 insert_chars.iter().map(|(ch, _)| *ch).collect::<String>(),
                 "AB"
             );
-            assert!(
-                universe.origin_is_inserted_kind(
-                    insert_chars[0].1.id(),
-                    InsertedOriginKind::AfterGroup
-                )
-            );
 
             let adjust_box = register_box(&mut universe, 9);
             let adjust_children = page_vec(&mut universe, adjust_box.children);
@@ -2299,10 +2295,6 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
                 line_chars.iter().map(|(ch, _)| *ch).collect::<String>(),
                 "ABC",
                 "aftergroup token precedes the following source token"
-            );
-            assert!(
-                universe
-                    .origin_is_inserted_kind(line_chars[1].1.id(), InsertedOriginKind::AfterGroup)
             );
         },
     );

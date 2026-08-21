@@ -1459,7 +1459,7 @@ mod unset_diagnostic_tests {
 
             set_escape(context, i32::from(b'|'));
             assert_eq!(
-                dump_node_slice(context, &nodes, config),
+                dump_node_slice(context, &nodes, config.clone()),
                 "|kern2.0\n|mkern3.0mu\n"
             );
             set_escape(context, -1);
@@ -1595,7 +1595,7 @@ mod unset_diagnostic_tests {
 
             set_escape(context, i32::from(b'|'));
             assert_eq!(
-                dump_node_slice(context, &nodes, config),
+                dump_node_slice(context, &nodes, config.clone()),
                 "|mathon\n|mathoff, surrounded 3.0\n"
             );
             set_escape(context, -1);
