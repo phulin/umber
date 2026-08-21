@@ -928,7 +928,7 @@ pub(in crate::main_control) fn apply<G>(
                         |stores, global| {
                             stores
                                 .assign_code(
-                                    tex_state::env::CodeTableKind::LcCode,
+                                    tex_state::env::CodeTableKind::Lccode,
                                     character,
                                     i64::from(value),
                                     assignment_scope(global),
@@ -960,7 +960,7 @@ pub(in crate::main_control) fn apply<G>(
                         |stores, global| {
                             stores
                                 .assign_code(
-                                    tex_state::env::CodeTableKind::UcCode,
+                                    tex_state::env::CodeTableKind::Uccode,
                                     character,
                                     i64::from(value),
                                     assignment_scope(global),
@@ -998,7 +998,7 @@ pub(in crate::main_control) fn apply<G>(
                         |stores, global| {
                             stores
                                 .assign_code(
-                                    tex_state::env::CodeTableKind::SfCode,
+                                    tex_state::env::CodeTableKind::Sfcode,
                                     character,
                                     i64::from(value),
                                     assignment_scope(global),
@@ -1036,7 +1036,7 @@ pub(in crate::main_control) fn apply<G>(
                         |stores, global| {
                             stores
                                 .assign_code(
-                                    tex_state::env::CodeTableKind::MathCode,
+                                    tex_state::env::CodeTableKind::Mathcode,
                                     character,
                                     i64::from(value),
                                     assignment_scope(global),
@@ -1075,7 +1075,7 @@ pub(in crate::main_control) fn apply<G>(
                         |stores, global| {
                             stores
                                 .assign_code(
-                                    tex_state::env::CodeTableKind::DelCode,
+                                    tex_state::env::CodeTableKind::Delcode,
                                     character,
                                     i64::from(value),
                                     assignment_scope(global),

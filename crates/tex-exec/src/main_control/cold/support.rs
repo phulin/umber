@@ -1589,7 +1589,7 @@ pub(in crate::main_control) fn report_font_parameter_recovery<G>(
         || stores.font_name(font),
         |symbol| stores.resolve(symbol).to_owned(),
     );
-    let count = i32::try_from(stores.font_parameter_count(font)).unwrap_or(i32::MAX);
+    let count = i32::try_from(stores.classic_math_parameter_count(font)).unwrap_or(i32::MAX);
     let mut report = stores.print_err("Font ");
     report
         .print_esc(&name)
