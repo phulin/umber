@@ -3,6 +3,7 @@
 use super::*;
 use tex_fonts::{FontMetrics, LoadedFont};
 use tex_state::EffectRecord;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{AdjustNode, BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, Sign};
@@ -513,11 +514,13 @@ fn batch_mode_routes_pack_headline_and_box_dump_to_log_only() {
     crate::test_harness::with_universe(|universe| {
         universe.set_interaction_mode(tex_state::InteractionMode::Batch);
         let mut stores = universe.command_context().expect("test state is admitted");
+        let mut diagnostic_effects = DiagnosticEffects::new();
         let context = ExecutionDiagnosticContext::source_free("");
         let packed = empty_hbox(&mut stores);
 
         report_pack_diagnostics(
             &mut stores,
+            &mut diagnostic_effects,
             &context,
             PackedDirection::Horizontal,
             &[PackDiagnostic::Overfull {
@@ -528,6 +531,9 @@ fn batch_mode_routes_pack_headline_and_box_dump_to_log_only() {
         );
 
         drop(stores);
+        universe
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         assert_eq!(sink_text(universe, true), "");
         let log = sink_text(universe, false);
         assert!(
@@ -543,6 +549,7 @@ fn nonstop_mode_keeps_pack_headline_before_dump_on_both_channels() {
     crate::test_harness::with_universe(|universe| {
         universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         let mut stores = universe.command_context().expect("test state is admitted");
+        let mut diagnostic_effects = DiagnosticEffects::new();
         stores
             .assign_int_param(
                 tex_state::env::banks::IntParam::TRACING_ONLINE,
@@ -555,6 +562,7 @@ fn nonstop_mode_keeps_pack_headline_before_dump_on_both_channels() {
 
         report_pack_diagnostics(
             &mut stores,
+            &mut diagnostic_effects,
             &context,
             PackedDirection::Horizontal,
             &[PackDiagnostic::Overfull {
@@ -565,6 +573,9 @@ fn nonstop_mode_keeps_pack_headline_before_dump_on_both_channels() {
         );
 
         drop(stores);
+        universe
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         let terminal = sink_text(universe, true);
         let log = sink_text(universe, false);
         assert_eq!(terminal, log);
@@ -584,11 +595,13 @@ fn output_active_vbox_dump_supplies_the_headline_newline() {
     for (output_active, separator) in [(true, "\n"), (false, "\n\n")] {
         crate::test_harness::with_tex82_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
+            let mut diagnostic_effects = DiagnosticEffects::new();
             let context = ExecutionDiagnosticContext::new(0, 0, output_active, "");
             let packed = empty_hbox(&mut stores);
 
             report_pack_diagnostics(
                 &mut stores,
+                &mut diagnostic_effects,
                 &context,
                 PackedDirection::Vertical,
                 &[PackDiagnostic::Overfull {
@@ -604,6 +617,9 @@ fn output_active_vbox_dump_supplies_the_headline_newline() {
                 ") detected at line 0"
             };
             drop(stores);
+            universe
+                .world_mut()
+                .publish_diagnostic_effects(diagnostic_effects);
             assert_eq!(
                 sink_text(universe, false),
                 format!(
@@ -637,12 +653,14 @@ fn pack_diagnostic_origin_contexts() {
             crate::test_harness::with_tex82_universe(|universe| {
                 universe.set_interaction_mode(mode);
                 let mut stores = universe.command_context().expect("test state is admitted");
+                let mut diagnostic_effects = DiagnosticEffects::new();
                 let context =
                     ExecutionDiagnosticContext::new(29, pack_begin_line, output_active, "");
                 let packed = empty_hbox(&mut stores);
 
                 report_pack_diagnostics(
                     &mut stores,
+                    &mut diagnostic_effects,
                     &context,
                     PackedDirection::Horizontal,
                     &[PackDiagnostic::Underfull {
@@ -655,6 +673,9 @@ fn pack_diagnostic_origin_contexts() {
 
                 let expected_headline = format!("\nUnderfull \\hbox (badness 10000{origin}\n\n");
                 drop(stores);
+                universe
+                    .world_mut()
+                    .publish_diagnostic_effects(diagnostic_effects);
                 assert_eq!(
                     sink_text(universe, false),
                     format!("{expected_headline}\n\\hbox(0.0+0.0)x0.0\n\n")

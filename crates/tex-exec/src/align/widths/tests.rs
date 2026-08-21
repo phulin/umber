@@ -207,6 +207,7 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
             &[row],
             Scaled::from_raw(0),
             &mut stores,
+            &mut tex_state::diagnostic::DiagnosticEffects::new(),
             &diagnostic_context,
         )
         .expect("the complete width, prototype, and setting pipeline succeeds");

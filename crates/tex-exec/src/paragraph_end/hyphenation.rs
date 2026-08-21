@@ -993,8 +993,18 @@ mod tests {
             assert_eq!(missing.len(), 1);
             assert_eq!(missing[0].node_index, 7);
             assert_eq!((missing[0].font, missing[0].ch), (font, '?'));
-            crate::diagnostics::report_missing_character_warning(&mut stores, font, '?', false);
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            crate::diagnostics::report_missing_character_warning(
+                &mut stores,
+                &mut diagnostic_effects,
+                font,
+                '?',
+                false,
+            );
             drop(stores);
+            universe
+                .world_mut()
+                .publish_diagnostic_effects(diagnostic_effects);
             assert!(
                 diagnostic_text(universe)
                     .contains("Missing character: There is no ? in font nullfont!")

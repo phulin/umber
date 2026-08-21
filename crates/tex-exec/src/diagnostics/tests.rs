@@ -1,4 +1,5 @@
 use tex_state::AssignmentScope;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::IntParam;
 use tex_state::world::{EffectRecord, PrintSink};
 
@@ -19,6 +20,7 @@ fn writes<G>(universe: &tex_state::Universe<G>) -> Vec<(PrintSink, String)> {
 #[test]
 fn extended_missing_character_forces_online_routing_inside_admission() {
     crate::test_harness::with_plain_universe(|universe| {
+        let before = universe.world().effect_records().len();
         let mut command = universe
             .command_context()
             .expect("admitted diagnostic state");
@@ -26,9 +28,27 @@ fn extended_missing_character_forces_online_routing_inside_admission() {
             .assign_int_param(IntParam::TRACING_LOST_CHARS, 2, AssignmentScope::Global)
             .expect("set tracinglostchars");
         let font = command.current_font();
-        super::report_missing_character_warning(&mut command, font, '?', true);
+        let mut diagnostic_effects = DiagnosticEffects::new();
+        super::report_missing_character_warning(
+            &mut command,
+            &mut diagnostic_effects,
+            font,
+            '?',
+            true,
+        );
         assert_eq!(command.int_param(IntParam::TRACING_LOST_CHARS), 2);
         drop(command);
+        universe
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
+        let sequences = universe.world().effect_sequences();
+        assert!(!sequences[before..].is_empty());
+        assert!(
+            sequences[before..]
+                .windows(2)
+                .all(|pair| pair[0] == pair[1]),
+            "one missing-character diagnostic must retain one logical batch"
+        );
 
         assert!(writes(universe).iter().any(|(sink, text)| {
             *sink == PrintSink::TerminalAndLog
@@ -62,15 +82,28 @@ fn infinite_shrink_report_uses_only_detached_output_context() {
 fn ignored_split_error_preserves_forced_online_text() {
     crate::test_harness::with_plain_universe(|universe| {
         let context = ExecutionDiagnosticContext::source_free("unused");
+        let before = universe.world().effect_records().len();
         let mut command = universe
             .command_context()
             .expect("admitted diagnostic state");
         command
             .assign_int_param(IntParam::IGNORE_PRIMITIVE_ERROR, 1, AssignmentScope::Global)
             .expect("set ignore primitive error");
-        super::report_split_infinite_shrinkage(&mut command, &context)
+        let mut diagnostic_effects = DiagnosticEffects::new();
+        super::report_split_infinite_shrinkage(&mut command, &mut diagnostic_effects, &context)
             .expect("ignored error recovers");
         drop(command);
+        universe
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
+        let sequences = universe.world().effect_sequences();
+        assert!(!sequences[before..].is_empty());
+        assert!(
+            sequences[before..]
+                .windows(2)
+                .all(|pair| pair[0] == pair[1]),
+            "one ignored split diagnostic must retain one logical batch"
+        );
 
         assert_eq!(
             writes(universe),

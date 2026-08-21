@@ -56,6 +56,7 @@ fn package_unset_cell_records_natural_extent_and_glue_orders() {
             );
             let Node::Unset(cell) = make_unset_node(
                 &mut stores,
+                &mut tex_state::diagnostic::DiagnosticEffects::new(),
                 &diagnostic_context,
                 children.clone(),
                 kind,
@@ -98,6 +99,7 @@ fn span_record_256_limit_and_merge_fields() {
         }]);
         let Node::Unset(limit) = make_unset_node(
             &mut stores,
+            &mut tex_state::diagnostic::DiagnosticEffects::new(),
             &diagnostic_context,
             children.clone(),
             UnsetKind::HBox,
@@ -115,6 +117,7 @@ fn span_record_256_limit_and_merge_fields() {
 
         let error = make_unset_node(
             &mut stores,
+            &mut tex_state::diagnostic::DiagnosticEffects::new(),
             &diagnostic_context,
             children,
             UnsetKind::HBox,

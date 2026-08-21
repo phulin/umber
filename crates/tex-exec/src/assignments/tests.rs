@@ -1,4 +1,5 @@
 use tex_command::ObservationValue;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::TokParam;
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -29,6 +30,7 @@ fn glue(width: i32) -> GlueSpec {
 fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
+        let mut diagnostic_effects = DiagnosticEffects::new();
         let displaced_register = stores
             .allocate_token_list(&[token('a')])
             .expect("token list");
@@ -39,7 +41,7 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
             .allocate_token_list(&[token('b')])
             .expect("token list");
 
-        AssignmentCommitter::new(&mut stores).toks(
+        AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).toks(
             0,
             replacement_register,
             ObservationValue::Integer(0),
@@ -65,7 +67,7 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
             .allocate_token_list(&[token('d')])
             .expect("token list");
 
-        AssignmentCommitter::new(&mut stores).token_parameter(
+        AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).token_parameter(
             parameter.raw(),
             Some(replacement_parameter),
             ObservationValue::Integer(0),
@@ -88,6 +90,7 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
 fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
+        let mut diagnostic_effects = DiagnosticEffects::new();
         let displaced = stores
             .allocate_token_list(&[token('a')])
             .expect("token list");
@@ -99,7 +102,7 @@ fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
             .allocate_token_list(&[token('b')])
             .expect("token list");
 
-        AssignmentCommitter::new(&mut stores).toks(
+        AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).toks(
             0,
             replacement,
             ObservationValue::Integer(0),
@@ -122,6 +125,7 @@ fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
 fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
+        let mut diagnostic_effects = DiagnosticEffects::new();
         stores
             .assign_int_param(IntParam::TRACING_ASSIGNS, 1, AssignmentScope::Global)
             .expect("parameter");
@@ -130,7 +134,14 @@ fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
         stores
             .assign_glue_register(0, Some(displaced_skip), AssignmentScope::Global)
             .expect("register");
-        AssignmentCommitter::new(&mut stores).skip(0, glue(2), true, false, false, false);
+        AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).skip(
+            0,
+            glue(2),
+            true,
+            false,
+            false,
+            false,
+        );
         assert_eq!(
             stores.glue(stores.glue_register(0).expect("register").expect("set")),
             glue(2)
@@ -140,7 +151,14 @@ fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
         stores
             .assign_mu_glue_register(0, Some(displaced_muskip), AssignmentScope::Global)
             .expect("register");
-        AssignmentCommitter::new(&mut stores).skip(0, glue(4), true, true, false, false);
+        AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).skip(
+            0,
+            glue(4),
+            true,
+            true,
+            false,
+            false,
+        );
         assert_eq!(stores.glue(stores.muskip(0).expect("set")), glue(4));
 
         let parameter = GlueParam::BASELINE_SKIP;
@@ -152,7 +170,7 @@ fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
                 AssignmentScope::Global,
             )
             .expect("parameter");
-        AssignmentCommitter::new(&mut stores).glue_parameter(
+        AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).glue_parameter(
             parameter.raw(),
             glue(6),
             "baselineskip".into(),
@@ -169,6 +187,7 @@ fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
 fn local_glue_write_undo_is_the_assignment_trace_liveness_negative_control() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
+        let mut diagnostic_effects = DiagnosticEffects::new();
         stores
             .assign_int_param(IntParam::TRACING_ASSIGNS, 1, AssignmentScope::Global)
             .expect("parameter");
@@ -178,7 +197,14 @@ fn local_glue_write_undo_is_the_assignment_trace_liveness_negative_control() {
             .expect("register");
         stores.begin_group(GroupKind::Simple, 0).expect("group");
 
-        AssignmentCommitter::new(&mut stores).skip(0, glue(2), false, false, false, false);
+        AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).skip(
+            0,
+            glue(2),
+            false,
+            false,
+            false,
+            false,
+        );
 
         assert_eq!(
             stores.glue(stores.glue_register(0).expect("register").expect("set")),

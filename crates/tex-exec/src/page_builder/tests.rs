@@ -191,7 +191,11 @@ fn page_state_freezes_specs_and_tracks_sorted_insertion_records() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 17, 0);
-        freeze_page_specs(&mut stores, PageContents::InsertsOnly);
+        freeze_page_specs(
+            &mut stores,
+            &mut DiagnosticEffects::new(),
+            PageContents::InsertsOnly,
+        );
         assert_eq!(stores.page_dimension(PageDimension::Goal), s(1_000));
         assert_eq!(stores.page_max_depth(), s(17));
         stores
@@ -215,6 +219,7 @@ fn page_state_freezes_specs_and_tracks_sorted_insertion_records() {
             let node = ins(&mut stores, class, 0, 0, &[]);
             prepare_insertion(
                 &mut stores,
+                &mut DiagnosticEffects::new(),
                 &node,
                 &crate::diagnostics::ExecutionDiagnosticContext::default(),
             )
@@ -238,7 +243,11 @@ fn page_builder_output_active_boundary_preserves_pending_contributions() {
         // TeX.web §§980--990: the frozen page specifications and all accumulated
         // quantities survive calls made while §989's output boundary is pending.
         params(&mut stores, 1_000, 19, 0);
-        freeze_page_specs(&mut stores, PageContents::BoxThere);
+        freeze_page_specs(
+            &mut stores,
+            &mut DiagnosticEffects::new(),
+            PageContents::BoxThere,
+        );
         for (dimension, value) in [
             (PageDimension::Total, 101),
             (PageDimension::Stretch, 102),
@@ -294,7 +303,11 @@ fn new_current_page_resets_nodes_totals_depth_and_last_item_state() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 9, 0);
-        freeze_page_specs(&mut stores, PageContents::BoxThere);
+        freeze_page_specs(
+            &mut stores,
+            &mut DiagnosticEffects::new(),
+            PageContents::BoxThere,
+        );
         stores.push_current_page_node(Node::Penalty(41));
         for d in [
             PageDimension::Total,
@@ -347,7 +360,11 @@ fn output_page_reset_retains_totals_until_the_next_page_starts() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 9, 0);
-        freeze_page_specs(&mut stores, PageContents::BoxThere);
+        freeze_page_specs(
+            &mut stores,
+            &mut DiagnosticEffects::new(),
+            PageContents::BoxThere,
+        );
         stores.push_current_page_node(Node::Penalty(41));
         stores.set_page_dimension(PageDimension::Total, s(52));
         stores.set_page_dimension(PageDimension::Shrink, s(51));
@@ -359,7 +376,11 @@ fn output_page_reset_retains_totals_until_the_next_page_starts() {
         assert_eq!(stores.page_dimension(PageDimension::Total), s(52));
         assert_eq!(stores.page_dimension(PageDimension::Shrink), s(51));
 
-        freeze_page_specs(&mut stores, PageContents::BoxThere);
+        freeze_page_specs(
+            &mut stores,
+            &mut DiagnosticEffects::new(),
+            PageContents::BoxThere,
+        );
         assert_eq!(stores.page_dimension(PageDimension::Total), s(0));
         assert_eq!(stores.page_dimension(PageDimension::Shrink), s(0));
     });
@@ -372,6 +393,7 @@ fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
         assert_eq!(
             insertion_box_size(
                 &mut stores,
+                &mut DiagnosticEffects::new(),
                 4,
                 &crate::diagnostics::ExecutionDiagnosticContext::default(),
             )
@@ -386,6 +408,7 @@ fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
         assert_eq!(
             insertion_box_size(
                 &mut stores,
+                &mut DiagnosticEffects::new(),
                 4,
                 &crate::diagnostics::ExecutionDiagnosticContext::default(),
             )
@@ -401,6 +424,7 @@ fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
         assert_eq!(
             insertion_box_size(
                 &mut stores,
+                &mut DiagnosticEffects::new(),
                 5,
                 &crate::diagnostics::ExecutionDiagnosticContext::default(),
             )
@@ -453,6 +477,7 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
         assert_eq!(
             insertion_box_size(
                 &mut stores,
+                &mut DiagnosticEffects::new(),
                 register,
                 &crate::diagnostics::ExecutionDiagnosticContext::default(),
             )
@@ -752,8 +777,12 @@ fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
             kind: GlueKind::Normal,
             leader: None,
         });
-        build_page_with_error_context(&mut stores, "l.27 published page continuation")
-            .expect("white-box operation succeeds");
+        build_page_with_error_context(
+            &mut stores,
+            &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            "l.27 published page continuation",
+        )
+        .expect("white-box operation succeeds");
         let specs = stores
             .current_page_nodes()
             .filter_map(|node| match node {
@@ -794,11 +823,13 @@ fn page_break_badness_cost_and_equal_champion_boundaries_match_tex82() {
             page_badness(&stores).expect("white-box operation succeeds"),
             100
         );
-        check_break(&mut stores, 0).expect("white-box operation succeeds");
+        check_break(&mut stores, &mut DiagnosticEffects::new(), 0)
+            .expect("white-box operation succeeds");
         assert_eq!(stores.least_page_cost(), 110);
         assert_eq!(stores.least_page_cost(), 100);
         stores.push_current_page_node(Node::Penalty(1));
-        check_break(&mut stores, 0).expect("white-box operation succeeds");
+        check_break(&mut stores, &mut DiagnosticEffects::new(), 0)
+            .expect("white-box operation succeeds");
         assert_eq!(stores.least_page_cost(), 110);
         stores.set_page_dimension(PageDimension::FilStretch, s(1));
         assert_eq!(
@@ -822,7 +853,8 @@ fn page_break_eject_and_awful_cost_paths_fire_the_selected_champion() {
         forced.set_page_contents(PageContents::BoxThere);
         forced.set_page_dimension(PageDimension::Goal, s(10));
         forced.set_page_dimension(PageDimension::Total, s(10));
-        check_break(&mut forced, EJECT_PENALTY).expect("white-box operation succeeds");
+        check_break(&mut forced, &mut DiagnosticEffects::new(), EJECT_PENALTY)
+            .expect("white-box operation succeeds");
         assert_eq!(forced.least_page_cost(), EJECT_PENALTY);
         assert_eq!(
             forced
@@ -837,7 +869,8 @@ fn page_break_eject_and_awful_cost_paths_fire_the_selected_champion() {
         awful.set_page_contents(PageContents::BoxThere);
         awful.set_page_dimension(PageDimension::Goal, s(10));
         awful.set_page_dimension(PageDimension::Total, s(11));
-        check_break(&mut awful, 0).expect("white-box operation succeeds");
+        check_break(&mut awful, &mut DiagnosticEffects::new(), 0)
+            .expect("white-box operation succeeds");
         assert_eq!(awful.least_page_cost(), AWFUL_BAD);
         assert_eq!(
             awful
@@ -854,7 +887,8 @@ fn page_break_eject_and_awful_cost_paths_fire_the_selected_champion() {
         insertion_overflow.set_page_dimension(PageDimension::Goal, s(10));
         insertion_overflow.set_page_dimension(PageDimension::Total, s(10));
         insertion_overflow.set_page_integer(PageInteger::InsertPenalties, INF_PENALTY);
-        check_break(&mut insertion_overflow, 0).expect("white-box operation succeeds");
+        check_break(&mut insertion_overflow, &mut DiagnosticEffects::new(), 0)
+            .expect("white-box operation succeeds");
         assert_eq!(insertion_overflow.least_page_cost(), AWFUL_BAD);
         assert!(insertion_overflow.page_fire_up().is_some());
     });
@@ -864,7 +898,8 @@ fn page_break_eject_and_awful_cost_paths_fire_the_selected_champion() {
         prohibited.set_page_contents(PageContents::BoxThere);
         prohibited.set_page_dimension(PageDimension::Goal, s(10));
         prohibited.set_page_dimension(PageDimension::Total, s(10));
-        check_break(&mut prohibited, INF_PENALTY).expect("white-box operation succeeds");
+        check_break(&mut prohibited, &mut DiagnosticEffects::new(), INF_PENALTY)
+            .expect("white-box operation succeeds");
         assert_eq!(prohibited.page_fire_up(), None);
     });
 }
@@ -874,12 +909,17 @@ fn page_insertion_class_order_scaling_skip_and_fit_match_tex82() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 100_000, 0, 0);
-        freeze_page_specs(&mut stores, PageContents::InsertsOnly);
+        freeze_page_specs(
+            &mut stores,
+            &mut DiagnosticEffects::new(),
+            PageContents::InsertsOnly,
+        );
         ins_class(&mut stores, 9, 500, 100_000, 10, 3);
         ins_class(&mut stores, 3, 1_000, 100_000, 4, 3);
         let nine = ins(&mut stores, 9, 20_000, 0, &[]);
         prepare_insertion(
             &mut stores,
+            &mut DiagnosticEffects::new(),
             &nine,
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
@@ -887,6 +927,7 @@ fn page_insertion_class_order_scaling_skip_and_fit_match_tex82() {
         let three = ins(&mut stores, 3, 8_000, 0, &[]);
         prepare_insertion(
             &mut stores,
+            &mut DiagnosticEffects::new(),
             &three,
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
@@ -910,11 +951,16 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 0, 0);
-        freeze_page_specs(&mut stores, PageContents::InsertsOnly);
+        freeze_page_specs(
+            &mut stores,
+            &mut DiagnosticEffects::new(),
+            PageContents::InsertsOnly,
+        );
         ins_class(&mut stores, 7, 1_000, 5, 0, 0);
         let split = ins(&mut stores, 7, 10, 17, &[rule(10, 0), Node::Penalty(51)]);
         prepare_insertion(
             &mut stores,
+            &mut DiagnosticEffects::new(),
             &split,
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
@@ -929,6 +975,7 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
         let before = stores.insert_penalties();
         prepare_insertion(
             &mut stores,
+            &mut DiagnosticEffects::new(),
             &split,
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
@@ -943,6 +990,7 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
         let invalid = ins(&mut stores, 8, 0, 0, &[]);
         prepare_insertion(
             &mut stores,
+            &mut DiagnosticEffects::new(),
             &invalid,
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
@@ -957,6 +1005,7 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
 fn page_insertion_split_tracing_reports_class_height_and_penalty() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
+        let mut diagnostic_effects = DiagnosticEffects::new();
         params(&mut stores, 5, 0, 0);
         stores
             .assign_int_param(
@@ -965,18 +1014,26 @@ fn page_insertion_split_tracing_reports_class_height_and_penalty() {
                 tex_state::AssignmentScope::Global,
             )
             .expect("parameter");
-        freeze_page_specs(&mut stores, PageContents::InsertsOnly);
+        freeze_page_specs(
+            &mut stores,
+            &mut diagnostic_effects,
+            PageContents::InsertsOnly,
+        );
         ins_class(&mut stores, 7, 1_000, 20, 0, 0);
         let split = ins(&mut stores, 7, 10, 0, &[rule(10, 0), Node::Penalty(51)]);
 
         prepare_insertion(
             &mut stores,
+            &mut diagnostic_effects,
             &split,
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
         .expect("traced insertion split succeeds");
 
         drop(stores);
+        universe
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         let trace = effects(universe);
         for operand in ["% split", "7", "0.00008", "0.00015", " p=", "51"] {
             assert!(trace.contains(operand), "missing {operand:?} from {trace}");
@@ -992,11 +1049,16 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
     crate::test_harness::with_universe(|universe| {
         let mut repeated = universe.command_context().expect("test state is admitted");
         params(&mut repeated, 100_000, 0, 0);
-        freeze_page_specs(&mut repeated, PageContents::InsertsOnly);
+        freeze_page_specs(
+            &mut repeated,
+            &mut DiagnosticEffects::new(),
+            PageContents::InsertsOnly,
+        );
         ins_class(&mut repeated, 2, 500, 40_000, 7_000, 3_000);
         let first = ins(&mut repeated, 2, 10_000, 0, &[]);
         prepare_insertion(
             &mut repeated,
+            &mut DiagnosticEffects::new(),
             &first,
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
@@ -1004,6 +1066,7 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
         let second = ins(&mut repeated, 2, 20_000, 0, &[]);
         prepare_insertion(
             &mut repeated,
+            &mut DiagnosticEffects::new(),
             &second,
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
@@ -1018,11 +1081,16 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
     crate::test_harness::with_universe(|universe| {
         let mut exact = universe.command_context().expect("test state is admitted");
         params(&mut exact, 10, 0, 0);
-        freeze_page_specs(&mut exact, PageContents::InsertsOnly);
+        freeze_page_specs(
+            &mut exact,
+            &mut DiagnosticEffects::new(),
+            PageContents::InsertsOnly,
+        );
         ins_class(&mut exact, 3, 1_000, 10, 0, 0);
         let at_capacity = ins(&mut exact, 3, 10, 0, &[]);
         prepare_insertion(
             &mut exact,
+            &mut DiagnosticEffects::new(),
             &at_capacity,
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
@@ -1041,11 +1109,16 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
     crate::test_harness::with_universe(|universe| {
         let mut null_split = universe.command_context().expect("test state is admitted");
         params(&mut null_split, 0, 0, 0);
-        freeze_page_specs(&mut null_split, PageContents::InsertsOnly);
+        freeze_page_specs(
+            &mut null_split,
+            &mut DiagnosticEffects::new(),
+            PageContents::InsertsOnly,
+        );
         ins_class(&mut null_split, 5, 1_000, 20, 0, 0);
         let unsplittable = ins(&mut null_split, 5, 9, 37, &[rule(9, 0)]);
         prepare_insertion(
             &mut null_split,
+            &mut DiagnosticEffects::new(),
             &unsplittable,
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )
@@ -1065,6 +1138,7 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
 
         prepare_insertion(
             &mut null_split,
+            &mut DiagnosticEffects::new(),
             &unsplittable,
             &crate::diagnostics::ExecutionDiagnosticContext::default(),
         )

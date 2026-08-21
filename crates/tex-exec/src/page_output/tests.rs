@@ -71,8 +71,13 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
             .assign_page_box(class, Some(register), tex_state::AssignmentScope::Local)
             .expect("box assignment");
 
-        let distributed = distribute_insertions(&mut stores, &diagnostic_context, page_nodes)
-            .expect("hbox recovery is nonfatal");
+        let distributed = distribute_insertions(
+            &mut stores,
+            &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            &diagnostic_context,
+            page_nodes,
+        )
+        .expect("hbox recovery is nonfatal");
 
         assert_eq!(distributed.page_nodes, [Node::Penalty(29)]);
         assert_eq!(distributed.heldover, [unrelated, later]);
@@ -142,6 +147,7 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
         assert_eq!(
             insertion_box_nodes(
                 &mut stores,
+                &mut tex_state::diagnostic::DiagnosticEffects::new(),
                 2,
                 &crate::diagnostics::ExecutionDiagnosticContext::default(),
             )
@@ -170,6 +176,7 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
         assert_eq!(
             insertion_box_nodes(
                 &mut stores,
+                &mut tex_state::diagnostic::DiagnosticEffects::new(),
                 2,
                 &crate::diagnostics::ExecutionDiagnosticContext::default(),
             )
