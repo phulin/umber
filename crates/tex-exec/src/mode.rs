@@ -4,9 +4,9 @@ use tex_state::ids::FontId;
 use tex_state::math::FractionThickness;
 use tex_state::node::{BoxNode, Node, NodeTokenList};
 use tex_state::node_arena::PageListId;
-use tex_state::provenance::OriginRef;
 use tex_state::scaled::Scaled;
-use tex_state::{EngineBoundaryHasher, EngineMode, Universe};
+use tex_state::token::OriginId;
+use tex_state::{EngineMode, Universe};
 
 use crate::ExecError;
 
@@ -21,7 +21,7 @@ pub const IGNORE_DEPTH: Scaled = Scaled::from_raw(-65_536_000);
 /// TeX82 and original e-TeX use the fixed `IGNORE_DEPTH` constant. pdfTeX
 /// exposes that value as the assignable `\pdfignoreddimen` parameter and
 /// consults the live cell at every prevdepth initialization and comparison.
-pub(crate) fn ignored_depth(stores: &Universe) -> Scaled {
+pub(crate) fn ignored_depth<G>(stores: &Universe<G>) -> Scaled {
     if stores.primitive_meaning("pdfignoreddimen").is_some() {
         stores.dimen_param(tex_state::env::banks::DimenParam::PDF_IGNORED_DIMEN)
     } else {
@@ -200,7 +200,7 @@ impl ModeList {
         });
     }
 
-    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginRef) {
+    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
         debug_assert!(self.pending_hchars.is_none());
         self.pending_hchars = Some(PendingHRun::new(font, ch, origin, self.nodes().len()));
     }
@@ -496,7 +496,7 @@ impl ModeListMutation<'_> {
             .push_reconstituted(insertion, first, second, third);
     }
 
-    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginRef) {
+    pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
         self.list.begin_pending_hchars(font, ch, origin);
     }
 
@@ -783,7 +783,7 @@ impl AlignState {
 pub struct PendingHChar {
     pub font: FontId,
     pub ch: char,
-    pub origin: OriginRef,
+    pub origin: OriginId,
 }
 
 /// Streaming state for the unresolved tail of one horizontal character run.
@@ -798,14 +798,10 @@ pub(crate) struct PendingHRun {
 }
 
 impl PendingHRun {
-    pub(crate) fn new(font: FontId, ch: char, origin: OriginRef, insertion_index: usize) -> Self {
+    pub(crate) fn new(font: FontId, ch: char, origin: OriginId, insertion_index: usize) -> Self {
         Self {
-            first: PendingHChar {
-                font,
-                ch,
-                origin: origin.clone(),
-            },
-            current: PendingHRunChar::new(font, ch, origin.clone()),
+            first: PendingHChar { font, ch, origin },
+            current: PendingHRunChar::new(font, ch, origin),
             insertion_index,
             source: vec![PendingHChar { font, ch, origin }],
             script: tex_fonts::character_script(ch),
@@ -819,14 +815,14 @@ pub(crate) struct PendingHRunChar {
     pub(crate) font: FontId,
     pub(crate) ch: char,
     pub(crate) orig: SmallVec<[char; 4]>,
-    pub(crate) origins: SmallVec<[OriginRef; 4]>,
+    pub(crate) origins: SmallVec<[OriginId; 4]>,
     pub(crate) ligature_present: bool,
     pub(crate) left_hit: bool,
     pub(crate) right_hit: bool,
 }
 
 impl PendingHRunChar {
-    pub(crate) fn new(font: FontId, ch: char, origin: OriginRef) -> Self {
+    pub(crate) fn new(font: FontId, ch: char, origin: OriginId) -> Self {
         Self {
             font,
             ch,
