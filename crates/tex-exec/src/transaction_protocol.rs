@@ -5,6 +5,7 @@
 //! the fixed fields of `tex_state`'s `HotSnapshot`; the cutover stages consume
 //! these descriptors when borrowing the corresponding marks.
 
+use tex_state::ResolvedMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
 
 macro_rules! bitset {
@@ -622,13 +623,28 @@ fn publication(
 
 /// Classifies every meaning that can reach canonical main control.
 #[must_use]
-pub fn canonical_command_capabilities(meaning: Meaning) -> CommandCapabilities {
+pub fn canonical_command_capabilities<G>(meaning: ResolvedMeaning<G>) -> CommandCapabilities {
+    match meaning {
+        ResolvedMeaning::Static(meaning) => static_command_capabilities(meaning),
+        ResolvedMeaning::Macro { .. } => {
+            ordinary(CanonicalCommandFamily::Passive, StateOwners::NONE)
+        }
+    }
+}
+
+/// Classifies one generation-free static command meaning.
+#[must_use]
+pub fn canonical_static_command_capabilities(meaning: Meaning) -> CommandCapabilities {
+    static_command_capabilities(meaning)
+}
+
+fn static_command_capabilities(meaning: Meaning) -> CommandCapabilities {
     match meaning {
         Meaning::Undefined | Meaning::Unknown(_) => diagnostic(StateOwners::NONE),
         Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => {
             resource(ResourceCapabilities::INPUT)
         }
-        Meaning::Relax | Meaning::ExpandablePrimitive(_) | Meaning::Macro { .. } => {
+        Meaning::Relax | Meaning::ExpandablePrimitive(_) => {
             ordinary(CanonicalCommandFamily::Passive, StateOwners::NONE)
         }
         Meaning::CharGiven(_) | Meaning::CharToken { .. } | Meaning::MathCharGiven(_) => {

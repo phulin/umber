@@ -92,10 +92,10 @@ impl OutputLedger {
     /// Closes all executor-owned output ledgers after a terminal committed
     /// step. Suspension never calls this method and therefore cannot expose a
     /// partial revision patch.
-    pub fn close_revision(
+    pub fn close_revision<G>(
         &mut self,
-        control: &mut MainControl,
-        universe: &Universe,
+        control: &mut MainControl<G>,
+        universe: &Universe<G>,
     ) -> Result<crate::RevisionOutputPatch, crate::RevisionOutputPatchError> {
         let effects = universe.world().effect_journal();
         let artifacts = crate::ArtifactLedger::new(
@@ -105,11 +105,11 @@ impl OutputLedger {
         crate::RevisionOutputPatch::close(effects, artifacts, control.take_prepared_dvi_pages())
     }
 
-    pub fn commit_job_start(
+    pub fn commit_job_start<G>(
         &mut self,
-        control: &mut MainControl,
-        universe: &mut Universe,
-        sink: &mut dyn CheckpointSink,
+        control: &mut MainControl<G>,
+        universe: &mut Universe<G>,
+        sink: &mut dyn CheckpointSink<G>,
     ) -> Result<bool, CommandSummaryError> {
         if std::mem::replace(&mut self.job_start_committed, true) {
             return Ok(false);
@@ -118,9 +118,9 @@ impl OutputLedger {
         Ok(true)
     }
 
-    pub fn fulfill(
+    pub fn fulfill<G>(
         &mut self,
-        control: &mut MainControl,
+        control: &mut MainControl<G>,
         need: &ResourceNeed,
         fulfillment: ResourceFulfillment,
     ) -> Result<(), Box<ResourceFulfillment>> {
@@ -152,9 +152,9 @@ impl OutputLedger {
         Ok(())
     }
 
-    pub fn mark_unavailable(
+    pub fn mark_unavailable<G>(
         &mut self,
-        control: &mut MainControl,
+        control: &mut MainControl<G>,
         need: &ResourceNeed,
         register_texinputs_alias: bool,
     ) {
@@ -179,11 +179,11 @@ impl OutputLedger {
         }
     }
 
-    fn publish(
+    fn publish<G>(
         &self,
-        control: &mut MainControl,
-        universe: &mut Universe,
-        sink: &mut dyn CheckpointSink,
+        control: &mut MainControl<G>,
+        universe: &mut Universe<G>,
+        sink: &mut dyn CheckpointSink<G>,
         boundaries: &[EngineBoundary],
     ) -> Result<(), CommandSummaryError> {
         for &boundary in boundaries {
@@ -206,16 +206,16 @@ impl OutputLedger {
 }
 
 /// Borrow-scoped driver for one bounded canonical engine operation.
-pub struct CanonicalStepRunner<'a> {
-    control: &'a mut MainControl,
-    universe: &'a mut Universe,
+pub struct CanonicalStepRunner<'a, G> {
+    control: &'a mut MainControl<G>,
+    universe: &'a mut Universe<G>,
     ledger: &'a mut OutputLedger,
 }
 
-impl<'a> CanonicalStepRunner<'a> {
+impl<'a, G> CanonicalStepRunner<'a, G> {
     pub fn new(
-        control: &'a mut MainControl,
-        universe: &'a mut Universe,
+        control: &'a mut MainControl<G>,
+        universe: &'a mut Universe<G>,
         ledger: &'a mut OutputLedger,
     ) -> Self {
         Self {
@@ -227,7 +227,7 @@ impl<'a> CanonicalStepRunner<'a> {
 
     pub fn step(
         &mut self,
-        sink: &mut dyn CheckpointSink,
+        sink: &mut dyn CheckpointSink<G>,
         cancellation: &Cancellation,
     ) -> CanonicalStepResult {
         let result = self.step_inner(sink, cancellation, None);
@@ -246,7 +246,7 @@ impl<'a> CanonicalStepRunner<'a> {
     /// fatal into terminal completion so §1333 cleanup can run.
     pub fn step_completing_fatal(
         &mut self,
-        sink: &mut dyn CheckpointSink,
+        sink: &mut dyn CheckpointSink<G>,
         cancellation: &Cancellation,
     ) -> CanonicalStepResult {
         let result = self.step_inner(sink, cancellation, None);
@@ -264,7 +264,7 @@ impl<'a> CanonicalStepRunner<'a> {
 
     pub fn step_with_observer(
         &mut self,
-        sink: &mut dyn CheckpointSink,
+        sink: &mut dyn CheckpointSink<G>,
         cancellation: &Cancellation,
         observer: &mut dyn CommandObserver,
     ) -> CanonicalStepResult {
@@ -273,7 +273,7 @@ impl<'a> CanonicalStepRunner<'a> {
 
     fn step_inner(
         &mut self,
-        sink: &mut dyn CheckpointSink,
+        sink: &mut dyn CheckpointSink<G>,
         cancellation: &Cancellation,
         observer: Option<&mut dyn CommandObserver>,
     ) -> CanonicalStepResult {

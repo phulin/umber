@@ -55,8 +55,8 @@ pub use canonical_step::{
     OutputLedger,
 };
 pub use checkpoint::{
-    CheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorRestoreError,
-    EngineBoundary, EngineCheckpoint, RootRehomeContext,
+    CheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EngineBoundary,
+    EngineCheckpoint,
 };
 pub use dispatch::{
     ArtifactLedger, DispatchAction, ExecutionStats, PreparedDviPage, RevisionOutputPatch,

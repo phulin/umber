@@ -81,14 +81,43 @@ impl ResourceFulfillment {
     }
 }
 
+trait ResourceWorldBackend {
+    fn with_input_read_state(&mut self, operation: &mut dyn FnMut(&mut dyn InputReadState));
+    fn read_file(&mut self, path: &Path) -> Result<FileContent, WorldError>;
+    fn register_selected_file(
+        &mut self,
+        path: &Path,
+        bytes: Arc<[u8]>,
+    ) -> Result<FileContent, WorldError>;
+}
+
+impl<G> ResourceWorldBackend for Universe<G> {
+    fn with_input_read_state(&mut self, operation: &mut dyn FnMut(&mut dyn InputReadState)) {
+        operation(&mut self.input_open_context());
+    }
+
+    fn read_file(&mut self, path: &Path) -> Result<FileContent, WorldError> {
+        self.world_mut().read_file(path)
+    }
+
+    fn register_selected_file(
+        &mut self,
+        path: &Path,
+        bytes: Arc<[u8]>,
+    ) -> Result<FileContent, WorldError> {
+        self.input_open_context()
+            .read_supplied_input_file(path, bytes)
+    }
+}
+
 pub struct ResourceWorld<'a> {
-    stores: &'a mut Universe,
+    backend: &'a mut dyn ResourceWorldBackend,
 }
 
 impl<'a> ResourceWorld<'a> {
     #[must_use]
-    pub fn new(stores: &'a mut Universe) -> Self {
-        Self { stores }
+    pub fn new<G>(stores: &'a mut Universe<G>) -> Self {
+        Self { backend: stores }
     }
 
     /// Borrows the candidate's private world for resource bookkeeping.
@@ -96,11 +125,20 @@ impl<'a> ResourceWorld<'a> {
         &mut self,
         operation: impl FnOnce(&mut dyn InputReadState) -> T,
     ) -> T {
-        operation(&mut self.stores.input_open_context())
+        let mut operation = Some(operation);
+        let mut result = None;
+        self.backend.with_input_read_state(&mut |input| {
+            result = Some(operation
+                .take()
+                .expect("resource input operation runs once")(
+                input
+            ));
+        });
+        result.expect("resource input operation ran")
     }
 
     pub fn read_file(&mut self, path: impl AsRef<Path>) -> Result<FileContent, WorldError> {
-        self.stores.world_mut().read_file(path)
+        self.backend.read_file(path.as_ref())
     }
 
     pub fn register_selected_file(
@@ -108,9 +146,7 @@ impl<'a> ResourceWorld<'a> {
         path: impl AsRef<Path>,
         bytes: Arc<[u8]>,
     ) -> Result<FileContent, WorldError> {
-        self.stores
-            .input_open_context()
-            .read_supplied_input_file(path.as_ref(), bytes)
+        self.backend.register_selected_file(path.as_ref(), bytes)
     }
 }
 
