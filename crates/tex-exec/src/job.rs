@@ -175,6 +175,14 @@ pub struct PdfJobFinalizationReport {
     reported: bool,
 }
 
+/// Handle-free navigation warning selected before job framing renders it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum PdfNavigationWarning {
+    Destination(tex_state::PdfDestinationIdentity),
+    StructureDestination(tex_state::PdfDestinationIdentity),
+    Thread(tex_state::PdfDestinationIdentity),
+}
+
 impl PdfJobFinalizationReport {
     #[must_use]
     pub const fn new(
@@ -716,71 +724,36 @@ pub(crate) fn report_pdf_fatal_error<G>(stores: &mut Universe<G>, message: &str)
 /// article thread whose bead list is empty. Object serialization is a host
 /// concern in Umber, but these diagnostics depend only on checkpointed engine
 /// state and therefore belong at the engine's finalization boundary.
-pub(crate) fn report_pdf_navigation_warnings<G>(stores: &mut Universe<G>) -> bool {
-    #[derive(Clone, Copy)]
-    enum MissingNavigationKind {
-        Destination,
-        StructureDestination,
-        Thread,
-    }
-
-    let missing = stores
-        .pdf_destinations(false)
-        .iter()
-        .filter(|record| !record.defined())
-        .map(|record| {
-            (
-                MissingNavigationKind::Destination,
-                record.identity().clone(),
-            )
-        })
-        .chain(
-            stores
-                .pdf_destinations(true)
-                .iter()
-                .filter(|record| !record.defined())
-                .map(|record| {
-                    (
-                        MissingNavigationKind::StructureDestination,
-                        record.identity().clone(),
-                    )
-                }),
-        )
-        .chain(
-            stores
-                .pdf_threads()
-                .iter()
-                .filter(|record| record.beads().is_empty())
-                .map(|record| (MissingNavigationKind::Thread, record.identity().clone())),
-        )
-        .collect::<Vec<_>>();
-
+pub(crate) fn report_pdf_navigation_warnings<G>(
+    stores: &mut Universe<G>,
+    missing: &[PdfNavigationWarning],
+) -> bool {
     if missing.is_empty() {
         return false;
     }
 
     let mut printer = stores.printer();
-    for (kind, identity) in missing {
-        match kind {
-            MissingNavigationKind::Destination => {
+    for warning in missing {
+        match warning {
+            PdfNavigationWarning::Destination(identity) => {
                 printer.print_nl("pdfTeX warning (dest): ");
-                print_pdf_navigation_identity(&mut printer, &identity);
+                print_pdf_navigation_identity(&mut printer, identity);
                 printer
                     .print(" has been referenced but does not exist, replaced by a fixed one")
                     .print_ln()
                     .print_ln();
             }
-            MissingNavigationKind::StructureDestination => {
+            PdfNavigationWarning::StructureDestination(identity) => {
                 printer.print("pdfTeX warning (structure dest): ");
-                print_pdf_navigation_identity(&mut printer, &identity);
+                print_pdf_navigation_identity(&mut printer, identity);
                 printer
                     .print(" has been referenced but does not exist")
                     .print_ln()
                     .print_ln();
             }
-            MissingNavigationKind::Thread => {
+            PdfNavigationWarning::Thread(identity) => {
                 printer.print_nl("pdfTeX warning (thread): destination ");
-                print_pdf_navigation_identity(&mut printer, &identity);
+                print_pdf_navigation_identity(&mut printer, identity);
                 printer
                     .print(" has been referenced but does not exist, replaced by a fixed one")
                     .print_ln()

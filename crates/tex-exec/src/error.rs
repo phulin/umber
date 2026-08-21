@@ -1,12 +1,9 @@
 use std::fmt;
 
 use tex_command::{CommandError, FatalError};
-use tex_state::FontParameterError;
 use tex_state::WorldError;
 use tex_state::meaning::ExpandablePrimitive;
 use tex_state::meaning::UnexpandablePrimitive;
-use tex_state::provenance::DiagnosticSite;
-use tex_state::provenance::OriginRef;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 use tex_state::{ColdProvenanceDemand, CommandContext, DiagnosticOriginRequest};
 
@@ -48,6 +45,54 @@ pub struct FrozenDiagnosticGroup {
 pub struct FrozenDiagnosticEvidence {
     pub origin: Option<FrozenDiagnosticOrigin>,
     pub context: Option<FrozenDiagnosticContext>,
+}
+
+/// Compact live diagnostic coordinate retained only until cold detachment.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DiagnosticSite {
+    primary: Option<OriginId>,
+}
+
+impl DiagnosticSite {
+    #[must_use]
+    pub const fn new(primary: Option<OriginId>) -> Self {
+        Self { primary }
+    }
+
+    #[must_use]
+    pub const fn primary_origin(&self) -> Option<OriginId> {
+        self.primary
+    }
+}
+
+/// Execution-facing font-parameter failure, detached from any retired store.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FontParameterError {
+    Zero,
+    NumberOutOfRange {
+        number: u32,
+        maximum: u32,
+    },
+    FontOutOfRange {
+        font: tex_state::ids::FontId,
+        maximum: u32,
+    },
+    ParameterCountOutOfRange {
+        count: usize,
+        maximum: u32,
+    },
+    TooManyFonts {
+        maximum: u32,
+    },
+    FontInfoCapacity {
+        capacity: usize,
+    },
+    CannotGrow {
+        font: tex_state::ids::FontId,
+        number: u32,
+        current_len: u32,
+        last_loaded_font: tex_state::ids::FontId,
+    },
 }
 
 impl FrozenDiagnosticContext {
@@ -809,8 +854,8 @@ impl ExecError {
     #[must_use]
     pub fn diagnostic_site(&self) -> DiagnosticSite {
         match self {
-            Self::Captured { site, .. } => site.clone(),
-            _ => DiagnosticSite::new(self.primary_origin(), [], None),
+            Self::Captured { site, .. } => *site,
+            _ => DiagnosticSite::new(self.primary_origin()),
         }
     }
 
@@ -831,31 +876,7 @@ impl ExecError {
         }
         Self::Captured {
             error: Box::new(self),
-            site: DiagnosticSite::new(
-                Some(origin),
-                inherited.related().iter().copied(),
-                inherited.expansion_head(),
-            ),
-            frozen: None,
-        }
-    }
-
-    /// Captures the triggering delivery's structural root. Formatting still
-    /// walks and renders it only when a diagnostic consumer requests text.
-    pub(crate) fn capture_command_origin_ref(self, origin: OriginRef) -> Self {
-        if matches!(
-            self,
-            Self::NeedResource(_) | Self::MissingFont { .. } | Self::MissingPdfImage { .. }
-        ) {
-            return self;
-        }
-        let inherited = self.diagnostic_site();
-        if inherited.primary_origin().is_some() {
-            return self;
-        }
-        Self::Captured {
-            error: Box::new(self),
-            site: DiagnosticSite::rooted(Some(origin), [], None),
+            site: DiagnosticSite::new(Some(origin)),
             frozen: None,
         }
     }

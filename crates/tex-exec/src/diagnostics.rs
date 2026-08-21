@@ -400,10 +400,13 @@ pub(crate) fn execute_showbox<G>(
         // only to this branch. Section 1296 prints `"void"` directly after
         // the equals sign when the register is null.
         text.push('\n');
+        let command = stores
+            .command_context()
+            .expect("showbox belongs to a live generation");
         text.push_str(&crate::node_dump::dump_page_list(
-            stores,
+            &command,
             owner,
-            DumpConfig::read(stores).for_profile(profile),
+            DumpConfig::read(&command).for_profile(profile),
         ));
     } else {
         text.push_str("void\n");
@@ -490,6 +493,10 @@ pub(crate) fn execute_showlists<G>(
     let summary = nest.summary();
     let output_routine_active = summary.levels().iter().any(|level| level.entry_line() < 0);
     let page = page_activity_snapshot(stores, output_routine_active)?;
+    let ignored_depth = ignored_depth(stores);
+    let command = stores
+        .command_context()
+        .expect("showlists belongs to a live generation");
     for (index, level) in summary.levels().iter().enumerate().rev() {
         text.push_str("### ");
         text.push_str(mode_text(level.mode()));
@@ -521,9 +528,9 @@ pub(crate) fn execute_showlists<G>(
                 }
                 text.push('\n');
                 text.push_str(&dump_node_slice(
-                    stores,
+                    &command,
                     &page.current_page,
-                    DumpConfig::read(stores).for_profile(profile),
+                    DumpConfig::read(&command).for_profile(profile),
                 ));
                 if page.contents != PageContents::Empty {
                     text.push_str("total height ");
@@ -539,26 +546,26 @@ pub(crate) fn execute_showlists<G>(
             if !page.contributions.is_empty() {
                 text.push_str("### recent contributions:\n");
                 text.push_str(&dump_node_slice(
-                    stores,
+                    &command,
                     &page.contributions,
-                    DumpConfig::read(stores).for_profile(profile),
+                    DumpConfig::read(&command).for_profile(profile),
                 ));
             }
-        } else if let Some(nodes) = showlists_level_nodes(stores, summary.levels(), index) {
+        } else if let Some(nodes) = showlists_level_nodes(&command, summary.levels(), index) {
             if index == 0 {
                 text.push_str("### recent contributions:\n");
             }
             text.push_str(&dump_node_slice(
-                stores,
+                &command,
                 &nodes,
-                DumpConfig::read(stores).for_profile(profile),
+                DumpConfig::read(&command).for_profile(profile),
             ));
         }
         match level.mode() {
             Mode::Vertical | Mode::InternalVertical => {
                 text.push_str("prevdepth ");
                 match level.list().prev_depth() {
-                    Some(depth) if depth.raw() > ignored_depth(stores).raw() => {
+                    Some(depth) if depth.raw() > ignored_depth.raw() => {
                         text.push_str(&crate::node_dump::format_scaled_for_diagnostics(depth));
                     }
                     _ => text.push_str("ignored"),
@@ -586,14 +593,15 @@ pub(crate) fn execute_showlists<G>(
                 if let Some(fraction) = level.list().incomplete_fraction() {
                     text.push_str("this will begin denominator of:\n");
                     text.push_str(&crate::node_dump::dump_incomplete_fraction(
-                        stores,
+                        &command,
                         fraction,
-                        DumpConfig::read(stores).for_profile(profile),
+                        DumpConfig::read(&command).for_profile(profile),
                     ));
                 }
             }
         }
     }
+    drop(command);
     // §218's `show_activities` opens with `print_nl(""); print_ln`, not the
     // single smart `print_nl` `show_box` uses: the forced blank line is why
     // `\showlists`, unlike `\showbox`, always separates its dump from
@@ -662,7 +670,7 @@ fn page_activity_snapshot<G>(
 /// project Umber's typed `DisplayEqNo` owner back onto that level instead of
 /// displaying the now-empty construction list.
 fn showlists_level_nodes<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     levels: &[crate::mode::ModeLevelSummary],
     index: usize,
 ) -> Option<Vec<tex_state::node::Node>> {

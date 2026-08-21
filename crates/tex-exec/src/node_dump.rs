@@ -126,7 +126,7 @@ trait DumpListProjection {
 
 impl DumpListProjection for PageListId {
     fn is_empty<G>(&self, _stores: &CommandContext<'_, G>) -> bool {
-        self.is_empty()
+        PageListId::is_empty(*self)
     }
 
     fn dump<G>(
@@ -492,7 +492,7 @@ fn dump_token_words<G>(
     for &token in tokens {
         // §1356 delegates write-node contents to §262 `show_token_list`,
         // including `print_cs`'s control-word separator.
-        append_token_show_text(stores, token, out);
+        append_token_show_text(stores, token.semantic_token(), out);
     }
     out.push_str("}\n");
 }
@@ -924,7 +924,7 @@ fn dump_mark<G>(
         let _ = write!(out, "{class}{{");
     }
     for &token in tokens {
-        out.push_str(&token_text(stores, token));
+        out.push_str(&token_text(stores, token.semantic_token()));
     }
     out.push_str("}\n");
 }
@@ -959,7 +959,7 @@ pub(crate) fn font_identifier_raw<G>(
     };
     let identifier = stores.font_identifier_symbol(identifier_font).map_or_else(
         || format!("\\{}", stores.font_name(font)),
-        |symbol| tex_state::token_show::token_text(stores, Token::Cs(symbol.symbol())),
+        |symbol| tex_state::token_show::token_text(stores, Token::Cs(symbol)),
     );
     if !stores.pdf_font_configuration().traces_fonts() {
         expansion_ratio.map_or(identifier.clone(), |ratio| {
