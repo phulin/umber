@@ -6,6 +6,23 @@ use tex_state::glue::Order;
 use tex_state::interner::InternerBudget;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
+use tex_state::token::OriginId;
+use tex_state::world::ArtifactSourceRecipe;
+
+struct EmptySourceResolver;
+
+impl crate::output_provenance::ArtifactSourceResolver for EmptySourceResolver {
+    fn detach_artifact_source(&self, _origin: OriginId) -> Option<ArtifactSourceRecipe> {
+        None
+    }
+}
+
+#[derive(Default)]
+struct IgnoredGeometry;
+
+impl crate::shipout::ShipoutGeometrySink for IgnoredGeometry {
+    fn committed_shipout_geometry(&mut self, _geometry: crate::shipout::ShipoutGeometry) {}
+}
 
 fn budget() -> InternerBudget {
     InternerBudget::new(32, 32, 1024).expect("test interner budget")
@@ -65,6 +82,55 @@ fn completed_page_release_drops_exact_closure_and_scratch() {
         assert!(stores.page_node_list(speculative).is_err());
     })
     .expect("fresh universe");
+}
+
+#[test]
+fn aborted_shipout_transaction_publishes_no_diagnostic_program() {
+    crate::test_harness::with_plain_universe(|stores| {
+        stores
+            .world_mut()
+            .write_text(tex_state::PrintSink::Terminal, "open terminal line");
+        let effect_prefix = stores.world().effect_records().to_vec();
+        let partial_lines = stores.world().printable_lines_are_open();
+        let history = stores.world().error_channel().history();
+
+        let mut write = |_: &mut Universe<_>,
+                         _: &mut DiagnosticEffects,
+                         _: tex_state::PrintSink,
+                         _: &[tex_state::token::TokenWord]| {
+            unreachable!("the negative control never begins traversal")
+        };
+        let mut replay = |_: &mut Universe<_>,
+                          _: &mut DiagnosticEffects,
+                          _: crate::shipout::ReplayTextKind,
+                          _: &[tex_state::token::TokenWord]| {
+            unreachable!("the negative control never begins traversal")
+        };
+        let mut geometry = IgnoredGeometry;
+        let mut transaction = crate::shipout::ShipoutTransaction::new(
+            &mut write,
+            &mut replay,
+            &EmptySourceResolver,
+            tex_state::ProvenanceDemand::DIAGNOSTICS,
+            0,
+            &mut geometry,
+        );
+        {
+            let command = stores.command_context().expect("diagnostic admission");
+            let mut diagnostic = command.begin_diagnostic(&mut transaction.diagnostic_effects);
+            diagnostic.print_nl("staged shipout diagnostic");
+            diagnostic.end(false);
+        }
+        assert_eq!(transaction.diagnostic_effects.len(), 1);
+
+        // A failed staging result drops the transaction without extracting
+        // its operation-local collector for outer publication.
+        drop(transaction);
+
+        assert_eq!(stores.world().effect_records(), effect_prefix);
+        assert_eq!(stores.world().printable_lines_are_open(), partial_lines);
+        assert_eq!(stores.world().error_channel().history(), history);
+    });
 }
 
 #[test]
