@@ -167,7 +167,7 @@ pub(crate) fn shipout_node<G>(
                     stores
                         .truncate_page_nodes(page_before_shipout)
                         .expect("failed memo replay restores its speculative page root");
-                    return Err(error);
+                    return Err(error.into());
                 }
             };
             stores.with_pure_memo(|memo| {
@@ -262,7 +262,7 @@ pub(crate) fn shipout_node<G>(
             stores
                 .truncate_page_nodes(page_before_shipout)
                 .expect("rejected shipout restores its entire speculative suffix");
-            return Err(error);
+            return Err(error.into());
         }
     };
     release_published_page(stores, shipout_scratch, page_root);
