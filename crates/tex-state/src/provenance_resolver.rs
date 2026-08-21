@@ -25,6 +25,13 @@ pub enum ColdProvenanceDemand {
     RenderedSource,
 }
 
+/// Explicit cold request for one origin captured by an execution error.
+#[derive(Clone, Copy, Debug)]
+pub struct DiagnosticOriginRequest<'a> {
+    pub demand: ColdProvenanceDemand,
+    pub message: &'a str,
+}
+
 /// One generation-local live coordinate selected for cold resolution.
 #[derive(Clone, Copy, Debug)]
 pub struct DiagnosticProvenanceCoordinate<G> {
@@ -88,9 +95,17 @@ pub struct DetachedDiagnosticPresentation {
     pub expansion: Vec<String>,
 }
 
+/// One fully detached diagnostic site and its optional generated backing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DetachedOriginDiagnostic {
+    pub rendered_site: String,
+    pub resolved_source: Option<ResolvedSourceLocation>,
+    pub generated_origin: Option<DetachedGeneratedSourceSpan>,
+}
+
 /// Resolver which allocates presentation only after explicit cold admission.
 pub struct ProvenanceResolver<'a, G> {
-    universe: &'a Universe<G>,
+    universe: Option<&'a Universe<G>>,
     demand: ColdProvenanceDemand,
     trace_depth: usize,
 }
@@ -99,7 +114,7 @@ impl<'a, G> ProvenanceResolver<'a, G> {
     #[must_use]
     pub const fn new(universe: &'a Universe<G>, demand: ColdProvenanceDemand) -> Self {
         Self {
-            universe,
+            universe: Some(universe),
             demand,
             trace_depth: DEFAULT_TRACE_DEPTH,
         }
@@ -112,7 +127,7 @@ impl<'a, G> ProvenanceResolver<'a, G> {
         trace_depth: usize,
     ) -> Self {
         Self {
-            universe,
+            universe: Some(universe),
             demand,
             trace_depth,
         }
@@ -121,6 +136,38 @@ impl<'a, G> ProvenanceResolver<'a, G> {
     #[must_use]
     pub const fn demand(&self) -> ColdProvenanceDemand {
         self.demand
+    }
+
+    pub(crate) const fn admitted(demand: ColdProvenanceDemand) -> Self {
+        Self {
+            universe: None,
+            demand,
+            trace_depth: DEFAULT_TRACE_DEPTH,
+        }
+    }
+
+    pub(crate) fn detach_admitted_origin(
+        &self,
+        message: &str,
+        record: OriginRecord,
+        primary: Option<ResolvedSourceLocation>,
+        generated_origin: Option<DetachedGeneratedSourceSpan>,
+    ) -> DetachedOriginDiagnostic {
+        let primary_summary = primary.as_ref().map_or_else(
+            || record_label(record),
+            |location| format!("{}:{}:{}", location.path, location.line, location.column),
+        );
+        let presentation = DetachedDiagnosticPresentation {
+            primary,
+            primary_summary,
+            related: Vec::new(),
+            expansion: Vec::new(),
+        };
+        DetachedOriginDiagnostic {
+            rendered_site: render_detached_diagnostic(message, &presentation),
+            resolved_source: presentation.primary,
+            generated_origin,
+        }
     }
 
     /// Detaches one live coordinate to an owned source presentation.
@@ -204,7 +251,7 @@ impl<'a, G> ProvenanceResolver<'a, G> {
     }
 
     fn record(&self, coordinate: ProvenanceId<G>) -> Option<OriginRecord> {
-        Some(self.universe.provenance_record(coordinate))
+        Some(self.universe?.provenance_record(coordinate))
     }
 
     fn resolve_record(&self, record: OriginRecord) -> Option<ResolvedSourceLocation> {
@@ -220,8 +267,9 @@ impl<'a, G> ProvenanceResolver<'a, G> {
     }
 
     fn resolve_source(&self, source: SourceOrigin) -> Option<ResolvedSourceLocation> {
-        let record = self.universe.world().input_record(source.input_record()?)?;
-        let bytes = self.universe.world().input_content(record.hash())?;
+        let universe = self.universe?;
+        let record = universe.world().input_record(source.input_record()?)?;
+        let bytes = universe.world().input_content(record.hash())?;
         let start = source.byte_offset();
         let start_usize = usize::try_from(start).ok()?;
         let width = utf8_scalar_len_at(bytes, start_usize).unwrap_or(1);
@@ -252,6 +300,26 @@ impl<'a, G> ProvenanceResolver<'a, G> {
             OriginRecord::Synthetic(synthetic) => {
                 format!("{} origin", synthetic_kind_label(synthetic.kind()))
             }
+        }
+    }
+}
+
+fn record_label(record: OriginRecord) -> String {
+    match record {
+        OriginRecord::UnknownBootstrap => "unknown origin".to_owned(),
+        OriginRecord::Source(_) | OriginRecord::SourceSpan(_) => "source location".to_owned(),
+        OriginRecord::MacroInvocation(_) => "macro expansion".to_owned(),
+        OriginRecord::Inserted(inserted) => format!(
+            "inserted {} token {}",
+            inserted_kind_label(inserted.kind()),
+            token_summary(inserted.token())
+        ),
+        OriginRecord::Synthesized(synthesized) => format!(
+            "synthesized {} token",
+            synthesized_kind_label(synthesized.kind())
+        ),
+        OriginRecord::Synthetic(synthetic) => {
+            format!("{} origin", synthetic_kind_label(synthetic.kind()))
         }
     }
 }

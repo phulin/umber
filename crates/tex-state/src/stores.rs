@@ -170,6 +170,7 @@ impl<'a, G> AdmittedState<'a, G> {
     pub(crate) fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
         self.generation.provenance().get(id)
     }
+
 }
 
 /// Unique admitted view used for assignment and commit publication.
@@ -210,6 +211,10 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     #[inline(always)]
     pub(crate) fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
         self.generation.provenance().get(id)
+    }
+
+    pub(crate) fn provenance_coordinate_at(&self, index: u32) -> Option<ProvenanceId<G>> {
+        self.generation.provenance().coordinate_at(index)
     }
 
     pub(crate) fn allocate_definition(

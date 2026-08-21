@@ -70,6 +70,15 @@ dense_id!(TokenListId);
 dense_id!(GlueId);
 dense_id!(ProvenanceId);
 
+impl<G> ProvenanceId<G> {
+    pub(crate) fn from_origin_index(index: u32) -> Option<Self> {
+        index
+            .checked_add(1)
+            .and_then(NonZeroU32::new)
+            .map(Self::from_row)
+    }
+}
+
 /// Failure to stage a complete durable row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DurableAllocationError {
@@ -266,6 +275,12 @@ impl<G> ProvenanceArena<G> {
             .map_err(|_| DurableAllocationError::AllocationFailed)?;
         self.rows.push(value);
         Ok(ProvenanceId::from_row(row))
+    }
+
+    pub(crate) fn coordinate_at(&self, index: u32) -> Option<ProvenanceId<G>> {
+        ((index as usize) < self.rows.len()).then(|| {
+            ProvenanceId::from_origin_index(index).expect("live provenance index is nonzero")
+        })
     }
 
     /// Reserves a complete promotion batch without publishing a row.

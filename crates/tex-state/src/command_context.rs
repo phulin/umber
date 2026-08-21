@@ -75,6 +75,63 @@ pub enum PrepareMagDiagnostic {
     IncompatibleMagnification { attempted: i32, retained: i32 },
 }
 
+/// Detached TeX-shaped resource counters for terminal job reporting.
+///
+/// This value contains no store, generation, or host handle. Execution-owned
+/// stack maxima may be filled by the caller after detachment because those
+/// stacks do not belong to `tex-state`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EngineUsageStatistics {
+    pub strings: usize,
+    pub string_capacity: usize,
+    pub string_characters: usize,
+    pub string_character_capacity: usize,
+    pub memory_words: usize,
+    pub memory_word_capacity: usize,
+    pub control_sequences: usize,
+    pub font_info_words: usize,
+    pub fonts: usize,
+    pub hyphenation_exceptions: usize,
+    pub hyphenation_exception_capacity: usize,
+    pub input_stack: usize,
+    pub nest_stack: usize,
+    pub parameter_stack: usize,
+    pub buffer_stack: usize,
+    pub save_stack: usize,
+}
+
+/// One explicit retained-string accounting delta.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetainedStringAllocation {
+    pub strings: usize,
+    pub characters: usize,
+}
+
+impl RetainedStringAllocation {
+    #[must_use]
+    pub const fn one(value: &str) -> Self {
+        Self {
+            strings: 1,
+            characters: value.len(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct EngineUsageRuntime {
+    retained_strings: usize,
+    retained_characters: usize,
+}
+
+impl EngineUsageRuntime {
+    fn record_retained_strings(&mut self, allocation: RetainedStringAllocation) {
+        self.retained_strings = self.retained_strings.saturating_add(allocation.strings);
+        self.retained_characters = self
+            .retained_characters
+            .saturating_add(allocation.characters);
+    }
+}
+
 /// One command episode's borrowed session and generation.
 ///
 /// Admission validates coarse owners once. Meaning reads and definition
@@ -94,6 +151,7 @@ pub struct CommandContext<'a, G> {
     hyphenation: &'a mut HyphenationTable,
     interaction_mode: &'a mut InteractionMode,
     error_context_widths: crate::print::ErrorContextWidths,
+    engine_usage: &'a mut EngineUsageRuntime,
 }
 
 impl<'a, G> CommandContext<'a, G> {
@@ -112,6 +170,7 @@ impl<'a, G> CommandContext<'a, G> {
         hyphenation: &'a mut HyphenationTable,
         interaction_mode: &'a mut InteractionMode,
         error_context_widths: crate::print::ErrorContextWidths,
+        engine_usage: &'a mut EngineUsageRuntime,
     ) -> Self {
         Self {
             interner,
@@ -128,7 +187,39 @@ impl<'a, G> CommandContext<'a, G> {
             hyphenation,
             interaction_mode,
             error_context_widths,
+            engine_usage,
         }
+    }
+
+    /// Detaches the state-owned portion of TeX82's terminal usage report.
+    #[must_use]
+    pub fn detach_engine_usage_statistics(&self) -> EngineUsageStatistics {
+        let fonts = self.fonts.watermark().len as usize;
+        let hyphenation = self.hyphenation.exception_usage();
+        EngineUsageStatistics {
+            strings: self.engine_usage.retained_strings,
+            string_capacity: 15_000_usize.saturating_sub(1_027),
+            string_characters: self.engine_usage.retained_characters,
+            string_character_capacity: 125_000_usize.saturating_sub(106_808),
+            memory_words: 0,
+            memory_word_capacity: 250_000,
+            control_sequences: self.interner.multiletter_len(),
+            font_info_words: 0,
+            fonts: fonts.saturating_sub(1),
+            hyphenation_exceptions: hyphenation.occupied,
+            hyphenation_exception_capacity: hyphenation.capacity,
+            input_stack: 0,
+            nest_stack: 0,
+            parameter_stack: 0,
+            buffer_stack: 0,
+            save_stack: 0,
+        }
+    }
+
+    /// Records only the scalar accounting effect of strings retained by an
+    /// execution or host owner. No string bytes enter semantic state.
+    pub fn record_retained_strings(&mut self, allocation: RetainedStringAllocation) {
+        self.engine_usage.record_retained_strings(allocation);
     }
 
     pub fn resolve_symbol(&self, symbol: SymbolId) -> Result<&str, InternerAccessError> {
@@ -259,6 +350,118 @@ impl<'a, G> CommandContext<'a, G> {
     #[inline(always)]
     pub fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
         self.admitted.provenance(id)
+    }
+
+    /// Admits one compact command origin into the generation-typed
+    /// provenance domain, then detaches all presentation before returning.
+    /// The returned value contains no coordinate, source-map row, or backing
+    /// owner and may safely survive rollback of the originating command.
+    pub fn detach_diagnostic_origin(
+        &mut self,
+        origin: crate::token::OriginId,
+        request: crate::DiagnosticOriginRequest<'_>,
+    ) -> Result<crate::DetachedOriginDiagnostic, DurableAllocationError> {
+        let coordinate = match origin.decode() {
+            crate::token::OriginEncoding::Arena(index) => {
+                match self.admitted.provenance_coordinate_at(index) {
+                    Some(coordinate) => coordinate,
+                    None => self
+                        .admitted
+                        .allocate_provenance(OriginRecord::UnknownBootstrap)?,
+                }
+            }
+            crate::token::OriginEncoding::DirectSource(position) => {
+                let region = self.sources.region_for_backed_position(position);
+                let span = region
+                    .and_then(|region| {
+                        let next = position.raw().checked_add(1)?;
+                        (next <= region.anchor().raw())
+                            .then(|| crate::source_map::SourcePos::from_raw_for_store(next))
+                    })
+                    .and_then(|hi| self.sources.span(position, hi).ok());
+                self.admitted.allocate_provenance(
+                    span.map_or(OriginRecord::UnknownBootstrap, OriginRecord::SourceSpan),
+                )?
+            }
+            crate::token::OriginEncoding::Unknown
+            | crate::token::OriginEncoding::NoExpandFallback => self
+                .admitted
+                .allocate_provenance(OriginRecord::UnknownBootstrap)?,
+        };
+        let record = self.admitted.provenance(coordinate);
+        let (resolved, generated_origin) = self.detach_origin_source(record, request.demand);
+        Ok(
+            crate::provenance_resolver::ProvenanceResolver::admitted(request.demand)
+                .detach_admitted_origin(
+                request.message,
+                record,
+                resolved,
+                generated_origin,
+            ),
+        )
+    }
+
+    fn detach_origin_source(
+        &self,
+        record: OriginRecord,
+        demand: crate::ColdProvenanceDemand,
+    ) -> (
+        Option<crate::ResolvedSourceLocation>,
+        Option<crate::DetachedGeneratedSourceSpan>,
+    ) {
+        let (registration, start, end) = match record {
+            OriginRecord::SourceSpan(span) => {
+                let Some(registration) = self.sources.registration_for_span(span) else {
+                    return (None, None);
+                };
+                let region = registration.region();
+                let Some(start) = span.lo().raw().checked_sub(region.start.raw()) else {
+                    return (None, None);
+                };
+                let Some(end) = span.hi().raw().checked_sub(region.start.raw()) else {
+                    return (None, None);
+                };
+                (registration, start, end)
+            }
+            OriginRecord::Source(source) => {
+                let Some(registration) = self.sources.registration_for_source(source.source())
+                else {
+                    return (None, None);
+                };
+                let start = source.byte_offset();
+                (registration, start, start.saturating_add(1))
+            }
+            _ => return (None, None),
+        };
+        let (logical_path, bytes, generated) = match registration.descriptor() {
+            crate::source_map::SourceDescriptor::World { input_record, .. } => {
+                let Some(record) = self.world.input_record(*input_record) else {
+                    return (None, None);
+                };
+                let Some(bytes) = self.world.input_content(record.hash()) else {
+                    return (None, None);
+                };
+                (
+                    record.path().to_string_lossy().into_owned(),
+                    bytes.to_vec(),
+                    false,
+                )
+            }
+            crate::source_map::SourceDescriptor::Generated(source) => (
+                source.logical_path().unwrap_or("<generated>").to_owned(),
+                source.bytes().to_vec(),
+                true,
+            ),
+        };
+        let span = crate::DetachedGeneratedSourceSpan {
+            logical_path,
+            bytes,
+            start,
+            end,
+        };
+        let resolved = crate::provenance_resolver::ProvenanceResolver::<G>::admitted(demand)
+            .resolve_generated(&span);
+        (resolved, generated.then_some(span))
     }
 
     #[inline(always)]

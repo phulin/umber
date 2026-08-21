@@ -134,8 +134,8 @@ pub use resource::{
 };
 
 pub use command_context::{
-    BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, ParagraphShapeLine,
-    PenaltyArrayKind, PrepareMagDiagnostic,
+    BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, EngineUsageStatistics,
+    ParagraphShapeLine, PenaltyArrayKind, PrepareMagDiagnostic, RetainedStringAllocation,
 };
 pub use definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
 pub use dependency::{
@@ -165,7 +165,8 @@ pub use page::{
 };
 pub use provenance::{ProvenanceBudgets, ProvenanceDemand};
 pub use provenance_resolver::{
-    DetachedGeneratedSourceSpan, ProvenanceResolver, ResolvedSourceLocation,
+    ColdProvenanceDemand, DetachedGeneratedSourceSpan, DetachedOriginDiagnostic,
+    DiagnosticOriginRequest, ResolvedSourceLocation,
 };
 pub use pure_memo::{
     MemoLayerStats, MemoTimingPhase, OutputProvenanceRecipe, OutputProvenanceSpan,

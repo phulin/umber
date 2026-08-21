@@ -402,6 +402,7 @@ pub struct Universe<G> {
     dependencies: DependencyRuntime,
     pub(crate) interaction_mode: InteractionMode,
     error_context_widths: ErrorContextWidths,
+    engine_usage: crate::command_context::EngineUsageRuntime,
     pub(crate) primitive_names: Vec<String>,
     pub(crate) primitive_meanings: Vec<MeaningWord<G>>,
     /// Driver-requested cache policy consumed exactly once by MainControl.
@@ -455,6 +456,7 @@ impl<G> Universe<G> {
             dependencies: DependencyRuntime::default(),
             interaction_mode: InteractionMode::default(),
             error_context_widths: ErrorContextWidths::default(),
+            engine_usage: crate::command_context::EngineUsageRuntime::default(),
             primitive_names: Vec::new(),
             primitive_meanings: Vec::new(),
             pure_memo_config: None,
@@ -1651,6 +1653,7 @@ impl<G> Universe<G> {
             &mut self.hyphenation,
             &mut self.interaction_mode,
             self.error_context_widths,
+            &mut self.engine_usage,
         ))
     }
 
