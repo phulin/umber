@@ -163,7 +163,7 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
                     context: "alignment next-cell lifecycle",
                 })?;
             if delimiter == AlignmentCellDelimiter::Tab {
-                begin_replay_alignment_cell(active, modes, stores)?;
+                begin_replay_alignment_cell(active, modes, stores, command.diagnostic_effects)?;
             }
             active.next_cell_opening_pending = true;
         }
@@ -269,6 +269,7 @@ pub(in crate::main_control) fn begin_replay_alignment_cell<G>(
     active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
 ) -> Result<(), ExecError> {
     if !active.row_open {
         modes.push(replay_alignment_row_mode(active.kind))?;
@@ -298,7 +299,7 @@ pub(in crate::main_control) fn begin_replay_alignment_cell<G>(
         });
     }
     modes.push(replay_alignment_cell_mode(active.kind))?;
-    crate::align::init_span_aux(modes, stores);
+    crate::align::init_span_aux(modes, stores, diagnostic_effects);
     active.cell_span = 1;
     active.cell_open = true;
     Ok(())

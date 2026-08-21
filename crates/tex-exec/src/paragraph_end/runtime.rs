@@ -97,8 +97,14 @@ pub(crate) fn break_current_paragraph<G>(
             &hlist,
         )?;
     }
-    let (mut decisions, trace, missing_hyphens) =
-        break_hlist_with_trace(stores, hlist, line_params, fuel, tracing)?;
+    let (mut decisions, trace, missing_hyphens) = break_hlist_with_trace(
+        stores,
+        diagnostic_effects,
+        hlist,
+        line_params,
+        fuel,
+        tracing,
+    )?;
     if tracing {
         report_line_break_trace(
             stores,
@@ -219,7 +225,7 @@ pub(crate) fn break_current_paragraph<G>(
             .expect("TeX prev_graf overflow"),
     );
     if reset_paragraph {
-        reset_after_par(nest, stores);
+        reset_after_par(nest, stores, diagnostic_effects);
     }
     crate::vertical::build_page_if_outer_vertical_with_error_context(
         nest,
@@ -488,6 +494,7 @@ fn active_text_directions(nodes: &[Node]) -> Vec<Direction> {
 
 fn break_hlist_with_trace<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     hlist: Vec<Node>,
     line_params: LineBreakParams,
     fuel: &mut tex_command::CommandFuel,
@@ -532,8 +539,12 @@ fn break_hlist_with_trace<G>(
         ))
     } else {
         let hlist = tape.into_semantic_nodes();
-        let (sequence, missing_hyphens) =
-            super::hyphenation::hyphenated_hlist_sequence_with_fuel(stores, hlist, fuel)?;
+        let (sequence, missing_hyphens) = super::hyphenation::hyphenated_hlist_sequence_with_fuel(
+            stores,
+            diagnostic_effects,
+            hlist,
+            fuel,
+        )?;
         let (mut hyphenated, physical_nodes) = sequence.take();
         crate::box_runtime::hmode::reshape_open_type_runs(stores, &mut hyphenated);
         let tape = ParagraphTape::analyze(
@@ -901,7 +912,11 @@ fn line_shape(params: &ParagraphParams) -> LineShape {
     }
 }
 
-pub(crate) fn normal_paragraph<G>(_nest: &mut ModeNest, stores: &mut CommandContext<'_, G>) {
+pub(crate) fn normal_paragraph<G>(
+    _nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+) {
     // e-TeX [47.1070] resets a non-null interline array through `eq_define`,
     // so [19.277]'s generic assignment hook traces the local write. The club
     // and widow arrays retain their scoped assignments (manual §3.4).
@@ -916,6 +931,7 @@ pub(crate) fn normal_paragraph<G>(_nest: &mut ModeNest, stores: &mut CommandCont
             .expect("paragraph reset targets admitted state");
         crate::assignments::tracing::trace_penalty_array(
             stores,
+            diagnostic_effects,
             PenaltyArrayKind::InterLine,
             false,
             &interline_penalties,
@@ -1002,8 +1018,12 @@ pub(crate) fn start_paragraph<G>(
     }
 }
 
-fn reset_after_par<G>(nest: &mut ModeNest, stores: &mut CommandContext<'_, G>) {
-    normal_paragraph(nest, stores);
+fn reset_after_par<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+) {
+    normal_paragraph(nest, stores, diagnostic_effects);
 }
 
 fn glue_parameter_value<G>(stores: &CommandContext<'_, G>, parameter: GlueParam) -> GlueSpec {

@@ -55,6 +55,7 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
     for kind in [AlignmentKind::HAlign, AlignmentKind::VAlign] {
         crate::test_harness::with_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
+            let mut diagnostic_effects = DiagnosticEffects::new();
             let diagnostic_context =
                 crate::pack_report::ExecutionDiagnosticContext::source_free("");
             let flexible = GlueSpec {
@@ -79,6 +80,7 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
                 &resolved,
                 &empty,
                 &mut stores,
+                &mut diagnostic_effects,
                 &diagnostic_context,
             );
             let exact_extent = match kind {
@@ -102,6 +104,7 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
                 &resolved,
                 &empty,
                 &mut stores,
+                &mut diagnostic_effects,
                 &diagnostic_context,
             );
             let spread_extent = match kind {
@@ -131,6 +134,7 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
     ] {
         crate::test_harness::with_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
+            let mut diagnostic_effects = DiagnosticEffects::new();
             let diagnostic_context =
                 crate::pack_report::ExecutionDiagnosticContext::source_free("");
             let resolved = ResolvedWidths {
@@ -146,6 +150,7 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
                 &resolved,
                 &empty,
                 &mut stores,
+                &mut diagnostic_effects,
                 &diagnostic_context,
             );
 

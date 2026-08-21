@@ -58,6 +58,7 @@ pub(crate) fn finish_eq_no<G>(
     let params = MathParams::read(&crate::typeset_context::TypesetContext::new(stores));
     let nodes = convert_math_hlist_with_error_context(
         stores,
+        diagnostic_effects,
         content,
         Style::TEXT,
         false,
@@ -96,6 +97,7 @@ pub(crate) fn finish_display_math<G>(
     let params = MathParams::read(&crate::typeset_context::TypesetContext::new(stores));
     let display_nodes = convert_math_hlist_with_error_context(
         stores,
+        diagnostic_effects,
         display_content,
         Style::DISPLAY,
         false,

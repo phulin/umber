@@ -2304,10 +2304,10 @@ impl<G> MainControl<G> {
     /// own processor rather than being handed one. A caller that must keep
     /// another of main control's fields borrowed at the same time builds the
     /// bundle from those fields directly instead.
-    fn command_machine(
-        &mut self,
-        diagnostic_effects: &mut DiagnosticEffects,
-    ) -> CommandMachine<'_, G> {
+    fn command_machine<'operation>(
+        &'operation mut self,
+        diagnostic_effects: &'operation mut DiagnosticEffects,
+    ) -> CommandMachine<'operation, G> {
         CommandMachine {
             state: &mut self.command,
             fuel: self.fuel.fuel_mut(),
@@ -7179,6 +7179,7 @@ impl<G> MainControl<G> {
                 let prepared_page_count = self.prepared_dvi_pages.len();
                 return Ok(OperationReadiness::<G>::Applied(self.apply_hot_operation(
                     stores,
+                    diagnostic_effects,
                     operation,
                     outer_paragraph_was_active,
                     artifact_count,
@@ -7264,6 +7265,7 @@ impl<G> MainControl<G> {
     fn apply_hot_operation(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
         operation: hot_apply::HotOperation<G>,
         outer_paragraph_was_active: bool,
         artifact_count: usize,
@@ -7364,6 +7366,7 @@ impl<G> MainControl<G> {
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
+                diagnostic_effects,
                 context,
             )?;
         }
@@ -7811,6 +7814,7 @@ impl<G> MainControl<G> {
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
+                diagnostic_effects,
                 context,
             )?;
         }

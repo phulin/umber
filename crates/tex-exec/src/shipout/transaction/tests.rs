@@ -70,8 +70,12 @@ fn completed_page_release_drops_exact_closure_and_scratch() {
 #[test]
 fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
     crate::test_harness::with_tex82_universe(|untraced| {
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let root = untraced.publish_page_nodes(&[empty_vbox()]);
-        report_huge_page_deleted_box(untraced, root, 0);
+        report_huge_page_deleted_box(untraced, &mut diagnostic_effects, root, 0);
+        untraced
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         let text = pending_text(untraced);
         assert!(
             text.contains("The following box has been deleted:\n\\vbox(16383.99998+0.0)x0.0"),
@@ -80,12 +84,16 @@ fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
     });
 
     crate::test_harness::with_tex82_universe(|traced| {
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         traced
             .assign_int_param(IntParam::TRACING_OUTPUT, 1, AssignmentScope::Global)
             .expect("assign tracingoutput");
         let root = traced.publish_page_nodes(&[empty_vbox()]);
         let tracing_output = traced.int_param(IntParam::TRACING_OUTPUT);
-        report_huge_page_deleted_box(traced, root, tracing_output);
+        report_huge_page_deleted_box(traced, &mut diagnostic_effects, root, tracing_output);
+        traced
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         assert_eq!(pending_text(traced), "");
     });
 }
@@ -93,6 +101,7 @@ fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
 #[test]
 fn huge_page_deleted_box_display_uses_live_escape_character() {
     tex_state::with_universe(budget(), |stores| {
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         stores
             .assign_int_param(
                 IntParam::ESCAPE_CHAR,
@@ -102,7 +111,10 @@ fn huge_page_deleted_box_display_uses_live_escape_character() {
             .expect("assign escapechar");
         let root = stores.publish_page_nodes(&[empty_vbox()]);
 
-        report_huge_page_deleted_box(stores, root, 0);
+        report_huge_page_deleted_box(stores, &mut diagnostic_effects, root, 0);
+        stores
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
 
         let text = pending_text(stores);
         assert!(

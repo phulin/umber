@@ -61,7 +61,7 @@ impl ParagraphEnd {
         if nest.current_list().is_empty() {
             let _ = commit_current_list(nest, stores, diagnostic_effects, fuel)?;
             if !is_display {
-                normal_paragraph(nest, stores);
+                normal_paragraph(nest, stores, diagnostic_effects);
                 crate::vertical::build_page_if_outer_vertical_with_error_context(
                     nest,
                     stores,

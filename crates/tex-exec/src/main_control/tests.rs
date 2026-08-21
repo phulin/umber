@@ -6712,6 +6712,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
 
         let mut modes = ModeNest::new();
         let mut boxes = ReplayBoxes::default();
+        let mut diagnostic_effects = DiagnosticEffects::new();
         crate::test_harness::begin_group(stores, GroupKind::AdjustedHBox, 6).expect("test group");
         modes
             .push(Mode::RestrictedHorizontal)
@@ -6736,6 +6737,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         ));
         admitted!(stores, |context| crate::diagnostics::execute_showgroups(
             context,
+            &mut diagnostic_effects,
             &diagnostic,
             String::new(),
         ))
@@ -6756,6 +6758,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         ));
         admitted!(stores, |context| crate::diagnostics::execute_showgroups(
             context,
+            &mut diagnostic_effects,
             &diagnostic,
             String::new(),
         ))
@@ -6774,6 +6777,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         ));
         admitted!(stores, |context| crate::diagnostics::execute_showgroups(
             context,
+            &mut diagnostic_effects,
             &diagnostic,
             String::new(),
         ))
@@ -6791,11 +6795,15 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         ));
         admitted!(stores, |context| crate::diagnostics::execute_showgroups(
             context,
+            &mut diagnostic_effects,
             &diagnostic,
             String::new(),
         ))
         .expect("\\showgroups reports no fatal error");
 
+        stores
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         let output = terminal_text(&stores);
         for expected in [
             "### bottom level",

@@ -571,12 +571,16 @@ fn hlist_and_vlist_visit_each_base_whatsit_once_in_position() {
                 let trace_nodes = base_whatsits(context);
                 state_box(context, &trace_nodes, vertical)
             });
-            let mut write =
-                |_: &mut Universe<_>, _: PrintSink, _: &[tex_state::token::TokenWord]| {
-                    Ok(crate::shipout::ExpandedWrite::transactional("w\n".into()))
-                };
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+            let mut write = |_: &mut Universe<_>,
+                             _: &mut tex_state::diagnostic::DiagnosticEffects,
+                             _: PrintSink,
+                             _: &[tex_state::token::TokenWord]| {
+                Ok(crate::shipout::ExpandedWrite::transactional("w\n".into()))
+            };
             let mut unexpected_replay =
                 |_: &mut Universe<_>,
+                 _: &mut tex_state::diagnostic::DiagnosticEffects,
                  _: crate::shipout::ReplayTextKind,
                  _: &[tex_state::token::TokenWord]| {
                     panic!("the typed visit trace does not replay text")
@@ -589,6 +593,7 @@ fn hlist_and_vlist_visit_each_base_whatsit_once_in_position() {
                 },
                 0,
                 trace_universe,
+                &mut diagnostic_effects,
                 &EmptyArtifactSourceResolver,
                 tex_state::ProvenanceDemand::DIAGNOSTICS,
                 0,

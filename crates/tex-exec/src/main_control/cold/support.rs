@@ -203,6 +203,7 @@ pub(in crate::main_control) fn schedule_afterassignment<G>(
     fuel: &mut tex_command::CommandFuel,
     capabilities: &mut CommandHostCapabilities,
     observations: &mut ObservationSlot,
+    diagnostic_effects: &mut DiagnosticEffects,
     stores: tex_state::CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let token = {
@@ -214,7 +215,14 @@ pub(in crate::main_control) fn schedule_afterassignment<G>(
     let Some(token) = token else {
         return Ok(());
     };
-    let mut processor = command_processor(command, fuel, capabilities, observations, stores);
+    let mut processor = command_processor(
+        command,
+        fuel,
+        capabilities,
+        observations,
+        diagnostic_effects,
+        stores,
+    );
     let result = processor.back_input_token(token);
     result.map_err(command_error)
 }
@@ -297,6 +305,7 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
     global: bool,
     profile: CommandProfile,
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
 ) -> Result<crate::assignments::committer::MutationReceipt, ExecError> {
     let receipt = match (target, operand) {
         (ArithmeticTarget::IntegerRegister(index), ArithmeticOperand::Integer(rhs)) => {
@@ -307,7 +316,7 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
                     .expect("count-register index is admitted"),
                 rhs,
             )?;
-            AssignmentCommitter::new(stores, command.diagnostic_effects).count(index, value, global)
+            AssignmentCommitter::new(stores, diagnostic_effects).count(index, value, global)
         }
         (ArithmeticTarget::IntegerParameter(index), ArithmeticOperand::Integer(rhs)) => {
             let value = arithmetic_integer(primitive, stores.int_param(IntParam::new(index)), rhs)?;
@@ -316,13 +325,12 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
                 ParameterClass::Integer,
                 index,
             );
-            AssignmentCommitter::new(stores, command.diagnostic_effects)
+            AssignmentCommitter::new(stores, diagnostic_effects)
                 .int_parameter(index, value, key, global)
         }
         (ArithmeticTarget::DimensionRegister(index), operand) => {
             let value = arithmetic_dimension(primitive, stores.dimen(index), operand)?;
-            AssignmentCommitter::new(stores, command.diagnostic_effects)
-                .dimension(index, value, global)
+            AssignmentCommitter::new(stores, diagnostic_effects).dimension(index, value, global)
         }
         (ArithmeticTarget::DimensionParameter(index), operand) => {
             let value = arithmetic_dimension(
@@ -335,7 +343,7 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
                 ParameterClass::Dimension,
                 index,
             );
-            AssignmentCommitter::new(stores, command.diagnostic_effects)
+            AssignmentCommitter::new(stores, diagnostic_effects)
                 .dimension_parameter(index, value, key, global)
         }
         (ArithmeticTarget::GlueRegister { index, mu }, operand) => {
@@ -348,7 +356,7 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
             }
             .map_or(GlueSpec::ZERO, |id| stores.glue(id));
             let value = arithmetic_glue(primitive, old, operand)?;
-            AssignmentCommitter::new(stores, command.diagnostic_effects)
+            AssignmentCommitter::new(stores, diagnostic_effects)
                 .skip(index, value, global, mu, false, false)
         }
         (ArithmeticTarget::GlueParameter { index, .. }, operand) => {
@@ -358,7 +366,7 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
             let value = arithmetic_glue(primitive, old, operand)?;
             let key =
                 parameter_mutation_key_for_dialect(profile.dialect(), ParameterClass::Glue, index);
-            AssignmentCommitter::new(stores, command.diagnostic_effects)
+            AssignmentCommitter::new(stores, diagnostic_effects)
                 .glue_parameter(index, value, key, global)
         }
         _ => return Err(ExecError::UnsupportedAssignmentTarget),
@@ -594,9 +602,9 @@ pub(in crate::main_control) fn commit_box_normal_paragraph<G>(
             value: ObservationValue::Tokens(Vec::new()),
             global: false,
         });
-    let receipt =
-        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(record, |stores| {
-            crate::paragraph_end::normal_paragraph(modes, stores);
+    let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
+        .unscoped_with_effects(record, |stores, diagnostic_effects| {
+            crate::paragraph_end::normal_paragraph(modes, stores, diagnostic_effects);
         });
     command.retain_assignment_receipt(receipt);
 }
@@ -1038,7 +1046,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
             crate::diagnostics::ExecutionDiagnosticContext::source_free("accent placement");
         let mut boxed = crate::box_runtime::hpack_with_overfull_rule(
             stores,
-            command.diagnostic_effects,
+            diagnostic_effects,
             &diagnostic_context,
             children,
             PackSpec::Natural,

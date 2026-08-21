@@ -111,7 +111,9 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         Write: FnOnce(&mut CommandContext<'_, G>, bool),
         Trace: FnOnce(&mut CommandContext<'_, G>, bool),
     {
-        if self.direct_scoped_word(current, replacement, global, write, trace) {
+        if self.direct_scoped_word(current, replacement, global, write, |stores, _, changed| {
+            trace(stores, changed)
+        }) {
             MutationReceipt::observed(record)
         } else {
             MutationReceipt::SILENT
@@ -135,13 +137,13 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
     where
         T: Eq + Copy,
         Write: FnOnce(&mut CommandContext<'_, G>, bool),
-        Trace: FnOnce(&mut CommandContext<'_, G>, bool),
+        Trace: FnOnce(&mut CommandContext<'_, G>, &mut DiagnosticEffects, bool),
     {
         let redundant = !global && self.redundant_word(current, replacement);
         if global || !redundant {
             write(self.stores, global);
         }
-        trace(self.stores, !redundant);
+        trace(self.stores, self.diagnostic_effects, !redundant);
         !redundant
     }
 
@@ -154,6 +156,18 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         Write: FnOnce(&mut CommandContext<'_, G>),
     {
         write(self.stores);
+        record.map_or(MutationReceipt::SILENT, MutationReceipt::observed)
+    }
+
+    pub(crate) fn unscoped_with_effects<Write>(
+        &mut self,
+        record: Option<MutationRecord>,
+        write: Write,
+    ) -> MutationReceipt
+    where
+        Write: FnOnce(&mut CommandContext<'_, G>, &mut DiagnosticEffects),
+    {
+        write(self.stores, self.diagnostic_effects);
         record.map_or(MutationReceipt::SILENT, MutationReceipt::observed)
     }
 

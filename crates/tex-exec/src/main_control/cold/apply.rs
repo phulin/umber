@@ -1912,6 +1912,7 @@ pub(in crate::main_control) fn apply<G>(
                 global,
                 command.state.profile(),
                 stores,
+                command.diagnostic_effects,
             ) {
                 Err(ExecError::ArithmeticOverflow) => {
                     let context = command.state.output_open_context(&**stores);
@@ -2561,7 +2562,7 @@ pub(in crate::main_control) fn apply<G>(
             // §1099: `normal_paragraph` resets \parshape/\looseness/\hangindent/
             // \hangafter local to the just-opened insert group, exactly like
             // `begin_box` does for `\vbox`/`\vtop` (§1051-2).
-            crate::paragraph_end::normal_paragraph(modes, stores);
+            crate::paragraph_end::normal_paragraph(modes, stores, command.diagnostic_effects);
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
@@ -2734,7 +2735,7 @@ pub(in crate::main_control) fn apply<G>(
             // `scan_left_brace`. Keep the reset at this consumed-opening-brace
             // boundary: doing it in the deferred page-fire tail runs before
             // command control has established the routine's body boundary.
-            crate::paragraph_end::normal_paragraph(modes, stores);
+            crate::paragraph_end::normal_paragraph(modes, stores, command.diagnostic_effects);
             boxes.output_routine_opening_pending = false;
             Ok(ReplayStep::Continue)
         }
@@ -2746,6 +2747,7 @@ pub(in crate::main_control) fn apply<G>(
                     command.fuel,
                     command.capabilities,
                     command.observations,
+                    command.diagnostic_effects,
                     stores.take(),
                 );
                 let result = processor
@@ -2805,6 +2807,7 @@ pub(in crate::main_control) fn apply<G>(
             boxes.output_routine_active = false;
             crate::page_output::resume_page_builder_after_output(
                 stores,
+                command.diagnostic_effects,
                 output_level.list().nodes().to_vec(),
                 crate::diagnostics::ExecutionDiagnosticContext::source_free(context),
             )?;
@@ -3327,7 +3330,7 @@ pub(in crate::main_control) fn apply<G>(
             // in restricted horizontal mode, but that level is the alignment
             // list itself, not a paragraph to pop.
             if modes.current_mode() == Mode::InternalVertical {
-                crate::paragraph_end::normal_paragraph(modes, stores);
+                crate::paragraph_end::normal_paragraph(modes, stores, command.diagnostic_effects);
             }
             Ok(ReplayStep::Continue)
         }
@@ -3352,7 +3355,7 @@ pub(in crate::main_control) fn apply<G>(
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment next-row lifecycle",
                 })?;
-            begin_replay_alignment_cell(active, modes, stores)?;
+            begin_replay_alignment_cell(active, modes, stores, command.diagnostic_effects)?;
             active.align_peek_pending = false;
             if omit {
                 command
@@ -3546,7 +3549,7 @@ pub(in crate::main_control) fn apply<G>(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                crate::paragraph_end::normal_paragraph(modes, stores);
+                crate::paragraph_end::normal_paragraph(modes, stores, command.diagnostic_effects);
                 let error_context = command.state.output_open_context(&**stores);
                 crate::vertical::build_page_if_outer_vertical_with_error_context(
                     modes,

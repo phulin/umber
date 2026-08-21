@@ -69,6 +69,7 @@ pub(crate) fn apply_scanned_hyphenation_exceptions<G>(
 
 fn hyphenated_hlist_with_projections<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     nodes: Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
@@ -100,6 +101,7 @@ fn hyphenated_hlist_with_projections<G>(
             && matches!(node, Node::Glue { .. })
             && let Some(next) = hyphenate_after_glue(
                 stores,
+                diagnostic_effects,
                 &nodes,
                 index,
                 (language, left, right),
@@ -128,6 +130,7 @@ fn hyphenated_hlist_with_projections<G>(
 /// discretionary's diagnostic pre-break branch.
 pub(crate) fn hyphenated_hlist_sequence_with_fuel<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     nodes: Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<
@@ -143,14 +146,20 @@ pub(crate) fn hyphenated_hlist_sequence_with_fuel<G>(
         physical_post_overrides: &mut physical_post_overrides,
         missing_hyphens: &mut missing_hyphens,
     };
-    let (semantic, _) = hyphenated_hlist_with_projections(stores, nodes, fuel, &mut projection)?;
+    let (semantic, _) = hyphenated_hlist_with_projections(
+        stores,
+        diagnostic_effects,
+        nodes,
+        fuel,
+        &mut projection,
+    )?;
     let mut physical = semantic.clone();
     for (index, physical_post) in physical_post_overrides {
         if let Some(Node::Disc { post, .. }) = physical.get_mut(index) {
             *post = physical_post;
         }
     }
-    project_physical_pre_break_spans(stores, &mut physical, fuel)?;
+    project_physical_pre_break_spans(stores, diagnostic_effects, &mut physical, fuel)?;
     Ok((
         tex_state::node_sequence::NodeSequence::from_channels(semantic, physical),
         missing_hyphens,
@@ -159,6 +168,7 @@ pub(crate) fn hyphenated_hlist_sequence_with_fuel<G>(
 
 fn project_physical_pre_break_spans<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     nodes: &mut [Node],
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -211,9 +221,15 @@ fn project_physical_pre_break_spans<G>(
             ch: hyphen,
             origin: last_origin,
         });
-        let pre =
-            crate::box_runtime::hmode::reconstitute_with_fuel(stores, &pending, true, false, fuel)
-                .map_err(ExecError::Command)?;
+        let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
+            stores,
+            diagnostic_effects,
+            &pending,
+            true,
+            false,
+            fuel,
+        )
+        .map_err(ExecError::Command)?;
         let pre = stores.publish_page_nodes(pre);
         let Node::Disc {
             pre: physical_pre, ..
@@ -241,6 +257,7 @@ fn update_hyphenation_context(node: &Node, language: &mut u8, left: &mut usize, 
 
 fn hyphenate_after_glue<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     nodes: &[Node],
     start: usize,
     context: (u8, usize, usize),
@@ -294,6 +311,7 @@ fn hyphenate_after_glue<G>(
     );
     append_hyphenated_word(
         stores,
+        diagnostic_effects,
         &word,
         &positions,
         no_left_boundary,
@@ -553,6 +571,7 @@ fn current_language<G>(stores: &CommandContext<'_, G>) -> u8 {
 
 fn append_hyphenated_word<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     word: &[WordChar],
     positions: &[usize],
     no_left_boundary: bool,
@@ -563,6 +582,7 @@ fn append_hyphenated_word<G>(
     let pending: Vec<_> = word.iter().map(WordChar::pending).collect();
     let nodes = crate::box_runtime::hmode::reconstitute_with_fuel(
         stores,
+        diagnostic_effects,
         &pending,
         no_left_boundary,
         false,
@@ -602,6 +622,7 @@ fn append_hyphenated_word<G>(
         {
             let (disc, physical_post) = discretionary_through_node(
                 stores,
+                diagnostic_effects,
                 word,
                 ((char_start, position, char_end), out.len()),
                 node,
@@ -644,6 +665,7 @@ fn append_hyphenated_word<G>(
 
 fn discretionary_through_node<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     word: &[WordChar],
     location: ((usize, usize, usize), usize),
     replacement: Node,
@@ -665,12 +687,19 @@ fn discretionary_through_node<G>(
             origin: word[position - 1].origin.clone(),
         });
     }
-    let pre =
-        crate::box_runtime::hmode::reconstitute_with_fuel(stores, &pre_pending, true, false, fuel)
-            .map_err(ExecError::Command)?;
+    let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
+        stores,
+        diagnostic_effects,
+        &pre_pending,
+        true,
+        false,
+        fuel,
+    )
+    .map_err(ExecError::Command)?;
     let post_pending: Vec<_> = word[position..end].iter().map(WordChar::pending).collect();
     let post = crate::box_runtime::hmode::reconstitute_with_fuel(
         stores,
+        diagnostic_effects,
         &post_pending,
         false,
         false,
@@ -678,8 +707,15 @@ fn discretionary_through_node<G>(
     )
     .map_err(ExecError::Command)?;
 
-    let (physical_replace_count, physical_post) =
-        physical_discretionary_projection(stores, word, span, &replacement, following, fuel)?;
+    let (physical_replace_count, physical_post) = physical_discretionary_projection(
+        stores,
+        diagnostic_effects,
+        word,
+        span,
+        &replacement,
+        following,
+        fuel,
+    )?;
     let disc = automatic_discretionary_with_count(
         stores,
         &pre,
@@ -701,6 +737,7 @@ fn discretionary_through_node<G>(
 /// without flattening the semantic ligature used by packing and shipout.
 fn physical_discretionary_projection<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     word: &[WordChar],
     span: (usize, usize, usize),
     replacement: &Node,
@@ -717,6 +754,7 @@ fn physical_discretionary_projection<G>(
         .collect::<Vec<_>>();
     let minor = crate::box_runtime::hmode::reconstitute_with_fuel(
         stores,
+        diagnostic_effects,
         &minor_pending,
         false,
         false,
@@ -1073,6 +1111,7 @@ mod tests {
         // with its immutable token payload and stream fields still owned.
         crate::test_harness::with_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
             let tokens =
                 tex_state::node::NodeTokenList::new(vec![tex_state::token::TokenWord::pack(
                     tex_state::token::Token::Char {
@@ -1105,9 +1144,13 @@ mod tests {
             ];
             let mut fuel = tex_command::CommandFuelLedger::new(1_000).expect("bounded fuel");
 
-            let (visited, diagnostics) =
-                hyphenated_hlist_sequence_with_fuel(&mut stores, nodes.clone(), fuel.fuel_mut())
-                    .expect("base-whatsit visit succeeds");
+            let (visited, diagnostics) = hyphenated_hlist_sequence_with_fuel(
+                &mut stores,
+                &mut diagnostic_effects,
+                nodes.clone(),
+                fuel.fuel_mut(),
+            )
+            .expect("base-whatsit visit succeeds");
 
             assert_eq!(visited.semantic(), nodes);
             assert_eq!(visited.physical(), nodes);
@@ -1120,6 +1163,7 @@ mod tests {
             };
             let (_, final_context) = hyphenated_hlist_with_projections(
                 &mut stores,
+                &mut diagnostic_effects,
                 nodes.clone(),
                 fuel.fuel_mut(),
                 &mut projection,

@@ -191,11 +191,7 @@ fn page_state_freezes_specs_and_tracks_sorted_insertion_records() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 17, 0);
-        freeze_page_specs(
-            &mut stores,
-            &mut DiagnosticEffects::new(),
-            PageContents::InsertsOnly,
-        );
+        freeze_page_specs(&mut stores, PageContents::InsertsOnly);
         assert_eq!(stores.page_dimension(PageDimension::Goal), s(1_000));
         assert_eq!(stores.page_max_depth(), s(17));
         stores
@@ -243,11 +239,7 @@ fn page_builder_output_active_boundary_preserves_pending_contributions() {
         // TeX.web §§980--990: the frozen page specifications and all accumulated
         // quantities survive calls made while §989's output boundary is pending.
         params(&mut stores, 1_000, 19, 0);
-        freeze_page_specs(
-            &mut stores,
-            &mut DiagnosticEffects::new(),
-            PageContents::BoxThere,
-        );
+        freeze_page_specs(&mut stores, PageContents::BoxThere);
         for (dimension, value) in [
             (PageDimension::Total, 101),
             (PageDimension::Stretch, 102),
@@ -303,11 +295,7 @@ fn new_current_page_resets_nodes_totals_depth_and_last_item_state() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 9, 0);
-        freeze_page_specs(
-            &mut stores,
-            &mut DiagnosticEffects::new(),
-            PageContents::BoxThere,
-        );
+        freeze_page_specs(&mut stores, PageContents::BoxThere);
         stores.push_current_page_node(Node::Penalty(41));
         for d in [
             PageDimension::Total,
@@ -360,11 +348,7 @@ fn output_page_reset_retains_totals_until_the_next_page_starts() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 9, 0);
-        freeze_page_specs(
-            &mut stores,
-            &mut DiagnosticEffects::new(),
-            PageContents::BoxThere,
-        );
+        freeze_page_specs(&mut stores, PageContents::BoxThere);
         stores.push_current_page_node(Node::Penalty(41));
         stores.set_page_dimension(PageDimension::Total, s(52));
         stores.set_page_dimension(PageDimension::Shrink, s(51));
@@ -376,11 +360,7 @@ fn output_page_reset_retains_totals_until_the_next_page_starts() {
         assert_eq!(stores.page_dimension(PageDimension::Total), s(52));
         assert_eq!(stores.page_dimension(PageDimension::Shrink), s(51));
 
-        freeze_page_specs(
-            &mut stores,
-            &mut DiagnosticEffects::new(),
-            PageContents::BoxThere,
-        );
+        freeze_page_specs(&mut stores, PageContents::BoxThere);
         assert_eq!(stores.page_dimension(PageDimension::Total), s(0));
         assert_eq!(stores.page_dimension(PageDimension::Shrink), s(0));
     });
@@ -909,11 +889,7 @@ fn page_insertion_class_order_scaling_skip_and_fit_match_tex82() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 100_000, 0, 0);
-        freeze_page_specs(
-            &mut stores,
-            &mut DiagnosticEffects::new(),
-            PageContents::InsertsOnly,
-        );
+        freeze_page_specs(&mut stores, PageContents::InsertsOnly);
         ins_class(&mut stores, 9, 500, 100_000, 10, 3);
         ins_class(&mut stores, 3, 1_000, 100_000, 4, 3);
         let nine = ins(&mut stores, 9, 20_000, 0, &[]);
@@ -951,11 +927,7 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 0, 0);
-        freeze_page_specs(
-            &mut stores,
-            &mut DiagnosticEffects::new(),
-            PageContents::InsertsOnly,
-        );
+        freeze_page_specs(&mut stores, PageContents::InsertsOnly);
         ins_class(&mut stores, 7, 1_000, 5, 0, 0);
         let split = ins(&mut stores, 7, 10, 17, &[rule(10, 0), Node::Penalty(51)]);
         prepare_insertion(
@@ -1014,11 +986,7 @@ fn page_insertion_split_tracing_reports_class_height_and_penalty() {
                 tex_state::AssignmentScope::Global,
             )
             .expect("parameter");
-        freeze_page_specs(
-            &mut stores,
-            &mut diagnostic_effects,
-            PageContents::InsertsOnly,
-        );
+        freeze_page_specs(&mut stores, PageContents::InsertsOnly);
         ins_class(&mut stores, 7, 1_000, 20, 0, 0);
         let split = ins(&mut stores, 7, 10, 0, &[rule(10, 0), Node::Penalty(51)]);
 
@@ -1049,11 +1017,7 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
     crate::test_harness::with_universe(|universe| {
         let mut repeated = universe.command_context().expect("test state is admitted");
         params(&mut repeated, 100_000, 0, 0);
-        freeze_page_specs(
-            &mut repeated,
-            &mut DiagnosticEffects::new(),
-            PageContents::InsertsOnly,
-        );
+        freeze_page_specs(&mut repeated, PageContents::InsertsOnly);
         ins_class(&mut repeated, 2, 500, 40_000, 7_000, 3_000);
         let first = ins(&mut repeated, 2, 10_000, 0, &[]);
         prepare_insertion(
@@ -1081,11 +1045,7 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
     crate::test_harness::with_universe(|universe| {
         let mut exact = universe.command_context().expect("test state is admitted");
         params(&mut exact, 10, 0, 0);
-        freeze_page_specs(
-            &mut exact,
-            &mut DiagnosticEffects::new(),
-            PageContents::InsertsOnly,
-        );
+        freeze_page_specs(&mut exact, PageContents::InsertsOnly);
         ins_class(&mut exact, 3, 1_000, 10, 0, 0);
         let at_capacity = ins(&mut exact, 3, 10, 0, &[]);
         prepare_insertion(
@@ -1109,11 +1069,7 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
     crate::test_harness::with_universe(|universe| {
         let mut null_split = universe.command_context().expect("test state is admitted");
         params(&mut null_split, 0, 0, 0);
-        freeze_page_specs(
-            &mut null_split,
-            &mut DiagnosticEffects::new(),
-            PageContents::InsertsOnly,
-        );
+        freeze_page_specs(&mut null_split, PageContents::InsertsOnly);
         ins_class(&mut null_split, 5, 1_000, 20, 0, 0);
         let unsplittable = ins(&mut null_split, 5, 9, 37, &[rule(9, 0)]);
         prepare_insertion(

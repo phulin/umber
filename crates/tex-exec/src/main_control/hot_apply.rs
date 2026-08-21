@@ -398,10 +398,10 @@ fn apply_catcode<G>(
                     )
                     .expect("catcode target belongs to the admitted generation");
             },
-            |stores, _| {
+            |stores, diagnostic_effects, _| {
                 assignment_tracing::trace_code(
                     stores,
-                    command.diagnostic_effects,
+                    diagnostic_effects,
                     "catcode",
                     character,
                     global,

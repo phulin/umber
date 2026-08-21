@@ -355,6 +355,7 @@ fn normalize_index<G>(
             let effect_count = overlay.effects.len();
             append_whatsit_effect(
                 stores,
+                diagnostic_effects,
                 expansion,
                 overlay,
                 whatsit,
@@ -412,6 +413,7 @@ fn base_whatsit_visit_kind(whatsit: &Whatsit) -> Option<BaseWhatsitVisitKind> {
 
 fn append_whatsit_effect<G>(
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     expansion: &mut NormalizeExpansion<'_, G>,
     overlay: &mut PageOverlay,
     whatsit: Whatsit,

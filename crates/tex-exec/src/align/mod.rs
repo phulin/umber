@@ -21,7 +21,11 @@ use tex_state::CommandContext;
 /// `\hangafter`, and `\parshape` back at their defaults. Transcribing only the
 /// `prev_depth` half let a nondefault `\looseness`/`\hangafter`/`\hangindent`
 /// survive into an entry (`umber2-hq8l`).
-pub(crate) fn init_span_aux<G>(nest: &mut ModeNest, stores: &mut CommandContext<'_, G>) {
+pub(crate) fn init_span_aux<G>(
+    nest: &mut ModeNest,
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+) {
     if matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
@@ -34,7 +38,7 @@ pub(crate) fn init_span_aux<G>(nest: &mut ModeNest, stores: &mut CommandContext<
             crate::mode::IGNORE_DEPTH
         };
         nest.current_list_mutation().set_prev_depth(ignored_depth);
-        crate::paragraph_end::normal_paragraph(nest, stores);
+        crate::paragraph_end::normal_paragraph(nest, stores, diagnostic_effects);
     }
 }
 

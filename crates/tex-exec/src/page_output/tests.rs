@@ -115,16 +115,21 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
 fn input_free_box255_recovery_uses_explicit_context() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let deleted = stores.publish_page_nodes(vec![rule(7)]);
 
         report_box255_not_void(
             &mut stores,
+            &mut diagnostic_effects,
             deleted,
             Some("l.31 published output continuation"),
         )
         .expect("recovery is nonfatal");
 
         drop(stores);
+        universe
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         let output = universe
             .world()
             .effect_records()
