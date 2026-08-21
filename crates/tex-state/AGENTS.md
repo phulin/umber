@@ -22,8 +22,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   owner/state/root/truncation/release ordering barrier.
 - `src/command_context.rs`: Already-admitted session/generation borrow for
   direct command and execution work, including typed register mutation,
-  page-list/page-builder access, font metrics, definitions, token lists, and
-  glue values without per-read owner admission.
+  page-list/page-builder access, font metrics and detached artifact recipes,
+  definitions, token lists, and glue values without per-read owner admission.
 - `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, registered World-backed mutation keys, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, generic tracked-region lifecycle and journal-write records, deterministic ordering, rollback failure closure, and handle-independent observation tests.
 - `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
@@ -56,7 +56,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   sidecars are never serialized.
 - `src/etex_tracing.rs` and `src/etex_tracing/tests.rs`: e-TeX 2.6's `\tracinggroups` group-enter/leave transcript trace, printed through the shared `\tracing*` diagnostic channel; `\tracingassigns`'s value rendering lives in `tex-exec` instead, against the primitives declared here, and `\tracingifs` renders directly in `tex-command` through the same channel.
 - `src/file_framing.rs` and `src/file_framing/tests.rs`: tex.web §54's `open_parens` and the §537/§362/§1335 prints that maintain it, held as print-adjacent `World` state so the command core can close a file's paren at §362's own point, ahead of the `check_outer_validity` diagnostic that follows it.
-- `src/font.rs`: Stateful loaded-font store, font handles, null font, missing-character records, and rollback marks.
+- `src/font.rs`: Stateful loaded-font store, font handles, null font,
+  missing-character records, rollback marks, and handle-free artifact-facing
+  recipes whose generated sources are named by semantic identity.
 - `src/format.rs` and `src/format/tests.rs`: Destination-stamped format
   staging and infallible atomic publication after complete validation.
 - `src/format_container.rs`: Portable schema-11 format-image header, section directory, authoritative fingerprints, checksum, compression, and structural validation; no compatibility codec is retained.

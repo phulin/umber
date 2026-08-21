@@ -40,6 +40,60 @@ pub struct FontExpansion {
     pub auto_expand: bool,
 }
 
+/// Handle-free description of how one immutable font was constructed.
+///
+/// Generated fonts name their source by semantic content identity.  The live
+/// source slot is deliberately not part of this cold recipe.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FontArtifactConstructionRecipe {
+    Loaded,
+    Copied {
+        source_identity: FontSourceIdentity,
+    },
+    Letterspaced {
+        source_identity: FontSourceIdentity,
+        amount: i16,
+        no_ligatures: bool,
+    },
+    Expanded {
+        source_identity: FontSourceIdentity,
+        ratio: i16,
+    },
+}
+
+/// Owned OpenType metadata needed to lower a font into an artifact resource.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenTypeArtifactRecipe {
+    pub program_identity: tex_fonts::FontProgramIdentity,
+    pub object_identity: tex_fonts::FontObjectIdentity,
+    pub instance_identity: tex_fonts::FontInstanceIdentity,
+    pub container: tex_fonts::FontContainer,
+    pub face_index: u32,
+    pub variation: tex_fonts::VariationSelection,
+    pub features: tex_fonts::FontFeaturePolicy,
+    pub direction: tex_fonts::WritingDirection,
+    pub script: Option<tex_fonts::OpenTypeTag>,
+    pub language: Option<tex_fonts::FontLanguage>,
+    pub encoding_map_version: Option<u8>,
+    pub encoding_map_identity: Option<[u8; 32]>,
+    pub fontdimen_synthesis_version: Option<u8>,
+}
+
+/// Owned, handle-free font metadata at the artifact publication boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FontArtifactRecipe {
+    pub name: String,
+    pub tfm_content_hash: FontContentHash,
+    pub tfm_checksum: u32,
+    pub design_size: Scaled,
+    pub at_size: Scaled,
+    pub layout_policy: tex_fonts::FontLayoutPolicy,
+    pub mapping_fallback: Option<tex_fonts::FontMappingFallbackPolicy>,
+    pub opentype: Option<OpenTypeArtifactRecipe>,
+    pub semantic_identity: FontSourceIdentity,
+    pub construction: FontArtifactConstructionRecipe,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FontExpansionConfigError {
     ExpandedBase,
@@ -380,6 +434,62 @@ impl FontStore {
         self.fonts
             .get(id.raw() as usize)
             .expect("font id is not live in this Universe timeline")
+    }
+
+    pub(crate) fn artifact_recipe(&self, id: FontId) -> FontArtifactRecipe {
+        let font = self.get(id);
+        let construction = match font.construction() {
+            FontConstruction::Loaded => FontArtifactConstructionRecipe::Loaded,
+            FontConstruction::Copied { source } => FontArtifactConstructionRecipe::Copied {
+                source_identity: *source,
+            },
+            FontConstruction::Letterspaced {
+                source,
+                amount,
+                no_ligatures,
+            } => FontArtifactConstructionRecipe::Letterspaced {
+                source_identity: *source,
+                amount: *amount,
+                no_ligatures: *no_ligatures,
+            },
+            FontConstruction::Expanded { source, ratio } => {
+                FontArtifactConstructionRecipe::Expanded {
+                    source_identity: *source,
+                    ratio: *ratio,
+                }
+            }
+        };
+        let opentype = font.opentype().map(|opentype| OpenTypeArtifactRecipe {
+            program_identity: opentype.identity,
+            object_identity: opentype.object_identity,
+            instance_identity: font
+                .opentype_instance_identity()
+                .expect("OpenType font has an instance identity"),
+            container: opentype.container,
+            face_index: opentype.face_index,
+            variation: opentype.variation.clone(),
+            features: opentype.feature_policy.clone(),
+            direction: opentype.direction,
+            script: opentype.script,
+            language: opentype.language.clone(),
+            encoding_map_version: font.encoding_map().map(|map| map.version()),
+            encoding_map_identity: font.encoding_map().map(|map| map.identity()),
+            fontdimen_synthesis_version: font
+                .encoding_map()
+                .map(|_| tex_fonts::OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION),
+        });
+        FontArtifactRecipe {
+            name: font.name().to_owned(),
+            tfm_content_hash: font.content_hash(),
+            tfm_checksum: font.checksum(),
+            design_size: font.design_size(),
+            at_size: font.size(),
+            layout_policy: font.layout_policy(),
+            mapping_fallback: font.mapping_fallback(),
+            opentype,
+            semantic_identity: font.source_identity(),
+            construction,
+        }
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = &LoadedFont> {

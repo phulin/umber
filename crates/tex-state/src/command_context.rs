@@ -526,6 +526,27 @@ impl<'a, G> CommandContext<'a, G> {
         self.fonts.get(id).name().to_owned()
     }
 
+    /// Detaches the complete artifact-facing metadata for one live font.
+    #[must_use]
+    pub fn font_artifact_recipe(&self, id: crate::ids::FontId) -> crate::FontArtifactRecipe {
+        self.fonts.artifact_recipe(id)
+    }
+
+    /// Resolves a generated font's semantic source inside this admitted
+    /// episode.  The returned runtime id never enters the detached recipe.
+    #[must_use]
+    pub fn font_id_for_source_identity(
+        &self,
+        identity: tex_fonts::FontSourceIdentity,
+    ) -> Option<crate::ids::FontId> {
+        self.fonts.by_source_identity(identity)
+    }
+
+    #[must_use]
+    pub fn font_false_boundary_char(&self, id: crate::ids::FontId) -> Option<u8> {
+        self.fonts.get(id).metrics().false_boundary_char()
+    }
+
     #[must_use]
     pub fn font_external_name(&self, id: crate::ids::FontId) -> &str {
         self.fonts.get(id).name()
