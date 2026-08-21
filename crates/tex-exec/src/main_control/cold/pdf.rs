@@ -1557,15 +1557,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             // Publish §367 traces and scanner diagnostics into the
             // shipout transaction now, before normalization appends the
             // payload's stream effect.
-            {
-                let mut context =
-                    stores
-                        .command_context()
-                        .map_err(|_| ExecError::MissingToken {
-                            context: "deferred write diagnostic admission",
-                        })?;
-                report_pending_diagnostics(&mut context, diagnostic_effects, diagnostics)?;
-            }
+            report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
             if command_trace_printed {
                 *command.shown_mode = None;
             }
@@ -1704,18 +1696,11 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     // publications and cross the artifact transaction only after it commits.
     // Deferred writes publish their §1370 expansion diagnostics inside the
     // transaction so they precede the resulting stream payload.
-    {
-        let mut context = stores
-            .command_context()
-            .map_err(|_| ExecError::MissingToken {
-                context: "shipout replay diagnostic admission",
-            })?;
-        report_pending_diagnostics(
-            &mut context,
-            command.diagnostic_effects,
-            replay_diagnostics.into_inner(),
-        )?;
-    }
+    report_pending_diagnostics(
+        stores,
+        command.diagnostic_effects,
+        replay_diagnostics.into_inner(),
+    )?;
     print_ship_out_marker_close(stores, tracing_output);
     if let Some(publication) = receipt.as_mut() {
         stores.world_mut().claim_effect_publication_boundary(
