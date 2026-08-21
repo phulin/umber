@@ -212,7 +212,7 @@ mod tests {
             let context = universe.command_context().expect("command admission");
             let context = round_trip_context(&mut interpreter, context);
 
-            assert_eq!(context.current_input_line(), 0);
+            assert_eq!(context.execution_group_depth(), 0);
             drop(context);
             assert_eq!(
                 interpreter.lifecycle_stats(),
