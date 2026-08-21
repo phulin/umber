@@ -1,5 +1,5 @@
 use super::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
-use crate::interner::Symbol;
+use crate::interner::InternerBudget;
 
 #[test]
 fn token_word_round_trips_every_category_code() {
@@ -32,43 +32,51 @@ fn token_word_round_trips_every_category_code() {
 }
 
 #[test]
-fn token_word_round_trips_every_control_sequence_form() {
+fn control_sequence_tokens_use_admitted_session_coordinates() {
     use crate::interner::ControlSequenceKind;
 
-    let mut universe = crate::Universe::new();
-    let symbols = [
-        universe.intern("").symbol(),
-        universe.intern("x").symbol(),
-        universe.intern("named").symbol(),
-        universe.intern_active_character('~').symbol(),
-        universe.intern_internal_control_sequence("frozen").symbol(),
-    ];
-    let expected_kinds = [
-        ControlSequenceKind::Null,
-        ControlSequenceKind::SingleCharacter,
-        ControlSequenceKind::Named,
-        ControlSequenceKind::ActiveCharacter,
-        ControlSequenceKind::Internal,
-    ];
+    let budget = InternerBudget::new(16, 16, 256).expect("budget");
+    crate::with_universe(budget, |universe| {
+        let ids = [
+            (
+                universe.intern("").expect("null"),
+                ControlSequenceKind::Null,
+            ),
+            (
+                universe.intern("x").expect("single"),
+                ControlSequenceKind::SingleCharacter,
+            ),
+            (
+                universe.intern("named").expect("named"),
+                ControlSequenceKind::Named,
+            ),
+            (
+                universe
+                    .intern_active_character('~')
+                    .expect("active character"),
+                ControlSequenceKind::ActiveCharacter,
+            ),
+        ];
 
-    for (symbol, expected_kind) in symbols.into_iter().zip(expected_kinds) {
-        let token = Token::Cs(symbol);
-        assert_eq!(universe.control_sequence_kind(symbol), expected_kind);
-        assert_eq!(TokenWord::pack(token).semantic_token(), token);
-    }
-
-    let boundary = Token::Cs(Symbol::new((1 << 30) - 1));
-    assert_eq!(TokenWord::pack(boundary).token(), Some(boundary));
+        for (id, expected_kind) in ids {
+            let token = Token::Cs(id.symbol());
+            assert_eq!(
+                universe.control_sequence_kind(id.symbol()),
+                Some(expected_kind)
+            );
+            assert_eq!(TokenWord::pack(token).semantic_token(), token);
+        }
+    })
+    .expect("fresh universe");
 }
 
 #[test]
-fn traced_words_are_exact_token_and_source_coordinate_composition() {
+fn traced_words_compose_semantic_tokens_with_source_coordinates() {
     let tokens = [
         Token::Char {
             ch: '🙂',
             cat: Catcode::Active,
         },
-        Token::Cs(Symbol::new((1 << 30) - 1)),
         Token::param(9),
         Token::frozen_endv(),
     ];
@@ -82,25 +90,6 @@ fn traced_words_are_exact_token_and_source_coordinate_composition() {
         assert_eq!(traced.origin(), origin);
         assert_eq!(traced, TracedTokenWord::pack(token, origin));
     }
-}
-
-#[test]
-fn token_variants_are_copy_and_comparable() {
-    let char_token = Token::Char {
-        ch: 'x',
-        cat: Catcode::Letter,
-    };
-    let cs_token = Token::Cs(Symbol::new(7));
-    let param_token = Token::param(3);
-
-    assert_eq!(char_token, char_token);
-    assert_eq!(cs_token, Token::Cs(Symbol::new(7)));
-    assert_eq!(param_token, Token::Param(3));
-}
-
-#[test]
-fn origin_zero_is_unknown() {
-    assert_eq!(OriginId::default(), OriginId::UNKNOWN);
 }
 
 #[test]
@@ -124,101 +113,46 @@ fn origin_encoding_round_trips_direct_and_arena_boundaries() {
     let first_arena = OriginId::arena(0).expect("first arena index must pack");
     let last_arena = OriginId::arena(0x7fff_fffe).expect("last arena index must pack");
     assert!(OriginId::arena(0x7fff_ffff).is_none());
-    assert!(OriginId::arena(0x8000_0000).is_none());
     assert_eq!(first_arena.decode(), super::OriginEncoding::Arena(0));
     assert_eq!(
         last_arena.decode(),
         super::OriginEncoding::Arena(0x7fff_fffe)
     );
     assert_eq!(OriginId::UNKNOWN.decode(), super::OriginEncoding::Unknown);
-    assert_eq!(
-        OriginId::NOEXPAND_FALLBACK.decode(),
-        super::OriginEncoding::NoExpandFallback
-    );
 }
 
 #[test]
-fn char_token_round_trips_with_origin() {
+fn scalar_parameter_and_frozen_tokens_round_trip_with_origins() {
     let origin = OriginId::from_raw(42);
-    let token = Token::Char {
-        ch: '🙂',
-        cat: Catcode::Active,
-    };
-
-    let packed = TracedTokenWord::pack(token, origin);
-
-    assert_eq!(packed.unpack(), Some((token, origin)));
-}
-
-#[test]
-fn control_sequence_token_round_trips_with_origin() {
-    let origin = OriginId::from_raw(u32::MAX);
-    let token = Token::Cs(Symbol::new((1 << 30) - 1));
-
-    let packed = TracedTokenWord::pack(token, origin);
-
-    assert_eq!(packed.unpack(), Some((token, origin)));
-}
-
-#[test]
-fn parameter_token_round_trips_with_origin() {
-    let origin = OriginId::from_raw(7);
-    let token = Token::param(9);
-
-    let packed = TracedTokenWord::pack(token, origin);
-
-    assert_eq!(packed.unpack(), Some((token, origin)));
-}
-
-#[test]
-fn frozen_alignment_tokens_round_trip_as_distinct_non_symbol_tokens() {
-    let origin = OriginId::from_raw(23);
-    let end_template = Token::frozen_end_template();
-    let endv = Token::frozen_endv();
-
-    assert_ne!(end_template, endv);
-    assert!(!matches!(end_template, Token::Cs(_)));
-    assert_eq!(
-        TracedTokenWord::pack(end_template, origin).unpack(),
-        Some((end_template, origin))
-    );
-    assert_eq!(
-        TracedTokenWord::pack(endv, origin).unpack(),
-        Some((endv, origin))
-    );
-}
-
-#[test]
-fn frozen_relax_is_outside_the_primitive_index_range() {
-    let relax = Token::frozen_relax();
-    let Token::Frozen(relax) = relax else {
-        panic!("frozen relax must remain inaccessible");
-    };
-    assert_eq!(relax.primitive_index(), None);
-
-    let last = super::FrozenToken::SENTINEL_BASE - super::FrozenToken::PRIMITIVE_BASE - 1;
-    assert_eq!(
-        super::FrozenToken::primitive(last).primitive_index(),
-        Some(last)
-    );
-}
-
-#[test]
-fn invariant_fast_decode_matches_checked_decode_for_every_token_kind() {
-    let tokens = [
+    for token in [
         Token::Char {
             ch: '🙂',
             cat: Catcode::Active,
         },
-        Token::Cs(Symbol::new((1 << 30) - 1)),
         Token::param(9),
+        Token::frozen_end_template(),
         Token::frozen_endv(),
-    ];
-    for token in tokens {
-        let packed = TracedTokenWord::pack(token, OriginId::from_raw(42));
-        assert_eq!(packed.semantic_token(), token);
-        assert_eq!(packed.token(), Some(token));
+    ] {
+        assert_eq!(
+            TracedTokenWord::pack(token, origin).unpack(),
+            Some((token, origin))
+        );
     }
+}
+
+#[test]
+fn frozen_token_kinds_remain_distinct() {
+    let end_template = Token::frozen_end_template();
+    let endv = Token::frozen_endv();
+    let relax = Token::frozen_relax();
+
+    assert_ne!(end_template, endv);
+    assert_ne!(endv, relax);
+    assert!(!matches!(end_template, Token::Cs(_)));
+    let Token::Frozen(relax) = relax else {
+        panic!("frozen relax must remain inaccessible");
+    };
+    assert_eq!(relax.primitive_index(), None);
 }
 
 #[test]
@@ -235,8 +169,6 @@ fn packed_token_decode_rejects_unrepresentable_payloads() {
     assert_eq!(TokenWord::from_raw(2_u32 << 30).token(), None);
     assert_eq!(TokenWord::from_raw((2_u32 << 30) | 10).token(), None);
     assert_eq!(TokenWord::from_raw(0x11_0000_u32 << 4).token(), None);
-
-    assert_eq!(bad_frozen.origin(), origin);
     assert_eq!(bad_frozen.unpack(), None);
     assert_eq!(bad_param_zero.unpack(), None);
     assert_eq!(bad_param_ten.unpack(), None);

@@ -22,7 +22,7 @@ fn restricted_capabilities_reject_privileged_apis() {
         &dependencies,
         &[
             "E0499",
-            "cannot borrow `universe` as mutable more than once at a time",
+            "cannot borrow `*universe` as mutable more than once at a time",
         ],
     );
 }

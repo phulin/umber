@@ -10,7 +10,7 @@ fn boxed<List>(children: List) -> Node<List> {
         width: Scaled::from_raw(10),
         height: Scaled::from_raw(20),
         depth: Scaled::from_raw(3),
-        shift: Scaled::ZERO,
+        shift: Scaled::from_raw(0),
         box_lr: BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,

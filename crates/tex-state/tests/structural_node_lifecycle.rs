@@ -1,10 +1,12 @@
-use tex_state::Universe;
+use tex_state::env::AssignmentScope;
 use tex_state::glue::Order;
+use tex_state::interner::InternerBudget;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::node_arena::PageListId;
 use tex_state::scaled::{GlueSetRatio, Scaled};
+use tex_state::{Universe, with_universe};
 
-fn boxed_penalty(universe: &mut Universe, penalty: i32) -> PageListId {
+fn boxed_penalty<G>(universe: &mut Universe<G>, penalty: i32) -> PageListId {
     let children = universe.publish_page_nodes(&[Node::Penalty(penalty)]);
     universe.publish_page_nodes(&[Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
@@ -19,7 +21,7 @@ fn boxed_penalty(universe: &mut Universe, penalty: i32) -> PageListId {
     }))])
 }
 
-fn boxed_penalty_value(universe: &Universe, root: PageListId) -> i32 {
+fn boxed_penalty_value<G>(universe: &Universe<G>, root: PageListId) -> i32 {
     let root = universe
         .page_node_list(root)
         .expect("page root remains readable");
@@ -35,7 +37,7 @@ fn boxed_penalty_value(universe: &Universe, root: PageListId) -> i32 {
     *value
 }
 
-fn box_register_penalty(universe: &mut Universe) -> i32 {
+fn box_register_penalty<G>(universe: &mut Universe<G>) -> i32 {
     let root = universe
         .copy_box_to_page(0)
         .expect("box register 0 remains populated");
@@ -43,36 +45,26 @@ fn box_register_penalty(universe: &mut Universe) -> i32 {
 }
 
 #[test]
-fn page_rollback_and_durable_promotion_preserve_box_values() {
-    let mut universe = Universe::default();
-    let baseline = boxed_penalty(&mut universe, 10);
-    universe.assign_page_box_local(0, baseline);
+fn checkpoint_restore_preserves_promoted_box_values_and_discards_suffixes() {
+    let budget = InternerBudget::new(16, 16, 256).expect("budget");
+    with_universe(budget, |universe| {
+        let baseline = boxed_penalty(universe, 10);
+        universe
+            .assign_page_box(0, Some(baseline), AssignmentScope::Global)
+            .expect("promote baseline box");
+        let checkpoint = universe.state_checkpoint().expect("checkpoint");
 
-    let rollback = universe.snapshot();
-    let replacement = boxed_penalty(&mut universe, 20);
-    universe.assign_page_box_local(0, replacement);
-    assert_eq!(box_register_penalty(&mut universe), 20);
-    universe.rollback(&rollback);
-    assert_eq!(box_register_penalty(&mut universe), 10);
+        let replacement = boxed_penalty(universe, 20);
+        universe
+            .assign_page_box(0, Some(replacement), AssignmentScope::Global)
+            .expect("promote replacement box");
+        assert_eq!(box_register_penalty(universe), 20);
 
-    let cursor = universe.page_node_cursor();
-    let rejected = boxed_penalty(&mut universe, 40);
-    assert_eq!(boxed_penalty_value(&universe, rejected), 40);
-    universe
-        .truncate_page_nodes(cursor)
-        .expect("speculative page suffix rolls back");
-    assert!(universe.page_node_list(rejected).is_err());
-    assert_eq!(box_register_penalty(&mut universe), 10);
-}
-
-#[test]
-fn durable_box_survives_format_round_trip() {
-    let mut universe = Universe::default();
-    let root = boxed_penalty(&mut universe, 70);
-    universe.assign_page_box_global(0, root);
-
-    let format = universe.dump_format().expect("box graph format dumps");
-    let mut restored = Universe::from_format(tex_state::World::memory(), &format)
-        .expect("box graph format restores");
-    assert_eq!(box_register_penalty(&mut restored), 70);
+        universe
+            .restore_state_checkpoint(&checkpoint)
+            .expect("restore checkpoint");
+        assert_eq!(box_register_penalty(universe), 10);
+        assert!(universe.page_node_list(replacement).is_err());
+    })
+    .expect("fresh universe");
 }

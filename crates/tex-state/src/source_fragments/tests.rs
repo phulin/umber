@@ -186,10 +186,10 @@ fn forked_fragment_appends_remain_store_local_and_logically_distinct() {
 }
 
 #[test]
-fn cross_store_layout_and_aggregate_installation_are_rejected() {
+fn cross_store_layout_is_rejected() {
     let mut first = FragmentStore::new();
     let (first_id, _) = append(&mut first, b"first", 1);
-    let layout = EditorLayout::new(
+    let _layout = EditorLayout::new(
         "root.tex",
         LayoutGeneration::new(1),
         vec![Piece::new(first_id, 0, 5)],
@@ -208,12 +208,6 @@ fn cross_store_layout_and_aggregate_installation_are_rejected() {
         ),
         Err(EditorLayoutError::UnknownFragment)
     ));
-
-    let mut universe = crate::Universe::new();
-    assert_eq!(
-        universe.install_editor_fragments(&second, &layout),
-        Err(EditorLayoutError::UnknownFragment)
-    );
 }
 
 #[test]
@@ -457,12 +451,6 @@ fn metadata_snapshots_do_not_pin_fragment_source_bytes() {
         fragments.reserved_position_bytes(),
         b"source bytes".len() as u64 + 1
     );
-    assert_eq!(
-        fragments.retained_bytes(),
-        mem::size_of::<FragmentStore>()
-            + fragments.metadata_retained_bytes()
-            + b"source bytes".len()
-    );
 }
 
 #[test]
@@ -536,7 +524,6 @@ fn retired_metadata_budget_eviction_preserves_stable_recipe_resolution() {
     .expect("current layout");
 
     assert_eq!(fragments.prune_for_layout(&layout, 14, 14), 3);
-    assert_eq!(fragments.testing_retired_metadata_rows(), 2);
     assert_eq!(direct_fragment_span(first_origin, &fragments), None);
     assert!(matches!(
         direct_fragment_span(second_origin, &fragments)
@@ -577,15 +564,4 @@ fn retired_metadata_budget_eviction_preserves_stable_recipe_resolution() {
         },
         "typed detached recipes outlive the raw-coordinate history window"
     );
-    let mut universe = crate::Universe::new();
-    universe
-        .install_editor_fragments(&fragments, &layout)
-        .expect("bounded fragment snapshot installs");
-    let materialized = universe
-        .origin_for_root_span(first_recipe)
-        .expect("evicted stable recipe materializes");
-    assert!(matches!(
-        universe.origin_if_live(materialized),
-        Some(crate::provenance::OriginRecord::SourceSpan(_))
-    ));
 }

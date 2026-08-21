@@ -45,7 +45,7 @@ fn token_lists_cross_generation_only_as_spellings_and_values() {
         let Token::Cs(symbol) = tokens[0] else {
             panic!("control sequence")
         };
-        assert_eq!(context.resolve(symbol), Some("answer"));
+        assert_eq!(context.resolve(symbol), "answer");
     })
     .unwrap();
 }
@@ -82,7 +82,7 @@ fn macro_materialization_stages_then_publishes_one_definition() {
         let Token::Cs(symbol) = definition.replacement_text()[0].semantic_token() else {
             panic!("replacement control sequence")
         };
-        assert_eq!(context.resolve(symbol), Some("x"));
+        assert_eq!(context.resolve(symbol), "x");
     })
     .unwrap();
 }

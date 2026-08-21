@@ -173,10 +173,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   episode views, typed arena publication, and whole-generation retirement.
 - `src/stores/tests.rs`: Direct arena resolution, generation-id bank
   installation, and coarse retirement tests.
-- `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
-- `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.
-- `src/tests/replay.rs`: Unit tests for snapshot/replay behavior and semantic state convergence.
-- `src/tests/replay_common.rs`: Shared helpers for replay tests, including model cells and expected hash state.
+- `src/tests.rs`: Crate-level semantic unit tests and module test wiring.
+- `src/tests/replay.rs`: Feature-gated generated invariant test for exact
+  generation-typed checkpoint replay.
 - `src/token.rs`: Token and catcode value definitions, constructors,
   classification helpers, and inline-small rooted traced-token buffers with
   sparse provenance ownership and spillover storage. Generated runs sharing
@@ -203,7 +202,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `tests/it/live_boundary.rs`: Downstream compile-fail assertion ensuring private stores and raw environment mutation stay inaccessible.
 - `tests/ui/input_open_context_forbidden.rs`: Compile-fail fixture that attempts forbidden reads, world access, and mutations from `InputOpenContext`.
 - `tests/ui/arena_transaction_exclusive.rs`: Compile-fail fixture proving suffix-owning transactions exclusively borrow the aggregate timeline.
-- `tests/ui/*-boundary-forbidden.rs`: Independent compile-fail fixtures attempting to bypass private live-state stores, omit paired editor-layout validation, or bypass the `Universe` facade.
+- `tests/ui/*-boundary-forbidden.rs`: Independent compile-fail fixtures
+  attempting to bypass private live-state stores or the `Universe` facade.
 - `tests/ui/handle_serialization_forbidden.rs`: Compile-fail fixture attempting to serialize, deserialize, or construct live handles downstream.
 
 ## Runtime-storage Test Contract

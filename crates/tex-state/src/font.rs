@@ -708,7 +708,9 @@ mod tests {
             (source.get(first).clone(), None, None),
             (source.get(second).clone(), None, None),
         ];
-        let interner = crate::interner::Interner::new();
+        let interner = crate::interner::Interner::new(
+            crate::interner::InternerBudget::new(16, 16, 256).expect("budget"),
+        );
         let mut loaded = FontStore::from_frozen(rows, &interner).expect("loaded font prefix");
 
         assert_eq!(loaded.intern(first_font).expect("reused first").raw(), 1);

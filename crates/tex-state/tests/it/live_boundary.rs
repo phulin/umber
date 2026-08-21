@@ -18,25 +18,17 @@ fn downstream_crate_cannot_import_private_stores() {
 
 #[test]
 fn downstream_crate_cannot_construct_or_mutate_raw_env() {
-    assert_live_boundary("env-boundary-forbidden", &["Env::new", "Env::default"]);
+    assert_live_boundary(
+        "env-boundary-forbidden",
+        &["struct `DenseState` is private"],
+    );
 }
 
 #[test]
 fn downstream_crate_cannot_construct_or_mutate_raw_interner_or_code_tables() {
     assert_live_boundary(
         "raw-table-boundary-forbidden",
-        &[
-            "E0624",
-            "Interner::new",
-            "method `intern` is private",
-            "CodeTables::new",
-            "method `set_catcode` is private",
-            "method `set_lccode` is private",
-            "method `set_uccode` is private",
-            "method `set_sfcode` is private",
-            "method `set_mathcode` is private",
-            "method `set_delcode` is private",
-        ],
+        &["E0624", "associated function `from_packed_slot` is private"],
     );
 }
 
@@ -45,12 +37,8 @@ fn downstream_crate_cannot_construct_or_mutate_raw_content_stores() {
     assert_live_boundary(
         "content-store-boundary-forbidden",
         &[
-            "E0624",
-            "no `TokenStore` in `token_store`",
-            "TokenListBuilder::new",
-            "no `GlueStore` in `glue`",
-            "NodeListBuilder::new",
-            "no method named `finish`",
+            "module `definition_arena` is private",
+            "module `durable_arena` is private",
         ],
     );
 }
@@ -78,8 +66,8 @@ fn downstream_crate_cannot_commit_world_effects_without_universe_boundary() {
         &[
             "E0624",
             "method `commit_effects` is private",
-            "method `store_artifact` is private",
             "method `record_deferred_write` is private",
+            "method `rollback_generation_fork` is private",
         ],
     );
 }
@@ -88,14 +76,9 @@ fn downstream_crate_cannot_commit_world_effects_without_universe_boundary() {
 fn downstream_crate_cannot_bypass_universe_facade_through_raw_env_ref() {
     assert_live_boundary(
         "universe-env-boundary-forbidden",
-        &["E0599", "no method named `env`"],
-    );
-}
-
-#[test]
-fn downstream_crate_cannot_install_fragments_without_the_paired_layout() {
-    assert_live_boundary(
-        "editor-fragment-install-boundary-forbidden",
-        &["E0061", "argument #2 of type `&EditorLayout` is missing"],
+        &[
+            "method `live_state` is private",
+            "method `admitted` is private",
+        ],
     );
 }

@@ -24,7 +24,7 @@ fn command_episode_admits_session_and_generation_once() {
         let context = universe.command_context().expect("admit episode");
         assert_eq!(context.resolve_symbol(symbol), Ok("alpha"));
         assert_eq!(
-            context.meaning(symbol).expect("meaning"),
+            context.meaning(symbol.symbol()),
             ResolvedMeaning::Static(Meaning::Relax)
         );
     })
@@ -118,7 +118,7 @@ fn retained_state_checkpoint_restores_dense_roots_before_arena_suffixes() {
 fn malformed_aggregate_restore_does_not_touch_dense_state() {
     with_universe(budget(), |universe| {
         let before_page = universe.page_node_cursor();
-        universe.publish_page_nodes(&[Node::Penalty(7)]);
+        let _ = universe.publish_page_nodes(&[Node::Penalty(7)]);
         let malformed = universe.state_checkpoint().expect("future page cursor");
         universe
             .assign_count(0, 41, AssignmentScope::Global)

@@ -1,7 +1,5 @@
-use tex_state::stores::Stores;
+use tex_state::stores::StateCore;
 
 fn main() {
-    let mut stores = Stores::new();
-    let snapshot = stores.checkpoint();
-    stores.rollback(snapshot);
+    let _: Option<StateCore<()>> = None;
 }
