@@ -385,6 +385,9 @@ pub enum CommandSemanticDiagnostic {
         message: String,
         help: &'static [&'static str],
         context: String,
+        /// The scanned value for reports canonically completed by TeX82
+        /// §81's `int_error`, rather than its ordinary `error` routine.
+        integer_error: Option<i32>,
     },
     /// TeX82 §391's compulsory macro-parameter-text mismatch.
     MacroPrefixMismatch {

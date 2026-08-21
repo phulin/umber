@@ -1498,6 +1498,7 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                 message,
                 help,
                 context,
+                integer_error,
                 ..
             }) => {
                 if let Some(runaway) = runaway {
@@ -1507,7 +1508,11 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                 }
                 let mut report = stores.print_err(&message);
                 report.help(help).context(context);
-                report.error().jump_out()?;
+                if let Some(value) = integer_error {
+                    report.int_error(value).jump_out()?;
+                } else {
+                    report.error().jump_out()?;
+                }
             }
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::MissingNumber {
                 context,

@@ -1183,6 +1183,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 message: format!("Extra {name}"),
                 help: &["I'm ignoring this; it doesn't match any \\if."],
                 context,
+                integer_error: None,
             });
         self.command
             .expansion

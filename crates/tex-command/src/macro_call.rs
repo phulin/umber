@@ -680,6 +680,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     "My plan is to forget the whole thing and hope for the best.",
                 ],
                 context,
+                integer_error: None,
             });
     }
 
@@ -702,6 +703,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     "your `}' was spurious, just type `2' and it will go away.",
                 ],
                 context,
+                integer_error: None,
             });
     }
 

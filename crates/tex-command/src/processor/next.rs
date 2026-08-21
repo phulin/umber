@@ -1333,6 +1333,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 message,
                 help,
                 context,
+                integer_error: None,
             });
         Ok(())
     }
@@ -1355,6 +1356,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 message,
                 help,
                 context,
+                integer_error: None,
             });
     }
 
@@ -2370,6 +2372,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         "you'd better type `E' or `X' now and fix your file.",
                     ],
                     context,
+                    integer_error: None,
                 });
         }
         if let ScannerStatus::Skipping(skipping) = &status {
@@ -2404,6 +2407,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     message,
                     help,
                     context,
+                    integer_error: None,
                 });
         }
         observe!(

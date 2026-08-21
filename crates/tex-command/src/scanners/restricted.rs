@@ -166,6 +166,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         message: class.message().into(),
                         help: class.help_lines(),
                         context,
+                        integer_error: Some(scanned.value),
                     },
                 );
                 return Ok(RestrictedInteger {

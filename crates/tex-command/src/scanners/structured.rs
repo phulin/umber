@@ -1923,6 +1923,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     message: "Missing delimiter (. inserted)".into(),
                     help: MISSING_DELIMITER_HELP,
                     context,
+                    integer_error: None,
                 });
             return Ok(());
         }

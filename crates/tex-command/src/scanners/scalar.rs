@@ -2044,6 +2044,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     message: format!("Improper \\{name}"),
                     help: IMPROPER_AUXILIARY_HELP,
                     context,
+                    integer_error: None,
                 });
             return Ok(());
         }

@@ -1815,6 +1815,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     message: "File ended within \\read".into(),
                     help: &["This \\read has unbalanced braces."],
                     context,
+                    integer_error: None,
                 });
             self.set_runaway_partial(FILE_ENDED_WITHIN_READ_DIAGNOSTIC, &partial);
             self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
