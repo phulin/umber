@@ -416,6 +416,68 @@ impl<'a, G> CommandContext<'a, G> {
         )
     }
 
+    /// Detaches the immutable source recipe needed by a committed output
+    /// artifact. No source-map coordinate or backing owner escapes admission.
+    #[must_use]
+    pub fn detach_artifact_source_recipe(
+        &self,
+        origin: crate::token::OriginId,
+    ) -> Option<crate::world::ArtifactSourceRecipe> {
+        let record = match origin.decode() {
+            crate::token::OriginEncoding::Arena(index) => self
+                .admitted
+                .provenance_coordinate_at(index)
+                .map(|coordinate| self.admitted.provenance(coordinate))?,
+            crate::token::OriginEncoding::DirectSource(position) => {
+                let region = self.sources.region_for_backed_position(position)?;
+                let end = position.raw().checked_add(1)?.min(region.anchor().raw());
+                OriginRecord::SourceSpan(
+                    self.sources
+                        .span(
+                            position,
+                            crate::source_map::SourcePos::from_raw_for_store(end),
+                        )
+                        .ok()?,
+                )
+            }
+            crate::token::OriginEncoding::Unknown
+            | crate::token::OriginEncoding::NoExpandFallback => return None,
+        };
+        let (registration, start, end) = match record {
+            OriginRecord::Source(source) => {
+                let registration = self.sources.registration_for_source(source.source())?;
+                let start = source.byte_offset();
+                (registration, start, start.saturating_add(1))
+            }
+            OriginRecord::SourceSpan(span) => {
+                let registration = self.sources.registration_for_span(span)?;
+                let region = registration.region();
+                (
+                    registration,
+                    span.lo().raw().checked_sub(region.start.raw())?,
+                    span.hi().raw().checked_sub(region.start.raw())?,
+                )
+            }
+            _ => return None,
+        };
+        let (content, logical_path) = match registration.descriptor() {
+            crate::source_map::SourceDescriptor::World { input_record, .. } => {
+                let input = self.world.input_record(*input_record)?;
+                (input.hash(), input.path().to_string_lossy().into_owned())
+            }
+            crate::source_map::SourceDescriptor::Generated(source) => (
+                source.hash(),
+                source.logical_path().unwrap_or("<generated>").to_owned(),
+            ),
+        };
+        Some(crate::world::ArtifactSourceRecipe {
+            content,
+            logical_path,
+            start,
+            end,
+        })
+    }
+
     fn detach_origin_source(
         &self,
         record: OriginRecord,

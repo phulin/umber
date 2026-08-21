@@ -410,6 +410,8 @@ pub struct Universe<G> {
     pub(crate) interaction_mode: InteractionMode,
     error_context_widths: ErrorContextWidths,
     engine_usage: crate::command_context::EngineUsageRuntime,
+    provenance_demand: crate::ProvenanceDemand,
+    provenance_budgets: crate::ProvenanceBudgets,
     pub(crate) primitive_names: Vec<String>,
     pub(crate) primitive_meanings: Vec<MeaningWord<G>>,
     /// Driver-requested cache policy consumed exactly once by MainControl.
@@ -420,6 +422,33 @@ pub struct Universe<G> {
 }
 
 impl<G> Universe<G> {
+    #[must_use]
+    pub fn with_provenance_config(
+        mut self,
+        demand: crate::ProvenanceDemand,
+        budgets: crate::ProvenanceBudgets,
+    ) -> Self {
+        self.provenance_demand = demand;
+        self.provenance_budgets = budgets;
+        self
+    }
+
+    #[must_use]
+    pub fn with_provenance_demand(self, demand: crate::ProvenanceDemand) -> Self {
+        let budgets = self.provenance_budgets;
+        self.with_provenance_config(demand, budgets)
+    }
+
+    #[must_use]
+    pub const fn provenance_demand(&self) -> crate::ProvenanceDemand {
+        self.provenance_demand
+    }
+
+    #[must_use]
+    pub const fn provenance_budgets(&self) -> crate::ProvenanceBudgets {
+        self.provenance_budgets
+    }
+
     /// Opens the outer transaction barrier for one dependency-observed
     /// command episode. Hot reads are recorded through `CommandContext`.
     pub fn begin_dependency_region(
@@ -475,6 +504,8 @@ impl<G> Universe<G> {
             interaction_mode: InteractionMode::default(),
             error_context_widths: ErrorContextWidths::default(),
             engine_usage: crate::command_context::EngineUsageRuntime::default(),
+            provenance_demand: crate::ProvenanceDemand::default(),
+            provenance_budgets: crate::ProvenanceBudgets::default(),
             primitive_names: Vec::new(),
             primitive_meanings: Vec::new(),
             pure_memo_config: None,
