@@ -135,41 +135,21 @@ impl<G> EngineBoundaryHasher<'_, G> {
         let mut value = node.clone();
         value.visit_node_lists_mut(|child| *child = PageListId::empty());
         match &mut value {
-            Node::Char { font, origin, .. } => {
+            Node::Char { font, .. } => {
                 self.font(*font);
                 *font = crate::font::NULL_FONT;
-                *origin = crate::token::OriginId::UNKNOWN;
             }
-            Node::Lig { font, origins, .. } => {
+            Node::Lig { font, .. } => {
                 self.font(*font);
                 *font = crate::font::NULL_FONT;
-                origins.clear();
             }
             Node::MarginKern { font, .. } => {
                 self.font(*font);
                 *font = crate::font::NULL_FONT;
             }
-            Node::HList(box_node) | Node::VList(box_node) => {
-                box_node.diagnostic_children = None;
-                box_node.allocator_high_cell_overlap = 0;
-            }
-            Node::Glue {
-                leader:
-                    Some(
-                        crate::node::LeaderPayload::HList(box_node)
-                        | crate::node::LeaderPayload::VList(box_node),
-                    ),
-                ..
-            } => {
-                box_node.diagnostic_children = None;
-                box_node.allocator_high_cell_overlap = 0;
-            }
-            Node::Disc {
-                physical_replace_count,
-                ..
-            } => *physical_replace_count = 0,
             _ => {}
         }
+        value.erase_diagnostic_sidecars();
         self.hasher.str(&format!("{value:?}"));
     }
 }

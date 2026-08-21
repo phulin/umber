@@ -1,6 +1,8 @@
 #[cfg(feature = "testing")]
 mod replay;
 
+mod node_semantics;
+
 #[test]
 fn etex_math_boundary_stack_counts_missing_and_extra_by_identity() {
     // Merged e-TeX WEB §53a counts unmatched ends as extra and open begins

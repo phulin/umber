@@ -7,6 +7,7 @@ use crate::node_arena::PageListId;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::{OriginId, TokenWord};
 use crate::world::{PrintSink, StreamSlot};
+use std::hash::{Hash, Hasher};
 
 /// Node-owned token payload used before and inside node arenas.
 ///
@@ -118,7 +119,7 @@ impl NodeKind {
 }
 
 /// A frozen TeX node.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Node<List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
     Char {
         font: FontId,
@@ -191,6 +192,156 @@ pub enum Node<List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
     MathList(MathListNode<List>),
     Nonscript,
     Adjust(AdjustNode<List>),
+}
+
+/// Borrowed semantic projection of a node.
+///
+/// Diagnostic source, physical-list, and allocator sidecars are deliberately
+/// absent. Keeping this projection beside [`Node`] makes equality and hashing
+/// share one exhaustive field list.
+#[derive(Eq, Hash, PartialEq)]
+enum SemanticNodeRef<'a, List, Glue, Tokens> {
+    Char(&'a FontId, &'a char),
+    Lig(&'a FontId, &'a char, &'a [char], &'a bool, &'a bool),
+    Kern(&'a Scaled, &'a KernKind),
+    MarginKern(&'a Scaled, &'a MarginKernSide, &'a FontId, &'a u8),
+    Glue(&'a Glue, &'a GlueKind, &'a Option<LeaderPayload<List>>),
+    Penalty(&'a i32),
+    Rule(&'a Option<Scaled>, &'a Option<Scaled>, &'a Option<Scaled>),
+    HList(&'a BoxNode<List>),
+    VList(&'a BoxNode<List>),
+    Unset(&'a UnsetNode<List>),
+    Disc(&'a DiscKind, &'a List, &'a List, &'a List),
+    Mark(&'a u16, &'a Tokens),
+    Ins(&'a u16, &'a Scaled, &'a Glue, &'a Scaled, &'a i32, &'a List),
+    Whatsit(&'a Whatsit<Glue, Tokens>),
+    MathOn(&'a Scaled),
+    MathOff(&'a Scaled),
+    Direction(&'a Direction),
+    MathNoad(&'a MathNoad<List>),
+    FractionNoad(&'a MathFraction<List>),
+    MathStyle(&'a MathStyle),
+    MathChoice(&'a MathChoice<List>),
+    MathList(&'a MathListNode<List>),
+    Nonscript,
+    Adjust(&'a AdjustNode<List>),
+}
+
+impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
+    fn semantic_ref(&self) -> SemanticNodeRef<'_, List, Glue, Tokens> {
+        match self {
+            Self::Char { font, ch, .. } => SemanticNodeRef::Char(font, ch),
+            Self::Lig {
+                font,
+                ch,
+                orig,
+                left_hit,
+                right_hit,
+                ..
+            } => SemanticNodeRef::Lig(font, ch, orig, left_hit, right_hit),
+            Self::Kern { amount, kind } => SemanticNodeRef::Kern(amount, kind),
+            Self::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => SemanticNodeRef::MarginKern(amount, side, font, ch),
+            Self::Glue { spec, kind, leader } => SemanticNodeRef::Glue(spec, kind, leader),
+            Self::Penalty(value) => SemanticNodeRef::Penalty(value),
+            Self::Rule {
+                width,
+                height,
+                depth,
+            } => SemanticNodeRef::Rule(width, height, depth),
+            Self::HList(value) => SemanticNodeRef::HList(value),
+            Self::VList(value) => SemanticNodeRef::VList(value),
+            Self::Unset(value) => SemanticNodeRef::Unset(value),
+            Self::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                ..
+            } => SemanticNodeRef::Disc(kind, pre, post, replace),
+            Self::Mark { class, tokens } => SemanticNodeRef::Mark(class, tokens),
+            Self::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => SemanticNodeRef::Ins(
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            ),
+            Self::Whatsit(value) => SemanticNodeRef::Whatsit(value),
+            Self::MathOn(value) => SemanticNodeRef::MathOn(value),
+            Self::MathOff(value) => SemanticNodeRef::MathOff(value),
+            Self::Direction(value) => SemanticNodeRef::Direction(value),
+            Self::MathNoad(value) => SemanticNodeRef::MathNoad(value),
+            Self::FractionNoad(value) => SemanticNodeRef::FractionNoad(value),
+            Self::MathStyle(value) => SemanticNodeRef::MathStyle(value),
+            Self::MathChoice(value) => SemanticNodeRef::MathChoice(value),
+            Self::MathList(value) => SemanticNodeRef::MathList(value),
+            Self::Nonscript => SemanticNodeRef::Nonscript,
+            Self::Adjust(value) => SemanticNodeRef::Adjust(value),
+        }
+    }
+
+    /// Erases sidecars excluded from semantic equality and checkpoint hashes.
+    pub(crate) fn erase_diagnostic_sidecars(&mut self) {
+        fn erase_math_char<List>(field: &mut crate::math::MathField<List>) {
+            if let crate::math::MathField::MathChar(value)
+            | crate::math::MathField::MathTextChar(value) = field
+            {
+                value.origin = OriginId::UNKNOWN;
+            }
+        }
+
+        match self {
+            Self::Char { origin, .. } => *origin = OriginId::UNKNOWN,
+            Self::Lig { origins, .. } => origins.clear(),
+            Self::HList(box_node) | Self::VList(box_node) => {
+                box_node.erase_diagnostic_sidecars();
+            }
+            Self::Glue {
+                leader: Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)),
+                ..
+            } => box_node.erase_diagnostic_sidecars(),
+            Self::Disc {
+                physical_replace_count,
+                ..
+            } => *physical_replace_count = 0,
+            Self::MathNoad(noad) => {
+                if let crate::math::NoadKind::Accent { accent } = &mut noad.kind {
+                    accent.origin = OriginId::UNKNOWN;
+                }
+                erase_math_char(&mut noad.nucleus);
+                erase_math_char(&mut noad.subscript);
+                erase_math_char(&mut noad.superscript);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl<List: PartialEq, Glue: PartialEq, Tokens: PartialEq> PartialEq for Node<List, Glue, Tokens> {
+    fn eq(&self, other: &Self) -> bool {
+        self.semantic_ref() == other.semantic_ref()
+    }
+}
+
+impl<List: Eq, Glue: Eq, Tokens: Eq> Eq for Node<List, Glue, Tokens> {}
+
+impl<List: Hash, Glue: Hash, Tokens: Hash> Hash for Node<List, Glue, Tokens> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.semantic_ref().hash(state);
+    }
 }
 
 impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
@@ -619,7 +770,7 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
 ///
 /// Ordinary TeX adjustments migrate after their containing horizontal box;
 /// pdfTeX's `pre` form migrates before it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct AdjustNode<List = PageListId> {
     pub content: List,
     pub pre: bool,
@@ -713,6 +864,29 @@ impl<List: PartialEq> PartialEq for BoxNode<List> {
     }
 }
 
+impl<List: Eq> Eq for BoxNode<List> {}
+
+impl<List: Hash> Hash for BoxNode<List> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.width.hash(state);
+        self.height.hash(state);
+        self.depth.hash(state);
+        self.shift.hash(state);
+        self.box_lr.hash(state);
+        self.glue_set.hash(state);
+        self.glue_sign.hash(state);
+        self.glue_order.hash(state);
+        self.children.hash(state);
+    }
+}
+
+impl<List> BoxNode<List> {
+    fn erase_diagnostic_sidecars(&mut self) {
+        self.diagnostic_children = None;
+        self.allocator_high_cell_overlap = 0;
+    }
+}
+
 /// Construction fields for a TeX box node payload.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxNodeFields<List = PageListId> {
@@ -743,7 +917,7 @@ pub enum BoxLr {
 }
 
 /// Repeated material attached to a leader glue node.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum LeaderPayload<List = PageListId> {
     HList(BoxNode<List>),
     VList(BoxNode<List>),
@@ -773,7 +947,7 @@ impl<List> LeaderPayload<List> {
 }
 
 /// A TeX unset box used while alignments are being measured and resolved.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct UnsetNode<List = PageListId> {
     pub kind: UnsetKind,
     pub width: Scaled,

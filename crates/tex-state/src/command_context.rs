@@ -3196,41 +3196,21 @@ fn page_list_semantic_id<G>(
             let mut value = node.clone();
             value.visit_node_lists_mut(|child| *child = PageListId::empty());
             match &mut value {
-                crate::node::Node::Char { font, origin, .. } => {
+                crate::node::Node::Char { font, .. } => {
                     self.font(*font);
                     *font = crate::font::NULL_FONT;
-                    *origin = crate::token::OriginId::UNKNOWN;
                 }
-                crate::node::Node::Lig { font, origins, .. } => {
+                crate::node::Node::Lig { font, .. } => {
                     self.font(*font);
                     *font = crate::font::NULL_FONT;
-                    origins.clear();
                 }
                 crate::node::Node::MarginKern { font, .. } => {
                     self.font(*font);
                     *font = crate::font::NULL_FONT;
                 }
-                crate::node::Node::HList(box_node) | crate::node::Node::VList(box_node) => {
-                    box_node.diagnostic_children = None;
-                    box_node.allocator_high_cell_overlap = 0;
-                }
-                crate::node::Node::Glue {
-                    leader:
-                        Some(
-                            crate::node::LeaderPayload::HList(box_node)
-                            | crate::node::LeaderPayload::VList(box_node),
-                        ),
-                    ..
-                } => {
-                    box_node.diagnostic_children = None;
-                    box_node.allocator_high_cell_overlap = 0;
-                }
-                crate::node::Node::Disc {
-                    physical_replace_count,
-                    ..
-                } => *physical_replace_count = 0,
                 _ => {}
             }
+            value.erase_diagnostic_sidecars();
             self.hasher.str(&format!("{value:?}"));
         }
     }

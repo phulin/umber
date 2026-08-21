@@ -190,6 +190,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/tests.rs`: Direct arena resolution, generation-id bank
   installation, and coarse retirement tests.
 - `src/tests.rs`: Crate-level semantic unit tests and module test wiring.
+- `src/tests/node_semantics.rs`: Canonical node equality/hash coverage proving
+  diagnostic provenance, physical topology, and allocator sidecars do not
+  affect semantic identity.
 - `src/tests/replay.rs`: Feature-gated generated invariant test for exact
   generation-typed checkpoint replay.
 - `src/token.rs`: Token and catcode value definitions, constructors,
