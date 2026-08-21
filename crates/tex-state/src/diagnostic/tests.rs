@@ -1,5 +1,5 @@
-use crate::env::banks::IntParam;
 use crate::env::AssignmentScope;
+use crate::env::banks::IntParam;
 use crate::interner::InternerBudget;
 use crate::scaled::Scaled;
 use crate::world::{EffectRecord, PrintSink};
