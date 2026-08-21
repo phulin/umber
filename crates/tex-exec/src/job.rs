@@ -33,7 +33,7 @@ use tex_command::{CommandHostCapabilities, CommandProfile};
 use tex_state::env::banks::IntParam;
 use tex_state::print::{ErrorHistory, Printer, Selector};
 use tex_state::world::PrintSink;
-use tex_state::{EngineUsageStatistics, Universe};
+use tex_state::{CommandContext, EngineUsageStatistics, Universe};
 
 /// pdftex.web §2's `banner`: the production reference engine's start-up string.
 ///
@@ -307,7 +307,7 @@ fn print_two(value: i32) -> String {
 
 /// §536's clock suffix: `"  " print_int(day) " " month print_int(year) " "
 /// print_two(hour) ":" print_two(minute)`.
-fn clock_suffix(stores: &Universe) -> String {
+fn clock_suffix<G>(stores: &Universe<G>) -> String {
     let day = stores.int_param(IntParam::DAY);
     let month = stores.int_param(IntParam::MONTH);
     let year = stores.int_param(IntParam::YEAR);
@@ -330,9 +330,9 @@ fn clock_suffix(stores: &Universe) -> String {
 /// [`crate::MainControl::register_root_source`] or a wrapper over
 /// it), so the banner and `**` line precede the root file's own `(`.
 #[cfg(test)]
-pub(crate) fn begin_job(
+pub(crate) fn begin_job<G>(
     job: &mut JobFraming,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     capabilities: &mut CommandHostCapabilities,
     initex: bool,
     format: Option<&PreloadedFormat>,
@@ -354,9 +354,9 @@ pub(crate) fn begin_job(
     );
 }
 
-pub(crate) fn begin_job_with_terminal_banner(
+pub(crate) fn begin_job_with_terminal_banner<G>(
     job: &mut JobFraming,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     capabilities: &mut CommandHostCapabilities,
     initex: bool,
     format: Option<&PreloadedFormat>,
@@ -383,12 +383,18 @@ pub(crate) fn begin_job_with_terminal_banner(
         // TeX82 §§525/536 retain `a_make_name_string(log_file)` for the
         // loaded job. INITEX construction accounting is sealed separately
         // into the format baseline.
-        stores.make_string_pool_string(&log_name);
+        stores
+            .command_context()
+            .expect("job framing belongs to a live generation")
+            .make_string_pool_string(&log_name);
     } else if initex {
         // TeX82 §§534--537 retain the scanned job-name component and the
         // opened transcript name before INITEX reaches §1328's format dump.
-        stores.make_string_pool_string(capabilities.job_name());
-        stores.make_string_pool_string(&log_name);
+        let mut command = stores
+            .command_context()
+            .expect("job framing belongs to a live generation");
+        command.make_string_pool_string(capabilities.job_name());
+        command.make_string_pool_string(&log_name);
     }
 
     // §61: the terminal's very first output -- `format_ident` and a
@@ -448,7 +454,7 @@ pub(crate) fn begin_job_with_terminal_banner(
 }
 
 /// tex.web §1335's `while open_parens>0 do begin print(" )"); decr(open_parens); end`.
-pub(crate) fn close_open_parens(stores: &mut Universe) {
+pub(crate) fn close_open_parens<G>(stores: &mut Universe<G>) {
     tex_state::file_framing::print_remaining_file_closes(stores);
 }
 
@@ -459,8 +465,7 @@ pub(crate) fn close_open_parens(stores: &mut Universe) {
 /// §1335 spells the escape `\end` whichever of `\end` and `\dump` ended the
 /// job, so this takes no dump flag; the sibling report immediately below it
 /// (`report_incomplete_conditions`) shares that wording for the same reason.
-pub(crate) fn report_unclosed_groups(stores: &mut Universe) {
-    let depth = stores.group_depth();
+pub(crate) fn report_unclosed_groups<G>(stores: &mut Universe<G>, depth: usize) {
     if depth == 0 {
         return;
     }
@@ -479,11 +484,11 @@ pub(crate) fn report_unclosed_groups(stores: &mut Universe) {
 /// so this opening cannot arrive through [`FileFramingEvent`]. It is still
 /// TeX82 §537's `print_char("("); incr(open_parens)`: §1335 must therefore
 /// see it when `\end` or `\dump` abandons the still-open root.
-pub(crate) fn open_startup_input(stores: &mut Universe, name: &str) {
+pub(crate) fn open_startup_input<G>(stores: &mut Universe<G>, name: &str) {
     tex_state::file_framing::print_startup_file_open(stores, name);
 }
 
-pub(crate) fn open_startup_input_after_log(stores: &mut Universe, name: &str) {
+pub(crate) fn open_startup_input_after_log<G>(stores: &mut Universe<G>, name: &str) {
     tex_state::file_framing::print_startup_file_open_after_log(stores, name);
 }
 
@@ -497,7 +502,7 @@ pub(crate) fn open_startup_input_after_log(stores: &mut Universe, name: &str) {
 /// to `Selector::for_interaction(interaction) == Selector::TermAndLog`
 /// -- i.e. `interaction<>batch_mode` -- rather than a real closed/open log
 /// test.
-pub(crate) fn print_history_note(stores: &mut Universe) {
+pub(crate) fn print_history_note<G>(stores: &mut Universe<G>) {
     let history = stores.world().error_channel().history();
     if history == ErrorHistory::Spotless {
         return;
@@ -542,8 +547,8 @@ pub(crate) fn print_history_note(stores: &mut Universe) {
 ///
 /// §31 drops the line's trailing space before setting `limit`, so the
 /// terminator the `**` line ends with is not part of `startup_terminal_line`.
-fn terminal_exhausted_context(
-    stores: &mut Universe,
+fn terminal_exhausted_context<G>(
+    stores: &mut CommandContext<'_, G>,
     startup_terminal_line: &str,
     interactive: bool,
 ) -> String {
@@ -554,7 +559,7 @@ fn terminal_exhausted_context(
     };
     tex_state::print::render_error_context(
         &[tex_state::print::ErrorContextLevel::new("<*> ", line, "")],
-        stores.command_context().error_context_widths(),
+        stores.error_context_widths(),
         stores.int_param(tex_state::env::banks::IntParam::new(54)),
     )
 }
@@ -605,16 +610,13 @@ pub(crate) enum EndOfInputAction {
     Fatal(tex_command::FatalError),
 }
 
-pub(crate) fn prompt_for_more_input(
-    stores: &mut Universe,
+pub(crate) fn prompt_for_more_input<G>(
+    stores: &mut CommandContext<'_, G>,
     startup_terminal_line: &str,
     buffered_line_is_empty: bool,
 ) -> EndOfInputAction {
     // tex.web §360's `else fatal_error("*** (job aborted...)")`.
-    if !stores
-        .command_context()
-        .interaction_permits_terminal_input()
-    {
+    if !stores.interaction_permits_terminal_input() {
         return EndOfInputAction::Fatal(report_emergency_stop(
             stores,
             startup_terminal_line,
@@ -631,9 +633,7 @@ pub(crate) fn prompt_for_more_input(
     stores.printer().print_ln();
     // §71's `prompt_input("*")`: the prompt, `term_input`'s read, and --
     // on success -- its transcript echo, all owned by `input_ln`.
-    let line = stores
-        .command_context()
-        .input_ln(tex_state::CommandLineSource::Terminal { prompt: "*" });
+    let line = stores.input_ln(tex_state::CommandLineSource::Terminal { prompt: "*" });
     match line {
         Some(line) => EndOfInputAction::Line(line),
         // §71's `fatal_error("End of file on the terminal!")`.
@@ -649,8 +649,8 @@ pub(crate) fn prompt_for_more_input(
 /// errorstop job from being prompted at §83's `? ` on its way out -- here, of
 /// all places, since the reason this report exists is that the terminal has
 /// nothing left to answer with.
-fn report_emergency_stop(
-    stores: &mut Universe,
+fn report_emergency_stop<G>(
+    stores: &mut CommandContext<'_, G>,
     startup_terminal_line: &str,
     interactive: bool,
 ) -> tex_command::FatalError {
@@ -677,8 +677,8 @@ fn report_emergency_stop(
 /// [`crate::MainControlStep::End`]) can't reorder anything this function
 /// prints. What remains here is exactly §642's DVI report and the
 /// transcript-closing note.
-pub(crate) fn finish_job(
-    stores: &mut Universe,
+pub(crate) fn finish_job<G>(
+    stores: &mut Universe<G>,
     profile: CommandProfile,
     binary: EngineBinaryIdentity,
     job_name: &str,
@@ -695,7 +695,7 @@ pub(crate) fn finish_job(
 /// Completes pdfTeX's `pdf_error` path through §93 `succumb` and the
 /// PDF-specific fatal close message before the host receives the unchanged
 /// typed execution error.
-pub(crate) fn report_pdf_fatal_error(stores: &mut Universe, message: &str) {
+pub(crate) fn report_pdf_fatal_error<G>(stores: &mut Universe<G>, message: &str) {
     stores
         .world_mut()
         .begin_terminal_publication(tex_state::TerminalPublicationPhase::PdfFatal);
@@ -715,7 +715,7 @@ pub(crate) fn report_pdf_fatal_error(stores: &mut Universe, message: &str) {
 /// article thread whose bead list is empty. Object serialization is a host
 /// concern in Umber, but these diagnostics depend only on checkpointed engine
 /// state and therefore belong at the engine's finalization boundary.
-pub(crate) fn report_pdf_navigation_warnings(stores: &mut Universe) -> bool {
+pub(crate) fn report_pdf_navigation_warnings<G>(stores: &mut Universe<G>) -> bool {
     #[derive(Clone, Copy)]
     enum MissingNavigationKind {
         Destination,
@@ -790,8 +790,8 @@ pub(crate) fn report_pdf_navigation_warnings(stores: &mut Universe) -> bool {
     true
 }
 
-fn print_pdf_navigation_identity(
-    printer: &mut Printer<'_>,
+fn print_pdf_navigation_identity<G>(
+    printer: &mut Printer<'_, G>,
     identity: &tex_state::PdfDestinationIdentity,
 ) {
     match identity {
@@ -808,8 +808,8 @@ fn print_pdf_navigation_identity(
     }
 }
 
-fn print_pdf_report(
-    stores: &mut Universe,
+fn print_pdf_report<G>(
+    stores: &mut Universe<G>,
     profile: CommandProfile,
     report: Option<&mut PdfJobFinalizationReport>,
 ) {
@@ -843,11 +843,11 @@ fn print_pdf_report(
     printer.print(" words of extra memory for PDF output out of 10000 (max. 10000000)");
 }
 
-fn print_u32(printer: &mut Printer<'_>, value: u32) {
+fn print_u32<G>(printer: &mut Printer<'_, G>, value: u32) {
     printer.print_int(i32::try_from(value).unwrap_or(i32::MAX));
 }
 
-fn print_usage_statistics(stores: &mut Universe, binary: EngineBinaryIdentity) -> bool {
+fn print_usage_statistics<G>(stores: &mut Universe<G>, binary: EngineBinaryIdentity) -> bool {
     if stores.int_param(IntParam::TRACING_STATS) <= 0 {
         return false;
     }
@@ -902,7 +902,7 @@ fn print_usage_statistics(stores: &mut Universe, binary: EngineBinaryIdentity) -
     file_offset_was_open
 }
 
-fn print_stack_usage(printer: &mut Printer<'_>, usage: EngineUsageStatistics) {
+fn print_stack_usage<G>(printer: &mut Printer<'_, G>, usage: EngineUsageStatistics) {
     for (value, suffix) in [
         (usage.input_stack, "i,"),
         (usage.nest_stack, "n,"),
@@ -921,7 +921,7 @@ fn print_stack_usage(printer: &mut Printer<'_>, usage: EngineUsageStatistics) {
         .print_ln();
 }
 
-fn print_usize(printer: &mut Printer<'_>, value: usize) {
+fn print_usize<G>(printer: &mut Printer<'_, G>, value: usize) {
     printer.print_int(i32::try_from(value).unwrap_or(i32::MAX));
 }
 
@@ -931,8 +931,8 @@ fn print_usize(printer: &mut Printer<'_>, value: usize) {
 /// calls this only after atomic publication succeeds, matching §1328's
 /// successful-open ordering and preventing a failed output from claiming a
 /// dump that did not happen.
-pub fn confirm_format_dump_publication(
-    stores: &mut Universe,
+pub fn confirm_format_dump_publication<G>(
+    stores: &mut Universe<G>,
     receipt: &mut FormatDumpReceipt,
     displayed_file_name: &str,
 ) {
@@ -962,8 +962,8 @@ pub fn confirm_format_dump_publication(
 /// cannot make this print "Output written on..." with a fabricated page
 /// count, and cannot make it print a byte count when the engine committed no
 /// pages, because the zero-page branch never inspects `dvi` at all.
-fn print_dvi_report(
-    stores: &mut Universe,
+fn print_dvi_report<G>(
+    stores: &mut Universe<G>,
     dvi: Option<DviJobOutput>,
     statistics_left_file_offset_open: bool,
 ) {
@@ -1006,7 +1006,7 @@ fn print_dvi_report(
 
 /// tex.web §1333's `if selector=term_only then begin print_nl("Transcript
 /// written on "); slow_print(log_name); print_char("."); end`.
-fn print_transcript_note(stores: &mut Universe, job_name: &str) {
+fn print_transcript_note<G>(stores: &mut Universe<G>, job_name: &str) {
     // Real tex.web reaches this only after `a_close(log_file);
     // selector:=selector-2` has just taken `selector` from `term_and_log` to
     // `term_only`. Umber's transcript never really closes (see

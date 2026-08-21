@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use tex_command::CommandProfile;
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::math::{
@@ -33,7 +33,7 @@ impl DumpConfig {
     /// initialization), so every level's item count must fall back to 5
     /// rather than truncating to zero items and printing `etc.` immediately;
     /// `depth_threshold` has no such fallback and is used as read.
-    pub(crate) fn read(stores: &Universe) -> Self {
+    pub(crate) fn read<G>(stores: &CommandContext<'_, G>) -> Self {
         let breadth = stores.int_param(IntParam::SHOW_BOX_BREADTH);
         Self {
             breadth: if breadth <= 0 { 5 } else { breadth },
@@ -48,7 +48,11 @@ impl DumpConfig {
     }
 }
 
-pub(crate) fn dump_page_list(stores: &Universe, owner: PageListId, config: DumpConfig) -> String {
+pub(crate) fn dump_page_list<G>(
+    stores: &CommandContext<'_, G>,
+    owner: PageListId,
+    config: DumpConfig,
+) -> String {
     let mut out = String::new();
     let list = stores
         .page_node_list(owner)
@@ -65,7 +69,11 @@ pub(crate) fn dump_page_list(stores: &Universe, owner: PageListId, config: DumpC
     out
 }
 
-pub(crate) fn dump_node_slice(stores: &Universe, nodes: &[Node], config: DumpConfig) -> String {
+pub(crate) fn dump_node_slice<G>(
+    stores: &CommandContext<'_, G>,
+    nodes: &[Node],
+    config: DumpConfig,
+) -> String {
     let mut out = String::new();
     dump_nodes(
         stores,
@@ -79,8 +87,8 @@ pub(crate) fn dump_node_slice(stores: &Universe, nodes: &[Node], config: DumpCon
     out
 }
 
-pub(crate) fn dump_incomplete_fraction(
-    stores: &Universe,
+pub(crate) fn dump_incomplete_fraction<G>(
+    stores: &CommandContext<'_, G>,
     fraction: &crate::mode::IncompleteFraction,
     config: DumpConfig,
 ) -> String {
@@ -104,10 +112,10 @@ enum ListContext {
 }
 
 trait DumpListProjection {
-    fn is_empty(&self, stores: &Universe) -> bool;
-    fn dump(
+    fn is_empty<G>(&self, stores: &CommandContext<'_, G>) -> bool;
+    fn dump<G>(
         &self,
-        stores: &Universe,
+        stores: &CommandContext<'_, G>,
         config: &DumpConfig,
         depth: i32,
         context: ListContext,
@@ -117,13 +125,13 @@ trait DumpListProjection {
 }
 
 impl DumpListProjection for PageListId {
-    fn is_empty(&self, _stores: &Universe) -> bool {
+    fn is_empty<G>(&self, _stores: &CommandContext<'_, G>) -> bool {
         self.is_empty()
     }
 
-    fn dump(
+    fn dump<G>(
         &self,
-        stores: &Universe,
+        stores: &CommandContext<'_, G>,
         config: &DumpConfig,
         depth: i32,
         context: ListContext,
@@ -145,8 +153,8 @@ impl DumpListProjection for PageListId {
     }
 }
 
-fn dump_projected_list<List: DumpListProjection>(
-    stores: &Universe,
+fn dump_projected_list<G, List: DumpListProjection>(
+    stores: &CommandContext<'_, G>,
     list: &List,
     config: &DumpConfig,
     depth: i32,
@@ -156,8 +164,8 @@ fn dump_projected_list<List: DumpListProjection>(
     list.dump(stores, config, depth, context, false, out);
 }
 
-fn dump_nodes(
-    stores: &Universe,
+fn dump_nodes<G>(
+    stores: &CommandContext<'_, G>,
     nodes: &[Node],
     config: &DumpConfig,
     depth: i32,
@@ -217,8 +225,8 @@ fn dump_nodes(
     }
 }
 
-fn dump_node(
-    stores: &Universe,
+fn dump_node<G>(
+    stores: &CommandContext<'_, G>,
     node: &Node,
     config: &DumpConfig,
     depth: i32,
@@ -415,7 +423,7 @@ fn dump_node(
 /// TeX82 §1356's `Display the whatsit node` cases. The PDF variants are
 /// extension-owned and retain the generic marker until their own diagnostic
 /// vocabulary is specified.
-fn dump_whatsit(stores: &Universe, whatsit: &Whatsit, out: &mut String) {
+fn dump_whatsit<G>(stores: &CommandContext<'_, G>, whatsit: &Whatsit, out: &mut String) {
     match whatsit {
         Whatsit::OpenOut { slot, path } => {
             append_escaped_name(stores, "openout", out);
@@ -468,14 +476,18 @@ fn dump_whatsit(stores: &Universe, whatsit: &Whatsit, out: &mut String) {
 }
 
 /// TeX82 §§63/1356 names each whatsit through the live `print_esc` rule.
-fn append_escaped_name(stores: &Universe, name: &str, out: &mut String) {
+fn append_escaped_name<G>(stores: &CommandContext<'_, G>, name: &str, out: &mut String) {
     if let Ok(escape) = u8::try_from(stores.int_param(IntParam::ESCAPE_CHAR)) {
         out.push(char::from(escape));
     }
     out.push_str(name);
 }
 
-fn dump_token_words(stores: &Universe, tokens: &[tex_state::token::TokenWord], out: &mut String) {
+fn dump_token_words<G>(
+    stores: &CommandContext<'_, G>,
+    tokens: &[tex_state::token::TokenWord],
+    out: &mut String,
+) {
     out.push('{');
     for &token in tokens {
         // §1356 delegates write-node contents to §262 `show_token_list`,
@@ -485,8 +497,8 @@ fn dump_token_words(stores: &Universe, tokens: &[tex_state::token::TokenWord], o
     out.push_str("}\n");
 }
 
-fn dump_math_noad<List: DumpListProjection>(
-    stores: &Universe,
+fn dump_math_noad<G, List: DumpListProjection>(
+    stores: &CommandContext<'_, G>,
     noad: &MathNoad<List>,
     config: &DumpConfig,
     depth: i32,
@@ -539,7 +551,12 @@ fn dump_math_noad<List: DumpListProjection>(
     dump_math_field(stores, &noad.subscript, config, depth + 1, '_', out);
 }
 
-fn dump_math_marker(stores: &Universe, name: &str, width: Scaled, out: &mut String) {
+fn dump_math_marker<G>(
+    stores: &CommandContext<'_, G>,
+    name: &str,
+    width: Scaled,
+    out: &mut String,
+) {
     // TeX82 §§63/184: both `before` and `after` math-node subtypes name
     // themselves through `print_esc`, so the header observes the live
     // `\escapechar` even when the node is nested in subsidiary math data.
@@ -551,8 +568,8 @@ fn dump_math_marker(stores: &Universe, name: &str, width: Scaled, out: &mut Stri
     }
 }
 
-fn dump_leader_payload<List: DumpListProjection + Clone>(
-    stores: &Universe,
+fn dump_leader_payload<G, List: DumpListProjection + Clone>(
+    stores: &CommandContext<'_, G>,
     payload: &LeaderPayload<List>,
     config: &DumpConfig,
     depth: i32,
@@ -577,8 +594,8 @@ fn dump_leader_payload<List: DumpListProjection + Clone>(
 
 /// TeX82 §191's `Display rule` begins with `print_esc("rule(")`, so both
 /// list rules and rules used as leader payloads observe the live escape byte.
-fn dump_rule(
-    stores: &Universe,
+fn dump_rule<G>(
+    stores: &CommandContext<'_, G>,
     width: Option<Scaled>,
     height: Option<Scaled>,
     depth: Option<Scaled>,
@@ -615,8 +632,8 @@ fn noad_name(kind: &NoadKind) -> &'static str {
     }
 }
 
-fn dump_math_field<List: DumpListProjection>(
-    stores: &Universe,
+fn dump_math_field<G, List: DumpListProjection>(
+    stores: &CommandContext<'_, G>,
     field: &MathField<List>,
     config: &DumpConfig,
     depth: i32,
@@ -671,20 +688,20 @@ fn mark_subsidiary_lines(out: &mut String, start: usize, depth: i32, marker: cha
     }
 }
 
-fn dump_math_char(stores: &Universe, ch: MathChar, out: &mut String) {
+fn dump_math_char<G>(stores: &CommandContext<'_, G>, ch: MathChar, out: &mut String) {
     dump_math_char_inline(stores, ch, out);
     out.push('\n');
 }
 
 /// TeX82 §691's `print_fam_and_char` names `fam` through §63 `print_esc`,
 /// so math-character diagnostics observe the current `\escapechar`.
-fn dump_math_char_inline(stores: &Universe, ch: MathChar, out: &mut String) {
+fn dump_math_char_inline<G>(stores: &CommandContext<'_, G>, ch: MathChar, out: &mut String) {
     append_escaped_name(stores, "fam", out);
     let _ = write!(out, "{} {}", ch.family, dump_char(ch.character));
 }
 
-fn dump_fraction<List: DumpListProjection>(
-    stores: &Universe,
+fn dump_fraction<G, List: DumpListProjection>(
+    stores: &CommandContext<'_, G>,
     fraction: &MathFraction<List>,
     config: &DumpConfig,
     depth: i32,
@@ -701,8 +718,8 @@ fn dump_fraction<List: DumpListProjection>(
     dump_fraction_part(stores, &fraction.denominator, config, depth + 1, "/", out);
 }
 
-fn dump_fraction_header(
-    stores: &Universe,
+fn dump_fraction_header<G>(
+    stores: &CommandContext<'_, G>,
     thickness: FractionThickness,
     left_delimiter: Option<u32>,
     right_delimiter: Option<u32>,
@@ -759,8 +776,8 @@ fn dump_packed_delimiter(prefix: &str, delimiter: u32, out: &mut String) {
     let _ = write!(out, "{prefix}\"{delimiter:X}");
 }
 
-fn dump_fraction_part<List: DumpListProjection>(
-    stores: &Universe,
+fn dump_fraction_part<G, List: DumpListProjection>(
+    stores: &CommandContext<'_, G>,
     list: &List,
     config: &DumpConfig,
     depth: i32,
@@ -790,8 +807,8 @@ fn dump_fraction_part<List: DumpListProjection>(
     }
 }
 
-fn dump_math_choice<List: DumpListProjection>(
-    stores: &Universe,
+fn dump_math_choice<G, List: DumpListProjection>(
+    stores: &CommandContext<'_, G>,
     choice: &MathChoice<List>,
     config: &DumpConfig,
     depth: i32,
@@ -806,8 +823,8 @@ fn dump_math_choice<List: DumpListProjection>(
     dump_choice_arm(stores, &choice.script_script, config, depth + 1, 's', out);
 }
 
-fn dump_choice_arm<List: DumpListProjection>(
-    stores: &Universe,
+fn dump_choice_arm<G, List: DumpListProjection>(
+    stores: &CommandContext<'_, G>,
     list: &List,
     config: &DumpConfig,
     depth: i32,
@@ -824,8 +841,8 @@ fn dump_choice_arm<List: DumpListProjection>(
     }
 }
 
-fn dump_math_list<List: DumpListProjection>(
-    stores: &Universe,
+fn dump_math_list<G, List: DumpListProjection>(
+    stores: &CommandContext<'_, G>,
     list: &MathListNode<List>,
     config: &DumpConfig,
     depth: i32,
@@ -857,8 +874,8 @@ fn math_style_name(style: MathStyle) -> &'static str {
     }
 }
 
-fn dump_disc<List: DumpListProjection>(
-    stores: &Universe,
+fn dump_disc<G, List: DumpListProjection>(
+    stores: &CommandContext<'_, G>,
     pre: &List,
     post: &List,
     physical_replace_count: u8,
@@ -891,8 +908,8 @@ fn dump_disc<List: DumpListProjection>(
     }
 }
 
-fn dump_mark(
-    stores: &Universe,
+fn dump_mark<G>(
+    stores: &CommandContext<'_, G>,
     class: u16,
     tokens: &[tex_state::token::TokenWord],
     out: &mut String,
@@ -914,18 +931,29 @@ fn dump_mark(
 
 /// TeX82 §267's `print_esc(font_id_text(f))`, the control sequence a font is
 /// known by, with pdfTeX's optional expansion and file-name annotations.
-pub(crate) fn font_identifier(stores: &Universe, font: tex_state::ids::FontId) -> String {
+pub(crate) fn font_identifier<G>(
+    stores: &CommandContext<'_, G>,
+    font: tex_state::ids::FontId,
+) -> String {
     render_print_string(stores, &font_identifier_raw(stores, font))
 }
 
 /// Unrendered §267 font identifier for a caller whose enclosing diagnostic
 /// will still send the completed message through `print`.
-pub(crate) fn font_identifier_raw(stores: &Universe, font: tex_state::ids::FontId) -> String {
-    let loaded = stores.font(font);
-    let (identifier_font, expansion_ratio) = match loaded.construction() {
-        tex_fonts::FontConstruction::Expanded { source, ratio } => (
-            stores.font_by_source_identity(*source).unwrap_or(font),
-            Some(*ratio),
+pub(crate) fn font_identifier_raw<G>(
+    stores: &CommandContext<'_, G>,
+    font: tex_state::ids::FontId,
+) -> String {
+    let recipe = stores.font_artifact_recipe(font);
+    let (identifier_font, expansion_ratio) = match recipe.construction {
+        tex_state::FontArtifactConstructionRecipe::Expanded {
+            source_identity,
+            ratio,
+        } => (
+            stores
+                .font_id_for_source_identity(source_identity)
+                .unwrap_or(font),
+            Some(ratio),
         ),
         _ => (font, None),
     };
@@ -938,10 +966,10 @@ pub(crate) fn font_identifier_raw(stores: &Universe, font: tex_state::ids::FontI
             format!("{identifier} ({}{ratio})", if ratio > 0 { "+" } else { "" })
         })
     } else {
-        let mut result = format!("{identifier} ({})", loaded.name());
-        if loaded.size() != loaded.design_size() {
+        let mut result = format!("{identifier} ({})", recipe.name);
+        if recipe.at_size != recipe.design_size {
             result.pop();
-            let _ = write!(result, "@{}pt)", format_scaled_without_unit(loaded.size()));
+            let _ = write!(result, "@{}pt)", format_scaled_without_unit(recipe.at_size));
         }
         result
     }
@@ -949,7 +977,7 @@ pub(crate) fn font_identifier_raw(stores: &Universe, font: tex_state::ids::FontI
 
 /// Renders characters that TeX82 §§58--60 would send through `print` before
 /// the surrounding node display becomes a completed `print_rendered` string.
-fn render_print_string(stores: &Universe, raw: &str) -> String {
+fn render_print_string<G>(stores: &CommandContext<'_, G>, raw: &str) -> String {
     let newline_char = u32::try_from(stores.int_param(IntParam::NEWLINE_CHAR))
         .ok()
         .and_then(char::from_u32);
@@ -983,7 +1011,7 @@ fn dump_char(ch: char) -> String {
 /// TeX82 §§59/173--174 print node character codes as one-character strings.
 /// The live new-line character is recognized before the string's otherwise
 /// unprintable byte is expanded to its `^^` spelling.
-fn dump_character_string(stores: &Universe, ch: char) -> String {
+fn dump_character_string<G>(stores: &CommandContext<'_, G>, ch: char) -> String {
     let newline_char = u32::try_from(stores.int_param(IntParam::NEWLINE_CHAR))
         .ok()
         .and_then(char::from_u32);
@@ -994,8 +1022,8 @@ fn dump_character_string(stores: &Universe, ch: char) -> String {
     }
 }
 
-fn dump_ligature(
-    stores: &Universe,
+fn dump_ligature<G>(
+    stores: &CommandContext<'_, G>,
     ch: char,
     orig: &[char],
     left_hit: bool,
@@ -1016,9 +1044,9 @@ fn dump_ligature(
     rendered
 }
 
-fn dump_box<List: DumpListProjection + Clone>(
+fn dump_box<G, List: DumpListProjection + Clone>(
     name: &str,
-    stores: &Universe,
+    stores: &CommandContext<'_, G>,
     box_node: &BoxNode<List>,
     config: &DumpConfig,
     depth: i32,
@@ -1081,8 +1109,8 @@ fn dump_box<List: DumpListProjection + Clone>(
     );
 }
 
-fn dump_unset<List: DumpListProjection>(
-    stores: &Universe,
+fn dump_unset<G, List: DumpListProjection>(
+    stores: &CommandContext<'_, G>,
     unset: &UnsetNode<List>,
     config: &DumpConfig,
     depth: i32,
@@ -1248,8 +1276,8 @@ fn order_unit(order: Order) -> &'static str {
 mod tests;
 
 trait GlueKindDump {
-    fn append_glue_dump_prefix(self, stores: &Universe, out: &mut String);
-    fn append_leader_dump_prefix(self, stores: &Universe, out: &mut String);
+    fn append_glue_dump_prefix<G>(self, stores: &CommandContext<'_, G>, out: &mut String);
+    fn append_leader_dump_prefix<G>(self, stores: &CommandContext<'_, G>, out: &mut String);
     fn parameter_name(self) -> Option<&'static str>;
     fn glue_unit(self) -> &'static str;
     fn prints_glue_spec(self) -> bool;
@@ -1258,7 +1286,7 @@ trait GlueKindDump {
 impl GlueKindDump for GlueKind {
     /// TeX82 §189 renders both `glue` and every non-normal subtype through
     /// `print_esc`, so each name observes the current `\escapechar`.
-    fn append_glue_dump_prefix(self, stores: &Universe, out: &mut String) {
+    fn append_glue_dump_prefix<G>(self, stores: &CommandContext<'_, G>, out: &mut String) {
         append_escaped_name(stores, "glue", out);
         if let Some(name) = self.parameter_name() {
             out.push('(');
@@ -1272,7 +1300,7 @@ impl GlueKindDump for GlueKind {
 
     /// TeX82 §189's leader branch calls `print_esc("")` before printing the
     /// optional `c`/`x` and the common `leaders` suffix.
-    fn append_leader_dump_prefix(self, stores: &Universe, out: &mut String) {
+    fn append_leader_dump_prefix<G>(self, stores: &CommandContext<'_, G>, out: &mut String) {
         match self {
             Self::Leaders => append_escaped_name(stores, "leaders", out),
             Self::Cleaders => append_escaped_name(stores, "cleaders", out),

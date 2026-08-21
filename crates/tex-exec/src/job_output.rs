@@ -24,24 +24,27 @@ pub(crate) enum JobOutputOpenError {
 }
 
 impl JobOutput {
-    pub(crate) fn dvi_name(
+    pub(crate) fn dvi_name<G>(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         job_name: &str,
     ) -> Result<&str, JobOutputOpenError> {
         if self.dvi_name.is_none() {
             let initial = derived_name(job_name, ".dvi");
             let opened = open_with_retry(stores, initial, ".dvi", false)?;
             // TeX82 §§525/532 retain `b_make_name_string(dvi_file)`.
-            stores.make_string_pool_string(&opened);
+            stores
+                .command_context()
+                .expect("job output belongs to a live generation")
+                .make_string_pool_string(&opened);
             self.dvi_name = Some(opened);
         }
         Ok(self.dvi_name.as_deref().expect("DVI name was initialized"))
     }
 
-    pub(crate) fn open_log(
+    pub(crate) fn open_log<G>(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         job_name: &str,
     ) -> Result<&str, JobOutputOpenError> {
         if self.log_name.is_none() {
@@ -69,8 +72,8 @@ fn derived_name(job_name: &str, extension: &str) -> String {
     )
 }
 
-fn open_with_retry(
-    stores: &mut Universe,
+fn open_with_retry<G>(
+    stores: &mut Universe<G>,
     mut candidate: String,
     default_extension: &str,
     transcript: bool,
@@ -98,6 +101,7 @@ fn open_with_retry(
         }
         if !stores
             .command_context()
+            .expect("job output belongs to a live generation")
             .interaction_permits_terminal_input()
         {
             return Err(JobOutputOpenError::NonInteractive);
