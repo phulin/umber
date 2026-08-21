@@ -738,6 +738,30 @@ impl<'a, G> CommandContext<'a, G> {
             .assign_dimension_parameter(parameter, value, scope)
     }
 
+    pub fn assign_current_font(
+        &mut self,
+        value: crate::ids::FontId,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted.state().assign_current_font(value, scope)
+    }
+
+    pub fn assign_math_family_font(
+        &mut self,
+        size: crate::math::MathFontSize,
+        family: u8,
+        value: crate::ids::FontId,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        let index = u8::try_from(size.index())
+            .expect("math font size is bounded")
+            .saturating_mul(16)
+            .saturating_add(family);
+        self.admitted
+            .state()
+            .assign_math_family_font(index, value, scope)
+    }
+
     #[must_use]
     pub fn current_font(&self) -> crate::ids::FontId {
         self.admitted.state_ref().current_font()
@@ -800,6 +824,11 @@ impl<'a, G> CommandContext<'a, G> {
         let level = i32::try_from(frames.len()).unwrap_or(i32::MAX);
         let kind = frames.last().map_or(0, |frame| frame.kind().etex_code());
         (level, kind)
+    }
+
+    #[must_use]
+    pub fn execution_group_depth(&self) -> usize {
+        self.admitted.state_ref().group_frames().len()
     }
 
     pub fn begin_group(
@@ -902,6 +931,21 @@ impl<'a, G> CommandContext<'a, G> {
         self.fonts.artifact_recipe(id)
     }
 
+    #[must_use]
+    pub fn font_construction(&self, id: crate::ids::FontId) -> tex_fonts::FontConstruction {
+        self.fonts.get(id).construction().clone()
+    }
+
+    #[must_use]
+    pub fn font_supports_math(&self, id: crate::ids::FontId) -> bool {
+        self.fonts.get(id).supports_math()
+    }
+
+    #[must_use]
+    pub fn font_parameter_count(&self, id: crate::ids::FontId) -> usize {
+        self.fonts.get(id).parameters().len()
+    }
+
     /// Resolves a generated font's semantic source inside this admitted
     /// episode.  The returned runtime id never enters the detached recipe.
     #[must_use]
@@ -924,6 +968,41 @@ impl<'a, G> CommandContext<'a, G> {
         self.fonts
             .intern(font)
             .expect("validated font exceeds the live font store capacity")
+    }
+
+    pub fn set_font_identifier_symbol(&mut self, font: crate::ids::FontId, symbol: SymbolId) {
+        let kind = self
+            .interner
+            .kind_id(symbol)
+            .expect("font identifier belongs to the admitted session");
+        let name = self
+            .interner
+            .resolve_id(symbol)
+            .expect("font identifier belongs to the admitted session")
+            .to_owned();
+        let complete = crate::font::complete_font_hash_fragment(
+            *self.fonts.hash_fragment(font),
+            Some((kind, &name)),
+        );
+        self.fonts.set_identifier(font, symbol, complete);
+    }
+
+    pub fn try_intern_font_with_identifier(
+        &mut self,
+        font: tex_fonts::LoadedFont,
+        identifier: SymbolId,
+    ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
+        let id = self.fonts.intern(font)?;
+        self.set_font_identifier_symbol(id, identifier);
+        Ok(id)
+    }
+
+    pub fn configure_font_expansion(
+        &mut self,
+        font: crate::ids::FontId,
+        expansion: crate::font::FontExpansion,
+    ) -> Result<bool, crate::font::FontExpansionConfigError> {
+        self.fonts.set_expansion(font, expansion)
     }
 
     pub fn try_expanded_font(
@@ -1309,6 +1388,18 @@ impl<'a, G> CommandContext<'a, G> {
         }
     }
 
+    pub fn set_interaction_mode(&mut self, mode: InteractionMode) {
+        *self.interaction_mode = mode;
+    }
+
+    pub fn clear_error_count(&mut self) {
+        self.world.error_channel_mut().clear_error_count();
+    }
+
+    pub fn take_long_help_seen(&mut self, mark: bool) -> bool {
+        self.world.error_channel_mut().take_long_help_seen(mark)
+    }
+
     #[must_use]
     pub fn read_stream_at_eof(&self, slot: crate::world::StreamSlot) -> bool {
         self.world.input_stream_eof(slot)
@@ -1464,6 +1555,57 @@ impl<'a, G> CommandContext<'a, G> {
         id: crate::PdfExternalImageId,
     ) -> Option<crate::PdfExternalImageMetadata> {
         self.pdf.external_image(id)
+    }
+
+    #[must_use]
+    pub fn pdf_external_image_record(
+        &self,
+        id: crate::PdfExternalImageId,
+    ) -> Option<crate::PdfExternalImageRecord> {
+        self.pdf.external_image_record(id)
+    }
+
+    #[must_use]
+    pub fn pdf_raw_object(&self, object: u32) -> Option<crate::PdfRawObjectRecord<G>> {
+        self.pdf
+            .raw_object(crate::PdfRawObjectId::from_allocated(object))
+    }
+
+    pub fn set_pdf_space_font_name(&mut self, name: Vec<u8>) {
+        self.pdf.set_space_font_name(name);
+    }
+
+    pub fn set_pdf_return_value(&mut self, value: i32) {
+        self.pdf.set_return_value(value);
+    }
+
+    pub fn has_pdf_color_stack(&mut self, id: u32) -> bool {
+        self.pdf.has_color_stack(id)
+    }
+
+    pub fn push_pdf_font_map(&mut self, operation: crate::PdfFontMapOperation) {
+        self.pdf.push_font_map(operation);
+    }
+
+    #[must_use]
+    pub fn pdf_font_map_duplicate_names(&self) -> Vec<Vec<u8>> {
+        self.pdf.font_map_duplicate_names()
+    }
+
+    pub fn set_pdf_font_attribute(&mut self, font: crate::ids::FontId, bytes: Vec<u8>) {
+        self.pdf.set_font_attribute(font, bytes);
+    }
+
+    pub fn include_pdf_font_chars(&mut self, font: crate::ids::FontId, chars: Vec<u8>) {
+        self.pdf.include_font_chars(font, chars);
+    }
+
+    pub fn disable_pdf_builtin_to_unicode(&mut self, font: crate::ids::FontId) {
+        self.pdf.disable_builtin_to_unicode(font);
+    }
+
+    pub fn set_pdf_glyph_to_unicode(&mut self, mapping: crate::PdfGlyphToUnicode) {
+        self.pdf.set_glyph_to_unicode(mapping);
     }
 
     #[must_use]
@@ -1715,6 +1857,10 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn start_page_after_output(&mut self) {
         self.page.start_page_after_output();
+    }
+
+    pub fn start_new_page(&mut self) {
+        self.page.start_new_page();
     }
 
     #[must_use]
@@ -2201,6 +2347,18 @@ impl<'a, G> CommandContext<'a, G> {
         )
     }
 
+    pub fn error_report(&mut self) -> crate::print::ErrorReport<'_, G> {
+        let newline = self.int_param(IntParam::NEWLINE_CHAR);
+        let escape = self.int_param(IntParam::ESCAPE_CHAR);
+        crate::print::ErrorReport::bare_from_parts(
+            self.world,
+            self.interaction_mode,
+            self.error_context_widths,
+            newline,
+            escape,
+        )
+    }
+
     pub fn resume_error_report(
         &mut self,
         deferred: crate::print::DeferredErrorReport,
@@ -2304,6 +2462,24 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn intern_control_sequence(&mut self, name: &str) -> Symbol {
         let id = self.interner.intern(name);
         self.intern_symbol(id)
+    }
+
+    pub fn intern(&mut self, name: &str) -> Result<SymbolId, crate::interner::InternerError> {
+        let id = self.interner.intern(name)?;
+        self.admitted
+            .state()
+            .admit_symbol(id.symbol())
+            .expect("interned symbol fits the meaning bank");
+        Ok(id)
+    }
+
+    pub fn intern_retained_pool_string(
+        &mut self,
+        value: &str,
+    ) -> Result<SymbolId, crate::interner::InternerError> {
+        let id = self.intern(value)?;
+        self.record_retained_strings(RetainedStringAllocation::one(value));
+        Ok(id)
     }
 
     pub fn intern_hash_control_sequence(&mut self, name: &str) -> Symbol {

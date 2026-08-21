@@ -583,6 +583,29 @@ impl<'a, G> ErrorReport<'a, G> {
         }
     }
 
+    pub(crate) fn bare_from_parts(
+        world: &'a mut crate::World,
+        interaction_mode_slot: &'a mut InteractionMode,
+        widths: ErrorContextWidths,
+        newline_char: i32,
+        escape_char: i32,
+    ) -> Self {
+        let selector = Selector::for_interaction(*interaction_mode_slot);
+        Self {
+            printer: Printer::from_parts(
+                world,
+                interaction_mode_slot,
+                newline_char,
+                escape_char,
+                widths.max_print_line(),
+                selector,
+            ),
+            help: Vec::new(),
+            err_help: None,
+            context: None,
+        }
+    }
+
     pub(crate) fn resume_from_parts(
         world: &'a mut crate::World,
         interaction_mode_slot: &'a mut InteractionMode,
