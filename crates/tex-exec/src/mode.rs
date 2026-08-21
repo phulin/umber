@@ -925,6 +925,23 @@ impl ModeNestSummary {
         &self.levels
     }
 
+    pub(crate) fn font_roots_are_live(&self, mut is_live: impl FnMut(FontId) -> bool) -> bool {
+        self.levels.iter().all(|level| {
+            let list = &level.list;
+            let nodes_are_live = list.nodes().iter().all(|node| {
+                let mut live = true;
+                node.visit_fonts(|font| live &= is_live(font));
+                live
+            });
+            let pending_is_live = list.pending_hchars.as_ref().is_none_or(|pending| {
+                is_live(pending.first.font)
+                    && is_live(pending.current.font)
+                    && pending.source.iter().all(|source| is_live(source.font))
+            });
+            nodes_are_live && pending_is_live
+        })
+    }
+
     pub(crate) fn semantic_fingerprint<G>(&self, universe: &Universe<G>) -> u64 {
         universe.engine_boundary_hash(0x6d6f_6465_5f6e_6573, |projection| {
             projection.usize(self.levels.len());

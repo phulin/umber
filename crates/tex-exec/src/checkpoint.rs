@@ -166,6 +166,13 @@ impl<G> EngineCheckpoint<G> {
         let prepared_command = command
             .prepare_summary_restore(self.command.as_ref(), universe)
             .map_err(CheckpointRestoreError::Command)?;
+        if !self.modes.font_roots_are_live(|font| {
+            universe.runtime_checkpoint_retains_font(&self.runtime, font)
+        }) {
+            return Err(CheckpointRestoreError::Runtime(UniverseError::State(
+                tex_state::StateError::InvalidCursor,
+            )));
+        }
         let restored_modes =
             ModeNest::from_summary(self.modes.clone()).map_err(CheckpointRestoreError::Mode)?;
         restore_validated_roots(

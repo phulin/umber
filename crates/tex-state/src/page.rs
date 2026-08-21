@@ -395,6 +395,22 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
+    pub(crate) fn font_roots_are_live(
+        &self,
+        mut is_live: impl FnMut(crate::ids::FontId) -> bool,
+    ) -> bool {
+        self.contribution
+            .iter()
+            .chain(self.current_page.iter())
+            .chain(self.page_discards.iter())
+            .chain(self.split_discards.iter())
+            .all(|node| {
+                let mut live = true;
+                node.visit_fonts(|font| live &= is_live(font));
+                live
+            })
+    }
+
     pub(crate) fn memo_parts(&self) -> (Vec<Node>, PageMemoState) {
         let mut nodes = Vec::with_capacity(
             self.contribution.len()

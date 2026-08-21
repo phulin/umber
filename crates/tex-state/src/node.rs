@@ -194,6 +194,16 @@ pub enum Node<List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
 }
 
 impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
+    /// Visits exact immutable-font coordinates retained directly by this node.
+    pub fn visit_fonts(&self, mut visit: impl FnMut(FontId)) {
+        match self {
+            Self::Char { font, .. } | Self::Lig { font, .. } | Self::MarginKern { font, .. } => {
+                visit(*font)
+            }
+            _ => {}
+        }
+    }
+
     pub fn visit_payloads(
         &self,
         mut visit_glue: impl FnMut(&Glue),

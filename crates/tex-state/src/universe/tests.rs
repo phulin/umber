@@ -6,10 +6,26 @@ use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use crate::node_arena::NodeArenaError;
 use crate::token::Token;
 use crate::{GroupKind, ParagraphShapeLine, PenaltyArrayKind};
+use std::path::PathBuf;
 use tex_arith::{GlueSetRatio, Scaled};
+use tex_content::ContentHash;
+use tex_fonts::{FontMetrics, LoadedFont};
 
 fn budget() -> InternerBudget {
     InternerBudget::new(32, 32, 1024).expect("budget")
+}
+
+fn test_font(name: &str) -> LoadedFont {
+    LoadedFont::new(
+        name,
+        PathBuf::from(format!("/fonts/{name}.tfm")),
+        ContentHash::from_bytes(name.as_bytes()).bytes(),
+        0x1234_5678,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        FontMetrics::default(),
+    )
 }
 
 #[test]
@@ -29,6 +45,68 @@ fn command_episode_admits_session_and_generation_once() {
         assert_eq!(
             context.meaning(symbol.symbol()),
             ResolvedMeaning::Static(Meaning::Relax)
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn font_meaning_retains_the_exact_live_timeline_coordinate() {
+    with_universe(budget(), |universe| {
+        let symbol = universe.intern("bodyfont").expect("intern font selector");
+        let font = universe
+            .command_context()
+            .expect("context")
+            .intern_font(test_font("bodyfont"));
+        assert_eq!(
+            universe.command_context().expect("context").font_name(font),
+            "bodyfont"
+        );
+
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::from_static(Meaning::Font(font)),
+                AssignmentScope::Global,
+            )
+            .expect("assign exact font meaning");
+        let context = universe.command_context().expect("context");
+        assert_eq!(
+            context.meaning(symbol.symbol()),
+            ResolvedMeaning::Static(Meaning::Font(font))
+        );
+        assert_eq!(context.font_name(font), "bodyfont");
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn null_font_and_scalar_meanings_keep_their_existing_round_trips() {
+    with_universe(budget(), |universe| {
+        let null = universe.intern("null").expect("intern null selector");
+        let scalar = universe.intern("scalar").expect("intern scalar selector");
+        universe
+            .assign_meaning(
+                null,
+                MeaningWord::from_static(Meaning::Font(crate::font::NULL_FONT)),
+                AssignmentScope::Global,
+            )
+            .expect("assign null font");
+        universe
+            .assign_meaning(
+                scalar,
+                MeaningWord::from_static(Meaning::CharGiven('A')),
+                AssignmentScope::Global,
+            )
+            .expect("assign scalar");
+        let context = universe.command_context().expect("context");
+        assert_eq!(
+            context.meaning(null.symbol()),
+            ResolvedMeaning::Static(Meaning::Font(crate::font::NULL_FONT))
+        );
+        assert_eq!(
+            context.meaning(scalar.symbol()),
+            ResolvedMeaning::Static(Meaning::CharGiven('A'))
         );
     })
     .expect("universe allocation");
@@ -233,6 +311,90 @@ fn runtime_checkpoint_restores_mutable_font_state() {
         assert_eq!(
             context.font_dimen(crate::font::NULL_FONT, 1),
             Scaled::from_raw(0)
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn runtime_checkpoint_preserves_exact_font_roots_across_every_state_owner() {
+    with_universe(budget(), |universe| {
+        let selector = universe.intern("checkpointfont").expect("selector");
+        let font = {
+            let mut context = universe.command_context().expect("context");
+            let font = context.intern_font(test_font("checkpointfont"));
+            context
+                .assign_resolved_meaning(
+                    selector.symbol(),
+                    ResolvedMeaning::Static(Meaning::Font(font)),
+                    AssignmentScope::Global,
+                )
+                .expect("font meaning");
+            context
+                .assign_current_font(font, AssignmentScope::Global)
+                .expect("current font");
+            context.append_page_contribution(Node::Char {
+                font,
+                ch: 'A',
+                origin: crate::token::OriginId::UNKNOWN,
+            });
+            context.set_pdf_font_attribute(font, b"checkpoint".to_vec());
+            font
+        };
+        let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
+        let suffix = universe
+            .command_context()
+            .expect("context")
+            .intern_font(test_font("suffixfont"));
+        universe
+            .assign_current_font(suffix, AssignmentScope::Global)
+            .expect("suffix font");
+
+        universe
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("restore exact font roots");
+        let context = universe.command_context().expect("context");
+        assert_eq!(context.current_font(), font);
+        assert_eq!(
+            context.meaning(selector.symbol()),
+            ResolvedMeaning::Static(Meaning::Font(font))
+        );
+        assert_eq!(context.font_name(font), "checkpointfont");
+        assert!(matches!(
+            context.page_contribution_front(),
+            Some(Node::Char { font: retained, .. }) if *retained == font
+        ));
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn stale_font_root_rejects_runtime_restore_before_dense_mutation() {
+    with_universe(budget(), |universe| {
+        universe
+            .live_state_mut()
+            .expect("live state")
+            .assign_current_font(crate::ids::FontId::testing_new(91), AssignmentScope::Global)
+            .expect("construct malformed checkpoint fixture");
+        let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
+        universe
+            .assign_count(0, 41, AssignmentScope::Global)
+            .expect("candidate count");
+
+        assert_eq!(
+            universe.restore_runtime_checkpoint_with_roots(&checkpoint, || {
+                panic!("external roots must not transfer after font preflight rejection")
+            }),
+            Err(UniverseError::State(crate::StateError::InvalidCursor))
+        );
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("context")
+                .count(0)
+                .expect("count"),
+            41,
+            "font-root rejection precedes dense-state mutation"
         );
     })
     .expect("universe allocation");

@@ -77,6 +77,14 @@ impl<G> StateCore<G> {
         self.nodes.validate_cursor(cursor)
     }
 
+    pub(crate) fn durable_font_roots_are_live(
+        &self,
+        cursor: NodeArenaCursor<G>,
+        is_live: impl FnMut(crate::ids::FontId) -> bool,
+    ) -> Result<bool, NodeArenaError> {
+        self.nodes.font_roots_are_live(cursor, is_live)
+    }
+
     pub(crate) fn truncate_durable_nodes(
         &mut self,
         cursor: NodeArenaCursor<G>,

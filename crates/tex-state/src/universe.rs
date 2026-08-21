@@ -600,6 +600,12 @@ impl<G> Universe<G> {
 
     /// Records a static or generation-local frozen primitive meaning.
     pub fn register_primitive_word(&mut self, name: &str, meaning: MeaningWord<G>) {
+        if let Some(font) = meaning.font() {
+            assert!(
+                self.fonts.contains(font),
+                "frozen font meaning retains a live Universe font"
+            );
+        }
         if let Some(index) = self
             .primitive_names
             .iter()
@@ -1048,6 +1054,9 @@ impl<G> Universe<G> {
         value: crate::ids::FontId,
         scope: AssignmentScope,
     ) -> Result<(), UniverseError> {
+        if !self.fonts.contains(value) {
+            return Err(UniverseError::State(StateError::ForeignSession));
+        }
         self.live_state_mut()?.assign_current_font(value, scope)?;
         Ok(())
     }
@@ -1060,6 +1069,9 @@ impl<G> Universe<G> {
         value: crate::ids::FontId,
         scope: AssignmentScope,
     ) -> Result<(), UniverseError> {
+        if !self.fonts.contains(value) {
+            return Err(UniverseError::State(StateError::ForeignSession));
+        }
         let index = u8::try_from(size.index())
             .expect("math font size is bounded")
             .saturating_mul(16)
@@ -1281,6 +1293,14 @@ impl<G> Universe<G> {
     /// Publishes one complete page-lifetime node list.
     #[must_use]
     pub fn publish_page_nodes(&mut self, nodes: &[Node]) -> PageListId {
+        for node in nodes {
+            node.visit_fonts(|font| {
+                assert!(
+                    self.fonts.contains(font),
+                    "published page node retains a live Universe font"
+                );
+            });
+        }
         self.page_nodes
             .publish(nodes.to_vec())
             .expect("page construction contains only live page-arena children")
@@ -1288,6 +1308,14 @@ impl<G> Universe<G> {
 
     /// Publishes a page-lifetime node list by moving the caller's buffer.
     pub fn publish_page_nodes_owned(&mut self, nodes: &mut Vec<Node>) -> PageListId {
+        for node in nodes.iter() {
+            node.visit_fonts(|font| {
+                assert!(
+                    self.fonts.contains(font),
+                    "published page node retains a live Universe font"
+                );
+            });
+        }
         self.page_nodes
             .publish(core::mem::take(nodes))
             .expect("page construction contains only live page-arena children")
@@ -1335,6 +1363,9 @@ impl<G> Universe<G> {
         scope: AssignmentScope,
     ) -> Result<(), UniverseError> {
         self.interner.resolve_id(symbol)?;
+        if value.font().is_some_and(|font| !self.fonts.contains(font)) {
+            return Err(UniverseError::State(StateError::ForeignSession));
+        }
         self.live_state_mut()?
             .assign_meaning(symbol.symbol(), value, scope)?;
         Ok(())
@@ -1576,6 +1607,17 @@ impl<G> Universe<G> {
         })
     }
 
+    /// Returns whether `font` is an exact immutable-row coordinate retained
+    /// by this runtime checkpoint's font-store prefix.
+    #[must_use]
+    pub fn runtime_checkpoint_retains_font(
+        &self,
+        checkpoint: &RuntimeCheckpoint<G>,
+        font: crate::ids::FontId,
+    ) -> bool {
+        self.fonts.validates(checkpoint.fonts) && self.fonts.contains_at(checkpoint.fonts, font)
+    }
+
     /// Validates and restores a complete runtime checkpoint while allowing
     /// the executor to transfer command and mode roots before any state,
     /// source, or font arena suffix is truncated.
@@ -1593,6 +1635,26 @@ impl<G> Universe<G> {
             || !self.pdf.snapshot_is_retained(&checkpoint.pdf)
             || !self.fonts.validates(checkpoint.fonts)
             || !self.sources.validates(checkpoint.sources)
+        {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
+        let font_survives = |font| self.fonts.contains_at(checkpoint.fonts, font);
+        let core = self.core.as_ref().ok_or(UniverseError::Retired)?;
+        if !self
+            .primitive_meanings
+            .iter()
+            .all(|meaning| meaning.font().is_none_or(font_survives))
+            || !core
+                .state()
+                .restored_font_roots_are_live(*mark.journal(), font_survives)?
+            || !core.durable_font_roots_are_live(*mark.durable(), font_survives)?
+            || !self
+                .page_nodes
+                .font_roots_are_live(*mark.page(), font_survives)?
+            || !checkpoint.page.font_roots_are_live(font_survives)
+            || !self
+                .pdf
+                .snapshot_font_roots_are_live(&checkpoint.pdf, font_survives)
         {
             return Err(UniverseError::State(StateError::InvalidCursor));
         }

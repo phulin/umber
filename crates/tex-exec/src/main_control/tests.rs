@@ -4998,7 +4998,7 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
 
 #[test]
 fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
-    let source = br"\font\bodyfont=cmr10 \bodyfont \def\sectionref{0}\def\pagerefvalue{0}\def\newlabel#1#2{\gdef\sectionref{1}\gdef\pagerefvalue{1}}\def\load{\openin0=child \ifeof0\else\closein0\input child\fi \openin2=second \ifeof2\else\closein2\input second\fi \count0=7}\load\end";
+    let source = br"\font\bodyfont=cmr10 \bodyfont A\def\sectionref{0}\def\pagerefvalue{0}\def\newlabel#1#2{\gdef\sectionref{1}\gdef\pagerefvalue{1}}\def\load{\openin0=child \ifeof0\else\closein0\input child\fi \openin2=second \ifeof2\else\closein2\input second\fi \count0=7}\load\end";
     let child = SourceRegistration::new(
         RegisteredSourceKind::Generated,
         Arc::<[u8]>::from(

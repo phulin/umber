@@ -576,19 +576,6 @@ impl FontStore {
     }
 
     #[must_use]
-    pub(crate) fn resolve_stored(&self, id: FontId) -> Option<FontId> {
-        if self.contains(id) {
-            return Some(id);
-        }
-        if !id.is_stored() {
-            return None;
-        }
-        self.identities
-            .identity_at(id.raw())
-            .map(FontId::from_identity)
-    }
-
-    #[must_use]
     pub(crate) fn watermark(&self) -> FontStoreMark {
         FontStoreMark {
             len: u32::try_from(self.fonts.len()).expect("font store exceeds u32 ids"),
@@ -607,6 +594,12 @@ impl FontStore {
             && mark.identifier_writes_len as usize <= self.identifier_writes.len()
             && mark.expansion_writes_len as usize <= self.expansion_writes.len()
             && self.identities.validate_rollback(mark.identities).is_ok()
+    }
+
+    /// Returns whether an exact font identity survives rollback to `mark`.
+    #[must_use]
+    pub(crate) fn contains_at(&self, mark: FontStoreMark, id: FontId) -> bool {
+        id.raw() < mark.len && self.contains(id)
     }
 
     pub(crate) fn truncate_to(&mut self, mark: FontStoreMark) {

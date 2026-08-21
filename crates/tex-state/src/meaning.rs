@@ -109,12 +109,13 @@ pub enum Meaning {
 
 /// One generation-scoped packed meaning cell.
 ///
-/// Static meanings retain TeX's compact `opcode:8 | flags:8 | operand:48`
-/// representation. Macro meanings carry their typed definition coordinate
-/// directly: the coordinate has no raw constructor, and resolving it remains
-/// an O(1) borrow of the matching admitted generation.
+/// Scalar meanings retain TeX's compact `opcode:8 | flags:8 | operand:48`
+/// representation. Meanings that contain live coordinates carry those
+/// coordinates directly: neither a definition nor a font identity may be
+/// reconstructed from a dense slot on an ordinary state read.
 pub enum MeaningWord<G> {
     Static(u64),
+    Font(FontId),
     Macro {
         flags: MeaningFlags,
         definition: DefinitionId<G>,
@@ -133,6 +134,7 @@ impl<G> core::fmt::Debug for MeaningWord<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Static(word) => formatter.debug_tuple("Static").field(word).finish(),
+            Self::Font(font) => formatter.debug_tuple("Font").field(font).finish(),
             Self::Macro { flags, .. } => formatter
                 .debug_struct("Macro")
                 .field("flags", flags)
@@ -146,6 +148,7 @@ impl<G> PartialEq for MeaningWord<G> {
     fn eq(&self, other: &Self) -> bool {
         match (*self, *other) {
             (Self::Static(left), Self::Static(right)) => left == right,
+            (Self::Font(left), Self::Font(right)) => left == right,
             (
                 Self::Macro {
                     flags: left_flags,
@@ -156,7 +159,9 @@ impl<G> PartialEq for MeaningWord<G> {
                     definition: right_definition,
                 },
             ) => left_flags == right_flags && left_definition == right_definition,
-            (Self::Static(_), Self::Macro { .. }) | (Self::Macro { .. }, Self::Static(_)) => false,
+            (Self::Static(_), Self::Font(_) | Self::Macro { .. })
+            | (Self::Font(_), Self::Static(_) | Self::Macro { .. })
+            | (Self::Macro { .. }, Self::Static(_) | Self::Font(_)) => false,
         }
     }
 }
@@ -168,7 +173,10 @@ impl<G> MeaningWord<G> {
 
     #[must_use]
     pub const fn from_static(meaning: Meaning) -> Self {
-        Self::Static(meaning.encode())
+        match meaning {
+            Meaning::Font(font) => Self::Font(font),
+            scalar => Self::Static(scalar.encode()),
+        }
     }
 
     #[must_use]
@@ -180,7 +188,17 @@ impl<G> MeaningWord<G> {
     pub const fn resolve(self) -> ResolvedMeaning<G> {
         match self {
             Self::Static(word) => ResolvedMeaning::Static(Meaning::decode_stored(word)),
+            Self::Font(font) => ResolvedMeaning::Static(Meaning::Font(font)),
             Self::Macro { flags, definition } => ResolvedMeaning::Macro { flags, definition },
+        }
+    }
+
+    /// Returns the exact live font coordinate retained by this meaning.
+    #[must_use]
+    pub(crate) const fn font(self) -> Option<FontId> {
+        match self {
+            Self::Font(font) => Some(font),
+            Self::Static(_) | Self::Macro { .. } => None,
         }
     }
 }

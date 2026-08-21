@@ -62,10 +62,6 @@ macro_rules! semantic_id {
                 self.0
             }
 
-            pub(crate) const fn is_stored(self) -> bool {
-                self.0.namespace() == $namespace
-            }
-
             /// Creates a placeholder id for tests that cover compact stored words.
             #[cfg(any(test, feature = "testing"))]
             #[must_use]

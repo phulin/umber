@@ -265,12 +265,32 @@ impl<'a, G> CommandContext<'a, G> {
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
         let word = match meaning {
+            ResolvedMeaning::Static(Meaning::Font(font)) => {
+                self.validate_font_root(font)?;
+                MeaningWord::from_static(Meaning::Font(font))
+            }
             ResolvedMeaning::Static(meaning) => MeaningWord::from_static(meaning),
             ResolvedMeaning::Macro { flags, definition } => {
                 MeaningWord::macro_definition(flags, definition)
             }
         };
         self.admitted.state().assign_meaning(symbol, word, scope)
+    }
+
+    fn validate_font_root(&self, font: crate::ids::FontId) -> Result<(), StateError> {
+        self.fonts
+            .contains(font)
+            .then_some(())
+            .ok_or(StateError::ForeignSession)
+    }
+
+    fn assert_live_node_font_roots(&self, node: &crate::node::Node) {
+        node.visit_fonts(|font| {
+            assert!(
+                self.fonts.contains(font),
+                "durable node contains a font outside the admitted timeline"
+            );
+        });
     }
 
     #[inline(always)]
@@ -825,6 +845,7 @@ impl<'a, G> CommandContext<'a, G> {
         value: crate::ids::FontId,
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
+        self.validate_font_root(value)?;
         self.admitted.state().assign_current_font(value, scope)
     }
 
@@ -835,6 +856,7 @@ impl<'a, G> CommandContext<'a, G> {
         value: crate::ids::FontId,
         scope: AssignmentScope,
     ) -> Result<(), StateError> {
+        self.validate_font_root(value)?;
         let index = u8::try_from(size.index())
             .expect("math font size is bounded")
             .saturating_mul(16)
@@ -2057,14 +2079,20 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn set_pdf_font_attribute(&mut self, font: crate::ids::FontId, bytes: Vec<u8>) {
+        self.validate_font_root(font)
+            .expect("PDF font attribute retains a live admitted font");
         self.pdf.set_font_attribute(font, bytes);
     }
 
     pub fn include_pdf_font_chars(&mut self, font: crate::ids::FontId, chars: Vec<u8>) {
+        self.validate_font_root(font)
+            .expect("PDF character inclusion retains a live admitted font");
         self.pdf.include_font_chars(font, chars);
     }
 
     pub fn disable_pdf_builtin_to_unicode(&mut self, font: crate::ids::FontId) {
+        self.validate_font_root(font)
+            .expect("PDF font configuration retains a live admitted font");
         self.pdf.disable_builtin_to_unicode(font);
     }
 
@@ -2081,6 +2109,8 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         font: crate::ids::FontId,
     ) -> Result<crate::PdfFontResourceRecord, crate::PdfObjectCapacityError> {
+        self.validate_font_root(font)
+            .map_err(|_| crate::PdfObjectCapacityError)?;
         let recipe = self.fonts.artifact_recipe(font);
         let identity = tex_fonts::PdfFontResourceIdentity::new(
             recipe.tfm_content_hash,
@@ -2313,6 +2343,9 @@ impl<'a, G> CommandContext<'a, G> {
 
     /// Publishes one complete page-lifetime list inside this admitted episode.
     pub fn publish_page_nodes(&mut self, nodes: Vec<crate::node::Node>) -> PageListId {
+        for node in &nodes {
+            self.assert_live_node_font_roots(node);
+        }
         self.page_nodes
             .publish(nodes)
             .expect("page construction contains only live page-arena children")
@@ -2423,14 +2456,19 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn append_page_contribution(&mut self, node: crate::node::Node) {
+        self.assert_live_node_font_roots(&node);
         self.page.push_contribution(node);
     }
 
     pub fn prepend_page_contribution(&mut self, node: crate::node::Node) {
+        self.assert_live_node_font_roots(&node);
         self.page.prepend_contribution(node);
     }
 
     pub fn prepend_page_contributions(&mut self, nodes: Vec<crate::node::Node>) {
+        for node in &nodes {
+            self.assert_live_node_font_roots(node);
+        }
         self.page.prepend_contributions(nodes);
     }
 
@@ -2466,6 +2504,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn push_current_page_node(&mut self, node: crate::node::Node) {
+        self.assert_live_node_font_roots(&node);
         self.page.push_current_page(node);
     }
 
@@ -2506,6 +2545,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn push_page_discard(&mut self, node: crate::node::Node) {
+        self.assert_live_node_font_roots(&node);
         self.page.push_page_discard(node);
     }
 
@@ -2518,6 +2558,9 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn set_split_discards(&mut self, nodes: Vec<crate::node::Node>) {
+        for node in &nodes {
+            self.assert_live_node_font_roots(node);
+        }
         self.page.set_split_discards(nodes);
     }
 
@@ -3063,6 +3106,10 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn set_provisional_meaning(&mut self, symbol: Symbol, meaning: Meaning, global: bool) {
+        if let Meaning::Font(font) = meaning {
+            self.validate_font_root(font)
+                .expect("provisional font meaning retains a live admitted font");
+        }
         self.admitted
             .state()
             .assign_meaning(

@@ -585,6 +585,10 @@ impl<T: Copy> DenseBank<T> {
     pub(crate) fn len(&self) -> usize {
         self.cells.len()
     }
+
+    pub(crate) fn values(&self) -> impl Iterator<Item = T> + '_ {
+        self.cells.iter().map(|cell| cell.value)
+    }
 }
 
 type Page<T> = Box<[BankCell<T>; PAGE_LEN]>;
