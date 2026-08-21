@@ -91,40 +91,43 @@ fn run() -> Result<(), CliError> {
 }
 
 fn lex_dump(path: &str) -> Result<(), CliError> {
-    let mut stores = Universe::with_world(World::real());
-    let content = stores.world_mut().read_file(path)?;
-    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
-    // `lex-dump` reports what a format-loaded engine would tokenize, matching
-    // `umber run`; INITEX alone leaves `{ } $ & # ^ _` as `other_char`
-    // (tex.web §232).
-    stores.install_plain_catcodes();
-    let mut command = CommandState::new(CommandProfile::unicode_extended(CommandDialect::Tex82));
-    let source = command
-        .register_source(SourceRegistration::world(content))
-        .map_err(|error| CliError::Lex(error.to_string()))?;
-    command
-        .open_registered_source(source)
-        .map_err(|error| CliError::Lex(error.to_string()))?;
-    loop {
-        let step = command.next_unicode_source_step(
-            stores.int_param(IntParam::END_LINE_CHAR),
-            &mut CatcodeQueries(|code: CharacterCode| {
-                stores.catcode(code.to_char().expect("Unicode command profile"))
-            }),
-        );
-        match step {
-            SourceTokenizationStep::Token(token) => println!("{}", format_source_token(&token)),
-            SourceTokenizationStep::InvalidCharacter(invalid) => {
-                return Err(CliError::Lex(format!(
-                    "invalid character {}",
-                    invalid.code().to_char().expect("Unicode command profile") as u32
-                )));
+    umber::with_engine_world(World::real(), |stores| {
+        let content = stores.world_mut().read_file(path)?;
+        // `lex-dump` reports what a format-loaded engine would tokenize,
+        // matching `umber run`; the run-store preparation supplies the plain
+        // category codes that INITEX itself deliberately leaves as `other`.
+        umber::prepare_run_stores(stores);
+        let mut command =
+            CommandState::new(CommandProfile::unicode_extended(CommandDialect::Tex82));
+        let source = command
+            .register_source(SourceRegistration::world(content))
+            .map_err(|error| CliError::Lex(error.to_string()))?;
+        command
+            .open_registered_source(source)
+            .map_err(|error| CliError::Lex(error.to_string()))?;
+        loop {
+            let step = command.next_unicode_source_step(
+                stores.int_param(IntParam::END_LINE_CHAR),
+                &mut CatcodeQueries(|code: CharacterCode| {
+                    stores.catcode(code.to_char().expect("Unicode command profile"))
+                }),
+            );
+            match step {
+                SourceTokenizationStep::Token(token) => {
+                    println!("{}", format_source_token(&token));
+                }
+                SourceTokenizationStep::InvalidCharacter(invalid) => {
+                    return Err(CliError::Lex(format!(
+                        "invalid character {}",
+                        invalid.code().to_char().expect("Unicode command profile") as u32
+                    )));
+                }
+                SourceTokenizationStep::End => break,
             }
-            SourceTokenizationStep::End => break,
         }
-    }
-
-    Ok(())
+        Ok(())
+    })
+    .map_err(|error| CliError::Lex(error.to_string()))?
 }
 
 #[cfg(feature = "profiling")]
@@ -1106,10 +1109,15 @@ fn insert_input_record(
     Ok(())
 }
 
-fn format_token(token: Token, stores: &Universe) -> String {
+fn format_token<G>(token: Token, stores: &Universe<G>) -> String {
     match token {
         Token::Char { ch, cat } => format!("char:{}:{}", ch as u32, cat as u8),
-        Token::Cs(symbol) => format!("cs:{}", stores.resolve(symbol)),
+        Token::Cs(symbol) => format!(
+            "cs:{}",
+            stores
+                .resolve(symbol)
+                .expect("command token symbol belongs to the admitted engine")
+        ),
         Token::Param(slot) => format!("param:{slot}"),
         token if token.is_frozen_end_template() => "frozen:endtemplate".to_owned(),
         token if token.is_frozen_endv() => "frozen:endv".to_owned(),

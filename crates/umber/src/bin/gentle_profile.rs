@@ -167,12 +167,17 @@ struct RunOutput {
 
 #[derive(Default)]
 struct ProfileCheckpointSink {
+    enabled: bool,
     count: usize,
     hash: u64,
 }
 
-impl CheckpointSink for ProfileCheckpointSink {
-    fn checkpoint(&mut self, checkpoint: EngineCheckpoint) {
+impl<G> CheckpointSink<G> for ProfileCheckpointSink {
+    fn wants_checkpoint(&self, _boundary: tex_exec::EngineBoundary) -> bool {
+        self.enabled
+    }
+
+    fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>) {
         self.count += 1;
         self.hash = self.hash.rotate_left(7) ^ checkpoint.state_hash();
     }
@@ -1829,43 +1834,42 @@ fn seed_font_dir(world: &mut World, dir: &Path) -> Result<(), String> {
 }
 
 fn execute_once(template: &World, capture_checkpoints: bool) -> Result<RunOutput, String> {
-    let mut stores = Universe::with_world(template.clone());
-    let path = Path::new(JOB_DIR).join(JOB_FILE);
-    let content = stores
-        .world_mut()
-        .read_file(&path)
-        .map_err(|error| error.to_string())?;
-    let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
-    let mut checkpoints = ProfileCheckpointSink::default();
-    let startup_name = path.to_string_lossy();
-    let mut session = EngineSession::tex82_initex(&mut stores);
-    session
-        .register_retained_root(
-            startup_name.as_ref(),
-            SourceRegistration::world(content).with_name(startup_name.as_ref()),
-        )
-        .map_err(|error| error.to_string())?;
-    let mut no_checkpoints = Vec::new();
-    let checkpoint_sink: &mut dyn CheckpointSink = if capture_checkpoints {
-        &mut checkpoints
-    } else {
-        &mut no_checkpoints
-    };
-    let (run, _expansion_stats) = session
-        .run_with_expansion_stats(&mut resolvers, checkpoint_sink)
-        .map_err(|error| error.to_string())?;
-    if run.artifacts.is_empty() {
-        return Err("Gentle produced no page artifacts".to_owned());
-    }
-    let dvi = dvi_from_page_plans(&run.dvi_pages).map_err(|error| error.to_string())?;
-    Ok(RunOutput {
-        dvi,
-        pages: run.artifacts.len(),
-        checkpoints: checkpoints.count,
-        checkpoint_hash: checkpoints.hash,
-        #[cfg(feature = "profiling")]
-        expansion_stats: _expansion_stats,
+    umber::with_engine_world(template.clone(), |stores| {
+        let path = Path::new(JOB_DIR).join(JOB_FILE);
+        let content = stores
+            .world_mut()
+            .read_file(&path)
+            .map_err(|error| error.to_string())?;
+        let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
+        let mut checkpoints = ProfileCheckpointSink {
+            enabled: capture_checkpoints,
+            ..ProfileCheckpointSink::default()
+        };
+        let startup_name = path.to_string_lossy();
+        let mut session = EngineSession::tex82_initex(stores);
+        session
+            .register_retained_root(
+                startup_name.as_ref(),
+                SourceRegistration::world(content).with_name(startup_name.as_ref()),
+            )
+            .map_err(|error| error.to_string())?;
+        let (run, _expansion_stats) = session
+            .run_with_expansion_stats(&mut resolvers, &mut checkpoints)
+            .map_err(|error| error.to_string())?;
+        if run.artifacts.is_empty() {
+            return Err("Gentle produced no page artifacts".to_owned());
+        }
+        let dvi = dvi_from_page_plans(&run.dvi_pages).map_err(|error| error.to_string())?;
+        Ok(RunOutput {
+            dvi,
+            pages: run.artifacts.len(),
+            checkpoints: checkpoints.count,
+            checkpoint_hash: checkpoints.hash,
+            #[cfg(feature = "profiling")]
+            expansion_stats: _expansion_stats,
+        })
     })
+    .map_err(|error| error.to_string())?
 }
 
 fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {

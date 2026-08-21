@@ -807,7 +807,7 @@ impl PlannedFinalization {
                     && matches!(
                         effect,
                         tex_state::EffectRecord::StreamOpen { slot, target }
-                            if *slot == failed.slot() && target.path() == failed.path()
+                            if slot == failed.slot() && target.path() == failed.path()
                     )
             })
             .ok_or_else(|| {

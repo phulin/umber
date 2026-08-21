@@ -4,7 +4,7 @@ use tex_command::{CommandProfile, SourceRegistration};
 use tex_exec::DiagnosticStep;
 use tex_state::meaning::Meaning;
 use tex_state::token::Token;
-use tex_state::{Universe, World, WorldError};
+use tex_state::{StateError, World, WorldError};
 
 use crate::format_token;
 use umber::{EngineSession, FileSessionResolvers, SessionError, prepare_run_stores};
@@ -14,45 +14,46 @@ use umber::{EngineSession, FileSessionResolvers, SessionError, prepare_run_store
 /// command prints expanded non-assignment spellings for analysis.
 pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     let path = Path::new(path);
-    let mut stores = Universe::with_world(World::real());
-    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let content = stores.world_mut().read_file(path)?;
-    let root_bytes = content.bytes().to_vec();
-    prepare_run_stores(&mut stores);
-    let startup_name = path.to_string_lossy();
-    let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-    session.register_retained_root(
-        &startup_name,
-        SourceRegistration::world(content).with_name(startup_name.as_ref()),
-    )?;
-    let mut host = FileSessionResolvers::from_environment(path);
+    umber::with_engine_world(World::real(), |stores| {
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        let content = stores.world_mut().read_file(path)?;
+        let root_bytes = content.bytes().to_vec();
+        prepare_run_stores(stores);
+        let startup_name = path.to_string_lossy();
+        let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+        session.register_retained_root(
+            &startup_name,
+            SourceRegistration::world(content).with_name(startup_name.as_ref()),
+        )?;
+        let mut host = FileSessionResolvers::from_environment(path);
 
-    loop {
-        match session.diagnostic_expand_step(&mut host)? {
-            DiagnosticStep::Token {
-                spelling,
-                meaning,
-                control_sequence,
-                source_provenance,
-            } => {
-                let semantic = spelling.semantic_token();
-                if meaning == Meaning::Undefined {
-                    return Err(ExpandDumpError::Rendered(render_undefined(
-                        path,
-                        &root_bytes,
-                        source_provenance,
-                        control_sequence.map(|symbol| session.stores().resolve(symbol)),
-                    )));
+        loop {
+            match session.diagnostic_expand_step(&mut host)? {
+                DiagnosticStep::Token {
+                    spelling,
+                    meaning,
+                    control_sequence,
+                    source_provenance,
+                } => {
+                    let semantic = spelling.semantic_token();
+                    if meaning == Meaning::Undefined {
+                        return Err(ExpandDumpError::Rendered(render_undefined(
+                            path,
+                            &root_bytes,
+                            source_provenance,
+                            control_sequence.and_then(|symbol| session.stores().resolve(symbol)),
+                        )));
+                    }
+                    if matches!(semantic, Token::Frozen(_)) {
+                        continue;
+                    }
+                    println!("{}", format_token(semantic, session.stores()));
                 }
-                if matches!(semantic, Token::Frozen(_)) {
-                    continue;
-                }
-                println!("{}", format_token(semantic, session.stores()));
+                DiagnosticStep::Assignment => {}
+                DiagnosticStep::EndOfInput => return Ok(()),
             }
-            DiagnosticStep::Assignment => {}
-            DiagnosticStep::EndOfInput => return Ok(()),
         }
-    }
+    })?
 }
 
 fn render_undefined(
@@ -121,6 +122,7 @@ fn render_undefined(
 
 #[derive(Debug)]
 pub enum ExpandDumpError {
+    State(StateError),
     World(WorldError),
     Session(Box<SessionError>),
     Rendered(String),
@@ -129,6 +131,7 @@ pub enum ExpandDumpError {
 impl std::fmt::Display for ExpandDumpError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::State(error) => error.fmt(formatter),
             Self::World(error) => error.fmt(formatter),
             Self::Session(error) => error.fmt(formatter),
             Self::Rendered(message) => formatter.write_str(message),
@@ -137,6 +140,12 @@ impl std::fmt::Display for ExpandDumpError {
 }
 
 impl std::error::Error for ExpandDumpError {}
+
+impl From<StateError> for ExpandDumpError {
+    fn from(error: StateError) -> Self {
+        Self::State(error)
+    }
+}
 
 impl From<WorldError> for ExpandDumpError {
     fn from(error: WorldError) -> Self {
