@@ -38,6 +38,33 @@ pub(super) enum HotOperation<G> {
     },
 }
 
+/// A common operation after every attempt-local escape root has been
+/// promoted into the live generation. Semantic application accepts only this
+/// representation.
+pub(super) enum PreparedHotOperation<G> {
+    MacroDefinition {
+        target: Symbol,
+        definition: tex_state::DefinitionId<G>,
+        flags: MeaningFlags,
+        global: bool,
+    },
+    Let {
+        target: Symbol,
+        meaning: tex_state::meaning::ResolvedMeaning<G>,
+        global: bool,
+    },
+    CatCode {
+        character: char,
+        value: i32,
+        global: bool,
+    },
+    EnterGroup(GroupKind),
+    LeaveGroup {
+        kind: GroupKind,
+        context: &'static str,
+    },
+}
+
 impl<G> HotOperation<G> {
     pub(super) const fn begin_ordinary_group() -> Self {
         Self::EnterGroup(GroupKind::Simple)
@@ -56,10 +83,12 @@ impl<G> HotOperation<G> {
             Self::MacroDefinition { .. } | Self::Let { .. } | Self::CatCode { .. }
         )
     }
+}
 
+impl<G> PreparedHotOperation<G> {
     pub(super) fn protected_definition_observation(
         &self,
-        stores: &Universe<G>,
+        stores: &tex_state::CommandContext<'_, G>,
     ) -> Option<TokenListRecord> {
         let Self::MacroDefinition {
             definition, flags, ..
@@ -67,6 +96,7 @@ impl<G> HotOperation<G> {
         else {
             return None;
         };
+        let definition = stores.definition(*definition);
         flags
             .contains(MeaningFlags::PROTECTED)
             .then(|| TokenListRecord {
@@ -74,10 +104,9 @@ impl<G> HotOperation<G> {
                 purpose: "protected_macro",
                 tokens: {
                     let mut tokens = definition
-                        .parameter_text
-                        .words()
+                        .parameter_text()
                         .iter()
-                        .map(|word| match word.semantic_token() {
+                        .map(|word| match word.token() {
                             Token::Param(_) => ObservedToken::MacroMatch,
                             token => observed_macro_token(token, stores),
                         })
@@ -85,15 +114,52 @@ impl<G> HotOperation<G> {
                     tokens.push(ObservedToken::MacroEndMatch);
                     tokens.extend(
                         definition
-                            .replacement_text
-                            .words()
+                            .replacement_text()
                             .iter()
-                            .map(|word| observed_macro_token(word.semantic_token(), stores)),
+                            .map(|word| observed_macro_token(word.token(), stores)),
                     );
                     tokens
                 },
             })
     }
+}
+
+/// Promotes every declared hot-operation root before command-state admission.
+pub(super) fn prepare<G>(
+    operation: HotOperation<G>,
+    command: &tex_command::CommandState<G>,
+    stores: &mut Universe<G>,
+) -> Result<PreparedHotOperation<G>, tex_command::AttemptError> {
+    Ok(match operation {
+        HotOperation::MacroDefinition {
+            definition,
+            flags,
+            global,
+        } => PreparedHotOperation::MacroDefinition {
+            target: definition.target,
+            definition: command.promote_attempt_definition(stores, definition.definition)?,
+            flags,
+            global,
+        },
+        HotOperation::Let { assignment, global } => PreparedHotOperation::Let {
+            target: assignment.target,
+            meaning: assignment.meaning,
+            global,
+        },
+        HotOperation::CatCode {
+            character,
+            value,
+            global,
+        } => PreparedHotOperation::CatCode {
+            character,
+            value,
+            global,
+        },
+        HotOperation::EnterGroup(kind) => PreparedHotOperation::EnterGroup(kind),
+        HotOperation::LeaveGroup { kind, context } => {
+            PreparedHotOperation::LeaveGroup { kind, context }
+        }
+    })
 }
 
 /// Scans a ranked common command after §1211's prefix loop and all contextual
@@ -106,22 +172,22 @@ pub(super) fn scan<G>(
     innermost_group: Option<GroupKind>,
 ) -> Result<Option<HotOperation<G>>, ExecError> {
     let operation = match command.meaning() {
-        Meaning::CharToken {
+        tex_state::meaning::ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::BeginGroup,
             ..
-        } => HotOperation::begin_ordinary_group(),
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::BeginGroup) => {
-            HotOperation::EnterGroup(GroupKind::SemiSimple)
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup)
-            if innermost_group == Some(GroupKind::SemiSimple) =>
-        {
-            HotOperation::LeaveGroup {
-                kind: GroupKind::SemiSimple,
-                context: "semi simple group",
-            }
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CatCode) => {
+        }) => HotOperation::begin_ordinary_group(),
+        tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::BeginGroup,
+        )) => HotOperation::EnterGroup(GroupKind::SemiSimple),
+        tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::EndGroup,
+        )) if innermost_group == Some(GroupKind::SemiSimple) => HotOperation::LeaveGroup {
+            kind: GroupKind::SemiSimple,
+            context: "semi simple group",
+        },
+        tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::CatCode,
+        )) => {
             let character = processor
                 .scan_restricted_integer(RestrictedIntegerClass::CharacterCode)
                 .map_err(command_error)?
@@ -135,12 +201,12 @@ pub(super) fn scan<G>(
                 global,
             }
         }
-        Meaning::UnexpandablePrimitive(
+        tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Def
             | UnexpandablePrimitive::Edef
             | UnexpandablePrimitive::Gdef
             | UnexpandablePrimitive::Xdef),
-        ) => HotOperation::MacroDefinition {
+        )) => HotOperation::MacroDefinition {
             definition: processor
                 .scan_macro_definition(matches!(
                     primitive,
@@ -150,9 +216,9 @@ pub(super) fn scan<G>(
             flags,
             global,
         },
-        Meaning::UnexpandablePrimitive(
+        tex_state::meaning::ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Let | UnexpandablePrimitive::FutureLet),
-        ) => HotOperation::Let {
+        )) => HotOperation::Let {
             assignment: processor
                 .scan_let_assignment(primitive == UnexpandablePrimitive::FutureLet)
                 .map_err(command_error)?,
@@ -165,89 +231,71 @@ pub(super) fn scan<G>(
 
 /// Applies one measured common operation to canonical state and journals.
 pub(super) fn apply<G>(
-    operation: &HotOperation<G>,
-    stores: &mut Universe<G>,
+    operation: &PreparedHotOperation<G>,
+    stores: tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
+    let mut stores = LinearCommandContext::new(stores);
+    let stores = &mut stores;
     match operation {
-        HotOperation::MacroDefinition {
+        PreparedHotOperation::MacroDefinition {
+            target,
             definition,
             flags,
             global,
-        } => apply_macro_definition(
-            definition.target,
-            *flags,
-            *global,
-            &definition.parameter_text,
-            &definition.replacement_text,
-            &definition.definition_origin,
-            stores,
-            command,
-        ),
-        HotOperation::Let { assignment, global } => {
-            // Keep the source spelling and macro definition strongly rooted
-            // through the dense-cell replacement. They are semantically cold
-            // but prevent the copied meaning from outliving its owner.
-            let _strong_roots = (&assignment.source, &assignment.macro_root);
-            apply_let(
-                assignment.target,
-                assignment.meaning,
-                *global,
-                stores,
-                command,
-            )
-        }
-        HotOperation::CatCode {
+        } => apply_macro_definition(*target, *definition, *flags, *global, stores, command),
+        PreparedHotOperation::Let {
+            target,
+            meaning,
+            global,
+        } => apply_let(*target, *meaning, *global, stores, command),
+        PreparedHotOperation::CatCode {
             character,
             value,
             global,
         } => apply_catcode(*character, *value, *global, stores, command),
-        HotOperation::EnterGroup(kind) => flush_group_boundary(modes, stores, command).map(|()| {
-            enter_group(stores, command.state, *kind);
-            ReplayStep::Continue
-        }),
-        HotOperation::LeaveGroup { kind, context } => {
+        PreparedHotOperation::EnterGroup(kind) => {
+            flush_group_boundary(modes, stores, command).map(|()| {
+                enter_group(stores, command.state, *kind);
+                ReplayStep::Continue
+            })
+        }
+        PreparedHotOperation::LeaveGroup { kind, context } => {
             leave_group(*kind, context, modes, stores, command)
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn apply_macro_definition(
+fn apply_macro_definition<G>(
     target: Symbol,
+    definition: tex_state::DefinitionId<G>,
     flags: MeaningFlags,
     global: bool,
-    parameter_text: &tex_state::token::RootedTracedTokenBuffer,
-    replacement_text: &tex_state::token::RootedTracedTokenBuffer,
-    definition_origin: &tex_state::provenance::OriginRef,
-    stores: &mut Universe,
-    command: &mut CommandMachine<'_>,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
     assignment_tracing::trace_meaning_write(stores, Token::Cs(target), true, global, |stores| {
-        stores.set_macro_meaning_from_buffers(
-            target,
-            flags,
-            parameter_text,
-            replacement_text,
-            definition_origin.clone(),
-            global,
-        )
+        stores
+            .assign_resolved_meaning(
+                target,
+                tex_state::meaning::ResolvedMeaning::Macro { flags, definition },
+                assignment_scope(global),
+            )
+            .expect("macro target belongs to the admitted generation");
     });
 
     // TeX82 §1211's trace seam reports the stored body. Walking that body is
     // cold evidence publication, never part of an unobserved definition.
     if command.observes_mutations() {
-        let meaning = stores
-            .macro_meaning(target)
-            .expect("new macro definition is installed");
+        let stored = stores.definition(definition);
         let record = MutationRecord {
             target: MutationTarget::Meaning,
             key: ObservationValue::Name(stores.resolve(target).to_owned()),
             value: ObservationValue::Tokens(observed_stored_macro_body(
                 flags,
-                meaning.parameter_text(),
-                meaning.replacement_text(),
+                stored.parameter_text(),
+                stored.replacement_text(),
                 stores,
             )),
             global,
@@ -259,23 +307,24 @@ fn apply_macro_definition(
     Ok(ReplayStep::Continue)
 }
 
-fn apply_let(
+fn apply_let<G>(
     target: Symbol,
-    meaning: Meaning,
+    meaning: tex_state::meaning::ResolvedMeaning<G>,
     global: bool,
-    stores: &mut Universe,
-    command: &mut CommandMachine<'_>,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let committed = AssignmentCommitter::new(stores).direct_meaning(
-        target,
+    let committed = global || stores.meaning(target) != meaning;
+    assignment_tracing::trace_meaning_write(
+        stores,
         Token::Cs(target),
-        meaning,
+        committed,
         global,
         |stores| {
-            if global {
-                stores.set_meaning_global(target, meaning)
-            } else {
-                stores.set_meaning(target, meaning)
+            if committed {
+                stores
+                    .assign_resolved_meaning(target, meaning, assignment_scope(global))
+                    .expect("let target belongs to the admitted generation");
             }
         },
     );
@@ -293,16 +342,16 @@ fn apply_let(
     Ok(ReplayStep::Continue)
 }
 
-fn apply_catcode(
+fn apply_catcode<G>(
     character: char,
     raw_value: i32,
     global: bool,
-    stores: &mut Universe,
-    command: &mut CommandMachine<'_>,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
     let mut value = raw_value;
     if !(0..=15).contains(&value) {
-        let context = command.state.output_open_context(&stores.command_context());
+        let context = command.state.output_open_context(stores);
         let mut report = stores.print_err("Invalid code (");
         report
             .print_int(value)
@@ -320,11 +369,14 @@ fn apply_catcode(
         catcode,
         global,
         |stores, global| {
-            if global {
-                stores.set_catcode_global(character, catcode)
-            } else {
-                stores.set_catcode(character, catcode)
-            }
+            stores
+                .assign_code(
+                    tex_state::env::CodeTableKind::Catcode,
+                    character,
+                    i64::from(catcode as u8),
+                    assignment_scope(global),
+                )
+                .expect("catcode target belongs to the admitted generation");
         },
         |stores, _| {
             assignment_tracing::trace_code(
@@ -380,10 +432,10 @@ fn catcode_from_value(value: i32) -> Result<Catcode, ExecError> {
     }
 }
 
-fn flush_group_boundary(
+fn flush_group_boundary<G>(
     modes: &mut ModeNest,
-    stores: &mut Universe,
-    command: &mut CommandMachine<'_>,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<(), ExecError> {
     crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)
 }
@@ -392,7 +444,7 @@ fn leave_group<G>(
     kind: GroupKind,
     context: &'static str,
     modes: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut LinearCommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
     flush_group_boundary(modes, stores, command)?;

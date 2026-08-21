@@ -11,35 +11,29 @@ use super::pdf::*;
 use super::support::*;
 
 pub(in crate::main_control) fn enter_group<G>(
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut PersistentInterpreter<G>,
     kind: GroupKind,
 ) {
     let entered_line = command.current_file_line_number();
-    let mut state = stores
-        .command_context()
-        .expect("group entry requires an admitted live generation");
     command
         .state_mut()
-        .begin_group(&mut state, kind, entered_line)
+        .begin_group(stores, kind, entered_line)
         .expect("executor and command group stacks remain synchronized");
 }
 
 pub(in crate::main_control) fn leave_group_payloads<G>(
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut PersistentInterpreter<G>,
     kind: GroupKind,
 ) -> Result<Vec<tex_state::token::TracedTokenWord>, tex_command::CommandGroupError> {
-    let mut state = stores
-        .command_context()
-        .expect("group exit requires an admitted live generation");
-    command.state_mut().end_group(&mut state, kind)
+    command.state_mut().end_group(stores, kind)
 }
 
 #[allow(clippy::too_many_arguments)] // applies the complete canonical replay state atomically
 pub(in crate::main_control) fn apply<G>(
     scanned: ColdOperation<G>,
-    stores: &mut Universe<G>,
+    stores: tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     next_alignment_identity: &mut u64,
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
@@ -52,6 +46,8 @@ pub(in crate::main_control) fn apply<G>(
     prepared_dvi_pages: &mut PreparedDviPages,
     end_job_ejection_pending: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
+    let mut stores = LinearCommandContext::new(stores);
+    let stores = &mut stores;
     match scanned {
         ColdOperation::Continue => Ok(ReplayStep::Continue),
         ColdOperation::AlignmentTemplateEntered => {
@@ -3279,10 +3275,12 @@ pub(in crate::main_control) fn apply<G>(
             ) {
                 crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             }
-            let finished = command
-                .processor(stores)
+            let mut processor = command.processor(stores.take());
+            let finished = processor
                 .finish_alignment_cell(alignment)
-                .map_err(command_error)?;
+                .map_err(command_error);
+            stores.restore(processor.into_context());
+            let finished = finished?;
             begin_next_replay_alignment_cell(
                 alignment,
                 finished.delimiter,

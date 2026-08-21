@@ -10,7 +10,7 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
     command: &mut CommandMachine<'_, G>,
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
     modes: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut LinearCommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let active = active_alignment
         .as_mut()
@@ -30,7 +30,9 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
     // list open. A valign entry can therefore leave horizontal mode before
     // the following column starts without packaging the spanning cell yet.
     if active.kind == AlignmentKind::VAlign {
-        let error_context = command.state.output_open_context(&stores.command_context());
+        let error_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
+            command.state.output_open_context(stores),
+        );
         crate::paragraph_end::end_paragraph_with_context(
             modes,
             stores,
@@ -80,10 +82,7 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
     if extra_tab_recovery {
         let recovered = command
             .state
-            .apply_alignment_request(
-                &stores.command_context(),
-                AlignmentRequest::RecoverExtraTab(alignment),
-            )
+            .apply_alignment_request(stores, AlignmentRequest::RecoverExtraTab(alignment))
             .map_err(|_| ExecError::MissingToken {
                 context: "alignment extra-tab recovery",
             })?;
@@ -156,9 +155,9 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
 /// TeX82 §792's exhausted-preamble diagnostic for a saved tab or span.
 pub(in crate::main_control) fn report_extra_alignment_tab<G>(
     command: &CommandState<G>,
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
-    let context = command.output_open_context(&stores.command_context());
+    let context = command.output_open_context(stores);
     crate::error_report::report_error(
         stores,
         "Extra alignment tab has been changed to \\cr",
@@ -180,7 +179,7 @@ pub(in crate::main_control) fn report_extra_alignment_tab<G>(
 /// as every other canonical group exit does.
 pub(in crate::main_control) fn replace_alignment_entry_save_level<G>(
     command: &mut CommandMachine<'_, G>,
-    stores: &mut Universe<G>,
+    stores: &mut LinearCommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let aftergroup = leave_alignment_save_level(command.state, stores, "alignment entry group")?;
     enter_group(stores, command.state, GroupKind::Align);
@@ -190,7 +189,7 @@ pub(in crate::main_control) fn replace_alignment_entry_save_level<G>(
 /// One of TeX82 §800 `fin_align`'s `unsave`s, or §791's.
 pub(in crate::main_control) fn leave_alignment_save_level<G>(
     command: &mut PersistentInterpreter<G>,
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     context: &'static str,
 ) -> Result<Vec<tex_state::token::TracedTokenWord>, ExecError> {
     leave_group_payloads(stores, command, GroupKind::Align)
@@ -205,7 +204,7 @@ pub(in crate::main_control) fn leave_alignment_save_level<G>(
 /// the entry level and the whole-alignment level.
 pub(in crate::main_control) fn leave_fin_align_save_level<G>(
     command: &mut PersistentInterpreter<G>,
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     confusion_site: &'static str,
 ) -> Result<Vec<tex_state::token::TracedTokenWord>, ExecError> {
     leave_group_payloads(stores, command, GroupKind::Align)
@@ -243,7 +242,7 @@ pub(in crate::main_control) fn replay_alignment_cell_mode(kind: AlignmentKind) -
 pub(in crate::main_control) fn begin_replay_alignment_cell<G>(
     active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     if !active.row_open {
         modes.push(replay_alignment_row_mode(active.kind))?;
@@ -282,7 +281,7 @@ pub(in crate::main_control) fn begin_replay_alignment_cell<G>(
 pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
     active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if !active.cell_open {
@@ -317,7 +316,7 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
     } else {
         cell.list_mutation().take_nodes()
     };
-    let material = stores.publish_page_nodes(&material);
+    let material = stores.publish_page_nodes(material);
     active
         .captured_rows
         .last_mut()
@@ -327,6 +326,7 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
         .push(material.clone());
     let cell = crate::align::packaging::make_unset_node(
         stores,
+        &crate::diagnostics::ExecutionDiagnosticContext::source_free("alignment cell"),
         material,
         crate::align::packaging::cell_unset_kind(active.kind),
         active.cell_span,
@@ -349,7 +349,7 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
 pub(in crate::main_control) fn finish_replay_alignment_row<G>(
     active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     capture_replay_alignment_cell(active, modes, stores, fuel)?;
@@ -358,9 +358,10 @@ pub(in crate::main_control) fn finish_replay_alignment_row<G>(
     }
 
     let mut row = crate::box_runtime::commit_current_list(modes, stores, fuel)?;
-    let children = stores.publish_page_nodes(&row.list_mutation().take_nodes());
+    let children = stores.publish_page_nodes(row.list_mutation().take_nodes());
     let row = crate::align::packaging::make_unset_node(
         stores,
+        &crate::diagnostics::ExecutionDiagnosticContext::source_free("alignment row"),
         children,
         crate::align::packaging::row_unset_kind(active.kind),
         1,
@@ -416,7 +417,7 @@ pub(in crate::main_control) fn alignment_pack_spec(
 pub(in crate::main_control) fn finish_replay_alignment<G>(
     active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {
@@ -426,45 +427,38 @@ pub(in crate::main_control) fn finish_replay_alignment<G>(
     // `fin_align` setting pass. The magnitude is the alignment level's
     // `mode_line`, captured by §774's `push_nest`, and §812 restores the
     // enclosing diagnostic state after the finished alignment is appended.
-    let restore_pack_begin_line = stores.pack_begin_line();
-    stores.set_pack_begin_line(-alignment.entry_line());
-    let result =
-        finish_replay_alignment_with_origin(active, modes, stores, &mut alignment, error_context);
-    stores.set_pack_begin_line(restore_pack_begin_line);
-    result
+    let diagnostic_context =
+        crate::diagnostics::ExecutionDiagnosticContext::source_free(error_context)
+            .with_pack_begin_line(-alignment.entry_line());
+    finish_replay_alignment_with_origin(active, modes, stores, &mut alignment, &diagnostic_context)
 }
 
 pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
     active: &ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     alignment: &mut crate::mode::ModeLevelSummary,
-    error_context: &str,
+    diagnostic_context: &crate::diagnostics::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     let rows = alignment.list_mutation().take_nodes();
-    let columns = {
-        let admitted = stores
-            .command_context()
-            .expect("alignment lowering requires an admitted live generation");
-        active
-            .columns
-            .iter()
-            .map(|templates| AlignColumn {
-                u_template: tex_state::node::NodeTokenList::new(
-                    admitted
-                        .token_list(
-                            templates
-                                .u_template
-                                .expect("alignment columns retain u templates"),
-                        )
-                        .to_vec(),
-                ),
-                v_template: tex_state::node::NodeTokenList::new(
-                    admitted.token_list(templates.v_template).to_vec(),
-                ),
-            })
-            .collect()
-    };
+    let columns = active
+        .columns
+        .iter()
+        .map(|templates| AlignColumn {
+            u_template: tex_state::node::NodeTokenList::new(
+                stores
+                    .token_list(
+                        templates
+                            .u_template
+                            .expect("alignment columns retain u templates"),
+                    )
+                    .to_vec(),
+            ),
+            v_template: tex_state::node::NodeTokenList::new(
+                stores.token_list(templates.v_template).to_vec(),
+            ),
+        })
+        .collect();
     let state = AlignState::new(
         active.kind,
         active.packing,
@@ -481,7 +475,8 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
     } else {
         Scaled::from_raw(0)
     };
-    let finished = crate::align::widths::finish_alignment(&state, &rows, offset, stores)?;
+    let finished =
+        crate::align::widths::finish_alignment(&state, &rows, offset, stores, diagnostic_context)?;
     let aux_prev_depth = alignment.list().prev_depth();
     let aux_space_factor = matches!(
         alignment.mode(),
@@ -505,7 +500,11 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
             },
         );
     }
-    crate::vertical::build_page_if_outer_vertical_with_error_context(modes, stores, error_context)?;
+    crate::vertical::build_page_if_outer_vertical_with_error_context(
+        modes,
+        stores,
+        &diagnostic_context.output_context,
+    )?;
     Ok(())
 }
 
@@ -513,7 +512,7 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
 /// construction contexts into an immutable diagnostic value without changing
 /// any engine stack.
 pub(in crate::main_control) fn detached_showgroups<G>(
-    stores: &Universe<G>,
+    stores: &tex_state::CommandContext<'_, G>,
     active_alignment: &Option<ActiveReplayAlignment<G>>,
     boxes: &ReplayBoxes<G>,
     active_discretionaries: &[ActiveDiscretionary],
@@ -523,7 +522,7 @@ pub(in crate::main_control) fn detached_showgroups<G>(
 ) -> crate::diagnostics::ShowGroupsDiagnostic {
     use crate::diagnostics::{ShowGroupFrame, ShowGroupsDiagnostic};
 
-    let frames = stores.group_frames().collect::<Vec<_>>();
+    let frames = stores.group_frames().to_vec();
     let mut alignment_contexts = alignment_group_contexts(&frames, active_alignment, boxes);
     let mut box_index = 0usize;
     let mut discretionary_index = 0usize;

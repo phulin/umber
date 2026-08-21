@@ -5,6 +5,65 @@ use super::apply::enter_group;
 use super::operation::*;
 use super::pdf::*;
 
+/// Move slot for the one admitted command context owned by semantic apply.
+///
+/// A short command-processor episode temporarily takes the context and must
+/// return that exact value through `into_context` before semantic work can
+/// continue. This wrapper adds no state API, guard, or ownership; it only
+/// makes the linear handoff expressible across the large cold dispatcher.
+pub(in crate::main_control) struct LinearCommandContext<'a, G> {
+    context: Option<tex_state::CommandContext<'a, G>>,
+}
+
+impl<'a, G> LinearCommandContext<'a, G> {
+    pub(in crate::main_control) const fn new(context: tex_state::CommandContext<'a, G>) -> Self {
+        Self {
+            context: Some(context),
+        }
+    }
+
+    pub(in crate::main_control) fn take(&mut self) -> tex_state::CommandContext<'a, G> {
+        self.context
+            .take()
+            .expect("the admitted apply context is not already lent")
+    }
+
+    pub(in crate::main_control) fn restore(&mut self, context: tex_state::CommandContext<'a, G>) {
+        assert!(
+            self.context.replace(context).is_none(),
+            "the admitted apply context is returned exactly once"
+        );
+    }
+}
+
+impl<'a, G> core::ops::Deref for LinearCommandContext<'a, G> {
+    type Target = tex_state::CommandContext<'a, G>;
+
+    fn deref(&self) -> &Self::Target {
+        self.context
+            .as_ref()
+            .expect("the admitted apply context is present outside a processor episode")
+    }
+}
+
+impl<'a, G> core::ops::DerefMut for LinearCommandContext<'a, G> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.context
+            .as_mut()
+            .expect("the admitted apply context is present outside a processor episode")
+    }
+}
+
+pub(in crate::main_control) const fn assignment_scope(
+    global: bool,
+) -> tex_state::env::AssignmentScope {
+    if global {
+        tex_state::env::AssignmentScope::Global
+    } else {
+        tex_state::env::AssignmentScope::Local
+    }
+}
+
 /// TeX82 §1370's printable-sink framing for an immediate `\write`.
 ///
 /// A closed numbered stream (including stream 16) temporarily becomes a
@@ -14,8 +73,8 @@ use super::pdf::*;
 /// because the leading `print_nl` owns the break after a preceding
 /// newline-less `\message`. Real output files have neither print columns nor
 /// that leading break.
-pub(in crate::main_control) fn write_immediate_text(
-    stores: &mut Universe,
+pub(in crate::main_control) fn write_immediate_text<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
     sink: PrintSink,
     text: &str,
 ) {
@@ -24,29 +83,22 @@ pub(in crate::main_control) fn write_immediate_text(
         PrintSink::Log => tex_state::print::Selector::LogOnly,
         PrintSink::TerminalAndLog => tex_state::print::Selector::TermAndLog,
         PrintSink::Stream(_) => {
-            stores.world_mut().write_text(sink, text);
+            stores.write_text(sink, text);
             return;
         }
     };
-    let line_is_open = {
-        let bufs = stores.world().stream_bufs();
-        let terminal = !bufs.terminal_partial_line().is_empty();
-        let log = !bufs.log_partial_line().is_empty();
-        match selector {
-            tex_state::print::Selector::TermOnly => terminal,
-            tex_state::print::Selector::LogOnly => log,
-            tex_state::print::Selector::TermAndLog => terminal || log,
-            tex_state::print::Selector::NoPrint => false,
-        }
-    };
     let mut printer = tex_state::print::Printer::new(stores, selector);
+    let line_is_open = printer.terminal_offset() > 0 || printer.log_offset() > 0;
     if line_is_open {
         printer.print_ln();
     }
     printer.print_rendered(text);
 }
 
-pub(in crate::main_control) fn print_display_content(stores: &mut Universe, content: &str) {
+pub(in crate::main_control) fn print_display_content<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
+    content: &str,
+) {
     stores.printer().print_nl("").print_rendered(content);
 }
 
@@ -67,37 +119,34 @@ pub(in crate::main_control) fn print_display_content(stores: &mut Universe, cont
 /// structure and the order `unsave` observes it in.
 pub(in crate::main_control) fn schedule_aftergroup<G>(
     command: &mut CommandMachine<'_, G>,
-    stores: &mut Universe<G>,
+    stores: &mut LinearCommandContext<'_, G>,
     tokens: Vec<tex_state::token::TracedTokenWord>,
 ) -> Result<(), ExecError> {
     if tokens.is_empty() {
         return Ok(());
     }
-    command
-        .processor(stores)
+    let mut processor = command.processor(stores.take());
+    let result = processor
         .back_input_aftergroup_tokens(tokens)
-        .map_err(command_error)
+        .map_err(command_error);
+    stores.restore(processor.into_context());
+    result
 }
 
 pub(in crate::main_control) fn warn_cross_file_group_close<G>(
-    stores: &mut Universe<G>,
+    stores: &mut LinearCommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) {
     let (level, frame) = {
-        let state = stores
-            .command_context()
-            .expect("group tracing requires an admitted live generation");
-        let frames = state.group_frames();
+        let frames = stores.group_frames();
         (frames.len(), frames.last().copied())
     };
     let Some(frame) = frame else {
         return;
     };
-    command.processor(stores).warn_cross_file_group_close(
-        level,
-        frame.kind().group_text(),
-        frame.entered_line(),
-    );
+    let mut processor = command.processor(stores.take());
+    processor.warn_cross_file_group_close(level, frame.kind().group_text(), frame.entered_line());
+    stores.restore(processor.into_context());
 }
 
 /// Releases the single pending after-assignment token only after the typed
@@ -108,15 +157,12 @@ pub(in crate::main_control) fn schedule_afterassignment<G>(
     fuel: &mut tex_command::CommandFuel,
     capabilities: &mut CommandHostCapabilities,
     observations: &mut ObservationSlot,
-    stores: &mut Universe<G>,
+    stores: tex_state::CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let token = {
-        let state = stores
-            .command_context()
-            .expect("afterassignment requires an admitted live generation");
         command
             .state_mut()
-            .take_afterassignment(&state)
+            .take_afterassignment(&stores)
             .expect("afterassignment uses the synchronized command generation")
     };
     let Some(token) = token else {
@@ -163,8 +209,8 @@ pub(in crate::main_control) fn code_table_mutation(
     }
 }
 
-pub(in crate::main_control) fn font_definition_mutation(
-    stores: &Universe,
+pub(in crate::main_control) fn font_definition_mutation<G>(
+    stores: &tex_state::CommandContext<'_, G>,
     target: Symbol,
     global: bool,
     observed: bool,
@@ -198,17 +244,23 @@ pub(in crate::main_control) fn pdf_font_code_table(
     }
 }
 
-pub(in crate::main_control) fn apply_arithmetic(
+pub(in crate::main_control) fn apply_arithmetic<G>(
     primitive: UnexpandablePrimitive,
     target: ArithmeticTarget,
     operand: ArithmeticOperand,
     global: bool,
     profile: CommandProfile,
-    stores: &mut Universe,
+    stores: &mut tex_state::CommandContext<'_, G>,
 ) -> Result<crate::assignments::committer::MutationReceipt, ExecError> {
     let receipt = match (target, operand) {
         (ArithmeticTarget::IntegerRegister(index), ArithmeticOperand::Integer(rhs)) => {
-            let value = arithmetic_integer(primitive, stores.count(index), rhs)?;
+            let value = arithmetic_integer(
+                primitive,
+                stores
+                    .count(index)
+                    .expect("count-register index is admitted"),
+                rhs,
+            )?;
             AssignmentCommitter::new(stores).count(index, value, global)
         }
         (ArithmeticTarget::IntegerParameter(index), ArithmeticOperand::Integer(rhs)) => {
@@ -238,16 +290,21 @@ pub(in crate::main_control) fn apply_arithmetic(
             AssignmentCommitter::new(stores).dimension_parameter(index, value, key, global)
         }
         (ArithmeticTarget::GlueRegister { index, mu }, operand) => {
-            let old = stores.glue(if mu {
+            let old = if mu {
                 stores.muskip(index)
             } else {
-                stores.skip(index)
-            });
+                stores
+                    .glue_register(index)
+                    .expect("glue-register index is admitted")
+            }
+            .map_or(GlueSpec::ZERO, |id| stores.glue(id));
             let value = arithmetic_glue(primitive, old, operand)?;
             AssignmentCommitter::new(stores).skip(index, value, global, mu, false, false)
         }
         (ArithmeticTarget::GlueParameter { index, .. }, operand) => {
-            let old = stores.glue(stores.glue_param(GlueParam::new(index)));
+            let old = stores
+                .glue_param(GlueParam::new(index))
+                .map_or(GlueSpec::ZERO, |id| stores.glue(id));
             let value = arithmetic_glue(primitive, old, operand)?;
             let key =
                 parameter_mutation_key_for_dialect(profile.dialect(), ParameterClass::Glue, index);
@@ -424,7 +481,7 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     target: Option<SetBoxTarget>,
     ships_out: bool,
     modes: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     boxes: &mut ReplayBoxes<G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<(), ExecError> {
@@ -474,10 +531,10 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     Ok(())
 }
 
-pub(in crate::main_control) fn commit_box_normal_paragraph(
+pub(in crate::main_control) fn commit_box_normal_paragraph<G>(
     modes: &mut ModeNest,
-    stores: &mut Universe,
-    command: &mut CommandMachine<'_>,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, G>,
 ) {
     let record =
         (!stores.penalty_array(PenaltyArrayKind::InterLine).is_empty()).then(|| MutationRecord {
@@ -504,7 +561,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
     shift: ScannedBoxShift,
     command: &mut CommandMachine<'_, G>,
     modes: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     boxes: &mut ReplayBoxes<G>,
 ) -> Result<ReplayStep, ExecError> {
     match shift.payload {
@@ -630,11 +687,11 @@ pub(in crate::main_control) enum BoxContext {
     ShipOut,
 }
 
-pub(in crate::main_control) fn read_box_register(
+pub(in crate::main_control) fn read_box_register<G>(
     index: u16,
     copy: bool,
-    stores: &mut Universe,
-    command: &CommandMachine<'_>,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &CommandMachine<'_, G>,
 ) -> Option<tex_state::node_arena::PageListId> {
     if !copy {
         return stores.take_box_to_page(index);
@@ -671,13 +728,13 @@ impl<G> ReplayBoxes<G> {
 /// according to its context. `\hbox`/`\vbox`/`\vtop` bodies reach the same
 /// three dispositions through `BoxEndGroup`, which cannot share this entry
 /// point because §1083 defers them to their group's closing brace.
-pub(in crate::main_control) fn box_end(
+pub(in crate::main_control) fn box_end<G>(
     context: BoxContext,
     node: Option<Node>,
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut tex_state::CommandContext<'_, G>,
     prepared_dvi_pages: &mut PreparedDviPages,
-    command: &mut CommandMachine<'_>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<(), ExecError> {
     match context {
         BoxContext::Append(delta) => append_shifted_box(modes, stores, node, delta, command),
@@ -708,11 +765,11 @@ pub(in crate::main_control) fn box_end(
 /// committed sparse-register boundary is observed after §1085 has packaged
 /// and unsaved the box group. Keeping the observation beside the write also
 /// covers immediate `\box`, `\copy`, `\lastbox`, and `\vsplit` operands.
-pub(in crate::main_control) fn commit_set_box_target(
+pub(in crate::main_control) fn commit_set_box_target<G>(
     target: SetBoxTarget,
     boxed: Option<tex_state::node_arena::PageListId>,
-    stores: &mut Universe,
-    command: &mut CommandMachine<'_>,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, G>,
 ) {
     let traced_box = boxed.clone();
     let receipt = AssignmentCommitter::new(stores).box_register(
@@ -720,10 +777,9 @@ pub(in crate::main_control) fn commit_set_box_target(
         traced_box.as_ref(),
         target.global,
         |stores| match (target.global, boxed) {
-            (false, Some(boxed)) => stores.assign_page_box_local(target.index, boxed),
-            (true, Some(boxed)) => stores.assign_page_box_global(target.index, boxed),
-            (false, None) => stores.clear_box_local(target.index),
-            (true, None) => stores.clear_box_global(target.index),
+            (global, boxed) => stores
+                .assign_page_box(target.index, boxed, assignment_scope(global))
+                .expect("box assignment promotes admitted page nodes"),
         },
     );
     command.retain_assignment_receipt(receipt);
@@ -733,26 +789,26 @@ pub(in crate::main_control) fn commit_set_box_target(
 /// scanned box, then appends it exactly like an ordinary standalone box
 /// (`\box<n>`'s bare append, or `BoxEndGroup`'s final branch). A void box is
 /// a no-op, matching `box_end`'s `if cur_box<>null` guard.
-pub(in crate::main_control) fn append_shifted_box(
+pub(in crate::main_control) fn append_shifted_box<G>(
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut tex_state::CommandContext<'_, G>,
     node: Option<Node>,
     delta: Scaled,
-    command: &mut CommandMachine<'_>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<(), ExecError> {
     let Some(mut node) = node else {
         return Ok(());
     };
     crate::box_runtime::apply_box_shift_delta(&mut node, delta)?;
     crate::box_runtime::append_box_node_to_current_list(modes, stores, node, command.fuel)?;
-    let error_context = command.state.output_open_context(&stores.command_context());
+    let error_context = command.state.output_open_context(stores);
     crate::vertical::build_page_if_outer_vertical_with_error_context(modes, stores, &error_context)
 }
 
-pub(in crate::main_control) fn apply_scanned_rule(
-    command: &mut CommandMachine<'_>,
+pub(in crate::main_control) fn apply_scanned_rule<G>(
+    command: &mut CommandMachine<'_, G>,
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut tex_state::CommandContext<'_, G>,
     width: Option<Scaled>,
     height: Option<Scaled>,
     depth: Option<Scaled>,
@@ -833,9 +889,9 @@ pub(in crate::main_control) struct AccentPlacement {
 
 /// Appends §1123's `link(tail):=p; tail:=p; space_factor:=1000`, preceded by
 /// §1125's accent kerns when §1124 produced a base character.
-pub(in crate::main_control) fn apply_accent_nodes(
+pub(in crate::main_control) fn apply_accent_nodes<G>(
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut tex_state::CommandContext<'_, G>,
     etex_extended: bool,
     placement: AccentPlacement,
 ) -> Result<ReplayStep, ExecError> {
@@ -910,8 +966,8 @@ pub(in crate::main_control) fn apply_accent_nodes(
     Ok(ReplayStep::Continue)
 }
 
-pub(in crate::main_control) fn assign_math_family_font(
-    stores: &mut Universe,
+pub(in crate::main_control) fn assign_math_family_font<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
     size: MathFontSize,
     family: u8,
     font: FontId,
@@ -986,25 +1042,21 @@ pub(in crate::main_control) fn load_font(
 /// TeX82 §1095 `new_graf`: command control has already made any required
 /// backup, then this typed transition installs the indent and schedules the
 /// immutable `\everypar` payload through the same command state.
-pub(in crate::main_control) fn start_paragraph(
-    command: &mut CommandState,
+pub(in crate::main_control) fn start_paragraph<G>(
+    command: &mut CommandState<G>,
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut tex_state::CommandContext<'_, G>,
     indent: bool,
 ) -> Result<(), ExecError> {
-    let error_context = command.output_open_context(&stores.command_context());
-    crate::paragraph_end::start_paragraph(modes, stores, indent, &error_context)?;
-    let everypar = stores.tok_param(TokParam::EVERY_PAR);
-    if !stores.tokens(everypar).is_empty() {
-        let origin = stores.bootstrap_origin();
-        let traced: Vec<_> = stores
-            .tokens(everypar)
-            .iter()
-            .copied()
-            .map(|token| tex_state::token::TracedTokenWord::pack(token, origin))
-            .collect();
-        let tokens = stores.finish_traced_token_list(&traced);
-        command.push_everypar(&stores.command_context(), tokens);
+    let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
+        command.output_open_context(stores),
+    );
+    crate::paragraph_end::start_paragraph(modes, stores, indent, &diagnostic_context)?;
+    if let Some(tokens) = stores
+        .token_parameter(TokParam::EVERY_PAR)
+        .expect("token parameter belongs to admitted state")
+    {
+        command.push_everypar(stores, tokens);
     }
     Ok(())
 }
@@ -1037,17 +1089,17 @@ pub(in crate::main_control) fn start_paragraph(
 /// (`is_outer_vertical`) then invokes `build_page`, matching §1099's `if
 /// nest_ptr=0 then build_page` (`\vadjust` never actually reaches this since
 /// it is forbidden in outer vertical mode).
-pub(in crate::main_control) fn finish_insert_or_adjust_group(
+pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
     class: u16,
     pre: bool,
     modes: &mut ModeNest,
-    stores: &mut Universe,
-    command: &mut CommandMachine<'_>,
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
     // TeX82 §§993/1100: an outer-vertical insertion invokes `build_page`
     // before main control fetches another command. Preserve this closing
     // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
-    let page_error_context = command.state.output_open_context(&stores.command_context());
+    let page_error_context = command.state.output_open_context(stores);
     crate::paragraph_end::end_paragraph_with_fuel(modes, stores, command.state, command.fuel)?;
     let split_top_skip = *stores.glue(stores.glue_param(GlueParam::SPLIT_TOP_SKIP));
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
@@ -1096,9 +1148,9 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group(
 /// Schedules an every-box list after replay has entered its scoped group and
 /// mode.  The immutable traced list is owned by command state, preserving the
 /// ordinary macro, recovery, retirement, and provenance path for hook tokens.
-pub(in crate::main_control) fn schedule_everybox(
-    command: &mut CommandState,
-    stores: &mut Universe,
+pub(in crate::main_control) fn schedule_everybox<G>(
+    command: &mut CommandState<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     horizontal: bool,
 ) {
     let parameter = if horizontal {
@@ -1106,26 +1158,13 @@ pub(in crate::main_control) fn schedule_everybox(
     } else {
         TokParam::EVERY_VBOX
     };
-    let tokens = stores.tok_param(parameter);
-    if stores.tokens(tokens).is_empty() {
+    let Some(tokens) = stores
+        .token_parameter(parameter)
+        .expect("token parameter belongs to admitted state")
+    else {
         return;
-    }
-    let tokens: Vec<_> = stores.tokens(tokens).to_vec();
-    let mut traced = tex_state::token::RootedTracedTokenBuffer::default();
-    for token in tokens {
-        let origin = stores.inserted_origin(
-            tex_state::provenance::InsertedOriginKind::TokenListReplay(if horizontal {
-                tex_state::TokenListReplayKind::EveryHBox
-            } else {
-                tex_state::TokenListReplayKind::EveryVBox
-            }),
-            token,
-            tex_state::token::OriginId::UNKNOWN,
-        );
-        traced.extend_archived([tex_state::token::TracedTokenWord::pack(token, origin)]);
-    }
-    let tokens = stores.finish_rooted_traced_token_list(&traced);
-    command.push_everybox(&stores.command_context(), tokens, horizontal);
+    };
+    command.push_everybox(stores, tokens, horizontal);
 }
 
 /// Runs TeX82 §774 `init_align`'s and §799 `fin_row`'s shared
@@ -1136,25 +1175,17 @@ pub(in crate::main_control) fn schedule_everybox(
 /// `\noalign{...}`. §785's `align_peek` itself never pushes it, and neither
 /// does §1133's `no_align_group` case of `handle_right_brace`, which reaches
 /// `align_peek` a second time after a `\noalign` body.
-pub(in crate::main_control) fn schedule_everycr(command: &mut CommandState, stores: &mut Universe) {
-    let tokens = stores.tok_param(TokParam::EVERY_CR);
-    if stores.tokens(tokens).is_empty() {
+pub(in crate::main_control) fn schedule_everycr<G>(
+    command: &mut CommandState<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
+) {
+    let Some(tokens) = stores
+        .token_parameter(TokParam::EVERY_CR)
+        .expect("token parameter belongs to admitted state")
+    else {
         return;
-    }
-    let tokens: Vec<_> = stores.tokens(tokens).to_vec();
-    let mut traced = tex_state::token::RootedTracedTokenBuffer::default();
-    for token in tokens {
-        let origin = stores.inserted_origin(
-            tex_state::provenance::InsertedOriginKind::TokenListReplay(
-                tex_state::TokenListReplayKind::EveryCr,
-            ),
-            token,
-            tex_state::token::OriginId::UNKNOWN,
-        );
-        traced.extend_archived([tex_state::token::TracedTokenWord::pack(token, origin)]);
-    }
-    let tokens = stores.finish_rooted_traced_token_list(&traced);
-    command.push_everycr(&stores.command_context(), tokens);
+    };
+    command.push_everycr(stores, tokens);
 }
 
 /// Runs TeX82 §1030 `main_control`'s prologue,
@@ -1166,33 +1197,20 @@ pub(in crate::main_control) fn schedule_everycr(command: &mut CommandState, stor
 /// started from a format image (where the parameter the format dumped is live
 /// at entry) from the INITEX job that built it and from a resumed timeline
 /// that already passed this point.
-pub(in crate::main_control) fn schedule_everyjob(
-    command: &mut CommandState,
-    stores: &mut Universe,
+pub(in crate::main_control) fn schedule_everyjob<G>(
+    command: &mut CommandState<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
 ) {
     let tokens = stores.take_pending_every_job();
-    if stores.tokens(tokens).is_empty() {
+    let Some(tokens) = tokens else {
         return;
-    }
-    let tokens: Vec<_> = stores.tokens(tokens).to_vec();
-    let mut traced = tex_state::token::RootedTracedTokenBuffer::default();
-    for token in tokens {
-        let origin = stores.inserted_origin(
-            tex_state::provenance::InsertedOriginKind::TokenListReplay(
-                tex_state::TokenListReplayKind::EveryJob,
-            ),
-            token,
-            tex_state::token::OriginId::UNKNOWN,
-        );
-        traced.extend_archived([tex_state::token::TracedTokenWord::pack(token, origin)]);
-    }
-    let tokens = stores.finish_rooted_traced_token_list(&traced);
-    command.push_everyjob(&stores.command_context(), tokens);
+    };
+    command.push_everyjob(stores, tokens);
 }
 
-pub(in crate::main_control) fn schedule_everymath(
-    command: &mut CommandState,
-    stores: &mut Universe,
+pub(in crate::main_control) fn schedule_everymath<G>(
+    command: &mut CommandState<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     display: bool,
 ) {
     let parameter = if display {
@@ -1200,19 +1218,13 @@ pub(in crate::main_control) fn schedule_everymath(
     } else {
         TokParam::EVERY_MATH
     };
-    let tokens = stores.tok_param(parameter);
-    if stores.tokens(tokens).is_empty() {
+    let Some(tokens) = stores
+        .token_parameter(parameter)
+        .expect("token parameter belongs to admitted state")
+    else {
         return;
-    }
-    let origin = stores.bootstrap_origin();
-    let traced: Vec<_> = stores
-        .tokens(tokens)
-        .iter()
-        .copied()
-        .map(|token| tex_state::token::TracedTokenWord::pack(token, origin))
-        .collect();
-    let tokens = stores.finish_traced_token_list(&traced);
-    command.push_everymath(&stores.command_context(), tokens, display);
+    };
+    command.push_everymath(stores, tokens, display);
 }
 
 /// A tex.web recoverable-error report that scanning detects but only the
@@ -1271,8 +1283,8 @@ impl PendingDiagnostic {
 }
 
 /// Prints each report a completed scan owes, in detection order.
-pub(in crate::main_control) fn report_pending_diagnostics(
-    stores: &mut Universe,
+pub(in crate::main_control) fn report_pending_diagnostics<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
     diagnostics: Vec<PendingDiagnostic>,
 ) -> Result<(), ExecError> {
     for diagnostic in diagnostics {
@@ -1353,7 +1365,7 @@ pub(in crate::main_control) fn report_pending_diagnostics(
                 tex_command::CommandSemanticDiagnostic::FontDimenUnavailable { font, context },
             ) => report_font_parameter_recovery(stores, font, context)?,
             PendingDiagnostic::PrefixOnNonPrefixedCommand(command, context, etex) => {
-                let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
+                let command = tex_command::print_cmd_chr_text(stores, command);
                 let mut report = stores.print_err("You can't use a prefix with `");
                 report.print(&command).print_char('\'');
                 report.help(if etex {
@@ -1365,7 +1377,7 @@ pub(in crate::main_control) fn report_pending_diagnostics(
                 report.error().jump_out()?;
             }
             PendingDiagnostic::IrrelevantLongOuterPrefix(command, context, etex) => {
-                let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
+                let command = tex_command::print_cmd_chr_text(stores, command);
                 let mut report = stores.print_err("You can't use `");
                 report.print_esc("long").print("' or `").print_esc("outer");
                 if etex {
@@ -1397,8 +1409,8 @@ pub(in crate::main_control) fn mode_text_for_command_trace(mode: Mode) -> &'stat
 }
 
 /// Reports TeX82 §1258's and §1259's illegal font-size recoveries.
-pub(in crate::main_control) fn report_font_size_recovery(
-    stores: &mut Universe,
+pub(in crate::main_control) fn report_font_size_recovery<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
     recovery: &tex_command::FontSizeRecovery,
 ) -> Result<(), ExecError> {
     match recovery {
@@ -1425,44 +1437,49 @@ pub(in crate::main_control) fn report_font_size_recovery(
 }
 
 /// TeX82 §1279's `token_show(def_ref)` into `new_string`.
-pub(in crate::main_control) fn message_text(
-    stores: &Universe,
-    tokens: tex_state::ids::TokenListId,
+pub(in crate::main_control) fn message_text<G>(
+    stores: &tex_state::CommandContext<'_, G>,
+    tokens: tex_state::TokenListId<G>,
 ) -> String {
     message_tokens_text(stores, tokens)
 }
 
-pub(in crate::main_control) fn message_tokens_text(
-    stores: &Universe,
-    tokens: tex_state::ids::TokenListId,
+pub(in crate::main_control) fn message_tokens_text<G>(
+    stores: &tex_state::CommandContext<'_, G>,
+    tokens: tex_state::TokenListId<G>,
 ) -> String {
     let mut text = String::new();
-    for &token in stores.tokens(tokens).iter() {
-        tex_state::token_show::append_token_string_text(stores, token, &mut text);
+    for &token in stores.token_list(tokens) {
+        tex_state::token_show::append_token_string_text(stores, token.token(), &mut text);
     }
     text
 }
 
 /// TeX82 §1297's `token_show(temp_head)` through the active selector.
 #[cfg(test)]
-pub(in crate::main_control) fn show_tokens_text(
-    stores: &Universe,
-    tokens: tex_state::ids::TokenListId,
+pub(in crate::main_control) fn show_tokens_text<G>(
+    stores: &tex_state::CommandContext<'_, G>,
+    tokens: tex_state::TokenListId<G>,
 ) -> String {
     show_tokens_tokens_text(stores, tokens)
 }
 
-pub(in crate::main_control) fn show_tokens_tokens_text(
-    stores: &Universe,
-    tokens: tex_state::ids::TokenListId,
+pub(in crate::main_control) fn show_tokens_tokens_text<G>(
+    stores: &tex_state::CommandContext<'_, G>,
+    tokens: tex_state::TokenListId<G>,
 ) -> String {
     let newlinechar = u32::try_from(stores.int_param(IntParam::NEWLINE_CHAR))
         .ok()
         .filter(|&code| code <= u8::MAX.into())
         .and_then(char::from_u32);
     let mut text = String::new();
-    for &token in stores.tokens(tokens).iter() {
-        tex_state::token_show::append_token_selector_text(stores, token, newlinechar, &mut text);
+    for &token in stores.token_list(tokens) {
+        tex_state::token_show::append_token_selector_text(
+            stores,
+            token.token(),
+            newlinechar,
+            &mut text,
+        );
     }
     text
 }
@@ -1505,7 +1522,10 @@ pub(in crate::main_control) fn render_showifs(
 }
 
 /// TeX82 §1280's `<Print string s on the terminal>`.
-pub(in crate::main_control) fn issue_terminal_message(stores: &mut Universe, text: &str) {
+pub(in crate::main_control) fn issue_terminal_message<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
+    text: &str,
+) {
     let mut printer = stores.printer();
     if printer.terminal_offset() + text.chars().count() > printer.max_print_line().saturating_sub(2)
     {
@@ -1517,14 +1537,16 @@ pub(in crate::main_control) fn issue_terminal_message(stores: &mut Universe, tex
 }
 
 /// TeX82 §1283's `<Print string s as an error message>`.
-pub(in crate::main_control) fn issue_error_message(
-    stores: &mut Universe,
+pub(in crate::main_control) fn issue_error_message<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
     text: &str,
     context: String,
 ) -> Result<(), ExecError> {
-    let err_help = stores.tok_param(TokParam::ERR_HELP);
-    let rendered = (!stores.tokens(err_help).is_empty()).then(|| message_text(stores, err_help));
-    let interactive = stores.interaction_mode() == tex_state::InteractionMode::ErrorStop;
+    let err_help = stores
+        .token_parameter(TokParam::ERR_HELP)
+        .expect("token parameter belongs to admitted state");
+    let rendered = err_help.map(|tokens| message_text(stores, tokens));
+    let interactive = stores.interaction_mode_value() == 3;
     let long_help_seen = stores
         .world_mut()
         .error_channel_mut()
@@ -1558,8 +1580,8 @@ pub(in crate::main_control) fn issue_error_message(
 /// fallback -- a number at or below zero, a number past the font's table when
 /// the font is not the last one loaded, or a capacity bound -- so all of them
 /// report the same §579 message and leave the font untouched.
-pub(in crate::main_control) fn report_font_parameter_recovery(
-    stores: &mut Universe,
+pub(in crate::main_control) fn report_font_parameter_recovery<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
     font: tex_state::ids::FontId,
     context: String,
 ) -> Result<(), ExecError> {
@@ -1587,8 +1609,8 @@ pub(in crate::main_control) fn report_font_parameter_recovery(
 }
 
 /// Returns TeX82 §1257's string `t` for a new font definition.
-pub(in crate::main_control) fn font_identifier_for_definition(
-    stores: &mut Universe,
+pub(in crate::main_control) fn font_identifier_for_definition<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
     target: Symbol,
 ) -> SymbolId {
     let (text, always_retained) = match stores.control_sequence_kind(target) {
