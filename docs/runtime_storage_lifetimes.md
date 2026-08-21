@@ -314,6 +314,17 @@ successful detachment, the page root is removed and its mode/page storage is
 dropped or returned to a bounded scratch pool. Published output retains no
 node id, arena owner, generation owner, or engine borrow.
 
+Rendered-source demand is the only path that invokes
+`ArtifactSourceResolver::detach_artifact_source(OriginId) ->
+Option<ArtifactSourceRecipe>`; the resolver validates the live coordinate and
+returns an owned recipe before publication. Successful page publication may
+also invoke
+`ShipoutGeometrySink::committed_shipout_geometry(ShipoutGeometry)`. That value
+contains only detached dimensions and count-register values. Main control may
+attach live source or line attribution only while forwarding it across the
+explicit observer boundary; shipout and committed artifacts never retain that
+attribution.
+
 ## Source identity and provenance
 
 Source identity has a lifetime distinct from tokens and definitions. Immutable

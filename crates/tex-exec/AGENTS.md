@@ -53,8 +53,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/box_runtime/`: source-free box-register, material, packing, migration, horizontal contribution, shaping, spacing, indentation, whatsit, leader, and list-commit operations.
 - `src/paragraph_end.rs` and `src/paragraph_end/`: typed paragraph completion, hyphenation, line materialization, packing, migration, contribution, diagnostics, and pretolerance memoization.
 - `src/output_provenance.rs` and `src/output_provenance/tests.rs`: explicitly
-  budgeted stable diagnostic provenance recipes for detached shipout
-  artifacts and focused admission controls.
+  demand-selected, budgeted `ArtifactSourceResolver` inversion for copying
+  live node origins into artifact-owned `ArtifactSourceRecipe` values, plus
+  focused proof that unrequested provenance performs no resolution.
 - `src/page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state.
 - `src/shipout.rs` and `src/shipout/`: typed page/PDF-form staging, direct
   canonical artifact emission, normalization, lowering, fresh-shipout DVI
@@ -64,8 +65,17 @@ Command operands are scanned by `tex-command` into typed request and result valu
   releases the exact page-arena closure; failed staging truncates only its
   speculative suffix so aggregate rollback can restore the original roots.
   Artifact effect sidecars use DTO-local `ArtifactEffectOrdinal` values;
-  runtime `EffectPos` cursors remain inside the live World transaction.
-- `src/diagnostics.rs`, `src/error.rs`, and `src/error_report.rs`: canonical error identity, provenance, rendering, recovery reporting, and fatal propagation. `ExecError::Fatal` is TeX82 §81's non-local exit and only main control may catch it.
+  runtime `EffectPos` cursors remain inside the live World transaction. A
+  successful page publication emits `ShipoutGeometry` through
+  `ShipoutGeometrySink::committed_shipout_geometry`; the DTO contains only
+  detached dimensions and counts, and live observer attribution is attached
+  by main control after the callback crosses that explicit boundary.
+- `src/diagnostics.rs`, `src/error.rs`, and `src/error_report.rs`: canonical
+  error identity, provenance, rendering, recovery reporting, and fatal
+  propagation. Context needed after a command borrow ends is passed as an
+  owned rendered string, never recovered from a retained input/source handle.
+  `ExecError::Fatal` is TeX82 §81's non-local exit and only main control may
+  catch it.
 - `src/align/`: source-free alignment completion, packaging, and width resolution.
 - `src/math/`: source-free math validation, mlist lowering, and display packaging.
 - `src/math/display/prototype.rs`: e-TeX saved display-line prototype and
