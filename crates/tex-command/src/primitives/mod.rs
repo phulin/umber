@@ -20,6 +20,7 @@ pub use generated::{
     primitive_observation_identity, primitive_registrations, render_primitive_documentation_table,
     special_primitive_views,
 };
+pub(crate) use parameters::fresh_parameter_defaults;
 pub use parameters::{PrimitiveParameterView, primitive_parameter_views};
 pub(crate) use prefixed::is_prefixed_command;
 pub use prefixed::is_prefixed_command as exceeds_max_non_prefixed_command;

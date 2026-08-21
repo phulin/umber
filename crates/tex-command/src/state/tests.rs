@@ -20,9 +20,9 @@ fn word(ch: char) -> TracedTokenWord {
 fn glue(width: i32) -> GlueSpec {
     GlueSpec {
         width: Scaled::from_raw(width),
-        stretch: Scaled::ZERO,
+        stretch: Scaled::from_raw(0),
         stretch_order: Order::Normal,
-        shrink: Scaled::ZERO,
+        shrink: Scaled::from_raw(0),
         shrink_order: Order::Normal,
     }
 }
