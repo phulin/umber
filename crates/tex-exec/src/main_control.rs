@@ -1823,7 +1823,7 @@ impl<G> MainControl<G> {
         };
         stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let resource = match &mut request {
-            InputStreamRequest::Open { file_name, .. } => {
+            RootedInputStreamRequest::Open { file_name, .. } => {
                 // tex.web §1275: `if cur_ext="" then cur_ext:=".tex";
                 // pack_cur_name`. The packed name is what is opened, so it is
                 // written back into the request rather than recomputed.
@@ -1855,7 +1855,7 @@ impl<G> MainControl<G> {
                     }
                 }
             }
-            InputStreamRequest::Close { .. } | InputStreamRequest::Read { .. } => None,
+            RootedInputStreamRequest::Close { .. } | RootedInputStreamRequest::Read { .. } => None,
         };
         Ok(ColdOperation::<G>::InputStream { request, resource })
     }
@@ -1871,18 +1871,31 @@ impl<G> MainControl<G> {
         stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         // pdfTeX checks \pdfoutput before it enters `scan_image`; in DVI
         // mode this must be the diagnostic, not a host-resource suspension.
-        if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
+        let mut context = stores.command_context().expect("live generation");
+        if context.int_param(IntParam::PDF_OUTPUT) <= 0 {
             return Ok(ColdOperation::<G>::PdfXImage {
                 request,
                 resource: PdfImageResource::Unavailable,
             });
         }
-        apply_pdf_image_compatibility_policy(stores);
-        request.page_box = pdf_image_page_box(stores, &request);
-        let Some(resource) = self.capabilities.pdf_image(&request) else {
+        apply_pdf_image_compatibility_policy(&mut context);
+        request.page_box = pdf_image_page_box(&context, &request);
+        drop(context);
+        let host_request = PdfImageRequest {
+            name: request.name.clone(),
+            width: request.width,
+            height: request.height,
+            depth: request.depth,
+            page: request.page,
+            color_space_object: request.color_space_object,
+            page_box: request.page_box,
+            page_box_explicit: request.page_box_explicit,
+            attr: request.attr,
+        };
+        let Some(resource) = self.capabilities.pdf_image(&host_request) else {
             return Err(Box::new(UnavailablePreparedResource::<G> {
                 error: ExecError::MissingPdfImage {
-                    request: request.clone(),
+                    request: host_request,
                 },
                 scanned: Box::new(ColdOperation::<G>::PdfXImage {
                     request,
@@ -2232,17 +2245,24 @@ impl<G> MainControl<G> {
     /// frees the would-be node, and jumps straight back to `big_switch`. With
     /// `\nullfont` selected -- §552 gives it `font_bc=1`, `font_ec=0`, so no
     /// character at all exists -- that is every character in the document.
-    fn resume_main_control_parking(&mut self, parking: MainControlParking, stores: &Universe<G>) {
+    fn resume_main_control_parking(
+        &mut self,
+        parking: MainControlParking,
+        stores: &mut Universe<G>,
+    ) {
         if parking.resumes_interrupted_fetch {
             return;
         }
+        let context = stores.command_context().expect("live generation");
         self.main_loop_active = parking.character.is_some_and(|character| {
             matches!(
                 self.modes.current_mode(),
                 Mode::Horizontal | Mode::RestrictedHorizontal
-            ) && stores
-                .font(stores.current_font())
-                .character_exists(character)
+            ) && u8::try_from(u32::from(character)).ok().is_some_and(|code| {
+                context
+                    .font_char_metrics(context.current_font(), code)
+                    .is_some()
+            })
         });
     }
 
@@ -2262,8 +2282,10 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         error: ExecError,
     ) -> Result<StepResult, ExecError> {
-        let error =
-            error.freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
+        let error = {
+            let mut context = stores.command_context().expect("live generation");
+            error.freeze_diagnostic_origin(&mut context, self.command.diagnostic_input_context(8))
+        };
         if let Some(fatal) = error.as_fatal() {
             let context = self
                 .command
