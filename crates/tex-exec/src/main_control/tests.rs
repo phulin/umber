@@ -52,6 +52,139 @@ fn allocate_tokens<G>(stores: &mut Universe<G>, tokens: &[Token]) -> tex_state::
         .expect("test token-list allocation")
 }
 
+#[test]
+fn fresh_initex_installs_canonical_parameters_and_clock_before_execution() {
+    let clock = tex_state::JobClock {
+        time: 13 * 60 + 37,
+        second: 11,
+        day: 21,
+        month: 8,
+        year: 2026,
+    };
+    crate::test_harness::with_world_universe(
+        tex_state::World::memory_with_clock(clock),
+        |stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            admitted!(stores, |context| {
+                assert_eq!(context.int_param(IntParam::TOLERANCE), 10_000);
+                assert_eq!(context.int_param(IntParam::MAG), 1_000);
+                assert_eq!(context.int_param(IntParam::ESCAPE_CHAR), i32::from(b'\\'));
+                assert_eq!(context.int_param(IntParam::END_LINE_CHAR), i32::from(b'\r'));
+                assert_eq!(context.int_param(IntParam::NEWLINE_CHAR), 0);
+                assert_eq!(context.int_param(IntParam::MAX_DEAD_CYCLES), 25);
+                assert_eq!(context.int_param(IntParam::HANG_AFTER), 1);
+            });
+            let widths = stores.error_context_widths();
+            assert_eq!(widths.error_line(), 79);
+            assert_eq!(widths.half_error_line(), 50);
+            assert_eq!(widths.max_print_line(), 79);
+
+            admitted!(stores, |context| context
+                .assign_int_param(IntParam::MAG, 1_200, tex_state::AssignmentScope::Global)
+                .expect("plain prelude magnification"));
+            tex_command::install_tex82_expandable_primitives(stores);
+            crate::install_unexpandable_primitives(stores);
+            admitted!(stores, |context| assert_eq!(
+                context.int_param(IntParam::MAG),
+                1_200,
+                "repeat profile installation cannot overwrite a Plain assignment"
+            ));
+
+            control.begin_job(stores, "defaults.tex");
+            admitted!(stores, |context| {
+                assert_eq!(context.int_param(IntParam::TIME), clock.time);
+                assert_eq!(context.int_param(IntParam::DAY), clock.day);
+                assert_eq!(context.int_param(IntParam::MONTH), clock.month);
+                assert_eq!(context.int_param(IntParam::YEAR), clock.year);
+            });
+        },
+    );
+}
+
+#[test]
+fn restored_profile_registration_preserves_format_parameters_except_clock() {
+    let clock = tex_state::JobClock {
+        time: 719,
+        second: 3,
+        day: 22,
+        month: 8,
+        year: 2031,
+    };
+    crate::test_harness::with_world_universe(
+        tex_state::World::memory_with_clock(clock),
+        |stores| {
+            let pages_attr = allocate_tokens(
+                stores,
+                &[Token::Char {
+                    ch: 'x',
+                    cat: Catcode::Other,
+                }],
+            );
+            admitted!(stores, |context| {
+                for (parameter, value) in [
+                    (IntParam::MAG, 1_200),
+                    (IntParam::ESCAPE_CHAR, i32::from(b'!')),
+                    (IntParam::PDF_COMPRESS_LEVEL, 2),
+                ] {
+                    context
+                        .assign_int_param(parameter, value, tex_state::AssignmentScope::Global)
+                        .expect("restored integer parameter");
+                }
+                context
+                    .assign_dimen_param(
+                        tex_state::env::banks::DimenParam::PDF_H_ORIGIN,
+                        Scaled::from_raw(123),
+                        tex_state::AssignmentScope::Global,
+                    )
+                    .expect("restored PDF origin");
+                context
+                    .assign_token_parameter(
+                        tex_state::env::banks::TokParam::PDF_PAGES_ATTR,
+                        Some(pages_attr),
+                        tex_state::AssignmentScope::Global,
+                    )
+                    .expect("restored PDF token parameter");
+            });
+
+            tex_command::register_tex82_expandable_primitives(stores);
+            crate::register_unexpandable_primitives(stores);
+            tex_command::register_etex_expandable_primitives(stores);
+            crate::register_etex_unexpandable_primitives(stores);
+            tex_command::register_pdftex_expandable_primitives(stores);
+            tex_command::register_pdftex_unexpandable_primitives(stores);
+            let mut control = MainControl::with_profile(CommandProfile::PDFTEX14029);
+            control.set_preloaded_format(crate::PreloadedFormat {
+                dump_name: "plain".to_owned(),
+                format_name: "plain".to_owned(),
+                year: 2026,
+                month: 8,
+                day: 21,
+            });
+            control.begin_job(stores, "restored.tex");
+
+            admitted!(stores, |context| {
+                assert_eq!(context.int_param(IntParam::MAG), 1_200);
+                assert_eq!(context.int_param(IntParam::ESCAPE_CHAR), i32::from(b'!'));
+                assert_eq!(context.int_param(IntParam::PDF_COMPRESS_LEVEL), 2);
+                assert_eq!(
+                    context.dimen_param(tex_state::env::banks::DimenParam::PDF_H_ORIGIN),
+                    Scaled::from_raw(123)
+                );
+                assert_eq!(
+                    context
+                        .token_parameter(tex_state::env::banks::TokParam::PDF_PAGES_ATTR)
+                        .expect("PDF token parameter"),
+                    Some(pages_attr)
+                );
+                assert_eq!(context.int_param(IntParam::TIME), clock.time);
+                assert_eq!(context.int_param(IntParam::DAY), clock.day);
+                assert_eq!(context.int_param(IntParam::MONTH), clock.month);
+                assert_eq!(context.int_param(IntParam::YEAR), clock.year);
+            });
+        },
+    );
+}
+
 fn font_by_name<G>(stores: &mut Universe<G>, name: &str) -> FontId {
     admitted!(stores, |context| {
         let symbol = context.intern_control_sequence(name);

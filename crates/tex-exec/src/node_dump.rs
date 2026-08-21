@@ -1366,8 +1366,29 @@ mod unset_diagnostic_tests {
         test: impl for<'id> FnOnce(&mut CommandContext<'_, tex_state::GenerationBrand<'id>>) -> R,
     ) -> R {
         crate::test_harness::with_universe(|universe| {
+            tex_command::install_tex82_expandable_primitives(universe);
+            crate::install_unexpandable_primitives(universe);
             crate::test_harness::with_admitted(universe, test)
         })
+    }
+
+    #[test]
+    fn fresh_profile_prints_node_names_with_tex82_escape_character() {
+        with_context(|context| {
+            assert_eq!(context.int_param(IntParam::ESCAPE_CHAR), i32::from(b'\\'));
+            assert_eq!(
+                dump_node_slice(
+                    context,
+                    &[Node::Penalty(50)],
+                    DumpConfig {
+                        breadth: 5,
+                        depth: 0,
+                        profile: CommandProfile::TEX82,
+                    },
+                ),
+                "\\penalty 50\n"
+            );
+        });
     }
 
     fn set_escape<G>(context: &mut CommandContext<'_, G>, value: i32) {

@@ -369,6 +369,13 @@ pub(crate) fn begin_job_with_terminal_banner<G>(
         return;
     }
     job.started = true;
+    // tex.web §241 runs `fix_date_and_time` for both fresh INITEX and a
+    // preloaded/restored format before the first line is tokenized. The
+    // restored dense bank remains authoritative except for these four
+    // explicitly volatile cells.
+    stores
+        .refresh_job_clock_parameters()
+        .expect("job framing requires a live generation");
     // §537's `a_make_name_string`-derived `\jobname` reuses tex.web's own
     // stem derivation rather than re-deriving it here; see
     // `CommandHostCapabilities::set_startup_job_name`.
