@@ -55,9 +55,10 @@ pub(crate) fn break_current_paragraph<G>(
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
     reset_paragraph: bool,
     diagnostic_context: crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
-    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
+    flush_pending_hchars_with_fuel(nest, stores, diagnostic_effects, fuel)?;
     let active_directions = active_text_directions(nest.current_list().nodes());
     let mut params = snapshot_paragraph_params(nest, stores);
     {
@@ -72,10 +73,14 @@ pub(crate) fn break_current_paragraph<G>(
         kind: GlueKind::ParFillSkip,
         leader: None,
     });
-    let mut level = commit_current_list(nest, stores, fuel)?;
+    let mut level = commit_current_list(nest, stores, diagnostic_effects, fuel)?;
     let paragraph_diagnostic_context = diagnostic_context.with_pack_begin_line(level.entry_line());
-    let mut hlist =
-        crate::math::finish_math_lists_owned(stores, level.list_mutation().take_nodes(), true);
+    let mut hlist = crate::math::finish_math_lists_owned(
+        stores,
+        diagnostic_effects,
+        level.list_mutation().take_nodes(),
+        true,
+    );
     let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
     normalize_paragraph_infinite_shrink(
         stores,
@@ -83,6 +88,7 @@ pub(crate) fn break_current_paragraph<G>(
         &mut hlist,
         tracing,
         &diagnostic_context,
+        diagnostic_effects,
     )?;
     let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {
@@ -94,11 +100,18 @@ pub(crate) fn break_current_paragraph<G>(
     let (mut decisions, trace, missing_hyphens) =
         break_hlist_with_trace(stores, hlist, line_params, fuel, tracing)?;
     if tracing {
-        report_line_break_trace(stores, decisions.tape.nodes(), &trace, &missing_hyphens);
+        report_line_break_trace(
+            stores,
+            diagnostic_effects,
+            decisions.tape.nodes(),
+            &trace,
+            &missing_hyphens,
+        );
     } else {
         for warning in missing_hyphens {
             crate::diagnostics::report_missing_character_warning(
                 stores,
+                diagnostic_effects,
                 warning.font,
                 warning.ch,
                 false,
@@ -170,6 +183,7 @@ pub(crate) fn break_current_paragraph<G>(
         }
         let line = hpack_owned_with_overfull_rule(
             stores,
+            diagnostic_effects,
             &paragraph_diagnostic_context,
             &mut broken.nodes,
             needs_physical_diagnostic.then_some(&mut diagnostic_nodes),
@@ -187,7 +201,7 @@ pub(crate) fn break_current_paragraph<G>(
             append_migrated_contribution(nest, stores, node);
         }
         let line_node = Node::HList(line);
-        append_node_to_current_list(nest, stores, line_node, fuel)?;
+        append_node_to_current_list(nest, stores, diagnostic_effects, line_node, fuel)?;
         for node in migrated.drain(..) {
             append_migrated_contribution(nest, stores, node);
         }
@@ -210,6 +224,7 @@ pub(crate) fn break_current_paragraph<G>(
     crate::vertical::build_page_if_outer_vertical_with_error_context(
         nest,
         stores,
+        diagnostic_effects,
         &diagnostic_context.output_context,
     )?;
     Ok(ParagraphBreakResult {
@@ -304,6 +319,7 @@ fn normalize_paragraph_infinite_shrink<G>(
     nodes: &mut [Node],
     tracing: bool,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_effects: &mut DiagnosticEffects,
 ) -> Result<(), ExecError> {
     let mut reported = false;
     let mut normalize = |spec: &mut tex_state::glue::GlueSpec| -> Result<(), ExecError> {
@@ -317,7 +333,7 @@ fn normalize_paragraph_infinite_shrink<G>(
                 // diagnostic with `end_diagnostic(true)` before `print_err`.
                 // Umber materializes the detached trace later, but must keep
                 // this print-channel boundary at the recovery point.
-                stores.begin_diagnostic().end(true);
+                stores.begin_diagnostic(diagnostic_effects).end(true);
             }
             crate::diagnostics::report_paragraph_infinite_shrinkage(stores, diagnostic_context)?;
             reported = true;
@@ -555,6 +571,7 @@ fn break_hlist_with_trace<G>(
 
 fn report_line_break_trace<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     nodes: &[Node],
     trace: &[LineBreakTrace],
     missing_hyphens: &[super::hyphenation::MissingHyphenDiagnostic],
@@ -594,7 +611,7 @@ fn report_line_break_trace<G>(
             _ => (None, None),
         })
         .collect::<Vec<_>>();
-    let mut diagnostic = stores.begin_diagnostic();
+    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     let mut next_warning = 0;
     for (event, (rendered_display, rendered_suffix)) in trace.iter().zip(rendered_trace) {
         if let LineBreakTrace::Feasible { display, .. } = event {
@@ -935,6 +952,7 @@ pub(crate) fn normal_paragraph<G>(_nest: &mut ModeNest, stores: &mut CommandCont
 pub(crate) fn start_paragraph<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     indent: bool,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
@@ -955,6 +973,7 @@ pub(crate) fn start_paragraph<G>(
                 crate::vertical::build_page_if_outer_vertical_with_error_context(
                     nest,
                     stores,
+                    diagnostic_effects,
                     &diagnostic_context.output_context,
                 )?;
             }
@@ -964,7 +983,13 @@ pub(crate) fn start_paragraph<G>(
                 .set_hyphen_context(language, left, right);
             if indent {
                 let mut fuel = tex_command::CommandFuelLedger::default();
-                crate::box_runtime::indent_in_hmode(nest, stores, true, fuel.fuel_mut())?;
+                crate::box_runtime::indent_in_hmode(
+                    nest,
+                    stores,
+                    diagnostic_effects,
+                    true,
+                    fuel.fuel_mut(),
+                )?;
             }
             Ok(())
         }
@@ -986,6 +1011,7 @@ fn glue_parameter_value<G>(stores: &CommandContext<'_, G>, parameter: GlueParam)
         .glue_param(parameter)
         .map_or(GlueSpec::ZERO, |id| stores.glue(id))
 }
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::font::PdfFontCode;
 use tex_state::glue::{GlueSpec, Order};

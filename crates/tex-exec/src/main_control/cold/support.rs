@@ -648,6 +648,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             let diagnostic_context = command_diagnostic_context(command, stores);
             let node = crate::box_runtime::split_vbox_register(
                 stores,
+                command.diagnostic_effects,
                 &diagnostic_context,
                 split.index,
                 split.height,
@@ -856,9 +857,20 @@ pub(in crate::main_control) fn append_shifted_box<G>(
         return Ok(());
     };
     crate::box_runtime::apply_box_shift_delta(&mut node, delta)?;
-    crate::box_runtime::append_box_node_to_current_list(modes, stores, node, command.fuel)?;
+    crate::box_runtime::append_box_node_to_current_list(
+        modes,
+        stores,
+        command.diagnostic_effects,
+        node,
+        command.fuel,
+    )?;
     let error_context = command.state.output_open_context(stores);
-    crate::vertical::build_page_if_outer_vertical_with_error_context(modes, stores, &error_context)
+    crate::vertical::build_page_if_outer_vertical_with_error_context(
+        modes,
+        stores,
+        command.diagnostic_effects,
+        &error_context,
+    )
 }
 
 pub(in crate::main_control) fn apply_scanned_rule<G>(
@@ -883,6 +895,7 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
+                    command.diagnostic_effects,
                     diagnostic_context,
                     command.fuel,
                 )?;
@@ -917,7 +930,13 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
             modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            start_paragraph(command.state, modes, stores, true)?;
+            start_paragraph(
+                command.state,
+                modes,
+                stores,
+                command.diagnostic_effects,
+                true,
+            )?;
         }
         // TeX82 §1054 reaches `append_rule` only after main_control has
         // finished the current word. Materialize Umber's pending character
@@ -959,6 +978,7 @@ pub(in crate::main_control) struct AccentPlacement {
 pub(in crate::main_control) fn apply_accent_nodes<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     etex_extended: bool,
     placement: AccentPlacement,
 ) -> Result<ReplayStep, ExecError> {
@@ -981,6 +1001,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
         let Some(metrics) = stores.font_char_metrics(base_font, character) else {
             crate::diagnostics::report_missing_character_warning(
                 stores,
+                diagnostic_effects,
                 base_font,
                 char::from(character),
                 etex_extended,
@@ -1122,12 +1143,19 @@ pub(in crate::main_control) fn start_paragraph<G>(
     command: &mut CommandState<G>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     indent: bool,
 ) -> Result<(), ExecError> {
     let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
         command.output_open_context(stores),
     );
-    crate::paragraph_end::start_paragraph(modes, stores, indent, &diagnostic_context)?;
+    crate::paragraph_end::start_paragraph(
+        modes,
+        stores,
+        diagnostic_effects,
+        indent,
+        &diagnostic_context,
+    )?;
     if let Some(tokens) = stores
         .token_parameter(TokParam::EVERY_PAR)
         .expect("token parameter belongs to admitted state")
@@ -1180,6 +1208,7 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
     crate::paragraph_end::end_paragraph_with_fuel(
         modes,
         stores,
+        command.diagnostic_effects,
         diagnostic_context.clone(),
         command.fuel,
     )?;
@@ -1245,6 +1274,7 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
     crate::vertical::build_page_if_outer_vertical_with_error_context(
         modes,
         stores,
+        command.diagnostic_effects,
         &page_error_context,
     )?;
     Ok(ReplayStep::Continue)

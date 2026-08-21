@@ -1,4 +1,5 @@
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{KernKind, Node};
@@ -17,10 +18,19 @@ pub(crate) fn execute_scanned_unbox_with_error_context<G>(
     index: u16,
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {
-    execute_scanned_unbox_impl(primitive, index, nest, stores, fuel, error_context)
+    execute_scanned_unbox_impl(
+        primitive,
+        index,
+        nest,
+        stores,
+        diagnostic_effects,
+        fuel,
+        error_context,
+    )
 }
 
 fn execute_scanned_unbox_impl<G>(
@@ -28,6 +38,7 @@ fn execute_scanned_unbox_impl<G>(
     index: u16,
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {
@@ -64,7 +75,7 @@ fn execute_scanned_unbox_impl<G>(
         // by the current page arena while they are spliced into the mode list.
         stores.clear_box_preserving_level(index);
     }
-    append_unboxed(nest, stores, Some(children), fuel)
+    append_unboxed(nest, stores, diagnostic_effects, Some(children), fuel)
 }
 
 /// Splices one of e-TeX 2.6 `etex.ch` [45.999]'s saved vertical-discard
@@ -77,6 +88,7 @@ pub(crate) fn execute_scanned_saved_vertical_discards<G>(
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let nodes = match primitive {
@@ -84,7 +96,7 @@ pub(crate) fn execute_scanned_saved_vertical_discards<G>(
         UnexpandablePrimitive::SplitDiscards => stores.take_split_discards(),
         _ => unreachable!("caller restricts saved vertical-discard primitives"),
     };
-    flush_pending_hchars(nest, stores, fuel)?;
+    flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
     for node in nodes {
         if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
             append_vertical_contribution(nest, stores, node);
@@ -100,9 +112,10 @@ pub(crate) fn execute_delete_last<G>(
     error_context: String,
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    flush_pending_hchars(nest, stores, fuel)?;
+    flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
     if is_outer_vertical(nest) {
         execute_delete_last_outer_vertical(primitive, &error_context, stores)?;
         return Ok(());
@@ -224,6 +237,7 @@ fn report_cannot_delete_from_page<G>(
 pub(crate) fn append_box_node_to_current_list<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     mut node: Node,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -245,7 +259,7 @@ pub(crate) fn append_box_node_to_current_list<G>(
     for node in pre_migrated {
         append_vertical_contribution(nest, stores, node);
     }
-    append_node_to_current_list(nest, stores, node, fuel)?;
+    append_node_to_current_list(nest, stores, diagnostic_effects, node, fuel)?;
     for node in migrated {
         append_vertical_contribution(nest, stores, node);
     }
@@ -321,13 +335,14 @@ pub(crate) fn split_hpack_migrations<G>(
 fn append_unboxed<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     source: Option<tex_state::node_arena::PageListId>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let Some(children) = source else {
         return Ok(());
     };
-    flush_pending_hchars(nest, stores, fuel)?;
+    flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
     // pdfTeX's margin-kern nodes are line-breaking annotations owned by the
     // containing packed line. Copying the box preserves them, but either
     // unboxing primitive removes them while splicing the remaining children;

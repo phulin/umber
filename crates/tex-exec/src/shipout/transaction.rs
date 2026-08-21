@@ -1,3 +1,4 @@
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::{Node, NodeKind};
 use tex_state::node_arena::{NodeRef, PageListId};
@@ -75,6 +76,7 @@ pub(crate) fn shipout_node<G>(
     origin: ShipoutOrigin,
     pending_effect_end: usize,
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     source_resolver: &dyn crate::output_provenance::ArtifactSourceResolver,
     provenance_demand: tex_state::ProvenanceDemand,
     provenance_budget_bytes: usize,
@@ -115,6 +117,7 @@ pub(crate) fn shipout_node<G>(
         }
         report_huge_page_deleted_box(
             stores,
+            diagnostic_effects,
             page_root,
             stores.int_param(IntParam::TRACING_OUTPUT),
         );
@@ -231,6 +234,7 @@ pub(crate) fn shipout_node<G>(
         origin,
         pending_effect_end,
         &mut transaction,
+        diagnostic_effects,
         source_resolver,
         provenance_demand,
         provenance_budget_bytes,
@@ -342,6 +346,7 @@ fn release_published_page<G>(
 /// before its caller prints the closing page marker.
 fn report_huge_page_deleted_box<G>(
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     page_root: PageListId,
     tracing_output: i32,
 ) {
@@ -354,7 +359,7 @@ fn report_huge_page_deleted_box<G>(
         page_root,
         crate::node_dump::DumpConfig::read(&command),
     );
-    let mut diagnostic = command.begin_diagnostic();
+    let mut diagnostic = command.begin_diagnostic(diagnostic_effects);
     diagnostic
         .print_nl("The following box has been deleted:")
         .print_ln()
@@ -367,6 +372,7 @@ pub(crate) fn stage_page<G>(
     origin: ShipoutOrigin,
     pending_effect_end: usize,
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     source_resolver: &dyn crate::output_provenance::ArtifactSourceResolver,
     provenance_demand: tex_state::ProvenanceDemand,
     provenance_budget_bytes: usize,
@@ -380,6 +386,7 @@ pub(crate) fn stage_page<G>(
         origin,
         pending_effect_end,
         stores,
+        diagnostic_effects,
         source_resolver,
         provenance_demand,
         provenance_budget_bytes,
@@ -393,10 +400,17 @@ pub(crate) fn stage_page<G>(
 pub(crate) fn stage_form<G>(
     form: tex_state::PdfFormRecord<G>,
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     write_expander: &mut WriteReplayHost<'_, G>,
     replay_expander: &mut TextReplayHost<'_, G>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    direct::stage_form(form, stores, write_expander, replay_expander)
+    direct::stage_form(
+        form,
+        stores,
+        diagnostic_effects,
+        write_expander,
+        replay_expander,
+    )
 }
 
 fn shipout_geometry<G>(node: &Node, stores: &mut Universe<G>) -> Option<ShipoutGeometry> {

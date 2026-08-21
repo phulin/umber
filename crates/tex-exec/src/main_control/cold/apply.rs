@@ -311,7 +311,13 @@ pub(in crate::main_control) fn apply<G>(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_paragraph(command.state, modes, stores, true)?;
+                start_paragraph(
+                    command.state,
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    true,
+                )?;
             }
             crate::box_runtime::flush_pending_hchars_with_fuel(
                 modes,
@@ -370,6 +376,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::vertical::build_page_if_outer_vertical_with_error_context(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 &error_context,
             )?;
             Ok(ReplayStep::Continue)
@@ -380,6 +387,7 @@ pub(in crate::main_control) fn apply<G>(
                 context,
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
             )?;
             Ok(ReplayStep::Continue)
@@ -434,6 +442,7 @@ pub(in crate::main_control) fn apply<G>(
                     crate::box_runtime::append_italic_correction_with_fuel(
                         modes,
                         stores,
+                        command.diagnostic_effects,
                         command.fuel,
                     )?;
                 }
@@ -492,6 +501,7 @@ pub(in crate::main_control) fn apply<G>(
                 crate::box_runtime::flush_pending_hchars_without_right_boundary(
                     modes,
                     stores,
+                    command.diagnostic_effects,
                     command.fuel,
                 )?;
             }
@@ -531,7 +541,13 @@ pub(in crate::main_control) fn apply<G>(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_paragraph(command.state, modes, stores, true)?;
+                start_paragraph(
+                    command.state,
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    true,
+                )?;
             }
             modes
                 .current_list_mutation()
@@ -539,6 +555,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_character_with_fuel(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 ch,
                 origin,
                 command.state.profile() == CommandProfile::ETEX26,
@@ -560,10 +577,17 @@ pub(in crate::main_control) fn apply<G>(
                     });
                 }
                 Mode::Vertical | Mode::InternalVertical => {
-                    start_paragraph(command.state, modes, stores, true)?;
+                    start_paragraph(
+                        command.state,
+                        modes,
+                        stores,
+                        command.diagnostic_effects,
+                        true,
+                    )?;
                     crate::box_runtime::append_control_space_with_fuel(
                         modes,
                         stores,
+                        command.diagnostic_effects,
                         command.fuel,
                     )?;
                 }
@@ -571,6 +595,7 @@ pub(in crate::main_control) fn apply<G>(
                     crate::box_runtime::append_control_space_with_fuel(
                         modes,
                         stores,
+                        command.diagnostic_effects,
                         command.fuel,
                     )?;
                 }
@@ -677,7 +702,13 @@ pub(in crate::main_control) fn apply<G>(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_paragraph(command.state, modes, stores, true)?;
+                start_paragraph(
+                    command.state,
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    true,
+                )?;
             }
             crate::box_runtime::flush_pending_hchars_with_fuel(
                 modes,
@@ -704,6 +735,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_node_to_current_list(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 Node::Glue {
                     spec: value,
                     kind: GlueKind::Normal,
@@ -720,6 +752,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_node_to_current_list(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 Node::Glue {
                     spec,
                     kind: GlueKind::Normal,
@@ -741,9 +774,21 @@ pub(in crate::main_control) fn apply<G>(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_paragraph(command.state, modes, stores, indent)?;
+                start_paragraph(
+                    command.state,
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    indent,
+                )?;
             } else {
-                crate::box_runtime::indent_in_hmode(modes, stores, indent, command.fuel)?;
+                crate::box_runtime::indent_in_hmode(
+                    modes,
+                    stores,
+                    command.diagnostic_effects,
+                    indent,
+                    command.fuel,
+                )?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -1455,6 +1500,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 Whatsit::PdfRefXImage {
                     object: image.id().raw(),
@@ -1484,6 +1530,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 Whatsit::PdfAccessibility(control),
             )?;
@@ -1500,6 +1547,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 Whatsit::PdfRunningLink(enabled),
             )?;
@@ -1516,9 +1564,13 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::PdfGraphics(request) => {
             apply_pdf_graphics_request(request, stores, modes, command.state)
         }
-        ColdOperation::PdfNavigation(request) => {
-            apply_pdf_navigation_request(request, stores, modes, command.fuel)
-        }
+        ColdOperation::PdfNavigation(request) => apply_pdf_navigation_request(
+            request,
+            stores,
+            modes,
+            command.diagnostic_effects,
+            command.fuel,
+        ),
         ColdOperation::PdfObject(request) => apply_pdf_object_request(request, stores, false),
         ColdOperation::PdfReferenceObject(request) => {
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -1531,6 +1583,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 Whatsit::PdfReferenceObject { object },
             )?;
@@ -1716,6 +1769,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 Whatsit::OpenOut {
                     slot: StreamSlot::new(stream),
@@ -1728,6 +1782,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 Whatsit::CloseOut {
                     slot: stream.stream_slot(),
@@ -1740,6 +1795,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 Whatsit::DeferredWrite {
                     sink: replay_write_sink(stream),
@@ -1756,6 +1812,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 Whatsit::DeferredSpecial {
                     class: "dvi".to_owned(),
@@ -1779,6 +1836,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 Whatsit::Special {
                     class: "dvi".to_owned(),
@@ -1811,6 +1869,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 Whatsit::Language {
                     language: clang,
@@ -2301,6 +2360,7 @@ pub(in crate::main_control) fn apply<G>(
                         let diagnostic_context = command_diagnostic_context(command, stores);
                         let node = crate::box_runtime::split_vbox_register(
                             stores,
+                            command.diagnostic_effects,
                             &diagnostic_context,
                             split.index,
                             split.height,
@@ -2329,6 +2389,7 @@ pub(in crate::main_control) fn apply<G>(
             let diagnostic_context = command_diagnostic_context(command, stores);
             let node = crate::box_runtime::split_vbox_register(
                 stores,
+                command.diagnostic_effects,
                 &diagnostic_context,
                 split.index,
                 split.height,
@@ -2359,6 +2420,7 @@ pub(in crate::main_control) fn apply<G>(
                 index,
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 &error_context,
             )?;
@@ -2369,6 +2431,7 @@ pub(in crate::main_control) fn apply<G>(
                 primitive,
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
             )?;
             Ok(ReplayStep::Continue)
@@ -2395,6 +2458,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::box_runtime::append_leader_contribution(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 kind,
                 payload,
                 glue,
@@ -2414,6 +2478,7 @@ pub(in crate::main_control) fn apply<G>(
                 crate::box_runtime::append_leader_contribution(
                     modes,
                     stores,
+                    command.diagnostic_effects,
                     kind,
                     payload,
                     glue,
@@ -2714,11 +2779,16 @@ pub(in crate::main_control) fn apply<G>(
             crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 diagnostic_context,
                 command.fuel,
             )?;
-            let output_level =
-                crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
+            let output_level = crate::box_runtime::commit_current_list(
+                modes,
+                stores,
+                command.diagnostic_effects,
+                command.fuel,
+            )?;
             let aftergroup = leave_group_payloads(
                 stores,
                 command.state,
@@ -2770,7 +2840,11 @@ pub(in crate::main_control) fn apply<G>(
                 *end_job_ejection_pending = true;
             }
             let error_context = command.state.output_open_context(&**stores);
-            crate::page_builder::build_page_with_error_context(stores, &error_context)?;
+            crate::page_builder::build_page_with_error_context(
+                stores,
+                command.diagnostic_effects,
+                &error_context,
+            )?;
             if stores.page_contributions().is_empty() {
                 *end_job_ejection_pending = false;
             }
@@ -2911,6 +2985,7 @@ pub(in crate::main_control) fn apply<G>(
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
+                    command.diagnostic_effects,
                     diagnostic_context,
                     command.fuel,
                 )?;
@@ -2933,7 +3008,12 @@ pub(in crate::main_control) fn apply<G>(
             // are dropped along with the popped mode level instead of ever
             // becoming node.
 
-            let level = crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
+            let level = crate::box_runtime::commit_current_list(
+                modes,
+                stores,
+                command.diagnostic_effects,
+                command.fuel,
+            )?;
             let children = stores.publish_page_nodes(level.list().nodes().to_vec());
             // TeX82 §1086 snapshots `d:=box_max_depth` before `unsave`.
             // The box body may assign a local, signed `\boxmaxdepth`; that
@@ -3070,6 +3150,7 @@ pub(in crate::main_control) fn apply<G>(
                 crate::box_runtime::append_box_node_to_current_list(
                     modes,
                     stores,
+                    command.diagnostic_effects,
                     node,
                     command.fuel,
                 )?;
@@ -3077,6 +3158,7 @@ pub(in crate::main_control) fn apply<G>(
                 crate::vertical::build_page_if_outer_vertical_with_error_context(
                     modes,
                     stores,
+                    command.diagnostic_effects,
                     &error_context,
                 )?;
             }
@@ -3337,6 +3419,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 diagnostic_context,
                 command.fuel,
             )?;
@@ -3468,6 +3551,7 @@ pub(in crate::main_control) fn apply<G>(
                 crate::vertical::build_page_if_outer_vertical_with_error_context(
                     modes,
                     stores,
+                    command.diagnostic_effects,
                     &error_context,
                 )?;
             } else {
@@ -3475,6 +3559,7 @@ pub(in crate::main_control) fn apply<G>(
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
+                    command.diagnostic_effects,
                     diagnostic_context,
                     command.fuel,
                 )?;
@@ -3489,7 +3574,13 @@ pub(in crate::main_control) fn apply<G>(
             unreachable!("apply_host_owned_step applies canonical math shifts")
         }
         ColdOperation::ParagraphStart => {
-            start_paragraph(command.state, modes, stores, true)?;
+            start_paragraph(
+                command.state,
+                modes,
+                stores,
+                command.diagnostic_effects,
+                true,
+            )?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::Character {
@@ -3519,7 +3610,12 @@ pub(in crate::main_control) fn apply<G>(
                         modes.current_mode(),
                         Mode::Horizontal | Mode::RestrictedHorizontal
                     ) {
-                        crate::box_runtime::append_space_with_fuel(modes, stores, command.fuel)?;
+                        crate::box_runtime::append_space_with_fuel(
+                            modes,
+                            stores,
+                            command.diagnostic_effects,
+                            command.fuel,
+                        )?;
                     }
                 }
                 Catcode::Letter | Catcode::Other => {
@@ -3527,7 +3623,13 @@ pub(in crate::main_control) fn apply<G>(
                         modes.current_mode(),
                         Mode::Vertical | Mode::InternalVertical
                     ) {
-                        start_paragraph(command.state, modes, stores, true)?;
+                        start_paragraph(
+                            command.state,
+                            modes,
+                            stores,
+                            command.diagnostic_effects,
+                            true,
+                        )?;
                     }
                     modes
                         .current_list_mutation()
@@ -3535,6 +3637,7 @@ pub(in crate::main_control) fn apply<G>(
                     crate::box_runtime::append_character_with_fuel(
                         modes,
                         stores,
+                        command.diagnostic_effects,
                         ch,
                         origin,
                         command.state.profile() == CommandProfile::ETEX26,

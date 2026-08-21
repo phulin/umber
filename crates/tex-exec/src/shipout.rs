@@ -75,6 +75,7 @@ pub(crate) struct ShipoutTransaction<'a, G> {
     provenance_demand: tex_state::ProvenanceDemand,
     provenance_budget_bytes: usize,
     geometry_sink: &'a mut dyn ShipoutGeometrySink,
+    diagnostic_effects: tex_state::diagnostic::DiagnosticEffects,
 }
 
 impl<'a, G> ShipoutTransaction<'a, G> {
@@ -93,7 +94,12 @@ impl<'a, G> ShipoutTransaction<'a, G> {
             provenance_demand,
             provenance_budget_bytes,
             geometry_sink,
+            diagnostic_effects: tex_state::diagnostic::DiagnosticEffects::new(),
         }
+    }
+
+    pub(crate) fn take_diagnostic_effects(&mut self) -> tex_state::diagnostic::DiagnosticEffects {
+        std::mem::take(&mut self.diagnostic_effects)
     }
 
     pub(crate) fn stage_page(
@@ -115,6 +121,7 @@ impl<'a, G> ShipoutTransaction<'a, G> {
             origin,
             pending_effect_end,
             stores,
+            &mut self.diagnostic_effects,
             self.source_resolver,
             self.provenance_demand,
             self.provenance_budget_bytes,
@@ -144,6 +151,12 @@ impl<'a, G> ShipoutTransaction<'a, G> {
         form: PdfFormRecord<G>,
         stores: &mut Universe<G>,
     ) -> Result<PdfFormArtifact, ExecError> {
-        transaction::stage_form(form, stores, self.write, self.replay)
+        transaction::stage_form(
+            form,
+            stores,
+            &mut self.diagnostic_effects,
+            self.write,
+            self.replay,
+        )
     }
 }

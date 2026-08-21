@@ -2939,7 +2939,13 @@ impl<G> MainControl<G> {
             Mode::Vertical | Mode::InternalVertical
         ) {
             let mut context = stores.command_context().expect("live generation");
-            start_paragraph(&mut self.command, &mut self.modes, &mut context, true)?;
+            start_paragraph(
+                &mut self.command,
+                &mut self.modes,
+                &mut context,
+                diagnostic_effects,
+                true,
+            )?;
         }
         {
             let mut context = stores.command_context().expect("live generation");
@@ -3149,7 +3155,13 @@ impl<G> MainControl<G> {
             Mode::Vertical | Mode::InternalVertical
         ) {
             let mut context = stores.command_context().expect("live generation");
-            start_paragraph(&mut self.command, &mut self.modes, &mut context, true)?;
+            start_paragraph(
+                &mut self.command,
+                &mut self.modes,
+                &mut context,
+                diagnostic_effects,
+                true,
+            )?;
         }
         let pre = {
             let mut stores = stores.command_context().expect("live generation");
@@ -4765,7 +4777,13 @@ impl<G> MainControl<G> {
             Mode::Vertical | Mode::InternalVertical
         ) {
             let mut context = stores.command_context().expect("live generation");
-            start_paragraph(&mut self.command, &mut self.modes, &mut context, true)?;
+            start_paragraph(
+                &mut self.command,
+                &mut self.modes,
+                &mut context,
+                diagnostic_effects,
+                true,
+            )?;
         }
         let mut context = stores.command_context().expect("live generation");
         crate::box_runtime::flush_pending_hchars_with_fuel(
@@ -4800,6 +4818,7 @@ impl<G> MainControl<G> {
         apply_accent_nodes(
             &mut self.modes,
             &mut context,
+            diagnostic_effects,
             etex_extended,
             AccentPlacement {
                 accent,

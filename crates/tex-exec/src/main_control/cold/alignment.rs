@@ -36,6 +36,7 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
         crate::paragraph_end::end_paragraph_with_context(
             modes,
             stores,
+            command.diagnostic_effects,
             command.fuel,
             error_context,
         )?;
@@ -357,6 +358,7 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
         .push(material.clone());
     let cell = crate::align::packaging::make_unset_node(
         stores,
+        diagnostic_effects,
         &crate::diagnostics::ExecutionDiagnosticContext::source_free("alignment cell"),
         material,
         crate::align::packaging::cell_unset_kind(active.kind),
@@ -393,6 +395,7 @@ pub(in crate::main_control) fn finish_replay_alignment_row<G>(
     let children = stores.publish_page_nodes(row.list_mutation().take_nodes());
     let row = crate::align::packaging::make_unset_node(
         stores,
+        diagnostic_effects,
         &crate::diagnostics::ExecutionDiagnosticContext::source_free("alignment row"),
         children,
         crate::align::packaging::row_unset_kind(active.kind),
@@ -464,13 +467,21 @@ pub(in crate::main_control) fn finish_replay_alignment<G>(
     let diagnostic_context =
         crate::diagnostics::ExecutionDiagnosticContext::source_free(error_context)
             .with_pack_begin_line(-alignment.entry_line());
-    finish_replay_alignment_with_origin(active, modes, stores, &mut alignment, &diagnostic_context)
+    finish_replay_alignment_with_origin(
+        active,
+        modes,
+        stores,
+        diagnostic_effects,
+        &mut alignment,
+        &diagnostic_context,
+    )
 }
 
 pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
     active: &ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     alignment: &mut crate::mode::ModeLevelSummary,
     diagnostic_context: &crate::diagnostics::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
@@ -509,8 +520,14 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
     } else {
         Scaled::from_raw(0)
     };
-    let finished =
-        crate::align::widths::finish_alignment(&state, &rows, offset, stores, diagnostic_context)?;
+    let finished = crate::align::widths::finish_alignment(
+        &state,
+        &rows,
+        offset,
+        stores,
+        diagnostic_effects,
+        diagnostic_context,
+    )?;
     let aux_prev_depth = alignment.list().prev_depth();
     let aux_space_factor = matches!(
         alignment.mode(),
@@ -537,6 +554,7 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
     crate::vertical::build_page_if_outer_vertical_with_error_context(
         modes,
         stores,
+        diagnostic_effects,
         &diagnostic_context.output_context,
     )?;
     Ok(())

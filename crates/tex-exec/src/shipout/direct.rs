@@ -75,6 +75,7 @@ pub(crate) struct BaseWhatsitVisit {
 pub(crate) fn stage_form<G>(
     form: tex_state::PdfFormRecord<G>,
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     write_expander: &mut WriteExpander<'_, G>,
     replay_expander: &mut ReplayTextExpander<'_, G>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
@@ -83,7 +84,13 @@ pub(crate) fn stage_form<G>(
         .expect("form shipout runs inside an admitted command episode")
         .pdf_form_color_rollback();
     let page_cursor = stores.page_node_cursor();
-    let result = stage_form_inner(form, stores, write_expander, replay_expander);
+    let result = stage_form_inner(
+        form,
+        stores,
+        diagnostic_effects,
+        write_expander,
+        replay_expander,
+    );
     if result.is_err() {
         stores
             .command_context()
@@ -99,6 +106,7 @@ pub(crate) fn stage_form<G>(
 fn stage_form_inner<G>(
     form: tex_state::PdfFormRecord<G>,
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     write_expander: &mut WriteExpander<'_, G>,
     replay_expander: &mut ReplayTextExpander<'_, G>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
@@ -129,6 +137,7 @@ fn stage_form_inner<G>(
             true,
         ),
         stores,
+        diagnostic_effects,
         write_expander,
         replay_expander,
         tex_state::PdfColorStackTarget::Form,
@@ -217,6 +226,7 @@ pub(crate) fn stage_shipout<G>(
     origin: super::ShipoutOrigin,
     pending_effect_end: usize,
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     source_resolver: &dyn ArtifactSourceResolver,
     provenance_demand: tex_state::ProvenanceDemand,
     provenance_budget_bytes: usize,
@@ -295,6 +305,7 @@ pub(crate) fn stage_shipout<G>(
         (vertical, root_box_lr),
         (pending_effects, output_open_context, announce_openout),
         stores,
+        diagnostic_effects,
         write_expander,
         replay_expander,
         tex_state::PdfColorStackTarget::Page,

@@ -1,6 +1,7 @@
 //! Shared vertical-list splitting helpers for insertions and `\vsplit`.
 
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{BoxNode, GlueKind, Node, Whatsit};
 use tex_state::node_arena::{NodeRef, PageListId};
@@ -71,10 +72,11 @@ pub(crate) fn is_page_top_discardable(node: &Node) -> bool {
 
 pub(crate) fn natural_vlist_size<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     content: PageListId,
 ) -> Result<Scaled, ExecError> {
-    let packed = vpack_natural(stores, diagnostic_context, content);
+    let packed = vpack_natural(stores, diagnostic_effects, diagnostic_context, content);
     packed
         .height
         .checked_add(packed.depth)
@@ -83,11 +85,13 @@ pub(crate) fn natural_vlist_size<G>(
 
 pub(crate) fn vpack_natural<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     content: PageListId,
 ) -> BoxNode {
     crate::packing_params::vpack(
         stores,
+        diagnostic_effects,
         diagnostic_context,
         content,
         PackSpec::Natural,

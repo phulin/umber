@@ -1,6 +1,7 @@
 //! Source-free leader payload and contribution runtime.
 
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::glue::GlueSpec;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, LeaderPayload, Node};
@@ -58,6 +59,7 @@ pub(crate) fn take_register_payload<G>(
 pub(crate) fn append_leader_contribution<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     kind: GlueKind,
     payload: LeaderPayload,
     spec: GlueSpec,
@@ -67,6 +69,7 @@ pub(crate) fn append_leader_contribution<G>(
     append_node_to_current_list(
         nest,
         stores,
+        diagnostic_effects,
         Node::Glue {
             spec,
             kind,
@@ -74,6 +77,11 @@ pub(crate) fn append_leader_contribution<G>(
         },
         fuel,
     )?;
-    crate::vertical::build_page_if_outer_vertical_with_error_context(nest, stores, error_context)?;
+    crate::vertical::build_page_if_outer_vertical_with_error_context(
+        nest,
+        stores,
+        diagnostic_effects,
+        error_context,
+    )?;
     Ok(())
 }

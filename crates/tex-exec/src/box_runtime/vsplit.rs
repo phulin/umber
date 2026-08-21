@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::Node;
@@ -17,6 +18,7 @@ use crate::splitting::{prune_page_top_with_discards, vpack_natural};
 
 pub(crate) fn split_vbox_register<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     index: u16,
     height: Scaled,
@@ -74,6 +76,7 @@ pub(crate) fn split_vbox_register<G>(
         &mut split_nodes,
         &split.infinite_shrink_glue,
         diagnostic_context,
+        diagnostic_effects,
     )?;
     let remainder = match split.break_index {
         Some(index) => split_nodes.split_off(index),
@@ -81,7 +84,14 @@ pub(crate) fn split_vbox_register<G>(
     };
 
     update_split_marks(stores, &split_nodes);
-    replace_split_source(stores, diagnostic_context, index, remainder, split_top_skip);
+    replace_split_source(
+        stores,
+        diagnostic_effects,
+        diagnostic_context,
+        index,
+        remainder,
+        split_top_skip,
+    );
 
     let split_list = stores.publish_page_nodes(split_nodes);
     let mut params = vpack_params(stores);
@@ -89,6 +99,7 @@ pub(crate) fn split_vbox_register<G>(
     Ok(Some(Node::VList(
         vpack(
             stores,
+            diagnostic_effects,
             diagnostic_context,
             split_list,
             PackSpec::Exactly(height),
@@ -103,6 +114,7 @@ fn normalize_split_infinite_shrink<G>(
     nodes: &mut [Node],
     indices: &[usize],
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    diagnostic_effects: &mut DiagnosticEffects,
 ) -> Result<(), ExecError> {
     for &index in indices {
         let Some(Node::Glue { spec, kind, leader }) = nodes.get(index) else {
@@ -112,7 +124,11 @@ fn normalize_split_infinite_shrink<G>(
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
-        diagnostics::report_split_infinite_shrinkage(stores, diagnostic_context)?;
+        diagnostics::report_split_infinite_shrinkage(
+            stores,
+            diagnostic_effects,
+            diagnostic_context,
+        )?;
         finite.shrink_order = Order::Normal;
         nodes[index] = Node::Glue {
             spec: finite,
@@ -125,6 +141,7 @@ fn normalize_split_infinite_shrink<G>(
 
 fn replace_split_source<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     index: u16,
     remainder: Vec<Node>,
@@ -140,7 +157,12 @@ fn replace_split_source<G>(
     }
 
     let remainder_list = stores.publish_page_nodes(pruned);
-    let packed = vpack_natural(stores, diagnostic_context, remainder_list);
+    let packed = vpack_natural(
+        stores,
+        diagnostic_effects,
+        diagnostic_context,
+        remainder_list,
+    );
     let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
     stores.replace_page_box(index, boxed);
 }

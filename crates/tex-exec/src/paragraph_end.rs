@@ -1,6 +1,7 @@
 //! Source-free paragraph completion transaction for canonical command control.
 
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_typeset::linebreak::WidowPenaltySelector;
 
 mod hyphenation;
@@ -49,20 +50,22 @@ impl ParagraphEnd {
         self,
         nest: &mut ModeNest,
         stores: &mut CommandContext<'_, G>,
+        diagnostic_effects: &mut DiagnosticEffects,
         fuel: &mut tex_command::CommandFuel,
     ) -> Result<ParagraphBreakResult, ExecError> {
         let is_display = self.continuation == ParagraphEndContinuation::DisplayInterruption;
         if !is_display && nest.current_mode() != Mode::Horizontal {
             return Ok(ParagraphBreakResult::empty());
         }
-        flush_pending_hchars_with_fuel(nest, stores, fuel)?;
+        flush_pending_hchars_with_fuel(nest, stores, diagnostic_effects, fuel)?;
         if nest.current_list().is_empty() {
-            let _ = commit_current_list(nest, stores, fuel)?;
+            let _ = commit_current_list(nest, stores, diagnostic_effects, fuel)?;
             if !is_display {
                 normal_paragraph(nest, stores);
                 crate::vertical::build_page_if_outer_vertical_with_error_context(
                     nest,
                     stores,
+                    diagnostic_effects,
                     &self.diagnostic_context.output_context,
                 )?;
             }
@@ -78,6 +81,7 @@ impl ParagraphEnd {
             },
             !is_display,
             self.diagnostic_context,
+            diagnostic_effects,
             fuel,
         )
     }
@@ -87,30 +91,37 @@ impl ParagraphEnd {
 pub(crate) fn end_paragraph_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: ExecutionDiagnosticContext,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    ParagraphEnd::end(diagnostic_context).finish(nest, stores, fuel)?;
+    ParagraphEnd::end(diagnostic_context).finish(nest, stores, diagnostic_effects, fuel)?;
     Ok(())
 }
 
 pub(crate) fn end_paragraph_with_context<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
     diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
-    ParagraphEnd::end(diagnostic_context).finish(nest, stores, fuel)?;
+    ParagraphEnd::end(diagnostic_context).finish(nest, stores, diagnostic_effects, fuel)?;
     Ok(())
 }
 
 pub(crate) fn interrupt_paragraph_for_display<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
     diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<ParagraphBreakResult, ExecError> {
-    let result =
-        ParagraphEnd::display_interruption(diagnostic_context).finish(nest, stores, fuel)?;
+    let result = ParagraphEnd::display_interruption(diagnostic_context).finish(
+        nest,
+        stores,
+        diagnostic_effects,
+        fuel,
+    )?;
     Ok(result)
 }

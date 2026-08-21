@@ -6,6 +6,7 @@ mod set;
 mod tests;
 
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{
     BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields,
@@ -29,11 +30,19 @@ pub(crate) fn finish_alignment<G>(
     rows: &[Node],
     offset: Scaled,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Result<Vec<Node>, ExecError> {
     let resolved = resolution::resolve_widths(state, rows, stores)?;
     let empty = PageListId::empty();
-    let prototype = pack_prototype(state, &resolved, &empty, stores, diagnostic_context);
+    let prototype = pack_prototype(
+        state,
+        &resolved,
+        &empty,
+        stores,
+        diagnostic_effects,
+        diagnostic_context,
+    );
     let finished = set::set_alignment_nodes(
         state.kind(),
         rows,
@@ -42,6 +51,7 @@ pub(crate) fn finish_alignment<G>(
         empty,
         offset,
         stores,
+        diagnostic_effects,
         diagnostic_context,
     )?;
     debug::debug_assert_no_unset_nodes(stores, &finished);
@@ -64,6 +74,7 @@ fn pack_prototype<G>(
     resolved: &ResolvedWidths,
     empty: &PageListId,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Prototype {
     let nodes = prototype_nodes(state.kind(), resolved, empty);
@@ -71,10 +82,26 @@ fn pack_prototype<G>(
     let spec = pack_spec(state.pack_spec());
     let box_node = match state.kind() {
         AlignmentKind::HAlign => {
-            hpack(stores, diagnostic_context, list, spec, hpack_params(stores)).node
+            hpack(
+                stores,
+                diagnostic_effects,
+                diagnostic_context,
+                list,
+                spec,
+                hpack_params(stores),
+            )
+            .node
         }
         AlignmentKind::VAlign => {
-            vpack(stores, diagnostic_context, list, spec, vpack_params(stores)).node
+            vpack(
+                stores,
+                diagnostic_effects,
+                diagnostic_context,
+                list,
+                spec,
+                vpack_params(stores),
+            )
+            .node
         }
     };
     Prototype { box_node }

@@ -40,6 +40,7 @@ pub(super) fn normalize_page<G>(
     root_box: (bool, tex_state::node::BoxLr),
     effects_and_context: (PendingPageEffects, String, bool),
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     write_expander: &mut super::WriteExpander<'_, G>,
     replay_expander: &mut super::ReplayTextExpander<'_, G>,
     color_target: tex_state::PdfColorStackTarget,
@@ -108,6 +109,7 @@ pub(super) fn normalize_page<G>(
     };
     normalize_list(
         stores,
+        diagnostic_effects,
         &mut expansion,
         root,
         NormalizeListContext {
@@ -151,6 +153,7 @@ struct NormalizeListContext {
 
 fn normalize_list<G>(
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     expansion: &mut NormalizeExpansion<'_, G>,
     list: tex_state::node_arena::PageListId,
     context: NormalizeListContext,
@@ -193,6 +196,7 @@ fn normalize_list<G>(
     for index in active_indices {
         normalize_index(
             stores,
+            diagnostic_effects,
             expansion,
             list,
             index,
@@ -230,6 +234,7 @@ fn node_requires_normalization(node: &Node) -> bool {
 
 fn normalize_index<G>(
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     expansion: &mut NormalizeExpansion<'_, G>,
     list: tex_state::node_arena::PageListId,
     index: usize,
@@ -308,6 +313,7 @@ fn normalize_index<G>(
         NormalizeNode::List(child, suppress, child_in_hlist, child_box_lr) => {
             normalize_list(
                 stores,
+                diagnostic_effects,
                 expansion,
                 child,
                 NormalizeListContext {
@@ -323,6 +329,7 @@ fn normalize_index<G>(
             for child in children {
                 normalize_list(
                     stores,
+                    diagnostic_effects,
                     expansion,
                     child,
                     NormalizeListContext {
@@ -361,7 +368,7 @@ fn normalize_index<G>(
         NormalizeNode::Math(math) => {
             let mut nodes = {
                 let mut command = stores.command_context().expect("live generation");
-                crate::math::finish_math_list_node(&mut command, math, false)
+                crate::math::finish_math_list_node(&mut command, diagnostic_effects, math, false)
             };
             let replacement = stores.publish_page_nodes_owned(&mut nodes);
             overlay.math.push(MathSubstitution {
@@ -371,6 +378,7 @@ fn normalize_index<G>(
             });
             normalize_list(
                 stores,
+                diagnostic_effects,
                 expansion,
                 replacement,
                 NormalizeListContext {

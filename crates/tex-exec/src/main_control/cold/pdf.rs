@@ -128,6 +128,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
     request: RootedPdfNavigationRequest<tex_state::TokenListId<G>>,
     stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ReplayStep, ExecError> {
     match request {
@@ -165,6 +166,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                     crate::box_runtime::append_whatsit(
                         modes,
                         stores,
+                        diagnostic_effects,
                         fuel,
                         Whatsit::PdfAnnotation {
                             object: record.object(),
@@ -206,6 +208,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                diagnostic_effects,
                 fuel,
                 Whatsit::PdfLinkStart {
                     object: record.object(),
@@ -231,6 +234,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                diagnostic_effects,
                 fuel,
                 Whatsit::PdfLinkEnd {
                     object: open.record.object(),
@@ -278,6 +282,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                diagnostic_effects,
                 fuel,
                 Whatsit::PdfDestination(Box::new(tex_state::node::PdfDestinationNode {
                     identifier: node_pdf_navigation_identifier(stores, identifier),
@@ -304,6 +309,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                diagnostic_effects,
                 fuel,
                 Whatsit::PdfThread(Box::new(tex_state::node::PdfThreadNode {
                     identifier: node_pdf_navigation_identifier(stores, identifier),
@@ -324,7 +330,13 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfendthread"));
             }
-            crate::box_runtime::append_whatsit(modes, stores, fuel, Whatsit::PdfEndThread)?;
+            crate::box_runtime::append_whatsit(
+                modes,
+                stores,
+                diagnostic_effects,
+                fuel,
+                Whatsit::PdfEndThread,
+            )?;
         }
     }
     Ok(ReplayStep::Continue)
@@ -592,6 +604,7 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
+                command.diagnostic_effects,
                 command.fuel,
                 Whatsit::PdfRefXForm {
                     object: form.object(),
@@ -667,15 +680,23 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
             )
             .map(crate::shipout::ExpandedReplayText)
         };
-    let artifact = crate::shipout::ShipoutTransaction::new(
+    let mut transaction = crate::shipout::ShipoutTransaction::new(
         &mut write,
         &mut replay,
         source_resolver,
         provenance_demand,
         provenance_budget_bytes,
         geometry_sink,
-    )
-    .stage_form(form.clone(), stores)?;
+    );
+    let artifact = transaction.stage_form(form.clone(), stores)?;
+    let mut shipout_diagnostics = transaction.take_diagnostic_effects();
+    drop(transaction);
+    {
+        let mut command = command.borrow_mut();
+        for effect in shipout_diagnostics.drain() {
+            command.diagnostic_effects.push(effect);
+        }
+    }
     let mut context = stores
         .command_context()
         .map_err(|_| ExecError::MissingToken {
@@ -1627,15 +1648,15 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         result
     };
     let mut geometry = DetachedShipoutGeometry::default();
-    let mut receipt = crate::shipout::ShipoutTransaction::new(
+    let mut transaction = crate::shipout::ShipoutTransaction::new(
         &mut expand_write,
         &mut expand_replay,
         &source_resolver,
         provenance_demand,
         provenance_budget_bytes,
         &mut geometry,
-    )
-    .stage_page(
+    );
+    let mut receipt = transaction.stage_page(
         node,
         crate::shipout::ShipoutOrigin {
             output_open_context,
@@ -1648,7 +1669,14 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         stores,
         emit_dvi,
     )?;
+    let mut shipout_diagnostics = transaction.take_diagnostic_effects();
+    drop(transaction);
+    drop(expand_write);
+    drop(expand_replay);
     let command = command_cell.into_inner();
+    for effect in shipout_diagnostics.drain() {
+        command.diagnostic_effects.push(effect);
+    }
     if let Some(geometry) = geometry.0 {
         crate::shipout::ShipoutGeometrySink::committed_shipout_geometry(
             &mut command.shipout_geometry_sink(),

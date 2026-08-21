@@ -310,6 +310,7 @@ fn distribute_insertions<G>(
                     if queue.best_ins_index == index {
                         if let Some(remainder) = split_insertion_remainder(
                             stores,
+                            diagnostic_effects,
                             diagnostic_context,
                             queue,
                             SplitInsertionContext {
@@ -325,7 +326,13 @@ fn distribute_insertions<G>(
                             heldover_count += 1;
                         }
                         let boxed_nodes = std::mem::take(&mut queue.nodes);
-                        package_insertion_box(stores, diagnostic_context, class, boxed_nodes);
+                        package_insertion_box(
+                            stores,
+                            diagnostic_effects,
+                            diagnostic_context,
+                            class,
+                            boxed_nodes,
+                        );
                         queue.accepting = false;
                     }
                 }
@@ -383,6 +390,7 @@ fn insertion_box_nodes<G>(
 
 fn split_insertion_remainder<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &ExecutionDiagnosticContext,
     queue: &mut InsertionQueue,
     context: SplitInsertionContext,
@@ -409,7 +417,12 @@ fn split_insertion_remainder<G>(
         return Ok(None);
     }
     let content = stores.publish_page_nodes(pruned);
-    let size = natural_vlist_size(stores, diagnostic_context, content.clone())?;
+    let size = natural_vlist_size(
+        stores,
+        diagnostic_effects,
+        diagnostic_context,
+        content.clone(),
+    )?;
     Ok(Some(Node::Ins {
         class: context.class,
         size,
@@ -422,12 +435,13 @@ fn split_insertion_remainder<G>(
 
 fn package_insertion_box<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &ExecutionDiagnosticContext,
     class: u16,
     nodes: Vec<Node>,
 ) {
     let list = stores.publish_page_nodes(nodes);
-    let packed = vpack_natural(stores, diagnostic_context, list);
+    let packed = vpack_natural(stores, diagnostic_effects, diagnostic_context, list);
     let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
     stores.assign_page_box_global(class, boxed);
 }

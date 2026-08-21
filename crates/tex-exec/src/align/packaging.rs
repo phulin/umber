@@ -1,4 +1,5 @@
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 #[cfg(test)]
 mod tests;
 
@@ -35,6 +36,7 @@ pub(crate) enum UnsetPackContext {
 /// every present and future §796 packaging site inherits it.
 pub(crate) fn make_unset_node<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     children: tex_state::node_arena::PageListId,
     kind: UnsetKind,
@@ -52,6 +54,7 @@ pub(crate) fn make_unset_node<G>(
     let packed = match kind {
         UnsetKind::HBox => hpack(
             stores,
+            diagnostic_effects,
             diagnostic_context,
             children,
             PackSpec::Natural,
@@ -69,6 +72,7 @@ pub(crate) fn make_unset_node<G>(
             };
             vpack(
                 stores,
+                diagnostic_effects,
                 diagnostic_context,
                 children,
                 PackSpec::Natural,

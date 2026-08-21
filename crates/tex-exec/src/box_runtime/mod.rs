@@ -34,9 +34,10 @@ pub(crate) use hmode::{indent_in_hmode, norm_min};
 pub(crate) fn append_node_to_current_list<G>(
     nest: &mut crate::ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     node: tex_state::node::Node,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), crate::ExecError> {
-    flush_pending_hchars(nest, stores, fuel)?;
+    flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
     crate::vertical::append_node_to_current_list(nest, stores, node)
 }
