@@ -7501,7 +7501,7 @@ enum OffSaveCloser {
 }
 
 impl OffSaveCloser {
-    fn print(self, report: &mut tex_state::print::ErrorReport<'_>) {
+    fn print<G>(self, report: &mut tex_state::print::ErrorReport<'_, G>) {
         match self {
             Self::EndGroup => report.print_esc("endgroup"),
             Self::MathShift => report.print_char('$'),
@@ -7529,7 +7529,7 @@ enum ForgottenGroupOpener {
 }
 
 impl ForgottenGroupOpener {
-    fn print(self, report: &mut tex_state::print::ErrorReport<'_>) {
+    fn print<G>(self, report: &mut tex_state::print::ErrorReport<'_, G>) {
         match self {
             Self::EndGroup => report.print_esc("endgroup"),
             Self::MathShift => report.print_char('$'),
