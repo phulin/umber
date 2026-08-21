@@ -834,23 +834,21 @@ pub(in crate::main_control) fn apply<G>(
                 value: ObservationValue::Tokens(Vec::new()),
                 global,
             };
-            let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(
-                Some(record),
-                |stores| {
+            let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
+                .unscoped_with_effects(Some(record), |stores, diagnostic_effects| {
                     let old = stores.penalty_array(kind);
                     stores
                         .assign_penalty_array(kind, &values, assignment_scope(global))
                         .expect("penalty array fits admitted durable storage");
                     assignment_tracing::trace_penalty_array(
                         stores,
-                        command.diagnostic_effects,
+                        diagnostic_effects,
                         kind,
                         global,
                         &old,
                         &values,
                     );
-                },
-            );
+                });
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
@@ -1036,10 +1034,10 @@ pub(in crate::main_control) fn apply<G>(
                                     )
                                     .expect("lccode target belongs to admitted state")
                             },
-                            |stores, _| {
+                            |stores, diagnostic_effects, _| {
                                 assignment_tracing::trace_code(
                                     stores,
-                                    command.diagnostic_effects,
+                                    diagnostic_effects,
                                     "lccode",
                                     character,
                                     global,
@@ -1070,10 +1068,10 @@ pub(in crate::main_control) fn apply<G>(
                                     )
                                     .expect("uccode target belongs to admitted state")
                             },
-                            |stores, _| {
+                            |stores, diagnostic_effects, _| {
                                 assignment_tracing::trace_code(
                                     stores,
-                                    command.diagnostic_effects,
+                                    diagnostic_effects,
                                     "uccode",
                                     character,
                                     global,
@@ -1110,10 +1108,10 @@ pub(in crate::main_control) fn apply<G>(
                                     )
                                     .expect("sfcode target belongs to admitted state")
                             },
-                            |stores, _| {
+                            |stores, diagnostic_effects, _| {
                                 assignment_tracing::trace_code(
                                     stores,
-                                    command.diagnostic_effects,
+                                    diagnostic_effects,
                                     "sfcode",
                                     character,
                                     global,
@@ -1150,10 +1148,10 @@ pub(in crate::main_control) fn apply<G>(
                                     )
                                     .expect("mathcode target belongs to admitted state")
                             },
-                            |stores, _| {
+                            |stores, diagnostic_effects, _| {
                                 assignment_tracing::trace_code(
                                     stores,
-                                    command.diagnostic_effects,
+                                    diagnostic_effects,
                                     "mathcode",
                                     character,
                                     global,
@@ -1191,10 +1189,10 @@ pub(in crate::main_control) fn apply<G>(
                                     )
                                     .expect("delcode target belongs to admitted state")
                             },
-                            |stores, _| {
+                            |stores, diagnostic_effects, _| {
                                 assignment_tracing::trace_code(
                                     stores,
-                                    command.diagnostic_effects,
+                                    diagnostic_effects,
                                     "delcode",
                                     character,
                                     global,
@@ -1232,7 +1230,7 @@ pub(in crate::main_control) fn apply<G>(
             // control-sequence text.
             let identifier = font_identifier_for_definition(stores, request.target);
             let observe_font_definition = command.state.profile().capabilities().supports_etex();
-            let bind_null_font = |stores: &mut tex_state::CommandContext<'_, G>| {
+            let mut bind_null_font = |stores: &mut tex_state::CommandContext<'_, G>| {
                 let record = font_definition_mutation(
                     stores,
                     request.target,
@@ -1433,10 +1431,10 @@ pub(in crate::main_control) fn apply<G>(
                         global,
                     };
                     let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
-                        .unscoped(Some(record), |stores| {
+                        .unscoped_with_effects(Some(record), |stores, diagnostic_effects| {
                             assignment_tracing::trace_meaning_write(
                                 stores,
-                                command.diagnostic_effects,
+                                diagnostic_effects,
                                 Token::Cs(target),
                                 true,
                                 global,

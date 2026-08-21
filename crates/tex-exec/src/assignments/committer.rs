@@ -109,11 +109,9 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
     where
         T: Eq + Copy,
         Write: FnOnce(&mut CommandContext<'_, G>, bool),
-        Trace: FnOnce(&mut CommandContext<'_, G>, bool),
+        Trace: FnOnce(&mut CommandContext<'_, G>, &mut DiagnosticEffects, bool),
     {
-        if self.direct_scoped_word(current, replacement, global, write, |stores, _, changed| {
-            trace(stores, changed)
-        }) {
+        if self.direct_scoped_word(current, replacement, global, write, trace) {
             MutationReceipt::observed(record)
         } else {
             MutationReceipt::SILENT
