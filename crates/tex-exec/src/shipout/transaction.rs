@@ -95,15 +95,18 @@ pub(crate) fn shipout_node<G>(
         // captured §82's display from the command-owned stack before
         // releasing that borrow.
         let context = origin.output_open_context.clone();
-        let reported = crate::error_report::report_error(
-            stores,
-            "Huge page cannot be shipped out",
-            &[
-                "The page just created is more than 18 feet tall or",
-                "more than 18 feet wide, so I suspect something went wrong.",
-            ],
-            context,
-        );
+        let reported = {
+            let mut command = stores.command_context().expect("live generation");
+            crate::error_report::report_error(
+                &mut command,
+                "Huge page cannot be shipped out",
+                &[
+                    "The page just created is more than 18 feet tall or",
+                    "more than 18 feet wide, so I suspect something went wrong.",
+                ],
+                context,
+            )
+        };
         if let Err(error) = reported {
             stores
                 .truncate_page_nodes(page_before_shipout)
@@ -345,12 +348,13 @@ fn report_huge_page_deleted_box<G>(
     if tracing_output > 0 {
         return;
     }
+    let mut command = stores.command_context().expect("live generation");
     let dump = crate::node_dump::dump_page_list(
-        stores,
+        &command,
         page_root,
-        crate::node_dump::DumpConfig::read(stores),
+        crate::node_dump::DumpConfig::read(&command),
     );
-    let mut diagnostic = stores.begin_diagnostic();
+    let mut diagnostic = command.begin_diagnostic();
     diagnostic
         .print_nl("The following box has been deleted:")
         .print_ln()

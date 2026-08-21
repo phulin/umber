@@ -359,7 +359,10 @@ fn normalize_index<G>(
             }
         }
         NormalizeNode::Math(math) => {
-            let mut nodes = crate::math::finish_math_list_node(stores, math, false);
+            let mut nodes = {
+                let mut command = stores.command_context().expect("live generation");
+                crate::math::finish_math_list_node(&mut command, math, false)
+            };
             let replacement = stores.publish_page_nodes_owned(&mut nodes);
             overlay.math.push(MathSubstitution {
                 list: list.clone(),
@@ -448,7 +451,19 @@ fn append_whatsit_effect<G>(
             // true`. It has to come after the context attach above, which
             // requires the `StreamOpen` record to still be the last effect.
             if announce_openout {
-                crate::diagnostics::report_openout(stores, slot.raw(), &path);
+                let tracing_online = stores
+                    .command_context()
+                    .expect("live generation")
+                    .int_param(tex_state::env::banks::IntParam::TRACING_ONLINE);
+                let (terminal_line_is_open, log_line_is_open) =
+                    stores.world().printable_lines_are_open();
+                overlay.diagnostics.push(crate::diagnostics::report_openout(
+                    tracing_online,
+                    terminal_line_is_open,
+                    log_line_is_open,
+                    slot.raw(),
+                    &path,
+                ));
             }
             effects.push(PageEffect::OpenOut {
                 stream: slot.raw(),

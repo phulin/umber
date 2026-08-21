@@ -3511,6 +3511,17 @@ impl World {
         self.write_text_with_line_limit(sink, text, crate::print::MAX_PRINT_LINE);
     }
 
+    /// Detaches tex.web's terminal and transcript partial-line predicates for
+    /// an outer publication barrier.
+    #[must_use]
+    pub fn printable_lines_are_open(&self) -> (bool, bool) {
+        let bufs = self.stream_bufs();
+        (
+            !bufs.terminal_partial_line.is_empty(),
+            !bufs.log_partial_line.is_empty(),
+        )
+    }
+
     pub(crate) fn write_text_with_line_limit(
         &mut self,
         sink: PrintSink,
