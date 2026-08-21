@@ -675,12 +675,12 @@ pub(crate) fn construct_format_in_worker(
 #[cfg(test)]
 struct NoCheckpoints;
 #[cfg(test)]
-impl CheckpointSink for NoCheckpoints {
+impl<G> CheckpointSink<G> for NoCheckpoints {
     fn wants_checkpoint(&self, _boundary: tex_exec::EngineBoundary) -> bool {
         false
     }
 
-    fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint) {}
+    fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint<G>) {}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -710,7 +710,7 @@ impl GuardCheckpoints {
     }
 }
 
-impl CheckpointSink for &GuardCheckpoints {
+impl<G> CheckpointSink<G> for &GuardCheckpoints {
     fn wants_checkpoint(&self, _boundary: tex_exec::EngineBoundary) -> bool {
         false
     }
@@ -729,7 +729,7 @@ impl CheckpointSink for &GuardCheckpoints {
         failure.is_some()
     }
 
-    fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint) {}
+    fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint<G>) {}
 }
 
 fn finish_guarded_run<T>(

@@ -43,8 +43,8 @@ impl Default for PdfVfLimits {
 }
 
 #[cfg(test)]
-pub(crate) fn lower_pages(
-    stores: &mut Universe,
+pub(crate) fn lower_pages<G>(
+    stores: &mut Universe<G>,
     pages: &mut [PositionedPage],
     resources: &PdfVirtualFontResources,
     limits: PdfVfLimits,
@@ -54,8 +54,8 @@ pub(crate) fn lower_pages(
 
 /// Replays packet-local font selection and returns every exact live font
 /// whose PDF resource identity was reserved by that walk.
-pub(crate) fn lower_pages_with_resource_receipt(
-    stores: &mut Universe,
+pub(crate) fn lower_pages_with_resource_receipt<G>(
+    stores: &mut Universe<G>,
     pages: &mut [PositionedPage],
     resources: &PdfVirtualFontResources,
     limits: PdfVfLimits,
@@ -116,8 +116,8 @@ pub(crate) fn lower_pages_with_resource_receipt(
     Ok(lowerer.instances.into_values().collect())
 }
 
-struct Lowerer<'a> {
-    stores: &'a mut Universe,
+struct Lowerer<'a, G> {
+    stores: &'a mut Universe<G>,
     resources: &'a PdfVirtualFontResources,
     programs: BTreeMap<String, Arc<tex_fonts::VfProgram>>,
     limits: PdfVfLimits,
@@ -138,7 +138,7 @@ struct Lowerer<'a> {
     local_instances: usize,
 }
 
-impl Lowerer<'_> {
+impl<G> Lowerer<'_, G> {
     fn lower_page(&mut self, page: &mut PositionedPage) -> Result<(), PdfBuildError> {
         // Packet execution is fallible after it has emitted operations and
         // appended leaf-font resources.  Keep the committed positioned page

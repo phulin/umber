@@ -10,14 +10,14 @@ use tex_state::meaning::{InternalInteger, Meaning, UnexpandablePrimitive};
 #[cfg(test)]
 use tex_state::scaled::Scaled;
 
-pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
+pub(crate) fn install_pdftex_layer<G>(stores: &mut Universe<G>) {
     tex_command::install_pdftex_unexpandable_primitives(stores);
     tex_command::install_pdftex_expandable_primitives(stores);
 }
 
 /// Reconstructs pdfTeX's original primitive table after a format load without
 /// replacing live meanings restored from the format image.
-pub(crate) fn register_pdftex_layer(stores: &mut Universe) {
+pub(crate) fn register_pdftex_layer<G>(stores: &mut Universe<G>) {
     tex_command::register_pdftex_unexpandable_primitives(stores);
     tex_command::register_pdftex_expandable_primitives(stores);
 }

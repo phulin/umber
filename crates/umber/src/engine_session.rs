@@ -31,14 +31,6 @@ fn map_step_failure(error: CanonicalStepFailure) -> SessionError {
     }
 }
 
-fn configure_font_memory(stores: &mut Universe, profile: CommandProfile) {
-    let capacity = match profile.dialect() {
-        CommandDialect::Pdftex14029 => tex_state::font::WEB2C_FONT_INFO_CAPACITY,
-        CommandDialect::Tex82 | CommandDialect::Etex26 => tex_state::font::FONT_INFO_CAPACITY,
-    };
-    stores.configure_font_info_capacity(capacity);
-}
-
 /// Default bound for a host that repeatedly declines the same typed need.
 pub const DEFAULT_NO_PROGRESS_LIMIT: u8 = 8;
 
@@ -258,9 +250,9 @@ impl From<tex_exec::ExecError> for SessionError {
 /// file-resolver dependency. Its only mutable engine input is the shared
 /// aggregate `Universe`; all source and resource bytes enter through retained
 /// typed registrations.
-pub struct EngineSession<'a> {
-    stores: &'a mut Universe,
-    control: MainControl,
+pub struct EngineSession<'a, G> {
+    stores: &'a mut Universe<G>,
+    control: MainControl<G>,
     initex: bool,
     loaded_job_framing: bool,
     root_registered: bool,
@@ -282,7 +274,7 @@ pub struct EngineSession<'a> {
     retry_materialization: Option<tex_state::MemoryMaterializationCheckpoint>,
 }
 
-impl<'a> EngineSession<'a> {
+impl<'a, G> EngineSession<'a, G> {
     /// Advances the retained command machine in analysis mode without
     /// invoking ordinary typesetting main control.
     pub fn diagnostic_expand_step(
@@ -310,8 +302,7 @@ impl<'a> EngineSession<'a> {
         }
     }
     #[must_use]
-    pub fn new(stores: &'a mut Universe, profile: CommandProfile) -> Self {
-        configure_font_memory(stores, profile);
+    pub fn new(stores: &'a mut Universe<G>, profile: CommandProfile) -> Self {
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
@@ -342,8 +333,7 @@ impl<'a> EngineSession<'a> {
     /// Unlike [`Self::new`], this enables init-only commands such as
     /// `\patterns` and installs the TeX82 primitive meanings in `stores`.
     #[must_use]
-    pub fn tex82_initex(stores: &'a mut Universe) -> Self {
-        configure_font_memory(stores, CommandProfile::TEX82);
+    pub fn tex82_initex(stores: &'a mut Universe<G>) -> Self {
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
@@ -371,8 +361,7 @@ impl<'a> EngineSession<'a> {
     /// Creates an INITEX session after the composed engine mode has installed
     /// its fresh primitive profile into `stores`.
     #[must_use]
-    pub fn prepared_initex(stores: &'a mut Universe, profile: CommandProfile) -> Self {
-        configure_font_memory(stores, profile);
+    pub fn prepared_initex(stores: &'a mut Universe<G>, profile: CommandProfile) -> Self {
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
@@ -398,7 +387,7 @@ impl<'a> EngineSession<'a> {
     }
 
     #[must_use]
-    pub const fn command_profile(&self) -> CommandProfile {
+    pub fn command_profile(&self) -> CommandProfile {
         self.control.command_profile()
     }
 
@@ -436,7 +425,7 @@ impl<'a> EngineSession<'a> {
     }
 
     #[must_use]
-    pub fn stores(&self) -> &Universe {
+    pub fn stores(&self) -> &Universe<G> {
         self.stores
     }
 
@@ -643,11 +632,12 @@ impl<'a> EngineSession<'a> {
                 self.startup_input_name = Some(name);
                 return Ok(id);
             }
-            if !self
+            let permits_terminal_input = self
                 .stores
                 .command_context()
-                .interaction_permits_terminal_input()
-            {
+                .map(|context| context.interaction_permits_terminal_input())
+                .unwrap_or(false);
+            if !permits_terminal_input {
                 let mut report = self.stores.print_err("Emergency stop");
                 report.help(&["*** (job aborted, file error in nonstop mode)"]);
                 report.succumb();
@@ -665,13 +655,16 @@ impl<'a> EngineSession<'a> {
     /// suspension. Checkpoints are published solely from committed receipts.
     pub fn advance_until_waiting(
         &mut self,
-        checkpoints: &mut dyn CheckpointSink,
+        checkpoints: &mut dyn CheckpointSink<G>,
     ) -> Result<SessionState, SessionError> {
         self.ensure_started(checkpoints)?;
         self.advance_inner(checkpoints, None)
     }
 
-    fn ensure_started(&mut self, checkpoints: &mut dyn CheckpointSink) -> Result<(), SessionError> {
+    fn ensure_started(
+        &mut self,
+        checkpoints: &mut dyn CheckpointSink<G>,
+    ) -> Result<(), SessionError> {
         if !self.root_registered {
             return Err(SessionError::RootNotRegistered);
         }
@@ -750,7 +743,7 @@ impl<'a> EngineSession<'a> {
     /// observations until their retry commits.
     pub fn advance_until_waiting_with_observer(
         &mut self,
-        checkpoints: &mut dyn CheckpointSink,
+        checkpoints: &mut dyn CheckpointSink<G>,
         observer: &mut dyn tex_command::CommandObserver,
     ) -> Result<SessionState, SessionError> {
         self.ensure_started(checkpoints)?;
@@ -759,7 +752,7 @@ impl<'a> EngineSession<'a> {
 
     fn advance_inner(
         &mut self,
-        checkpoints: &mut dyn CheckpointSink,
+        checkpoints: &mut dyn CheckpointSink<G>,
         mut observer: Option<&mut dyn tex_command::CommandObserver>,
     ) -> Result<SessionState, SessionError> {
         if self.terminated {
@@ -836,7 +829,7 @@ impl<'a> EngineSession<'a> {
     pub fn run(
         &mut self,
         host: &mut dyn ResourceHost,
-        checkpoints: &mut dyn CheckpointSink,
+        checkpoints: &mut dyn CheckpointSink<G>,
     ) -> Result<RunResult, SessionError> {
         self.run_inner(host, checkpoints, None)
     }
@@ -846,7 +839,7 @@ impl<'a> EngineSession<'a> {
     pub fn run_with_expansion_stats(
         &mut self,
         host: &mut dyn ResourceHost,
-        checkpoints: &mut dyn CheckpointSink,
+        checkpoints: &mut dyn CheckpointSink<G>,
     ) -> Result<(RunResult, ExpansionStats), SessionError> {
         let mut observer = ExpansionObserver::default();
         let result = self.run_with_observer(host, checkpoints, &mut observer)?;
@@ -857,7 +850,7 @@ impl<'a> EngineSession<'a> {
     pub fn run_with_observer(
         &mut self,
         host: &mut dyn ResourceHost,
-        checkpoints: &mut dyn CheckpointSink,
+        checkpoints: &mut dyn CheckpointSink<G>,
         observer: &mut dyn tex_command::CommandObserver,
     ) -> Result<RunResult, SessionError> {
         self.run_inner(host, checkpoints, Some(observer))
@@ -866,7 +859,7 @@ impl<'a> EngineSession<'a> {
     fn run_inner(
         &mut self,
         host: &mut dyn ResourceHost,
-        checkpoints: &mut dyn CheckpointSink,
+        checkpoints: &mut dyn CheckpointSink<G>,
         mut observer: Option<&mut dyn tex_command::CommandObserver>,
     ) -> Result<RunResult, SessionError> {
         let mut declined: u8 = 0;

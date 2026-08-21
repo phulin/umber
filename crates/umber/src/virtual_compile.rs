@@ -386,8 +386,7 @@ impl EngineMode {
     /// `\nonstopmode` is what a host with no terminal passes on the command
     /// line, and is the same thing this crate's `-interaction=nonstopmode`
     /// reference captures run under.
-    pub fn prepare_fresh(self, stores: &mut Universe) {
-        self.configure_font_memory(stores);
+    pub fn prepare_fresh<G>(self, stores: &mut Universe<G>) {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         match self {
             Self::Tex82 => prepare_run_stores(stores),
@@ -402,8 +401,7 @@ impl EngineMode {
     ///
     /// Unlike [`Self::prepare_fresh`], this preserves TeX82's initial
     /// category-code table while the format source is tokenized.
-    pub fn prepare_initex(self, stores: &mut Universe) {
-        self.configure_font_memory(stores);
+    pub fn prepare_initex<G>(self, stores: &mut Universe<G>) {
         // Same non-interactive host as [`Self::prepare_fresh`].
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         crate::prepare_initex_stores(stores);
@@ -435,8 +433,7 @@ impl EngineMode {
     }
 
     /// Restores driver-owned primitive implementations after a format load.
-    pub fn install_after_format(self, stores: &mut Universe) {
-        self.configure_font_memory(stores);
+    pub fn install_after_format<G>(self, stores: &mut Universe<G>) {
         match self {
             Self::Tex82 => {
                 tex_command::register_tex82_expandable_primitives(stores);
@@ -452,18 +449,6 @@ impl EngineMode {
             Self::Latex => install_latex_format_primitives(stores),
             Self::PdfLatex => install_pdflatex_format_primitives(stores),
         }
-    }
-
-    fn configure_font_memory(self, stores: &mut Universe) {
-        let capacity = if matches!(
-            self.binary_identity(),
-            tex_exec::EngineBinaryIdentity::Pdftex14029
-        ) {
-            tex_state::font::WEB2C_FONT_INFO_CAPACITY
-        } else {
-            tex_state::font::FONT_INFO_CAPACITY
-        };
-        stores.configure_font_info_capacity(capacity);
     }
 
     /// Whether this compatibility contract uses LaTeX's byte-oriented UTF-8 input layer.
@@ -895,33 +880,9 @@ impl RetainedExecution {
         frozen: &tex_exec::FrozenDiagnosticOrigin,
     ) -> Option<CompileSourceLocation> {
         let resolved = match self {
-            RetainedExecution::Initial { session, candidate } => {
-                session.resolve_candidate_frozen_diagnostic_primary(candidate, frozen)
-            }
-            RetainedExecution::Pending(candidate) => {
+            RetainedExecution::Initial { candidate, .. }
+            | RetainedExecution::Pending(candidate) => {
                 candidate.resolve_frozen_diagnostic_primary(frozen)
-            }
-        }?;
-        Some(CompileSourceLocation {
-            file: resolved.path,
-            byte_start: resolved.start,
-            byte_end: resolved.end,
-            line: resolved.line,
-            column: resolved.column,
-            excerpt: resolved.excerpt,
-        })
-    }
-
-    fn resolve_diagnostic_site_primary(
-        &self,
-        site: &tex_state::provenance::DiagnosticSite,
-    ) -> Option<CompileSourceLocation> {
-        let resolved = match self {
-            RetainedExecution::Initial { session, candidate } => {
-                session.resolve_candidate_diagnostic_site_primary(candidate, site)
-            }
-            RetainedExecution::Pending(candidate) => {
-                candidate.resolve_diagnostic_site_primary(site)
             }
         }?;
         Some(CompileSourceLocation {
@@ -942,13 +903,7 @@ impl CompileDiagnostic {
     ) -> Self {
         let location = error
             .frozen_diagnostic_origin()
-            .and_then(|frozen| candidate?.resolve_frozen_diagnostic_primary(frozen))
-            .or_else(|| {
-                error
-                    .diagnostic_site()
-                    .as_ref()
-                    .and_then(|site| candidate?.resolve_diagnostic_site_primary(site))
-            });
+            .and_then(|frozen| candidate?.resolve_frozen_diagnostic_primary(frozen));
         Self {
             message: error.to_string(),
             location,
@@ -3068,8 +3023,8 @@ enum PdfRawObjectFileLookup {
     Unavailable,
 }
 
-fn discover_pdf_raw_object_files(
-    stores: &Universe,
+fn discover_pdf_raw_object_files<G>(
+    stores: &Universe<G>,
     workspace: &ProjectWorkspace,
 ) -> Result<Vec<FileRequest>, String> {
     let mut required = BTreeMap::new();
@@ -3103,8 +3058,8 @@ fn discover_pdf_raw_object_files(
     Ok(required.into_values().collect())
 }
 
-fn pdf_raw_object_file_receipt(
-    stores: &Universe,
+fn pdf_raw_object_file_receipt<G>(
+    stores: &Universe<G>,
     workspace: &ProjectWorkspace,
 ) -> Result<PdfRawObjectFileReceipt, CompileError> {
     let mut entries = BTreeMap::new();

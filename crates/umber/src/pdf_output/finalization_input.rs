@@ -34,8 +34,8 @@ use super::{
 /// This is intentionally the last Umber-owned step: artifact lookup, accepted
 /// raw-object payload binding, token expansion, engine identifiers, and
 /// diagnostics remain on this side of the boundary.
-pub fn pdf_finalization_input(
-    stores: &mut Universe,
+pub fn pdf_finalization_input<G>(
+    stores: &mut Universe<G>,
     artifacts: &[CommittedArtifact],
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
@@ -51,8 +51,8 @@ pub fn pdf_finalization_input(
 
 /// Freezes finalization input using immutable raw-object file payloads captured
 /// by the accepted resource session.
-pub fn pdf_finalization_input_with_raw_object_files(
-    stores: &mut Universe,
+pub fn pdf_finalization_input_with_raw_object_files<G>(
+    stores: &mut Universe<G>,
     artifacts: &[CommittedArtifact],
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
@@ -69,10 +69,10 @@ pub fn pdf_finalization_input_with_raw_object_files(
     )
 }
 
-pub(super) fn pdf_finalization_input_with_page_records(
-    stores: &mut Universe,
+pub(super) fn pdf_finalization_input_with_page_records<G>(
+    stores: &mut Universe<G>,
     artifacts: &[CommittedArtifact],
-    page_records: &[PdfPageRecord],
+    page_records: &[PdfPageRecord<G>],
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
     raw_object_files: &crate::PdfRawObjectFileReceipt,
@@ -137,18 +137,12 @@ pub(super) fn pdf_finalization_input_with_page_records(
         })
         .collect::<Result<BTreeMap<_, _>, PdfBuildError>>()?;
 
-    // Run the same bounded, pure packet walk once at the host boundary to
-    // materialize the live font instances and pdfTeX resource reservations
-    // that first packet use would allocate. The positioned candidate is
-    // discarded: tex-out repeats lowering from the committed artifacts using
-    // only the detached closure captured below.
-    let mut detached_stores = stores.clone();
-    let (virtual_positioned, reserved_virtual_fonts) = reserve_virtual_font_resources(
-        &mut detached_stores,
-        artifacts,
-        page_records,
-        virtual_fonts,
-    )?;
+    // Run the bounded packet walk once at the outer finalization boundary to
+    // materialize destination-local font instances and resource reservations.
+    // The positioned candidate is discarded: tex-out repeats lowering from
+    // the committed artifacts using only the detached closure captured below.
+    let (virtual_positioned, reserved_virtual_fonts) =
+        reserve_virtual_font_resources(stores, artifacts, page_records, virtual_fonts)?;
 
     let artifacts_by_font = pages
         .iter()
@@ -164,10 +158,10 @@ pub(super) fn pdf_finalization_input_with_page_records(
                 .flat_map(|positioned| positioned.fonts.iter().cloned()),
         )
         .chain(reserved_virtual_fonts.into_iter().map(|font_id| {
-            let resource = detached_stores
+            let resource = stores
                 .pdf_font_resource(font_id)
                 .expect("VF reservation receipt names a checkpointed resource");
-            let font = detached_stores.font(resource.font());
+            let font = stores.font(resource.font());
             tex_out::FontResource {
                 font_id: resource.resource_number(),
                 name: font.name().to_owned(),
@@ -192,19 +186,19 @@ pub(super) fn pdf_finalization_input_with_page_records(
     let font_configuration = stores.pdf_font_configuration();
     let mut fonts = BTreeMap::new();
     for (identity, artifact_resource) in artifacts_by_font {
-        let font_id = detached_stores
+        let font_id = stores
             .font_by_source_identity(identity)
             .ok_or_else(|| PdfBuildError::MissingLiveFont(artifact_resource.name.clone()))?;
-        let resource = detached_stores
+        let resource = stores
             .pdf_font_resource_by_identity(identity)
             .ok_or_else(|| PdfBuildError::MissingFontResource(artifact_resource.name.clone()))?;
-        let loaded = detached_stores.font(font_id);
+        let loaded = stores.font(font_id);
         let map_entry = resolved_map.get(artifact_resource.name.as_bytes()).cloned();
         let encoding = map_entry
             .as_ref()
             .and_then(|entry| entry.encoding_files.first())
             .map(|name| {
-                detached_stores
+                stores
                     .pdf_encoding(name)
                     .cloned()
                     .ok_or_else(|| PdfBuildError::MissingEncoding(name.clone()))
@@ -218,7 +212,7 @@ pub(super) fn pdf_finalization_input_with_page_records(
             // PDF font dictionary. Its exact VF/TFM closure is below.
             PdfFontProgramInput::Resident
         } else {
-            detached_font_program(&detached_stores, font_id, map_entry.as_ref(), driver_dpi)?
+            detached_font_program(stores, font_id, map_entry.as_ref(), driver_dpi)?
         };
         let mut glyph_names = encoding
             .as_ref()
@@ -236,29 +230,29 @@ pub(super) fn pdf_finalization_input_with_page_records(
         let glyph_to_unicode = glyph_names
             .into_iter()
             .filter_map(|name| {
-                detached_stores
+                stores
                     .pdf_glyph_to_unicode(loaded.name().as_bytes(), &name)
-                    .or_else(|| detached_stores.pdf_glyph_to_unicode(&[], &name))
+                    .or_else(|| stores.pdf_glyph_to_unicode(&[], &name))
                     .map(|unicode| (name, unicode.to_vec()))
             })
             .collect();
         let metrics = PdfFontMetricsInput {
             widths: std::array::from_fn(|code| {
-                detached_stores
+                stores
                     .font_char_metrics(font_id, code as u8)
                     .map_or(Scaled::from_raw(0), |metric| metric.width)
             }),
             heights: std::array::from_fn(|code| {
-                detached_stores
+                stores
                     .font_char_metrics(font_id, code as u8)
                     .map_or(Scaled::from_raw(0), |metric| metric.height)
             }),
             depths: std::array::from_fn(|code| {
-                detached_stores
+                stores
                     .font_char_metrics(font_id, code as u8)
                     .map_or(Scaled::from_raw(0), |metric| metric.depth)
             }),
-            x_height: detached_stores.font_parameter(font_id, 5),
+            x_height: stores.font_parameter(font_id, 5),
         };
         fonts.insert(
             identity,
@@ -267,15 +261,14 @@ pub(super) fn pdf_finalization_input_with_page_records(
                 resource_number: resource.resource_number(),
                 object_number: resource.object_number(),
                 metrics,
-                included_codes: detached_stores
+                included_codes: stores
                     .included_pdf_font_chars(font_id)
                     .into_iter()
                     .collect(),
-                descriptor_entries: detached_stores.pdf_font_attribute(font_id).to_vec(),
+                descriptor_entries: stores.pdf_font_attribute(font_id).to_vec(),
                 generate_to_unicode: font_configuration.generates_to_unicode(),
-                disable_builtin_to_unicode: detached_stores
-                    .pdf_builtin_to_unicode_disabled(font_id),
-                infer_builtin_glyph_unicode: detached_stores.has_pdf_glyph_to_unicode_mappings(),
+                disable_builtin_to_unicode: stores.pdf_builtin_to_unicode_disabled(font_id),
+                infer_builtin_glyph_unicode: stores.has_pdf_glyph_to_unicode_mappings(),
                 omit_charset: font_configuration.omits_charset(),
                 glyph_to_unicode,
                 map_entry,
@@ -353,8 +346,7 @@ pub(super) fn pdf_finalization_input_with_page_records(
     }
 
     let include_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
-    let mut allocation_state = detached_stores.clone();
-    let ids = allocation_state
+    let ids = stores
         .finalize_pdf_document_objects(include_info)
         .map_err(|_| PdfBuildError::ObjectCapacity)?;
     let document_objects = PdfReservedDocumentObjects {
@@ -451,7 +443,7 @@ pub(super) fn pdf_finalization_input_with_page_records(
         navigation,
         allocation: PdfAllocationInput {
             document: document_objects,
-            next_object: allocation_state.pdf_next_object_id(),
+            next_object: stores.pdf_next_object_id(),
         },
         limits: PdfFinalizationLimits::default(),
     })
@@ -459,10 +451,10 @@ pub(super) fn pdf_finalization_input_with_page_records(
 
 /// Replays the bounded VF first-use order against the supplied private state
 /// and returns the lowered candidate solely as a font-closure receipt.
-pub(crate) fn reserve_virtual_font_resources(
-    stores: &mut Universe,
+pub(crate) fn reserve_virtual_font_resources<G>(
+    stores: &mut Universe<G>,
     artifacts: &[CommittedArtifact],
-    page_records: &[tex_state::PdfPageRecord],
+    page_records: &[tex_state::PdfPageRecord<G>],
     virtual_fonts: &crate::PdfVirtualFontResources,
 ) -> Result<
     (
@@ -486,8 +478,8 @@ pub(crate) fn reserve_virtual_font_resources(
     Ok((positioned, reserved))
 }
 
-fn detached_font_program(
-    stores: &Universe,
+fn detached_font_program<G>(
+    stores: &Universe<G>,
     font_id: tex_state::ids::FontId,
     map: Option<&tex_fonts::PdfFontMapEntry>,
     driver_dpi: i32,
@@ -569,7 +561,7 @@ fn image_metadata(metadata: PdfExternalImageMetadata) -> PdfImageMetadataInput {
     }
 }
 
-fn navigation(stores: &Universe) -> PdfNavigationInput {
+fn navigation<G>(stores: &Universe<G>) -> PdfNavigationInput {
     PdfNavigationInput {
         annotations: stores
             .pdf_annotations()
@@ -629,7 +621,7 @@ fn navigation(stores: &Universe) -> PdfNavigationInput {
     }
 }
 
-fn destinations(stores: &Universe, structure: bool) -> Vec<PdfDestinationInput> {
+fn destinations<G>(stores: &Universe<G>, structure: bool) -> Vec<PdfDestinationInput> {
     stores
         .pdf_destinations(structure)
         .iter()
@@ -642,7 +634,7 @@ fn destinations(stores: &Universe, structure: bool) -> Vec<PdfDestinationInput> 
         .collect()
 }
 
-fn indirect_action(stores: &Universe, record: PdfActionRecord) -> PdfIndirectActionInput {
+fn indirect_action<G>(stores: &Universe<G>, record: PdfActionRecord<G>) -> PdfIndirectActionInput {
     PdfIndirectActionInput {
         object: record.id(),
         target_object: record.target_object(),
@@ -651,13 +643,13 @@ fn indirect_action(stores: &Universe, record: PdfActionRecord) -> PdfIndirectAct
     }
 }
 
-fn action(stores: &Universe, spec: PdfActionSpec) -> PdfActionInput {
+fn action<G>(stores: &Universe<G>, spec: PdfActionSpec<G>) -> PdfActionInput {
     match spec {
-        PdfActionSpec::User(tokens) => PdfActionInput::User(token_list_bytes(stores, tokens.id())),
+        PdfActionSpec::User(tokens) => PdfActionInput::User(token_list_bytes(stores, tokens)),
         PdfActionSpec::GoTo(destination) => PdfActionInput::GoTo {
             file: destination
                 .file
-                .map(|tokens| token_list_bytes(stores, tokens.id())),
+                .map(|tokens| token_list_bytes(stores, tokens)),
             structure: destination
                 .structure
                 .map(|identity| action_identity(stores, identity)),
@@ -667,7 +659,7 @@ fn action(stores: &Universe, spec: PdfActionSpec) -> PdfActionInput {
         PdfActionSpec::Thread(destination) => PdfActionInput::Thread {
             file: destination
                 .file
-                .map(|tokens| token_list_bytes(stores, tokens.id())),
+                .map(|tokens| token_list_bytes(stores, tokens)),
             structure: destination
                 .structure
                 .map(|identity| action_identity(stores, identity)),
@@ -677,11 +669,11 @@ fn action(stores: &Universe, spec: PdfActionSpec) -> PdfActionInput {
     }
 }
 
-fn action_target(stores: &Universe, target: PdfActionTarget) -> PdfActionTargetInput {
+fn action_target<G>(stores: &Universe<G>, target: PdfActionTarget<G>) -> PdfActionTargetInput {
     match target {
         PdfActionTarget::Page { number, view } => PdfActionTargetInput::Page {
             number,
-            view: token_list_bytes(stores, view.id()),
+            view: token_list_bytes(stores, view),
         },
         PdfActionTarget::Destination(identity) => {
             PdfActionTargetInput::Destination(action_identity(stores, identity))
@@ -689,17 +681,17 @@ fn action_target(stores: &Universe, target: PdfActionTarget) -> PdfActionTargetI
     }
 }
 
-fn action_identity(
-    stores: &Universe,
-    identity: PdfActionIdentifier,
+fn action_identity<G>(
+    stores: &Universe<G>,
+    identity: PdfActionIdentifier<G>,
 ) -> PdfDestinationIdentityInput {
     match identity {
         PdfActionIdentifier::Name(tokens) => {
-            PdfDestinationIdentityInput::Name(token_list_bytes(stores, tokens.id()))
+            PdfDestinationIdentityInput::Name(token_list_bytes(stores, tokens))
         }
         PdfActionIdentifier::Number(number) => PdfDestinationIdentityInput::Number(number),
         PdfActionIdentifier::Raw(tokens) => {
-            PdfDestinationIdentityInput::Raw(token_list_bytes(stores, tokens.id()))
+            PdfDestinationIdentityInput::Raw(token_list_bytes(stores, tokens))
         }
     }
 }

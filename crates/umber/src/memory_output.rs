@@ -10,8 +10,8 @@ use crate::{
 };
 
 /// Fast-path variant for page bodies compiled before successful shipout.
-pub fn collect_final_memory_output_from_plans(
-    stores: &mut Universe,
+pub fn collect_final_memory_output_from_plans<G>(
+    stores: &mut Universe<G>,
     plans: &[DviPagePlan],
     output_byte_limit: usize,
 ) -> Result<MemoryRunOutput, MemoryOutputCollectionError> {
@@ -61,8 +61,8 @@ pub(crate) fn publish_auxiliary_outputs(
 }
 
 /// Fast-path variant for artifacts committed by the current in-process run.
-pub fn collect_final_memory_output_from_commits(
-    stores: &mut Universe,
+pub fn collect_final_memory_output_from_commits<G>(
+    stores: &mut Universe<G>,
     artifacts: &[CommittedArtifact],
     output_byte_limit: usize,
 ) -> Result<MemoryRunOutput, MemoryOutputCollectionError> {
@@ -95,8 +95,8 @@ pub struct MemoryRunOutput {
 ///
 /// Callers must discard the complete `Universe` instead of invoking this for
 /// an attempt that discovered missing files.
-pub fn collect_final_memory_output(
-    stores: &mut Universe,
+pub fn collect_final_memory_output<G>(
+    stores: &mut Universe<G>,
     artifacts: &[ContentHash],
     output_byte_limit: usize,
 ) -> Result<MemoryRunOutput, MemoryOutputCollectionError> {
@@ -109,16 +109,16 @@ pub fn collect_final_memory_output(
     })
 }
 
-fn collect_final_memory_output_with_dvi<F>(
-    stores: &mut Universe,
+fn collect_final_memory_output_with_dvi<G, F>(
+    stores: &mut Universe<G>,
     output_byte_limit: usize,
     build_dvi: F,
 ) -> Result<MemoryRunOutput, MemoryOutputCollectionError>
 where
-    F: FnOnce(&Universe) -> Result<Vec<u8>, DviBuildError>,
+    F: FnOnce(&Universe<G>) -> Result<Vec<u8>, DviBuildError>,
 {
     let effect_pos = stores.world().effect_pos();
-    stores.commit_effects(effect_pos)?;
+    stores.publish_effect_prefix(effect_pos)?;
 
     let terminal = stores
         .world()

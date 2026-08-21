@@ -36,8 +36,8 @@ pub(super) struct Discovery {
     pub observed_pk_fonts: Vec<tex_fonts::PdfPkFontRequest>,
 }
 
-pub(super) fn discover(
-    stores: &mut Universe,
+pub(super) fn discover<G>(
+    stores: &mut Universe<G>,
     files: &ProjectWorkspace,
     cache: &mut PdfVirtualFontResources,
     pk_fonts: &BTreeMap<tex_fonts::PdfPkFontRequest, ResolvedPkFont>,
@@ -302,14 +302,14 @@ pub(super) fn discover(
     })
 }
 
-fn acquire_parsed(
-    stores: &mut Universe,
+fn acquire_parsed<G>(
+    stores: &mut Universe<G>,
     files: &ProjectWorkspace,
     required: &mut BTreeMap<FileRequestKey, FileRequest>,
     observed: &mut BTreeMap<FileRequestKey, FileRequest>,
     kind: FileKind,
     name: &str,
-    parse: impl FnOnce(&mut Universe, &[u8]) -> Result<(), String>,
+    parse: impl FnOnce(&mut Universe<G>, &[u8]) -> Result<(), String>,
 ) -> Result<(), String> {
     let request = request(kind, name, "")?;
     observed.insert(request.key().clone(), request.clone());

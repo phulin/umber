@@ -12,8 +12,9 @@ use tex_exec::{
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::env::banks::IntParam;
 use tex_state::{
-    CommittedArtifact, ContentHash, EffectPos, EffectRecord, FileContent, InputResolver, PrintSink,
-    ResourceLookup, ResourceResult, Universe, WorldCommitMode, WorldError,
+    CommittedArtifact, ContentHash, EffectPos, EffectRecord, FileContent, GenerationBrand,
+    InputResolver, PrintSink, ResourceLookup, ResourceResult, Universe, World, WorldCommitMode,
+    WorldError,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -187,17 +188,43 @@ impl RetainedRootRequest {
 
 struct NoCheckpoints;
 
-impl CheckpointSink for NoCheckpoints {
+fn engine_interner_budget() -> tex_state::interner::InternerBudget {
+    tex_state::interner::InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024)
+        .expect("the Umber engine interner budget is valid")
+}
+
+/// Runs one engine episode inside a fresh generation brand.
+///
+/// The higher-ranked callback prevents runtime ids, checkpoints, or arena
+/// borrows from escaping into host-owned state.
+pub fn with_engine_universe<R>(
+    use_universe: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
+) -> Result<R, tex_state::StateError> {
+    tex_state::with_universe(engine_interner_budget(), use_universe)
+}
+
+/// Installs a host-owned world before entering one freshly branded episode.
+pub fn with_engine_world<R>(
+    world: World,
+    use_universe: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
+) -> Result<R, tex_state::StateError> {
+    with_engine_universe(|universe| {
+        *universe.world_mut() = world;
+        use_universe(universe)
+    })
+}
+
+impl<G> CheckpointSink<G> for NoCheckpoints {
     fn wants_checkpoint(&self, _boundary: EngineBoundary) -> bool {
         false
     }
 
-    fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint) {}
+    fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint<G>) {}
 }
 
 /// Runs one retained immutable root through canonical main control.
-pub fn run_retained_root(
-    stores: &mut Universe,
+pub fn run_retained_root<G>(
+    stores: &mut Universe<G>,
     request: RetainedRootRequest,
     host: &mut dyn ResourceHost,
 ) -> Result<RunResult, SessionError> {
@@ -296,14 +323,14 @@ impl FileSessionResolvers {
     /// Acquires every mapline-selected font program and encoding through the
     /// driver's configured font search path. PDF finalization remains
     /// host-neutral and consumes only validated resources in engine state.
-    pub fn provide_pdf_font_programs(&self, stores: &mut Universe) -> Result<(), String> {
+    pub fn provide_pdf_font_programs<G>(&self, stores: &mut Universe<G>) -> Result<(), String> {
         self.provide_pdf_font_programs_at_dpi(stores, pdf_output::DEFAULT_PDF_PK_RESOLUTION)
     }
 
     /// Variant used by hosts that configure a non-default bitmap device DPI.
-    pub fn provide_pdf_font_programs_at_dpi(
+    pub fn provide_pdf_font_programs_at_dpi<G>(
         &self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         driver_dpi: i32,
     ) -> Result<(), String> {
         provide_pdf_font_resources_at_dpi(stores, driver_dpi, |stores, name| {
@@ -427,19 +454,19 @@ impl ResourceHost for FileSessionResolvers {
     }
 }
 
-pub(crate) fn provide_pdf_font_resources_at_dpi(
-    stores: &mut Universe,
+pub(crate) fn provide_pdf_font_resources_at_dpi<G>(
+    stores: &mut Universe<G>,
     driver_dpi: i32,
-    acquire: impl FnMut(&mut Universe, &[u8]) -> Result<Vec<u8>, String>,
+    acquire: impl FnMut(&mut Universe<G>, &[u8]) -> Result<Vec<u8>, String>,
 ) -> Result<(), String> {
     provide_pdf_font_resources_excluding_at_dpi(stores, driver_dpi, &BTreeSet::new(), acquire)
 }
 
-pub(crate) fn provide_pdf_font_resources_excluding_at_dpi(
-    stores: &mut Universe,
+pub(crate) fn provide_pdf_font_resources_excluding_at_dpi<G>(
+    stores: &mut Universe<G>,
     driver_dpi: i32,
     excluded_names: &BTreeSet<Vec<u8>>,
-    mut acquire: impl FnMut(&mut Universe, &[u8]) -> Result<Vec<u8>, String>,
+    mut acquire: impl FnMut(&mut Universe<G>, &[u8]) -> Result<Vec<u8>, String>,
 ) -> Result<(), String> {
     let used_names = stores
         .pdf_font_resources()
@@ -463,7 +490,7 @@ pub(crate) fn provide_pdf_font_resources_excluding_at_dpi(
         if stores.has_pdf_font_map_file(&name) {
             continue;
         }
-        if name == b"pdftex.map" && !explicitly_requests_default {
+        if name.as_slice() == b"pdftex.map" && !explicitly_requests_default {
             implicit_default = true;
             continue;
         }
@@ -749,9 +776,9 @@ impl PlannedFinalization {
         self
     }
 
-    pub fn retarget_stream_open(
+    pub fn retarget_stream_open<G>(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         failed: &tex_state::StreamOpenFailure,
         replacement: &Path,
     ) -> Result<(), FinalizationError> {
@@ -831,9 +858,9 @@ impl PlannedFinalization {
         Ok(())
     }
 
-    pub fn commit_effects(
+    pub fn commit_effects<G>(
         self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<CommittedFinalization, FinalizationError> {
         match self.commit_effects_retryable(stores)? {
             FinalizationCommit::Committed(committed) => Ok(committed),
@@ -848,9 +875,9 @@ impl PlannedFinalization {
     /// case. Keeping this value lets the caller prompt and retarget the failed
     /// open, then resume the same pending suffix without rebuilding drivers or
     /// replaying engine effects.
-    pub fn commit_effects_retryable(
+    pub fn commit_effects_retryable<G>(
         mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<FinalizationCommit, FinalizationError> {
         let result = if stores.world().commit_mode() == WorldCommitMode::Retained {
             // §530's retry report is itself selector-routed output appended
@@ -858,7 +885,7 @@ impl PlannedFinalization {
             self.effect_pos = stores.world().effect_pos();
             stores.export_retained_effects()
         } else {
-            stores.commit_effects(self.effect_pos)
+            stores.publish_effect_prefix(self.effect_pos)
         };
         if let Err(error) = result {
             if error.stream_open_unavailable().is_some()
@@ -912,7 +939,7 @@ pub struct CommittedFinalization {
 }
 
 impl CommittedFinalization {
-    pub fn materialize(self, stores: &mut Universe) -> Result<(), FinalizationError> {
+    pub fn materialize<G>(self, stores: &mut Universe<G>) -> Result<(), FinalizationError> {
         stores.world_mut().publish_files(
             self.files
                 .into_iter()
@@ -959,8 +986,14 @@ impl From<WorldError> for FinalizationError {
 /// TeX82 initializes only the category codes named in tex.web §232. In
 /// particular, `{`, `}`, `$`, `&`, `#`, `^`, and `_` remain `other_char`
 /// until the format source assigns them.
-pub fn prepare_initex_stores(stores: &mut Universe) {
-    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
+pub fn prepare_initex_stores<G>(stores: &mut Universe<G>) {
+    stores
+        .assign_int_param(
+            IntParam::END_LINE_CHAR,
+            13,
+            tex_state::AssignmentScope::Global,
+        )
+        .expect("fresh end-line character assignment");
     tex_command::install_tex82_expandable_primitives(stores);
     tex_exec::install_unexpandable_primitives(stores);
     stores.intern("par");
@@ -975,27 +1008,27 @@ pub fn prepare_initex_stores(stores: &mut Universe) {
 /// (tex.web §232); the format assigns them, so Umber -- which has no dumped
 /// plain format -- synthesizes that part of the format prelude here rather
 /// than in [`Universe::new`]'s INITEX code tables.
-pub fn prepare_run_stores(stores: &mut Universe) {
+pub fn prepare_run_stores<G>(stores: &mut Universe<G>) {
     prepare_initex_stores(stores);
-    stores.install_plain_catcodes();
+    install_plain_catcodes(stores);
 }
 
 /// Installs the primitive/state setup used by `umber run --etex`.
-pub fn prepare_etex_run_stores(stores: &mut Universe) {
+pub fn prepare_etex_run_stores<G>(stores: &mut Universe<G>) {
     prepare_run_stores(stores);
     tex_command::install_etex_expandable_primitives(stores);
     tex_exec::install_etex_unexpandable_primitives(stores);
 }
 
 /// Installs the primitive/state setup used by `umber run --pdftex`.
-pub fn prepare_pdftex_run_stores(stores: &mut Universe) {
+pub fn prepare_pdftex_run_stores<G>(stores: &mut Universe<G>) {
     prepare_etex_run_stores(stores);
     pdftex::install_pdftex_layer(stores);
     stores.enable_pdf_output();
 }
 
 /// Restores driver-selected pdfTeX meanings after loading a format image.
-pub fn install_pdftex_format_primitives(stores: &mut Universe) {
+pub fn install_pdftex_format_primitives<G>(stores: &mut Universe<G>) {
     tex_command::register_tex82_expandable_primitives(stores);
     tex_command::register_etex_expandable_primitives(stores);
     tex_exec::register_unexpandable_primitives(stores);
@@ -1004,26 +1037,58 @@ pub fn install_pdftex_format_primitives(stores: &mut Universe) {
     stores.enable_pdf_output();
 }
 
-fn register_tex_format_primitives(stores: &mut Universe) {
+fn register_tex_format_primitives<G>(stores: &mut Universe<G>) {
     tex_command::register_tex82_expandable_primitives(stores);
     tex_exec::register_unexpandable_primitives(stores);
 }
 
-fn register_etex_format_primitives(stores: &mut Universe) {
+fn register_etex_format_primitives<G>(stores: &mut Universe<G>) {
     register_tex_format_primitives(stores);
     tex_command::register_etex_expandable_primitives(stores);
     tex_exec::register_etex_unexpandable_primitives(stores);
 }
 
-fn install_latex_compatibility_layer(stores: &mut Universe) {
+fn install_latex_compatibility_layer<G>(stores: &mut Universe<G>) {
     tex_command::install_latex_expandable_primitives(stores);
-    for ch in ['{', '}', '$', '&', '#', '^', '_'] {
-        stores.set_catcode(ch, tex_state::token::Catcode::Other);
+    let mut context = stores
+        .command_context()
+        .expect("fresh LaTeX compatibility admission");
+    for character in ['{', '}', '$', '&', '#', '^', '_'] {
+        context
+            .assign_code(
+                tex_state::CodeTableKind::Catcode,
+                character,
+                i64::from(tex_state::token::Catcode::Other as u8),
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("LaTeX compatibility catcode assignment");
+    }
+}
+
+fn install_plain_catcodes<G>(stores: &mut Universe<G>) {
+    let mut context = stores.command_context().expect("fresh plain admission");
+    for (character, catcode) in [
+        ('{', tex_state::token::Catcode::BeginGroup),
+        ('}', tex_state::token::Catcode::EndGroup),
+        ('$', tex_state::token::Catcode::MathShift),
+        ('&', tex_state::token::Catcode::AlignmentTab),
+        ('#', tex_state::token::Catcode::Parameter),
+        ('^', tex_state::token::Catcode::Superscript),
+        ('_', tex_state::token::Catcode::Subscript),
+    ] {
+        context
+            .assign_code(
+                tex_state::CodeTableKind::Catcode,
+                character,
+                i64::from(catcode as u8),
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("plain catcode assignment");
     }
 }
 
 /// Reconstructs the driver-selected LaTeX primitive registry after loading a format image.
-pub fn install_latex_format_primitives(stores: &mut Universe) {
+pub fn install_latex_format_primitives<G>(stores: &mut Universe<G>) {
     register_etex_format_primitives(stores);
     tex_command::register_latex_expandable_primitives(stores);
 }
@@ -1032,19 +1097,19 @@ pub fn install_latex_format_primitives(stores: &mut Universe) {
 ///
 /// This is an Umber extension layer over e-TeX. It intentionally does not
 /// install pdfTeX identity or PDF-backend primitives.
-pub fn prepare_latex_run_stores(stores: &mut Universe) {
+pub fn prepare_latex_run_stores<G>(stores: &mut Universe<G>) {
     prepare_etex_run_stores(stores);
     install_latex_compatibility_layer(stores);
 }
 
 /// Installs the composed pdfTeX and LaTeX setup used by pdfLaTeX runs.
-pub fn prepare_pdflatex_run_stores(stores: &mut Universe) {
+pub fn prepare_pdflatex_run_stores<G>(stores: &mut Universe<G>) {
     prepare_pdftex_run_stores(stores);
     install_latex_compatibility_layer(stores);
 }
 
 /// Reconstructs the composed pdfTeX and LaTeX primitive registry after format load.
-pub fn install_pdflatex_format_primitives(stores: &mut Universe) {
+pub fn install_pdflatex_format_primitives<G>(stores: &mut Universe<G>) {
     install_pdftex_format_primitives(stores);
     tex_command::register_latex_expandable_primitives(stores);
 }
@@ -1573,8 +1638,8 @@ mod primitive_mode_tests {
 }
 
 /// Runs one retained root through canonical main control.
-pub fn run_input_with_context(
-    stores: &mut Universe,
+pub fn run_input_with_context<G>(
+    stores: &mut Universe<G>,
     request: RetainedRootRequest,
     host: &mut dyn ResourceHost,
 ) -> Result<String, SessionError> {
@@ -1582,8 +1647,8 @@ pub fn run_input_with_context(
 }
 
 /// Runs one retained root with the explicitly selected command profile.
-pub fn run_input_with_context_and_profile(
-    stores: &mut Universe,
+pub fn run_input_with_context_and_profile<G>(
+    stores: &mut Universe<G>,
     request: RetainedRootRequest,
     host: &mut dyn ResourceHost,
     profile: CommandProfile,
@@ -1593,8 +1658,8 @@ pub fn run_input_with_context_and_profile(
 }
 
 /// Runs input and returns the artifact ids emitted by `\shipout` in order.
-pub fn run_input_collecting_artifacts(
-    stores: &mut Universe,
+pub fn run_input_collecting_artifacts<G>(
+    stores: &mut Universe<G>,
     request: RetainedRootRequest,
     host: &mut dyn ResourceHost,
 ) -> Result<RunResult, SessionError> {
@@ -1607,8 +1672,8 @@ pub fn run_input_collecting_artifacts(
 /// responsibilities. In particular, a pdfTeX store must be paired with
 /// [`CommandProfile::PDFTEX14029`] so shipout finalizes PDF-only deferred nodes as
 /// PDF rather than applying the exact DVI-mode rejection.
-pub fn run_input_collecting_artifacts_with_profile(
-    stores: &mut Universe,
+pub fn run_input_collecting_artifacts_with_profile<G>(
+    stores: &mut Universe<G>,
     mut request: RetainedRootRequest,
     host: &mut dyn ResourceHost,
     profile: CommandProfile,
@@ -1618,8 +1683,8 @@ pub fn run_input_collecting_artifacts_with_profile(
 }
 
 /// Reads committed page artifacts from `World` and writes a complete DVI file.
-pub fn dvi_from_artifacts(
-    stores: &Universe,
+pub fn dvi_from_artifacts<G>(
+    stores: &Universe<G>,
     artifacts: &[ContentHash],
 ) -> Result<Vec<u8>, DviBuildError> {
     write_dvi_from_artifacts(stores, artifacts, Vec::new())
@@ -1664,8 +1729,8 @@ pub fn write_dvi_from_committed_artifacts<W: std::io::Write>(
 }
 
 /// Decodes, validates, emits, and drops each artifact before loading the next.
-pub fn write_dvi_from_artifacts<W: std::io::Write>(
-    stores: &Universe,
+pub fn write_dvi_from_artifacts<G, W: std::io::Write>(
+    stores: &Universe<G>,
     artifacts: &[ContentHash],
     sink: W,
 ) -> Result<W, DviBuildError> {
@@ -1698,8 +1763,8 @@ pub fn html_from_committed_artifacts<R: tex_out::html::HtmlFontAssets>(
 }
 
 /// Replays durable artifacts through the HTML driver one page at a time.
-pub fn html_from_artifacts<R: tex_out::html::HtmlFontAssets>(
-    stores: &Universe,
+pub fn html_from_artifacts<G, R: tex_out::html::HtmlFontAssets>(
+    stores: &Universe<G>,
     artifacts: &[ContentHash],
     assets: &R,
     options: &tex_out::html::HtmlOptions,
@@ -1716,14 +1781,17 @@ pub fn html_from_artifacts<R: tex_out::html::HtmlFontAssets>(
 }
 
 /// Runs in-memory TeX through the `umber run` executor setup.
-pub fn run_memory_with_stores(source: &str, stores: &mut Universe) -> Result<String, SessionError> {
+pub fn run_memory_with_stores<G>(
+    source: &str,
+    stores: &mut Universe<G>,
+) -> Result<String, SessionError> {
     run_memory_collecting_artifacts(source, stores).map(|result| result.terminal_text)
 }
 
 /// Runs in-memory input with an explicit command profile and output backend.
-pub fn run_memory_with_stores_and_profile(
+pub fn run_memory_with_stores_and_profile<G>(
     source: &str,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     profile: CommandProfile,
     emit_dvi: bool,
 ) -> Result<String, SessionError> {
@@ -1732,17 +1800,17 @@ pub fn run_memory_with_stores_and_profile(
 }
 
 /// Runs in-memory TeX and preserves its completed status and artifacts.
-pub fn run_memory_collecting_artifacts(
+pub fn run_memory_collecting_artifacts<G>(
     source: &str,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<RunResult, SessionError> {
     run_memory_collecting_artifacts_with_profile(source, stores, CommandProfile::TEX82, true)
 }
 
 /// Runs in-memory input with an explicit profile while preserving its status.
-pub fn run_memory_collecting_artifacts_with_profile(
+pub fn run_memory_collecting_artifacts_with_profile<G>(
     source: &str,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     profile: CommandProfile,
     emit_dvi: bool,
 ) -> Result<RunResult, SessionError> {
@@ -1761,7 +1829,7 @@ pub fn run_memory_collecting_artifacts_with_profile(
     session.run(&mut host, &mut NoCheckpoints)
 }
 
-fn uncommitted_terminal_text(stores: &Universe) -> String {
+fn uncommitted_terminal_text<G>(stores: &Universe<G>) -> String {
     terminal_text_from_effects(stores.world().effect_records())
 }
 

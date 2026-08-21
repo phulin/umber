@@ -14,8 +14,9 @@ use tex_out::pdf::{
     PdfStreamCompression, PdfVersion,
 };
 use tex_out::positioned::{PositionedError, PositionedPage};
+use tex_state::TokenListId;
 use tex_state::env::banks::{IntParam, TokParam};
-use tex_state::ids::{FontId, TokenListId};
+use tex_state::ids::FontId;
 use tex_state::token_show::append_token_string_text;
 use tex_state::{
     CommittedArtifact, ContentHash, PdfDocumentFragmentKind, PdfOutputParameters, Universe,
@@ -34,8 +35,8 @@ pub(crate) fn is_pdf_sfnt_program(name: &[u8]) -> bool {
         })
 }
 
-pub(crate) fn pk_font_request(
-    stores: &Universe,
+pub(crate) fn pk_font_request<G>(
+    stores: &Universe<G>,
     font_id: FontId,
     driver_dpi: i32,
 ) -> Result<tex_fonts::PdfPkFontRequest, String> {
@@ -66,8 +67,8 @@ pub(crate) fn pk_font_request(
     ))
 }
 
-pub fn pdf_from_committed_artifacts(
-    stores: &mut Universe,
+pub fn pdf_from_committed_artifacts<G>(
+    stores: &mut Universe<G>,
     artifacts: &[CommittedArtifact],
 ) -> Result<Vec<u8>, PdfBuildError> {
     pdf_from_committed_artifacts_with_virtual_fonts(
@@ -77,8 +78,8 @@ pub fn pdf_from_committed_artifacts(
     )
 }
 
-pub fn pdf_from_committed_artifacts_with_virtual_fonts(
-    stores: &mut Universe,
+pub fn pdf_from_committed_artifacts_with_virtual_fonts<G>(
+    stores: &mut Universe<G>,
     artifacts: &[CommittedArtifact],
     virtual_fonts: &crate::PdfVirtualFontResources,
 ) -> Result<Vec<u8>, PdfBuildError> {
@@ -100,8 +101,8 @@ pub fn pdf_from_committed_artifacts_with_virtual_fonts(
 /// commit, but they are already part of the accepted document. This adapter
 /// presents the ordered live prefix and prepared suffix as one PDF page ledger
 /// without publishing either effects or artifacts early.
-pub fn pdf_from_accepted_artifacts_with_virtual_fonts(
-    stores: &mut Universe,
+pub fn pdf_from_accepted_artifacts_with_virtual_fonts<G>(
+    stores: &mut Universe<G>,
     artifacts: &[CommittedArtifact],
     prepared_pages: Option<&tex_state::PreparedPageSuffix>,
     virtual_fonts: &crate::PdfVirtualFontResources,
@@ -121,8 +122,8 @@ pub fn pdf_from_accepted_artifacts_with_virtual_fonts(
     )
 }
 
-pub fn pdf_from_committed_artifacts_at_dpi(
-    stores: &mut Universe,
+pub fn pdf_from_committed_artifacts_at_dpi<G>(
+    stores: &mut Universe<G>,
     artifacts: &[CommittedArtifact],
     driver_dpi: i32,
 ) -> Result<Vec<u8>, PdfBuildError> {
@@ -138,10 +139,10 @@ pub fn pdf_from_committed_artifacts_at_dpi(
 }
 
 #[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
-fn pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts(
-    stores: &mut Universe,
+fn pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts<G>(
+    stores: &mut Universe<G>,
     artifacts: &[CommittedArtifact],
-    page_records: &[tex_state::PdfPageRecord],
+    page_records: &[tex_state::PdfPageRecord<G>],
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
     raw_object_files: &crate::PdfRawObjectFileReceipt,
@@ -205,10 +206,10 @@ fn map_finalization_error(error: tex_out::pdf::PdfBuildError) -> PdfBuildError {
     }
 }
 
-fn positioned_pages(
-    stores: &Universe,
+fn positioned_pages<G>(
+    stores: &Universe<G>,
     artifacts: &[CommittedArtifact],
-    records: &[tex_state::PdfPageRecord],
+    records: &[tex_state::PdfPageRecord<G>],
 ) -> Result<Vec<PositionedPage>, PdfBuildError> {
     records
         .iter()
@@ -224,7 +225,7 @@ fn positioned_pages(
         .collect()
 }
 
-fn positioned_forms(stores: &Universe) -> Result<Vec<(u32, PositionedPage)>, PdfBuildError> {
+fn positioned_forms<G>(stores: &Universe<G>) -> Result<Vec<(u32, PositionedPage)>, PdfBuildError> {
     stores
         .pdf_forms()
         .filter_map(|form| {
@@ -252,8 +253,8 @@ fn pdf_date(clock: tex_state::JobClock) -> Vec<u8> {
     .into_bytes()
 }
 
-fn artifact_bytes(
-    stores: &Universe,
+fn artifact_bytes<G>(
+    stores: &Universe<G>,
     artifacts: &[CommittedArtifact],
     hash: ContentHash,
 ) -> Result<Vec<u8>, PdfBuildError> {
@@ -266,7 +267,7 @@ fn artifact_bytes(
         .ok_or(PdfBuildError::MissingArtifact(hash))
 }
 
-fn output_parameters(stores: &Universe) -> PdfOutputParameters {
+fn output_parameters<G>(stores: &Universe<G>) -> PdfOutputParameters {
     stores.fixed_pdf_output_parameters().unwrap_or_else(|| {
         PdfOutputParameters {
             output: stores.int_param(IntParam::PDF_OUTPUT),
@@ -316,7 +317,7 @@ fn serialization_options(
     })
 }
 
-pub(crate) fn token_list_bytes(stores: &Universe, id: TokenListId) -> Vec<u8> {
+pub(crate) fn token_list_bytes<G>(stores: &Universe<G>, id: TokenListId<G>) -> Vec<u8> {
     let mut text = String::new();
     for &token in stores.tokens(id).iter() {
         append_token_string_text(stores, token, &mut text);
@@ -324,7 +325,7 @@ pub(crate) fn token_list_bytes(stores: &Universe, id: TokenListId) -> Vec<u8> {
     text.into_bytes()
 }
 
-fn document_fragment_bytes(stores: &Universe, kind: PdfDocumentFragmentKind) -> Vec<u8> {
+fn document_fragment_bytes<G>(stores: &Universe<G>, kind: PdfDocumentFragmentKind) -> Vec<u8> {
     let mut bytes = Vec::new();
     for tokens in stores.pdf_document_fragments(kind) {
         bytes.extend_from_slice(&token_list_bytes(stores, tokens));
