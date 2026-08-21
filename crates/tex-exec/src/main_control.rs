@@ -7677,6 +7677,14 @@ impl<G> MainControl<G> {
         }
         if let (Ok(ReplayStep::End), Some((dump, incomplete_conditions))) = (&result, end.as_ref())
         {
+            // TeX82 §1030 traces the delivered `\end` before §1335 starts
+            // final cleanup. The trace was rendered while command state was
+            // admitted, but its detached program must be replayed here,
+            // after that admission has ended and before cleanup writes its
+            // transcript notice directly to World.
+            stores
+                .world_mut()
+                .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
             self.end_of_job_final_cleanup(stores, *dump, incomplete_conditions.clone());
         } else if matches!(result, Ok(ReplayStep::EndOfInput))
             && self.root_completion == RootCompletionPolicy::RequireTeXEnd
