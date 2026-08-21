@@ -3104,10 +3104,7 @@ impl<G> MainControl<G> {
                 );
             }
             self.capture_first_causal_context(stores, &diagnostics);
-            {
-                let mut context = stores.command_context().expect("live generation");
-                report_pending_diagnostics(&mut context, diagnostic_effects, diagnostics)?;
-            }
+            report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
             self.open_discretionary_part(stores)?;
             return Ok(ReplayStep::Continue);
         }
@@ -6123,8 +6120,7 @@ impl<G> MainControl<G> {
         // the following outer main-control step report them only after
         // build_page has emitted its tracingpages state.
         self.capture_first_causal_context(stores, &diagnostics);
-        let mut context = stores.command_context().expect("live generation");
-        report_pending_diagnostics(&mut context, diagnostic_effects, diagnostics)
+        report_pending_diagnostics(stores, diagnostic_effects, diagnostics)
     }
 
     fn apply_math_delimiter(
@@ -6697,10 +6693,7 @@ impl<G> MainControl<G> {
             return Err(error);
         }
         self.capture_first_causal_context(stores, &diagnostics);
-        {
-            let mut context = stores.command_context().expect("live generation");
-            report_pending_diagnostics(&mut context, diagnostic_effects, diagnostics)?;
-        }
+        report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
         self.drain_file_framing_events(stores);
 
         if let Some((operation, meaning)) = fused_hot {
@@ -7166,10 +7159,7 @@ impl<G> MainControl<G> {
             ));
         }
         self.capture_first_causal_context(stores, &diagnostics);
-        {
-            let mut context = stores.command_context().expect("live generation");
-            report_pending_diagnostics(&mut context, diagnostic_effects, diagnostics)?;
-        }
+        report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
         self.drain_file_framing_events(stores);
         let scanned = match scanned {
             ScannedOperation::<G>::Cold(scanned) => scanned,
