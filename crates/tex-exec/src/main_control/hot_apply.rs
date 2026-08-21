@@ -16,14 +16,14 @@ use super::*;
 /// Keeping the scanned definition inline preserves the allocation-free common
 /// command path despite the deliberate variant size difference.
 #[allow(clippy::large_enum_variant)]
-pub(super) enum HotOperation {
+pub(super) enum HotOperation<G> {
     MacroDefinition {
         definition: tex_command::ScannedMacroDefinition,
         flags: MeaningFlags,
         global: bool,
     },
     Let {
-        assignment: tex_command::ScannedLetAssignment,
+        assignment: tex_command::ScannedLetAssignment<G>,
         global: bool,
     },
     CatCode {
@@ -38,7 +38,7 @@ pub(super) enum HotOperation {
     },
 }
 
-impl HotOperation {
+impl<G> HotOperation<G> {
     pub(super) const fn begin_ordinary_group() -> Self {
         Self::EnterGroup(GroupKind::Simple)
     }
@@ -59,7 +59,7 @@ impl HotOperation {
 
     pub(super) fn protected_definition_observation(
         &self,
-        stores: &Universe,
+        stores: &Universe<G>,
     ) -> Option<TokenListRecord> {
         let Self::MacroDefinition {
             definition, flags, ..
@@ -98,13 +98,13 @@ impl HotOperation {
 
 /// Scans a ranked common command after §1211's prefix loop and all contextual
 /// mode/group cases have selected the ordinary assignment arm.
-pub(super) fn scan(
-    processor: &mut CommandProcessor<'_>,
-    command: &tex_command::CurrentCommand,
+pub(super) fn scan<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: &tex_command::CurrentCommand<G>,
     global: bool,
     flags: MeaningFlags,
     innermost_group: Option<GroupKind>,
-) -> Result<Option<HotOperation>, ExecError> {
+) -> Result<Option<HotOperation<G>>, ExecError> {
     let operation = match command.meaning() {
         Meaning::CharToken {
             cat: Catcode::BeginGroup,
@@ -164,11 +164,11 @@ pub(super) fn scan(
 }
 
 /// Applies one measured common operation to canonical state and journals.
-pub(super) fn apply(
-    operation: &HotOperation,
-    stores: &mut Universe,
+pub(super) fn apply<G>(
+    operation: &HotOperation<G>,
+    stores: &mut Universe<G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
     match operation {
         HotOperation::MacroDefinition {

@@ -29,11 +29,10 @@ use tex_command::{
     MutationTarget, ObservationEffectKind, ObservationValue, ObservedToken, ParameterClass,
     TokenListRecord, parameter_mutation_key_for_dialect,
 };
-use tex_state::GeometryObservation;
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::ids::{FontId, GlueId, TokenListId};
+use tex_state::ids::FontId;
 use tex_state::interner::{ControlSequenceKind, Symbol, SymbolId};
 use tex_state::macro_store::MacroMeaning;
 use tex_state::math::{
@@ -51,6 +50,7 @@ use tex_state::{
     InputReadState, ParagraphShapeLine, PenaltyArrayKind, PrintSink, StreamSlot, TracedTokenList,
     TrackedRegionBarrier, TrackedRegionError, TrackedRegionRecord, Universe,
 };
+use tex_state::{GlueId, TokenListId};
 use tex_typeset::PackSpec;
 
 use crate::assignments::committer::AssignmentCommitter;
@@ -92,12 +92,12 @@ fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch:
 }
 
 /// Production command main control with command-owned source consumption.
-#[derive(Debug, Default)]
-pub struct MainControl {
+#[derive(Debug)]
+pub struct MainControl<G> {
     /// The one session-lived canonical input, expansion, and scanner owner.
     /// Individual [`CommandProcessor`] values are borrow-only facades over
     /// this interpreter and cannot survive semantic or host barriers.
-    command: PersistentInterpreter,
+    command: PersistentInterpreter<G>,
     /// Operational memo service owned by the execution/session layer.
     pure_memo: Arc<std::sync::Mutex<tex_state::PureMemoRuntime>>,
     pure_memo_initialized: bool,
@@ -127,11 +127,11 @@ pub struct MainControl {
     /// last skip-register definition. The second component is `None` when
     /// scanning allocated a fresh TeX glue node that Umber subsequently
     /// hash-consed with an equal existing node.
-    skip_pointer_sources: Vec<Option<(GlueId, Option<GlueId>)>>,
+    skip_pointer_sources: Vec<Option<(GlueId<G>, Option<GlueId<G>>)>>,
     /// Mu-glue counterpart of [`Self::skip_pointer_sources`]. e-TeX's
     /// `\gluetomu` and `\mutoglue` conversions retain the source pointer, so
     /// the two register banks need the same identity accounting.
-    muskip_pointer_sources: Vec<Option<(GlueId, Option<GlueId>)>>,
+    muskip_pointer_sources: Vec<Option<(GlueId<G>, Option<GlueId<G>>)>>,
     /// True while `main_control` is parked at TeX82 §1034's
     /// `main_loop_lookahead` rather than at §1030's `big_switch`.
     ///
@@ -264,19 +264,19 @@ pub struct MainControl {
     /// Settled command retained across a typed resource retry.
     /// Preflight has already committed its delivery, so retry resumes operand
     /// scanning without cloning or replaying earlier ordinary commands.
-    pending_preflight_command: Option<PendingPreflightCommand>,
+    pending_preflight_command: Option<PendingPreflightCommand<G>>,
     /// Fully scanned resource operation retained across host acquisition.
     /// The command/input cursor is already committed, so retry resolves this
     /// typed operand and never replays delivery or scanning work.
-    pending_resource_operation: Option<PendingResourceOperation>,
+    pending_resource_operation: Option<PendingResourceOperation<G>>,
     /// Alignment-owned delivery retained across immutable host suspension.
-    /// Command input and expansion continuations remain in `CommandState`;
+    /// Command input and expansion continuations remain in `CommandState<G>`;
     /// this tag names the executor entry point that must resume them.
     pending_alignment_delivery: Option<PendingAlignmentDelivery>,
     /// Diagnostic-host assignment retained after expanded delivery has
     /// committed. Retrying resumes either its exact settled command/cursor or
     /// its fully scanned operation without fetching another diagnostic token.
-    pending_diagnostic_operation: Option<PendingDiagnosticOperation>,
+    pending_diagnostic_operation: Option<PendingDiagnosticOperation<G>>,
     /// TeX82 §76's `history=fatal_error_stop`, carrying §93/§94/§95's payload.
     ///
     /// `succumb` ends the job through §81's `jump_out`, which a library engine
@@ -576,24 +576,24 @@ type ObservationSlot = Option<ObservationBuffer>;
 ///
 /// Delivery selects only how the next completed command enters main control;
 /// preparation, application, publication, and evidence are shared.
-enum OperationDelivery {
-    Replay(Option<tex_command::CurrentCommand>),
+enum OperationDelivery<G> {
+    Replay(Option<tex_command::CurrentCommand<G>>),
     /// TeX82 §1038's main-loop lookahead delivered this command with bare
     /// `get_next`; it must not acquire an expanded-delivery observation when
     /// the scanner borrow resumes.
     Raw {
-        command: tex_command::CurrentCommand,
+        command: tex_command::CurrentCommand<G>,
         cursor: Option<tex_command::CommandDeliveryCursor>,
     },
     /// Expansion settled in the processor borrow that produced this command,
     /// including its canonical expanded observation. This covers both raw
     /// preflight and an in-place TeX82 `goto reswitch`/§1270 handoff.
     Settled {
-        command: tex_command::CurrentCommand,
+        command: tex_command::CurrentCommand<G>,
         cursor: Option<tex_command::CommandDeliveryCursor>,
     },
     Expanding {
-        command: tex_command::CurrentCommand,
+        command: tex_command::CurrentCommand<G>,
         main_loop: bool,
         cursor: tex_command::CommandDeliveryCursor,
     },
@@ -610,32 +610,32 @@ enum OperationDelivery {
     /// preflight processor borrow. The typed family operand is the real Rust
     /// borrow barrier before semantic state application; no command or
     /// universal scanned-step DTO crosses it.
-    Hot(hot_apply::HotOperation),
+    Hot(hot_apply::HotOperation<G>),
     /// Delivery completed during mutation-free capability preflight. The
     /// semantic step still runs through the sole executor below.
-    Prepared(Box<ColdOperation>),
+    Prepared(Box<ColdOperation<G>>),
 }
 
 #[derive(Clone, Debug)]
-enum PendingPreflightCommand {
+enum PendingPreflightCommand<G> {
     Settled {
-        command: tex_command::CurrentCommand,
+        command: tex_command::CurrentCommand<G>,
         cursor: Option<tex_command::CommandDeliveryCursor>,
     },
     Raw {
-        command: tex_command::CurrentCommand,
+        command: tex_command::CurrentCommand<G>,
         cursor: Option<tex_command::CommandDeliveryCursor>,
     },
     Expanding {
-        command: tex_command::CurrentCommand,
+        command: tex_command::CurrentCommand<G>,
         main_loop: bool,
         cursor: tex_command::CommandDeliveryCursor,
     },
     ImmediatePdfRetry(UnexpandablePrimitive),
 }
 
-impl PendingPreflightCommand {
-    fn with_retry_expansion(self, retry: Option<tex_command::CurrentCommand>) -> Self {
+impl<G> PendingPreflightCommand<G> {
+    fn with_retry_expansion(self, retry: Option<tex_command::CurrentCommand<G>>) -> Self {
         let Some(retry) = retry else {
             return self;
         };
@@ -673,13 +673,13 @@ impl PendingPreflightCommand {
     }
 }
 
-struct PreflightDelivery {
-    delivery: OperationDelivery,
+struct PreflightDelivery<G> {
+    delivery: OperationDelivery<G>,
     capabilities: crate::transaction_protocol::CommandCapabilities,
 }
 
-struct PreparedColdOperation {
-    scanned: ColdOperation,
+struct PreparedColdOperation<G> {
+    scanned: ColdOperation<G>,
     outer_paragraph_was_active: bool,
     artifact_count: usize,
     effect_count: usize,
@@ -690,28 +690,28 @@ struct PreparedColdOperation {
 ///
 /// Common unexpandable families are already applied when this value is
 /// returned. Cold and barrier families retain the existing prepared value.
-enum OperationReadiness {
+enum OperationReadiness<G> {
     Applied(Result<ReplayStep, ExecError>),
-    Prepared(PreparedColdOperation),
+    Prepared(PreparedColdOperation<G>),
 }
 
 /// One command after canonical delivery and operand scanning.
 ///
 /// The hot variant is a family-sized borrow-release operand. Only the cold
 /// variant materializes a typed cold operation.
-enum ScannedOperation {
-    Hot(hot_apply::HotOperation),
-    Cold(ColdOperation),
+enum ScannedOperation<G> {
+    Hot(hot_apply::HotOperation<G>),
+    Cold(ColdOperation<G>),
 }
 
-impl From<ColdOperation> for ScannedOperation {
-    fn from(scanned: ColdOperation) -> Self {
+impl<G> From<ColdOperation<G>> for ScannedOperation<G> {
+    fn from(scanned: ColdOperation<G>) -> Self {
         Self::Cold(scanned)
     }
 }
 
-struct PendingResourceOperation {
-    scanned: Box<ColdOperation>,
+struct PendingResourceOperation<G> {
+    scanned: Box<ColdOperation<G>>,
     capabilities: crate::transaction_protocol::CommandCapabilities,
 }
 
@@ -721,44 +721,44 @@ struct PendingAlignmentDelivery {
     cursor: tex_command::CommandDeliveryCursor,
 }
 
-enum PendingDiagnosticOperation {
+enum PendingDiagnosticOperation<G> {
     Assignment {
-        command: tex_command::CurrentCommand,
+        command: tex_command::CurrentCommand<G>,
         cursor: tex_command::CommandDeliveryCursor,
     },
-    Prepared(Box<ColdOperation>),
+    Prepared(Box<ColdOperation<G>>),
 }
 
-impl std::fmt::Debug for PendingDiagnosticOperation {
+impl<G> std::fmt::Debug for PendingDiagnosticOperation<G> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
-            Self::Assignment { .. } => "PendingDiagnosticOperation::Assignment",
-            Self::Prepared(_) => "PendingDiagnosticOperation::Prepared",
+            Self::Assignment { .. } => "PendingDiagnosticOperation::<G>::Assignment",
+            Self::Prepared(_) => "PendingDiagnosticOperation::<G>::Prepared",
         })
     }
 }
 
-impl std::fmt::Debug for PendingResourceOperation {
+impl<G> std::fmt::Debug for PendingResourceOperation<G> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("PendingResourceOperation")
+            .debug_struct("PendingResourceOperation<G>")
             .field("family", &self.capabilities.family())
             .finish_non_exhaustive()
     }
 }
 
-struct UnavailablePreparedResource {
+struct UnavailablePreparedResource<G> {
     error: ExecError,
-    scanned: Box<ColdOperation>,
+    scanned: Box<ColdOperation<G>>,
 }
 
-struct PrepareOperationError {
+struct PrepareOperationError<G> {
     error: Box<ExecError>,
-    unavailable: Option<Box<ColdOperation>>,
+    unavailable: Option<Box<ColdOperation<G>>>,
     cursor: Option<tex_command::CommandDeliveryCursor>,
 }
 
-impl PrepareOperationError {
+impl<G> PrepareOperationError<G> {
     fn with_cursor(error: ExecError, cursor: tex_command::CommandDeliveryCursor) -> Self {
         Self {
             error: Box::new(error),
@@ -788,7 +788,7 @@ struct DirectOperationMark<G> {
     page: tex_state::node_arena::NodeArenaCursor<tex_state::node_arena::PageLifetime>,
 }
 
-impl From<ExecError> for PrepareOperationError {
+impl<G> From<ExecError> for PrepareOperationError<G> {
     fn from(error: ExecError) -> Self {
         Self {
             error: Box::new(error),
@@ -798,8 +798,8 @@ impl From<ExecError> for PrepareOperationError {
     }
 }
 
-impl From<Box<UnavailablePreparedResource>> for PrepareOperationError {
-    fn from(unavailable: Box<UnavailablePreparedResource>) -> Self {
+impl<G> From<Box<UnavailablePreparedResource<G>>> for PrepareOperationError<G> {
+    fn from(unavailable: Box<UnavailablePreparedResource<G>>) -> Self {
         let unavailable = *unavailable;
         Self {
             error: Box::new(unavailable.error),
@@ -993,8 +993,8 @@ impl CommandObserver for ObservationBuffer {
 /// needs to build a processor of its own -- rather than being handed one --
 /// takes this instead, so passing the command machine along costs one
 /// parameter instead of four.
-struct CommandMachine<'a> {
-    state: &'a mut PersistentInterpreter,
+struct CommandMachine<'a, G> {
+    state: &'a mut PersistentInterpreter<G>,
     fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
@@ -1007,8 +1007,8 @@ struct CommandMachine<'a> {
     emit_dvi_override: Option<bool>,
 }
 
-impl CommandMachine<'_> {
-    fn processor<'a>(&'a mut self, stores: &'a mut Universe) -> InterpreterProcessor<'a> {
+impl<G> CommandMachine<'_, G> {
+    fn processor<'a>(&'a mut self, stores: &'a mut Universe<G>) -> InterpreterProcessor<'a, G> {
         command_processor(
             self.state,
             self.fuel,
@@ -1047,13 +1047,13 @@ impl CommandMachine<'_> {
     }
 }
 
-fn command_processor<'a>(
-    command: &'a mut PersistentInterpreter,
+fn command_processor<'a, G>(
+    command: &'a mut PersistentInterpreter<G>,
     fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
-    stores: &'a mut Universe,
-) -> InterpreterProcessor<'a> {
+    stores: &'a mut Universe<G>,
+) -> InterpreterProcessor<'a, G> {
     let observer = observations
         .as_mut()
         .map(|buffer| buffer as &mut dyn CommandObserver);
@@ -1065,7 +1065,64 @@ fn command_processor<'a>(
     )
 }
 
-impl MainControl {
+impl<G> Default for MainControl<G> {
+    fn default() -> Self {
+        Self {
+            command: PersistentInterpreter::default(),
+            pure_memo: Arc::default(),
+            pure_memo_initialized: false,
+            fuel: tex_command::CommandFuelLedger::default(),
+            capabilities: CommandHostCapabilities::default(),
+            emit_dvi_override: None,
+            modes: ModeNest::default(),
+            max_save_stack: 0,
+            next_alignment_identity: 0,
+            active_alignment: None,
+            boxes: ReplayBoxes::default(),
+            active_discretionaries: Vec::new(),
+            active_math_choices: Vec::new(),
+            active_math_left_boundaries: Vec::new(),
+            active_math_shifts: Vec::new(),
+            skip_pointer_sources: Vec::new(),
+            muskip_pointer_sources: Vec::new(),
+            main_loop_active: false,
+            set_box_forbidden_depth: 0,
+            shown_mode: None,
+            main_control_entered: false,
+            end_job_ejection_pending: false,
+            initex: false,
+            preloaded_format: None,
+            engine_binary: None,
+            dumped_format: None,
+            startup_terminal_line: String::new(),
+            terminal_line_was_empty: None,
+            root_completion: RootCompletionPolicy::default(),
+            page_output_observations: ObservationBuffer::default(),
+            operation_observations: None,
+            operation_receipt_start: None,
+            suspended_operation_observation: None,
+            completed_replay_episode: None,
+            prepared_dvi_pages: PreparedDviPages::default(),
+            completed_boundaries: Vec::new(),
+            pending_shipout_boundary: false,
+            pending_resource_site: None,
+            pending_preflight_command: None,
+            pending_resource_operation: None,
+            pending_alignment_delivery: None,
+            pending_diagnostic_operation: None,
+            fatal: None,
+            captured_fatal_origin: None,
+            first_causal_context: None,
+            job: crate::job::JobFraming::default(),
+            job_body_effect_end: None,
+            pdf_navigation_finalized: false,
+            advance_telemetry: AdvanceTelemetry::default(),
+            episode_telemetry: crate::EpisodeTelemetry::default(),
+        }
+    }
+}
+
+impl<G> MainControl<G> {
     /// Replaces the execution-owned memo service between candidate runs.
     pub fn install_pure_memo_runtime(&mut self, runtime: tex_state::PureMemoRuntime) {
         self.pure_memo = Arc::new(std::sync::Mutex::new(runtime));
@@ -1077,7 +1134,7 @@ impl MainControl {
         let runtime = std::mem::take(&mut self.pure_memo);
         self.pure_memo_initialized = false;
         Arc::try_unwrap(runtime)
-            .expect("Universe retains only a weak memo capability")
+            .expect("Universe<G> retains only a weak memo capability")
             .into_inner()
             .expect("memo runtime mutex is not poisoned")
     }
@@ -1092,7 +1149,7 @@ impl MainControl {
 
     /// Attaches this execution-owned service before candidate setup records
     /// carried history outside the command step loop.
-    pub fn attach_pure_memo_capability(&self, stores: &mut Universe) {
+    pub fn attach_pure_memo_capability(&self, stores: &mut Universe<G>) {
         stores.attach_pure_memo_capability(&self.pure_memo);
     }
 
@@ -1117,11 +1174,11 @@ impl MainControl {
         self.episode_telemetry.record_semantic_barrier(barrier);
     }
 
-    /// Samples host cancellation before mutating command, mode, or Universe
+    /// Samples host cancellation before mutating command, mode, or Universe<G>
     /// state.
     pub fn advance_when(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         readiness: AdvanceReadiness,
     ) -> Result<AdvanceOutcome, ExecError> {
         if readiness == AdvanceReadiness::Cancelled {
@@ -1135,7 +1192,7 @@ impl MainControl {
         self.advance(stores).map(AdvanceOutcome::Step)
     }
 
-    fn pause_for_instructions(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+    fn pause_for_instructions(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
         // tex.web §330: an injected interruption always enters ErrorStop,
         // reports against the live canonical input cursor, and leaves that
         // cursor untouched when the dialog returns.
@@ -1161,10 +1218,14 @@ impl MainControl {
         )
     }
 
-    fn local_glue_pointer_reassigned(&self, stores: &Universe, scanned: &ColdOperation) -> bool {
+    fn local_glue_pointer_reassigned(
+        &self,
+        stores: &Universe<G>,
+        scanned: &ColdOperation<G>,
+    ) -> bool {
         let (index, value, source_identity, source_is_target, physical, pointer_sources) =
             match scanned {
-                ColdOperation::Skip {
+                ColdOperation::<G>::Skip {
                     index,
                     value,
                     source_identity,
@@ -1179,7 +1240,7 @@ impl MainControl {
                     stores.skip(*index),
                     &self.skip_pointer_sources,
                 ),
-                ColdOperation::Muskip {
+                ColdOperation::<G>::Muskip {
                     index,
                     value,
                     source_identity,
@@ -1216,8 +1277,8 @@ impl MainControl {
 
     fn etex_redundant_local_glue_assignment(
         &self,
-        stores: &mut Universe,
-        scanned: &ColdOperation,
+        stores: &mut Universe<G>,
+        scanned: &ColdOperation<G>,
     ) -> bool {
         stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
             && self.local_glue_pointer_reassigned(stores, scanned)
@@ -1225,7 +1286,7 @@ impl MainControl {
 
     pub const DEFAULT_FUEL_LIMIT: u64 = tex_command::DEFAULT_COMMAND_FUEL_LIMIT;
 
-    /// Creates command-owned state without changing the shared `Universe`.
+    /// Creates command-owned state without changing the shared `Universe<G>`.
     ///
     /// Composed sessions use this when their profile/format initializer has
     /// already installed primitive meanings. [`Self::tex82_initex`] remains
@@ -1263,7 +1324,7 @@ impl MainControl {
     /// The primitive definitions are installed from the engine's static TeX82
     /// registries, before any fixture or host source is registered.
     #[must_use]
-    pub fn tex82_initex(stores: &mut Universe) -> Self {
+    pub fn tex82_initex(stores: &mut Universe<G>) -> Self {
         tex_command::install_tex82_expandable_primitives(stores);
         crate::install_unexpandable_primitives(stores);
         Self {
@@ -1276,7 +1337,7 @@ impl MainControl {
 
     /// Borrows command state for source registration and snapshots.
     #[must_use]
-    pub fn command_mut(&mut self) -> &mut CommandState {
+    pub fn command_mut(&mut self) -> &mut CommandState<G> {
         self.command.state_mut()
     }
 
@@ -1343,7 +1404,7 @@ impl MainControl {
     pub fn capture_checkpoint(
         &mut self,
         boundary: crate::EngineBoundary,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
         crate::EngineCheckpoint::capture_checkpoint(
@@ -1361,7 +1422,7 @@ impl MainControl {
     pub fn capture_checkpoint_with_exact_identity(
         &mut self,
         boundary: crate::EngineBoundary,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
         crate::EngineCheckpoint::capture_checkpoint(
@@ -1380,7 +1441,7 @@ impl MainControl {
     pub fn restore_checkpoint(
         &mut self,
         checkpoint: &crate::EngineCheckpoint,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<(), crate::CheckpointRestoreError> {
         checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
         self.active_alignment = None;
@@ -1404,7 +1465,7 @@ impl MainControl {
     /// root source (e.g. before [`Self::register_root_source`]), so the
     /// banner and `**` line precede the root file's own `(`. See
     /// [`crate::job`].
-    pub fn begin_job(&mut self, stores: &mut Universe, first_line: &str) {
+    pub fn begin_job(&mut self, stores: &mut Universe<G>, first_line: &str) {
         self.begin_job_for_input(stores, first_line, first_line);
     }
 
@@ -1413,7 +1474,7 @@ impl MainControl {
     /// immutable job name from the separately parsed input filename.
     pub fn begin_job_for_input(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         first_line: &str,
         input_name: &str,
     ) {
@@ -1422,7 +1483,11 @@ impl MainControl {
 
     /// Opens the transcript and catches up §534 after a driver already
     /// emitted §61's terminal headline before interactive root acquisition.
-    pub fn begin_job_after_terminal_headline(&mut self, stores: &mut Universe, first_line: &str) {
+    pub fn begin_job_after_terminal_headline(
+        &mut self,
+        stores: &mut Universe<G>,
+        first_line: &str,
+    ) {
         self.begin_job_after_terminal_headline_for_input(stores, first_line, first_line);
     }
 
@@ -1430,7 +1495,7 @@ impl MainControl {
     /// from the filename selected from it.
     pub fn begin_job_after_terminal_headline_for_input(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         first_line: &str,
         input_name: &str,
     ) {
@@ -1439,7 +1504,7 @@ impl MainControl {
 
     fn begin_job_with_terminal_banner(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         first_line: &str,
         input_name: &str,
         print_terminal_banner: bool,
@@ -1493,7 +1558,7 @@ impl MainControl {
     /// This is TeX82 §537's opening boundary. Keeping its `open_parens`
     /// mutation beside the print lets §1335 close an input abandoned by
     /// `\end` or `\dump`, just as it closes command-opened inputs.
-    pub fn open_startup_input(&mut self, stores: &mut Universe, name: &str) {
+    pub fn open_startup_input(&mut self, stores: &mut Universe<G>, name: &str) {
         crate::job::open_startup_input(stores, name);
     }
 
@@ -1528,7 +1593,7 @@ impl MainControl {
     /// alternative to refusing here is printing a fabricated number.
     pub fn finish_job(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         dvi: Option<crate::DviJobOutput>,
         pdf: Option<&mut crate::PdfJobFinalizationReport>,
     ) {
@@ -1556,7 +1621,7 @@ impl MainControl {
 
     /// Selects TeX82 §§532--533's lazy DVI output name at the first point a
     /// driver needs to serialize shipped pages.
-    pub fn dvi_output_name(&mut self, stores: &mut Universe) -> Result<String, ExecError> {
+    pub fn dvi_output_name(&mut self, stores: &mut Universe<G>) -> Result<String, ExecError> {
         self.job
             .output
             .dvi_name(stores, self.capabilities.job_name())
@@ -1569,7 +1634,7 @@ impl MainControl {
     }
 
     /// Renders whatever §537/§362 bracketing the command core queued but had
-    /// no `Universe` in hand to print.
+    /// no `Universe<G>` in hand to print.
     ///
     /// The command core renders every event at the point tex.web prints it
     /// whenever it can -- §362's `)` has to precede the
@@ -1577,7 +1642,7 @@ impl MainControl {
     /// `get_next` -- so what reaches here is the residue. Every step driver
     /// calls this once, immediately after it reports the operation's other
     /// diagnostics.
-    fn drain_file_framing_events(&mut self, stores: &mut Universe) {
+    fn drain_file_framing_events(&mut self, stores: &mut Universe<G>) {
         self.command
             .render_file_framing_events(&mut stores.command_context());
     }
@@ -1587,12 +1652,12 @@ impl MainControl {
     /// unfinished conditionals, the "(see the transcript file..." note, and
     /// the `\dump`-outside-INITEX note, in that exact order. The first of
     /// those needs `self`'s job-framing state, which the free function
-    /// `apply_cold_operation` that handles `ColdOperation::End` does not have; the
+    /// `apply_cold_operation` that handles `ColdOperation::<G>::End` does not have; the
     /// other three used to run inside that free function and are moved here,
     /// not copied, so they run after the paren close instead of before it.
     fn end_of_job_final_cleanup(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         dump: bool,
         incomplete_conditions: Vec<tex_command::IncompleteCondition>,
     ) {
@@ -1624,7 +1689,7 @@ impl MainControl {
     /// the `\end` ejection has made the last page and its navigation records
     /// visible. This is deliberately later than TeX82 §1335's generic
     /// `final_cleanup`, matching pdfTeX's `close_files_and_terminate` order.
-    pub fn finalize_pdf_navigation(&mut self, stores: &mut Universe) {
+    pub fn finalize_pdf_navigation(&mut self, stores: &mut Universe<G>) {
         if std::mem::replace(&mut self.pdf_navigation_finalized, true) {
             return;
         }
@@ -1651,10 +1716,10 @@ impl MainControl {
 
     fn resolve_font_resource(
         &self,
-        scanned: ColdOperation,
-        stores: &Universe,
-    ) -> Result<ColdOperation, Box<UnavailablePreparedResource>> {
-        let ColdOperation::FontDefinition {
+        scanned: ColdOperation<G>,
+        stores: &Universe<G>,
+    ) -> Result<ColdOperation<G>, Box<UnavailablePreparedResource<G>>> {
+        let ColdOperation::<G>::FontDefinition {
             request, global, ..
         } = scanned
         else {
@@ -1663,18 +1728,18 @@ impl MainControl {
         stores.poison_tracked_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let path = crate::canonical_font_resource_path(&request.name);
         let Some(resource) = self.capabilities.font(&path) else {
-            return Err(Box::new(UnavailablePreparedResource {
+            return Err(Box::new(UnavailablePreparedResource::<G> {
                 error: ExecError::MissingFont {
                     request: request.clone(),
                 },
-                scanned: Box::new(ColdOperation::FontDefinition {
+                scanned: Box::new(ColdOperation::<G>::FontDefinition {
                     request,
                     resource: Box::new(None),
                     global,
                 }),
             }));
         };
-        Ok(ColdOperation::FontDefinition {
+        Ok(ColdOperation::<G>::FontDefinition {
             request,
             resource: Box::new(Some(resource)),
             global,
@@ -1683,10 +1748,10 @@ impl MainControl {
 
     fn resolve_input_stream_resource(
         &self,
-        scanned: ColdOperation,
-        stores: &Universe,
-    ) -> Result<ColdOperation, Box<UnavailablePreparedResource>> {
-        let ColdOperation::InputStream {
+        scanned: ColdOperation<G>,
+        stores: &Universe<G>,
+    ) -> Result<ColdOperation<G>, Box<UnavailablePreparedResource<G>>> {
+        let ColdOperation::<G>::InputStream {
             mut request,
             resource: _,
         } = scanned
@@ -1715,11 +1780,11 @@ impl MainControl {
                             packed_name,
                             tex_command::FileEnquiryIntent::OpenInProbe,
                         );
-                        return Err(Box::new(UnavailablePreparedResource {
+                        return Err(Box::new(UnavailablePreparedResource::<G> {
                             error: ExecError::MissingInputProbe {
                                 request: error_request,
                             },
-                            scanned: Box::new(ColdOperation::InputStream {
+                            scanned: Box::new(ColdOperation::<G>::InputStream {
                                 request,
                                 resource: None,
                             }),
@@ -1729,22 +1794,22 @@ impl MainControl {
             }
             InputStreamRequest::Close { .. } | InputStreamRequest::Read { .. } => None,
         };
-        Ok(ColdOperation::InputStream { request, resource })
+        Ok(ColdOperation::<G>::InputStream { request, resource })
     }
 
     fn resolve_pdf_image_resource(
         &self,
-        scanned: ColdOperation,
-        stores: &mut Universe,
-    ) -> Result<ColdOperation, Box<UnavailablePreparedResource>> {
-        let ColdOperation::PdfXImage { mut request, .. } = scanned else {
+        scanned: ColdOperation<G>,
+        stores: &mut Universe<G>,
+    ) -> Result<ColdOperation<G>, Box<UnavailablePreparedResource<G>>> {
+        let ColdOperation::<G>::PdfXImage { mut request, .. } = scanned else {
             return Ok(scanned);
         };
         stores.poison_tracked_region(TrackedRegionBarrier::UnsupportedHostCapability);
         // pdfTeX checks \pdfoutput before it enters `scan_image`; in DVI
         // mode this must be the diagnostic, not a host-resource suspension.
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
-            return Ok(ColdOperation::PdfXImage {
+            return Ok(ColdOperation::<G>::PdfXImage {
                 request,
                 resource: PdfImageResource::Unavailable,
             });
@@ -1752,17 +1817,17 @@ impl MainControl {
         apply_pdf_image_compatibility_policy(stores);
         request.page_box = pdf_image_page_box(stores, &request);
         let Some(resource) = self.capabilities.pdf_image(&request) else {
-            return Err(Box::new(UnavailablePreparedResource {
+            return Err(Box::new(UnavailablePreparedResource::<G> {
                 error: ExecError::MissingPdfImage {
                     request: request.clone(),
                 },
-                scanned: Box::new(ColdOperation::PdfXImage {
+                scanned: Box::new(ColdOperation::<G>::PdfXImage {
                     request,
                     resource: PdfImageResource::Unavailable,
                 }),
             }));
         };
-        Ok(ColdOperation::PdfXImage { request, resource })
+        Ok(ColdOperation::<G>::PdfXImage { request, resource })
     }
 
     /// Registers and opens the one root source selected by the host before
@@ -1784,7 +1849,7 @@ impl MainControl {
 
     /// Publishes source-open framing after root registration without
     /// consuming the first command, allowing hosts to checkpoint JobStart.
-    pub fn flush_pending_file_framing(&mut self, stores: &mut Universe) {
+    pub fn flush_pending_file_framing(&mut self, stores: &mut Universe<G>) {
         self.drain_file_framing_events(stores);
     }
 
@@ -1801,7 +1866,7 @@ impl MainControl {
     /// to main control for ordinary tokenization and fuel accounting. Fatal
     /// EOF is latched as §93's terminal `End`, so no driver can advance the
     /// exhausted source again.
-    fn handle_root_end_of_input(&mut self, stores: &mut Universe) -> ReplayStep {
+    fn handle_root_end_of_input(&mut self, stores: &mut Universe<G>) -> ReplayStep {
         let previous_line_was_empty = self
             .terminal_line_was_empty
             .unwrap_or(self.startup_terminal_line.is_empty());
@@ -1832,7 +1897,7 @@ impl MainControl {
     /// after the driver has opened the transcript.
     pub fn register_startup_root_source(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         source: SourceRegistration,
         startup_name: &str,
     ) -> Result<tex_state::SourceId, SourceRegistrationError> {
@@ -1868,7 +1933,7 @@ impl MainControl {
     /// scan but still crossed §537's opened-name boundary.
     pub fn record_retained_startup_strings(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         requested_name: &str,
         resolved_name: Option<&str>,
     ) {
@@ -1895,7 +1960,7 @@ impl MainControl {
     ///
     /// This is intentionally call-local capability state rather than part of
     /// a command snapshot or durable session summary.
-    pub fn refresh_host_capabilities(&mut self, stores: &Universe) {
+    pub fn refresh_host_capabilities(&mut self, stores: &Universe<G>) {
         self.capabilities
             .set_conditional_state(self.modes.conditional_state());
         self.capabilities.set_space_factor(
@@ -1953,7 +2018,7 @@ impl MainControl {
     /// builder sweeps a node onto the page) exactly when the contribution
     /// list has been swept empty; while it is nonempty, the real
     /// contribution tail governs, just as it does for `\unskip`.
-    fn last_node_value(&self, stores: &Universe) -> Option<tex_command::LastNodeItem> {
+    fn last_node_value(&self, stores: &Universe<G>) -> Option<tex_command::LastNodeItem> {
         if is_outer_vertical(&self.modes) {
             return match crate::effective_tail::EffectiveTail::find(
                 stores.page_contributions().iter(),
@@ -1978,7 +2043,7 @@ impl MainControl {
 
     /// e-TeX 2.6 `etex.ch` [26.424]'s `find_effective_tail` result for
     /// `\lastnodetype`.
-    fn last_node_type_value(&self, stores: &Universe) -> i32 {
+    fn last_node_type_value(&self, stores: &Universe<G>) -> i32 {
         if is_outer_vertical(&self.modes) {
             return crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
                 .map_or_else(
@@ -2002,7 +2067,7 @@ impl MainControl {
     /// other node shape (including a character, which tex.web excludes via
     /// `is_char_node`) has no matching case, exactly like tex.web's
     /// `case cur_chr of ... end {there are no other cases}`.
-    fn classify_last_node(stores: &Universe, node: &Node) -> Option<tex_command::LastNodeItem> {
+    fn classify_last_node(stores: &Universe<G>, node: &Node) -> Option<tex_command::LastNodeItem> {
         match node {
             Node::Penalty(value) => Some(tex_command::LastNodeItem::Penalty(*value)),
             Node::Kern { amount, .. } => Some(tex_command::LastNodeItem::Kern(*amount)),
@@ -2034,7 +2099,7 @@ impl MainControl {
     /// own processor rather than being handed one. A caller that must keep
     /// another of main control's fields borrowed at the same time builds the
     /// bundle from those fields directly instead.
-    fn command_machine(&mut self) -> CommandMachine<'_> {
+    fn command_machine(&mut self) -> CommandMachine<'_, G> {
         CommandMachine {
             state: &mut self.command,
             fuel: self.fuel.fuel_mut(),
@@ -2054,10 +2119,13 @@ impl MainControl {
     /// to [`Self::resume_main_control_parking`] afterwards. The rule is stated
     /// here once: three drivers used to spell it out inline, and a rule spelled
     /// three times is a rule two of them can be missing.
-    fn suspend_main_control_parking(&mut self, scanned: &ColdOperation) -> MainControlParking {
+    fn suspend_main_control_parking(&mut self, scanned: &ColdOperation<G>) -> MainControlParking {
         let parking = MainControlParking {
             character: scanned.main_loop_character(),
-            resumes_interrupted_fetch: matches!(scanned, ColdOperation::AlignmentTemplateEntered),
+            resumes_interrupted_fetch: matches!(
+                scanned,
+                ColdOperation::<G>::AlignmentTemplateEntered
+            ),
         };
         if !parking.resumes_interrupted_fetch {
             self.main_loop_active = false;
@@ -2078,7 +2146,7 @@ impl MainControl {
     /// frees the would-be node, and jumps straight back to `big_switch`. With
     /// `\nullfont` selected -- §552 gives it `font_bc=1`, `font_ec=0`, so no
     /// character at all exists -- that is every character in the document.
-    fn resume_main_control_parking(&mut self, parking: MainControlParking, stores: &Universe) {
+    fn resume_main_control_parking(&mut self, parking: MainControlParking, stores: &Universe<G>) {
         if parking.resumes_interrupted_fetch {
             return;
         }
@@ -2092,7 +2160,10 @@ impl MainControl {
         });
     }
 
-    fn publish_pdf_fatal_error(stores: &mut Universe, error: &ExecError) -> Result<(), ExecError> {
+    fn publish_pdf_fatal_error(
+        stores: &mut Universe<G>,
+        error: &ExecError,
+    ) -> Result<(), ExecError> {
         if error.is_pdftex_navigation_fatal() {
             crate::job::report_pdf_fatal_error(stores, &error.to_string());
             stores.commit_effects(stores.world().effect_pos())?;
@@ -2102,7 +2173,7 @@ impl MainControl {
 
     fn finish_resource_preflight_failure(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         error: ExecError,
     ) -> Result<StepResult, ExecError> {
         let error =
@@ -2221,7 +2292,7 @@ impl MainControl {
         &mut self,
         artifact_count: usize,
         _effect_count: usize,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) {
         self.pending_shipout_boundary |= stores.world().artifact_commits().len() != artifact_count;
         if self.pending_shipout_boundary
@@ -2256,7 +2327,7 @@ impl MainControl {
     /// delimiter-classification or source-consumption path.
     pub fn apply_alignment_request(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         request: AlignmentRequest,
     ) -> Result<(), ExecError> {
         let finished = matches!(request, AlignmentRequest::Finish(_));
@@ -2316,7 +2387,7 @@ impl MainControl {
     ///
     /// Returns whether this call was the entry, so an observed step publishes
     /// the prologue's push only on the step that produced it.
-    fn enter_main_control(&mut self, stores: &mut Universe) -> bool {
+    fn enter_main_control(&mut self, stores: &mut Universe<G>) -> bool {
         // Seeds `line` before the first command is delivered; every step
         // republishes it after delivery (see `apply_operation`).
         stores.set_current_input_position(
@@ -2346,11 +2417,11 @@ impl MainControl {
     pub fn alignment_step(
         &mut self,
         alignment: AlignmentIdentity,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
         match self.execute_operation(
             stores,
-            OperationDelivery::Alignment(alignment),
+            OperationDelivery::<G>::Alignment(alignment),
             OperationTransaction::Alignment,
             1,
             None,
@@ -2369,7 +2440,7 @@ impl MainControl {
     /// Every step-delivery entry point -- unobserved, observed, and alignment
     /// -- routes through this single match, so the host-applied set is stated
     /// exactly once. It used to be an `if let` chain copied into each entry
-    /// point, and the observed copy was missing [`ColdOperation::MathShift`]:
+    /// point, and the observed copy was missing [`ColdOperation::<G>::MathShift`]:
     /// an observed `$` fell through to `apply_cold_operation`'s `unreachable!()`
     /// while the identical unobserved `$` was applied correctly
     /// (umber2-johp.118). Add a host-applied step here, never at a call site.
@@ -2379,36 +2450,38 @@ impl MainControl {
     /// `main_loop` entry, so all of them resume at `big_switch`.
     fn apply_host_owned_step(
         &mut self,
-        scanned: ColdOperation,
-        stores: &mut Universe,
-    ) -> ControlFlow<Result<ReplayStep, ExecError>, ColdOperation> {
+        scanned: ColdOperation<G>,
+        stores: &mut Universe<G>,
+    ) -> ControlFlow<Result<ReplayStep, ExecError>, ColdOperation<G>> {
         let applied = match scanned {
-            ColdOperation::ReplayCompleted(episode) => {
+            ColdOperation::<G>::ReplayCompleted(episode) => {
                 self.completed_replay_episode = Some(episode);
                 Ok(ReplayStep::Continue)
             }
-            ColdOperation::Math(request) => self.apply_math_request(request, stores),
-            ColdOperation::DisplayAlignmentRecovery => {
+            ColdOperation::<G>::Math(request) => self.apply_math_request(request, stores),
+            ColdOperation::<G>::DisplayAlignmentRecovery => {
                 self.recover_display_alignment_closer(stores)
             }
-            ColdOperation::MathDelimiter(boundary) => self.apply_math_delimiter(boundary, stores),
+            ColdOperation::<G>::MathDelimiter(boundary) => {
+                self.apply_math_delimiter(boundary, stores)
+            }
             // TeX82 §1137's `hmode+math_shift: init_math` and §1193's
             // `mmode+math_shift: if cur_group=math_shift_group then
             // after_math else off_save`. §1090 backs a `vmode+math_shift` up
             // and runs `new_graf(true)` first, so vertical mode never reaches
             // this step.
-            ColdOperation::MathShift { pairing } => self.apply_math_shift(pairing, stores),
-            ColdOperation::DiscretionaryOpening(opening) => {
+            ColdOperation::<G>::MathShift { pairing } => self.apply_math_shift(pairing, stores),
+            ColdOperation::<G>::DiscretionaryOpening(opening) => {
                 self.begin_discretionary(opening, stores)
             }
-            ColdOperation::DiscretionaryPartEnd => self.finish_discretionary_part(stores),
-            ColdOperation::DiscretionaryHyphen { origin } => {
+            ColdOperation::<G>::DiscretionaryPartEnd => self.finish_discretionary_part(stores),
+            ColdOperation::<G>::DiscretionaryHyphen { origin } => {
                 self.apply_discretionary_hyphen(origin, stores)
             }
             // TeX82 §1123's `make_accent` runs §1270's `do_assignments`
             // between the accent code and §1124's base character, so it
             // executes whole commands of its own before it can finish.
-            ColdOperation::Accent(accent) => self.apply_accent(accent, stores),
+            ColdOperation::<G>::Accent(accent) => self.apply_accent(accent, stores),
             scanned => return ControlFlow::Continue(scanned),
         };
         // TeX82 §§994/1005 run `fire_up` inside the host-owned operation's
@@ -2447,7 +2520,7 @@ impl MainControl {
         artifact_count: usize,
         _effect_count: usize,
         _prepared_page_count: usize,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
         let applied = match applied {
             Ok(applied) => applied,
@@ -2518,7 +2591,7 @@ impl MainControl {
     fn finish_paragraph_boundary(
         &mut self,
         outer_paragraph_was_active: bool,
-        _stores: &mut Universe,
+        _stores: &mut Universe<G>,
     ) {
         if outer_paragraph_was_active
             && self.modes.current_mode() == Mode::Vertical
@@ -2534,7 +2607,7 @@ impl MainControl {
     fn begin_discretionary(
         &mut self,
         _opening: ScannedDiscretionaryOpening,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
             self.modes.current_mode(),
@@ -2555,7 +2628,7 @@ impl MainControl {
         Ok(ReplayStep::Continue)
     }
 
-    fn open_discretionary_part(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+    fn open_discretionary_part(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
         // TeX82 §216 checks nest capacity before saving the current semantic
         // level. Fatal overflow is committed by main control, so
         // this fallible operation must precede both halves of the live
@@ -2580,7 +2653,7 @@ impl MainControl {
     /// brace or append the completed three-part node.
     fn finish_discretionary_part(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
         let level =
             crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
@@ -2710,7 +2783,7 @@ impl MainControl {
     fn apply_discretionary_hyphen(
         &mut self,
         origin: tex_state::provenance::OriginRef,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
             self.modes.current_mode(),
@@ -2758,7 +2831,7 @@ impl MainControl {
 
     /// Records TeX's checked save-stack high-water projection after one
     /// direct main-control operation.
-    fn record_save_stack_usage(&mut self, stores: &Universe) {
+    fn record_save_stack_usage(&mut self, stores: &Universe<G>) {
         // TeX82 §§645/1083 keeps ordinary box specs immediately below their
         // §273 boundaries. Vcenters and insertions deliberately have smaller
         // projections (§§1167/1099), so derive the words from each live kind.
@@ -2777,7 +2850,7 @@ impl MainControl {
     #[allow(clippy::too_many_arguments)]
     fn episode_commit_boundary(
         &self,
-        stores: &Universe,
+        stores: &Universe<G>,
         applied: &Result<ReplayStep, ExecError>,
         operations: usize,
         max_operations: usize,
@@ -2845,9 +2918,9 @@ impl MainControl {
 
     fn command_requires_transaction(
         &self,
-        stores: &Universe,
+        stores: &Universe<G>,
         capabilities: crate::transaction_protocol::CommandCapabilities,
-        delivery: &OperationDelivery,
+        delivery: &OperationDelivery<G>,
     ) -> bool {
         if !matches!(
             capabilities.preflight(),
@@ -2871,7 +2944,7 @@ impl MainControl {
             Mode::Vertical | Mode::InternalVertical
         ) && matches!(
             delivery,
-            OperationDelivery::Replay(Some(command))
+            OperationDelivery::<G>::Replay(Some(command))
                 if matches!(
                     command.meaning(),
                     Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfStartLink)
@@ -2879,7 +2952,7 @@ impl MainControl {
         ) {
             return true;
         }
-        if matches!(delivery, OperationDelivery::Expanding { .. }) {
+        if matches!(delivery, OperationDelivery::<G>::Expanding { .. }) {
             return true;
         }
         // A right brace normally owns only the save stack and group state,
@@ -2889,7 +2962,7 @@ impl MainControl {
         // known before direct semantic apply. Braces inside the box remain
         // ordinary because their innermost save-stack group does not name the
         // box body.
-        if let OperationDelivery::Replay(Some(command)) = delivery
+        if let OperationDelivery::<G>::Replay(Some(command)) = delivery
             && matches!(
                 command.meaning(),
                 Meaning::CharToken {
@@ -2907,7 +2980,7 @@ impl MainControl {
         }
         matches!(
             delivery,
-            OperationDelivery::Replay(Some(command))
+            OperationDelivery::<G>::Replay(Some(command))
                 if matches!(
                     command.meaning(),
                     Meaning::UnexpandablePrimitive(
@@ -2924,7 +2997,7 @@ impl MainControl {
 
     fn record_direct_episode_commit(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         operations: usize,
         boundary: crate::EpisodeCommitBoundary,
         initial_artifacts: usize,
@@ -2976,7 +3049,7 @@ impl MainControl {
         self.advance_telemetry.commits += 1;
     }
 
-    fn begin_direct_operation<G>(&mut self, stores: &Universe<G>) -> DirectOperationMark<G> {
+    fn begin_direct_operation(&mut self, stores: &Universe<G>) -> DirectOperationMark<G> {
         DirectOperationMark {
             state: stores
                 .journal_cursor()
@@ -2987,21 +3060,13 @@ impl MainControl {
         }
     }
 
-    fn commit_direct_operation<G>(
-        &mut self,
-        _stores: &mut Universe<G>,
-        mark: DirectOperationMark<G>,
-    ) {
+    fn commit_direct_operation(&mut self, _stores: &mut Universe<G>, mark: DirectOperationMark<G>) {
         self.modes
             .commit_journal(mark.mode)
             .expect("direct operation owns the top mode journal frame");
     }
 
-    fn discard_direct_operation<G>(
-        &mut self,
-        stores: &mut Universe<G>,
-        mark: DirectOperationMark<G>,
-    ) {
+    fn discard_direct_operation(&mut self, stores: &mut Universe<G>, mark: DirectOperationMark<G>) {
         stores
             .restore_state(mark.state)
             .expect("direct operation state cursor belongs to the live generation");
@@ -3014,7 +3079,7 @@ impl MainControl {
             .expect("direct operation page cursor belongs to the live page arena");
     }
 
-    fn finish_direct_failure<G>(
+    fn finish_direct_failure(
         &mut self,
         stores: &mut Universe<G>,
         operation_mark: DirectOperationMark<G>,
@@ -3076,11 +3141,11 @@ impl MainControl {
     /// loop deliberately has no group-depth stop and owns no retry snapshot.
     /// Only a capability with an explicit transaction specification, dynamic
     /// output continuation, or unsettled expansion leaves this path.
-    fn execute_direct_episode<G>(
+    fn execute_direct_episode(
         &mut self,
         stores: &mut Universe<G>,
         max_operations: usize,
-        mut initial_delivery: Option<OperationDelivery>,
+        mut initial_delivery: Option<OperationDelivery<G>>,
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
     ) -> Result<StepResult, ExecError> {
         let initial_boundaries = self.completed_boundaries.len();
@@ -3112,20 +3177,20 @@ impl MainControl {
             // owners still remain untouched until prepared apply.
             let operation_mark = self.begin_direct_operation(stores);
             let preflight = if let Some(pending) = self.pending_resource_operation.take() {
-                PreflightDelivery {
-                    delivery: OperationDelivery::Prepared(pending.scanned),
+                PreflightDelivery::<G> {
+                    delivery: OperationDelivery::<G>::Prepared(pending.scanned),
                     capabilities: pending.capabilities,
                 }
             } else if let Some(delivery) = initial_delivery.take() {
-                PreflightDelivery {
+                PreflightDelivery::<G> {
                     delivery,
                     capabilities: crate::transaction_protocol::canonical_command_capabilities(
                         Meaning::Relax,
                     ),
                 }
             } else if let Some(pending) = self.pending_alignment_delivery.take() {
-                PreflightDelivery {
-                    delivery: OperationDelivery::AlignmentRetry {
+                PreflightDelivery::<G> {
+                    delivery: OperationDelivery::<G>::AlignmentRetry {
                         alignment: pending.alignment,
                         cursor: pending.cursor,
                     },
@@ -3135,38 +3200,44 @@ impl MainControl {
                 }
             } else if let Some(command) = self.pending_preflight_command.take() {
                 match command {
-                    PendingPreflightCommand::Settled { command, cursor } => PreflightDelivery {
-                        capabilities: crate::transaction_protocol::canonical_command_capabilities(
-                            command.meaning(),
-                        ),
-                        delivery: OperationDelivery::Settled { command, cursor },
-                    },
-                    PendingPreflightCommand::Raw { command, cursor } => PreflightDelivery {
-                        capabilities: crate::transaction_protocol::canonical_command_capabilities(
-                            command.meaning(),
-                        ),
-                        delivery: OperationDelivery::Raw { command, cursor },
-                    },
-                    PendingPreflightCommand::Expanding {
+                    PendingPreflightCommand::<G>::Settled { command, cursor } => {
+                        PreflightDelivery::<G> {
+                            capabilities:
+                                crate::transaction_protocol::canonical_command_capabilities(
+                                    command.meaning(),
+                                ),
+                            delivery: OperationDelivery::<G>::Settled { command, cursor },
+                        }
+                    }
+                    PendingPreflightCommand::<G>::Raw { command, cursor } => {
+                        PreflightDelivery::<G> {
+                            capabilities:
+                                crate::transaction_protocol::canonical_command_capabilities(
+                                    command.meaning(),
+                                ),
+                            delivery: OperationDelivery::<G>::Raw { command, cursor },
+                        }
+                    }
+                    PendingPreflightCommand::<G>::Expanding {
                         command,
                         main_loop,
                         cursor,
-                    } => PreflightDelivery {
+                    } => PreflightDelivery::<G> {
                         capabilities: crate::transaction_protocol::canonical_command_capabilities(
                             command.meaning(),
                         ),
-                        delivery: OperationDelivery::Expanding {
+                        delivery: OperationDelivery::<G>::Expanding {
                             command,
                             main_loop,
                             cursor,
                         },
                     },
-                    PendingPreflightCommand::ImmediatePdfRetry(primitive) => {
+                    PendingPreflightCommand::<G>::ImmediatePdfRetry(primitive) => {
                         let meaning = Meaning::UnexpandablePrimitive(primitive);
-                        PreflightDelivery {
+                        PreflightDelivery::<G> {
                             capabilities:
                                 crate::transaction_protocol::canonical_command_capabilities(meaning),
-                            delivery: OperationDelivery::ImmediatePdfRetry(primitive),
+                            delivery: OperationDelivery::<G>::ImmediatePdfRetry(primitive),
                         }
                     }
                 }
@@ -3199,9 +3270,9 @@ impl MainControl {
             };
 
             let alignment_delivery = match &preflight.delivery {
-                OperationDelivery::Alignment(alignment) => Some(Some(*alignment)),
-                OperationDelivery::AlignmentRetry { alignment, .. } => Some(*alignment),
-                OperationDelivery::Replay(None)
+                OperationDelivery::<G>::Alignment(alignment) => Some(Some(*alignment)),
+                OperationDelivery::<G>::AlignmentRetry { alignment, .. } => Some(*alignment),
+                OperationDelivery::<G>::Replay(None)
                     if self.active_alignment.is_some()
                         || (self.modes.current_mode() == Mode::DisplayMath
                             && self.modes.current_list().has_display_alignment()) =>
@@ -3216,7 +3287,7 @@ impl MainControl {
                 && !(stores.int_param(IntParam::PDF_OUTPUT) <= 0
                     && matches!(
                         &preflight.delivery,
-                        OperationDelivery::Replay(Some(command))
+                        OperationDelivery::<G>::Replay(Some(command))
                             if matches!(
                                 command.meaning(),
                                 Meaning::UnexpandablePrimitive(
@@ -3239,41 +3310,41 @@ impl MainControl {
                 self.advance_telemetry.attempts += 1;
                 let tracked_mark = episode_tracked_mark.take();
                 let retry_command = match &preflight.delivery {
-                    OperationDelivery::Replay(Some(command)) => {
-                        Some(PendingPreflightCommand::Settled {
+                    OperationDelivery::<G>::Replay(Some(command)) => {
+                        Some(PendingPreflightCommand::<G>::Settled {
                             command: command.clone(),
                             cursor: None,
                         })
                     }
-                    OperationDelivery::Settled { command, cursor } => {
-                        Some(PendingPreflightCommand::Settled {
+                    OperationDelivery::<G>::Settled { command, cursor } => {
+                        Some(PendingPreflightCommand::<G>::Settled {
                             command: command.clone(),
                             cursor: *cursor,
                         })
                     }
-                    OperationDelivery::Raw { command, cursor } => {
-                        Some(PendingPreflightCommand::Raw {
+                    OperationDelivery::<G>::Raw { command, cursor } => {
+                        Some(PendingPreflightCommand::<G>::Raw {
                             command: command.clone(),
                             cursor: *cursor,
                         })
                     }
-                    OperationDelivery::Expanding {
+                    OperationDelivery::<G>::Expanding {
                         command,
                         main_loop,
                         cursor,
-                    } => Some(PendingPreflightCommand::Expanding {
+                    } => Some(PendingPreflightCommand::<G>::Expanding {
                         command: command.clone(),
                         main_loop: *main_loop,
                         cursor: *cursor,
                     }),
-                    OperationDelivery::ImmediatePdfRetry(primitive) => {
-                        Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive))
+                    OperationDelivery::<G>::ImmediatePdfRetry(primitive) => {
+                        Some(PendingPreflightCommand::<G>::ImmediatePdfRetry(*primitive))
                     }
-                    OperationDelivery::Replay(None)
-                    | OperationDelivery::Alignment(_)
-                    | OperationDelivery::AlignmentRetry { .. }
-                    | OperationDelivery::Hot(_)
-                    | OperationDelivery::Prepared(_) => None,
+                    OperationDelivery::<G>::Replay(None)
+                    | OperationDelivery::<G>::Alignment(_)
+                    | OperationDelivery::<G>::AlignmentRetry { .. }
+                    | OperationDelivery::<G>::Hot(_)
+                    | OperationDelivery::<G>::Prepared(_) => None,
                 };
                 let prepared = match self.prepare_operation(stores, preflight.delivery) {
                     Ok(prepared) => prepared,
@@ -3282,7 +3353,7 @@ impl MainControl {
                             let _ = stores.abandon_tracked_region(mark);
                         }
                         if let Some(scanned) = failure.unavailable {
-                            self.pending_resource_operation = Some(PendingResourceOperation {
+                            self.pending_resource_operation = Some(PendingResourceOperation::<G> {
                                 scanned,
                                 capabilities: preflight.capabilities,
                             });
@@ -3401,41 +3472,41 @@ impl MainControl {
                 }
                 let tracked_mark = episode_tracked_mark.take();
                 let mut retry_command = match &preflight.delivery {
-                    OperationDelivery::Replay(Some(command)) => {
-                        Some(PendingPreflightCommand::Settled {
+                    OperationDelivery::<G>::Replay(Some(command)) => {
+                        Some(PendingPreflightCommand::<G>::Settled {
                             command: command.clone(),
                             cursor: None,
                         })
                     }
-                    OperationDelivery::Settled { command, cursor } => {
-                        Some(PendingPreflightCommand::Settled {
+                    OperationDelivery::<G>::Settled { command, cursor } => {
+                        Some(PendingPreflightCommand::<G>::Settled {
                             command: command.clone(),
                             cursor: *cursor,
                         })
                     }
-                    OperationDelivery::Raw { command, cursor } => {
-                        Some(PendingPreflightCommand::Raw {
+                    OperationDelivery::<G>::Raw { command, cursor } => {
+                        Some(PendingPreflightCommand::<G>::Raw {
                             command: command.clone(),
                             cursor: *cursor,
                         })
                     }
-                    OperationDelivery::Expanding {
+                    OperationDelivery::<G>::Expanding {
                         command,
                         main_loop,
                         cursor,
-                    } => Some(PendingPreflightCommand::Expanding {
+                    } => Some(PendingPreflightCommand::<G>::Expanding {
                         command: command.clone(),
                         main_loop: *main_loop,
                         cursor: *cursor,
                     }),
-                    OperationDelivery::ImmediatePdfRetry(primitive) => {
-                        Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive))
+                    OperationDelivery::<G>::ImmediatePdfRetry(primitive) => {
+                        Some(PendingPreflightCommand::<G>::ImmediatePdfRetry(*primitive))
                     }
-                    OperationDelivery::Replay(None)
-                    | OperationDelivery::Alignment(_)
-                    | OperationDelivery::AlignmentRetry { .. }
-                    | OperationDelivery::Hot(_)
-                    | OperationDelivery::Prepared(_) => None,
+                    OperationDelivery::<G>::Replay(None)
+                    | OperationDelivery::<G>::Alignment(_)
+                    | OperationDelivery::<G>::AlignmentRetry { .. }
+                    | OperationDelivery::<G>::Hot(_)
+                    | OperationDelivery::<G>::Prepared(_) => None,
                 };
                 if let crate::transaction_protocol::CommandPreflight::Transaction(transaction) =
                     preflight.capabilities.preflight()
@@ -3452,7 +3523,7 @@ impl MainControl {
                             let _ = stores.abandon_tracked_region(mark);
                         }
                         if let Some(scanned) = failure.unavailable {
-                            self.pending_resource_operation = Some(PendingResourceOperation {
+                            self.pending_resource_operation = Some(PendingResourceOperation::<G> {
                                 scanned,
                                 capabilities: preflight.capabilities,
                             });
@@ -3503,15 +3574,16 @@ impl MainControl {
                         }
                     }
                 };
-                if let OperationReadiness::Prepared(PreparedColdOperation {
+                if let OperationReadiness::<G>::Prepared(PreparedColdOperation::<G> {
                     scanned:
-                        ColdOperation::ImmediateExtension(ImmediateExtension::PdfExtensionInDviMode(
-                            primitive,
-                        )),
+                        ColdOperation::<G>::ImmediateExtension(
+                            ImmediateExtension::PdfExtensionInDviMode(primitive),
+                        ),
                     ..
                 }) = &prepared
                 {
-                    retry_command = Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive));
+                    retry_command =
+                        Some(PendingPreflightCommand::<G>::ImmediatePdfRetry(*primitive));
                 }
                 self.episode_telemetry.record_attempt();
                 self.advance_telemetry.attempts += 1;
@@ -3602,8 +3674,8 @@ impl MainControl {
             let tracked_mark = episode_tracked_mark.take();
             let preserves_undefined_for_executor_diagnostic = matches!(
                 &preflight.delivery,
-                OperationDelivery::Replay(Some(command))
-                    | OperationDelivery::Settled { command, .. }
+                OperationDelivery::<G>::Replay(Some(command))
+                    | OperationDelivery::<G>::Settled { command, .. }
                     if matches!(command.meaning(), Meaning::Undefined | Meaning::Unknown(_))
             );
             // Capability preflight preserves an undefined command instead of
@@ -3618,39 +3690,41 @@ impl MainControl {
                 stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
             }
             let retry_command = match &preflight.delivery {
-                OperationDelivery::Replay(Some(command)) => {
-                    Some(PendingPreflightCommand::Settled {
+                OperationDelivery::<G>::Replay(Some(command)) => {
+                    Some(PendingPreflightCommand::<G>::Settled {
                         command: command.clone(),
                         cursor: None,
                     })
                 }
-                OperationDelivery::Settled { command, cursor } => {
-                    Some(PendingPreflightCommand::Settled {
+                OperationDelivery::<G>::Settled { command, cursor } => {
+                    Some(PendingPreflightCommand::<G>::Settled {
                         command: command.clone(),
                         cursor: *cursor,
                     })
                 }
-                OperationDelivery::Raw { command, cursor } => Some(PendingPreflightCommand::Raw {
-                    command: command.clone(),
-                    cursor: *cursor,
-                }),
-                OperationDelivery::Expanding {
+                OperationDelivery::<G>::Raw { command, cursor } => {
+                    Some(PendingPreflightCommand::<G>::Raw {
+                        command: command.clone(),
+                        cursor: *cursor,
+                    })
+                }
+                OperationDelivery::<G>::Expanding {
                     command,
                     main_loop,
                     cursor,
-                } => Some(PendingPreflightCommand::Expanding {
+                } => Some(PendingPreflightCommand::<G>::Expanding {
                     command: command.clone(),
                     main_loop: *main_loop,
                     cursor: *cursor,
                 }),
-                OperationDelivery::ImmediatePdfRetry(primitive) => {
-                    Some(PendingPreflightCommand::ImmediatePdfRetry(*primitive))
+                OperationDelivery::<G>::ImmediatePdfRetry(primitive) => {
+                    Some(PendingPreflightCommand::<G>::ImmediatePdfRetry(*primitive))
                 }
-                OperationDelivery::Replay(None)
-                | OperationDelivery::Alignment(_)
-                | OperationDelivery::AlignmentRetry { .. }
-                | OperationDelivery::Hot(_)
-                | OperationDelivery::Prepared(_) => None,
+                OperationDelivery::<G>::Replay(None)
+                | OperationDelivery::<G>::Alignment(_)
+                | OperationDelivery::<G>::AlignmentRetry { .. }
+                | OperationDelivery::<G>::Hot(_)
+                | OperationDelivery::<G>::Prepared(_) => None,
             };
             let prepared = match self.prepare_operation(stores, preflight.delivery) {
                 Ok(prepared) => prepared,
@@ -3662,7 +3736,7 @@ impl MainControl {
                         let _ = stores.abandon_tracked_region(mark);
                     }
                     if let Some(scanned) = failure.unavailable {
-                        self.pending_resource_operation = Some(PendingResourceOperation {
+                        self.pending_resource_operation = Some(PendingResourceOperation::<G> {
                             scanned,
                             capabilities: preflight.capabilities,
                         });
@@ -3775,8 +3849,8 @@ impl MainControl {
 
     fn execute_operation(
         &mut self,
-        stores: &mut Universe,
-        delivery: OperationDelivery,
+        stores: &mut Universe<G>,
+        delivery: OperationDelivery<G>,
         transaction: OperationTransaction,
         max_operations: usize,
         tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
@@ -3806,7 +3880,7 @@ impl MainControl {
 
     fn capture_first_causal_context(
         &mut self,
-        stores: &Universe,
+        stores: &Universe<G>,
         diagnostics: &[PendingDiagnostic],
     ) {
         if self.first_causal_context.is_none()
@@ -3831,7 +3905,7 @@ impl MainControl {
     /// that must precede any operation commit.
     fn admit_observed_receipt(
         &mut self,
-        stores: &Universe,
+        stores: &Universe<G>,
         termination: OperationTermination,
     ) -> Option<ExecError> {
         let (Some(start), Some(pending)) = (
@@ -3877,7 +3951,7 @@ impl MainControl {
     /// exact command/input continuation has been retained. The next call
     /// creates a fresh processor borrow and resumes that continuation without
     /// redelivering the command.
-    pub fn advance(&mut self, stores: &mut Universe) -> Result<StepResult, ExecError> {
+    pub fn advance(&mut self, stores: &mut Universe<G>) -> Result<StepResult, ExecError> {
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -3891,7 +3965,7 @@ impl MainControl {
         }
         self.execute_operation(
             stores,
-            OperationDelivery::Replay(None),
+            OperationDelivery::<G>::Replay(None),
             OperationTransaction::Advance,
             1,
             None,
@@ -3901,7 +3975,7 @@ impl MainControl {
     /// Advances one production driver chunk under a single bounded retry
     /// point. The public one-operation [`Self::advance`] contract remains
     /// available to diagnostic and focused-test callers.
-    pub fn advance_episode(&mut self, stores: &mut Universe) -> Result<StepResult, ExecError> {
+    pub fn advance_episode(&mut self, stores: &mut Universe<G>) -> Result<StepResult, ExecError> {
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -3915,7 +3989,7 @@ impl MainControl {
         }
         self.execute_operation(
             stores,
-            OperationDelivery::Replay(None),
+            OperationDelivery::<G>::Replay(None),
             OperationTransaction::Advance,
             256,
             None,
@@ -3930,7 +4004,7 @@ impl MainControl {
     /// rejection, and rollback or resource suspension returns no region.
     pub fn advance_with_tracked_region(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<TrackedStepResult, ExecError> {
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
@@ -3949,7 +4023,7 @@ impl MainControl {
         let mut region = None;
         let step = self.execute_operation(
             stores,
-            OperationDelivery::Replay(None),
+            OperationDelivery::<G>::Replay(None),
             OperationTransaction::Advance,
             1,
             Some(&mut region),
@@ -3961,20 +4035,20 @@ impl MainControl {
     /// typesetting. TeX82 §1270's command-code partition still routes every
     /// assignment through §1211 `prefixed_command`; other spellings, including
     /// undefined control sequences, are returned to the host with provenance.
-    pub fn diagnostic_expand_step<G>(
+    pub fn diagnostic_expand_step(
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<DiagnosticStepResult, ExecError> {
         let operation_mark = self.begin_direct_operation(stores);
         let continuation = self.pending_diagnostic_operation.take();
         let assignment = match continuation {
-            Some(PendingDiagnosticOperation::Prepared(scanned)) => {
-                Some((OperationDelivery::Prepared(scanned), None))
+            Some(PendingDiagnosticOperation::<G>::Prepared(scanned)) => {
+                Some((OperationDelivery::<G>::Prepared(scanned), None))
             }
-            Some(PendingDiagnosticOperation::Assignment { command, cursor }) => {
+            Some(PendingDiagnosticOperation::<G>::Assignment { command, cursor }) => {
                 let retry = (command.clone(), cursor);
                 Some((
-                    OperationDelivery::Settled {
+                    OperationDelivery::<G>::Settled {
                         command,
                         cursor: Some(cursor),
                     },
@@ -4027,7 +4101,7 @@ impl MainControl {
                 }
                 let retry = (command.clone(), cursor);
                 Some((
-                    OperationDelivery::Settled {
+                    OperationDelivery::<G>::Settled {
                         command,
                         cursor: Some(cursor),
                     },
@@ -4042,7 +4116,7 @@ impl MainControl {
             Err(failure) => {
                 if let Some(scanned) = failure.unavailable {
                     self.pending_diagnostic_operation =
-                        Some(PendingDiagnosticOperation::Prepared(scanned));
+                        Some(PendingDiagnosticOperation::<G>::Prepared(scanned));
                 } else if let Some((command, cursor)) = retry {
                     let command = self
                         .command
@@ -4050,7 +4124,7 @@ impl MainControl {
                         .cloned()
                         .unwrap_or(command);
                     self.pending_diagnostic_operation =
-                        Some(PendingDiagnosticOperation::Assignment {
+                        Some(PendingDiagnosticOperation::<G>::Assignment {
                             command,
                             cursor: failure.cursor.unwrap_or(cursor),
                         });
@@ -4094,7 +4168,7 @@ impl MainControl {
     ///
     /// Compatibility wrapper for callers which have not yet adopted typed
     /// resource suspension. New production hosts should use [`Self::advance`].
-    pub fn step(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
+    pub fn step(&mut self, stores: &mut Universe<G>) -> Result<ReplayStep, ExecError> {
         let result = self.advance(stores).map_err(|error| match error {
             ExecError::Captured { error, .. } => *error,
             error => error,
@@ -4127,11 +4201,11 @@ impl MainControl {
     /// committed `word_define` is not reduced to command/scanner records.
     fn execute_nested_operation(
         &mut self,
-        stores: &mut Universe,
-        settled: Option<tex_command::CurrentCommand>,
+        stores: &mut Universe<G>,
+        settled: Option<tex_command::CurrentCommand<G>>,
     ) -> Result<ReplayStep, ExecError> {
-        let delivery = settled.map_or(OperationDelivery::Replay(None), |command| {
-            OperationDelivery::Settled {
+        let delivery = settled.map_or(OperationDelivery::<G>::Replay(None), |command| {
+            OperationDelivery::<G>::Settled {
                 command,
                 cursor: None,
             }
@@ -4160,7 +4234,7 @@ impl MainControl {
     fn apply_accent(
         &mut self,
         scanned: ScannedAccent,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
             self.modes.current_mode(),
@@ -4227,7 +4301,7 @@ impl MainControl {
     /// branch backs a command up.
     fn do_assignments_then_accent_base(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<Option<(u8, tex_state::token::OriginId)>, ExecError> {
         // None of §1270's assignments is a §1030 `main_loop` entry.
         self.main_loop_active = false;
@@ -4276,7 +4350,7 @@ impl MainControl {
     /// instrumentation-only extra.  The `\output` token-list push it performs
     /// is buffered rather than observed directly, so an observed step can
     /// flush it after that step's own mutation and effect records.
-    fn fire_pending_page_output(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+    fn fire_pending_page_output(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
         while !self.boxes.output_routine_active {
             let Some(fire_up) = stores.page_fire_up() else {
                 break;
@@ -4371,7 +4445,7 @@ impl MainControl {
     fn execute_live_math_group(
         &mut self,
         kind: GroupKind,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         // The depth sampled before `push_math`, not the innermost group
         // kind, is what identifies this group's own closing brace: a nested
@@ -4404,7 +4478,7 @@ impl MainControl {
     /// the math mode level and finishes its mlist (§1184's `fin_mlist`).
     fn finish_math_level(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         self.main_loop_active = false;
         while left_group_open(&self.modes, stores) {
@@ -4448,7 +4522,7 @@ impl MainControl {
     /// body main control reads until `build_choices` closes it.
     fn execute_math_choice_branch(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         self.command_scan_math_choice_group(stores)?;
         self.execute_live_math_group(GroupKind::MathChoice, stores)
@@ -4465,7 +4539,7 @@ impl MainControl {
     fn execute_math_field(
         &mut self,
         field: tex_command::MathFieldEpisode,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<MathField, ExecError> {
         match field.body {
             MathFieldBody::Missing => Ok(MathField::Empty),
@@ -4482,7 +4556,7 @@ impl MainControl {
     fn apply_math_request(
         &mut self,
         request: MathRequest,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
         match request {
             MathRequest::Character(value) => {
@@ -4742,7 +4816,7 @@ impl MainControl {
     /// command left by do_assignments.
     fn recover_display_alignment_closer(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
         let Some((nodes, aux_prev_depth)) =
             self.modes.current_list_mutation().take_display_alignment()
@@ -4779,7 +4853,7 @@ impl MainControl {
     fn apply_math_shift(
         &mut self,
         pairing: MathShiftPairing,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
         match self.modes.current_mode() {
             Mode::Horizontal | Mode::RestrictedHorizontal => {
@@ -4854,7 +4928,7 @@ impl MainControl {
     /// and before §1197 probes for the second display-closing `$`.
     fn prepare_math_list(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         let math_font_context = self.command.output_open_context(&stores.command_context());
         let rejected = crate::math::reject_invalid_math_fonts(stores, math_font_context)?;
@@ -4870,7 +4944,7 @@ impl MainControl {
     /// completed display mode before expanding the required second `$`.
     fn prepare_display_math_list(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<
         (
             tex_state::node_arena::PageListId,
@@ -4884,7 +4958,7 @@ impl MainControl {
         Ok((content, level))
     }
 
-    fn scan_display_end(&mut self, stores: &mut Universe) -> Result<bool, ExecError> {
+    fn scan_display_end(&mut self, stores: &mut Universe<G>) -> Result<bool, ExecError> {
         // TeX82 §§1185/1194's `fin_mlist` has already popped the display
         // level. Publish that live nest before §1197's nested expansion
         // episode: capabilities were last sampled at the start of the outer
@@ -4906,7 +4980,11 @@ impl MainControl {
         Ok(paired)
     }
 
-    fn enter_math_level(&mut self, display: bool, stores: &mut Universe) -> Result<(), ExecError> {
+    fn enter_math_level(
+        &mut self,
+        display: bool,
+        stores: &mut Universe<G>,
+    ) -> Result<(), ExecError> {
         stores.enter_group_with_kind_at_line(
             GroupKind::MathShift,
             self.command.current_file_line_number(),
@@ -4932,7 +5010,7 @@ impl MainControl {
         Ok(())
     }
 
-    fn enter_display(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+    fn enter_display(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
         let error_context = self.command.output_open_context(&stores.command_context());
         let paragraph = crate::paragraph_end::interrupt_paragraph_for_display(
             &mut self.modes,
@@ -4983,7 +5061,7 @@ impl MainControl {
         Ok(())
     }
 
-    fn finish_inline_math(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+    fn finish_inline_math(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
         let mut content = take_finished_math_list(&mut self.modes, stores)?;
         let conversion_error_context = crate::math::MathConversionErrorContext::new(
             self.command.output_open_context(&stores.command_context()),
@@ -5018,7 +5096,7 @@ impl MainControl {
 
     fn finish_equation_number_mlist(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<crate::mode::DisplayEqNo, ExecError> {
         let mut level =
             crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
@@ -5034,7 +5112,7 @@ impl MainControl {
 
     fn finish_equation_number_group(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         eq: crate::mode::DisplayEqNo,
         content: tex_state::node_arena::PageListId,
     ) -> Result<
@@ -5065,7 +5143,7 @@ impl MainControl {
 
     fn finish_display_alignment(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         finished: crate::align::FinishedAlignment,
     ) -> Result<(), ExecError> {
         self.finish_display_alignment_inner(stores, finished, true)
@@ -5073,7 +5151,7 @@ impl MainControl {
 
     fn finish_display_alignment_inner(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         finished: crate::align::FinishedAlignment,
         scan_optional_space: bool,
     ) -> Result<(), ExecError> {
@@ -5099,7 +5177,7 @@ impl MainControl {
 
     fn finish_display_math_content(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         mut content: tex_state::node_arena::PageListId,
         eq_no: Option<crate::math::display::FinishedEqNo>,
         fonts_checked: bool,
@@ -5149,7 +5227,7 @@ impl MainControl {
 
     fn resume_display(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         directions: Vec<tex_state::node::Direction>,
     ) -> Result<(), ExecError> {
         self.resume_display_inner(stores, directions, true)
@@ -5157,7 +5235,7 @@ impl MainControl {
 
     fn resume_display_inner(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         directions: Vec<tex_state::node::Direction>,
         scan_optional_space: bool,
     ) -> Result<(), ExecError> {
@@ -5206,7 +5284,7 @@ impl MainControl {
     /// vertical list gained an empty line box and its interline glue
     /// (`umber2-johp.231`). The scan is a plain `get_x_token`, so a macro
     /// following the display is expanded here exactly as TeX82 expands it.
-    fn scan_optional_space(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+    fn scan_optional_space(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
         let mode = self.modes.current_mode();
         let shown_mode = self.shown_mode;
         let mut machine = self.command_machine();
@@ -5246,7 +5324,7 @@ impl MainControl {
         }
         // §1200 performs this expanded fetch synchronously before §1125's
         // page builder. Diagnostics produced by expansion therefore belong
-        // to this nested scanner boundary; leaving them on CommandState lets
+        // to this nested scanner boundary; leaving them on CommandState<G> lets
         // the following outer main-control step report them only after
         // build_page has emitted its tracingpages state.
         self.capture_first_causal_context(stores, &diagnostics);
@@ -5256,7 +5334,7 @@ impl MainControl {
     fn apply_math_delimiter(
         &mut self,
         boundary: MathDelimiterBoundary,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
         match boundary.kind {
             MathDelimiterBoundaryKind::Left => {
@@ -5400,7 +5478,7 @@ impl MainControl {
 
     fn command_scan_math_field(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<tex_command::MathFieldEpisode, ExecError> {
         let mut processor = command_processor(
             &mut self.command,
@@ -5417,7 +5495,7 @@ impl MainControl {
     /// diagnostic has completed, as required by §1110's text-accent path.
     fn command_scan_math_character(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
     ) -> Result<tex_command::ScannedMathCharacter, ExecError> {
         let mut processor = command_processor(
             &mut self.command,
@@ -5432,7 +5510,10 @@ impl MainControl {
     /// TeX82 §1172/§1174's `scan_left_brace` for one `\mathchoice` branch.
     /// §403 recovery opens the group anyway, so the recovered flag is
     /// diagnostic only.
-    fn command_scan_math_choice_group(&mut self, stores: &mut Universe) -> Result<bool, ExecError> {
+    fn command_scan_math_choice_group(
+        &mut self,
+        stores: &mut Universe<G>,
+    ) -> Result<bool, ExecError> {
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
@@ -5448,7 +5529,7 @@ impl MainControl {
     /// command-owned observations in their original order.
     pub fn step_with_observer(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         observer: &mut dyn CommandObserver,
     ) -> Result<ReplayStep, ExecError> {
         match self.advance_with_observer(stores, observer)? {
@@ -5474,7 +5555,7 @@ impl MainControl {
     /// until both command delivery and executor application have committed.
     pub fn advance_with_observer(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         observer: &mut dyn CommandObserver,
     ) -> Result<StepResult, ExecError> {
         if !self.pure_memo_initialized {
@@ -5510,7 +5591,7 @@ impl MainControl {
         }
         let stepped = self.execute_operation(
             stores,
-            OperationDelivery::Replay(None),
+            OperationDelivery::<G>::Replay(None),
             OperationTransaction::Advance,
             1,
             None,
@@ -5650,14 +5731,14 @@ impl MainControl {
     /// and retain only their exact continuation tag.
     fn preflight_replay_delivery(
         &mut self,
-        stores: &mut Universe,
-    ) -> Result<Option<PreflightDelivery>, ExecError> {
+        stores: &mut Universe<G>,
+    ) -> Result<Option<PreflightDelivery<G>>, ExecError> {
         let mode = self.modes.current_mode();
         if self.active_alignment.is_some()
             || (mode == Mode::DisplayMath && self.modes.current_list().has_display_alignment())
         {
-            return Ok(Some(PreflightDelivery {
-                delivery: OperationDelivery::Replay(None),
+            return Ok(Some(PreflightDelivery::<G> {
+                delivery: OperationDelivery::<G>::Replay(None),
                 capabilities: crate::transaction_protocol::canonical_command_capabilities(
                     Meaning::Relax,
                 ),
@@ -5719,7 +5800,7 @@ impl MainControl {
                                 processor
                                     .pending_expansion_command()
                                     .cloned()
-                                    .map(|command| PendingPreflightCommand::Expanding {
+                                    .map(|command| PendingPreflightCommand::<G>::Expanding {
                                         command,
                                         main_loop: self.main_loop_active,
                                         cursor: processor.delivery_cursor(),
@@ -5803,7 +5884,7 @@ impl MainControl {
                             let cursor = processor.delivery_cursor();
                             let retry_expansion = processor.pending_expansion_command().cloned();
                             fused_retry = Some(
-                                PendingPreflightCommand::Settled {
+                                PendingPreflightCommand::<G>::Settled {
                                     command,
                                     cursor: Some(cursor),
                                 }
@@ -5836,8 +5917,8 @@ impl MainControl {
         self.drain_file_framing_events(stores);
 
         if let Some((operation, meaning)) = fused_hot {
-            return Ok(Some(PreflightDelivery {
-                delivery: OperationDelivery::Hot(operation),
+            return Ok(Some(PreflightDelivery::<G> {
+                delivery: OperationDelivery::<G>::Hot(operation),
                 capabilities: crate::transaction_protocol::canonical_command_capabilities(meaning),
             }));
         }
@@ -5845,8 +5926,10 @@ impl MainControl {
         let passive =
             || crate::transaction_protocol::canonical_command_capabilities(Meaning::Relax);
         let Some(delivery) = delivery else {
-            return Ok(Some(PreflightDelivery {
-                delivery: OperationDelivery::Prepared(Box::new(ColdOperation::EndOfInput)),
+            return Ok(Some(PreflightDelivery::<G> {
+                delivery: OperationDelivery::<G>::Prepared(Box::new(
+                    ColdOperation::<G>::EndOfInput,
+                )),
                 capabilities: passive(),
             }));
         };
@@ -5854,10 +5937,10 @@ impl MainControl {
             let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
                 unreachable!();
             };
-            return Ok(Some(PreflightDelivery {
-                delivery: OperationDelivery::Prepared(Box::new(ColdOperation::ReplayCompleted(
-                    episode,
-                ))),
+            return Ok(Some(PreflightDelivery::<G> {
+                delivery: OperationDelivery::<G>::Prepared(Box::new(
+                    ColdOperation::<G>::ReplayCompleted(episode),
+                )),
                 capabilities: passive(),
             }));
         };
@@ -5897,10 +5980,12 @@ impl MainControl {
             )
             && self.operation_observations.is_none()
         {
-            return Ok(Some(PreflightDelivery {
-                delivery: OperationDelivery::Prepared(Box::new(ColdOperation::NoBoundary {
-                    suppress_right: true,
-                })),
+            return Ok(Some(PreflightDelivery::<G> {
+                delivery: OperationDelivery::<G>::Prepared(Box::new(
+                    ColdOperation::<G>::NoBoundary {
+                        suppress_right: true,
+                    },
+                )),
                 capabilities: crate::transaction_protocol::canonical_command_capabilities(
                     command.meaning(),
                 ),
@@ -5908,19 +5993,19 @@ impl MainControl {
         }
         let capabilities =
             crate::transaction_protocol::canonical_command_capabilities(command.meaning());
-        Ok(Some(PreflightDelivery {
+        Ok(Some(PreflightDelivery::<G> {
             delivery: if settled_in_preflight {
-                OperationDelivery::Settled {
+                OperationDelivery::<G>::Settled {
                     command,
                     cursor: None,
                 }
             } else if raw_main_loop_delivery && continues_main_loop {
-                OperationDelivery::Raw {
+                OperationDelivery::<G>::Raw {
                     command,
                     cursor: None,
                 }
             } else {
-                OperationDelivery::Replay(Some(command))
+                OperationDelivery::<G>::Replay(Some(command))
             },
             capabilities,
         }))
@@ -5934,8 +6019,8 @@ impl MainControl {
 
     fn apply_operation(
         &mut self,
-        stores: &mut Universe,
-        delivery: OperationDelivery,
+        stores: &mut Universe<G>,
+        delivery: OperationDelivery<G>,
     ) -> Result<ReplayStep, ExecError> {
         let readiness = self
             .prepare_operation(stores, delivery)
@@ -5945,12 +6030,12 @@ impl MainControl {
 
     fn apply_ready_operation(
         &mut self,
-        stores: &mut Universe,
-        readiness: OperationReadiness,
+        stores: &mut Universe<G>,
+        readiness: OperationReadiness<G>,
     ) -> Result<ReplayStep, ExecError> {
         match readiness {
-            OperationReadiness::Applied(result) => result,
-            OperationReadiness::Prepared(prepared) => {
+            OperationReadiness::<G>::Applied(result) => result,
+            OperationReadiness::<G>::Prepared(prepared) => {
                 self.apply_prepared_operation(stores, prepared)
             }
         }
@@ -5962,9 +6047,9 @@ impl MainControl {
     /// immutable resource resolution.
     fn prepare_operation(
         &mut self,
-        stores: &mut Universe,
-        delivery: OperationDelivery,
-    ) -> Result<OperationReadiness, PrepareOperationError> {
+        stores: &mut Universe<G>,
+        delivery: OperationDelivery<G>,
+    ) -> Result<OperationReadiness<G>, PrepareOperationError<G>> {
         if stores.dependency_region_is_active() {
             let mode = self.modes.current_mode();
             let mode_key = DependencyKey::Engine(DependencyEngineField::Mode);
@@ -6001,7 +6086,8 @@ impl MainControl {
         // execution mode. Keep the command processor's borrowed mode facts
         // identical to an unobserved step (notably for \ifhmode after a
         // paragraph-start transition).
-        if matches!(&delivery, OperationDelivery::Replay(_)) && self.enter_main_control(stores) {
+        if matches!(&delivery, OperationDelivery::<G>::Replay(_)) && self.enter_main_control(stores)
+        {
             // §1030's prologue precedes `big_switch`, so its push is published
             // ahead of the first command this step delivers rather than with
             // the step's own applied records.
@@ -6021,8 +6107,8 @@ impl MainControl {
         let innermost_group = stores.innermost_group_kind();
         let job_is_all_over = crate::page_output::job_is_all_over(stores);
         let mut diagnostics = Vec::new();
-        let scanned = if let OperationDelivery::Hot(operation) = delivery {
-            ScannedOperation::Hot(operation)
+        let scanned = if let OperationDelivery::<G>::Hot(operation) = delivery {
+            ScannedOperation::<G>::Hot(operation)
         } else {
             #[cfg(feature = "profiling")]
             tex_state::measurement::record_hot_core_phase(
@@ -6039,12 +6125,12 @@ impl MainControl {
                 &mut self.operation_observations,
                 stores,
             );
-            let display_alignment_tail = matches!(&delivery, OperationDelivery::Replay(None))
+            let display_alignment_tail = matches!(&delivery, OperationDelivery::<G>::Replay(None))
                 && mode == Mode::DisplayMath
                 && self.modes.current_list().has_display_alignment();
-            let scanned = (|| -> Result<ScannedOperation, ExecError> {
+            let scanned = (|| -> Result<ScannedOperation<G>, ExecError> {
                 Ok(match delivery {
-                    OperationDelivery::Replay(Some(command)) => {
+                    OperationDelivery::<G>::Replay(Some(command)) => {
                         processor.resume_current_command(&command);
                         processor.observe_expanded_delivery(&command);
                         dispatch_main_control_command(
@@ -6061,7 +6147,7 @@ impl MainControl {
                             self.set_box_forbidden_depth == 0,
                         )?
                     }
-                    OperationDelivery::Settled { command, cursor } => {
+                    OperationDelivery::<G>::Settled { command, cursor } => {
                         processor.resume_current_command(&command);
                         if let Some(cursor) = cursor {
                             processor.resume_delivery_cursor(cursor);
@@ -6080,7 +6166,7 @@ impl MainControl {
                             self.set_box_forbidden_depth == 0,
                         )?
                     }
-                    OperationDelivery::Raw { command, cursor } => {
+                    OperationDelivery::<G>::Raw { command, cursor } => {
                         processor.resume_current_command(&command);
                         if let Some(cursor) = cursor {
                             processor.resume_delivery_cursor(cursor);
@@ -6099,43 +6185,45 @@ impl MainControl {
                             self.set_box_forbidden_depth == 0,
                         )?
                     }
-                    OperationDelivery::Replay(None) if display_alignment_tail => match processor
-                        .next_do_assignments_command()
-                        .map_err(command_error)?
-                    {
-                        Some(command) => match command.meaning() {
-                            meaning
-                                if tex_command::exceeds_max_non_prefixed_command(meaning)
-                                    || matches!(
-                                        meaning,
-                                        Meaning::CharToken {
-                                            cat: Catcode::MathShift,
-                                            ..
-                                        }
-                                    ) =>
-                            {
-                                dispatch_main_control_command(
-                                    &mut processor,
-                                    command,
-                                    mode,
-                                    &self.boxes,
-                                    innermost_group,
-                                    job_is_all_over,
-                                    false,
-                                    &mut self.shown_mode,
-                                    &mut diagnostics,
-                                    None,
-                                    false,
-                                )?
-                            }
-                            _ => {
-                                processor.back_input(command).map_err(command_error)?;
-                                ColdOperation::DisplayAlignmentRecovery.into()
-                            }
-                        },
-                        None => ColdOperation::EndOfInput.into(),
-                    },
-                    OperationDelivery::Replay(None) => scan_replay_step(
+                    OperationDelivery::<G>::Replay(None) if display_alignment_tail => {
+                        match processor
+                            .next_do_assignments_command()
+                            .map_err(command_error)?
+                        {
+                            Some(command) => match command.meaning() {
+                                meaning
+                                    if tex_command::exceeds_max_non_prefixed_command(meaning)
+                                        || matches!(
+                                            meaning,
+                                            Meaning::CharToken {
+                                                cat: Catcode::MathShift,
+                                                ..
+                                            }
+                                        ) =>
+                                {
+                                    dispatch_main_control_command(
+                                        &mut processor,
+                                        command,
+                                        mode,
+                                        &self.boxes,
+                                        innermost_group,
+                                        job_is_all_over,
+                                        false,
+                                        &mut self.shown_mode,
+                                        &mut diagnostics,
+                                        None,
+                                        false,
+                                    )?
+                                }
+                                _ => {
+                                    processor.back_input(command).map_err(command_error)?;
+                                    ColdOperation::<G>::DisplayAlignmentRecovery.into()
+                                }
+                            },
+                            None => ColdOperation::<G>::EndOfInput.into(),
+                        }
+                    }
+                    OperationDelivery::<G>::Replay(None) => scan_replay_step(
                         &mut processor,
                         mode,
                         &self.boxes,
@@ -6147,7 +6235,7 @@ impl MainControl {
                         &mut self.shown_mode,
                         &mut diagnostics,
                     )?,
-                    OperationDelivery::Expanding {
+                    OperationDelivery::<G>::Expanding {
                         command,
                         main_loop,
                         cursor,
@@ -6167,29 +6255,29 @@ impl MainControl {
                             &mut diagnostics,
                         )?
                     }
-                    OperationDelivery::ImmediatePdfRetry(primitive) => match primitive {
+                    OperationDelivery::<G>::ImmediatePdfRetry(primitive) => match primitive {
                         UnexpandablePrimitive::PdfObject => {
-                            ColdOperation::ImmediateExtension(ImmediateExtension::PdfObject(
+                            ColdOperation::<G>::ImmediateExtension(ImmediateExtension::PdfObject(
                                 processor.scan_pdf_object_request().map_err(command_error)?,
                             ))
                             .into()
                         }
                         UnexpandablePrimitive::PdfXForm => {
-                            ColdOperation::ImmediateExtension(ImmediateExtension::PdfForm(
+                            ColdOperation::<G>::ImmediateExtension(ImmediateExtension::PdfForm(
                                 processor
                                     .scan_pdf_form_request(UnexpandablePrimitive::PdfXForm)
                                     .map_err(command_error)?,
                             ))
                             .into()
                         }
-                        UnexpandablePrimitive::PdfXImage => ColdOperation::PdfXImage {
+                        UnexpandablePrimitive::PdfXImage => ColdOperation::<G>::PdfXImage {
                             request: processor.scan_pdf_image_request().map_err(command_error)?,
                             resource: PdfImageResource::Unavailable,
                         }
                         .into(),
                         _ => unreachable!("only immediate PDF retries reach this delivery"),
                     },
-                    OperationDelivery::Alignment(alignment) => scan_alignment_delivery_step(
+                    OperationDelivery::<G>::Alignment(alignment) => scan_alignment_delivery_step(
                         &mut processor,
                         alignment,
                         &ReplayBoxes::default(),
@@ -6200,7 +6288,7 @@ impl MainControl {
                         &mut self.shown_mode,
                         &mut diagnostics,
                     )?,
-                    OperationDelivery::AlignmentRetry { alignment, cursor } => {
+                    OperationDelivery::<G>::AlignmentRetry { alignment, cursor } => {
                         processor.resume_delivery_cursor(cursor);
                         match alignment {
                             Some(alignment) => scan_alignment_delivery_step(
@@ -6228,17 +6316,17 @@ impl MainControl {
                             )?,
                         }
                     }
-                    OperationDelivery::Hot(_) => {
+                    OperationDelivery::<G>::Hot(_) => {
                         unreachable!("pre-scanned hot delivery bypasses processor construction")
                     }
-                    OperationDelivery::Prepared(scanned) => (*scanned).into(),
+                    OperationDelivery::<G>::Prepared(scanned) => (*scanned).into(),
                 })
             })();
             let cursor = processor.delivery_cursor();
             let scanned =
-                scanned.map_err(|error| PrepareOperationError::with_cursor(error, cursor))?;
+                scanned.map_err(|error| PrepareOperationError::<G>::with_cursor(error, cursor))?;
             #[cfg(feature = "profiling")]
-            if matches!(scanned, ScannedOperation::Cold(_)) {
+            if matches!(scanned, ScannedOperation::<G>::Cold(_)) {
                 tex_state::measurement::record_hot_core_materialization(
                     tex_state::measurement::HotCoreMaterialization::ScannedStep,
                 );
@@ -6273,12 +6361,12 @@ impl MainControl {
         report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
         let scanned = match scanned {
-            ScannedOperation::Cold(scanned) => scanned,
-            ScannedOperation::Hot(operation) => {
+            ScannedOperation::<G>::Cold(scanned) => scanned,
+            ScannedOperation::<G>::Hot(operation) => {
                 let artifact_count = stores.world().artifact_commits().len();
                 let effect_count = stores.world().effect_records().len();
                 let prepared_page_count = self.prepared_dvi_pages.len();
-                return Ok(OperationReadiness::Applied(self.apply_hot_operation(
+                return Ok(OperationReadiness::<G>::Applied(self.apply_hot_operation(
                     stores,
                     operation,
                     outer_paragraph_was_active,
@@ -6295,7 +6383,9 @@ impl MainControl {
         tex_state::measurement::record_hot_core_materialization(
             tex_state::measurement::HotCoreMaterialization::PreparedOperation,
         );
-        Ok(OperationReadiness::Prepared(PreparedColdOperation {
+        Ok(OperationReadiness::<G>::Prepared(PreparedColdOperation::<
+            G,
+        > {
             scanned,
             outer_paragraph_was_active,
             artifact_count: stores.world().artifact_commits().len(),
@@ -6311,8 +6401,8 @@ impl MainControl {
     #[allow(clippy::too_many_arguments)]
     fn apply_hot_operation(
         &mut self,
-        stores: &mut Universe,
-        operation: hot_apply::HotOperation,
+        stores: &mut Universe<G>,
+        operation: hot_apply::HotOperation<G>,
         outer_paragraph_was_active: bool,
         artifact_count: usize,
         effect_count: usize,
@@ -6408,10 +6498,10 @@ impl MainControl {
 
     fn apply_prepared_operation(
         &mut self,
-        stores: &mut Universe,
-        prepared: PreparedColdOperation,
+        stores: &mut Universe<G>,
+        prepared: PreparedColdOperation<G>,
     ) -> Result<ReplayStep, ExecError> {
-        let PreparedColdOperation {
+        let PreparedColdOperation::<G> {
             scanned,
             outer_paragraph_was_active,
             artifact_count,
@@ -6441,7 +6531,7 @@ impl MainControl {
             ControlFlow::Continue(scanned) => scanned,
         };
         let mut scanned = match scanned {
-            ColdOperation::ShowGroups { diagnostic: None } => ColdOperation::ShowGroups {
+            ColdOperation::<G>::ShowGroups { diagnostic: None } => ColdOperation::<G>::ShowGroups {
                 diagnostic: Some(detached_showgroups(
                     stores,
                     &self.active_alignment,
@@ -6457,12 +6547,12 @@ impl MainControl {
         let reassigning_glue = self.local_glue_pointer_reassigned(stores, &scanned);
         let redundant_glue = self.etex_redundant_local_glue_assignment(stores, &scanned);
         match &mut scanned {
-            ColdOperation::Skip {
+            ColdOperation::<G>::Skip {
                 redundant,
                 reassigning,
                 ..
             }
-            | ColdOperation::Muskip {
+            | ColdOperation::<G>::Muskip {
                 redundant,
                 reassigning,
                 ..
@@ -6474,44 +6564,44 @@ impl MainControl {
         }
         let observing = self.operation_observations.is_some();
         let mut assignment_receipts = observing.then(Vec::new);
-        let begins_alignment = matches!(&scanned, ColdOperation::BeginAlignment { .. });
+        let begins_alignment = matches!(&scanned, ColdOperation::<G>::BeginAlignment { .. });
         let suspends_alignment = begins_alignment && self.active_alignment.is_some();
         let begins_alignment_cell =
-            matches!(&scanned, ColdOperation::AlignmentPreambleStart { .. });
+            matches!(&scanned, ColdOperation::<G>::AlignmentPreambleStart { .. });
         let installs_u_template = match &scanned {
-            ColdOperation::AlignmentCellOpening {
+            ColdOperation::<G>::AlignmentCellOpening {
                 alignment,
                 opening: AlignmentCellOpening::Template,
             } => Some(*alignment),
             // `align_peek` already fetched and backed up the first nonblank
             // command before it calls TeX82's `init_col`.
-            ColdOperation::AlignmentPeekCell {
+            ColdOperation::<G>::AlignmentPeekCell {
                 alignment,
                 omit: false,
             } => Some(*alignment),
             _ => None,
         };
         let installs_omit_cell = match &scanned {
-            ColdOperation::AlignmentCellOpening {
+            ColdOperation::<G>::AlignmentCellOpening {
                 alignment,
                 opening: AlignmentCellOpening::Omit,
             } => Some(*alignment),
-            ColdOperation::AlignmentPeekCell {
+            ColdOperation::<G>::AlignmentPeekCell {
                 alignment,
                 omit: true,
             } => Some(*alignment),
             _ => None,
         };
         let finishes_alignment_cell = match &scanned {
-            ColdOperation::AlignmentCellFinish { alignment } => {
+            ColdOperation::<G>::AlignmentCellFinish { alignment } => {
                 self.command.alignment_cell_finish_observation(*alignment)
             }
             _ => None,
         };
         let completes_alignment_cell =
-            matches!(&scanned, ColdOperation::AlignmentCellFinish { .. });
+            matches!(&scanned, ColdOperation::<G>::AlignmentCellFinish { .. });
         let finishes_alignment = match &scanned {
-            ColdOperation::AlignmentFinish { alignment } => {
+            ColdOperation::<G>::AlignmentFinish { alignment } => {
                 self.command.alignment_finish_observation(*alignment)
             }
             _ => None,
@@ -6558,7 +6648,7 @@ impl MainControl {
         if result.is_ok()
             && !redundant_glue
             && let Some((index, physical, source_identity, pointer_sources)) = match &scanned {
-                ColdOperation::Skip {
+                ColdOperation::<G>::Skip {
                     index,
                     source_identity,
                     ..
@@ -6568,7 +6658,7 @@ impl MainControl {
                     *source_identity,
                     &mut self.skip_pointer_sources,
                 )),
-                ColdOperation::Muskip {
+                ColdOperation::<G>::Muskip {
                     index,
                     source_identity,
                     ..
@@ -6586,7 +6676,9 @@ impl MainControl {
             }
             pointer_sources[usize::from(index)] = Some((physical, source_identity));
         }
-        if result.is_ok() && self.initex && matches!(scanned, ColdOperation::End { dump: true, .. })
+        if result.is_ok()
+            && self.initex
+            && matches!(scanned, ColdOperation::<G>::End { dump: true, .. })
         {
             let receipt = crate::job::FormatDumpReceipt::new(
                 self.capabilities.job_name().to_owned(),
@@ -6602,7 +6694,7 @@ impl MainControl {
         }
         if let (
             Ok(ReplayStep::End),
-            ColdOperation::End {
+            ColdOperation::<G>::End {
                 dump,
                 incomplete_conditions,
             },
@@ -6712,7 +6804,7 @@ impl MainControl {
             // the replay driver's synthetic terminal marker. Other command
             // effects retain their established command-before-host-delta
             // ordering.
-            if matches!(scanned, ColdOperation::End { .. }) {
+            if matches!(scanned, ColdOperation::<G>::End { .. }) {
                 records.extend(effects.into_iter().map(CommandObservation::Effect));
                 if let Some(effect) = effect {
                     records.push(CommandObservation::Effect(effect));
@@ -6753,7 +6845,7 @@ impl MainControl {
     /// path, retaining every committed observation for the caller.
     pub fn scan_startup_file_name(
         &mut self,
-        stores: &mut Universe,
+        stores: &mut Universe<G>,
         observer: &mut dyn CommandObserver,
     ) -> Result<String, ExecError> {
         self.operation_observations = Some(ObservationBuffer::default());
@@ -6765,7 +6857,10 @@ impl MainControl {
         scanned
     }
 
-    fn scan_startup_file_name_once(&mut self, stores: &mut Universe) -> Result<String, ExecError> {
+    fn scan_startup_file_name_once(
+        &mut self,
+        stores: &mut Universe<G>,
+    ) -> Result<String, ExecError> {
         let filename =
             {
                 let mut processor = command_processor(
@@ -6836,8 +6931,8 @@ impl MainControl {
 /// TeX82 §1121's improper-discretionary report. The completed part is
 /// frozen before validation so its detached node list remains available to
 /// `show_box` even though recovery rejects the enclosing discretionary.
-fn report_improper_discretionary(
-    stores: &mut Universe,
+fn report_improper_discretionary<G>(
+    stores: &mut Universe<G>,
     deleted: tex_state::node_arena::PageListId,
     context: String,
 ) -> Result<(), ExecError> {
@@ -6888,8 +6983,8 @@ pub enum RootCompletionPolicy {
 // see `MainControlStep`.
 type ReplayStep = MainControlStep;
 
-fn math_char(
-    stores: &Universe,
+fn math_char<G>(
+    stores: &Universe<G>,
     code: u32,
     origin: tex_state::token::OriginId,
 ) -> Result<(NoadClass, MathChar), ExecError> {
@@ -6926,9 +7021,9 @@ fn math_char(
     ))
 }
 
-fn append_math_char(
+fn append_math_char<G>(
     mut list: crate::mode::ModeListMutation<'_>,
-    stores: &Universe,
+    stores: &Universe<G>,
     code: u32,
     origin: tex_state::token::OriginId,
 ) -> Result<(), ExecError> {
@@ -6963,12 +7058,12 @@ fn append_math_char(
 /// bound `\mathchar` and `\mathaccent` to fifteen bits, and §437's
 /// `scan_twenty_seven_bit_int` bounds `\delimiter`'s `cur_val div @'10000`
 /// to the same range, so those callers append unconditionally.
-fn set_math_char(
+fn set_math_char<G>(
     ch: char,
     origin: tex_state::token::OriginId,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<(), ExecError> {
     stores.observe_semantic_dependency(tex_state::DependencyKey::Code {
         table: tex_state::DependencyCodeTable::Mathcode,
@@ -7048,9 +7143,9 @@ pub(crate) struct ScriptTarget {
 /// precedes every side effect of the field scan, and material appended while a
 /// recovered or nested field executes cannot move the eventual attachment to a
 /// newer tail.
-pub(crate) fn reserve_script_target(
+pub(crate) fn reserve_script_target<G>(
     mut list: crate::mode::ModeListMutation<'_>,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     kind: MathScriptKind,
 ) -> Result<ScriptTarget, ExecError> {
     // `t<>empty`: the tail was eligible but already carries this script.
@@ -7139,9 +7234,9 @@ fn apply_limits(mut list: crate::mode::ModeListMutation<'_>, kind: MathLimitKind
     .unwrap_or(false)
 }
 
-fn start_fraction(
+fn start_fraction<G>(
     mut list: crate::mode::ModeListMutation<'_>,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fraction: tex_command::ScannedMathFraction,
 ) -> bool {
     if list.incomplete_fraction().is_some() {
@@ -7160,10 +7255,10 @@ fn start_fraction(
     true
 }
 
-fn finish_math_list(
+fn finish_math_list<G>(
     nodes: &[Node],
     incomplete: Option<&crate::mode::IncompleteFraction>,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<tex_state::node_arena::PageListId, ExecError> {
     let mut output = nodes.to_vec();
     if let Some(fraction) = incomplete {
@@ -7216,8 +7311,8 @@ fn finish_math_list(
 /// `handle_right_brace` removes braces around exactly one undecorated Ord
 /// noad by copying its nucleus field into the destination. This preserves an
 /// author box as `sub_box` instead of wrapping it in a second natural hpack.
-fn collapse_singleton_math_group(
-    stores: &Universe,
+fn collapse_singleton_math_group<G>(
+    stores: &Universe<G>,
     list: tex_state::node_arena::PageListId,
 ) -> MathField {
     let nodes = stores
@@ -7234,9 +7329,9 @@ fn collapse_singleton_math_group(
     MathField::SubMlist(list)
 }
 
-fn take_finished_math_list(
+fn take_finished_math_list<G>(
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<tex_state::node_arena::PageListId, ExecError> {
     let (nodes, incomplete) = {
         let mut list = modes.current_list_mutation();
@@ -7259,8 +7354,8 @@ const OFF_SAVE_HELP: [&str; 5] = [
 ///
 /// Spelling the control sequence with `print_esc` rather than a literal
 /// backslash is what keeps the report honest under a changed `\escapechar`.
-fn report_escaped_error(
-    stores: &mut Universe,
+fn report_escaped_error<G>(
+    stores: &mut Universe<G>,
     prefix: &str,
     escaped: &str,
     suffix: &str,
@@ -7279,7 +7374,10 @@ fn report_escaped_error(
 /// §1084 reports through `back_error`, and every caller here has already had
 /// the rejected command backed up during scanning, so only the report is
 /// left.
-fn report_missing_box(command: &CommandState, stores: &mut Universe) -> Result<(), ExecError> {
+fn report_missing_box<G>(
+    command: &CommandState<G>,
+    stores: &mut Universe<G>,
+) -> Result<(), ExecError> {
     let context = command.output_open_context(&stores.command_context());
     crate::error_report::report_error(
         stores,
@@ -7295,7 +7393,7 @@ fn report_missing_box(command: &CommandState, stores: &mut Universe) -> Result<(
 }
 
 /// TeX82 §1084's `box_context < box_flag` recovery for `\setbox`.
-fn report_improper_setbox(context: String, stores: &mut Universe) -> Result<(), ExecError> {
+fn report_improper_setbox<G>(context: String, stores: &mut Universe<G>) -> Result<(), ExecError> {
     report_escaped_error(
         stores,
         "Improper ",
@@ -7310,7 +7408,7 @@ fn report_improper_setbox(context: String, stores: &mut Universe) -> Result<(), 
 }
 
 /// TeX82 §1082's `scan_keyword("to")` recovery in `\vsplit`.
-fn report_missing_vsplit_to(context: &str, stores: &mut Universe) -> Result<(), ExecError> {
+fn report_missing_vsplit_to<G>(context: &str, stores: &mut Universe<G>) -> Result<(), ExecError> {
     crate::error_report::report_error(
         stores,
         "Missing `to' inserted",
@@ -7328,9 +7426,9 @@ fn report_missing_vsplit_to(context: &str, stores: &mut Universe) -> Result<(), 
 /// §1197 reaches this through `back_error`, and the scanner's probe
 /// (`scan_display_end_math_shift`) has already put the offending token back,
 /// so only the report itself is left to issue.
-fn report_unpaired_display_end(
-    command: &CommandState,
-    stores: &mut Universe,
+fn report_unpaired_display_end<G>(
+    command: &CommandState<G>,
+    stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
     let context = command.output_open_context(&stores.command_context());
     crate::error_report::report_error(
@@ -7345,7 +7443,7 @@ fn report_unpaired_display_end(
     Ok(())
 }
 
-fn left_group_open(modes: &ModeNest, stores: &Universe) -> bool {
+fn left_group_open<G>(modes: &ModeNest, stores: &Universe<G>) -> bool {
     // e-TeX etex.ch [48.1192] admits `\middle` through the same
     // `math_left_group` case as `\right`.  Seeing a leading left noad is not
     // sufficient: a simple group nested inside that left/right group is an
@@ -7445,8 +7543,8 @@ impl ForgottenGroupOpener {
 /// opening brace twice through successive command-owned backup levels; only
 /// the second replay reaches TeX82's live preamble scanner.
 #[allow(clippy::too_many_arguments)] // owns the replay-only command/input seam
-fn scan_replay_step(
-    processor: &mut CommandProcessor<'_>,
+fn scan_replay_step<G>(
+    processor: &mut CommandProcessor<'_, G>,
     mode: Mode,
     boxes: &ReplayBoxes,
     alignment_preamble: Option<(AlignmentIdentity, AlignmentPreamblePhase)>,
@@ -7456,7 +7554,7 @@ fn scan_replay_step(
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
             AlignmentPreamblePhase::Opening => {
@@ -7474,7 +7572,7 @@ fn scan_replay_step(
                 if processor.command_trace_printed() {
                     *shown_mode = Some(mode);
                 }
-                Ok(ColdOperation::AlignmentPreambleOpening { alignment, packing }.into())
+                Ok(ColdOperation::<G>::AlignmentPreambleOpening { alignment, packing }.into())
             }
             AlignmentPreamblePhase::Start { owner } => {
                 // TeX82 §§299, 367, 759, and 774: `init_align` has already
@@ -7489,19 +7587,19 @@ fn scan_replay_step(
                 if processor.command_trace_printed() {
                     *shown_mode = Some(mode);
                 }
-                Ok(ColdOperation::AlignmentPreambleStart { alignment }.into())
+                Ok(ColdOperation::<G>::AlignmentPreambleStart { alignment }.into())
             }
             AlignmentPreamblePhase::CellOpening => {
                 let opening = processor
                     .scan_alignment_cell_opening()
                     .map_err(command_error)?;
-                Ok(ColdOperation::AlignmentCellOpening { alignment, opening }.into())
+                Ok(ColdOperation::<G>::AlignmentCellOpening { alignment, opening }.into())
             }
             AlignmentPreamblePhase::NextCellOpening => {
                 let opening = processor
                     .scan_alignment_next_cell_opening()
                     .map_err(command_error)?;
-                Ok(ColdOperation::AlignmentCellOpening { alignment, opening }.into())
+                Ok(ColdOperation::<G>::AlignmentCellOpening { alignment, opening }.into())
             }
             AlignmentPreamblePhase::AlignPeek { after_noalign } => {
                 scan_alignment_peek(processor, alignment, after_noalign).map(Into::into)
@@ -7591,11 +7689,11 @@ fn alignment_preamble(
 /// TeX82 §37's post-row lookahead.  This is deliberately separate from
 /// `init_col`: `\\noalign` consumes its opening brace directly, whereas an
 /// ordinary next-cell command is backed up for template installation.
-fn scan_alignment_peek(
-    processor: &mut CommandProcessor<'_>,
+fn scan_alignment_peek<G>(
+    processor: &mut CommandProcessor<'_, G>,
     alignment: AlignmentIdentity,
     _after_noalign: bool,
-) -> Result<ColdOperation, ExecError> {
+) -> Result<ColdOperation<G>, ExecError> {
     processor
         .begin_alignment_peek(_after_noalign)
         .map_err(command_error)?;
@@ -7611,22 +7709,22 @@ fn scan_alignment_peek(
             processor
                 .scan_alignment_noalign_opening()
                 .map_err(command_error)?;
-            Ok(ColdOperation::BeginNoAlign { alignment })
+            Ok(ColdOperation::<G>::BeginNoAlign { alignment })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr) => {
             let _ = processor.commit_alignment_lookahead_delivery(lookahead);
-            Ok(ColdOperation::AlignPeekRestart { alignment })
+            Ok(ColdOperation::<G>::AlignPeekRestart { alignment })
         }
         Meaning::CharToken {
             cat: Catcode::EndGroup,
             ..
         } => {
             let _ = processor.commit_alignment_lookahead_delivery(lookahead);
-            Ok(ColdOperation::AlignmentFinish { alignment })
+            Ok(ColdOperation::<G>::AlignmentFinish { alignment })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit) => {
             let _ = processor.commit_alignment_lookahead_delivery(lookahead);
-            Ok(ColdOperation::AlignmentPeekCell {
+            Ok(ColdOperation::<G>::AlignmentPeekCell {
                 alignment,
                 omit: true,
             })
@@ -7635,7 +7733,7 @@ fn scan_alignment_peek(
             processor
                 .back_alignment_lookahead(lookahead)
                 .map_err(command_error)?;
-            Ok(ColdOperation::AlignmentPeekCell {
+            Ok(ColdOperation::<G>::AlignmentPeekCell {
                 alignment,
                 omit: false,
             })
@@ -7644,8 +7742,8 @@ fn scan_alignment_peek(
 }
 
 #[allow(clippy::too_many_arguments)] // carries command-owned noalign replay facts
-fn scan_noalign_body(
-    processor: &mut CommandProcessor<'_>,
+fn scan_noalign_body<G>(
+    processor: &mut CommandProcessor<'_, G>,
     alignment: AlignmentIdentity,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
@@ -7653,10 +7751,10 @@ fn scan_noalign_body(
     job_is_all_over: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
     let Some(command) = processor.get_x_token().map_err(command_error)? else {
-        return Ok(ColdOperation::EndOfInput.into());
+        return Ok(ColdOperation::<G>::EndOfInput.into());
     };
     report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
     match command.meaning() {
@@ -7668,9 +7766,9 @@ fn scan_noalign_body(
                 processor
                     .insert_partoken_before(command)
                     .map_err(command_error)?;
-                return Ok(ColdOperation::Continue.into());
+                return Ok(ColdOperation::<G>::Continue.into());
             }
-            Ok(ColdOperation::NoAlignEndGroup { alignment }.into())
+            Ok(ColdOperation::<G>::NoAlignEndGroup { alignment }.into())
         }
         // A `\noalign` body is ordinary main control between its braces
         // (TeX82 §785's `no_align_group`), so it dispatches through the same
@@ -7696,8 +7794,8 @@ fn scan_noalign_body(
 /// completed scanner (such as a rule specification) can leave a backed-up
 /// delimiter ready for the next main-control step.
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
-fn scan_alignment_delivery_step(
-    processor: &mut CommandProcessor<'_>,
+fn scan_alignment_delivery_step<G>(
+    processor: &mut CommandProcessor<'_, G>,
     alignment: AlignmentIdentity,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
@@ -7706,13 +7804,13 @@ fn scan_alignment_delivery_step(
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
     match processor
         .get_x_alignment_delivery(main_loop_active)
         .map_err(command_error)?
     {
-        None => Ok(ColdOperation::EndOfInput.into()),
+        None => Ok(ColdOperation::<G>::EndOfInput.into()),
         // An executor-owned replay episode (a math field/group/choice branch
         // or discretionary part) retired mid-cell. This must be reported
         // exactly like ordinary `scan_step`'s `ReplayCompleted` case, rather
@@ -7720,7 +7818,7 @@ fn scan_alignment_delivery_step(
         // as this cell's own content: that next token can belong to the
         // *enclosing* cell/field context, not the just-retired episode.
         Some(AlignmentDelivery::Completed(episode)) => {
-            Ok(ColdOperation::ReplayCompleted(episode).into())
+            Ok(ColdOperation::<G>::ReplayCompleted(episode).into())
         }
         Some(AlignmentDelivery::Command(command)) => {
             // TeX82 §§1034/1038 keeps an adjacent character fetched by
@@ -7762,7 +7860,7 @@ fn scan_alignment_delivery_step(
                         tex_command::AlignmentDeliveryEvent::ClosingBrace(command),
                     )
                     .map_err(command_error)?;
-                return Ok(ColdOperation::MissingAlignmentCr.into());
+                return Ok(ColdOperation::<G>::MissingAlignmentCr.into());
             }
             if matches!(command.meaning(), Meaning::EndV) {
                 // TeX82 §§1046-1047 route `mmode+endv` through
@@ -7775,13 +7873,13 @@ fn scan_alignment_delivery_step(
                     processor
                         .recover_missing_math_shift(command)
                         .map_err(command_error)?;
-                    return Ok(ColdOperation::MissingMathShift.into());
+                    return Ok(ColdOperation::<G>::MissingMathShift.into());
                 }
                 if partoken_context_replays(processor, mode, 2) {
                     processor
                         .insert_partoken_before(command)
                         .map_err(command_error)?;
-                    return Ok(ColdOperation::Continue.into());
+                    return Ok(ColdOperation::<G>::Continue.into());
                 }
                 // TeX82 §1131 accepts end-v only when `cur_group=align_group`.
                 // The replay driver tracks align-error's inserted `{`
@@ -7797,7 +7895,7 @@ fn scan_alignment_delivery_step(
                 {
                     return scan_off_save(processor, command, innermost_group).map(Into::into);
                 }
-                return Ok(ColdOperation::AlignmentCellFinish { alignment }.into());
+                return Ok(ColdOperation::<G>::AlignmentCellFinish { alignment }.into());
             }
             // An alignment cell's body is ordinary main control bounded by
             // §1130's `vmode+endv,hmode+endv: do_endv`, not a dispatcher of
@@ -7831,17 +7929,17 @@ fn scan_alignment_delivery_step(
 /// before returning to `reswitch`. TeX82 §342 still inserts the v-template at
 /// that nested fetch, so the split executor must receive the same typed event
 /// instead of dispatching the resulting frozen `\endv` as ordinary content.
-fn scan_alignment_delivery_event(
-    processor: &mut CommandProcessor<'_>,
+fn scan_alignment_delivery_event<G>(
+    processor: &mut CommandProcessor<'_, G>,
     alignment: AlignmentIdentity,
-    event: tex_command::AlignmentDeliveryEvent,
-) -> Result<ColdOperation, ExecError> {
+    event: tex_command::AlignmentDeliveryEvent<G>,
+) -> Result<ColdOperation<G>, ExecError> {
     match event {
         tex_command::AlignmentDeliveryEvent::EndTemplate(_) => {
             processor
                 .begin_alignment_v_template(alignment, event)
                 .map_err(command_error)?;
-            Ok(ColdOperation::AlignmentTemplateEntered)
+            Ok(ColdOperation::<G>::AlignmentTemplateEntered)
         }
         tex_command::AlignmentDeliveryEvent::ClosingBrace(_) => {
             // TeX82 §1132 selects this executor-owned align_group branch. Raw
@@ -7850,15 +7948,15 @@ fn scan_alignment_delivery_event(
             processor
                 .recover_alignment_closing_brace(event)
                 .map_err(command_error)?;
-            Ok(ColdOperation::MissingAlignmentCr)
+            Ok(ColdOperation::<G>::MissingAlignmentCr)
         }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn settle_preflight_step(
-    processor: &mut CommandProcessor<'_>,
-    command: tex_command::CurrentCommand,
+fn settle_preflight_step<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: tex_command::CurrentCommand<G>,
     main_loop: bool,
     mode: Mode,
     boxes: &ReplayBoxes,
@@ -7867,18 +7965,18 @@ fn settle_preflight_step(
     display_eq_no: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     let delivery = processor
         .settle_preflight_command(command, main_loop)
         .map_err(command_error)?;
     let Some(delivery) = delivery else {
-        return Ok(ColdOperation::EndOfInput.into());
+        return Ok(ColdOperation::<G>::EndOfInput.into());
     };
     let tex_command::CommandReplayDelivery::Command(command) = delivery else {
         let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
             unreachable!();
         };
-        return Ok(ColdOperation::ReplayCompleted(episode).into());
+        return Ok(ColdOperation::<G>::ReplayCompleted(episode).into());
     };
     let continues_main_loop = main_loop
         && matches!(
@@ -7899,7 +7997,7 @@ fn settle_preflight_step(
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary)
         )
     {
-        return Ok(ColdOperation::NoBoundary {
+        return Ok(ColdOperation::<G>::NoBoundary {
             suppress_right: true,
         }
         .into());
@@ -7920,8 +8018,8 @@ fn settle_preflight_step(
 }
 
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
-fn scan_step(
-    processor: &mut CommandProcessor<'_>,
+fn scan_step<G>(
+    processor: &mut CommandProcessor<'_, G>,
     mode: Mode,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
@@ -7930,7 +8028,7 @@ fn scan_step(
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
     // `get_x_token`; §1034's inner character loop instead re-enters at
     // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a
@@ -7942,13 +8040,13 @@ fn scan_step(
         processor.get_x_token_with_replay_completion()
     };
     let Some(delivery) = delivery.map_err(command_error)? else {
-        return Ok(ColdOperation::EndOfInput.into());
+        return Ok(ColdOperation::<G>::EndOfInput.into());
     };
     let tex_command::CommandReplayDelivery::Command(command) = delivery else {
         let tex_command::CommandReplayDelivery::Completed(episode) = delivery else {
             unreachable!();
         };
-        return Ok(ColdOperation::ReplayCompleted(episode).into());
+        return Ok(ColdOperation::<G>::ReplayCompleted(episode).into());
     };
     // TeX82 §§1034/1038 keeps a fetched character inside `main_loop`;
     // it reaches neither `reswitch` nor §1030's command trace. A
@@ -7973,7 +8071,7 @@ fn scan_step(
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary)
         )
     {
-        return Ok(ColdOperation::NoBoundary {
+        return Ok(ColdOperation::<G>::NoBoundary {
             suppress_right: true,
         }
         .into());
@@ -8008,11 +8106,11 @@ fn execution_error_needs_command_retry(error: &ExecError) -> bool {
 /// crossing a transaction, resource, diagnostic, or contextual dispatcher
 /// barrier. Prefixes deliberately do not qualify: their substantive command
 /// is not known until the transactional prefix loop has run.
-fn direct_hot_candidate(
+fn direct_hot_candidate<G>(
     mode: Mode,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
-    command: &tex_command::CurrentCommand,
+    command: &tex_command::CurrentCommand<G>,
 ) -> bool {
     if boxes.pending_leader.is_some() {
         return false;
@@ -8051,11 +8149,11 @@ fn direct_hot_candidate(
 /// dispatcher work before the ranked hot family. The command remains borrowed
 /// so an actual immutable-resource suspension can move it into the exact retry
 /// continuation without a speculative clone.
-fn scan_direct_hot_command(
-    processor: &mut CommandProcessor<'_>,
-    command: &tex_command::CurrentCommand,
+fn scan_direct_hot_command<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: &tex_command::CurrentCommand<G>,
     innermost_group: Option<GroupKind>,
-) -> Result<hot_apply::HotOperation, ExecError> {
+) -> Result<hot_apply::HotOperation<G>, ExecError> {
     #[cfg(feature = "profiling")]
     {
         tex_state::measurement::record_hot_core_command_family(hot_core_command_family(
@@ -8077,7 +8175,7 @@ fn scan_direct_hot_command(
             }
         )
     {
-        return Ok(hot_apply::HotOperation::end_ordinary_group());
+        return Ok(hot_apply::HotOperation::<G>::end_ordinary_group());
     }
     let global = effective_global(
         processor.int_param(IntParam::GLOBAL_DEFS),
@@ -8125,9 +8223,9 @@ fn scan_direct_hot_command(
 /// - §1045's `any_mode(ignore_spaces): begin <Get the next non-blank non-call
 ///   token>; goto reswitch; end`.
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
-fn dispatch_main_control_command(
-    processor: &mut CommandProcessor<'_>,
-    mut command: tex_command::CurrentCommand,
+fn dispatch_main_control_command<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    mut command: tex_command::CurrentCommand<G>,
     mode: Mode,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
@@ -8137,7 +8235,7 @@ fn dispatch_main_control_command(
     diagnostics: &mut Vec<PendingDiagnostic>,
     alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     // TeX82 §1078 uses §404's non-blank, non-relax fetch after every leader
     // payload. Constructed boxes close in a separate replay step, so the first
     // token after the box has already reached this dispatcher. Finish §404
@@ -8208,9 +8306,9 @@ fn hot_core_command_family(meaning: Meaning) -> tex_state::measurement::HotCoreC
 }
 
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
-fn dispatch_main_control_command_inner(
-    processor: &mut CommandProcessor<'_>,
-    mut command: tex_command::CurrentCommand,
+fn dispatch_main_control_command_inner<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    mut command: tex_command::CurrentCommand<G>,
     mode: Mode,
     boxes: &ReplayBoxes,
     innermost_group: Option<GroupKind>,
@@ -8220,7 +8318,7 @@ fn dispatch_main_control_command_inner(
     diagnostics: &mut Vec<PendingDiagnostic>,
     alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     // TeX82 §1078 fetches the command following a completed leader payload
     // inside `box_end`, before control returns to §1030's `big_switch` or
     // §1211's prefix loop. Split replay finishes the box in one step and
@@ -8230,9 +8328,9 @@ fn dispatch_main_control_command_inner(
     // consume and restore the following assignment instead.
     if let Some((kind, payload)) = boxes.pending_leader.as_ref() {
         let Some(glue) = scan_leader_glue_command(processor, command, mode)? else {
-            return Ok(ColdOperation::LeadersNotFollowedByGlue.into());
+            return Ok(ColdOperation::<G>::LeadersNotFollowedByGlue.into());
         };
-        return Ok(ColdOperation::Leaders {
+        return Ok(ColdOperation::<G>::Leaders {
             kind: *kind,
             payload: payload.clone(),
             glue,
@@ -8294,7 +8392,7 @@ fn dispatch_main_control_command_inner(
                     processor.error_context(),
                     etex,
                 ));
-                return Ok(ColdOperation::Continue.into());
+                return Ok(ColdOperation::<G>::Continue.into());
             }
         }
         // §1213's `<Discard the prefixes \long and \outer if they are
@@ -8335,9 +8433,9 @@ fn dispatch_main_control_command_inner(
                         .get_x_alignment_delivery(false)
                         .map_err(command_error)?
                     {
-                        None => return Ok(ColdOperation::EndOfInput.into()),
+                        None => return Ok(ColdOperation::<G>::EndOfInput.into()),
                         Some(AlignmentDelivery::Completed(episode)) => {
-                            return Ok(ColdOperation::ReplayCompleted(episode).into());
+                            return Ok(ColdOperation::<G>::ReplayCompleted(episode).into());
                         }
                         Some(AlignmentDelivery::Event(event)) => {
                             return scan_alignment_delivery_event(processor, alignment, event)
@@ -8356,7 +8454,7 @@ fn dispatch_main_control_command_inner(
                 }
             } else {
                 let Some(next) = processor.next_non_blank_x_token().map_err(command_error)? else {
-                    return Ok(ColdOperation::EndOfInput.into());
+                    return Ok(ColdOperation::<G>::EndOfInput.into());
                 };
                 next
             };
@@ -8371,7 +8469,7 @@ fn dispatch_main_control_command_inner(
             )
         {
             let Some(next) = processor.get_x_token().map_err(command_error)? else {
-                return Ok(ColdOperation::Continue.into());
+                return Ok(ColdOperation::<G>::Continue.into());
             };
             suppress_left_boundary = matches!(
                 next.meaning(),
@@ -8414,12 +8512,12 @@ fn dispatch_main_control_command_inner(
             shown_mode,
         )?;
         if suppress_left_boundary
-            && let ScannedOperation::Cold(
-                ColdOperation::Character {
+            && let ScannedOperation::<G>::Cold(
+                ColdOperation::<G>::Character {
                     suppress_left_boundary,
                     ..
                 }
-                | ColdOperation::CharacterCode {
+                | ColdOperation::<G>::CharacterCode {
                     suppress_left_boundary,
                     ..
                 },
@@ -8435,10 +8533,10 @@ fn dispatch_main_control_command_inner(
 /// reached after `big_switch` and after cases such as §1045 `ignore_spaces`
 /// fetch a replacement command. §1211's prefix loop does not return to that
 /// label, so its internal fetches remain untraced.
-fn report_command_trace(
-    processor: &mut CommandProcessor<'_>,
+fn report_command_trace<G>(
+    processor: &mut CommandProcessor<'_, G>,
     mode: Mode,
-    command: &tex_command::CurrentCommand,
+    command: &tex_command::CurrentCommand<G>,
     shown_mode: &mut Option<Mode>,
 ) {
     if processor.int_param(IntParam::TRACING_COMMANDS) > 0 {
@@ -8466,10 +8564,10 @@ fn report_command_trace(
 /// `scan_box` from the already-traced `leader_ship` case, so its `\hbox`,
 /// `\vbox`, or `\vtop` never returns to §1030's `reswitch`. Split replay
 /// retains `pending_shipout` across that internal fetch.
-fn report_main_control_command_trace(
-    processor: &mut CommandProcessor<'_>,
+fn report_main_control_command_trace<G>(
+    processor: &mut CommandProcessor<'_, G>,
     mode: Mode,
-    command: &tex_command::CurrentCommand,
+    command: &tex_command::CurrentCommand<G>,
     boxes: &ReplayBoxes,
     shown_mode: &mut Option<Mode>,
 ) {
@@ -8500,8 +8598,8 @@ fn report_main_control_command_trace(
     }
 }
 
-fn prepare_command_trace(
-    processor: &mut CommandProcessor<'_>,
+fn prepare_command_trace<G>(
+    processor: &mut CommandProcessor<'_, G>,
     mode: Mode,
     shown_mode: Option<Mode>,
 ) {
@@ -8517,16 +8615,16 @@ fn prepare_command_trace(
     processor.set_command_trace_mode_prefix(mode_prefix);
 }
 
-fn scan_leaders_step(
-    processor: &mut CommandProcessor<'_>,
+fn scan_leaders_step<G>(
+    processor: &mut CommandProcessor<'_, G>,
     primitive: UnexpandablePrimitive,
     mode: Mode,
-) -> Result<ColdOperation, ExecError> {
+) -> Result<ColdOperation<G>, ExecError> {
     let kind = crate::box_runtime::leader_glue_kind(primitive);
     match processor.scan_leader_payload().map_err(command_error)? {
-        ScannedLeaderPayload::Missing => Ok(ColdOperation::MissingLeaderPayload),
+        ScannedLeaderPayload::Missing => Ok(ColdOperation::<G>::MissingLeaderPayload),
         ScannedLeaderPayload::Construction(construction) => {
-            Ok(ColdOperation::BeginLeaderBox { construction, kind })
+            Ok(ColdOperation::<G>::BeginLeaderBox { construction, kind })
         }
         ScannedLeaderPayload::Rule(rule) => {
             let glue_command = processor
@@ -8536,14 +8634,14 @@ fn scan_leaders_step(
                     context: "leader glue",
                 })?;
             let Some(glue) = scan_leader_glue_command(processor, glue_command, mode)? else {
-                return Ok(ColdOperation::LeadersNotFollowedByGlue);
+                return Ok(ColdOperation::<G>::LeadersNotFollowedByGlue);
             };
             let payload = LeaderPayload::Rule {
                 width: rule.width,
                 height: rule.height,
                 depth: rule.depth,
             };
-            Ok(ColdOperation::Leaders {
+            Ok(ColdOperation::<G>::Leaders {
                 kind,
                 payload,
                 glue,
@@ -8560,9 +8658,9 @@ fn scan_leaders_step(
                     context: "leader glue",
                 })?;
             let Some(glue) = scan_leader_glue_command(processor, glue_command, mode)? else {
-                return Ok(ColdOperation::LeadersNotFollowedByGlue);
+                return Ok(ColdOperation::<G>::LeadersNotFollowedByGlue);
             };
-            Ok(ColdOperation::LeaderRegister {
+            Ok(ColdOperation::<G>::LeaderRegister {
                 kind,
                 index,
                 copy,
@@ -8572,9 +8670,9 @@ fn scan_leaders_step(
     }
 }
 
-fn scan_leader_glue_command(
-    processor: &mut CommandProcessor<'_>,
-    command: tex_command::CurrentCommand,
+fn scan_leader_glue_command<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: tex_command::CurrentCommand<G>,
     mode: Mode,
 ) -> Result<Option<GlueSpec>, ExecError> {
     let horizontal = matches!(
@@ -8711,9 +8809,9 @@ fn starts_paragraph_in_vertical_mode(meaning: Meaning) -> bool {
     }
 }
 
-fn material_origin(
-    processor: &mut CommandProcessor<'_>,
-    command: &tex_command::CurrentCommand,
+fn material_origin<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: &tex_command::CurrentCommand<G>,
 ) -> tex_state::provenance::OriginRef {
     processor
         .active_macro_origin()
@@ -8721,9 +8819,9 @@ fn material_origin(
 }
 
 #[allow(clippy::too_many_arguments)] // mirrors TeX main-control dispatch inputs
-fn scan_command(
-    processor: &mut CommandProcessor<'_>,
-    command: tex_command::CurrentCommand,
+fn scan_command<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: tex_command::CurrentCommand<G>,
     global: bool,
     flags: MeaningFlags,
     mode: Mode,
@@ -8733,7 +8831,7 @@ fn scan_command(
     display_eq_no: bool,
     set_box_allowed: bool,
     shown_mode: &mut Option<Mode>,
-) -> Result<ScannedOperation, ExecError> {
+) -> Result<ScannedOperation<G>, ExecError> {
     if let Meaning::UnexpandablePrimitive(
         primitive @ (UnexpandablePrimitive::TextFont
         | UnexpandablePrimitive::ScriptFont
@@ -8753,7 +8851,7 @@ fn scan_command(
         // Using the typed scanner also commits its lookahead consumption so
         // the identifier cannot be backed up and replayed by main control.
         let font = processor.scan_font_selector().map_err(command_error)?;
-        return Ok(ColdOperation::MathFamily {
+        return Ok(ColdOperation::<G>::MathFamily {
             family,
             font,
             global,
@@ -8776,7 +8874,7 @@ fn scan_command(
             UnexpandablePrimitive::Middle => MathDelimiterBoundaryKind::Middle,
             _ => unreachable!(),
         };
-        return Ok(ColdOperation::MathDelimiter(
+        return Ok(ColdOperation::<G>::MathDelimiter(
             processor
                 .scan_math_delimiter_boundary(kind)
                 .map_err(command_error)?,
@@ -8788,7 +8886,7 @@ fn scan_command(
             .scan_math_request(&command)
             .map_err(command_error)?
     {
-        return Ok(ColdOperation::Math(request).into());
+        return Ok(ColdOperation::<G>::Math(request).into());
     }
     if matches!(mode, Mode::Math | Mode::DisplayMath)
         && let Meaning::CharToken {
@@ -8797,7 +8895,7 @@ fn scan_command(
         } = command.meaning()
     {
         return Ok(
-            ColdOperation::Math(MathRequest::Script(tex_command::ScannedMathScript {
+            ColdOperation::<G>::Math(MathRequest::Script(tex_command::ScannedMathScript {
                 kind: MathScriptKind::Superscript,
                 provenance: tex_command::StructuredProvenance {
                     primary: command.origin(),
@@ -8813,7 +8911,7 @@ fn scan_command(
         } = command.meaning()
     {
         return Ok(
-            ColdOperation::Math(MathRequest::Script(tex_command::ScannedMathScript {
+            ColdOperation::<G>::Math(MathRequest::Script(tex_command::ScannedMathScript {
                 kind: MathScriptKind::Subscript,
                 provenance: tex_command::StructuredProvenance {
                     primary: command.origin(),
@@ -8832,7 +8930,7 @@ fn scan_command(
             }
         )
     {
-        return Ok(ColdOperation::OutputRoutineOpeningBrace.into());
+        return Ok(ColdOperation::<G>::OutputRoutineOpeningBrace.into());
     }
     // `align_error`'s inserted brace is an actual execution group, even when
     // it appears inside a replayed box body.  It must therefore win over the
@@ -8846,7 +8944,7 @@ fn scan_command(
             }
         )
     {
-        return Ok(ColdOperation::BeginSimpleGroup.into());
+        return Ok(ColdOperation::<G>::BeginSimpleGroup.into());
     }
     if boxes.recovery_simple_group_open
         && matches!(
@@ -8857,7 +8955,7 @@ fn scan_command(
             }
         )
     {
-        return Ok(ColdOperation::EndSimpleGroup.into());
+        return Ok(ColdOperation::<G>::EndSimpleGroup.into());
     }
     // TeX82 §1068 dispatches a right brace from the current `cur_group`.
     // An ancestor simple group must not make a nested box's body closer look
@@ -8871,8 +8969,8 @@ fn scan_command(
             }
         )
     {
-        return Ok(ScannedOperation::Hot(
-            hot_apply::HotOperation::end_ordinary_group(),
+        return Ok(ScannedOperation::<G>::Hot(
+            hot_apply::HotOperation::<G>::end_ordinary_group(),
         ));
     }
     // TeX82 §1186's `math_group` arm of `handle_right_brace` (the brace that
@@ -8890,7 +8988,7 @@ fn scan_command(
             }
         )
     {
-        return Ok(ColdOperation::EndMathGroup(kind).into());
+        return Ok(ColdOperation::<G>::EndMathGroup(kind).into());
     }
     if innermost_group == Some(GroupKind::Disc)
         && matches!(
@@ -8901,7 +8999,7 @@ fn scan_command(
             }
         )
     {
-        return Ok(ColdOperation::DiscretionaryPartEnd.into());
+        return Ok(ColdOperation::<G>::DiscretionaryPartEnd.into());
     }
     // TeX82 §1150's `mmode+left_brace`: a bare explicit brace encountered
     // directly in math mode starts a subformula that becomes the nucleus of a
@@ -8929,7 +9027,7 @@ fn scan_command(
         } = command.meaning()
     {
         processor.back_input(command).map_err(command_error)?;
-        return Ok(ColdOperation::Math(MathRequest::TextField(MathTextFieldKind::Ord)).into());
+        return Ok(ColdOperation::<G>::Math(MathRequest::TextField(MathTextFieldKind::Ord)).into());
     }
     // TeX82 §1068's `handle_right_brace` dispatches purely on `cur_group`, so
     // a box body's own closing brace is exactly the one delivered while the
@@ -8960,9 +9058,9 @@ fn scan_command(
             processor
                 .insert_partoken_before(command)
                 .map_err(command_error)?;
-            return Ok(ColdOperation::Continue.into());
+            return Ok(ColdOperation::<G>::Continue.into());
         }
-        return Ok(ColdOperation::BoxEndGroup {
+        return Ok(ColdOperation::<G>::BoxEndGroup {
             ships_out: box_state.ships_out,
         }
         .into());
@@ -8984,9 +9082,9 @@ fn scan_command(
             processor
                 .insert_partoken_before(command)
                 .map_err(command_error)?;
-            return Ok(ColdOperation::Continue.into());
+            return Ok(ColdOperation::<G>::Continue.into());
         }
-        return Ok(ColdOperation::EndOutputRoutine.into());
+        return Ok(ColdOperation::<G>::EndOutputRoutine.into());
     }
     // TeX82 §1090's `@<Cases of |main_control| that build boxes and lists@>`
     // opens with one shared vertical-mode case, not thirteen separate ones:
@@ -9013,10 +9111,10 @@ fn scan_command(
         && starts_paragraph_in_vertical_mode(command.meaning())
     {
         processor.back_input(command).map_err(command_error)?;
-        return Ok(ColdOperation::ParagraphStart.into());
+        return Ok(ColdOperation::<G>::ParagraphStart.into());
     }
     if let Some(operation) = hot_apply::scan(processor, &command, global, flags, innermost_group)? {
-        return Ok(ScannedOperation::Hot(operation));
+        return Ok(ScannedOperation::<G>::Hot(operation));
     }
     scan_cold_operation(
         processor,
@@ -9062,7 +9160,7 @@ mod discretionary_hyphen_tests {
     fn disabled_hyphen_char_leaves_pre_break_empty() {
         // TeX82 §1113 inserts the current font's hyphen character only in
         // 0..256. In particular, -1 disables the visible pre-break.
-        let mut stores = Universe::new_with_plain_catcodes();
+        let mut stores = Universe::<G>::new_with_plain_catcodes();
         stores.set_font_hyphen_char(stores.current_font(), -1);
         let mut control = MainControl::tex82_initex(&mut stores);
         control
@@ -9095,7 +9193,7 @@ mod discretionary_hyphen_tests {
     fn missing_hyphen_glyph_leaves_pre_break_empty() {
         // TeX82 §§581/1113: an in-range hyphen character is constructed via
         // `new_character`, which warns and returns null for an absent glyph.
-        let mut stores = Universe::new_with_plain_catcodes();
+        let mut stores = Universe::<G>::new_with_plain_catcodes();
         let mut control = MainControl::tex82_initex(&mut stores);
         stores.set_int_param(IntParam::TRACING_LOST_CHARS, 1);
         stores.set_int_param(IntParam::TRACING_ONLINE, 1);
@@ -9126,7 +9224,8 @@ mod discretionary_hyphen_tests {
         // TeX82 §§1369--1372: `write_out` traces the write-text token list
         // and expands its condition before testing the frozen `\endwrite`
         // stopper. Atomic shipout staging must retain that live-call order.
-        let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
+        let mut stores =
+            Universe::<G>::with_world(tex_state::World::memory()).with_plain_catcodes();
         let mut control = MainControl::tex82_initex(&mut stores);
         control
             .register_root_source(tex_command::SourceRegistration::new(

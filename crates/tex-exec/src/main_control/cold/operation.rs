@@ -6,7 +6,7 @@
 use super::super::*;
 
 #[derive(Clone)]
-pub(in crate::main_control) enum ColdOperation {
+pub(in crate::main_control) enum ColdOperation<G> {
     Continue,
     Relax,
     /// e-TeX 2.6 `etex.ch` [17.3822--3880]'s `hmode+valign` extension:
@@ -116,7 +116,7 @@ pub(in crate::main_control) enum ColdOperation {
     Skip {
         index: u16,
         value: GlueSpec,
-        source_identity: Option<tex_state::ids::GlueId>,
+        source_identity: Option<tex_state::GlueId<G>>,
         source_skip_index: Option<u16>,
         redundant: bool,
         reassigning: bool,
@@ -125,7 +125,7 @@ pub(in crate::main_control) enum ColdOperation {
     Muskip {
         index: u16,
         value: GlueSpec,
-        source_identity: Option<tex_state::ids::GlueId>,
+        source_identity: Option<tex_state::GlueId<G>>,
         redundant: bool,
         reassigning: bool,
         global: bool,
@@ -148,7 +148,7 @@ pub(in crate::main_control) enum ColdOperation {
     },
     CharacterCode {
         value: i32,
-        origin: tex_state::provenance::OriginRef,
+        origin: tex_state::token::OriginId,
         suppress_left_boundary: bool,
     },
     /// TeX82 §1105's `any_mode(remove_item): delete_last` -- `\unpenalty`,
@@ -292,7 +292,7 @@ pub(in crate::main_control) enum ColdOperation {
     },
     Toks {
         index: u16,
-        tokens: TracedTokenList,
+        tokens: tex_command::AttemptTokenListId,
         global: bool,
     },
     IntParam {
@@ -307,7 +307,7 @@ pub(in crate::main_control) enum ColdOperation {
     },
     TokParam {
         index: u16,
-        tokens: Option<TracedTokenList>,
+        tokens: Option<tex_command::AttemptTokenListId>,
         global: bool,
     },
     GlueParam {
@@ -377,7 +377,7 @@ pub(in crate::main_control) enum ColdOperation {
     PdfRunningLink(bool),
     /// pdftex.web §1599's expanded balanced text selecting the global,
     /// job-owned fallback font name used by accessible-space PDF output.
-    PdfSpaceFont(TracedTokenList),
+    PdfSpaceFont(tex_command::AttemptTokenListId),
     PdfGraphics(PdfGraphicsRequest),
     PdfObject(PdfObjectRequest),
     PdfReferenceObject(PdfReferenceObjectRequest),
@@ -413,8 +413,8 @@ pub(in crate::main_control) enum ColdOperation {
     PdfFontAction {
         primitive: UnexpandablePrimitive,
         font: Option<FontId>,
-        first: Option<TracedTokenList>,
-        second: Option<TracedTokenList>,
+        first: Option<tex_command::AttemptTokenListId>,
+        second: Option<tex_command::AttemptTokenListId>,
     },
     DeferredOpenOut {
         stream: u8,
@@ -425,11 +425,11 @@ pub(in crate::main_control) enum ColdOperation {
     },
     DeferredWrite {
         stream: tex_command::WriteStreamSelector,
-        tokens: TracedTokenList,
+        tokens: tex_command::AttemptTokenListId,
     },
     DeferredSpecial {
         deferred: bool,
-        tokens: TracedTokenList,
+        tokens: tex_command::AttemptTokenListId,
     },
     /// TeX82 §1377's `@<Implement \setlanguage@>`, reached from §1348's
     /// `do_extension` on `set_language_code` (§1344's `extension` modifier
@@ -466,13 +466,13 @@ pub(in crate::main_control) enum ColdOperation {
     /// operand is scanned and no value is changed.
     InvalidArithmeticTarget {
         primitive: UnexpandablePrimitive,
-        target: tex_command::PrintCommand,
+        target: tex_command::PrintCommand<G>,
     },
     CharacterDefinition {
         primitive: UnexpandablePrimitive,
         target: Symbol,
         /// Meaning replaced by §1224's already-applied provisional `\relax`.
-        provisional_old: Meaning,
+        provisional_old: tex_state::meaning::ResolvedMeaning<G>,
         /// `cur_val` after §434/§436's recover-to-zero.
         value: i32,
         global: bool,
@@ -504,11 +504,11 @@ pub(in crate::main_control) enum ColdOperation {
         primitive: UnexpandablePrimitive,
         target: Symbol,
         /// Meaning replaced by §1224's already-applied provisional `\relax`.
-        provisional_old: Meaning,
+        provisional_old: tex_state::meaning::ResolvedMeaning<G>,
         index: u16,
         global: bool,
     },
-    AfterGroup(tex_state::token::RootedTracedTokenWord),
+    AfterGroup(tex_state::token::TracedTokenWord),
     AfterAssignment(Token),
     Rule {
         width: Option<Scaled>,
@@ -518,7 +518,7 @@ pub(in crate::main_control) enum ColdOperation {
     },
     HRuleHereExceptLeaders,
     Message {
-        tokens: TracedTokenList,
+        tokens: tex_command::AttemptTokenListId,
         error: bool,
     },
     DisplayDiagnostic(ScannedDisplayDiagnostic),
@@ -533,7 +533,7 @@ pub(in crate::main_control) enum ColdOperation {
     /// processing has removed the compulsory braces and frozen the
     /// unexpanded balanced interior. Replay owns only diagnostic rendering.
     ShowTokens {
-        tokens: TracedTokenList,
+        tokens: tex_command::AttemptTokenListId,
     },
     /// e-TeX 2.6 `etex.ch` [17.3703--3732]'s read-only conditional-stack
     /// diagnostic, detached in innermost-to-outermost traversal order.
@@ -737,7 +737,7 @@ pub(in crate::main_control) enum ColdOperation {
     /// expanded balanced general text, appended as the selected mark class.
     Mark {
         class: u16,
-        tokens: TracedTokenList,
+        tokens: tex_command::AttemptTokenListId,
     },
     Paragraph,
     MathShift {
@@ -747,14 +747,14 @@ pub(in crate::main_control) enum ColdOperation {
     Character {
         ch: char,
         cat: Catcode,
-        origin: tex_state::provenance::OriginRef,
+        origin: tex_state::token::OriginId,
         suppress_left_boundary: bool,
     },
     Accent(ScannedAccent),
     DiscretionaryOpening(ScannedDiscretionaryOpening),
     DiscretionaryPartEnd,
     DiscretionaryHyphen {
-        origin: tex_state::provenance::OriginRef,
+        origin: tex_state::token::OriginId,
     },
 }
 
@@ -765,7 +765,7 @@ pub(in crate::main_control) enum MathShiftPairing {
     ProbeDisplayEnd,
 }
 
-impl ColdOperation {
+impl<G> ColdOperation<G> {
     pub(in crate::main_control) const fn fires_afterassignment(&self) -> bool {
         matches!(
             self,

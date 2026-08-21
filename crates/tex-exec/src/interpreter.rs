@@ -16,8 +16,8 @@ use tex_state::CommandContext;
 
 /// The sole session-lived owner of canonical command state.
 #[derive(Debug)]
-pub(crate) struct PersistentInterpreter {
-    state: CommandState,
+pub(crate) struct PersistentInterpreter<G> {
+    state: CommandState<G>,
     lifecycle: InterpreterLifecycle,
 }
 
@@ -39,13 +39,13 @@ pub(crate) struct InterpreterLifecycleStats {
     pub maximum_live_processors: u8,
 }
 
-impl Default for PersistentInterpreter {
+impl<G> Default for PersistentInterpreter<G> {
     fn default() -> Self {
         Self::new(CommandProfile::default())
     }
 }
 
-impl PersistentInterpreter {
+impl<G> PersistentInterpreter<G> {
     /// Creates the one canonical interpreter owned by an engine session.
     pub(crate) fn new(profile: CommandProfile) -> Self {
         #[cfg(feature = "profiling")]
@@ -60,11 +60,11 @@ impl PersistentInterpreter {
         }
     }
 
-    pub(crate) const fn state(&self) -> &CommandState {
+    pub(crate) const fn state(&self) -> &CommandState<G> {
         &self.state
     }
 
-    pub(crate) fn state_mut(&mut self) -> &mut CommandState {
+    pub(crate) fn state_mut(&mut self) -> &mut CommandState<G> {
         &mut self.state
     }
 
@@ -76,11 +76,11 @@ impl PersistentInterpreter {
     /// every facade is retired before a semantic, rollback, or host barrier.
     pub(crate) fn processor<'a>(
         &'a mut self,
-        state: CommandContext<'a>,
+        state: CommandContext<'a, G>,
         host: CommandHostContext<'a>,
         fuel: &'a mut CommandFuel,
         observer: Option<&'a mut dyn CommandObserver>,
-    ) -> InterpreterProcessor<'a> {
+    ) -> InterpreterProcessor<'a, G> {
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_interpreter_operation_entry();
         #[cfg(feature = "profiling")]
@@ -117,41 +117,41 @@ impl PersistentInterpreter {
     }
 }
 
-impl Deref for PersistentInterpreter {
-    type Target = CommandState;
+impl<G> Deref for PersistentInterpreter<G> {
+    type Target = CommandState<G>;
 
     fn deref(&self) -> &Self::Target {
         &self.state
     }
 }
 
-impl DerefMut for PersistentInterpreter {
+impl<G> DerefMut for PersistentInterpreter<G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.state
     }
 }
 
 /// One borrow-scoped facade over the persistent canonical interpreter.
-pub(crate) struct InterpreterProcessor<'a> {
-    processor: CommandProcessor<'a>,
+pub(crate) struct InterpreterProcessor<'a, G> {
+    processor: CommandProcessor<'a, G>,
     lifecycle: &'a mut InterpreterLifecycle,
 }
 
-impl<'a> Deref for InterpreterProcessor<'a> {
-    type Target = CommandProcessor<'a>;
+impl<'a, G> Deref for InterpreterProcessor<'a, G> {
+    type Target = CommandProcessor<'a, G>;
 
     fn deref(&self) -> &Self::Target {
         &self.processor
     }
 }
 
-impl DerefMut for InterpreterProcessor<'_> {
+impl<G> DerefMut for InterpreterProcessor<'_, G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.processor
     }
 }
 
-impl Drop for InterpreterProcessor<'_> {
+impl<G> Drop for InterpreterProcessor<'_, G> {
     fn drop(&mut self) {
         assert_eq!(
             self.lifecycle.live_processors, 1,
