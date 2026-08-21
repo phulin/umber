@@ -32,7 +32,8 @@ pub struct PreparedFormatJob<'a> {
     pub startup_line: String,
     pub source_name: String,
     pub source_kind: RegisteredSourceKind,
-    pub source: Arc<[u8]>,
+    /// Job-owned source bytes materialized into the freshly loaded session.
+    pub source: Vec<u8>,
     pub resources: Vec<LoadedFormatResource>,
     pub terminal_input: Vec<String>,
     pub observer: &'a mut dyn CommandObserver,
@@ -138,7 +139,7 @@ impl PreparedFormatProvider {
         loaded.run_configured(
             &job.source_name,
             job.source_kind,
-            job.source,
+            Arc::from(job.source),
             &job.resources,
             LoadedRunConfiguration {
                 guards: job.guards,

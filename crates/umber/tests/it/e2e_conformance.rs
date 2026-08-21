@@ -121,17 +121,12 @@ fn detached_geometry_uses_the_pinned_schema_three_header() {
 
 #[test]
 fn trip_construction_evidence_is_fresh_complete_and_canonical() {
-    let source: Arc<[u8]> = Arc::from(
-        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
-    );
-    let tripos: Arc<[u8]> = Arc::from(
-        test_support::read_repository_asset("third_party/trip/tripos.tex")
-            .expect("read TRIP terminal input"),
-    );
-    let tfm: Arc<[u8]> = Arc::from(
-        test_support::read_repository_asset("third_party/trip/trip.tfm")
-            .expect("read TRIP font metrics"),
-    );
+    let source =
+        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source");
+    let tripos = test_support::read_repository_asset("third_party/trip/tripos.tex")
+        .expect("read TRIP terminal input");
+    let tfm = test_support::read_repository_asset("third_party/trip/trip.tfm")
+        .expect("read TRIP font metrics");
     let recipe = trip_format_recipe(
         TripEngineProfile::Tex82,
         "trip",
@@ -458,9 +453,9 @@ fn trip_format_recipe(
     profile: TripEngineProfile,
     fixture_name: &str,
     source_name: &str,
-    source: Arc<[u8]>,
-    tripos: Arc<[u8]>,
-    tfm: Arc<[u8]>,
+    source: Vec<u8>,
+    tripos: Vec<u8>,
+    tfm: Vec<u8>,
 ) -> FormatRecipe {
     let mut recipe = profile.recipe();
     // Knuth's TRIP build deliberately selects this non-production `hyph_size`.
@@ -482,7 +477,7 @@ fn trip_format_recipe(
             bytes: tfm,
         },
     ];
-    recipe.distribution_identity = Arc::from(&b"pinned-trip-public-format-boundary-v2"[..]);
+    recipe.distribution_identity = b"pinned-trip-public-format-boundary-v2".to_vec();
     recipe.clock = JobClock {
         time: 13 * 60 + 36,
         second: 0,
@@ -514,9 +509,9 @@ fn canonical_source_identity_selects_startup_input_name_independently_of_staging
 #[test]
 #[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_and_etrip_recipes_select_typed_public_format_inputs() {
-    let source: Arc<[u8]> = Arc::from(&b"fixture source"[..]);
-    let tripos: Arc<[u8]> = Arc::from(&b"tripos"[..]);
-    let tfm: Arc<[u8]> = Arc::from(&b"tfm"[..]);
+    let source = b"fixture source".to_vec();
+    let tripos = b"tripos".to_vec();
+    let tfm = b"tfm".to_vec();
     let mut identities = Vec::new();
     for (profile, fixture_name, source_name, engine, format_name) in [
         (
@@ -538,9 +533,9 @@ fn trip_and_etrip_recipes_select_typed_public_format_inputs() {
             profile,
             fixture_name,
             source_name,
-            Arc::clone(&source),
-            Arc::clone(&tripos),
-            Arc::clone(&tfm),
+            source.clone(),
+            tripos.clone(),
+            tfm.clone(),
         );
         assert_eq!(recipe.engine, engine);
         assert_eq!(recipe.engine.command_profile(), engine.command_profile());
@@ -554,11 +549,11 @@ fn trip_and_etrip_recipes_select_typed_public_format_inputs() {
                 FormatResource::Input {
                     logical_name: "tripos.tex".into(),
                     source_kind: RegisteredSourceKind::Generated,
-                    bytes: Arc::clone(&tripos),
+                    bytes: tripos.clone(),
                 },
                 FormatResource::Tfm {
                     logical_name: format!("{fixture_name}.tfm"),
-                    bytes: Arc::clone(&tfm),
+                    bytes: tfm.clone(),
                 },
             ]
         );
@@ -675,15 +670,15 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
         (TripEngineProfile::Tex82, "trip"),
         (TripEngineProfile::ETex, "etrip"),
     ] {
-        let tripos: Arc<[u8]> = Arc::from(&b"complete input closure"[..]);
-        let tfm: Arc<[u8]> = Arc::from(&b"complete TFM closure"[..]);
+        let tripos = b"complete input closure".to_vec();
+        let tfm = b"complete TFM closure".to_vec();
         let recipe = trip_format_recipe(
             profile,
             fixture_name,
             &format!("{fixture_name}.tex"),
-            Arc::from(&b"\\dump\n"[..]),
-            Arc::clone(&tripos),
-            Arc::clone(&tfm),
+            b"\\dump\n".to_vec(),
+            tripos.clone(),
+            tfm.clone(),
         );
         identities.push(recipe.identity().expect("recipe identity").key());
         let first_provider = PreparedFormatProvider::with_store(
@@ -724,17 +719,17 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
                         startup_line: format!("{fixture_name}-provider-control.tex"),
                         source_name: format!("{fixture_name}-provider-control.tex"),
                         source_kind: RegisteredSourceKind::Generated,
-                        source: Arc::from(assignment.as_bytes()),
+                        source: assignment.as_bytes().to_vec(),
                         resources: vec![
                             LoadedFormatResource::Input {
                                 logical_name: "tripos.tex".into(),
                                 resolved_name: "./tripos.tex".into(),
                                 source_kind: RegisteredSourceKind::Generated,
-                                bytes: Arc::clone(&tripos),
+                                bytes: tripos.clone(),
                             },
                             LoadedFormatResource::Tfm {
                                 logical_name: format!("{fixture_name}.tfm"),
-                                bytes: Arc::clone(&tfm),
+                                bytes: tfm.clone(),
                             },
                         ],
                         terminal_input: Vec::new(),
@@ -806,9 +801,9 @@ fn plain_format_recipe(repo_root: &Path) -> Result<FormatRecipe, String> {
         format_name: "repository-plain-tex82".into(),
         format_ident_name: "repository-plain-tex82".into(),
         construction_source_name: "repository-plain-tex82.ini".into(),
-        construction_source: Arc::from(&b"\\input plain.tex\n\\dump\n"[..]),
+        construction_source: b"\\input plain.tex\n\\dump\n".to_vec(),
         resources,
-        distribution_identity: Arc::from(&b"repository-pinned-plain-tex82-v1"[..]),
+        distribution_identity: b"repository-pinned-plain-tex82-v1".to_vec(),
         clock: PLAIN_CLOCK,
         construction_interaction: tex_state::InteractionMode::Nonstop,
         construction_error_context_widths: tex_state::print::ErrorContextWidths::new(64, 32)
@@ -819,7 +814,7 @@ fn plain_format_recipe(repo_root: &Path) -> Result<FormatRecipe, String> {
 
 struct PlainJobInput {
     source_name: String,
-    source: Arc<[u8]>,
+    source: Vec<u8>,
     resources: Vec<LoadedFormatResource>,
 }
 
@@ -860,10 +855,8 @@ fn plain_job_input(path: &Path) -> Result<PlainJobInput, String> {
         if name == "plain.tex" || name == "hyphen.tex" {
             continue;
         }
-        let bytes = Arc::from(
-            fs::read(entry.path())
-                .map_err(|error| format!("read {}: {error}", entry.path().display()))?,
-        );
+        let bytes = fs::read(entry.path())
+            .map_err(|error| format!("read {}: {error}", entry.path().display()))?;
         if let Some(font) = name.strip_suffix(".tfm") {
             if !parity_harness::PLAIN_PRELOAD_FONTS.contains(&font) {
                 resources.push(LoadedFormatResource::Tfm {
@@ -882,7 +875,7 @@ fn plain_job_input(path: &Path) -> Result<PlainJobInput, String> {
     }
     Ok(PlainJobInput {
         source_name,
-        source: Arc::from(source),
+        source,
         resources,
     })
 }
@@ -897,7 +890,7 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
         .map_err(|error| format!("Plain format preparation failed: {error}"))?;
     let input = plain_job_input(path)?;
     let source_name = input.source_name.clone();
-    let source = Arc::clone(&input.source);
+    let source = input.source.clone();
     let mut observers = TripObservers::default();
     let loaded = provider
         .run(
@@ -915,7 +908,7 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
                 startup_line: source_name.clone(),
                 source_name: source_name.clone(),
                 source_kind: RegisteredSourceKind::Generated,
-                source: Arc::clone(&source),
+                source: source.clone(),
                 resources: input.resources,
                 terminal_input: Vec::new(),
                 observer: &mut observers,
@@ -937,7 +930,7 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
             root: LiveSource {
                 name: source_name,
                 source: loaded.root_source,
-                bytes: source,
+                bytes: Arc::from(source),
             },
             observations: observers.into_captured(),
             outcome: LiveSessionOutcome::Completed,
@@ -958,9 +951,7 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
         .and_then(std::ffi::OsStr::to_str)
         .ok_or_else(|| format!("input name is not UTF-8: {}", path.display()))?
         .to_owned();
-    let source: Arc<[u8]> = fs::read(&path)
-        .map_err(|error| format!("read {}: {error}", path.display()))?
-        .into();
+    let source = fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
     let mut entries = fs::read_dir(parent)
         .map_err(|error| format!("read staged directory {}: {error}", parent.display()))?
         .collect::<Result<Vec<_>, _>>()
@@ -977,9 +968,8 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
-        let bytes: Arc<[u8]> = fs::read(entry.path())
-            .map_err(|error| format!("read {}: {error}", entry.path().display()))?
-            .into();
+        let bytes = fs::read(entry.path())
+            .map_err(|error| format!("read {}: {error}", entry.path().display()))?;
         if name.ends_with(".tfm") {
             resources.push(LoadedFormatResource::Tfm {
                 logical_name: name,
@@ -1017,7 +1007,7 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
                 startup_line: source_name.clone(),
                 source_name: source_name.clone(),
                 source_kind: RegisteredSourceKind::Generated,
-                source: Arc::clone(&source),
+                source: source.clone(),
                 resources,
                 terminal_input: Vec::new(),
                 observer: &mut observers,
@@ -1039,7 +1029,7 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
             root: LiveSource {
                 name: source_name,
                 source: loaded.root_source,
-                bytes: source,
+                bytes: Arc::from(source),
             },
             observations: observers.into_captured(),
             outcome: LiveSessionOutcome::Completed,
@@ -1148,13 +1138,13 @@ fn plain_job_split_types_non_preload_resources() {
         vec![
             LoadedFormatResource::Tfm {
                 logical_name: "extra.tfm".into(),
-                bytes: Arc::from(&b"job tfm"[..]),
+                bytes: b"job tfm".to_vec(),
             },
             LoadedFormatResource::Input {
                 logical_name: "support.tex".into(),
                 resolved_name: "./support.tex".into(),
                 source_kind: RegisteredSourceKind::Generated,
-                bytes: Arc::from(&b"job input"[..]),
+                bytes: b"job input".to_vec(),
             },
         ]
     );
@@ -1348,7 +1338,7 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
                     startup_line: "plain-provider-isolation.tex".into(),
                     source_name: "plain-provider-isolation.tex".into(),
                     source_kind: RegisteredSourceKind::Generated,
-                    source: Arc::from(source),
+                    source: source.to_vec(),
                     resources: Vec::new(),
                     terminal_input: Vec::new(),
                     observer: &mut observer,
@@ -1377,7 +1367,7 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
                     startup_line: "plain-provider-provenance-isolation.tex".into(),
                     source_name: "plain-provider-provenance-isolation.tex".into(),
                     source_kind: RegisteredSourceKind::Generated,
-                    source: Arc::from(&b"\\def\\x{a}\\x\\end\n"[..]),
+                    source: b"\\def\\x{a}\\x\\end\n".to_vec(),
                     resources: Vec::new(),
                     terminal_input: Vec::new(),
                     observer: &mut observer,
@@ -2024,19 +2014,16 @@ fn run_two_phase_fixture(
         source_bytes
     };
     let source_identity = ManifestBoundSource::new(source_name, local_name, &source_bytes);
-    let source_bytes: Arc<[u8]> = Arc::from(source_bytes);
-    let tripos: Arc<[u8]> = Arc::from(
-        fs::read(root.join("third_party/trip/tripos.tex")).expect("read shared TRIP input"),
-    );
-    let tfm: Arc<[u8]> =
-        Arc::from(fs::read(root.join("third_party/trip/trip.tfm")).expect("read conformance TFM"));
+    let tripos =
+        fs::read(root.join("third_party/trip/tripos.tex")).expect("read shared TRIP input");
+    let tfm = fs::read(root.join("third_party/trip/trip.tfm")).expect("read conformance TFM");
     let recipe = trip_format_recipe(
         profile,
         fixture_name,
         source_identity.canonical_name(),
-        Arc::clone(&source_bytes),
-        Arc::clone(&tripos),
-        Arc::clone(&tfm),
+        source_bytes.clone(),
+        tripos.clone(),
+        tfm.clone(),
     );
     let engine = recipe.engine;
     let provider = PreparedFormatProvider::from_environment(super::umber_format_worker_launcher())
@@ -2101,7 +2088,7 @@ fn run_two_phase_fixture(
                 ),
                 source_name: source_identity.canonical_name().to_owned(),
                 source_kind: RegisteredSourceKind::Generated,
-                source: Arc::clone(&source_bytes),
+                source: source_bytes,
                 resources,
                 terminal_input: Vec::new(),
                 observer: &mut observers,
@@ -2900,24 +2887,19 @@ fn positionless_geometry(observer: TripObservers, oracle: &[u8]) -> Vec<u8> {
 }
 
 fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, TripObservers) {
-    let trip: Arc<[u8]> = Arc::from(
-        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
-    );
-    let tripos: Arc<[u8]> = Arc::from(
-        test_support::read_repository_asset("third_party/trip/tripos.tex")
-            .expect("read TRIP terminal input"),
-    );
-    let tfm: Arc<[u8]> = Arc::from(
-        test_support::read_repository_asset("third_party/trip/trip.tfm")
-            .expect("read TRIP font metrics"),
-    );
+    let trip =
+        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source");
+    let tripos = test_support::read_repository_asset("third_party/trip/tripos.tex")
+        .expect("read TRIP terminal input");
+    let tfm = test_support::read_repository_asset("third_party/trip/trip.tfm")
+        .expect("read TRIP font metrics");
     let recipe = trip_format_recipe(
         TripEngineProfile::Tex82,
         "trip",
         "trip.tex",
-        Arc::clone(&trip),
-        Arc::clone(&tripos),
-        Arc::clone(&tfm),
+        trip,
+        tripos.clone(),
+        tfm.clone(),
     );
     let provider = PreparedFormatProvider::from_environment(super::umber_format_worker_launcher())
         .expect("focused TRIP format provider");
@@ -2938,7 +2920,7 @@ fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, TripObservers)
                 startup_line: "&trip focused.tex".into(),
                 source_name: "focused.tex".into(),
                 source_kind: RegisteredSourceKind::Generated,
-                source,
+                source: source.to_vec(),
                 resources: vec![
                     LoadedFormatResource::Input {
                         logical_name: "tripos.tex".into(),

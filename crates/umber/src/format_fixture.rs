@@ -66,11 +66,13 @@ pub enum FormatResource {
     Input {
         logical_name: String,
         source_kind: RegisteredSourceKind,
-        bytes: Arc<[u8]>,
+        /// Recipe-owned transport bytes; materialization creates session-local storage.
+        bytes: Vec<u8>,
     },
     Tfm {
         logical_name: String,
-        bytes: Arc<[u8]>,
+        /// Recipe-owned transport bytes; no live file or cache owner is retained.
+        bytes: Vec<u8>,
     },
 }
 
@@ -84,11 +86,11 @@ pub enum LoadedFormatResource {
         logical_name: String,
         resolved_name: String,
         source_kind: RegisteredSourceKind,
-        bytes: Arc<[u8]>,
+        bytes: Vec<u8>,
     },
     Tfm {
         logical_name: String,
-        bytes: Arc<[u8]>,
+        bytes: Vec<u8>,
     },
 }
 
@@ -103,9 +105,11 @@ pub struct FormatRecipe {
     /// The dump job name embedded by TeX82 §1328 and restored for §536's log.
     pub format_ident_name: String,
     pub construction_source_name: String,
-    pub construction_source: Arc<[u8]>,
+    /// Handle-free INITEX input copied into the destination session on use.
+    pub construction_source: Vec<u8>,
     pub resources: Vec<FormatResource>,
-    pub distribution_identity: Arc<[u8]>,
+    /// Stable distribution value identity, never a runtime cache owner.
+    pub distribution_identity: Vec<u8>,
     pub clock: JobClock,
     /// Driver-selected interaction for the construction episode.
     pub construction_interaction: tex_state::InteractionMode,
@@ -124,9 +128,9 @@ impl FormatRecipe {
             format_name: "raw-tex82".into(),
             format_ident_name: "raw-tex82".into(),
             construction_source_name: "raw-tex82.ini".into(),
-            construction_source: Arc::from(&b"\\dump\n"[..]),
+            construction_source: b"\\dump\n".to_vec(),
             resources: Vec::new(),
-            distribution_identity: Arc::from(&b"repository-raw-tex82-v1"[..]),
+            distribution_identity: b"repository-raw-tex82-v1".to_vec(),
             clock: JobClock {
                 time: 12 * 60,
                 second: 0,
@@ -153,9 +157,9 @@ impl FormatRecipe {
             format_name: "raw-etex26".into(),
             format_ident_name: "raw-etex26".into(),
             construction_source_name: "raw-etex26.ini".into(),
-            construction_source: Arc::from(&b"\\dump\n"[..]),
+            construction_source: b"\\dump\n".to_vec(),
             resources: Vec::new(),
-            distribution_identity: Arc::from(&b"repository-raw-etex26-v1"[..]),
+            distribution_identity: b"repository-raw-etex26-v1".to_vec(),
             clock: JobClock {
                 time: 12 * 60,
                 second: 0,
@@ -185,9 +189,9 @@ impl FormatRecipe {
             format_name: "production".into(),
             format_ident_name: "production".into(),
             construction_source_name: "production-pdftex14029.ini".into(),
-            construction_source: Arc::from(&b"\\dump\n"[..]),
+            construction_source: b"\\dump\n".to_vec(),
             resources: Vec::new(),
-            distribution_identity: Arc::from(&b"repository-production-pdftex14029-v1"[..]),
+            distribution_identity: b"repository-production-pdftex14029-v1".to_vec(),
             clock: JobClock {
                 time: 12 * 60,
                 second: 0,
@@ -450,8 +454,11 @@ impl ResourceHost for LoadedResourceHost<'_> {
                     } if logical_name == name => {
                         Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Input {
                             name: logical_name.clone(),
-                            source: SourceRegistration::new(*source_kind, Arc::clone(bytes))
-                                .with_name(resolved_name.clone()),
+                            source: SourceRegistration::new(
+                                *source_kind,
+                                Arc::from(bytes.as_slice()),
+                            )
+                            .with_name(resolved_name.clone()),
                         }))
                     }
                     _ => None,
@@ -469,7 +476,7 @@ impl ResourceHost for LoadedResourceHost<'_> {
                                     name: logical_name.clone(),
                                     source: SourceRegistration::new(
                                         *source_kind,
-                                        Arc::clone(bytes),
+                                        Arc::from(bytes.as_slice()),
                                     )
                                     .with_name(format!("./{logical_name}")),
                                 }))
@@ -491,7 +498,7 @@ impl ResourceHost for LoadedResourceHost<'_> {
                         ResourceFulfillment::InputProbe {
                             request: request.clone(),
                             resource: FileEnquiryResource::new(
-                                SourceRegistration::new(*source_kind, Arc::clone(bytes))
+                                SourceRegistration::new(*source_kind, Arc::from(bytes.as_slice()))
                                     .with_name(resolved_name.clone()),
                                 None,
                             ),
@@ -511,8 +518,11 @@ impl ResourceHost for LoadedResourceHost<'_> {
                                 ResourceFulfillment::InputProbe {
                                     request: request.clone(),
                                     resource: FileEnquiryResource::new(
-                                        SourceRegistration::new(*source_kind, Arc::clone(bytes))
-                                            .with_name(format!("./{logical_name}")),
+                                        SourceRegistration::new(
+                                            *source_kind,
+                                            Arc::from(bytes.as_slice()),
+                                        )
+                                        .with_name(format!("./{logical_name}")),
                                         None,
                                     ),
                                 },
@@ -532,7 +542,7 @@ impl ResourceHost for LoadedResourceHost<'_> {
                         == Some(std::ffi::OsStr::new(&request.name)) =>
                     {
                         let content = world
-                            .register_selected_file(logical_name, Arc::clone(bytes))
+                            .register_selected_file(logical_name, Arc::from(bytes.as_slice()))
                             .ok()?;
                         Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                             request: request.clone(),
@@ -555,7 +565,10 @@ impl ResourceHost for LoadedResourceHost<'_> {
                                 == Some(std::ffi::OsStr::new(&request.name)) =>
                             {
                                 let content = world
-                                    .register_selected_file(logical_name, Arc::clone(bytes))
+                                    .register_selected_file(
+                                        logical_name,
+                                        Arc::from(bytes.as_slice()),
+                                    )
                                     .ok()?;
                                 Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                                     request: request.clone(),
@@ -626,7 +639,7 @@ pub(crate) fn construct_format_in_worker(
         &recipe.construction_source_name,
         SourceRegistration::new(
             RegisteredSourceKind::Generated,
-            Arc::clone(&recipe.construction_source),
+            Arc::from(recipe.construction_source.as_slice()),
         )
         .with_name(format!("./{}", recipe.construction_source_name)),
     )?;
@@ -636,7 +649,7 @@ pub(crate) fn construct_format_in_worker(
         LiveSource {
             name: recipe.construction_source_name.clone(),
             source: root,
-            bytes: Arc::clone(&recipe.construction_source),
+            bytes: Arc::from(recipe.construction_source.as_slice()),
         },
     );
     let guards = GuardCheckpoints::new(recipe.guards)?;
@@ -755,9 +768,13 @@ impl ResourceHost for RecipeResourceHost<'_> {
                         logical_name,
                         source_kind,
                         bytes,
-                    } if logical_name == name => Some(ResourceOutcome::Fulfilled(
-                        ResourceFulfillment::input(logical_name, *source_kind, Arc::clone(bytes)),
-                    )),
+                    } if logical_name == name => {
+                        Some(ResourceOutcome::Fulfilled(ResourceFulfillment::input(
+                            logical_name,
+                            *source_kind,
+                            Arc::from(bytes.as_slice()),
+                        )))
+                    }
                     _ => None,
                 })
                 .unwrap_or(ResourceOutcome::Unavailable),
@@ -773,7 +790,7 @@ impl ResourceHost for RecipeResourceHost<'_> {
                         ResourceFulfillment::InputProbe {
                             request: request.clone(),
                             resource: FileEnquiryResource::new(
-                                SourceRegistration::new(*source_kind, Arc::clone(bytes)),
+                                SourceRegistration::new(*source_kind, Arc::from(bytes.as_slice())),
                                 None,
                             ),
                         },
@@ -792,7 +809,7 @@ impl ResourceHost for RecipeResourceHost<'_> {
                         == Some(std::ffi::OsStr::new(&request.name)) =>
                     {
                         let content = world
-                            .register_selected_file(logical_name, Arc::clone(bytes))
+                            .register_selected_file(logical_name, Arc::from(bytes.as_slice()))
                             .ok()?;
                         Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                             request: request.clone(),

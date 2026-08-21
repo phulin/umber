@@ -66,30 +66,30 @@ fn recipe_identity_invalidates_every_fixture_input_class() {
     recipe.construction_source_name.push_str(".other");
     mutations.push(recipe);
     let mut recipe = original.clone();
-    recipe.construction_source = Arc::from(&b"\\relax\\dump\n"[..]);
+    recipe.construction_source = b"\\relax\\dump\n".to_vec();
     mutations.push(recipe);
     let mut recipe = original.clone();
     recipe.resources.push(FormatResource::Input {
         logical_name: "fixture.tex".into(),
         source_kind: RegisteredSourceKind::Generated,
-        bytes: Arc::from(&b"\\relax"[..]),
+        bytes: b"\\relax".to_vec(),
     });
     mutations.push(recipe);
     for resource in [
         FormatResource::Input {
             logical_name: "other.tex".into(),
             source_kind: RegisteredSourceKind::Generated,
-            bytes: Arc::from(&b"\\relax"[..]),
+            bytes: b"\\relax".to_vec(),
         },
         FormatResource::Input {
             logical_name: "fixture.tex".into(),
             source_kind: RegisteredSourceKind::World,
-            bytes: Arc::from(&b"\\relax"[..]),
+            bytes: b"\\relax".to_vec(),
         },
         FormatResource::Input {
             logical_name: "fixture.tex".into(),
             source_kind: RegisteredSourceKind::Generated,
-            bytes: Arc::from(&b"\\end"[..]),
+            bytes: b"\\end".to_vec(),
         },
     ] {
         let mut recipe = original.clone();
@@ -100,11 +100,11 @@ fn recipe_identity_invalidates_every_fixture_input_class() {
     recipe.resources = vec![
         FormatResource::Tfm {
             logical_name: "a.tfm".into(),
-            bytes: Arc::from(&b"a"[..]),
+            bytes: b"a".to_vec(),
         },
         FormatResource::Tfm {
             logical_name: "b.tfm".into(),
-            bytes: Arc::from(&b"b"[..]),
+            bytes: b"b".to_vec(),
         },
     ];
     let mut reversed = recipe.clone();
@@ -112,7 +112,7 @@ fn recipe_identity_invalidates_every_fixture_input_class() {
     mutations.push(recipe);
     mutations.push(reversed);
     let mut recipe = original.clone();
-    recipe.distribution_identity = Arc::from(&b"other-distribution"[..]);
+    recipe.distribution_identity = b"other-distribution".to_vec();
     mutations.push(recipe);
     for mutate in [
         |clock: &mut JobClock| clock.time += 1,
@@ -325,7 +325,7 @@ fn construction_failure_publishes_no_entry() {
     let cache_root = TempDir::new().expect("cache");
     let cache = FormatCacheStore::new(cache_root.path());
     let mut recipe = FormatRecipe::raw_tex82();
-    recipe.construction_source = Arc::from(&b"\\end\n"[..]);
+    recipe.construction_source = b"\\end\n".to_vec();
     assert!(matches!(
         ensure_format(&cache, &recipe),
         Err(FormatFixtureError::Worker(_))
@@ -345,7 +345,7 @@ fn construction_fuel_interrupts_a_cyclic_macro() {
     let cache_root = TempDir::new().expect("cache");
     let mut recipe = FormatRecipe::raw_tex82();
     recipe.guards.command_fuel = 32;
-    recipe.construction_source = Arc::from(&b"\\def\\loop{\\loop}\\loop"[..]);
+    recipe.construction_source = b"\\def\\loop{\\loop}\\loop".to_vec();
     assert!(matches!(
         ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe),
         Err(FormatFixtureError::Worker(_))
@@ -368,7 +368,7 @@ fn construction_wall_guard_interrupts_during_execution() {
 fn construction_rss_guard_interrupts_without_allocating() {
     let cache_root = TempDir::new().expect("cache");
     let mut recipe = FormatRecipe::raw_tex82();
-    recipe.construction_source = Arc::from(&b"\\end\n"[..]);
+    recipe.construction_source = b"\\end\n".to_vec();
     recipe.guards.resident_bytes = 1;
     let result = ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe);
     assert!(

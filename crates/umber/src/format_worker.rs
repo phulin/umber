@@ -901,13 +901,13 @@ impl Request {
             format_name: self.format_name,
             format_ident_name: self.format_ident_name,
             construction_source_name: self.source_name,
-            construction_source: Arc::from(self.source),
+            construction_source: self.source,
             resources: self
                 .resources
                 .into_iter()
                 .map(Resource::into_resource)
                 .collect::<Result<_, _>>()?,
-            distribution_identity: Arc::from(self.distribution),
+            distribution_identity: self.distribution,
             clock: JobClock {
                 time: self.clock[0],
                 second: self.clock[1],
@@ -965,11 +965,11 @@ impl Resource {
             Self::Input(tag, logical_name, bytes) => Ok(FormatResource::Input {
                 logical_name,
                 source_kind: decode_source_kind(tag)?,
-                bytes: Arc::from(bytes),
+                bytes,
             }),
             Self::Tfm(logical_name, bytes) => Ok(FormatResource::Tfm {
                 logical_name,
-                bytes: Arc::from(bytes),
+                bytes,
             }),
         }
     }

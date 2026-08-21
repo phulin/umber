@@ -63,7 +63,7 @@ fn job<'a>(source: &'static [u8], observer: &'a mut dyn CommandObserver) -> Prep
         startup_line: "provider-job.tex".into(),
         source_name: "provider-job.tex".into(),
         source_kind: RegisteredSourceKind::World,
-        source: Arc::from(source),
+        source: source.to_vec(),
         resources: Vec::new(),
         terminal_input: Vec::new(),
         observer,
@@ -290,12 +290,12 @@ fn loaded_job_reopens_authenticated_resources_after_job_precedence() {
     let mut recipe = FormatRecipe::raw_tex82();
     recipe.resources.push(crate::FormatResource::Tfm {
         logical_name: "cmr10.tfm".into(),
-        bytes: Arc::from(&include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm")[..]),
+        bytes: include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
     });
     recipe.resources.push(crate::FormatResource::Input {
         logical_name: "shared.tex".into(),
         source_kind: RegisteredSourceKind::World,
-        bytes: Arc::from(&b"\\count0=1\n"[..]),
+        bytes: b"\\count0=1\n".to_vec(),
     });
     let fixture = provider
         .prepare(&recipe)
@@ -309,7 +309,7 @@ fn loaded_job_reopens_authenticated_resources_after_job_precedence() {
         logical_name: "shared.tex".into(),
         resolved_name: "./job/shared.tex".into(),
         source_kind: RegisteredSourceKind::World,
-        bytes: Arc::from(&b"\\count0=2\n"[..]),
+        bytes: b"\\count0=2\n".to_vec(),
     });
     let run = provider
         .run(&fixture, request)
@@ -333,7 +333,7 @@ fn loaded_job_applies_explicit_provenance_demand_after_format_restore() {
     let mut recipe = FormatRecipe::raw_tex82();
     recipe.resources.push(crate::FormatResource::Tfm {
         logical_name: "cmr10.tfm".into(),
-        bytes: Arc::from(&include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm")[..]),
+        bytes: include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
     });
     let fixture = provider
         .prepare(&recipe)
@@ -403,7 +403,7 @@ fn loaded_job_does_not_reopen_wrong_typed_recipe_resource() {
     recipe.resources.push(crate::FormatResource::Input {
         logical_name: "cmr10.tfm".into(),
         source_kind: RegisteredSourceKind::World,
-        bytes: Arc::from(&include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm")[..]),
+        bytes: include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
     });
     let fixture = provider.prepare(&recipe).expect("prepare typed closure");
     let mut recorder = Recorder::default();
