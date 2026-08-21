@@ -5255,7 +5255,7 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
 }
 
 #[test]
-fn literal_and_macro_paragraph_boundaries_publish_once_before_the_next_command() {
+fn named_boundary_queue_publishes_literal_and_macro_paragraphs_before_the_next_command() {
     for source in [
         br"\count0=1 A\par\count0=2\end".as_slice(),
         br"\count0=1\def\finish{A\par}\finish\count0=2\end".as_slice(),
@@ -5310,7 +5310,7 @@ fn literal_and_macro_paragraph_boundaries_publish_once_before_the_next_command()
 }
 
 #[test]
-fn paragraph_boundary_waits_for_a_live_macro_argument_record() {
+fn named_boundary_queue_waits_for_a_live_macro_argument_record() {
     crate::test_harness::with_plain_universe(|mut stores| {
         let mut control = MainControl::tex82_initex(&mut stores);
         register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
@@ -5346,7 +5346,7 @@ fn paragraph_boundary_waits_for_a_live_macro_argument_record() {
 }
 
 #[test]
-fn pending_paragraph_boundary_does_not_cross_a_resource_suspension() {
+fn named_boundary_queue_does_not_cross_a_resource_suspension() {
     crate::test_harness::with_plain_universe(|mut stores| {
         let mut control = MainControl::tex82_initex(&mut stores);
         register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
@@ -5408,7 +5408,7 @@ fn pending_paragraph_boundary_does_not_cross_a_resource_suspension() {
 }
 
 #[test]
-fn macro_with_two_paragraph_ends_drains_two_ordered_intents() {
+fn named_boundary_queue_drains_two_macro_paragraphs_in_order() {
     crate::test_harness::with_plain_universe(|mut stores| {
         let mut control = MainControl::tex82_initex(&mut stores);
         register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
@@ -5439,7 +5439,7 @@ fn macro_with_two_paragraph_ends_drains_two_ordered_intents() {
 }
 
 #[test]
-fn macro_wrapped_shipout_waits_for_table_content_macro_retirement() {
+fn named_boundary_queue_waits_for_macro_wrapped_shipout_content() {
     crate::test_harness::with_plain_universe(|mut stores| {
         let mut control = MainControl::tex82_initex(&mut stores);
         register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
@@ -5479,7 +5479,7 @@ fn macro_wrapped_shipout_waits_for_table_content_macro_retirement() {
 }
 
 #[test]
-fn mixed_paragraph_and_shipout_intents_drain_in_producer_order() {
+fn named_boundary_queue_drains_mixed_intents_in_producer_order() {
     crate::test_harness::with_plain_universe(|mut stores| {
         let mut control = MainControl::tex82_initex(&mut stores);
         register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
