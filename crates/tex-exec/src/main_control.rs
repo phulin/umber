@@ -1058,7 +1058,9 @@ fn command_processor<'a, G>(
         .as_mut()
         .map(|buffer| buffer as &mut dyn CommandObserver);
     command.processor(
-        stores.command_context(),
+        stores
+            .command_context()
+            .expect("command processing requires an admitted live generation"),
         CommandHostContext::new(capabilities),
         fuel,
         observer,
