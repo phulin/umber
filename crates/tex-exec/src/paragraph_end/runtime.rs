@@ -12,11 +12,14 @@ impl ParagraphBreakResult {
     }
 }
 
-pub(crate) fn display_line_dimensions<G>(nest: &ModeNest, stores: &Universe<G>) -> LineDimensions {
+pub(crate) fn display_line_dimensions<G>(
+    nest: &ModeNest,
+    stores: &CommandContext<'_, G>,
+) -> LineDimensions {
     let params = ParagraphParams {
-        left_skip: *stores.glue(stores.glue_param(GlueParam::LEFT_SKIP)),
-        right_skip: *stores.glue(stores.glue_param(GlueParam::RIGHT_SKIP)),
-        par_fill_skip: *stores.glue(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
+        left_skip: glue_parameter_value(stores, GlueParam::LEFT_SKIP),
+        right_skip: glue_parameter_value(stores, GlueParam::RIGHT_SKIP),
+        par_fill_skip: glue_parameter_value(stores, GlueParam::PAR_FILL_SKIP),
         par_shape: stores.paragraph_shape(),
         prev_graf: nest.enclosing_vertical_prev_graf(),
         hang_indent: stores.dimen_param(DimenParam::HANG_INDENT),
@@ -48,7 +51,7 @@ pub(crate) fn display_line_dimensions<G>(nest: &ModeNest, stores: &Universe<G>) 
 
 pub(crate) fn break_current_paragraph<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
     reset_paragraph: bool,
     error_context: String,
@@ -83,8 +86,10 @@ pub(crate) fn break_current_paragraph<G>(
     )?;
     let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {
-        line_params.expansion_steps =
-            tex_typeset::linebreak::validate_paragraph_expansion(stores, &hlist)?;
+        line_params.expansion_steps = tex_typeset::linebreak::validate_paragraph_expansion(
+            &crate::typeset_context::TypesetContext::new(stores),
+            &hlist,
+        )?;
     }
     let (mut decisions, trace, missing_hyphens) =
         break_hlist_with_trace(stores, hlist, line_params, fuel, tracing)?;
@@ -124,7 +129,10 @@ pub(crate) fn break_current_paragraph<G>(
     let mut migrated = Vec::new();
     let mut pre_migrated = Vec::new();
     let mut retained_migrated = Vec::new();
-    while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
+    while let Some(mut broken) = materializer.materialize_next(
+        &crate::typeset_context::TypesetContext::new(stores),
+        line_nodes,
+    ) {
         crate::box_runtime::hmode::reshape_open_type_runs(stores, &mut broken.nodes);
         materialize_pdf_line(
             stores,
@@ -246,7 +254,11 @@ fn discretionary_diagnostics_differ(physical: &[Node], semantic: &[Node]) -> boo
         else {
             continue;
         };
-        if usize::from(*physical_replace_count) != replace.len()
+        if usize::from(*physical_replace_count)
+            != stores
+                .page_node_list(replace.clone())
+                .expect("discretionary replacement belongs to the live page arena")
+                .len()
             || semantic.next()
                 != Some((
                     *kind,
@@ -263,7 +275,7 @@ fn discretionary_diagnostics_differ(physical: &[Node], semantic: &[Node]) -> boo
 }
 
 fn materialize_pdf_line<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     nodes: &mut Vec<Node>,
     target: Scaled,
     adjusts_spacing: bool,
@@ -273,7 +285,10 @@ fn materialize_pdf_line<G>(
         apply_line_expansion(stores, nodes, target)?;
     }
     if protrudes_chars {
-        tex_typeset::protrusion::insert_margin_kerns(stores, nodes);
+        tex_typeset::protrusion::insert_margin_kerns(
+            &crate::typeset_context::TypesetContext::new(stores),
+            nodes,
+        );
     }
     Ok(())
 }
@@ -282,7 +297,7 @@ fn materialize_pdf_line<G>(
 /// offending specification is copied and normalized, while recovery is
 /// reported at most once for the whole paragraph.
 fn normalize_paragraph_infinite_shrink<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     params: &mut ParagraphParams,
     nodes: &mut [Node],
     tracing: bool,
@@ -326,11 +341,15 @@ fn normalize_paragraph_infinite_shrink<G>(
 }
 
 pub(crate) fn apply_line_expansion<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     nodes: &mut [Node],
     target: Scaled,
 ) -> Result<(), ExecError> {
-    let line_ratio = tex_typeset::linebreak::plan_line_expansion(stores, nodes, target);
+    let line_ratio = tex_typeset::linebreak::plan_line_expansion(
+        &crate::typeset_context::TypesetContext::new(stores),
+        nodes,
+        target,
+    );
     if line_ratio == 0 {
         return Ok(());
     }
@@ -378,7 +397,7 @@ pub(crate) fn apply_line_expansion<G>(
         if left_font != right_font {
             continue;
         }
-        if let Some(tex_fonts::LigKernCommand::Kern(amount)) = stores.lig_kern_command(
+        if let Some(tex_fonts::LigKernCommand::Kern(amount)) = stores.font_lig_kern_command(
             left_font,
             tex_fonts::LigKernChar::Char(left),
             tex_fonts::LigKernChar::Char(right),
@@ -425,7 +444,7 @@ impl PdfLineDimensions {
     }
 }
 
-fn pdf_line_dimensions<G>(stores: &mut Universe<G>) -> PdfLineDimensions {
+fn pdf_line_dimensions<G>(stores: &mut CommandContext<'_, G>) -> PdfLineDimensions {
     for param in [
         DimenParam::PDF_IGNORED_DIMEN,
         DimenParam::PDF_FIRST_LINE_HEIGHT,
@@ -469,7 +488,7 @@ fn active_text_directions(nodes: &[Node]) -> Vec<Direction> {
 }
 
 fn break_hlist_with_trace<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     hlist: Vec<Node>,
     line_params: LineBreakParams,
     fuel: &mut tex_command::CommandFuel,
@@ -490,12 +509,16 @@ fn break_hlist_with_trace<G>(
         stores.close_hyphenation_patterns();
     }
     let tape = ParagraphTape::analyze(
-        stores,
+        &crate::typeset_context::TypesetContext::new(stores),
         tex_state::node_sequence::NodeSequence::mirrored(hlist),
         &line_params,
     );
     let (first, trace) = if tracing {
-        try_tape_without_hyphenation_traced(stores, &tape, &line_params)
+        try_tape_without_hyphenation_traced(
+            &crate::typeset_context::TypesetContext::new(stores),
+            &tape,
+            &line_params,
+        )
     } else {
         (
             cached_pretolerance_plan(stores, tape.nodes(), &line_params),
@@ -515,7 +538,7 @@ fn break_hlist_with_trace<G>(
         let (mut hyphenated, physical_nodes) = sequence.take();
         crate::box_runtime::hmode::reshape_open_type_runs(stores, &mut hyphenated);
         let tape = ParagraphTape::analyze(
-            stores,
+            &crate::typeset_context::TypesetContext::new(stores),
             tex_state::node_sequence::NodeSequence::from_compacted_semantic(
                 hyphenated,
                 physical_nodes,
@@ -523,9 +546,21 @@ fn break_hlist_with_trace<G>(
             &line_params,
         );
         let (plan, trace) = if tracing {
-            break_hyphenated_tape_traced(stores, &tape, &line_params, trace)
+            break_hyphenated_tape_traced(
+                &crate::typeset_context::TypesetContext::new(stores),
+                &tape,
+                &line_params,
+                trace,
+            )
         } else {
-            (break_hyphenated_tape(stores, &tape, &line_params), trace)
+            (
+                break_hyphenated_tape(
+                    &crate::typeset_context::TypesetContext::new(stores),
+                    &tape,
+                    &line_params,
+                ),
+                trace,
+            )
         };
         Ok((
             tex_typeset::linebreak::plan_with_tape(plan, tape),
@@ -536,7 +571,7 @@ fn break_hlist_with_trace<G>(
 }
 
 fn report_line_break_trace<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     nodes: &[Node],
     trace: &[LineBreakTrace],
     missing_hyphens: &[super::hyphenation::MissingHyphenDiagnostic],
@@ -547,7 +582,7 @@ fn report_line_break_trace<G>(
             .map(|warning| {
                 (
                     warning.node_index,
-                    stores.font(warning.font).name().to_owned(),
+                    stores.font_name(warning.font),
                     warning.ch,
                 )
             })
@@ -555,10 +590,30 @@ fn report_line_break_trace<G>(
     } else {
         Vec::new()
     };
-    let mut diagnostic = stores.begin_diagnostic();
     let mut short_display = crate::pack_report::ShortDisplayRenderer::new();
+    let rendered_trace = trace
+        .iter()
+        .map(|event| match event {
+            LineBreakTrace::Pass(_) => {
+                short_display.reset();
+                (None, None)
+            }
+            LineBreakTrace::Feasible {
+                display,
+                display_suffix,
+                ..
+            } if !display.is_empty() => (
+                Some(short_display.render_nodes(stores, &nodes[display.clone()])),
+                display_suffix.as_ref().map(|suffix| {
+                    short_display.render_line_break_trace_suffix(stores, suffix.clone())
+                }),
+            ),
+            _ => (None, None),
+        })
+        .collect::<Vec<_>>();
+    let mut diagnostic = stores.begin_diagnostic();
     let mut next_warning = 0;
-    for event in trace {
+    for (event, (rendered_display, rendered_suffix)) in trace.iter().zip(rendered_trace) {
         if let LineBreakTrace::Feasible { display, .. } = event {
             while missing_hyphens
                 .get(next_warning)
@@ -579,7 +634,6 @@ fn report_line_break_trace<G>(
                 // TeX82 §851 creates the initial active node once per pass
                 // and resets `font_in_short_display` there. Feasible-break
                 // fragments within the pass retain the selected font.
-                short_display.reset();
                 diagnostic.print_nl(match pass {
                     LineBreakPass::First => "@firstpass",
                     LineBreakPass::Second => "@secondpass",
@@ -587,24 +641,17 @@ fn report_line_break_trace<G>(
                 });
             }
             LineBreakTrace::Feasible {
-                display,
-                display_suffix,
                 breakpoint,
                 via,
                 badness,
                 penalty,
                 demerits,
+                ..
             } => {
-                if !display.is_empty() {
-                    let rendered =
-                        short_display.render_nodes(diagnostic.state(), &nodes[display.clone()]);
+                if let Some(rendered) = rendered_display {
                     diagnostic.print_nl("").print_rendered(&rendered);
                 }
-                if !display.is_empty()
-                    && let Some(suffix) = display_suffix
-                {
-                    let rendered = short_display
-                        .render_line_break_trace_suffix(diagnostic.state(), suffix.clone());
+                if let Some(rendered) = rendered_suffix {
                     diagnostic.print_rendered(&rendered);
                 }
                 diagnostic.print_nl("@");
@@ -692,7 +739,7 @@ fn report_line_break_trace<G>(
 /// Callers retain ownership of the node list. The cache value contains only
 /// stable positions, scalar demerits, and detached glue content.
 pub fn cached_pretolerance_plan<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     hlist: &[Node],
     line_params: &LineBreakParams,
 ) -> Option<tex_typeset::linebreak::BreakPlan> {
@@ -708,7 +755,11 @@ pub fn cached_pretolerance_plan<G>(
                 memo.record_not_attempted(tex_state::PureMemoLayer::Pretolerance);
             });
         }
-        return try_line_break_without_hyphenation(stores, hlist, line_params);
+        return try_line_break_without_hyphenation(
+            &crate::typeset_context::TypesetContext::new(stores),
+            hlist,
+            line_params,
+        );
     }
     let validation_started = crate::timing::TelemetryTimer::start();
     let key = pretolerance_memo_key(stores, hlist, line_params);
@@ -738,18 +789,22 @@ const PRETOLERANCE_HASH_DOMAINS: [u64; 4] = [
 ];
 
 fn compute_and_cache_pretolerance<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     key: PureMemoKey,
     hlist: &[Node],
     params: &LineBreakParams,
 ) -> Option<tex_typeset::linebreak::BreakPlan> {
-    let plan = try_line_break_without_hyphenation(stores, hlist, params);
+    let plan = try_line_break_without_hyphenation(
+        &crate::typeset_context::TypesetContext::new(stores),
+        hlist,
+        params,
+    );
     stores.with_pure_memo(|memo| memo.insert_pretolerance(key, plan.clone()));
     plan
 }
 
 fn pretolerance_memo_key<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     hlist: &[Node],
     params: &LineBreakParams,
 ) -> PureMemoKey {
@@ -823,7 +878,7 @@ fn encode_glue_spec(spec: tex_state::glue::GlueSpec, out: &mut Vec<u8>) {
 }
 
 fn extract_migrating_material<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     nodes: &mut Vec<Node>,
     pre_migrated: &mut Vec<Node>,
     migrated: &mut Vec<Node>,
@@ -861,7 +916,7 @@ fn extract_migrating_material<G>(
     }
 }
 
-fn observe_paragraph_material_dependencies<G>(stores: &mut Universe<G>, nodes: &[Node]) {
+fn observe_paragraph_material_dependencies<G>(stores: &mut CommandContext<'_, G>, nodes: &[Node]) {
     let mut fonts = std::collections::BTreeSet::new();
     let mut characters = std::collections::BTreeSet::new();
     for node in nodes {
@@ -895,7 +950,10 @@ fn observe_paragraph_material_dependencies<G>(stores: &mut Universe<G>, nodes: &
     }
 }
 
-fn snapshot_paragraph_params<G>(nest: &ModeNest, stores: &mut Universe<G>) -> ParagraphParams {
+fn snapshot_paragraph_params<G>(
+    nest: &ModeNest,
+    stores: &mut CommandContext<'_, G>,
+) -> ParagraphParams {
     use tex_state::cell::{BankTag, CellId};
     use tex_state::{DependencyEngineField, DependencyKey};
     for param in [
@@ -944,9 +1002,9 @@ fn snapshot_paragraph_params<G>(nest: &ModeNest, stores: &mut Universe<G>) -> Pa
     stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::ParShape));
     stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::PenaltyArrays));
     ParagraphParams {
-        left_skip: *stores.glue(stores.glue_param(GlueParam::LEFT_SKIP)),
-        right_skip: *stores.glue(stores.glue_param(GlueParam::RIGHT_SKIP)),
-        par_fill_skip: *stores.glue(stores.glue_param(GlueParam::PAR_FILL_SKIP)),
+        left_skip: glue_parameter_value(stores, GlueParam::LEFT_SKIP),
+        right_skip: glue_parameter_value(stores, GlueParam::RIGHT_SKIP),
+        par_fill_skip: glue_parameter_value(stores, GlueParam::PAR_FILL_SKIP),
         par_shape: stores.paragraph_shape(),
         prev_graf: nest.enclosing_vertical_prev_graf(),
         hang_indent: stores.dimen_param(DimenParam::HANG_INDENT),
@@ -975,7 +1033,10 @@ fn snapshot_paragraph_params<G>(nest: &ModeNest, stores: &mut Universe<G>) -> Pa
     }
 }
 
-fn line_break_params<G>(stores: &Universe<G>, params: &ParagraphParams) -> LineBreakParams {
+fn line_break_params<G>(
+    stores: &CommandContext<'_, G>,
+    params: &ParagraphParams,
+) -> LineBreakParams {
     LineBreakParams {
         pretolerance: params.pretolerance,
         tolerance: params.tolerance,
@@ -1047,7 +1108,7 @@ fn line_shape(params: &ParagraphParams) -> LineShape {
     }
 }
 
-pub(crate) fn normal_paragraph<G>(_nest: &mut ModeNest, stores: &mut Universe<G>) {
+pub(crate) fn normal_paragraph<G>(_nest: &mut ModeNest, stores: &mut CommandContext<'_, G>) {
     // e-TeX [47.1070] resets a non-null interline array through `eq_define`,
     // so [19.277]'s generic assignment hook traces the local write. The club
     // and widow arrays retain their scoped assignments (manual §3.4).
@@ -1079,20 +1140,20 @@ pub(crate) fn normal_paragraph<G>(_nest: &mut ModeNest, stores: &mut Universe<G>
 
 pub(crate) fn start_paragraph<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     indent: bool,
     error_context: &str,
 ) -> Result<(), ExecError> {
     match nest.current_mode() {
         crate::Mode::Vertical | crate::Mode::InternalVertical => {
             nest.set_enclosing_vertical_prev_graf(0);
-            let parskip = stores.glue_param(GlueParam::PAR_SKIP);
+            let parskip = glue_parameter_value(stores, GlueParam::PAR_SKIP);
             if nest.current_mode() == crate::Mode::Vertical || !nest.current_list().is_empty() {
                 append_vertical_contribution(
                     nest,
                     stores,
                     Node::Glue {
-                        spec: *stores.glue(parskip),
+                        spec: parskip,
                         kind: GlueKind::ParSkip,
                         leader: None,
                     },
@@ -1123,15 +1184,21 @@ pub(crate) fn start_paragraph<G>(
     }
 }
 
-fn reset_after_par<G>(nest: &mut ModeNest, stores: &mut Universe<G>) {
+fn reset_after_par<G>(nest: &mut ModeNest, stores: &mut CommandContext<'_, G>) {
     normal_paragraph(nest, stores);
+}
+
+fn glue_parameter_value<G>(stores: &CommandContext<'_, G>, parameter: GlueParam) -> GlueSpec {
+    stores
+        .glue_param(parameter)
+        .map_or(GlueSpec::ZERO, |id| stores.glue(id))
 }
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::font::PdfFontCode;
-use tex_state::glue::Order;
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, Direction, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::{ContentHash, PenaltyArrayKind, PureMemoKey, Universe};
+use tex_state::{CommandContext, ContentHash, PenaltyArrayKind, PureMemoKey};
 use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
     LineBreakParams, LineBreakPass, LineBreakResult, LineBreakTrace, LineDimensions,

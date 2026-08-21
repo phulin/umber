@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
@@ -26,7 +26,7 @@ impl MathConversionErrorContext {
 }
 
 pub(crate) fn finish_math_list_node<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     list: MathListNode,
     insert_penalties: bool,
 ) -> Vec<Node> {
@@ -34,7 +34,7 @@ pub(crate) fn finish_math_list_node<G>(
 }
 
 pub(crate) fn finish_inline_math_list_node<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     list: MathListNode,
     insert_penalties: bool,
     error_context: MathConversionErrorContext,
@@ -43,7 +43,7 @@ pub(crate) fn finish_inline_math_list_node<G>(
 }
 
 fn finish_math_list_node_with_reads<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     list: MathListNode,
     insert_penalties: bool,
     error_context: Option<&MathConversionErrorContext>,
@@ -94,7 +94,7 @@ fn finish_math_list_node_with_reads<G>(
 }
 
 pub(super) fn convert_math_hlist_with_error_context<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     input: PageListId,
     style: Style,
     penalties: bool,
@@ -106,7 +106,7 @@ pub(super) fn convert_math_hlist_with_error_context<G>(
 }
 
 fn convert_math_hlist_with_sink<G>(
-    sink: &mut LoweredMathSink<'_, G>,
+    sink: &mut LoweredMathSink<'_, '_, G>,
     input: PageListId,
     style: Style,
     penalties: bool,
@@ -117,17 +117,17 @@ fn convert_math_hlist_with_sink<G>(
     sink.take_root_nodes()
 }
 
-struct LoweredMathSink<'a, G> {
-    stores: &'a mut Universe<G>,
+struct LoweredMathSink<'a, 'ctx, G> {
+    stores: &'a mut CommandContext<'ctx, G>,
     error_context: Option<&'a MathConversionErrorContext>,
     root_nodes: Vec<Node>,
     glue_cache: Vec<(GlueSpec, GlueSpec)>,
     family_mask: Cell<u64>,
 }
 
-impl<'a, G> LoweredMathSink<'a, G> {
+impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
     fn new(
-        stores: &'a mut Universe<G>,
+        stores: &'a mut CommandContext<'ctx, G>,
         error_context: Option<&'a MathConversionErrorContext>,
     ) -> Self {
         Self {
@@ -160,7 +160,7 @@ impl<'a, G> LoweredMathSink<'a, G> {
                 else {
                     unreachable!()
                 };
-                let children = self.stores.publish_page_nodes(&scratch[start..]);
+                let children = self.stores.publish_page_nodes(scratch[start..].to_vec());
                 scratch.truncate(start);
                 let boxed_node = lower_math_box(&boxed, children);
                 scratch.push(if vertical {
@@ -231,7 +231,7 @@ impl<'a, G> LoweredMathSink<'a, G> {
     }
 }
 
-impl<G> TypesetState for LoweredMathSink<'_, G> {
+impl<G> TypesetState for LoweredMathSink<'_, '_, G> {
     fn page_nodes(&self, list: PageListId) -> &[Node] {
         self.stores
             .page_node_list(list)
@@ -240,7 +240,7 @@ impl<G> TypesetState for LoweredMathSink<'_, G> {
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {
-        self.stores.font_char_metrics(font, code)
+        self.stores.font_character_metrics(font, char::from(code))
     }
 
     fn font_widths(&self, font: FontId) -> &[Scaled; 256] {
@@ -252,7 +252,7 @@ impl<G> TypesetState for LoweredMathSink<'_, G> {
     }
 }
 
-impl<G> MathTypesetState for LoweredMathSink<'_, G> {
+impl<G> MathTypesetState for LoweredMathSink<'_, '_, G> {
     fn math_family_font(&self, size: tex_state::math::MathFontSize, family: u8) -> FontId {
         let index = u32::from(size.index()) * 16 + u32::from(family);
         self.family_mask
@@ -273,7 +273,7 @@ impl<G> MathTypesetState for LoweredMathSink<'_, G> {
         font: FontId,
         code: u8,
     ) -> Option<tex_fonts::metrics::ExtensibleRecipe> {
-        self.stores.extensible_recipe(font, code)
+        self.stores.font_extensible_recipe(font, code)
     }
 
     fn lig_kern_command(
@@ -282,7 +282,7 @@ impl<G> MathTypesetState for LoweredMathSink<'_, G> {
         left: tex_fonts::LigKernChar,
         right: tex_fonts::LigKernChar,
     ) -> Option<tex_fonts::LigKernCommand> {
-        self.stores.lig_kern_command(font, left, right)
+        self.stores.font_lig_kern_command(font, left, right)
     }
 
     fn font_skew_char(&self, font: FontId) -> i32 {
@@ -290,11 +290,11 @@ impl<G> MathTypesetState for LoweredMathSink<'_, G> {
     }
 
     fn math_metrics_source(&self, font: FontId) -> tex_fonts::MathMetricsSource<'_> {
-        self.stores.font(font).math_metrics_source()
+        self.stores.font_math_metrics_source(font)
     }
 }
 
-impl<G> MathParamState for LoweredMathSink<'_, G> {
+impl<G> MathParamState for LoweredMathSink<'_, '_, G> {
     fn int_param(&self, param: IntParam) -> i32 {
         self.stores.int_param(param)
     }
@@ -304,11 +304,13 @@ impl<G> MathParamState for LoweredMathSink<'_, G> {
     }
 
     fn glue_param(&self, param: GlueParam) -> GlueSpec {
-        self.stores.glue_param(param)
+        self.stores
+            .glue_param(param)
+            .map_or(GlueSpec::ZERO, |id| self.stores.glue(id))
     }
 }
 
-impl<G> LoweredMathSink<'_, G> {
+impl<G> LoweredMathSink<'_, '_, G> {
     fn commit_math_transaction(&mut self, layout: &MathLayout) {
         let list = layout.root();
         for event in layout.conversion_events() {
@@ -318,7 +320,7 @@ impl<G> LoweredMathSink<'_, G> {
                         // TeX82 §581's `char_warning` prints the stored
                         // external name, not `\fontname`'s size-qualified
                         // rendering.
-                        let font_name = self.stores.font(font).name().to_owned();
+                        let font_name = self.stores.font_name(font);
                         let mut diagnostic = self.stores.begin_diagnostic();
                         diagnostic
                             .print_nl("Missing character: There is no ")
@@ -394,7 +396,7 @@ impl<G> LoweredMathSink<'_, G> {
 }
 
 pub(crate) fn finish_math_lists_owned<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     nodes: Vec<Node>,
     insert_penalties: bool,
 ) -> Vec<Node> {

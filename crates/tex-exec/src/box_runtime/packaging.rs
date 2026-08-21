@@ -2,7 +2,7 @@
 
 use tex_state::node::Node;
 use tex_state::node_arena::PageListId;
-use tex_state::{GeometryObservation, Universe};
+use tex_state::{CommandContext, GeometryObservation};
 use tex_typeset::{PackDiagnostic, PackSpec, plan_hpack_nodes};
 
 use crate::packing_params::{hpack_params, recover_texxet_directions};
@@ -12,7 +12,7 @@ use super::hmode::flush_pending_hchars;
 
 pub(crate) fn take_last_box<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
     error_context: String,
 ) -> Result<Option<Node>, ExecError> {
@@ -83,7 +83,7 @@ fn reset_removed_box_shift(removed: &mut [Node]) -> Option<Node> {
 }
 
 fn report_cannot_take_last_box<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     mode: &str,
     help: &[&str],
     context: String,
@@ -100,7 +100,7 @@ fn report_cannot_take_last_box<G>(
 }
 
 pub(crate) fn hpack_with_overfull_rule<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     children: tex_state::node_arena::PageListId,
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
@@ -126,7 +126,7 @@ pub(crate) fn hpack_with_overfull_rule<G>(
             height: None,
             depth: None,
         });
-        let children = stores.publish_page_nodes(&nodes);
+        let children = stores.publish_page_nodes(nodes);
         packed.node.children = children;
     }
     // TeX82 §§115/162 stores a discretionary's replacement as the
@@ -143,7 +143,7 @@ pub(crate) fn hpack_with_overfull_rule<G>(
 }
 
 fn physical_discretionary_projection<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     children: tex_state::node_arena::PageListId,
 ) -> Option<tex_state::node_arena::PageListId> {
     let nodes = stores
@@ -184,7 +184,7 @@ fn physical_discretionary_projection<G>(
 }
 
 pub(crate) fn hpack_owned_with_overfull_rule<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     nodes: &mut Vec<Node>,
     mut diagnostic_nodes: Option<&mut Vec<Node>>,
     allocator_high_cell_overlap: u32,
@@ -195,7 +195,12 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
     if let Some(diagnostic_nodes) = diagnostic_nodes.as_deref_mut() {
         let _ = recover_texxet_directions(stores, diagnostic_nodes);
     }
-    let plan = plan_hpack_nodes(stores, nodes, spec, params);
+    let plan = plan_hpack_nodes(
+        &crate::typeset_context::TypesetContext::new(stores),
+        nodes,
+        spec,
+        params,
+    );
     if !nodes.is_empty()
         && params.overfull_rule.raw() > 0
         && plan
@@ -246,7 +251,8 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
         let children = stores.publish_page_nodes(
             short_diagnostic_nodes
                 .as_deref()
-                .expect("physical diagnostics have a short-display projection"),
+                .expect("physical diagnostics have a short-display projection")
+                .to_vec(),
         );
         packed.node.diagnostic_children = Some(diagnostic_children);
         tex_state::node::BoxNode {
@@ -306,7 +312,10 @@ pub(crate) fn project_short_diagnostic_discs(physical: &[Node], semantic: &[Node
         .collect()
 }
 
-pub(crate) fn first_box_node<G>(stores: &Universe<G>, owner: Option<PageListId>) -> Option<Node> {
+pub(crate) fn first_box_node<G>(
+    stores: &CommandContext<'_, G>,
+    owner: Option<PageListId>,
+) -> Option<Node> {
     stores
         .page_node_list(owner?)
         .ok()?

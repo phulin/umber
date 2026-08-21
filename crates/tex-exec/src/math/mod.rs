@@ -3,7 +3,7 @@
 pub(crate) mod display;
 mod lower;
 
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::math::MathFontSize;
 
 pub(crate) use lower::finish_math_lists_owned;
@@ -40,7 +40,7 @@ impl MathFontFailure {
     }
 }
 
-pub(super) fn math_font_failure<G>(stores: &mut Universe<G>) -> Option<MathFontFailure> {
+pub(super) fn math_font_failure<G>(stores: &mut CommandContext<'_, G>) -> Option<MathFontFailure> {
     const SIZES: [MathFontSize; 3] = [
         MathFontSize::Text,
         MathFontSize::Script,
@@ -56,7 +56,7 @@ pub(super) fn math_font_failure<G>(stores: &mut Universe<G>) -> Option<MathFontF
         let font = stores.math_family_font(size, 2);
         stores.classic_math_parameter_count(font) < 22
             && !matches!(
-                stores.font(font).math_metrics_source(),
+                stores.font_math_metrics_source(font),
                 tex_fonts::MathMetricsSource::OpenType(_)
             )
     }) {
@@ -72,7 +72,7 @@ pub(super) fn math_font_failure<G>(stores: &mut Universe<G>) -> Option<MathFontF
         let font = stores.math_family_font(size, 3);
         stores.classic_math_parameter_count(font) < 13
             && !matches!(
-                stores.font(font).math_metrics_source(),
+                stores.font_math_metrics_source(font),
                 tex_fonts::MathMetricsSource::OpenType(_)
             )
     }) {
@@ -82,7 +82,7 @@ pub(super) fn math_font_failure<G>(stores: &mut Universe<G>) -> Option<MathFontF
 }
 
 pub(crate) fn reject_invalid_math_fonts<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     context: String,
 ) -> Result<bool, crate::ExecError> {
     let Some(failure) = math_font_failure(stores) else {

@@ -1,4 +1,4 @@
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::env::banks::GlueParam;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, GlueKind, KernKind, Node};
@@ -12,17 +12,22 @@ use crate::packing_params::{hpack as hpack_nodes, hpack_params};
 /// a nonempty paragraph. Only the two skip boundaries and the finalized last
 /// line's box setting survive until `app_display`; the paragraph material
 /// itself remains owned by the vertical list.
-pub(crate) fn display_line_prototype<G>(stores: &mut Universe<G>, last_line: BoxNode) -> BoxNode {
-    let boundary = |stores: &Universe<G>, parameter, kind| {
-        let spec = stores.glue_param(parameter);
-        if stores.glue(spec) == GlueSpec::ZERO {
+pub(crate) fn display_line_prototype<G>(
+    stores: &mut CommandContext<'_, G>,
+    last_line: BoxNode,
+) -> BoxNode {
+    let boundary = |stores: &CommandContext<'_, G>, parameter, kind| {
+        let spec = stores
+            .glue_param(parameter)
+            .map_or(GlueSpec::ZERO, |id| stores.glue(id));
+        if spec == GlueSpec::ZERO {
             Node::Kern {
                 amount: Scaled::from_raw(0),
                 kind: KernKind::Font,
             }
         } else {
             Node::Glue {
-                spec: *stores.glue(spec),
+                spec,
                 kind,
                 leader: None,
             }
@@ -32,7 +37,7 @@ pub(crate) fn display_line_prototype<G>(stores: &mut Universe<G>, last_line: Box
         boundary(stores, GlueParam::LEFT_SKIP, GlueKind::LeftSkip),
         boundary(stores, GlueParam::RIGHT_SKIP, GlueKind::RightSkip),
     ];
-    let children = stores.publish_page_nodes(&children);
+    let children = stores.publish_page_nodes(children.into());
     BoxNode::new(BoxNodeFields {
         width: last_line.width,
         height: Scaled::from_raw(0),
@@ -52,7 +57,7 @@ pub(crate) fn display_line_prototype<G>(stores: &mut Universe<G>, last_line: Box
 /// to the vertical list is a normal hbox whose math-direction boundaries make
 /// the display transparent to the surrounding TeXXeT paragraph direction.
 pub(super) fn package_directed_display_line<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     display_line: BoxNode,
     prototype: Option<BoxNode>,
     mut displacement: Scaled,
@@ -166,14 +171,14 @@ pub(super) fn package_directed_display_line<G>(
         kind: KernKind::Font,
     });
     children.push(Node::Direction(tex_state::node::Direction::EndM));
-    let list = stores.publish_page_nodes(&children);
+    let list = stores.publish_page_nodes(children);
     let mut boxed = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
     boxed.shift = display_indent;
     boxed
 }
 
 fn cancel_display_skip<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     original: &tex_state::glue::GlueSpec,
     kind: GlueKind,
     displacement: Scaled,

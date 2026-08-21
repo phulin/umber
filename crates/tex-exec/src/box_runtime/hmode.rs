@@ -1,5 +1,5 @@
 use tex_fonts::{LigKernChar, LigKernCommand};
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
@@ -14,7 +14,7 @@ use crate::{ExecError, Mode, ModeNest};
 
 pub(crate) fn append_character_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     ch: char,
     origin: OriginId,
     etex_extended: bool,
@@ -31,7 +31,7 @@ pub(crate) fn append_character_with_fuel<G>(
 /// mode has been selected by TeX82 §1095.
 pub(crate) fn append_space_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     debug_assert!(matches!(
@@ -44,7 +44,7 @@ pub(crate) fn append_space_with_fuel<G>(
 
 pub(crate) fn flush_pending_hchars<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
@@ -53,7 +53,7 @@ pub(crate) fn flush_pending_hchars<G>(
 
 pub(crate) fn flush_pending_hchars_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores, fuel)
@@ -64,7 +64,7 @@ pub(crate) fn flush_pending_hchars_with_fuel<G>(
 /// the list records §1030's left-boundary cancellation before a new run.
 pub(crate) fn flush_pending_hchars_without_right_boundary<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
@@ -87,7 +87,7 @@ pub(crate) fn flush_pending_hchars_without_right_boundary<G>(
 /// belong to two runs and must not ligature across it.
 pub(crate) fn append_whatsit<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
     whatsit: tex_state::node::Whatsit,
 ) -> Result<(), ExecError> {
@@ -123,7 +123,7 @@ pub(crate) fn append_whatsit<G>(
 /// must keep the mode level open.
 pub(crate) fn commit_current_list<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<crate::mode::ModeLevelSummary, ExecError> {
     flush_pending_hchars(nest, stores, fuel)?;
@@ -132,7 +132,7 @@ pub(crate) fn commit_current_list<G>(
 
 pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     insert_hyphen_discs: bool,
     suppress_right_boundary: bool,
     fuel: &mut tex_command::CommandFuel,
@@ -181,7 +181,7 @@ pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
 }
 
 fn candidate_positions_for_chars<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     language: u8,
     chars: &[PendingHChar],
     left: usize,
@@ -219,7 +219,7 @@ fn candidate_positions_for_chars<G>(
 
 pub(crate) fn append_space_after_flush<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let configuration = stores.pdf_font_configuration();
     let sf = if configuration.adjusts_interword_glue() {
@@ -248,7 +248,7 @@ pub(crate) fn append_space_after_flush<G>(
 /// mode-switch-then-append operation.
 pub(crate) fn append_control_space_glue_after_flush<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let (mut spec, kind) = space_skip_or_font_space(stores, 1000);
     if stores.pdf_font_configuration().adjusts_interword_glue() {
@@ -267,7 +267,7 @@ pub(crate) fn append_control_space_glue_after_flush<G>(
 /// Mirrors `append_canonical_space`'s split from `append_space` above.
 pub(crate) fn append_control_space_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     debug_assert!(matches!(
@@ -283,13 +283,13 @@ pub(crate) fn append_control_space_with_fuel<G>(
 /// ligature run or pdfTeX interword-glue adjustment to consider -- those are
 /// exclusively horizontal-list concerns. Callers push the returned spec
 /// directly onto the current (math) list.
-pub(crate) fn control_space_glue_spec<G>(stores: &Universe<G>) -> GlueSpec {
+pub(crate) fn control_space_glue_spec<G>(stores: &CommandContext<'_, G>) -> GlueSpec {
     space_skip_or_font_space(stores, 1000).0
 }
 
 pub(crate) fn append_hchar_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     ch: char,
     origin: OriginId,
     etex_extended: bool,
@@ -298,15 +298,8 @@ pub(crate) fn append_hchar_with_fuel<G>(
     let mode = nest.current_mode();
     fix_hyphen_language_with_fuel(nest, stores, mode, fuel)?;
     let font = stores.current_font();
-    let (character_exists, font_is_ltr_shaping) = {
-        let loaded = stores.font(font);
-        (
-            loaded.character_exists(ch),
-            loaded
-                .opentype()
-                .is_some_and(|font| font.direction == tex_fonts::WritingDirection::LeftToRight),
-        )
-    };
+    let character_exists = stores.font_character_exists(font, ch);
+    let font_is_ltr_shaping = stores.font_is_left_to_right_shaping(font);
     let false_boundary_character = font_code(ch)
         .ok()
         .is_some_and(|code| stores.font_false_boundary_char(font) == Some(code));
@@ -361,7 +354,7 @@ pub(crate) const fn norm_min(value: i32) -> u8 {
 ///
 /// The hyphen minima travel with `clang` in Umber's typed mode-list state so
 /// the first §1376 `fix_language` node can retain the complete prior context.
-pub(crate) fn current_hyphen_context<G>(stores: &Universe<G>) -> (u8, u8, u8) {
+pub(crate) fn current_hyphen_context<G>(stores: &CommandContext<'_, G>) -> (u8, u8, u8) {
     (
         u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0),
         norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN)),
@@ -371,14 +364,14 @@ pub(crate) fn current_hyphen_context<G>(stores: &Universe<G>) -> (u8, u8, u8) {
 
 pub(crate) fn indent_in_hmode<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     indent: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if !indent {
         return Ok(());
     }
-    fn make_indent_box<G>(stores: &mut Universe<G>) -> Node {
+    fn make_indent_box<G>(stores: &mut CommandContext<'_, G>) -> Node {
         stores.observe_semantic_dependency(tex_state::DependencyKey::Cell(
             tex_state::cell::CellId::new(
                 tex_state::cell::BankTag::DimenParam,
@@ -400,7 +393,7 @@ pub(crate) fn indent_in_hmode<G>(
     }
     if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
         let indent_box = make_indent_box(stores);
-        let list = stores.publish_page_nodes(&[indent_box]);
+        let list = stores.publish_page_nodes(vec![indent_box]);
         nest.current_list_mutation()
             .push(Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
@@ -417,7 +410,7 @@ pub(crate) fn indent_in_hmode<G>(
 
 pub(crate) fn fix_hyphen_language_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     mode: Mode,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -451,7 +444,7 @@ pub(crate) fn fix_hyphen_language_with_fuel<G>(
 
 pub(crate) fn append_pending_hchar<G>(
     list: &mut crate::mode::ModeListMutation<'_>,
-    _stores: &mut Universe<G>,
+    _stores: &mut CommandContext<'_, G>,
     _mode: Mode,
     font: FontId,
     font_is_ltr_shaping: bool,
@@ -515,14 +508,12 @@ pub(crate) fn is_supported_script(script: tex_fonts::Script) -> bool {
     )
 }
 
-pub(crate) fn is_ltr_shaping_font<G>(stores: &Universe<G>, font: FontId) -> bool {
-    let font = stores.font(font);
-    font.opentype()
-        .is_some_and(|font| font.direction == tex_fonts::WritingDirection::LeftToRight)
+pub(crate) fn is_ltr_shaping_font<G>(stores: &CommandContext<'_, G>, font: FontId) -> bool {
+    stores.font_is_left_to_right_shaping(font)
 }
 
 pub(crate) fn shape_open_type_chars<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     chars: &[crate::mode::PendingHChar],
     break_positions: &[usize],
 ) -> Vec<Node> {
@@ -531,12 +522,11 @@ pub(crate) fn shape_open_type_chars<G>(
     let Some(first) = chars.first() else {
         return Vec::new();
     };
-    let font = stores.font(first.font);
     let mut text = String::new();
     let mut byte_starts = Vec::with_capacity(chars.len());
     for entry in chars {
         byte_starts.push(text.len());
-        if let Some(mapped) = font.mapped_text(entry.ch) {
+        if let Some(mapped) = stores.font_mapped_text(first.font, entry.ch) {
             text.push_str(mapped);
         } else {
             text.push(entry.ch);
@@ -546,8 +536,11 @@ pub(crate) fn shape_open_type_chars<G>(
         .iter()
         .filter_map(|&position| byte_starts.get(position).copied())
         .collect::<Vec<_>>();
-    let shaped = font
-        .shape_run(tex_fonts::ShapingRequest::with_breaks(&text, &break_bytes))
+    let shaped = stores
+        .shape_font_run(
+            first.font,
+            tex_fonts::ShapingRequest::with_breaks(&text, &break_bytes),
+        )
         .expect("OpenType run font");
     let mut cluster_advances = BTreeMap::<usize, i64>::new();
     for glyph in shaped.glyphs {
@@ -601,7 +594,7 @@ pub(crate) fn shape_open_type_chars<G>(
 /// Every call shapes caller-delimited runs independently. Paragraph code uses
 /// this after break selection, which restores ligatures on each unsplit side
 /// while preventing a glyph cluster from crossing the chosen line boundary.
-pub(crate) fn reshape_open_type_runs<G>(stores: &Universe<G>, nodes: &mut Vec<Node>) {
+pub(crate) fn reshape_open_type_runs<G>(stores: &CommandContext<'_, G>, nodes: &mut Vec<Node>) {
     let mut index = 0;
     while index < nodes.len() {
         let Node::Char { font, ch, origin } = &nodes[index] else {
@@ -657,7 +650,7 @@ pub(crate) fn reshape_open_type_runs<G>(stores: &Universe<G>, nodes: &mut Vec<No
 }
 
 pub(crate) fn reconstitute_with_fuel<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     pending: &[crate::mode::PendingHChar],
     no_left_boundary: bool,
     insert_hyphen_discs: bool,
@@ -790,7 +783,7 @@ pub(crate) fn replacement_glyph(
 /// work list. Thus every replacement pair re-enters the TFM program, and the
 /// retain/delete and pass-over bits move one authoritative cursor.
 pub(crate) fn run_tfm_ligature_machine<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     source: &[crate::mode::PendingHChar],
     no_left_boundary: bool,
     suppress_right_boundary: bool,
@@ -864,7 +857,7 @@ pub(crate) fn run_tfm_ligature_machine<G>(
 
         if false_boundary_match {
             if let LigatureWorkItem::Glyph(right) = &right_item
-                && !stores.font(right.font).character_exists(right.ch)
+                && !stores.font_character_exists(right.font, right.ch)
             {
                 crate::diagnostics::report_missing_character_warning(
                     stores, right.font, right.ch, false,
@@ -968,7 +961,7 @@ pub(crate) fn run_tfm_ligature_machine<G>(
             LigatureWorkItem::Boundary => {}
             LigatureWorkItem::Glyph(glyph) => {
                 if work.nodes[current].discard_if_missing
-                    && !stores.font(glyph.font).character_exists(glyph.ch)
+                    && !stores.font_character_exists(glyph.font, glyph.ch)
                 {
                     crate::diagnostics::report_missing_character_warning(
                         stores, glyph.font, glyph.ch, false,
@@ -994,7 +987,7 @@ fn work_glyph(item: &LigatureWorkItem) -> Option<PendingHRunChar> {
 }
 
 pub(crate) fn auto_kern_between<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     left: &PendingHRunChar,
     right: &PendingHRunChar,
 ) -> Option<Node> {
@@ -1008,7 +1001,7 @@ pub(crate) fn auto_kern_between<G>(
 }
 
 pub(crate) fn auto_kern<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     glyph: &PendingHRunChar,
     leading: Option<bool>,
 ) -> Option<Node> {
@@ -1019,7 +1012,7 @@ pub(crate) fn auto_kern<G>(
 }
 
 pub(crate) fn auto_kern_codes<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     font: FontId,
     left: Option<char>,
     right: Option<char>,
@@ -1061,7 +1054,11 @@ pub(crate) fn add_scaled(left: Scaled, right: Scaled) -> Scaled {
         .expect("pdfTeX inter-character kern adjustment fits Scaled")
 }
 
-pub(crate) fn adjust_interword_glue<G>(stores: &Universe<G>, nodes: &[Node], spec: &mut GlueSpec) {
+pub(crate) fn adjust_interword_glue<G>(
+    stores: &CommandContext<'_, G>,
+    nodes: &[Node],
+    spec: &mut GlueSpec,
+) {
     let mut glyph = None;
     for node in nodes.iter().rev() {
         match node {
@@ -1108,7 +1105,11 @@ pub(crate) fn adjust_interword_glue<G>(stores: &Universe<G>, nodes: &[Node], spe
         .expect("pdfTeX interword shrink adjustment fits Scaled");
 }
 
-pub(crate) fn scaled_font_code<G>(stores: &Universe<G>, font: FontId, code: i32) -> Scaled {
+pub(crate) fn scaled_font_code<G>(
+    stores: &CommandContext<'_, G>,
+    font: FontId,
+    code: i32,
+) -> Scaled {
     let product = i64::from(stores.font_parameter(font, 6).raw()) * i64::from(code);
     let rounded = if product >= 0 {
         (product + 500) / 1000
@@ -1140,13 +1141,13 @@ pub(crate) fn rechar_node(current: PendingHRunChar) -> Node {
                 .origins
                 .first()
                 .cloned()
-                .unwrap_or_else(OriginId::unknown),
+                .unwrap_or(OriginId::UNKNOWN),
         }
     }
 }
 
 pub(crate) fn literal_hyphen_disc<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     current: &PendingHRunChar,
     enabled: bool,
 ) -> Option<Node> {
@@ -1168,13 +1169,13 @@ pub(crate) fn literal_hyphen_disc<G>(
 
 pub(crate) fn update_space_factor<G>(
     list: &mut crate::mode::ModeListMutation<'_>,
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     ch: char,
 ) {
     list.set_space_factor(next_space_factor(list.space_factor(), stores, ch));
 }
 
-pub(crate) fn next_space_factor<G>(current: i32, stores: &Universe<G>, ch: char) -> i32 {
+pub(crate) fn next_space_factor<G>(current: i32, stores: &CommandContext<'_, G>, ch: char) -> i32 {
     let sf = i32::from(stores.sfcode(ch));
     if sf == 0 {
         return current;
@@ -1186,7 +1187,10 @@ pub(crate) fn next_space_factor<G>(current: i32, stores: &Universe<G>, ch: char)
     }
 }
 
-pub(crate) fn interword_glue<G>(stores: &Universe<G>, space_factor: i32) -> (GlueSpec, GlueKind) {
+pub(crate) fn interword_glue<G>(
+    stores: &CommandContext<'_, G>,
+    space_factor: i32,
+) -> (GlueSpec, GlueKind) {
     let xspace = stores.glue(stores.glue_param(GlueParam::XSPACE_SKIP));
     if space_factor >= 2000 && xspace != GlueSpec::ZERO {
         // TeX82 §1042 appends a nonzero `\xspaceskip` verbatim.
@@ -1196,7 +1200,7 @@ pub(crate) fn interword_glue<G>(stores: &Universe<G>, space_factor: i32) -> (Glu
 }
 
 pub(crate) fn space_skip_or_font_space<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     space_factor: i32,
 ) -> (GlueSpec, GlueKind) {
     let override_spec = stores.glue(stores.glue_param(GlueParam::SPACE_SKIP));
@@ -1272,7 +1276,7 @@ pub(crate) fn fixed_infinite_glue(primitive: UnexpandablePrimitive) -> GlueSpec 
 
 pub(crate) fn append_italic_correction_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     flush_pending_hchars_with_fuel(nest, stores, fuel)?;

@@ -4,7 +4,7 @@ use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::{Direction, KernKind, Node};
 use tex_state::node_arena::PageListId;
 use tex_state::scaled::Scaled;
-use tex_state::{GeometryObservation, Universe};
+use tex_state::{CommandContext, GeometryObservation};
 use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
 
 use crate::pack_report::{DiagnosticListLayout, PackedDirection, report_pack_diagnostics};
@@ -13,7 +13,7 @@ use crate::pack_report::{DiagnosticListLayout, PackedDirection, report_pack_diag
 mod tests;
 
 #[must_use]
-pub(crate) fn hpack_params<G>(stores: &Universe<G>) -> HpackParams {
+pub(crate) fn hpack_params<G>(stores: &CommandContext<'_, G>) -> HpackParams {
     HpackParams {
         hbadness: stores.int_param(IntParam::HBADNESS),
         hfuzz: stores.dimen_param(DimenParam::HFUZZ),
@@ -22,7 +22,7 @@ pub(crate) fn hpack_params<G>(stores: &Universe<G>) -> HpackParams {
 }
 
 #[must_use]
-pub(crate) fn vpack_params<G>(stores: &Universe<G>) -> VpackParams {
+pub(crate) fn vpack_params<G>(stores: &CommandContext<'_, G>) -> VpackParams {
     VpackParams {
         vbadness: stores.int_param(IntParam::VBADNESS),
         vfuzz: stores.dimen_param(DimenParam::VFUZZ),
@@ -31,7 +31,7 @@ pub(crate) fn vpack_params<G>(stores: &Universe<G>) -> VpackParams {
 }
 
 pub(crate) fn hpack<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     list: PageListId,
     spec: PackSpec,
     params: HpackParams,
@@ -47,7 +47,7 @@ pub(crate) fn hpack<G>(
 /// it, so callers that own that branch must finish decoration before calling
 /// [`report_hpack`]. Ordinary callers use [`hpack`], which reports once.
 pub(crate) fn hpack_unreported<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     list: PageListId,
     spec: PackSpec,
     params: HpackParams,
@@ -59,11 +59,16 @@ pub(crate) fn hpack_unreported<G>(
         .to_vec();
     let lr_problems = recover_texxet_directions(stores, &mut recovered);
     let list = if lr_problems.is_some() {
-        stores.publish_page_nodes(&recovered)
+        stores.publish_page_nodes(recovered)
     } else {
         list
     };
-    let packed = tex_typeset::hpack(&*stores, list, spec, params);
+    let packed = tex_typeset::hpack(
+        &crate::typeset_context::TypesetContext::new(stores),
+        list,
+        spec,
+        params,
+    );
     stores.set_last_badness(packed.badness);
     stores.record_geometry_observation(GeometryObservation::Hpack {
         width_sp: i64::from(packed.node.width.raw()),
@@ -76,7 +81,7 @@ pub(crate) fn hpack_unreported<G>(
 }
 
 pub(crate) fn report_hpack<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     packed: &PackedBox,
     lr_problems: Option<(usize, usize)>,
 ) {
@@ -99,7 +104,7 @@ pub(crate) fn report_hpack<G>(
 }
 
 pub(crate) fn recover_texxet_directions<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     nodes: &mut Vec<Node>,
 ) -> Option<(usize, usize)> {
     if stores.int_param(IntParam::TEX_XET_STATE) <= 0 {
@@ -135,12 +140,17 @@ pub(crate) fn recover_texxet_directions<G>(
 }
 
 pub(crate) fn vpack<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     list: PageListId,
     spec: PackSpec,
     params: VpackParams,
 ) -> PackedBox {
-    let packed = tex_typeset::vpack(&*stores, list, spec, params);
+    let packed = tex_typeset::vpack(
+        &crate::typeset_context::TypesetContext::new(stores),
+        list,
+        spec,
+        params,
+    );
     stores.set_last_badness(packed.badness);
     stores.record_geometry_observation(GeometryObservation::Vpack {
         width_sp: i64::from(packed.node.width.raw()),
@@ -160,7 +170,7 @@ pub(crate) fn vpack<G>(
 }
 
 pub(crate) fn vtop<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     list: PageListId,
     spec: PackSpec,
     params: VpackParams,
@@ -169,6 +179,10 @@ pub(crate) fn vtop<G>(
     // dimensions and diagnostics, before §1087 readjusts the returned vtop.
     let mut packed = vpack(stores, list, spec, params);
     let children = packed.node.children.clone();
-    tex_typeset::readjust_vtop(stores, &children, &mut packed);
+    tex_typeset::readjust_vtop(
+        &crate::typeset_context::TypesetContext::new(stores),
+        &children,
+        &mut packed,
+    );
     packed
 }

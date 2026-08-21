@@ -1,20 +1,20 @@
-use tex_state::Universe;
+use tex_state::CommandContext;
 #[cfg(debug_assertions)]
 use tex_state::math::MathField;
 use tex_state::node::Node;
 
 #[cfg(debug_assertions)]
-pub(super) fn debug_assert_no_unset_nodes<G>(stores: &Universe<G>, nodes: &[Node]) {
+pub(super) fn debug_assert_no_unset_nodes<G>(stores: &CommandContext<'_, G>, nodes: &[Node]) {
     for node in nodes {
         debug_assert_no_unset_node(stores, node);
     }
 }
 
 #[cfg(not(debug_assertions))]
-pub(super) fn debug_assert_no_unset_nodes<G>(_stores: &Universe<G>, _nodes: &[Node]) {}
+pub(super) fn debug_assert_no_unset_nodes<G>(_stores: &CommandContext<'_, G>, _nodes: &[Node]) {}
 
 #[cfg(debug_assertions)]
-fn debug_assert_no_unset_node<G>(stores: &Universe<G>, node: &Node) {
+fn debug_assert_no_unset_node<G>(stores: &CommandContext<'_, G>, node: &Node) {
     match node {
         Node::Unset(_) => panic!("unset node escaped fin_align"),
         Node::HList(box_node) | Node::VList(box_node) => {
@@ -64,7 +64,7 @@ fn debug_assert_no_unset_node<G>(stores: &Universe<G>, node: &Node) {
 
 #[cfg(debug_assertions)]
 fn debug_assert_no_unset_nodes_in<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     list: tex_state::node_arena::PageListId,
 ) {
     for node in stores
@@ -77,7 +77,7 @@ fn debug_assert_no_unset_nodes_in<G>(
 }
 
 #[cfg(debug_assertions)]
-fn debug_assert_math_field<G>(stores: &Universe<G>, field: &MathField) {
+fn debug_assert_math_field<G>(stores: &CommandContext<'_, G>, field: &MathField) {
     match field {
         MathField::SubBox(list) | MathField::SubMlist(list) => {
             debug_assert_no_unset_nodes_in(stores, *list)

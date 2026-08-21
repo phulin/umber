@@ -33,7 +33,7 @@ pub(crate) use hmode::{indent_in_hmode, norm_min};
 
 pub(crate) fn append_node_to_current_list<G>(
     nest: &mut crate::ModeNest,
-    stores: &mut tex_state::Universe<G>,
+    stores: &mut tex_state::CommandContext<'_, G>,
     node: tex_state::node::Node,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), crate::ExecError> {

@@ -56,7 +56,8 @@ fn unset_cell<List>(
 
 #[test]
 fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut universe = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = universe.command_context().expect("test state is admitted");
     let empty = PageListId::empty();
 
     let horizontal = set_alignment_nodes(
@@ -180,7 +181,8 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
 
 #[test]
 fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut universe = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = universe.command_context().expect("test state is admitted");
     let empty = PageListId::empty();
     let middle = GlueSpec {
         width: sp(1),
@@ -201,7 +203,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
         },
         empty.clone(),
     );
-    let row_children = stores.publish_page_nodes(&[
+    let row_children = stores.publish_page_nodes(vec![
         tabskip_node(tex_state::glue::GlueSpec::ZERO),
         Node::Unset(cell),
         tabskip_node(tex_state::glue::GlueSpec::ZERO),
@@ -282,7 +284,8 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
     // TeX82 §§803--807 traverse the alignment list in place: non-row nodes
     // retain their relative positions, running rules use prototype dimensions,
     // and each unset row becomes a set box at that same position.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut universe = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = universe.command_context().expect("test state is admitted");
     let empty = PageListId::empty();
     let cell = Node::Unset(unset_cell(
         UnsetKind::HBox,
@@ -296,7 +299,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
         },
         empty.clone(),
     ));
-    let children = stores.publish_page_nodes(&[
+    let children = stores.publish_page_nodes(vec![
         tabskip_node(tex_state::glue::GlueSpec::ZERO),
         cell,
         tabskip_node(tex_state::glue::GlueSpec::ZERO),

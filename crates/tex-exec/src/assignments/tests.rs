@@ -1,5 +1,4 @@
 use tex_command::ObservationValue;
-use tex_state::Universe;
 use tex_state::env::banks::TokParam;
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -27,7 +26,8 @@ fn glue(width: i32) -> GlueSpec {
 
 #[test]
 fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
-    let mut stores = Universe::new();
+    let mut universe = tex_state::Universe::new();
+    let mut stores = universe.command_context().expect("test state is admitted");
     let displaced_register = stores.intern_token_list_ref(&[token('a')]);
     stores.set_toks_global(0, displaced_register.id());
     let replacement_register = stores.intern_token_list_ref(&[token('b')]);
@@ -62,7 +62,8 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
 
 #[test]
 fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
-    let mut stores = Universe::new();
+    let mut universe = tex_state::Universe::new();
+    let mut stores = universe.command_context().expect("test state is admitted");
     let displaced = stores.intern_token_list_ref(&[token('a')]);
     stores.set_toks_global(0, displaced.id());
     stores.enter_group();
@@ -82,7 +83,8 @@ fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
 
 #[test]
 fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
-    let mut stores = Universe::new();
+    let mut universe = tex_state::Universe::new();
+    let mut stores = universe.command_context().expect("test state is admitted");
     stores.set_int_param_global(IntParam::TRACING_ASSIGNS, 1);
 
     let displaced_skip = stores.intern_glue(glue(1));
@@ -109,7 +111,8 @@ fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
 
 #[test]
 fn local_glue_write_undo_is_the_assignment_trace_liveness_negative_control() {
-    let mut stores = Universe::new();
+    let mut universe = tex_state::Universe::new();
+    let mut stores = universe.command_context().expect("test state is admitted");
     stores.set_int_param_global(IntParam::TRACING_ASSIGNS, 1);
     let displaced = stores.intern_glue(glue(1));
     stores.set_skip_global(0, displaced);

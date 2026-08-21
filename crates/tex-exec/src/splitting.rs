@@ -1,6 +1,6 @@
 //! Shared vertical-list splitting helpers for insertions and `\vsplit`.
 
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{BoxNode, GlueKind, Node, Whatsit};
 use tex_state::node_arena::{NodeRef, PageListId};
@@ -10,7 +10,7 @@ use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 use crate::ExecError;
 
 pub(crate) fn prune_page_top<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     nodes: Vec<Node>,
     split_top_skip: GlueSpec,
 ) -> Vec<Node> {
@@ -18,7 +18,7 @@ pub(crate) fn prune_page_top<G>(
 }
 
 pub(crate) fn prune_page_top_with_discards<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     nodes: Vec<Node>,
     split_top_skip: GlueSpec,
 ) -> (Vec<Node>, Vec<Node>) {
@@ -70,7 +70,7 @@ pub(crate) fn is_page_top_discardable(node: &Node) -> bool {
 }
 
 pub(crate) fn natural_vlist_size<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     content: PageListId,
 ) -> Result<Scaled, ExecError> {
     let packed = vpack_natural(stores, content);
@@ -80,7 +80,7 @@ pub(crate) fn natural_vlist_size<G>(
         .ok_or(ExecError::ArithmeticOverflow)
 }
 
-pub(crate) fn vpack_natural<G>(stores: &mut Universe<G>, content: PageListId) -> BoxNode {
+pub(crate) fn vpack_natural<G>(stores: &mut CommandContext<'_, G>, content: PageListId) -> BoxNode {
     crate::packing_params::vpack(
         stores,
         content,

@@ -1,6 +1,6 @@
 //! Source-free leader payload and contribution runtime.
 
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::glue::GlueSpec;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, LeaderPayload, Node};
@@ -35,7 +35,7 @@ pub(crate) fn leader_glue_kind(primitive: UnexpandablePrimitive) -> GlueKind {
 }
 
 pub(crate) fn take_register_payload<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     copy: bool,
 ) -> Option<LeaderPayload> {
@@ -51,7 +51,7 @@ pub(crate) fn take_register_payload<G>(
 
 pub(crate) fn append_leader_contribution<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     kind: GlueKind,
     payload: LeaderPayload,
     spec: GlueSpec,

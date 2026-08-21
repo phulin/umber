@@ -5,7 +5,7 @@ mod set;
 #[cfg(test)]
 mod tests;
 
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::glue::GlueSpec;
 use tex_state::node::{
     BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields,
@@ -28,7 +28,7 @@ pub(crate) fn finish_alignment<G>(
     state: &AlignState,
     rows: &[Node],
     offset: Scaled,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
 ) -> Result<Vec<Node>, ExecError> {
     let resolved = resolution::resolve_widths(state, rows, stores)?;
     let empty = PageListId::empty();
@@ -61,10 +61,10 @@ fn pack_prototype<G>(
     state: &AlignState,
     resolved: &ResolvedWidths,
     empty: &PageListId,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
 ) -> Prototype {
     let nodes = prototype_nodes(state.kind(), resolved, empty);
-    let list = stores.publish_page_nodes(&nodes);
+    let list = stores.publish_page_nodes(nodes);
     let spec = pack_spec(state.pack_spec());
     let box_node = match state.kind() {
         AlignmentKind::HAlign => hpack(stores, list, spec, hpack_params(stores)).node,
@@ -93,7 +93,7 @@ fn prototype_nodes(
     nodes
 }
 
-fn hpack_params<G>(stores: &Universe<G>) -> HpackParams {
+fn hpack_params<G>(stores: &CommandContext<'_, G>) -> HpackParams {
     let mut params = read_hpack_params(stores);
     params.overfull_rule = Scaled::from_raw(0);
     params

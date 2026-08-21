@@ -1,4 +1,4 @@
-use tex_state::Universe;
+use tex_state::CommandContext;
 #[cfg(test)]
 mod tests;
 
@@ -33,7 +33,7 @@ pub(super) fn set_alignment_nodes<G>(
     prototype: &Prototype,
     empty: PageListId,
     offset: Scaled,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
 ) -> Result<Vec<Node>, ExecError> {
     let config = SetConfig {
         kind,
@@ -66,7 +66,11 @@ pub(super) fn set_alignment_nodes<G>(
 /// indent one by wrapping it in a box. §807 shifts rows by the same `o`, and
 /// leaving the rule unwrapped left it starting at the margin while every row
 /// beside it was indented (`umber2-jnfg`).
-fn set_running_rule<G>(config: &SetConfig<'_>, node: &Node, stores: &mut Universe<G>) -> Node {
+fn set_running_rule<G>(
+    config: &SetConfig<'_>,
+    node: &Node,
+    stores: &mut CommandContext<'_, G>,
+) -> Node {
     let prototype = &config.prototype.box_node;
     let Node::Rule {
         width,
@@ -87,7 +91,7 @@ fn set_running_rule<G>(config: &SetConfig<'_>, node: &Node, stores: &mut Univers
     if config.offset.raw() == 0 {
         return rule;
     }
-    let list = stores.publish_page_nodes(std::slice::from_ref(&rule));
+    let list = stores.publish_page_nodes(vec![rule]);
     let mut packed = crate::packing_params::hpack(
         stores,
         list,
@@ -102,10 +106,10 @@ fn set_running_rule<G>(config: &SetConfig<'_>, node: &Node, stores: &mut Univers
 fn set_row<G>(
     config: &SetConfig<'_>,
     row: &UnsetNode,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
 ) -> Result<Node, ExecError> {
     let children = set_row_children(config, row, stores)?;
-    let children = stores.publish_page_nodes(&children);
+    let children = stores.publish_page_nodes(children);
     let fields = match config.kind {
         AlignmentKind::HAlign => BoxNodeFields {
             width: config.prototype.box_node.width,
@@ -139,7 +143,7 @@ fn set_row<G>(
 fn set_row_children<G>(
     config: &SetConfig<'_>,
     row: &UnsetNode,
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
 ) -> Result<Vec<Node>, ExecError> {
     let mut out = Vec::new();
     let mut column = 0usize;
@@ -175,7 +179,7 @@ fn set_cell<G>(
     cell: &UnsetNode<PageListId>,
     column: usize,
     span: usize,
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
 ) -> Result<Node, ExecError> {
     let width = config.resolved.columns[column];
     let target = spanned_target(column, span, config.resolved, config.prototype, stores)?;
@@ -215,7 +219,7 @@ fn spanned_target<G>(
     span: usize,
     resolved: &ResolvedWidths,
     prototype: &Prototype,
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
 ) -> Result<Scaled, ExecError> {
     let mut target = resolved.columns[column];
     for offset in 1..span {

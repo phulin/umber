@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
@@ -32,7 +32,7 @@ pub(crate) enum SelectedPageOutput {
 /// main control owns the subsequent mode/group transition; command control
 /// owns replay of `\\output` itself.
 pub(crate) fn select_pending_page_output<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fire_up: PageFireUp,
     error_context: String,
 ) -> Result<SelectedPageOutput, ExecError> {
@@ -60,7 +60,7 @@ pub(crate) fn select_pending_page_output<G>(
 /// TeX82 §1026's input-free tail after the command-owned output list has
 /// closed.  `output_nodes` is the internal-vertical list built by the routine.
 pub(crate) fn resume_page_builder_after_output<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     output_nodes: Vec<Node>,
     error_context: String,
 ) -> Result<(), ExecError> {
@@ -74,7 +74,7 @@ pub(crate) fn resume_page_builder_after_output<G>(
 }
 
 pub(crate) fn prepare_box255<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fire_up: PageFireUp,
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
@@ -92,7 +92,7 @@ pub(crate) fn prepare_box255<G>(
     let distributed = distribute_insertions(stores, page_nodes, error_context)?;
     update_page_marks_at_fire_up(stores, &distributed.page_nodes);
 
-    let page_list = stores.publish_page_nodes(&distributed.page_nodes);
+    let page_list = stores.publish_page_nodes(distributed.page_nodes);
     let packed = vpack(
         stores,
         page_list,
@@ -103,7 +103,7 @@ pub(crate) fn prepare_box255<G>(
             box_max_depth: page_max_depth,
         },
     );
-    let box255 = stores.publish_page_nodes(&[Node::VList(packed.node)]);
+    let box255 = stores.publish_page_nodes(vec![Node::VList(packed.node)]);
     stores.assign_page_box_global(255, box255);
     stores.start_page_after_output();
     for node in distributed.heldover {
@@ -116,7 +116,7 @@ pub(crate) fn prepare_box255<G>(
     Ok(())
 }
 
-fn update_page_marks_at_fire_up<G>(stores: &mut Universe<G>, page_nodes: &[Node]) {
+fn update_page_marks_at_fire_up<G>(stores: &mut CommandContext<'_, G>, page_nodes: &[Node]) {
     let mut classes = stores.page_mark_classes().collect::<BTreeSet<_>>();
     classes.insert(0);
     for node in page_nodes {
@@ -205,7 +205,7 @@ struct SplitInsertionContext {
 }
 
 fn distribute_insertions<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     page_nodes: Vec<Node>,
     error_context: Option<&str>,
 ) -> Result<DistributedInsertions, ExecError> {
@@ -305,7 +305,7 @@ fn distribute_insertions<G>(
 }
 
 fn insertion_box_nodes<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     class: u16,
     error_context: Option<&str>,
 ) -> Result<Vec<Node>, ExecError> {
@@ -335,7 +335,7 @@ fn insertion_box_nodes<G>(
 }
 
 fn split_insertion_remainder<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     queue: &mut InsertionQueue,
     context: SplitInsertionContext,
 ) -> Result<Option<Node>, ExecError> {
@@ -360,7 +360,7 @@ fn split_insertion_remainder<G>(
     if pruned.is_empty() {
         return Ok(None);
     }
-    let content = stores.publish_page_nodes(&pruned);
+    let content = stores.publish_page_nodes(pruned);
     let size = natural_vlist_size(stores, content.clone())?;
     Ok(Some(Node::Ins {
         class: context.class,
@@ -372,15 +372,15 @@ fn split_insertion_remainder<G>(
     }))
 }
 
-fn package_insertion_box<G>(stores: &mut Universe<G>, class: u16, nodes: Vec<Node>) {
-    let list = stores.publish_page_nodes(&nodes);
+fn package_insertion_box<G>(stores: &mut CommandContext<'_, G>, class: u16, nodes: Vec<Node>) {
+    let list = stores.publish_page_nodes(nodes);
     let packed = vpack_natural(stores, list);
-    let boxed = stores.publish_page_nodes(&[Node::VList(packed)]);
+    let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
     stores.assign_page_box_global(class, boxed);
 }
 
 pub(crate) fn prepend_output_heldover<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     output_nodes: Vec<Node>,
     discard_rewritten_break: bool,
 ) {
@@ -414,7 +414,7 @@ pub(crate) fn prepend_output_heldover<G>(
 }
 
 fn output_penalty_and_rewrite_break<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     after_break: &mut Vec<Node>,
     fire_up: PageFireUp,
 ) -> i32 {
@@ -442,7 +442,7 @@ fn output_penalty_and_rewrite_break<G>(
 /// stack; only the explicit source-free test seam renders the last published
 /// input summary.
 pub(crate) fn report_output_loop<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     dead_cycles: i32,
     context: String,
 ) -> Result<(), ExecError> {
@@ -462,7 +462,7 @@ pub(crate) fn report_output_loop<G>(
 
 /// TeX.web §1015's `<Ensure that box 255 is empty before output>`.
 fn report_box255_not_void<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     deleted: PageListId,
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
@@ -486,7 +486,7 @@ fn report_box255_not_void<G>(
 
 /// TeX.web §1028's `<Ensure that box 255 is empty after output>`.
 pub(crate) fn report_box255_not_emptied<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     deleted: PageListId,
     context: String,
 ) -> Result<(), ExecError> {
@@ -506,7 +506,7 @@ pub(crate) fn report_box255_not_emptied<G>(
 }
 
 /// TeX82 §199's `box_error` tail after the caller's recoverable error.
-fn report_deleted_box<G>(stores: &mut Universe<G>, deleted: PageListId) {
+fn report_deleted_box<G>(stores: &mut CommandContext<'_, G>, deleted: PageListId) {
     let dump = crate::node_dump::dump_page_list(
         stores,
         deleted,
@@ -520,7 +520,7 @@ fn report_deleted_box<G>(stores: &mut Universe<G>, deleted: PageListId) {
     diagnostic.end(true);
 }
 
-pub(crate) fn take_box255_node<G>(stores: &mut Universe<G>) -> Result<Node, ExecError> {
+pub(crate) fn take_box255_node<G>(stores: &mut CommandContext<'_, G>) -> Result<Node, ExecError> {
     let owner = stores
         .take_box_to_page(255)
         .ok_or(ExecError::MissingToken { context: "box" })?;
@@ -538,7 +538,7 @@ pub(crate) fn take_box255_node<G>(stores: &mut Universe<G>) -> Result<Node, Exec
 ///
 /// `tail_append` is a plain list append, so none of §679's `append_to_vlist`
 /// baselineskip interposition applies and `prev_depth` is left alone.
-pub(crate) fn append_end_job_contributions<G>(stores: &mut Universe<G>) {
+pub(crate) fn append_end_job_contributions<G>(stores: &mut CommandContext<'_, G>) {
     let empty = tex_state::node_arena::PageListId::empty();
     stores.append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
         width: stores.dimen_param(DimenParam::H_SIZE),
@@ -572,7 +572,7 @@ pub(crate) fn append_end_job_contributions<G>(stores: &mut Universe<G>) {
 /// §1051's `privileged` has already restricted this to outer vertical mode,
 /// where `head`/`tail` *is* the contribution list, so `head=tail` is exactly
 /// "no contributions are waiting for `build_page`".
-pub(crate) fn job_is_all_over<G>(stores: &Universe<G>) -> bool {
+pub(crate) fn job_is_all_over<G>(stores: &CommandContext<'_, G>) -> bool {
     stores.current_page_len() == 0
         && stores.page_contributions().is_empty()
         && stores.page_integer(PageInteger::DeadCycles) == 0

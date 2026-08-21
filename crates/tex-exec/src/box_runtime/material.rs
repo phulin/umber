@@ -1,4 +1,4 @@
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{KernKind, Node};
@@ -16,7 +16,7 @@ pub(crate) fn execute_scanned_unbox_with_error_context<G>(
     primitive: UnexpandablePrimitive,
     index: u16,
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {
@@ -27,7 +27,7 @@ fn execute_scanned_unbox_impl<G>(
     primitive: UnexpandablePrimitive,
     index: u16,
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {
@@ -76,7 +76,7 @@ fn execute_scanned_unbox_impl<G>(
 pub(crate) fn execute_scanned_saved_vertical_discards<G>(
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let nodes = match primitive {
@@ -99,7 +99,7 @@ pub(crate) fn execute_delete_last<G>(
     primitive: UnexpandablePrimitive,
     error_context: String,
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores, fuel)?;
@@ -127,7 +127,7 @@ pub(crate) fn execute_delete_last<G>(
 fn execute_delete_last_outer_vertical<G>(
     primitive: UnexpandablePrimitive,
     error_context: &str,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let Some(tail) = crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
     else {
@@ -168,7 +168,7 @@ fn execute_delete_last_outer_vertical<G>(
 fn report_cannot_delete_from_page<G>(
     primitive: UnexpandablePrimitive,
     error_context: &str,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
     let command = match primitive {
         UnexpandablePrimitive::UnSkip => "unskip",
@@ -223,7 +223,7 @@ fn report_cannot_delete_from_page<G>(
 /// smallest variant instead of the size the box calls for.
 pub(crate) fn append_box_node_to_current_list<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     mut node: Node,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -234,7 +234,7 @@ pub(crate) fn append_box_node_to_current_list<G>(
             (Vec::new(), Vec::new())
         };
     let node = if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
-        let nucleus = stores.publish_page_nodes(std::slice::from_ref(&node));
+        let nucleus = stores.publish_page_nodes(vec![node]);
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
             MathField::SubBox(nucleus),
@@ -258,7 +258,10 @@ pub(crate) fn append_box_node_to_current_list<G>(
     Ok(())
 }
 
-fn extract_box_migrations<G>(stores: &mut Universe<G>, node: &mut Node) -> (Vec<Node>, Vec<Node>) {
+fn extract_box_migrations<G>(
+    stores: &mut CommandContext<'_, G>,
+    node: &mut Node,
+) -> (Vec<Node>, Vec<Node>) {
     let Node::HList(boxed) = node else {
         return (Vec::new(), Vec::new());
     };
@@ -269,7 +272,7 @@ fn extract_box_migrations<G>(stores: &mut Universe<G>, node: &mut Node) -> (Vec<
         .to_vec();
     let (retained, pre_migrated, migrated) = split_hpack_migrations(stores, children);
     if !pre_migrated.is_empty() || !migrated.is_empty() {
-        let retained = stores.publish_page_nodes(&retained);
+        let retained = stores.publish_page_nodes(retained);
         boxed.children = retained;
     }
     (pre_migrated, migrated)
@@ -285,7 +288,7 @@ fn extract_box_migrations<G>(stores: &mut Universe<G>, node: &mut Node) -> (Vec<
 /// `\hbox` contribution to a vertical list, §796's alignment column -- performs
 /// exactly this split, and differs only in where the migrated material lands.
 pub(crate) fn split_hpack_migrations<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     nodes: Vec<Node>,
 ) -> (Vec<Node>, Vec<Node>, Vec<Node>) {
     let mut retained = Vec::with_capacity(nodes.len());
@@ -317,7 +320,7 @@ pub(crate) fn split_hpack_migrations<G>(
 
 fn append_unboxed<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     source: Option<tex_state::node_arena::PageListId>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -373,7 +376,7 @@ fn unbox_kind_matches(primitive: UnexpandablePrimitive, node: &Node) -> bool {
 ///
 /// The completed register scan owns the live §82 context for this command.
 fn report_incompatible_unbox<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     error_context: &str,
 ) -> Result<(), ExecError> {
     crate::error_report::report_error(

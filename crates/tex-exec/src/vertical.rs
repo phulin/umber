@@ -1,4 +1,4 @@
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::GlueSpec;
 use tex_state::node::{GlueKind, Node};
@@ -10,7 +10,7 @@ use crate::{ExecError, Mode, ModeNest};
 
 pub(crate) fn append_node_to_current_list<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     node: Node,
 ) -> Result<(), ExecError> {
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
@@ -23,7 +23,7 @@ pub(crate) fn append_node_to_current_list<G>(
 
 pub(crate) fn append_node_to_vertical_list<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     node: Node,
 ) -> Result<(), ExecError> {
     let Some((height, depth)) = vertical_baseline_dimensions(&node) else {
@@ -74,7 +74,7 @@ pub(crate) fn append_node_to_vertical_list<G>(
 
 pub(crate) fn append_migrated_contribution<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     node: Node,
 ) {
     append_vertical_contribution(nest, stores, node);
@@ -82,7 +82,7 @@ pub(crate) fn append_migrated_contribution<G>(
 
 pub(crate) fn append_vertical_contribution<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     node: Node,
 ) {
     if is_outer_vertical(nest) {
@@ -94,7 +94,7 @@ pub(crate) fn append_vertical_contribution<G>(
 
 pub(crate) fn build_page_if_outer_vertical_with_error_context<G>(
     nest: &ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     error_context: &str,
 ) -> Result<(), ExecError> {
     if is_outer_vertical(nest) {

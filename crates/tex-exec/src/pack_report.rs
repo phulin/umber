@@ -28,7 +28,7 @@ mod tests;
 
 use std::fmt::Write as _;
 
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::env::banks::IntParam;
 use tex_state::node::Node;
 use tex_typeset::PackDiagnostic;
@@ -79,7 +79,7 @@ impl PackedDirection {
 /// `packed` is the finished box: §663 abbreviates its list and §198 shows the
 /// box itself.
 pub(crate) fn report_pack_diagnostics<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     direction: PackedDirection,
     diagnostics: &[PackDiagnostic],
     packed: &Node,
@@ -93,7 +93,7 @@ pub(crate) fn report_pack_diagnostics<G>(
 /// e-TeX [33.649]'s LR anomaly report followed by TeX82 §663's common
 /// horizontal-box diagnostic tail.
 pub(crate) fn report_lr_problems<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     missing: usize,
     extra: usize,
     packed: &Node,
@@ -120,7 +120,7 @@ pub(crate) fn report_lr_problems<G>(
 }
 
 fn report_one<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     direction: PackedDirection,
     diagnostic: &PackDiagnostic,
     packed: &Node,
@@ -194,7 +194,7 @@ fn report_one<G>(
 }
 
 /// §663's and §675's shared `<Finish issuing a diagnostic message...>`.
-fn origin_text<G>(stores: &Universe<G>) -> String {
+fn origin_text<G>(stores: &CommandContext<'_, G>) -> String {
     if stores.output_routine_is_active() {
         return ") has occurred while \\output is active".to_owned();
     }
@@ -226,7 +226,7 @@ fn origin_text<G>(stores: &Universe<G>) -> String {
 /// its replacement count. e-TeX 2.6's §175 change prints its L/R direction
 /// subtypes as `[]` instead of ordinary math `$` markers.
 fn short_display<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     list: tex_state::node_arena::PageListId,
     list_layout: DiagnosticListLayout,
 ) -> String {
@@ -255,7 +255,11 @@ impl ShortDisplayRenderer {
         self.font = None;
     }
 
-    pub(crate) fn render_nodes<G>(&mut self, stores: &Universe<G>, nodes: &[Node]) -> String {
+    pub(crate) fn render_nodes<G>(
+        &mut self,
+        stores: &CommandContext<'_, G>,
+        nodes: &[Node],
+    ) -> String {
         let mut out = String::new();
         append_short_display_nodes(
             stores,
@@ -269,7 +273,7 @@ impl ShortDisplayRenderer {
 
     pub(crate) fn render_line_break_trace_suffix<G>(
         &mut self,
-        stores: &Universe<G>,
+        stores: &CommandContext<'_, G>,
         list: tex_state::node_arena::PageListId,
     ) -> String {
         self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
@@ -278,7 +282,7 @@ impl ShortDisplayRenderer {
     #[cfg(test)]
     fn render_list<G>(
         &mut self,
-        stores: &Universe<G>,
+        stores: &CommandContext<'_, G>,
         list: tex_state::node_arena::PageListId,
     ) -> String {
         self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
@@ -286,7 +290,7 @@ impl ShortDisplayRenderer {
 
     fn render_list_with_layout<G>(
         &mut self,
-        stores: &Universe<G>,
+        stores: &CommandContext<'_, G>,
         list: tex_state::node_arena::PageListId,
         list_layout: DiagnosticListLayout,
     ) -> String {
@@ -297,7 +301,7 @@ impl ShortDisplayRenderer {
 }
 
 fn append_short_display<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     list: tex_state::node_arena::PageListId,
     list_layout: DiagnosticListLayout,
     font_in_short_display: &mut Option<u32>,
@@ -331,7 +335,7 @@ enum DiscReplacementLayout {
 }
 
 fn append_short_display_nodes<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     nodes: &[Node],
     disc_layout: DiscReplacementLayout,
     font_in_short_display: &mut Option<u32>,
@@ -397,7 +401,10 @@ fn append_short_display_nodes<G>(
                 // projection whose hidden suffix is described by the
                 // immutable replacement side list.
                 let replacement_count = match disc_layout {
-                    DiscReplacementLayout::DetachedProjection => replace.len(),
+                    DiscReplacementLayout::DetachedProjection => stores
+                        .page_node_list(replace.clone())
+                        .expect("discretionary replacement belongs to the live page arena")
+                        .len(),
                     DiscReplacementLayout::FrozenList => usize::from(*physical_replace_count),
                 };
                 index = index.saturating_add(replacement_count).min(nodes.len());
@@ -410,7 +417,7 @@ fn append_short_display_nodes<G>(
 }
 
 fn append_short_char<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     font: tex_state::ids::FontId,
     ch: char,
     font_in_short_display: &mut Option<u32>,

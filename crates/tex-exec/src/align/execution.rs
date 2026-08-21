@@ -1,6 +1,6 @@
 //! Source-free canonical alignment completion and list contribution.
 
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::node::Node;
 
 use crate::vertical::append_vertical_contribution;
@@ -14,7 +14,7 @@ pub(crate) struct FinishedAlignment {
 
 pub(crate) fn append_finished_alignment<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     finished: FinishedAlignment,
 ) {
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical)

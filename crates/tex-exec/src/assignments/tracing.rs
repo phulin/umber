@@ -28,20 +28,20 @@ use tex_state::glue::GlueSpec;
 use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::scaled::Scaled;
 use tex_state::token::Token;
-use tex_state::{PenaltyArrayKind, TokenListId, Universe};
+use tex_state::{CommandContext, PenaltyArrayKind, TokenListId};
 
 use super::primitives::{dimen_param_name, glue_param_name, int_param_name, tok_param_name};
 use crate::node_dump::{format_glue_with_unit, format_scaled_for_diagnostics};
 
 /// Renders one primitive/register name through the live `\escapechar`,
 /// matching e-TeX 2.6's own escape-aware `print_esc`-based rendering.
-fn escaped<G>(stores: &mut Universe<G>, name: &str) -> String {
-    tex_command::print_esc_text(&stores.command_context(), name)
+fn escaped<G>(stores: &mut CommandContext<'_, G>, name: &str) -> String {
+    tex_command::print_esc_text(stores, name)
 }
 
 /// Prints `{label name=value}` unconditionally: the caller has already
 /// decided `\tracingassigns` was positive at the moment that mattered.
-fn print_trace<G>(stores: &mut Universe<G>, label: &str, name: &str, value: &str) {
+fn print_trace<G>(stores: &mut CommandContext<'_, G>, label: &str, name: &str, value: &str) {
     let mut diagnostic = stores.begin_diagnostic();
     diagnostic
         .print_char('{')
@@ -58,7 +58,7 @@ fn print_trace<G>(stores: &mut Universe<G>, label: &str, name: &str, value: &str
 /// restore_trace(p, label)`, gated against the *current* (live) state. Used
 /// for the "into"/"reassigning" half of a write, which etex.ch checks after
 /// the mutation has already happened.
-fn emit<G>(stores: &mut Universe<G>, label: &str, name: &str, value: &str) {
+fn emit<G>(stores: &mut CommandContext<'_, G>, label: &str, name: &str, value: &str) {
     if stores.int_param(IntParam::TRACING_ASSIGNS) > 0 {
         print_trace(stores, label, name, value);
     }
@@ -80,7 +80,7 @@ fn emit<G>(stores: &mut Universe<G>, label: &str, name: &str, value: &str) {
 /// checked live (post-write) through [`emit`], for the same reason in
 /// reverse.
 fn trace_scalar<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     tracing_before: bool,
     global: bool,
     changed: bool,
@@ -104,7 +104,7 @@ fn trace_scalar<G>(
 }
 
 pub(crate) fn trace_int_param<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     tracing_before: bool,
     global: bool,
@@ -130,7 +130,7 @@ pub(crate) fn trace_int_param<G>(
 }
 
 pub(crate) fn trace_int_register<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     global: bool,
     old: i32,
@@ -155,7 +155,7 @@ pub(crate) fn trace_int_register<G>(
 }
 
 pub(crate) fn trace_dimen_param<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     global: bool,
     old: Scaled,
@@ -178,7 +178,7 @@ pub(crate) fn trace_dimen_param<G>(
 }
 
 pub(crate) fn trace_dimen_register<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     global: bool,
     old: Scaled,
@@ -211,7 +211,7 @@ fn dimen_text(value: Scaled) -> String {
 /// scanned specification. The assignment owner therefore supplies whether
 /// e-TeX [19.277] took the same-pointer `reassigning` return.
 pub(crate) fn trace_glue_param<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     global: bool,
     old: GlueSpec,
@@ -239,7 +239,7 @@ pub(crate) fn trace_glue_param<G>(
 
 /// Register counterpart of [`trace_glue_param`].
 pub(crate) fn trace_glue_register<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     global: bool,
     old: GlueSpec,
@@ -266,7 +266,7 @@ pub(crate) fn trace_glue_register<G>(
 
 /// Mu-glue register counterpart of [`trace_glue_param`].
 pub(crate) fn trace_muglue_register<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     global: bool,
     old: GlueSpec,
@@ -292,7 +292,7 @@ pub(crate) fn trace_muglue_register<G>(
 }
 
 pub(crate) fn trace_tok_param<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     global: bool,
     old: Option<TokenListId<G>>,
@@ -317,7 +317,7 @@ pub(crate) fn trace_tok_param<G>(
 }
 
 pub(crate) fn trace_toks_register<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     global: bool,
     old: Option<TokenListId<G>>,
@@ -345,13 +345,18 @@ pub(crate) fn trace_toks_register<G>(
 /// assignment hook. The non-void value begins on the newline introduced by
 /// `show_node_list`, exactly as §252's `show_eqtb` does.
 pub(crate) fn trace_box_write<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     global: bool,
     new: Option<&tex_state::node_arena::PageListId>,
-    write: impl FnOnce(&mut Universe<G>),
+    write: impl FnOnce(&mut CommandContext<'_, G>),
 ) {
-    fn print_box_trace<G>(stores: &mut Universe<G>, label: &str, name: &str, value: &str) {
+    fn print_box_trace<G>(
+        stores: &mut CommandContext<'_, G>,
+        label: &str,
+        name: &str,
+        value: &str,
+    ) {
         let mut diagnostic = stores.begin_diagnostic();
         diagnostic
             .print_char('{')
@@ -402,7 +407,7 @@ pub(crate) fn trace_box_write<G>(
 /// `show_eqtb` does: the empty shape is `0`, a singleton prints its count and
 /// value, and a longer shape abbreviates everything after its first value as
 /// `\ETC.`.
-fn penalty_array_text<G>(stores: &mut Universe<G>, values: &[i32]) -> String {
+fn penalty_array_text<G>(stores: &mut CommandContext<'_, G>, values: &[i32]) -> String {
     let mut text = values.len().to_string();
     if let Some(first) = values.first() {
         text.push(' ');
@@ -420,7 +425,7 @@ fn penalty_array_text<G>(stores: &mut Universe<G>, values: &[i32]) -> String {
 /// even equal values are a change; only two null (empty) shapes are the same
 /// local equivalent and therefore produce `reassigning`.
 pub(crate) fn trace_penalty_array<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     kind: PenaltyArrayKind,
     global: bool,
     old: &[i32],
@@ -450,15 +455,9 @@ pub(crate) fn trace_penalty_array<G>(
     );
 }
 
-fn tokens_text<G>(stores: &mut Universe<G>, tokens: Option<TokenListId<G>>) -> String {
+fn tokens_text<G>(stores: &mut CommandContext<'_, G>, tokens: Option<TokenListId<G>>) -> String {
     let mut text = String::new();
-    let words = tokens.map_or_else(Vec::new, |id| {
-        stores
-            .command_context()
-            .expect("assignment trace uses a live admitted generation")
-            .token_list(id)
-            .to_vec()
-    });
+    let words = tokens.map_or_else(Vec::new, |id| stores.token_list(id).to_vec());
     for token in words {
         crate::diagnostics::append_token_show_text(stores, token, &mut text);
     }
@@ -471,7 +470,7 @@ fn tokens_text<G>(stores: &mut Universe<G>, tokens: Option<TokenListId<G>>) -> S
 /// as the integer parameter family, so their trace is a plain integer value
 /// keyed by the character code rather than a register index.
 pub(crate) fn trace_code<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     primitive_name: &str,
     ch: char,
     global: bool,
@@ -511,11 +510,11 @@ pub(crate) fn trace_code<G>(
 /// that decision explicitly rather than this module re-deriving it from a
 /// `Meaning` equality check, which would accept the `\def` case too.
 pub(crate) fn trace_meaning_write<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     token: Token,
     changed: bool,
     global: bool,
-    write: impl FnOnce(&mut Universe<G>),
+    write: impl FnOnce(&mut CommandContext<'_, G>),
 ) {
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
     if !tracing_before {
@@ -553,7 +552,7 @@ pub(crate) fn trace_meaning_write<G>(
 /// meaning. Carrying the copyable pre-image across the scan/apply seam lets
 /// this renderer preserve that ownership without replaying the mutation.
 pub(crate) fn trace_completed_provisional_meaning_write<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     token: Token,
     old: ResolvedMeaning<G>,
     new: Meaning,
@@ -579,7 +578,10 @@ pub(crate) fn trace_completed_provisional_meaning_write<G>(
 }
 
 /// TeX82 §252's bounded `show_eqtb` value for a detached meaning pre-image.
-fn meaning_value_text<G>(stores: &mut Universe<G>, meaning: ResolvedMeaning<G>) -> String {
+fn meaning_value_text<G>(
+    stores: &mut CommandContext<'_, G>,
+    meaning: ResolvedMeaning<G>,
+) -> String {
     match meaning {
         ResolvedMeaning::Static(Meaning::Undefined) => "undefined".to_owned(),
         ResolvedMeaning::Static(Meaning::Relax) => escaped(stores, "relax"),
@@ -611,16 +613,9 @@ fn meaning_value_text<G>(stores: &mut Universe<G>, meaning: ResolvedMeaning<G>) 
             escaped(stores, &format!("toks{index}"))
         }
         ResolvedMeaning::Macro { flags, definition } => {
-            let (parameter_text, replacement_text) = {
-                let context = stores
-                    .command_context()
-                    .expect("meaning trace uses a live admitted generation");
-                let definition = context.definition(definition);
-                (
-                    definition.parameter_text().to_vec(),
-                    definition.replacement_text().to_vec(),
-                )
-            };
+            let definition = stores.definition(definition);
+            let parameter_text = definition.parameter_text().to_vec();
+            let replacement_text = definition.replacement_text().to_vec();
             let mut text = String::new();
             for (flag, name) in [
                 (MeaningFlags::PROTECTED, "protected"),
@@ -667,10 +662,7 @@ fn meaning_value_text<G>(stores: &mut Universe<G>, meaning: ResolvedMeaning<G>) 
             text
         }
         ResolvedMeaning::Static(Meaning::Font(font)) => {
-            let name = stores
-                .command_context()
-                .expect("meaning trace uses a live admitted generation")
-                .font_name(font);
+            let name = stores.font_name(font);
             format!("select font {name}")
         }
         ResolvedMeaning::Static(

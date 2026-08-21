@@ -1,4 +1,4 @@
-use tex_state::Universe;
+use tex_state::CommandContext;
 #[cfg(test)]
 mod tests;
 
@@ -34,7 +34,7 @@ pub(crate) enum UnsetPackContext {
 /// field, so the guard belongs here rather than at each individual caller --
 /// every present and future §796 packaging site inherits it.
 pub(crate) fn make_unset_node<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     children: tex_state::node_arena::PageListId,
     kind: UnsetKind,
     span_count: u16,
@@ -63,7 +63,11 @@ pub(crate) fn make_unset_node<G>(
             vpack(stores, children, PackSpec::Natural, params)
         }
     };
-    let metrics = measure_unset(stores, &packed.node.children, kind);
+    let metrics = measure_unset(
+        &crate::typeset_context::TypesetContext::new(stores),
+        &packed.node.children,
+        kind,
+    );
     let children = packed.node.children.clone();
     Ok(Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind,

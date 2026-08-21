@@ -9,7 +9,8 @@ fn sp(raw: i32) -> Scaled {
 
 #[test]
 fn package_unset_cell_records_natural_extent_and_glue_orders() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut universe = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = universe.command_context().expect("test state is admitted");
     let fil = GlueSpec {
         width: sp(3),
         stretch: sp(7),
@@ -24,7 +25,7 @@ fn package_unset_cell_records_natural_extent_and_glue_orders() {
         shrink: sp(6),
         shrink_order: Order::Fil,
     };
-    let children = stores.publish_page_nodes(&[
+    let children = stores.publish_page_nodes(vec![
         Node::Rule {
             width: Some(sp(5)),
             height: Some(sp(2)),
@@ -80,8 +81,9 @@ fn span_record_256_limit_and_merge_fields() {
     // TeX82 §§797--798 store the zero-based span count in a quarterword. The
     // largest legal cell therefore spans 256 columns; one more succumbs with
     // the canonical confusion, without losing the packed metric fields.
-    let mut stores = Universe::new_with_plain_catcodes();
-    let children = stores.publish_page_nodes(&[Node::Rule {
+    let mut universe = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = universe.command_context().expect("test state is admitted");
+    let children = stores.publish_page_nodes(vec![Node::Rule {
         width: Some(sp(9)),
         height: Some(sp(2)),
         depth: Some(sp(1)),

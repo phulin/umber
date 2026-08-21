@@ -9,7 +9,7 @@ fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw * Scaled::UNITY)
 }
 
-fn glue<G>(_stores: &mut Universe<G>, width: i32) -> GlueSpec {
+fn glue<G>(_stores: &mut CommandContext<'_, G>, width: i32) -> GlueSpec {
     GlueSpec {
         width: sp(width),
         stretch: Scaled::from_raw(0),
@@ -34,8 +34,8 @@ fn cell(empty: PageListId, width: i32, span_count: u16) -> Node {
     }))
 }
 
-fn row<G>(stores: &mut Universe<G>, cells: &[Node]) -> Node {
-    let children = stores.publish_page_nodes(cells);
+fn row<G>(stores: &mut CommandContext<'_, G>, cells: &[Node]) -> Node {
+    let children = stores.publish_page_nodes(cells.to_vec());
     Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,
         width: Scaled::from_raw(0),
@@ -70,7 +70,8 @@ fn state(columns: usize, tabskips: Vec<GlueSpec>) -> AlignState {
 
 #[test]
 fn span_width_list_orders_counts_and_keeps_maximum() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut universe = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = universe.command_context().expect("test state is admitted");
     let middle = glue(&mut stores, 1);
     let alignment = state(
         3,
@@ -114,7 +115,8 @@ fn span_width_list_orders_counts_and_keeps_maximum() {
 
 #[test]
 fn resolve_alignment_widths_applies_tex82_recurrence() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut universe = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = universe.command_context().expect("test state is admitted");
     let middle = glue(&mut stores, 1);
     let state = state(
         2,
@@ -148,7 +150,8 @@ fn resolve_alignment_widths_applies_tex82_recurrence() {
 
 #[test]
 fn resolve_alignment_widths_zeroes_null_column_tabskip() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut universe = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = universe.command_context().expect("test state is admitted");
     let middle = glue(&mut stores, 1);
     let trailing = glue(&mut stores, 2);
     let state = state(2, vec![tex_state::glue::GlueSpec::ZERO, middle, trailing]);
@@ -166,7 +169,8 @@ fn resolve_alignment_widths_zeroes_null_column_tabskip() {
 fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
     // TeX82 §§800--802 merge equal span counts by maximum width, process
     // shorter counts first, and retain negative residual requirements.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut universe = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = universe.command_context().expect("test state is admitted");
     let middle = glue(&mut stores, 2);
     let alignment = state(
         3,

@@ -1,4 +1,3 @@
-use tex_state::Universe;
 use tex_state::glue::Order;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Direction, KernKind, Node, Sign};
 use tex_state::node_arena::PageListId;
@@ -26,7 +25,8 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
     // Merged e-TeX §§1475 and 1478--1480: a display after a nonempty
     // paragraph copies the saved last-line prototype and replaces its list.
     // Only the no-prototype control calls hpack to create a new line box.
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut universe = tex_state::Universe::new_with_plain_catcodes();
+    let mut stores = universe.command_context().expect("test state is admitted");
     stores.enable_geometry_observation();
     let last_line = box_node(100, 7, 3, 5, BoxLr::Normal);
     let prototype = display_line_prototype(&mut stores, last_line);

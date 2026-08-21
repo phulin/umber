@@ -1,6 +1,6 @@
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
-use tex_state::glue::Order;
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
 use tex_state::scaled::Scaled;
 use tex_typeset::PackSpec;
@@ -27,6 +27,12 @@ fn scaled_mul(factor: i32, value: Scaled) -> Scaled {
     Scaled::from_raw(i32::try_from(product).expect("display-math scaled multiplication overflow"))
 }
 
+fn glue_parameter_value<G>(stores: &CommandContext<'_, G>, parameter: GlueParam) -> GlueSpec {
+    stores
+        .glue_param(parameter)
+        .map_or(GlueSpec::ZERO, |id| stores.glue(id))
+}
+
 use super::lower::{MathConversionErrorContext, convert_math_hlist_with_error_context};
 
 mod prototype;
@@ -42,12 +48,12 @@ pub(crate) struct FinishedEqNo {
 }
 
 pub(crate) fn finish_eq_no<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     side: EqNoSide,
     content: tex_state::node_arena::PageListId,
     error_context: Option<&MathConversionErrorContext>,
 ) -> FinishedEqNo {
-    let params = MathParams::read(stores);
+    let params = MathParams::read(&crate::typeset_context::TypesetContext::new(stores));
     let nodes = convert_math_hlist_with_error_context(
         stores,
         content,
@@ -56,7 +62,7 @@ pub(crate) fn finish_eq_no<G>(
         &params,
         error_context,
     );
-    let list = stores.publish_page_nodes(&nodes);
+    let list = stores.publish_page_nodes(nodes);
     let mut boxed = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
     boxed.box_lr = tex_state::node::BoxLr::DList;
     FinishedEqNo { side, boxed }
@@ -64,7 +70,7 @@ pub(crate) fn finish_eq_no<G>(
 
 pub(crate) fn finish_display_math<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     content: tex_state::node_arena::PageListId,
     eq_no: Option<FinishedEqNo>,
     prototype: Option<BoxNode>,
@@ -75,7 +81,7 @@ pub(crate) fn finish_display_math<G>(
         None => (content, None, false),
     };
     // AppG rule 22
-    let params = MathParams::read(stores);
+    let params = MathParams::read(&crate::typeset_context::TypesetContext::new(stores));
     let display_nodes = convert_math_hlist_with_error_context(
         stores,
         display_content,
@@ -91,7 +97,7 @@ pub(crate) fn finish_display_math<G>(
     // leaving zero-dimensional wrappers inside its packed hlist.
     let (display_nodes, pre_migrated, migrated) = split_hpack_migrations(stores, display_nodes);
     let shrink = hlist_shrink(stores, &display_nodes);
-    let display_list = stores.publish_page_nodes(&display_nodes);
+    let display_list = stores.publish_page_nodes(display_nodes);
     let mut display_box = hpack_nodes(
         stores,
         display_list.clone(),
@@ -170,12 +176,12 @@ pub(crate) fn finish_display_math<G>(
             append_vertical_contribution(nest, stores, Node::Penalty(10_000));
         }
     } else {
-        let spec = stores.glue_param(above);
+        let spec = glue_parameter_value(stores, above);
         append_vertical_contribution(
             nest,
             stores,
             Node::Glue {
-                spec: *stores.glue(spec),
+                spec,
                 kind: above_display_glue_kind(above),
                 leader: None,
             },
@@ -196,7 +202,7 @@ pub(crate) fn finish_display_math<G>(
         } else {
             vec![Node::HList(display_line), kern, Node::HList(eq_box)]
         };
-        let list = stores.publish_page_nodes(&children);
+        let list = stores.publish_page_nodes(children);
         display_line = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
     }
     let pre_display_direction = stores.int_param(IntParam::PRE_DISPLAY_DIRECTION);
@@ -244,12 +250,12 @@ pub(crate) fn finish_display_math<G>(
         Node::Penalty(stores.int_param(IntParam::POST_DISPLAY_PENALTY)),
     );
     if let Some(below) = below {
-        let spec = stores.glue_param(below);
+        let spec = glue_parameter_value(stores, below);
         append_vertical_contribution(
             nest,
             stores,
             Node::Glue {
-                spec: *stores.glue(spec),
+                spec,
                 kind: below_display_glue_kind(below),
                 leader: None,
             },
@@ -261,7 +267,7 @@ pub(crate) fn finish_display_math<G>(
 
 pub(crate) fn finish_display_alignment<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     finished: crate::align::FinishedAlignment,
 ) -> Result<(), ExecError> {
     append_vertical_contribution(
@@ -271,12 +277,12 @@ pub(crate) fn finish_display_alignment<G>(
     );
 
     let above = GlueParam::ABOVE_DISPLAY_SKIP;
-    let spec = stores.glue_param(above);
+    let spec = glue_parameter_value(stores, above);
     append_vertical_contribution(
         nest,
         stores,
         Node::Glue {
-            spec: *stores.glue(spec),
+            spec,
             kind: above_display_glue_kind(above),
             leader: None,
         },
@@ -298,12 +304,12 @@ pub(crate) fn finish_display_alignment<G>(
         stores,
         Node::Penalty(stores.int_param(IntParam::POST_DISPLAY_PENALTY)),
     );
-    let spec = stores.glue_param(GlueParam::BELOW_DISPLAY_SKIP);
+    let spec = glue_parameter_value(stores, GlueParam::BELOW_DISPLAY_SKIP);
     append_vertical_contribution(
         nest,
         stores,
         Node::Glue {
-            spec: *stores.glue(spec),
+            spec,
             kind: GlueKind::BelowDisplaySkip,
             leader: None,
         },
@@ -351,7 +357,7 @@ const fn tex_half(x: i32) -> i32 {
 
 pub(crate) fn build_page_after_display_resume<G>(
     nest: &ModeNest,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     error_context: &str,
 ) -> Result<(), ExecError> {
     // tex.web §1200's closing `if nest_ptr=1 then build_page`. `nest_ptr` is
@@ -389,7 +395,7 @@ struct ShrinkTotals {
     filll: Scaled,
 }
 
-fn hlist_shrink<G>(stores: &Universe<G>, nodes: &[Node]) -> ShrinkTotals {
+fn hlist_shrink<G>(stores: &CommandContext<'_, G>, nodes: &[Node]) -> ShrinkTotals {
     let mut totals = [Scaled::from_raw(0); 4];
     for node in nodes {
         if let Node::Glue { spec, .. } = node {
@@ -405,7 +411,7 @@ fn hlist_shrink<G>(stores: &Universe<G>, nodes: &[Node]) -> ShrinkTotals {
     }
 }
 
-pub(crate) fn pre_display_size<G>(stores: &Universe<G>, line: &BoxNode) -> Scaled {
+pub(crate) fn pre_display_size<G>(stores: &CommandContext<'_, G>, line: &BoxNode) -> Scaled {
     let quad = stores.font_parameter(stores.current_font(), 6);
     let mut v = line.shift + quad + quad;
     let mut w = Scaled::from_raw(-Scaled::MAX_DIMEN.raw());
@@ -433,7 +439,7 @@ pub(crate) fn pre_display_size<G>(stores: &Universe<G>, line: &BoxNode) -> Scale
 }
 
 fn pre_display_node_width<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     line: &BoxNode,
     node: tex_state::node_arena::NodeRef<'_>,
 ) -> (Scaled, bool, bool) {

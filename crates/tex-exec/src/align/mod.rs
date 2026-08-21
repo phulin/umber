@@ -7,7 +7,7 @@ pub(crate) mod packaging;
 pub(crate) mod widths;
 
 use crate::{Mode, ModeNest};
-use tex_state::Universe;
+use tex_state::CommandContext;
 
 /// TeX82 §787 `init_span`'s aux initialization for a freshly pushed span
 /// level.
@@ -21,7 +21,7 @@ use tex_state::Universe;
 /// `\hangafter`, and `\parshape` back at their defaults. Transcribing only the
 /// `prev_depth` half let a nondefault `\looseness`/`\hangafter`/`\hangindent`
 /// survive into an entry (`umber2-hq8l`).
-pub(crate) fn init_span_aux<G>(nest: &mut ModeNest, stores: &mut Universe<G>) {
+pub(crate) fn init_span_aux<G>(nest: &mut ModeNest, stores: &mut CommandContext<'_, G>) {
     if matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
