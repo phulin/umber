@@ -2,7 +2,6 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -29,6 +28,7 @@ mod path;
 mod pdf_resources;
 mod resolvers;
 pub use pdf_resources::{CachedLocalTfm, CachedVirtualFont, PdfVirtualFontResources};
+pub(crate) use pdf_resources::{detached_pk_request, resolved_font_map_lines};
 pub(crate) use resolvers::parse_image;
 
 use path::{RequestedFile, user_path_for_key};

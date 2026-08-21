@@ -145,8 +145,6 @@ pub struct NativeAcceptedRun {
     main_input: (PathBuf, usize),
     telemetry: CompileTelemetry,
     host_telemetry: NativeHostTelemetry,
-    distribution: DistributionResolver,
-    local: LocalResolver,
 }
 
 pub type NativeAcceptedParts = (
@@ -203,33 +201,10 @@ impl NativeAcceptedRun {
     #[must_use]
     pub fn pdf_draft_mode(&self) -> bool {
         self.finalization
-            .stores
-            .fixed_pdf_output_parameters()
+            .completion
+            .pdf()
+            .and_then(tex_state::DetachedPdfCompletion::output_parameters)
             .is_some_and(|parameters| parameters.draft_mode > 0)
-    }
-
-    pub fn provide_pdf_font_programs(&mut self) -> Result<(), NativeRunError> {
-        let cancellation = FetchCancellation::new();
-        let distribution = &mut self.distribution;
-        let local = &self.local;
-        let virtual_names = self
-            .finalization
-            .virtual_font_resources
-            .virtual_fonts
-            .keys()
-            .map(|name| name.as_bytes().to_vec())
-            .collect();
-        crate::provide_pdf_font_resources_excluding_at_dpi(
-            &mut self.finalization.stores,
-            crate::pdf_output::DEFAULT_PDF_PK_RESOLUTION,
-            &virtual_names,
-            |_stores, logical_name| {
-                distribution
-                    .resolve_generic_asset(local, logical_name, &cancellation)
-                    .map_err(|error| error.to_string())
-            },
-        )
-        .map_err(NativeRunError::Compile)
     }
 
     /// Publishes the accepted engine-owned PDF classic-font closure as a
@@ -359,19 +334,9 @@ pub fn run_for_finalization(
     let main_input = (options.input.clone(), session.source.len());
     let telemetry = session.session.compile_telemetry();
     let mut host_telemetry = session.host_telemetry;
-    let NativeCompileSession {
-        session,
-        distribution,
-        local,
-        ..
-    } = session;
-    let mut finalization = session
+    let NativeCompileSession { session, .. } = session;
+    let finalization = session
         .into_accepted_finalization()
-        .map_err(|error| NativeRunError::Compile(error.to_string()))?;
-    finalization
-        .stores
-        .world_mut()
-        .retarget_output_backend(&World::real())
         .map_err(|error| NativeRunError::Compile(error.to_string()))?;
     host_telemetry.accepted_handoff_time = accepted_handoff_started.elapsed();
     Ok(NativeAcceptedRun {
@@ -382,8 +347,6 @@ pub fn run_for_finalization(
         main_input,
         telemetry,
         host_telemetry,
-        distribution,
-        local,
     })
 }
 

@@ -440,16 +440,12 @@ fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
 #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
 fn finalize_run(
     opts: &RunCliOptions,
-    mut accepted: umber::cli_resource::NativeAcceptedRun,
+    accepted: umber::cli_resource::NativeAcceptedRun,
     run_started: std::time::Instant,
     accepted_wall: std::time::Duration,
 ) -> Result<(), CliError> {
-    let font_resources_started = std::time::Instant::now();
-    if opts.pdf.is_some() && !accepted.pdf_draft_mode() {
-        accepted.provide_pdf_font_programs()?;
-    }
-    let font_resources_ns = font_resources_started.elapsed().as_nanos();
-    let (output, finalization, input_path_map, resolved_inputs, main_input, telemetry, host) =
+    let font_resources_ns = 0;
+    let (output, finalization, _input_path_map, resolved_inputs, main_input, telemetry, host) =
         accepted.into_parts();
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
@@ -530,16 +526,11 @@ fn finalize_run(
     }
     let virtual_font_resources = finalization.virtual_font_resources;
     let pdf_raw_object_file_receipt = finalization.pdf_raw_object_file_receipt;
-    let mut stores = finalization.stores;
-    let prepared_pages = finalization.prepared_pages;
+    let completion = finalization.completion;
     let dumped_format = finalization.dumped_format;
     let mut format_dump_receipt = finalization.format_dump_receipt;
     #[cfg_attr(not(feature = "profiling"), allow(unused_variables))]
     let expansion_stats = finalization.expansion_stats;
-    let mut committed_artifacts = stores.world().committed_artifacts().to_vec();
-    if let Some(pages) = &prepared_pages {
-        committed_artifacts.extend_from_slice(pages.artifacts());
-    }
     if opts.format_out.is_some() && !dumped_format {
         return Err(CliError::MissingFormatDump);
     }
@@ -648,17 +639,19 @@ fn finalize_run(
         driver_files.push(DriverFile::new(path.clone(), output.dvi.clone()));
     }
     if let Some(output) = &opts.pdf {
-        if stores
-            .fixed_pdf_output_parameters()
+        if completion
+            .pdf()
+            .and_then(tex_state::DetachedPdfCompletion::output_parameters)
             .is_some_and(|parameters| parameters.draft_mode > 0)
         {
             eprintln!("pdfTeX warning: \\pdfdraftmode enabled, not changing output pdf");
         } else {
             let pdf_started = std::time::Instant::now();
+            let pdf_completion = completion.pdf().ok_or(CliError::Usage(
+                "the accepted session returned no PDF completion",
+            ))?;
             let pdf = umber::pdf_from_accepted_artifacts_with_virtual_fonts(
-                &mut stores,
-                &committed_artifacts,
-                prepared_pages.as_ref(),
+                pdf_completion,
                 &virtual_font_resources,
                 &pdf_raw_object_file_receipt,
             )?;
@@ -700,49 +693,31 @@ fn finalize_run(
         })
     });
     if let Some(output) = &format_output {
-        let format = stores.dump_format()?;
+        let format = format_dump_receipt
+            .as_ref()
+            .expect("a dumped format has its detached receipt")
+            .detached_image_bytes();
         driver_files.push(DriverFile::new(output.clone(), format));
     }
     if let Some(receipt_output) = &opts.input_records_out {
         driver_files.push(DriverFile::new(
             receipt_output.clone(),
-            input_record_receipt(
-                stores.world(),
-                &input_path_map,
-                &resolved_inputs,
-                Some(main_input),
-                &output.files,
-            )?,
+            input_record_receipt(&resolved_inputs, Some(main_input))?,
         ));
     }
-    let effect_pos = stores.world().effect_pos();
     let materialize_started = std::time::Instant::now();
-    let mut finalization =
-        PlannedFinalization::new(effect_pos, driver_files)?.with_prepared_pages(prepared_pages);
+    let publication = completion.into_publication()?;
+    let finalization = PlannedFinalization::new(publication, driver_files)?;
     if opts.show_fixtures {
         print!("{}", String::from_utf8_lossy(&output.terminal));
         finalization.discard_uncommitted();
         return Ok(());
     }
-    let committed = loop {
-        match finalization.commit_effects_retryable(&mut stores)? {
-            umber::FinalizationCommit::Committed(committed) => break committed,
-            umber::FinalizationCommit::Retry { plan, error } => {
-                let failed = error
-                    .stream_open_unavailable()
-                    .expect("retryable finalization identifies the failed open")
-                    .clone();
-                let replacement = tex_exec::retry_unavailable_stream_open(&mut stores, &failed)?;
-                finalization = plan;
-                finalization.retarget_stream_open(&mut stores, &failed, &replacement)?;
-            }
-        }
-    };
-    committed.materialize(&mut stores)?;
+    let mut destination = World::real();
+    let committed = finalization.commit_effects(&mut destination)?;
+    committed.materialize(&mut destination)?;
     if let (Some(receipt), Some(path)) = (&mut format_dump_receipt, &format_output) {
-        tex_exec::confirm_format_dump_publication(&mut stores, receipt, &path.to_string_lossy());
-        let receipt_effect_pos = stores.world().effect_pos();
-        stores.commit_effects(receipt_effect_pos)?;
+        receipt.confirm_detached_publication(&mut destination, &path.to_string_lossy())?;
     }
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
@@ -1034,28 +1009,12 @@ impl RunCliOptions {
 }
 
 fn input_record_receipt(
-    world: &World,
-    path_map: &BTreeMap<PathBuf, PathBuf>,
     resolved_inputs: &[(PathBuf, usize)],
     main_input: Option<(PathBuf, usize)>,
-    same_run_outputs: &[MemoryOutputFile],
 ) -> Result<Vec<u8>, CliError> {
     let mut records = BTreeMap::<PathBuf, usize>::new();
     for (path, len) in resolved_inputs {
         insert_input_record(&mut records, path.clone(), *len)?;
-    }
-    for record in world.external_input_records() {
-        if same_run_outputs
-            .iter()
-            .any(|output| receipt_path_key(&output.path) == receipt_path_key(record.path()))
-        {
-            continue;
-        }
-        let path = path_map
-            .get(record.path())
-            .cloned()
-            .unwrap_or_else(|| record.path().to_owned());
-        insert_input_record(&mut records, path, record.len())?;
     }
     if let Some((path, len)) = main_input {
         insert_input_record(&mut records, path, len)?;

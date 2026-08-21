@@ -5,23 +5,13 @@ mod finalization_input;
 pub use finalization_input::{
     pdf_finalization_input, pdf_finalization_input_with_raw_object_files,
 };
-use finalization_input::{
-    pdf_finalization_input_with_page_records, reserve_virtual_font_resources,
-};
 
 use tex_out::pdf::{
     PdfModelError, PdfObjectCompression, PdfSerializationOptions, PdfSerializeError,
     PdfStreamCompression, PdfVersion,
 };
-use tex_out::positioned::{PositionedError, PositionedPage};
-use tex_state::TokenListId;
-use tex_state::env::banks::{IntParam, TokParam};
-use tex_state::ids::FontId;
-use tex_state::token_show::append_token_string_text;
-use tex_state::{
-    CommittedArtifact, ContentHash, PdfDocumentFragmentKind, PdfOutputParameters, Universe,
-    WorldError,
-};
+use tex_out::positioned::PositionedError;
+use tex_state::{ContentHash, DetachedPdfCompletion, PdfOutputParameters, WorldError};
 
 pub(crate) const DEFAULT_PDF_PK_RESOLUTION: i32 = 600;
 
@@ -35,141 +25,32 @@ pub(crate) fn is_pdf_sfnt_program(name: &[u8]) -> bool {
         })
 }
 
-pub(crate) fn pk_font_request<G>(
-    stores: &Universe<G>,
-    font_id: FontId,
-    driver_dpi: i32,
-) -> Result<tex_fonts::PdfPkFontRequest, String> {
-    let font = stores.font(font_id);
-    let parameters = output_parameters(stores);
-    let base_dpi = if parameters.pk_resolution == 0 {
-        driver_dpi.clamp(72, 8_000)
-    } else {
-        parameters.pk_resolution
-    };
-    let design_size = i64::from(font.design_size().raw());
-    if design_size <= 0 {
-        return Err(format!("font {} has invalid PK design size", font.name()));
-    }
-    let scaled_dpi = i64::from(base_dpi)
-        .checked_mul(i64::from(font.size().raw()))
-        .and_then(|value| value.checked_add(design_size / 2))
-        .map(|value| value / design_size)
-        .and_then(|value| u32::try_from(value).ok())
-        .ok_or_else(|| format!("font {} PK resolution overflows", font.name()))?;
-    let mode = stores
-        .fixed_pdf_pk_mode()
-        .unwrap_or_else(|| stores.tok_param(TokParam::PDF_PK_MODE));
-    Ok(tex_fonts::PdfPkFontRequest::new(
-        font.name().as_bytes().to_vec(),
-        scaled_dpi,
-        token_list_bytes(stores, mode),
-    ))
-}
-
-pub fn pdf_from_committed_artifacts<G>(
-    stores: &mut Universe<G>,
-    artifacts: &[CommittedArtifact],
-) -> Result<Vec<u8>, PdfBuildError> {
-    pdf_from_committed_artifacts_with_virtual_fonts(
-        stores,
-        artifacts,
-        &crate::PdfVirtualFontResources::default(),
-    )
-}
-
-pub fn pdf_from_committed_artifacts_with_virtual_fonts<G>(
-    stores: &mut Universe<G>,
-    artifacts: &[CommittedArtifact],
-    virtual_fonts: &crate::PdfVirtualFontResources,
-) -> Result<Vec<u8>, PdfBuildError> {
-    let page_records = stores.pdf_pages().to_vec();
-    pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts(
-        stores,
-        artifacts,
-        &page_records,
-        DEFAULT_PDF_PK_RESOLUTION,
-        virtual_fonts,
-        &crate::PdfRawObjectFileReceipt::default(),
-    )
-}
-
-/// Finalizes an accepted native run while its fallible page suffix remains
-/// unpublished.
-///
-/// Prepared pages must remain outside the live universe until their effects
-/// commit, but they are already part of the accepted document. This adapter
-/// presents the ordered live prefix and prepared suffix as one PDF page ledger
-/// without publishing either effects or artifacts early.
-pub fn pdf_from_accepted_artifacts_with_virtual_fonts<G>(
-    stores: &mut Universe<G>,
-    artifacts: &[CommittedArtifact],
-    prepared_pages: Option<&tex_state::PreparedPageSuffix>,
+pub fn pdf_from_accepted_artifacts_with_virtual_fonts(
+    pdf: &DetachedPdfCompletion,
     virtual_fonts: &crate::PdfVirtualFontResources,
     raw_object_files: &crate::PdfRawObjectFileReceipt,
 ) -> Result<Vec<u8>, PdfBuildError> {
-    let mut page_records = stores.pdf_pages().to_vec();
-    if let Some(prepared_pages) = prepared_pages {
-        page_records.extend_from_slice(prepared_pages.pdf_pages());
-    }
-    pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts(
-        stores,
-        artifacts,
-        &page_records,
+    pdf_from_completion_at_dpi(
+        pdf,
         DEFAULT_PDF_PK_RESOLUTION,
         virtual_fonts,
         raw_object_files,
     )
 }
 
-pub fn pdf_from_committed_artifacts_at_dpi<G>(
-    stores: &mut Universe<G>,
-    artifacts: &[CommittedArtifact],
-    driver_dpi: i32,
-) -> Result<Vec<u8>, PdfBuildError> {
-    let page_records = stores.pdf_pages().to_vec();
-    pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts(
-        stores,
-        artifacts,
-        &page_records,
-        driver_dpi,
-        &crate::PdfVirtualFontResources::default(),
-        &crate::PdfRawObjectFileReceipt::default(),
-    )
-}
-
-#[allow(clippy::disallowed_methods)] // Process telemetry; PDF content never observes it.
-fn pdf_from_artifacts_and_page_records_at_dpi_with_virtual_fonts<G>(
-    stores: &mut Universe<G>,
-    artifacts: &[CommittedArtifact],
-    page_records: &[tex_state::PdfPageRecord<G>],
+pub fn pdf_from_completion_at_dpi(
+    pdf: &DetachedPdfCompletion,
     driver_dpi: i32,
     virtual_fonts: &crate::PdfVirtualFontResources,
     raw_object_files: &crate::PdfRawObjectFileReceipt,
 ) -> Result<Vec<u8>, PdfBuildError> {
-    let input = pdf_finalization_input_with_page_records(
-        stores,
-        artifacts,
-        page_records,
+    let input = pdf_finalization_input_with_raw_object_files(
+        pdf,
         driver_dpi,
         virtual_fonts,
         raw_object_files,
     )?;
-    let include_info = input.document.metadata.include_info_dictionary;
     let output = tex_out::pdf::finalize_pdf(&input).map_err(map_finalization_error)?;
-
-    // Replay only the allocation receipt proven by detached finalization. No
-    // output lowering or serialization is repeated against live engine state.
-    reserve_virtual_font_resources(stores, artifacts, page_records, virtual_fonts)?;
-    stores
-        .finalize_pdf_document_objects(include_info)
-        .map_err(|_| PdfBuildError::ObjectCapacity)?;
-    for diagnostic in output.diagnostics {
-        stores.world_mut().write_text(
-            tex_state::PrintSink::TerminalAndLog,
-            &format!("{diagnostic}\n"),
-        );
-    }
     Ok(output.bytes)
 }
 
@@ -206,41 +87,7 @@ fn map_finalization_error(error: tex_out::pdf::PdfBuildError) -> PdfBuildError {
     }
 }
 
-fn positioned_pages<G>(
-    stores: &Universe<G>,
-    artifacts: &[CommittedArtifact],
-    records: &[tex_state::PdfPageRecord<G>],
-) -> Result<Vec<PositionedPage>, PdfBuildError> {
-    records
-        .iter()
-        .enumerate()
-        .map(|(page_index, record)| {
-            let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
-            let artifact = tex_out::PageArtifact::from_bytes(&bytes)?;
-            Ok(tex_out::positioned::lower_page(
-                &artifact,
-                page_index as u32,
-            )?)
-        })
-        .collect()
-}
-
-fn positioned_forms<G>(stores: &Universe<G>) -> Result<Vec<(u32, PositionedPage)>, PdfBuildError> {
-    stores
-        .pdf_forms()
-        .filter_map(|form| {
-            stores.pdf_form_artifact(form.object()).map(|staged| {
-                let artifact = tex_out::PageArtifact::from_bytes(staged.bytes())?;
-                Ok((
-                    form.object(),
-                    tex_out::positioned::lower_page(&artifact, 0)?,
-                ))
-            })
-        })
-        .collect()
-}
-
-fn pdf_date(clock: tex_state::JobClock) -> Vec<u8> {
+pub(super) fn pdf_date(clock: tex_state::JobClock) -> Vec<u8> {
     format!(
         "D:{:04}{:02}{:02}{:02}{:02}{:02}Z",
         clock.year,
@@ -253,43 +100,7 @@ fn pdf_date(clock: tex_state::JobClock) -> Vec<u8> {
     .into_bytes()
 }
 
-fn artifact_bytes<G>(
-    stores: &Universe<G>,
-    artifacts: &[CommittedArtifact],
-    hash: ContentHash,
-) -> Result<Vec<u8>, PdfBuildError> {
-    if let Some(artifact) = artifacts.iter().find(|artifact| artifact.hash() == hash) {
-        return Ok(artifact.bytes().to_vec());
-    }
-    stores
-        .world()
-        .read_artifact(hash)?
-        .ok_or(PdfBuildError::MissingArtifact(hash))
-}
-
-fn output_parameters<G>(stores: &Universe<G>) -> PdfOutputParameters {
-    stores.fixed_pdf_output_parameters().unwrap_or_else(|| {
-        PdfOutputParameters {
-            output: stores.int_param(IntParam::PDF_OUTPUT),
-            major_version: stores.int_param(IntParam::PDF_MAJOR_VERSION),
-            minor_version: stores.int_param(IntParam::PDF_MINOR_VERSION),
-            compress_level: stores.int_param(IntParam::PDF_COMPRESS_LEVEL),
-            object_compress_level: stores.int_param(IntParam::PDF_OBJ_COMPRESS_LEVEL),
-            decimal_digits: stores.int_param(IntParam::PDF_DECIMAL_DIGITS),
-            gamma: stores.int_param(IntParam::PDF_GAMMA),
-            image_gamma: stores.int_param(IntParam::PDF_IMAGE_GAMMA),
-            image_hicolor: stores.int_param(IntParam::PDF_IMAGE_HICOLOR),
-            image_apply_gamma: stores.int_param(IntParam::PDF_IMAGE_APPLY_GAMMA),
-            draft_mode: stores.int_param(IntParam::PDF_DRAFT_MODE),
-            inclusion_copy_fonts: stores.int_param(IntParam::PDF_INCLUSION_COPY_FONTS),
-            pk_resolution: stores.int_param(IntParam::PDF_PK_RESOLUTION),
-            unique_resource_names: stores.int_param(IntParam::PDF_UNIQUE_RESNAME),
-        }
-        .normalized()
-    })
-}
-
-fn pdf_version(parameters: PdfOutputParameters) -> Result<PdfVersion, PdfBuildError> {
+pub(super) fn pdf_version(parameters: PdfOutputParameters) -> Result<PdfVersion, PdfBuildError> {
     let major = u8::try_from(parameters.major_version)
         .map_err(|_| PdfBuildError::InvalidVersionParameters)?;
     let minor = u8::try_from(parameters.minor_version)
@@ -297,7 +108,7 @@ fn pdf_version(parameters: PdfOutputParameters) -> Result<PdfVersion, PdfBuildEr
     Ok(PdfVersion::new(major, minor)?)
 }
 
-fn serialization_options(
+pub(super) fn serialization_options(
     parameters: PdfOutputParameters,
 ) -> Result<PdfSerializationOptions, PdfBuildError> {
     let stream_compression = match parameters.compress_level {
@@ -315,22 +126,6 @@ fn serialization_options(
         stream_compression,
         object_compression,
     })
-}
-
-pub(crate) fn token_list_bytes<G>(stores: &Universe<G>, id: TokenListId<G>) -> Vec<u8> {
-    let mut text = String::new();
-    for &token in stores.tokens(id).iter() {
-        append_token_string_text(stores, token, &mut text);
-    }
-    text.into_bytes()
-}
-
-fn document_fragment_bytes<G>(stores: &Universe<G>, kind: PdfDocumentFragmentKind) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for tokens in stores.pdf_document_fragments(kind) {
-        bytes.extend_from_slice(&token_list_bytes(stores, tokens));
-    }
-    bytes
 }
 
 #[derive(Debug)]

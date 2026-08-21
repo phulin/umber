@@ -56,14 +56,11 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   catalogue; it owns no second name, meaning, parameter, or default table.
 - `src/pdftex/tests/retained_fixture_properties.rs`: active retained pdfTeX-extension fixture runner that compares status, terminal, and log projections, including bug-linked strict xfails.
 - `src/pdf_output.rs`: thin detached-finalization adapter, error translation, diagnostics publication, and validated allocation-receipt replay; all lowering and serialization delegate to `tex-out`.
-- `src/pdf_output/tests.rs`: detached boundary tests for container classification and exact nested virtual-font identity, sizing, rejection, resource, and independent-parse evidence.
+- `src/pdf_output/tests.rs`: detached boundary tests for container classification, host-resolved font resources, and exact nested virtual-font identity, sizing, rejection, and independent-parse evidence.
 - `src/pdf_output/finalization_input.rs`: compatibility adapter that freezes
   accepted engine state and host-resolved artifacts/resources into
   `tex_out::pdf::PdfFinalizationInput`; it is the only Umber-owned PDF
   finalization boundary.
-- `src/pdf_font_resources_tests.rs`: post-acceptance real-font fallback and virtual-root exclusion tests.
-- `src/pdf_vf.rs`: adapter-side bounded VF first-use reservation walk retained to freeze exact leaf font/resource identities before detached finalization.
-- `src/pdf_vf/tests.rs`: synthetic packet execution, recursion, resource-selection, and lowering-limit tests.
 - `src/virtual_compile.rs`: host-neutral persistent compile session over one `ProjectWorkspace`, versioned mapped-TFM layout policy, revision-checked root patches, canonical file/OpenType/PK admission and retries, atomic response registration, one retained canonical HTML render document, output-budgeted rendered-source caches, retained immutable resources, and configurable execution/resource accounting.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
 - `src/virtual_compile/pdf_resources.rs`: post-execution typed VF/local-TFM/map/encoding/program closure discovery and immutable parsed cache.

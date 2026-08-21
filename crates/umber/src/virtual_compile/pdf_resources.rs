@@ -386,7 +386,7 @@ const fn map_directive(operation: &PdfFontMapOperation) -> tex_fonts::PdfFontMap
     }
 }
 
-fn detached_pk_request(
+pub(crate) fn detached_pk_request(
     font: &tex_state::FontArtifactRecipe,
     base_dpi: i32,
 ) -> Result<tex_fonts::PdfPkFontRequest, String> {

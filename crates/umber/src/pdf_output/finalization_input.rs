@@ -1,9 +1,8 @@
-//! Umber compatibility adapter for the detached `tex-out` PDF boundary.
+//! Umber adapter from terminal PDF completion to the pure `tex-out` boundary.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use tex_arith::Scaled;
 use tex_out::pdf::{
     PdfActionInput, PdfActionTargetInput, PdfAllocationInput, PdfAnnotationDimensionsInput,
     PdfAnnotationInput, PdfCommittedPageInput, PdfDestinationIdentityInput, PdfDestinationInput,
@@ -15,134 +14,81 @@ use tex_out::pdf::{
     PdfReservedDocumentObjects, PdfThreadBeadInput, PdfThreadInput, PdfVirtualFontInput,
     PdfVirtualLocalTfmInput,
 };
-use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::{
-    CommittedArtifact, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
-    PdfActionWindow, PdfAnnotationDimensions, PdfDestinationIdentity, PdfDocumentFragmentKind,
-    PdfExternalImageMetadata, PdfOutputParameters, PdfPageRecord, PdfRasterColorSpace,
-    PdfRasterFormat, Universe,
+    DetachedPdfAction, DetachedPdfActionIdentifier, DetachedPdfActionRecord,
+    DetachedPdfActionTarget, DetachedPdfCompletion, DetachedPdfFontOperation,
+    DetachedPdfRawObjectPayload, PdfActionWindow, PdfAnnotationDimensions, PdfDestinationIdentity,
+    PdfExternalImageMetadata, PdfRasterColorSpace, PdfRasterFormat,
 };
 
-use super::{
-    PdfBuildError, artifact_bytes, document_fragment_bytes, is_pdf_sfnt_program, output_parameters,
-    pdf_date, pdf_version, pk_font_request, serialization_options, token_list_bytes,
-};
+use super::{PdfBuildError, is_pdf_sfnt_program, pdf_date, pdf_version, serialization_options};
 
-/// Freezes the accepted engine ledger and host-owned resources into the sole
-/// input contract consumed by `tex-out` PDF finalization.
-///
-/// This is intentionally the last Umber-owned step: artifact lookup, accepted
-/// raw-object payload binding, token expansion, engine identifiers, and
-/// diagnostics remain on this side of the boundary.
-pub fn pdf_finalization_input<G>(
-    stores: &mut Universe<G>,
-    artifacts: &[CommittedArtifact],
+pub fn pdf_finalization_input(
+    pdf: &DetachedPdfCompletion,
     driver_dpi: i32,
-    virtual_fonts: &crate::PdfVirtualFontResources,
+    resources: &crate::PdfVirtualFontResources,
 ) -> Result<PdfFinalizationInput, PdfBuildError> {
     pdf_finalization_input_with_raw_object_files(
-        stores,
-        artifacts,
+        pdf,
         driver_dpi,
-        virtual_fonts,
+        resources,
         &crate::PdfRawObjectFileReceipt::default(),
     )
 }
 
-/// Freezes finalization input using immutable raw-object file payloads captured
-/// by the accepted resource session.
-pub fn pdf_finalization_input_with_raw_object_files<G>(
-    stores: &mut Universe<G>,
-    artifacts: &[CommittedArtifact],
+pub fn pdf_finalization_input_with_raw_object_files(
+    pdf: &DetachedPdfCompletion,
     driver_dpi: i32,
-    virtual_fonts: &crate::PdfVirtualFontResources,
+    resources: &crate::PdfVirtualFontResources,
     raw_object_files: &crate::PdfRawObjectFileReceipt,
 ) -> Result<PdfFinalizationInput, PdfBuildError> {
-    let page_records = stores.pdf_pages().to_vec();
-    pdf_finalization_input_with_page_records(
-        stores,
-        artifacts,
-        &page_records,
-        driver_dpi,
-        virtual_fonts,
-        raw_object_files,
-    )
-}
-
-pub(super) fn pdf_finalization_input_with_page_records<G>(
-    stores: &mut Universe<G>,
-    artifacts: &[CommittedArtifact],
-    page_records: &[PdfPageRecord<G>],
-    driver_dpi: i32,
-    virtual_fonts: &crate::PdfVirtualFontResources,
-    raw_object_files: &crate::PdfRawObjectFileReceipt,
-) -> Result<PdfFinalizationInput, PdfBuildError> {
-    let parameters = output_parameters(stores);
+    let parameters = pdf
+        .output_parameters()
+        .ok_or(PdfBuildError::PdfOutputDisabled)?;
     if parameters.output <= 0 {
         return Err(PdfBuildError::PdfOutputDisabled);
     }
     let version = pdf_version(parameters)?;
-    let pages = page_records
+    let pages = pdf
+        .pages()
         .iter()
-        .map(|record| {
-            let bytes = artifact_bytes(stores, artifacts, record.artifact())?;
-            Ok(PdfCommittedPageInput {
-                artifact_hash: record.artifact(),
-                artifact_bytes: Arc::from(bytes),
-                resources_object: record.resources_object(),
-                contents_object: record.contents_object(),
-                page_object: record.page_object(),
-                h_origin: record.h_origin(),
-                v_origin: record.v_origin(),
-                width: record.width(),
-                height: record.height(),
-                link_margin: record.link_margin(),
-                page_entries: token_list_bytes(stores, record.page_attr()),
-                resource_entries: token_list_bytes(stores, record.resources()),
-                omit_procset: record.omit_procset(),
-                space_font_name: stores
-                    .pdf_space_font_name(record.space_font_name_id())
-                    .ok_or(PdfBuildError::MissingSpaceFontName(
-                        record.space_font_name_id(),
-                    ))?
-                    .to_vec(),
-            })
+        .map(|page| PdfCommittedPageInput {
+            artifact_hash: page.artifact,
+            artifact_bytes: Arc::from(page.artifact_bytes.as_slice()),
+            resources_object: page.resources_object,
+            contents_object: page.contents_object,
+            page_object: page.page_object,
+            h_origin: page.h_origin,
+            v_origin: page.v_origin,
+            width: page.width,
+            height: page.height,
+            link_margin: page.link_margin,
+            page_entries: page.page_entries.clone(),
+            resource_entries: page.resource_entries.clone(),
+            omit_procset: page.omit_procset,
+            space_font_name: page.space_font_name.clone(),
         })
-        .collect::<Result<Vec<_>, PdfBuildError>>()?;
-
-    let forms = stores
-        .pdf_forms()
-        .filter_map(|record| {
-            let artifact = stores.pdf_form_artifact(record.object())?;
-            Some(Ok((
-                record.object(),
+        .collect::<Vec<_>>();
+    let forms = pdf
+        .forms()
+        .iter()
+        .map(|form| {
+            (
+                form.object,
                 PdfFormInput {
-                    object: record.object(),
-                    resource: record.resource(),
-                    artifact_bytes: Arc::from(artifact.bytes()),
-                    width: record.width(),
-                    height: record.height(),
-                    depth: record.depth(),
-                    entries: record
-                        .attr()
-                        .map(|tokens| token_list_bytes(stores, tokens))
-                        .unwrap_or_default(),
-                    resource_entries: record
-                        .resources()
-                        .map(|tokens| token_list_bytes(stores, tokens))
-                        .unwrap_or_default(),
-                    immediate: record.immediate(),
+                    object: form.object,
+                    resource: form.resource,
+                    artifact_bytes: Arc::from(form.artifact_bytes.as_slice()),
+                    width: form.width,
+                    height: form.height,
+                    depth: form.depth,
+                    entries: form.entries.clone(),
+                    resource_entries: form.resource_entries.clone(),
+                    immediate: form.immediate,
                 },
-            )))
+            )
         })
-        .collect::<Result<BTreeMap<_, _>, PdfBuildError>>()?;
-
-    // Run the bounded packet walk once at the outer finalization boundary to
-    // materialize destination-local font instances and resource reservations.
-    // The positioned candidate is discarded: tex-out repeats lowering from
-    // the committed artifacts using only the detached closure captured below.
-    let (virtual_positioned, reserved_virtual_fonts) =
-        reserve_virtual_font_resources(stores, artifacts, page_records, virtual_fonts)?;
+        .collect::<BTreeMap<_, _>>();
 
     let artifacts_by_font = pages
         .iter()
@@ -152,67 +98,44 @@ pub(super) fn pdf_finalization_input_with_page_records<G>(
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flat_map(|artifact| artifact.fonts.clone())
-        .chain(
-            virtual_positioned
-                .iter()
-                .flat_map(|positioned| positioned.fonts.iter().cloned()),
-        )
-        .chain(reserved_virtual_fonts.into_iter().map(|font_id| {
-            let resource = stores
-                .pdf_font_resource(font_id)
-                .expect("VF reservation receipt names a checkpointed resource");
-            let font = stores.font(resource.font());
-            tex_out::FontResource {
-                font_id: resource.resource_number(),
-                name: font.name().to_owned(),
-                tfm_content_hash: tex_out::ContentIdentity::new(font.content_hash()),
-                tfm_checksum: font.checksum(),
-                design_size: font.design_size(),
-                at_size: font.size(),
-                layout_policy: font.layout_policy(),
-                mapping_fallback: font.mapping_fallback(),
-                opentype: None,
-                semantic_identity: font.source_identity(),
-                construction: tex_out::FontResourceConstruction::Loaded,
-            }
-        }))
         .map(|font| (font.semantic_identity, font))
         .collect::<BTreeMap<_, _>>();
-    let resolved_map = stores
-        .resolved_pdf_font_map_lines()
+    let resolved_map = crate::virtual_compile::resolved_font_map_lines(pdf, resources)
         .into_iter()
         .map(|entry| (entry.tex_name.clone(), entry))
         .collect::<BTreeMap<_, _>>();
-    let font_configuration = stores.pdf_font_configuration();
+    let glyph_mappings = pdf
+        .font_operations()
+        .iter()
+        .filter_map(|operation| match operation {
+            DetachedPdfFontOperation::GlyphToUnicode(mapping) => Some(mapping),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let configuration = pdf.font_configuration();
     let mut fonts = BTreeMap::new();
-    for (identity, artifact_resource) in artifacts_by_font {
-        let font_id = stores
-            .font_by_source_identity(identity)
-            .ok_or_else(|| PdfBuildError::MissingLiveFont(artifact_resource.name.clone()))?;
-        let resource = stores
-            .pdf_font_resource_by_identity(identity)
-            .ok_or_else(|| PdfBuildError::MissingFontResource(artifact_resource.name.clone()))?;
-        let loaded = stores.font(font_id);
-        let map_entry = resolved_map.get(artifact_resource.name.as_bytes()).cloned();
+    for detached in pdf.fonts() {
+        let identity = detached.recipe.semantic_identity;
+        let artifact_resource = artifacts_by_font
+            .get(&identity)
+            .cloned()
+            .ok_or_else(|| PdfBuildError::MissingFontResource(detached.recipe.name.clone()))?;
+        let map_entry = resolved_map.get(detached.recipe.name.as_bytes()).cloned();
         let encoding = map_entry
             .as_ref()
             .and_then(|entry| entry.encoding_files.first())
             .map(|name| {
-                stores
-                    .pdf_encoding(name)
-                    .cloned()
+                detached_encoding(pdf, resources, name)
                     .ok_or_else(|| PdfBuildError::MissingEncoding(name.clone()))
             })
             .transpose()?;
-        let program = if virtual_fonts
+        let program = if resources
             .virtual_fonts
-            .contains_key(artifact_resource.name.as_str())
+            .contains_key(detached.recipe.name.as_str())
         {
-            // A virtual font is composition only and is never emitted as a
-            // PDF font dictionary. Its exact VF/TFM closure is below.
             PdfFontProgramInput::Resident
         } else {
-            detached_font_program(stores, font_id, map_entry.as_ref(), driver_dpi)?
+            detached_font_program(pdf, resources, detached, map_entry.as_ref(), driver_dpi)?
         };
         let mut glyph_names = encoding
             .as_ref()
@@ -230,46 +153,43 @@ pub(super) fn pdf_finalization_input_with_page_records<G>(
         let glyph_to_unicode = glyph_names
             .into_iter()
             .filter_map(|name| {
-                stores
-                    .pdf_glyph_to_unicode(loaded.name().as_bytes(), &name)
-                    .or_else(|| stores.pdf_glyph_to_unicode(&[], &name))
-                    .map(|unicode| (name, unicode.to_vec()))
+                glyph_mappings
+                    .iter()
+                    .rev()
+                    .find(|mapping| {
+                        mapping.glyph_name == name
+                            && mapping
+                                .tfm_name
+                                .as_deref()
+                                .is_none_or(|tfm| tfm == detached.recipe.name.as_bytes())
+                    })
+                    .map(|mapping| (name, mapping.unicode.clone()))
             })
             .collect();
-        let metrics = PdfFontMetricsInput {
-            widths: std::array::from_fn(|code| {
-                stores
-                    .font_char_metrics(font_id, code as u8)
-                    .map_or(Scaled::from_raw(0), |metric| metric.width)
-            }),
-            heights: std::array::from_fn(|code| {
-                stores
-                    .font_char_metrics(font_id, code as u8)
-                    .map_or(Scaled::from_raw(0), |metric| metric.height)
-            }),
-            depths: std::array::from_fn(|code| {
-                stores
-                    .font_char_metrics(font_id, code as u8)
-                    .map_or(Scaled::from_raw(0), |metric| metric.depth)
-            }),
-            x_height: stores.font_parameter(font_id, 5),
-        };
         fonts.insert(
             identity,
             PdfFontInput {
                 artifact_resource,
-                resource_number: resource.resource_number(),
-                object_number: resource.object_number(),
-                metrics,
-                included_codes: stores
-                    .included_pdf_font_chars(font_id)
-                    .into_iter()
-                    .collect(),
-                descriptor_entries: stores.pdf_font_attribute(font_id).to_vec(),
-                generate_to_unicode: font_configuration.generates_to_unicode(),
-                disable_builtin_to_unicode: stores.pdf_builtin_to_unicode_disabled(font_id),
-                infer_builtin_glyph_unicode: stores.has_pdf_glyph_to_unicode_mappings(),
-                omit_charset: font_configuration.omits_charset(),
+                resource_number: detached.resource_number,
+                object_number: detached.object_number,
+                metrics: PdfFontMetricsInput {
+                    widths: detached.widths.clone().try_into().map_err(|_| {
+                        PdfBuildError::MissingFontResource(detached.recipe.name.clone())
+                    })?,
+                    heights: detached.heights.clone().try_into().map_err(|_| {
+                        PdfBuildError::MissingFontResource(detached.recipe.name.clone())
+                    })?,
+                    depths: detached.depths.clone().try_into().map_err(|_| {
+                        PdfBuildError::MissingFontResource(detached.recipe.name.clone())
+                    })?,
+                    x_height: detached.x_height,
+                },
+                included_codes: detached.included_codes.iter().copied().collect(),
+                descriptor_entries: detached.descriptor_entries.clone(),
+                generate_to_unicode: configuration.generates_to_unicode(),
+                disable_builtin_to_unicode: detached.disable_builtin_to_unicode,
+                infer_builtin_glyph_unicode: !glyph_mappings.is_empty(),
+                omit_charset: configuration.omits_charset(),
                 glyph_to_unicode,
                 map_entry,
                 encoding,
@@ -278,8 +198,8 @@ pub(super) fn pdf_finalization_input_with_page_records<G>(
         );
     }
 
-    let images = stores
-        .pdf_external_images()
+    let images = pdf
+        .images()
         .iter()
         .map(|image| {
             let dimensions = image.dimensions();
@@ -301,87 +221,71 @@ pub(super) fn pdf_finalization_input_with_page_records<G>(
             )
         })
         .collect();
-
-    let mut raw_objects = Vec::new();
-    let raw_records = stores.pdf_raw_objects().to_vec();
-    for record in raw_records {
-        let payload = match record.data() {
-            None => None,
-            Some(data) if data.is_stream() => {
-                let source = token_list_bytes(stores, data.data());
-                let bytes = if data.is_file() {
-                    let entry = raw_object_files.entries.get(&record.id().raw()).ok_or(
-                        PdfBuildError::MissingRawObjectFilePayload(record.id().raw()),
-                    )?;
-                    if entry.source_name.as_bytes() != source
-                        || crate::FileContentId::for_bytes(&entry.bytes) != entry.content_id
+    let raw_objects = pdf
+        .raw_objects()
+        .iter()
+        .map(|record| {
+            let payload = match &record.payload {
+                None => None,
+                Some(DetachedPdfRawObjectPayload::Value(bytes)) => {
+                    Some(PdfRawObjectPayloadInput::Value(bytes.clone()))
+                }
+                Some(DetachedPdfRawObjectPayload::Stream { entries, data }) => {
+                    Some(PdfRawObjectPayloadInput::Stream {
+                        entries: entries.clone(),
+                        data: Arc::from(data.as_slice()),
+                    })
+                }
+                Some(DetachedPdfRawObjectPayload::FileStream {
+                    entries,
+                    source_name,
+                }) => {
+                    let receipt = raw_object_files
+                        .entries
+                        .get(&record.object)
+                        .ok_or(PdfBuildError::MissingRawObjectFilePayload(record.object))?;
+                    if receipt.source_name.as_bytes() != source_name
+                        || crate::FileContentId::for_bytes(&receipt.bytes) != receipt.content_id
                     {
-                        return Err(PdfBuildError::RawObjectFilePayloadMismatch(
-                            record.id().raw(),
-                        ));
+                        return Err(PdfBuildError::RawObjectFilePayloadMismatch(record.object));
                     }
-                    Arc::from(entry.bytes.as_slice())
-                } else {
-                    Arc::from(source)
-                };
-                Some(PdfRawObjectPayloadInput::Stream {
-                    entries: data
-                        .stream_attr()
-                        .map(|tokens| token_list_bytes(stores, tokens))
-                        .unwrap_or_default(),
-                    data: bytes,
-                })
-            }
-            Some(data) => Some(PdfRawObjectPayloadInput::Value(token_list_bytes(
-                stores,
-                data.data(),
-            ))),
-        };
-        raw_objects.push(PdfRawObjectInput {
-            object: record.id().raw(),
-            payload,
-            immediate: record.is_immediate(),
-            referenced: record.is_referenced(),
-        });
-    }
+                    Some(PdfRawObjectPayloadInput::Stream {
+                        entries: entries.clone(),
+                        data: Arc::from(receipt.bytes.as_slice()),
+                    })
+                }
+            };
+            Ok(PdfRawObjectInput {
+                object: record.object,
+                payload,
+                immediate: record.immediate,
+                referenced: record.referenced,
+            })
+        })
+        .collect::<Result<Vec<_>, PdfBuildError>>()?;
 
-    let include_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
-    let ids = stores
-        .finalize_pdf_document_objects(include_info)
-        .map_err(|_| PdfBuildError::ObjectCapacity)?;
-    let document_objects = PdfReservedDocumentObjects {
-        pages: ids.pages().expect("finalization reserves pages"),
-        names: ids.names(),
-        catalog: ids.catalog().expect("finalization reserves catalog"),
-        info: ids.info(),
-    };
-    let open_action = stores
-        .pdf_catalog_open_action()
-        .map(|record| indirect_action(stores, record));
-    let clock = stores.world().job_clock();
+    let (document_objects, next_object) = document_objects(pdf)?;
+    let document = pdf.document();
     let metadata = PdfDocumentMetadataInput {
-        include_info_dictionary: include_info,
-        include_dates: stores.int_param(IntParam::PDF_INFO_OMIT_DATE) == 0,
-        creation_date: pdf_date(clock),
-        ptex_banner_key: (stores.int_param(IntParam::PDF_SUPPRESS_PTEX_INFO) % 2 == 0).then(|| {
-            if stores.int_param(IntParam::PDF_PTEX_USE_UNDERSCORE) > 0
-                || parameters.major_version >= 2
-            {
+        include_info_dictionary: document.include_info_dictionary,
+        include_dates: document.include_dates,
+        creation_date: pdf_date(document.clock),
+        ptex_banner_key: (document.suppress_ptex_info % 2 == 0).then(|| {
+            if document.ptex_use_underscore || parameters.major_version >= 2 {
                 b"PTEX_Fullbanner".to_vec()
             } else {
                 b"PTEX.Fullbanner".to_vec()
             }
         }),
         ptex_banner: tex_exec::BANNER.as_bytes().to_vec(),
-        info_entries: document_fragment_bytes(stores, PdfDocumentFragmentKind::Info),
-        catalog_entries: document_fragment_bytes(stores, PdfDocumentFragmentKind::Catalog),
-        names_entries: document_fragment_bytes(stores, PdfDocumentFragmentKind::Names),
-        trailer_entries: document_fragment_bytes(stores, PdfDocumentFragmentKind::Trailer),
-        trailer_id: document_fragment_bytes(stores, PdfDocumentFragmentKind::TrailerId),
-        open_action,
+        info_entries: document.fragments.info.clone(),
+        catalog_entries: document.fragments.catalog.clone(),
+        names_entries: document.fragments.names.clone(),
+        trailer_entries: document.fragments.trailer.clone(),
+        trailer_id: document.fragments.trailer_id.clone(),
+        open_action: document.open_action.as_ref().map(indirect_action),
     };
-    let navigation = navigation(stores);
-    let virtual_fonts = virtual_fonts
+    let virtual_fonts = resources
         .virtual_fonts
         .iter()
         .map(|(name, cached)| {
@@ -389,7 +293,7 @@ pub(super) fn pdf_finalization_input_with_page_records<G>(
                 name.as_bytes().to_vec(),
                 PdfVirtualFontInput {
                     program: cached.program.clone(),
-                    local_tfms: virtual_fonts
+                    local_tfms: resources
                         .local_tfms
                         .iter()
                         .map(|(name, cached)| {
@@ -407,11 +311,7 @@ pub(super) fn pdf_finalization_input_with_page_records<G>(
             )
         })
         .collect();
-    let dpi = if parameters.pk_resolution == 0 {
-        driver_dpi.clamp(72, 8_000)
-    } else {
-        parameters.pk_resolution
-    };
+    let dpi = configuration.resolved_pk_resolution(driver_dpi);
     Ok(PdfFinalizationInput {
         document: PdfDocumentInput {
             version: (version.major(), version.minor()),
@@ -427,11 +327,9 @@ pub(super) fn pdf_finalization_input_with_page_records<G>(
                 high_color: parameters.image_hicolor > 0,
                 apply_gamma: parameters.image_apply_gamma > 0,
             },
-            pages_entries: token_list_bytes(stores, stores.tok_param(TokParam::PDF_PAGES_ATTR)),
-            form_omit_procset: stores.int_param(IntParam::PDF_OMIT_PROCSET),
-            suppress_page_group_warning: stores
-                .int_param(IntParam::PDF_SUPPRESS_WARNING_PAGE_GROUP)
-                != 0,
+            pages_entries: document.pages_entries.clone(),
+            form_omit_procset: document.form_omit_procset,
+            suppress_page_group_warning: document.suppress_page_group_warning,
             metadata,
         },
         pages,
@@ -440,56 +338,59 @@ pub(super) fn pdf_finalization_input_with_page_records<G>(
         virtual_fonts,
         images,
         raw_objects,
-        navigation,
+        navigation: navigation(pdf),
         allocation: PdfAllocationInput {
             document: document_objects,
-            next_object: stores.pdf_next_object_id(),
+            next_object,
         },
         limits: PdfFinalizationLimits::default(),
     })
 }
 
-/// Replays the bounded VF first-use order against the supplied private state
-/// and returns the lowered candidate solely as a font-closure receipt.
-pub(crate) fn reserve_virtual_font_resources<G>(
-    stores: &mut Universe<G>,
-    artifacts: &[CommittedArtifact],
-    page_records: &[tex_state::PdfPageRecord<G>],
-    virtual_fonts: &crate::PdfVirtualFontResources,
-) -> Result<
-    (
-        Vec<tex_out::positioned::PositionedPage>,
-        BTreeSet<tex_state::ids::FontId>,
-    ),
-    PdfBuildError,
-> {
-    let mut positioned = super::positioned_pages(stores, artifacts, page_records)?;
-    positioned.extend(
-        super::positioned_forms(stores)?
-            .into_iter()
-            .map(|(_, positioned)| positioned),
-    );
-    let reserved = crate::pdf_vf::lower_pages_with_resource_receipt(
-        stores,
-        &mut positioned,
-        virtual_fonts,
-        crate::pdf_vf::PdfVfLimits::default(),
-    )?;
-    Ok((positioned, reserved))
+fn detached_encoding(
+    pdf: &DetachedPdfCompletion,
+    resources: &crate::PdfVirtualFontResources,
+    name: &[u8],
+) -> Option<tex_fonts::PdfEncoding> {
+    pdf.font_operations()
+        .iter()
+        .rev()
+        .find_map(|operation| match operation {
+            DetachedPdfFontOperation::Encoding {
+                logical_name,
+                encoding,
+            } if logical_name == name => Some(encoding.clone()),
+            _ => None,
+        })
+        .or_else(|| resources.encodings.get(name).cloned())
 }
 
-fn detached_font_program<G>(
-    stores: &Universe<G>,
-    font_id: tex_state::ids::FontId,
+fn detached_font_program(
+    pdf: &DetachedPdfCompletion,
+    resources: &crate::PdfVirtualFontResources,
+    font: &tex_state::DetachedPdfFontResource,
     map: Option<&tex_fonts::PdfFontMapEntry>,
     driver_dpi: i32,
 ) -> Result<PdfFontProgramInput, PdfBuildError> {
     let Some(map) = map else {
-        let request =
-            pk_font_request(stores, font_id, driver_dpi).map_err(PdfBuildError::PkFont)?;
-        let font = stores
-            .pdf_pk_font(&request)
-            .cloned()
+        let request = crate::virtual_compile::detached_pk_request(
+            &font.recipe,
+            pdf.font_configuration().resolved_pk_resolution(driver_dpi),
+        )
+        .map_err(PdfBuildError::PkFont)?;
+        let detached = pdf
+            .font_operations()
+            .iter()
+            .rev()
+            .find_map(|operation| match operation {
+                DetachedPdfFontOperation::PkFont {
+                    request: candidate,
+                    font,
+                } if candidate == &request => Some(font.clone()),
+                _ => None,
+            });
+        let font = detached
+            .or_else(|| resources.pk_fonts.get(&request).cloned())
             .ok_or_else(|| PdfBuildError::MissingPkFont(request.clone()))?;
         return Ok(PdfFontProgramInput::Pk { request, font });
     };
@@ -501,18 +402,78 @@ fn detached_font_program<G>(
         .as_deref()
         .ok_or_else(|| PdfBuildError::MissingFontProgram(map.tex_name.clone()))?;
     if is_pdf_sfnt_program(name) {
-        stores
-            .pdf_truetype_program(name)
-            .cloned()
+        let program = pdf
+            .font_operations()
+            .iter()
+            .rev()
+            .find_map(|operation| match operation {
+                DetachedPdfFontOperation::TrueTypeProgram {
+                    logical_name,
+                    program,
+                } if logical_name == name => Some(program.clone()),
+                _ => None,
+            })
+            .or_else(|| resources.truetype_programs.get(name).cloned());
+        program
             .map(PdfFontProgramInput::TrueType)
             .ok_or_else(|| PdfBuildError::MissingFontProgram(name.to_vec()))
     } else {
-        stores
-            .pdf_type1_program(name)
-            .cloned()
+        let program = pdf
+            .font_operations()
+            .iter()
+            .rev()
+            .find_map(|operation| match operation {
+                DetachedPdfFontOperation::Type1Program {
+                    logical_name,
+                    program,
+                } if logical_name == name => Some(program.clone()),
+                _ => None,
+            })
+            .or_else(|| resources.type1_programs.get(name).cloned());
+        program
             .map(PdfFontProgramInput::Type1)
             .ok_or_else(|| PdfBuildError::MissingFontProgram(name.to_vec()))
     }
+}
+
+fn document_objects(
+    pdf: &DetachedPdfCompletion,
+) -> Result<(PdfReservedDocumentObjects, u32), PdfBuildError> {
+    let document = pdf.document();
+    let mut next = pdf.next_object();
+    let mut allocate = || -> Result<u32, PdfBuildError> {
+        let object = (next <= i32::MAX as u32)
+            .then_some(next)
+            .ok_or(PdfBuildError::ObjectCapacity)?;
+        next = next.checked_add(1).ok_or(PdfBuildError::ObjectCapacity)?;
+        Ok(object)
+    };
+    let pages = document.objects.pages().map_or_else(&mut allocate, Ok)?;
+    let needs_names = !document.fragments.names.is_empty()
+        || pdf
+            .destinations()
+            .iter()
+            .any(|record| matches!(record.identity(), PdfDestinationIdentity::Name(_)));
+    let names = match document.objects.names() {
+        Some(object) => Some(object),
+        None if needs_names => Some(allocate()?),
+        None => None,
+    };
+    let catalog = document.objects.catalog().map_or_else(&mut allocate, Ok)?;
+    let info = match document.objects.info() {
+        Some(object) => Some(object),
+        None if document.include_info_dictionary => Some(allocate()?),
+        None => None,
+    };
+    Ok((
+        PdfReservedDocumentObjects {
+            pages,
+            names,
+            catalog,
+            info,
+        },
+        next,
+    ))
 }
 
 fn image_metadata(metadata: PdfExternalImageMetadata) -> PdfImageMetadataInput {
@@ -561,48 +522,46 @@ fn image_metadata(metadata: PdfExternalImageMetadata) -> PdfImageMetadataInput {
     }
 }
 
-fn navigation<G>(stores: &Universe<G>) -> PdfNavigationInput {
+fn navigation(pdf: &DetachedPdfCompletion) -> PdfNavigationInput {
     PdfNavigationInput {
-        annotations: stores
-            .pdf_annotations()
+        annotations: pdf
+            .annotations()
             .iter()
             .map(|record| PdfAnnotationInput {
-                object: record.object(),
-                data: record.data().map(|data| {
-                    (
-                        dimensions(data.dimensions),
-                        token_list_bytes(stores, data.entries.id()),
-                    )
-                }),
+                object: record.object,
+                data: record
+                    .dimensions
+                    .zip(record.entries.clone())
+                    .map(|(dimensions, entries)| (annotation_dimensions(dimensions), entries)),
             })
             .collect(),
-        links: stores
-            .pdf_links()
+        links: pdf
+            .links()
             .iter()
             .map(|record| PdfLinkInput {
-                object: record.object(),
-                dimensions: dimensions(record.dimensions()),
-                entries: token_list_bytes(stores, record.attributes()),
-                action: action(stores, record.action()),
+                object: record.object,
+                dimensions: annotation_dimensions(record.dimensions),
+                entries: record.entries.clone(),
+                action: action(&record.action),
             })
             .collect(),
-        destinations: destinations(stores, false),
-        structure_destinations: destinations(stores, true),
-        outlines: stores
-            .pdf_outlines()
+        destinations: destinations(pdf.destinations()),
+        structure_destinations: destinations(pdf.structure_destinations()),
+        outlines: pdf
+            .outlines()
             .iter()
             .map(|record| PdfOutlineInput {
-                action_object: record.action_object(),
-                item_object: record.item_object(),
-                title_object: record.title_object(),
-                entries: token_list_bytes(stores, record.attributes()),
-                action: action(stores, record.action()),
-                count: record.count(),
-                title: token_list_bytes(stores, record.title()),
+                action_object: record.action_object,
+                item_object: record.item_object,
+                title_object: record.title_object,
+                entries: record.entries.clone(),
+                action: action(&record.action),
+                count: record.count,
+                title: record.title.clone(),
             })
             .collect(),
-        threads: stores
-            .pdf_threads()
+        threads: pdf
+            .threads()
             .iter()
             .map(|thread| PdfThreadInput {
                 identity: destination_identity(thread.identity()),
@@ -621,9 +580,8 @@ fn navigation<G>(stores: &Universe<G>) -> PdfNavigationInput {
     }
 }
 
-fn destinations<G>(stores: &Universe<G>, structure: bool) -> Vec<PdfDestinationInput> {
-    stores
-        .pdf_destinations(structure)
+fn destinations(records: &[tex_state::PdfDestinationRecord]) -> Vec<PdfDestinationInput> {
+    records
         .iter()
         .map(|record| PdfDestinationInput {
             identity: destination_identity(record.identity()),
@@ -634,65 +592,52 @@ fn destinations<G>(stores: &Universe<G>, structure: bool) -> Vec<PdfDestinationI
         .collect()
 }
 
-fn indirect_action<G>(stores: &Universe<G>, record: PdfActionRecord<G>) -> PdfIndirectActionInput {
+fn indirect_action(record: &DetachedPdfActionRecord) -> PdfIndirectActionInput {
     PdfIndirectActionInput {
-        object: record.id(),
-        target_object: record.target_object(),
-        structure_object: record.structure_object(),
-        action: action(stores, record.spec()),
+        object: record.id,
+        target_object: record.target_object,
+        structure_object: record.structure_object,
+        action: action(&record.action),
     }
 }
 
-fn action<G>(stores: &Universe<G>, spec: PdfActionSpec<G>) -> PdfActionInput {
+fn action(spec: &DetachedPdfAction) -> PdfActionInput {
     match spec {
-        PdfActionSpec::User(tokens) => PdfActionInput::User(token_list_bytes(stores, tokens)),
-        PdfActionSpec::GoTo(destination) => PdfActionInput::GoTo {
-            file: destination
-                .file
-                .map(|tokens| token_list_bytes(stores, tokens)),
-            structure: destination
-                .structure
-                .map(|identity| action_identity(stores, identity)),
-            target: action_target(stores, destination.target),
+        DetachedPdfAction::User(bytes) => PdfActionInput::User(bytes.clone()),
+        DetachedPdfAction::GoTo(destination) => PdfActionInput::GoTo {
+            file: destination.file.clone(),
+            structure: destination.structure.as_ref().map(action_identity),
+            target: action_target(&destination.target),
             new_window: action_window(destination.window),
         },
-        PdfActionSpec::Thread(destination) => PdfActionInput::Thread {
-            file: destination
-                .file
-                .map(|tokens| token_list_bytes(stores, tokens)),
-            structure: destination
-                .structure
-                .map(|identity| action_identity(stores, identity)),
-            target: action_target(stores, destination.target),
+        DetachedPdfAction::Thread(destination) => PdfActionInput::Thread {
+            file: destination.file.clone(),
+            structure: destination.structure.as_ref().map(action_identity),
+            target: action_target(&destination.target),
             new_window: action_window(destination.window),
         },
     }
 }
 
-fn action_target<G>(stores: &Universe<G>, target: PdfActionTarget<G>) -> PdfActionTargetInput {
+fn action_target(target: &DetachedPdfActionTarget) -> PdfActionTargetInput {
     match target {
-        PdfActionTarget::Page { number, view } => PdfActionTargetInput::Page {
-            number,
-            view: token_list_bytes(stores, view),
+        DetachedPdfActionTarget::Page { number, view } => PdfActionTargetInput::Page {
+            number: *number,
+            view: view.clone(),
         },
-        PdfActionTarget::Destination(identity) => {
-            PdfActionTargetInput::Destination(action_identity(stores, identity))
+        DetachedPdfActionTarget::Destination(identity) => {
+            PdfActionTargetInput::Destination(action_identity(identity))
         }
     }
 }
 
-fn action_identity<G>(
-    stores: &Universe<G>,
-    identity: PdfActionIdentifier<G>,
-) -> PdfDestinationIdentityInput {
+fn action_identity(identity: &DetachedPdfActionIdentifier) -> PdfDestinationIdentityInput {
     match identity {
-        PdfActionIdentifier::Name(tokens) => {
-            PdfDestinationIdentityInput::Name(token_list_bytes(stores, tokens))
+        DetachedPdfActionIdentifier::Name(bytes) => {
+            PdfDestinationIdentityInput::Name(bytes.clone())
         }
-        PdfActionIdentifier::Number(number) => PdfDestinationIdentityInput::Number(number),
-        PdfActionIdentifier::Raw(tokens) => {
-            PdfDestinationIdentityInput::Raw(token_list_bytes(stores, tokens))
-        }
+        DetachedPdfActionIdentifier::Number(number) => PdfDestinationIdentityInput::Number(*number),
+        DetachedPdfActionIdentifier::Raw(bytes) => PdfDestinationIdentityInput::Raw(bytes.clone()),
     }
 }
 
@@ -711,13 +656,10 @@ fn action_window(window: PdfActionWindow) -> Option<bool> {
     }
 }
 
-fn dimensions(dimensions: PdfAnnotationDimensions) -> PdfAnnotationDimensionsInput {
+fn annotation_dimensions(dimensions: PdfAnnotationDimensions) -> PdfAnnotationDimensionsInput {
     PdfAnnotationDimensionsInput {
         width: dimensions.width,
         height: dimensions.height,
         depth: dimensions.depth,
     }
 }
-
-#[allow(dead_code)]
-fn _assert_parameter_is_copy(_: PdfOutputParameters) {}

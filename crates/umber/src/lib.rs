@@ -12,9 +12,8 @@ use tex_exec::{
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::env::banks::IntParam;
 use tex_state::{
-    CommittedArtifact, ContentHash, EffectPos, EffectRecord, FileContent, GenerationBrand,
-    InputResolver, PrintSink, ResourceLookup, ResourceResult, Universe, World, WorldCommitMode,
-    WorldError,
+    CommittedArtifact, ContentHash, EffectRecord, FileContent, GenerationBrand, InputResolver,
+    PrintSink, ResourceLookup, ResourceResult, Universe, World, WorldError,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -38,7 +37,6 @@ mod linux_rss;
 mod memory_output;
 mod pdf_import;
 mod pdf_output;
-mod pdf_vf;
 mod pdftex;
 #[cfg(not(target_arch = "wasm32"))]
 mod prepared_format;
@@ -88,8 +86,7 @@ pub use memory_output::{
 };
 pub use pdf_output::{
     PdfBuildError, pdf_finalization_input, pdf_finalization_input_with_raw_object_files,
-    pdf_from_accepted_artifacts_with_virtual_fonts, pdf_from_committed_artifacts,
-    pdf_from_committed_artifacts_at_dpi, pdf_from_committed_artifacts_with_virtual_fonts,
+    pdf_from_accepted_artifacts_with_virtual_fonts, pdf_from_completion_at_dpi,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use prepared_format::{PreparedFormatJob, PreparedFormatProvider};
@@ -320,28 +317,6 @@ impl FileSessionResolvers {
         }
     }
 
-    /// Acquires every mapline-selected font program and encoding through the
-    /// driver's configured font search path. PDF finalization remains
-    /// host-neutral and consumes only validated resources in engine state.
-    pub fn provide_pdf_font_programs<G>(&self, stores: &mut Universe<G>) -> Result<(), String> {
-        self.provide_pdf_font_programs_at_dpi(stores, pdf_output::DEFAULT_PDF_PK_RESOLUTION)
-    }
-
-    /// Variant used by hosts that configure a non-default bitmap device DPI.
-    pub fn provide_pdf_font_programs_at_dpi<G>(
-        &self,
-        stores: &mut Universe<G>,
-        driver_dpi: i32,
-    ) -> Result<(), String> {
-        provide_pdf_font_resources_at_dpi(stores, driver_dpi, |stores, name| {
-            let logical_name = String::from_utf8_lossy(name);
-            self.font
-                .0
-                .read_program_from_world(&mut stores.world_mut(), Path::new(logical_name.as_ref()))
-                .map(|content| content.bytes().to_vec())
-        })
-    }
-
     /// Borrows the input and font resolvers for an incremental editor session.
     pub fn resolvers(&mut self) -> (&mut dyn InputResolver, &mut dyn FontResolver) {
         (&mut self.input, &mut self.font)
@@ -453,137 +428,6 @@ impl ResourceHost for FileSessionResolvers {
         }
     }
 }
-
-pub(crate) fn provide_pdf_font_resources_at_dpi<G>(
-    stores: &mut Universe<G>,
-    driver_dpi: i32,
-    acquire: impl FnMut(&mut Universe<G>, &[u8]) -> Result<Vec<u8>, String>,
-) -> Result<(), String> {
-    provide_pdf_font_resources_excluding_at_dpi(stores, driver_dpi, &BTreeSet::new(), acquire)
-}
-
-pub(crate) fn provide_pdf_font_resources_excluding_at_dpi<G>(
-    stores: &mut Universe<G>,
-    driver_dpi: i32,
-    excluded_names: &BTreeSet<Vec<u8>>,
-    mut acquire: impl FnMut(&mut Universe<G>, &[u8]) -> Result<Vec<u8>, String>,
-) -> Result<(), String> {
-    let used_names = stores
-        .pdf_font_resources()
-        .filter_map(|resource| {
-            let name = stores.font(resource.font()).name().as_bytes().to_vec();
-            (!excluded_names.contains(&name)).then_some(name)
-        })
-        .collect::<BTreeSet<_>>();
-    if used_names.is_empty() {
-        return Ok(());
-    }
-    let explicitly_requests_default = stores.pdf_font_maps().any(|operation| {
-        matches!(
-            operation,
-            tex_state::PdfFontMapOperation::File(file)
-                if file.logical_name == b"pdftex.map"
-        )
-    });
-    let mut implicit_default = false;
-    for name in stores.pdf_font_map_file_requests() {
-        if stores.has_pdf_font_map_file(&name) {
-            continue;
-        }
-        if name.as_slice() == b"pdftex.map" && !explicitly_requests_default {
-            implicit_default = true;
-            continue;
-        }
-        let bytes = acquire(stores, &name)?;
-        stores
-            .provide_pdf_font_map_file(name, &bytes)
-            .map_err(|error| error.to_string())?;
-    }
-    let mapped_names = stores
-        .resolved_pdf_font_map_lines()
-        .into_iter()
-        .map(|entry| entry.tex_name)
-        .collect::<BTreeSet<_>>();
-    let covered_names = mapped_names
-        .into_iter()
-        .chain(stores.authoritative_pdf_font_map_names())
-        .collect::<BTreeSet<_>>();
-    if implicit_default && !used_names.is_subset(&covered_names) {
-        let name = b"pdftex.map".to_vec();
-        let bytes = acquire(stores, &name)?;
-        stores
-            .provide_pdf_font_map_file(name, &bytes)
-            .map_err(|error| error.to_string())?;
-    }
-    let encodings = stores
-        .resolved_pdf_font_map_lines()
-        .into_iter()
-        .filter(|entry| used_names.contains(&entry.tex_name))
-        .flat_map(|entry| entry.encoding_files)
-        .collect::<std::collections::BTreeSet<_>>();
-    for name in encodings {
-        if stores.pdf_encoding(&name).is_some() {
-            continue;
-        }
-        let bytes = acquire(stores, &name)?;
-        stores
-            .provide_pdf_encoding(name, &bytes)
-            .map_err(|error| error.to_string())?;
-    }
-    let names = stores
-        .resolved_pdf_font_map_lines()
-        .into_iter()
-        .filter(|entry| used_names.contains(&entry.tex_name))
-        .filter_map(|entry| entry.font_file)
-        .collect::<std::collections::BTreeSet<_>>();
-    for name in names {
-        let is_truetype = pdf_output::is_pdf_sfnt_program(&name);
-        if (is_truetype && stores.pdf_truetype_program(&name).is_some())
-            || (!is_truetype && stores.pdf_type1_program(&name).is_some())
-        {
-            continue;
-        }
-        let bytes = acquire(stores, &name)?;
-        if is_truetype {
-            stores
-                .provide_pdf_truetype_program(name, &bytes)
-                .map_err(|error| error.to_string())?;
-        } else {
-            stores
-                .provide_pdf_type1_program(name, &bytes)
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    let mapped_names = stores
-        .resolved_pdf_font_map_lines()
-        .into_iter()
-        .filter(|entry| used_names.contains(&entry.tex_name))
-        .map(|entry| entry.tex_name)
-        .collect::<BTreeSet<_>>();
-    let requests = stores
-        .pdf_font_resources()
-        .filter_map(|resource| {
-            let font = stores.font(resource.font());
-            (used_names.contains(font.name().as_bytes())
-                && !mapped_names.contains(font.name().as_bytes()))
-            .then(|| pdf_output::pk_font_request(stores, resource.font(), driver_dpi))
-        })
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    for request in requests {
-        if stores.pdf_pk_font(&request).is_some() {
-            continue;
-        }
-        let logical_name = request.logical_name();
-        let bytes = acquire(stores, &logical_name)?;
-        stores
-            .provide_pdf_pk_font(request, &bytes)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod pdf_font_resources_tests;
 
 struct FileInputResolver(TexInputSearchPath);
 
@@ -740,9 +584,8 @@ impl DriverFile {
 
 /// Finalization state before the engine's World effects have committed.
 pub struct PlannedFinalization {
-    effect_pos: EffectPos,
+    publication: tex_exec::PreparedEnginePublication,
     files: Vec<DriverFile>,
-    prepared_pages: Option<tex_state::PreparedPageSuffix>,
 }
 
 /// A finalization effect commit that retained its downstream plan after a
@@ -751,120 +594,43 @@ pub enum FinalizationCommit {
     Committed(CommittedFinalization),
     Retry {
         plan: PlannedFinalization,
-        error: WorldError,
+        failure: tex_exec::CompletionPublicationFailure,
     },
 }
 
 impl PlannedFinalization {
-    pub fn new(effect_pos: EffectPos, files: Vec<DriverFile>) -> Result<Self, FinalizationError> {
+    pub fn new(
+        publication: tex_exec::PreparedEnginePublication,
+        files: Vec<DriverFile>,
+    ) -> Result<Self, FinalizationError> {
         let mut paths = BTreeSet::new();
         for file in &files {
             if !paths.insert(lexically_normalize_path(&file.path)) {
                 return Err(FinalizationError::ConflictingDriverPath(file.path.clone()));
             }
         }
-        Ok(Self {
-            effect_pos,
-            files,
-            prepared_pages: None,
-        })
+        Ok(Self { publication, files })
     }
 
-    #[must_use]
-    pub fn with_prepared_pages(mut self, pages: Option<tex_state::PreparedPageSuffix>) -> Self {
-        self.prepared_pages = pages;
-        self
-    }
-
-    pub fn retarget_stream_open<G>(
+    pub fn retarget_stream_open(
         &mut self,
-        stores: &mut Universe<G>,
-        failed: &tex_state::StreamOpenFailure,
+        failed: &tex_exec::CompletionPublicationFailure,
         replacement: &Path,
     ) -> Result<(), FinalizationError> {
-        let Some(mut pages) = self.prepared_pages.clone() else {
-            return Err(FinalizationError::PreparedArtifact(
-                "the failed stream open has no prepared page suffix".to_owned(),
-            ));
-        };
-        let failed_path = failed.path().to_string_lossy();
-        let replacement_text = replacement.to_string_lossy();
-        let failed_ordinal = failed
-            .position()
-            .raw()
-            .checked_sub(1)
-            .and_then(|index| u32::try_from(index).ok())
-            .ok_or_else(|| {
-                FinalizationError::PreparedArtifact(
-                    "the failed stream-open position has no detached ordinal".to_owned(),
-                )
-            })?;
-        pages
-            .effects()
-            .iter()
-            .position(|(position, effect)| {
-                position.index() == failed_ordinal
-                    && matches!(
-                        effect,
-                        tex_state::EffectRecord::StreamOpen { slot, target }
-                            if slot == failed.slot() && target.path() == failed.path()
-                    )
-            })
-            .ok_or_else(|| {
-                FinalizationError::PreparedArtifact(
-                    "the failed stream-open identity is absent or stale".to_owned(),
-                )
-            })?;
-        let mut retargeted = 0usize;
-        for artifact in pages.artifacts_mut() {
-            let target_page_index =
-                artifact
-                    .open_out_occurrences()
-                    .iter()
-                    .find_map(|(page_index, position)| {
-                        (position.index() == failed_ordinal).then_some(*page_index)
-                    });
-            let Some(page_index) = target_page_index else {
-                continue;
-            };
-            let mut page = tex_out::PageArtifact::from_bytes(artifact.bytes())
-                .map_err(|error| FinalizationError::PreparedArtifact(error.to_string()))?;
-            if !page.retarget_open_out_at(
-                page_index,
-                failed.slot().raw(),
-                &failed_path,
-                &replacement_text,
-            ) {
-                return Err(FinalizationError::PreparedArtifact(
-                    "the exact prepared page effect does not validate against the failed open"
-                        .to_owned(),
-                ));
-            }
-            let bytes = page
-                .to_bytes()
-                .map_err(|error| FinalizationError::PreparedArtifact(error.to_string()))?;
-            *artifact = artifact.clone().with_prepared_bytes(bytes);
-            retargeted += 1;
-        }
-        if retargeted == 0 {
-            return Err(FinalizationError::PreparedArtifact(
-                "no prepared artifact contains the failed stream-open occurrence".to_owned(),
-            ));
-        }
-        stores
-            .world_mut()
-            .retarget_pending_stream_open(failed, replacement)?;
-        self.prepared_pages = Some(pages);
-        Ok(())
+        self.publication
+            .retarget(failed, replacement.to_owned())
+            .map_err(FinalizationError::Publication)
     }
 
-    pub fn commit_effects<G>(
+    pub fn commit_effects(
         self,
-        stores: &mut Universe<G>,
+        world: &mut World,
     ) -> Result<CommittedFinalization, FinalizationError> {
-        match self.commit_effects_retryable(stores)? {
+        match self.commit_effects_retryable(world)? {
             FinalizationCommit::Committed(committed) => Ok(committed),
-            FinalizationCommit::Retry { error, .. } => Err(error.into()),
+            FinalizationCommit::Retry { failure, .. } => {
+                Err(FinalizationError::RetryablePublication(failure))
+            }
         }
     }
 
@@ -875,32 +641,26 @@ impl PlannedFinalization {
     /// case. Keeping this value lets the caller prompt and retarget the failed
     /// open, then resume the same pending suffix without rebuilding drivers or
     /// replaying engine effects.
-    pub fn commit_effects_retryable<G>(
-        mut self,
-        stores: &mut Universe<G>,
+    pub fn commit_effects_retryable(
+        self,
+        world: &mut World,
     ) -> Result<FinalizationCommit, FinalizationError> {
-        let result = if stores.world().commit_mode() == WorldCommitMode::Retained {
-            // §530's retry report is itself selector-routed output appended
-            // while this plan is suspended.
-            self.effect_pos = stores.world().effect_pos();
-            stores.export_retained_effects()
-        } else {
-            stores.publish_effect_prefix(self.effect_pos)
-        };
-        if let Err(error) = result {
-            if error.stream_open_unavailable().is_some()
-                && error.retry_safety() == tex_state::EffectRetrySafety::Safe
-            {
-                return Ok(FinalizationCommit::Retry { plan: self, error });
+        match self.publication.publish(world)? {
+            tex_exec::CompletionPublication::Committed(_) => {
+                Ok(FinalizationCommit::Committed(CommittedFinalization {
+                    files: self.files,
+                }))
             }
-            return Err(error.into());
+            tex_exec::CompletionPublication::Retry { plan, failure } => {
+                Ok(FinalizationCommit::Retry {
+                    plan: Self {
+                        publication: plan,
+                        files: self.files,
+                    },
+                    failure,
+                })
+            }
         }
-        if let Some(pages) = self.prepared_pages.take() {
-            stores.publish_page_suffix(pages)?;
-        }
-        Ok(FinalizationCommit::Committed(CommittedFinalization {
-            files: self.files,
-        }))
     }
 
     /// Explicit fixture policy: retain effect records and materialize nothing.
@@ -939,8 +699,8 @@ pub struct CommittedFinalization {
 }
 
 impl CommittedFinalization {
-    pub fn materialize<G>(self, stores: &mut Universe<G>) -> Result<(), FinalizationError> {
-        stores.world_mut().publish_files(
+    pub fn materialize(self, world: &mut World) -> Result<(), FinalizationError> {
+        world.publish_files(
             self.files
                 .into_iter()
                 .map(|file| (file.path, file.bytes))
@@ -954,6 +714,8 @@ impl CommittedFinalization {
 pub enum FinalizationError {
     ConflictingDriverPath(PathBuf),
     PreparedArtifact(String),
+    Publication(tex_exec::EnginePublicationError),
+    RetryablePublication(tex_exec::CompletionPublicationFailure),
     World(WorldError),
 }
 
@@ -968,6 +730,13 @@ impl std::fmt::Display for FinalizationError {
             Self::PreparedArtifact(message) => {
                 write!(f, "prepared page artifact finalization failed: {message}")
             }
+            Self::Publication(error) => error.fmt(f),
+            Self::RetryablePublication(failure) => write!(
+                f,
+                "retryable engine publication failed after {} effects: {}",
+                failure.committed_prefix(),
+                failure.message()
+            ),
             Self::World(error) => error.fmt(f),
         }
     }
@@ -978,6 +747,12 @@ impl std::error::Error for FinalizationError {}
 impl From<WorldError> for FinalizationError {
     fn from(value: WorldError) -> Self {
         Self::World(value)
+    }
+}
+
+impl From<tex_exec::EnginePublicationError> for FinalizationError {
+    fn from(value: tex_exec::EnginePublicationError) -> Self {
+        Self::Publication(value)
     }
 }
 
