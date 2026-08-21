@@ -26,13 +26,16 @@ All production mutation of live TeX state should pass through `Universe` or simi
   generated-font lookup, grouped box transfer, page marks, hyphenation,
   detached paragraph-shape and e-TeX penalty-array projections with journaled
   assignment, and bounded assignment-diagnostic rendering,
+  including e-TeX's assignment-free forced-online diagnostic scope,
   PDF traversal/form/color operations, output-stream normalization,
   definitions, token/glue allocation, and dependency-aware mutations without
   per-read owner admission.
 - `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, registered World-backed mutation keys, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, generic tracked-region lifecycle and journal-write records, deterministic ordering, rollback failure closure, and handle-independent observation tests.
 - `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
-- `src/diagnostic/tests.rs`: Destination-selection, `print_nl` line-break, and scalar-formatting tests for the diagnostic channel.
+- `src/diagnostic/tests.rs`: Destination-selection, admitted forced-online
+  routing without eqtb assignment, `print_nl` line-break, and scalar-formatting
+  tests for the diagnostic channel.
 - `src/definition_arena.rs`: Append-only generation-branded immutable macro
   definitions whose parameter and replacement words live in the same arena.
 - `src/durable_arena.rs`: Separate generation-branded append-only token-list,

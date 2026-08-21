@@ -104,6 +104,31 @@ fn online_print_nl_breaks_a_terminal_partial_line() {
 }
 
 #[test]
+fn admitted_online_diagnostic_overrides_tracingonline_without_assigning_it() {
+    with_test_universe(|universe| {
+        universe
+            .assign_int_param(IntParam::TRACING_ONLINE, 0, AssignmentScope::Global)
+            .expect("set tracingonline");
+        let mut command = universe
+            .command_context()
+            .expect("admitted command context");
+        let mut diagnostic = command.begin_online_diagnostic();
+        diagnostic.print("missing character");
+        diagnostic.end(false);
+        drop(command);
+        assert_eq!(
+            universe.int_param(IntParam::TRACING_ONLINE),
+            0,
+            "routing override must not write eqtb"
+        );
+        assert_eq!(
+            routed(universe),
+            vec![(PrintSink::TerminalAndLog, "missing character\n".to_owned())]
+        );
+    });
+}
+
+#[test]
 fn scalar_printing_matches_tex_web() {
     with_test_universe(|universe| {
         let mut diagnostic = universe.begin_diagnostic();

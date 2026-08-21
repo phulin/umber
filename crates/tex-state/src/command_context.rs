@@ -1908,6 +1908,24 @@ impl<'a, G> CommandContext<'a, G> {
         )
     }
 
+    /// Opens §245's diagnostic channel with terminal-and-log routing.
+    ///
+    /// e-TeX 2.6 change 17.516 temporarily forces `tracing_online` while
+    /// reporting level-two missing characters. This is a print-channel
+    /// override, not an eqtb assignment.
+    pub fn begin_online_diagnostic(&mut self) -> crate::diagnostic::Diagnostic<'_, G> {
+        let newline = self.int_param(IntParam::NEWLINE_CHAR);
+        let escape = self.int_param(IntParam::ESCAPE_CHAR);
+        crate::diagnostic::Diagnostic::from_parts(
+            self.world,
+            self.interaction_mode,
+            self.error_context_widths,
+            1,
+            newline,
+            escape,
+        )
+    }
+
     pub fn printer(&mut self) -> crate::print::Printer<'_, G> {
         let newline = self.int_param(IntParam::NEWLINE_CHAR);
         let escape = self.int_param(IntParam::ESCAPE_CHAR);
