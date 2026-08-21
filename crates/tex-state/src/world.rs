@@ -30,6 +30,16 @@ pub const STREAM_SLOT_COUNT: usize = 16;
 /// Hard ceiling for distinct semantic input paths retained by one World.
 pub const MAX_INPUT_DEPENDENCIES: usize = 8_192;
 
+static NEXT_TERMINAL_INPUT_OWNER: AtomicU64 = AtomicU64::new(1);
+
+fn fresh_terminal_input_owner() -> u64 {
+    NEXT_TERMINAL_INPUT_OWNER
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            next.checked_add(1)
+        })
+        .expect("terminal-input owner identity space exhausted")
+}
+
 /// An output-open answer that is safe to use before effect commit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RetainedOutputOpenOutcome {
@@ -888,7 +898,10 @@ pub struct StreamBufState {
 /// Opaque cursor for restoring a borrowed terminal-input position without
 /// exposing or replacing the World's retained terminal line storage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TerminalInputPosition(usize);
+pub struct TerminalInputPosition {
+    owner: u64,
+    next: usize,
+}
 
 impl StreamBufState {
     fn retained_bytes(&self) -> usize {
@@ -1665,6 +1678,7 @@ pub struct World {
     input_contents: BTreeMap<ContentHash, Arc<[u8]>>,
     input_dependencies: Arc<BTreeMap<Arc<Path>, InputDependency>>,
     terminal_inputs: Vec<String>,
+    terminal_input_owner: u64,
     shell_escapes: Vec<ShellEscapeRecord>,
     artifact_base: usize,
     artifact_commits: Arc<Vec<ContentHash>>,
@@ -2128,6 +2142,7 @@ impl Clone for World {
             input_contents: self.input_contents.clone(),
             input_dependencies: self.input_dependencies.clone(),
             terminal_inputs: self.terminal_inputs.clone(),
+            terminal_input_owner: fresh_terminal_input_owner(),
             shell_escapes: self.shell_escapes.clone(),
             artifact_base: self.artifact_base,
             artifact_commits: self.artifact_commits.clone(),
@@ -2381,6 +2396,7 @@ impl World {
             input_contents: BTreeMap::new(),
             input_dependencies: Arc::new(BTreeMap::new()),
             terminal_inputs: Vec::new(),
+            terminal_input_owner: fresh_terminal_input_owner(),
             shell_escapes: Vec::new(),
             artifact_base: 0,
             artifact_commits: Arc::new(Vec::new()),
@@ -3056,15 +3072,32 @@ impl World {
     }
 
     pub(crate) fn terminal_input_position(&self) -> TerminalInputPosition {
-        TerminalInputPosition(self.stream_bufs.terminal_input_next)
+        TerminalInputPosition {
+            owner: self.terminal_input_owner,
+            next: self.stream_bufs.terminal_input_next,
+        }
     }
 
-    pub(crate) fn restore_terminal_input_position(&mut self, position: TerminalInputPosition) {
-        assert!(
-            position.0 <= self.terminal_inputs.len(),
-            "terminal input position must name retained input"
-        );
-        self.stream_bufs_mut().terminal_input_next = position.0;
+    pub(crate) fn restore_terminal_input_position(
+        &mut self,
+        position: TerminalInputPosition,
+    ) -> Result<(), WorldError> {
+        if position.owner != self.terminal_input_owner {
+            return Err(WorldError::new(
+                "restore terminal input position",
+                None,
+                "terminal input position belongs to a different World",
+            ));
+        }
+        if position.next > self.terminal_inputs.len() {
+            return Err(WorldError::new(
+                "restore terminal input position",
+                None,
+                "terminal input position is no longer retained",
+            ));
+        }
+        self.stream_bufs_mut().terminal_input_next = position.next;
+        Ok(())
     }
 
     pub fn recorded_input_content(&self, id: InputRecordId) -> Option<FileContent> {

@@ -447,6 +447,295 @@ pub(crate) struct DenseState<G> {
 }
 
 impl<G> DenseState<G> {
+    pub(crate) fn capture_format_font_runtime(
+        &self,
+        font: FontId,
+    ) -> Result<crate::format::schema::FormatFontRuntime, &'static str> {
+        self.font_runtime
+            .capture_format(font.raw())
+            .map_err(|_| "format font runtime is not live")
+    }
+
+    pub(crate) fn install_format_font_runtimes(
+        &mut self,
+        fonts: &[crate::format::schema::FormatFont],
+    ) -> Result<(), &'static str> {
+        let mut runtime = FontRuntimeBank::new();
+        for (raw, font) in fonts.iter().enumerate() {
+            runtime
+                .install_format(raw as u32, &font.runtime)
+                .map_err(|_| "invalid format font runtime")?;
+        }
+        self.font_runtime = runtime;
+        Ok(())
+    }
+
+    pub(crate) fn capture_format_cells(
+        &self,
+        mut node_row: impl FnMut(DurableListId<G>) -> Result<u32, String>,
+    ) -> Result<Vec<crate::format::schema::FormatCell>, String> {
+        use crate::format::schema::{FormatCell, FormatMeaning};
+
+        let mut cells = Vec::new();
+        for (index, meaning) in self.meanings.values().enumerate() {
+            let meaning = match meaning {
+                MeaningWord::Static(0) => continue,
+                MeaningWord::Static(word) => FormatMeaning::Static(word),
+                MeaningWord::Font(font) => FormatMeaning::Font(font.raw()),
+                MeaningWord::Macro { flags, definition } => FormatMeaning::Macro {
+                    flags: flags.bits(),
+                    definition: definition.format_index(),
+                },
+            };
+            cells.push(FormatCell::Meaning(index as u32, meaning));
+        }
+        for index in u16::MIN..=u16::MAX {
+            let count = self.counts.get(index).expect("u16 register").value;
+            if count != 0 {
+                cells.push(FormatCell::Count(index, count));
+            }
+            let dimension = self
+                .dimensions
+                .get(index)
+                .expect("u16 register")
+                .value
+                .raw();
+            if dimension != 0 {
+                cells.push(FormatCell::Dimension(index, dimension));
+            }
+            if let Some(tokens) = self.token_registers.get(index).expect("u16 register").value {
+                cells.push(FormatCell::TokenRegister(index, tokens.format_index()));
+            }
+            if let Some(glue) = self.glue_registers.get(index).expect("u16 register").value {
+                cells.push(FormatCell::GlueRegister(index, glue.format_index()));
+            }
+            if let Some(glue) = self
+                .mu_glue_registers
+                .get(index)
+                .expect("u16 register")
+                .value
+            {
+                cells.push(FormatCell::MuGlueRegister(index, glue.format_index()));
+            }
+            if let Some(nodes) = self.box_registers.get(index).expect("u16 register").value {
+                cells.push(FormatCell::BoxRegister(index, node_row(nodes)?));
+            }
+        }
+        for index in 0..PARAMETER_COUNT as u16 {
+            let integer = self
+                .integer_parameters
+                .get(u32::from(index))
+                .expect("parameter")
+                .value;
+            if integer != 0
+                && !matches!(
+                    IntParam::new(index),
+                    IntParam::TIME | IntParam::DAY | IntParam::MONTH | IntParam::YEAR
+                )
+            {
+                cells.push(FormatCell::IntegerParameter(index, integer));
+            }
+            let dimension = self
+                .dimension_parameters
+                .get(u32::from(index))
+                .expect("parameter")
+                .value
+                .raw();
+            if dimension != 0 {
+                cells.push(FormatCell::DimensionParameter(index, dimension));
+            }
+            if let Some(tokens) = self
+                .token_parameters
+                .get(u32::from(index))
+                .expect("parameter")
+                .value
+            {
+                cells.push(FormatCell::TokenParameter(index, tokens.format_index()));
+            }
+            if let Some(glue) = self
+                .glue_parameters
+                .get(u32::from(index))
+                .expect("parameter")
+                .value
+            {
+                cells.push(FormatCell::GlueParameter(index, glue.format_index()));
+            }
+        }
+        if self.current_font.value.raw() != 0 {
+            cells.push(FormatCell::CurrentFont(self.current_font.value.raw()));
+        }
+        for (index, font) in self.math_family_fonts.values().enumerate() {
+            if font.raw() != 0 {
+                cells.push(FormatCell::MathFamilyFont(index as u8, font.raw()));
+            }
+        }
+        for (kind, bank) in [
+            (0, &self.catcodes),
+            (1, &self.lccodes),
+            (2, &self.uccodes),
+            (3, &self.sfcodes),
+            (4, &self.mathcodes),
+            (5, &self.delcodes),
+        ] {
+            cells.extend(
+                bank.nondefault_values()
+                    .map(|(scalar, value)| FormatCell::Code {
+                        kind,
+                        scalar,
+                        value,
+                    }),
+            );
+        }
+        Ok(cells)
+    }
+
+    pub(crate) fn install_format_cells(
+        &mut self,
+        cells: &[crate::format::schema::FormatCell],
+        definitions: &[crate::DefinitionId<G>],
+        token_lists: &[crate::TokenListId<G>],
+        glue_values: &[crate::GlueId<G>],
+        node_lists: &[crate::node_arena::DurableListId<G>],
+        font_count: usize,
+    ) -> Result<(), &'static str> {
+        use crate::format::schema::{FormatCell, FormatMeaning};
+        for &cell in cells {
+            match cell {
+                FormatCell::Meaning(index, meaning) => {
+                    let meaning = match meaning {
+                        FormatMeaning::Static(word) => MeaningWord::Static(word),
+                        FormatMeaning::Font(font) if (font as usize) < font_count => {
+                            MeaningWord::Font(FontId::new(font))
+                        }
+                        FormatMeaning::Font(_) => return Err("format references an unloaded font"),
+                        FormatMeaning::Macro { flags, definition } => MeaningWord::Macro {
+                            flags: crate::meaning::MeaningFlags::from_bits(flags),
+                            definition: *definitions
+                                .get(definition as usize)
+                                .ok_or("format macro reference is out of range")?,
+                        },
+                    };
+                    self.meanings
+                        .write(index, BankCell::level_one(meaning))
+                        .map_err(|_| "format meaning index is out of range")?;
+                }
+                FormatCell::Count(index, value) => self
+                    .counts
+                    .write(index, BankCell::level_one(value))
+                    .map_err(|_| "format count index")?,
+                FormatCell::Dimension(index, value) => self
+                    .dimensions
+                    .write(index, BankCell::level_one(Scaled::from_raw(value)))
+                    .map_err(|_| "format dimension index")?,
+                FormatCell::TokenRegister(index, value) => self
+                    .token_registers
+                    .write(
+                        index,
+                        BankCell::level_one(Some(
+                            *token_lists
+                                .get(value as usize)
+                                .ok_or("format token reference is out of range")?,
+                        )),
+                    )
+                    .map_err(|_| "format token register index")?,
+                FormatCell::GlueRegister(index, value) => self
+                    .glue_registers
+                    .write(
+                        index,
+                        BankCell::level_one(Some(
+                            *glue_values
+                                .get(value as usize)
+                                .ok_or("format glue reference is out of range")?,
+                        )),
+                    )
+                    .map_err(|_| "format glue register index")?,
+                FormatCell::MuGlueRegister(index, value) => self
+                    .mu_glue_registers
+                    .write(
+                        index,
+                        BankCell::level_one(Some(
+                            *glue_values
+                                .get(value as usize)
+                                .ok_or("format mu-glue reference is out of range")?,
+                        )),
+                    )
+                    .map_err(|_| "format mu-glue register index")?,
+                FormatCell::BoxRegister(index, value) => self
+                    .box_registers
+                    .write(
+                        index,
+                        BankCell::level_one(Some(
+                            *node_lists
+                                .get(value as usize)
+                                .ok_or("format node reference is out of range")?,
+                        )),
+                    )
+                    .map_err(|_| "format box register index")?,
+                FormatCell::IntegerParameter(index, value) => self
+                    .integer_parameters
+                    .write(u32::from(index), BankCell::level_one(value))
+                    .map_err(|_| "format integer parameter index")?,
+                FormatCell::DimensionParameter(index, value) => self
+                    .dimension_parameters
+                    .write(
+                        u32::from(index),
+                        BankCell::level_one(Scaled::from_raw(value)),
+                    )
+                    .map_err(|_| "format dimension parameter index")?,
+                FormatCell::TokenParameter(index, value) => self
+                    .token_parameters
+                    .write(
+                        u32::from(index),
+                        BankCell::level_one(Some(
+                            *token_lists
+                                .get(value as usize)
+                                .ok_or("format token reference is out of range")?,
+                        )),
+                    )
+                    .map_err(|_| "format token parameter index")?,
+                FormatCell::GlueParameter(index, value) => self
+                    .glue_parameters
+                    .write(
+                        u32::from(index),
+                        BankCell::level_one(Some(
+                            *glue_values
+                                .get(value as usize)
+                                .ok_or("format glue reference is out of range")?,
+                        )),
+                    )
+                    .map_err(|_| "format glue parameter index")?,
+                FormatCell::CurrentFont(font) if (font as usize) < font_count => {
+                    self.current_font = BankCell::level_one(FontId::new(font));
+                }
+                FormatCell::MathFamilyFont(index, font) if (font as usize) < font_count => self
+                    .math_family_fonts
+                    .write(u32::from(index), BankCell::level_one(FontId::new(font)))
+                    .map_err(|_| "format math-family index")?,
+                FormatCell::CurrentFont(_) | FormatCell::MathFamilyFont(_, _) => {
+                    return Err("format references an unloaded font");
+                }
+                FormatCell::Code {
+                    kind,
+                    scalar,
+                    value,
+                } => {
+                    let kind = match kind {
+                        0 => CodeTableKind::Catcode,
+                        1 => CodeTableKind::Lccode,
+                        2 => CodeTableKind::Uccode,
+                        3 => CodeTableKind::Sfcode,
+                        4 => CodeTableKind::Mathcode,
+                        5 => CodeTableKind::Delcode,
+                        _ => return Err("unknown format code-table kind"),
+                    };
+                    self.code_bank_mut(kind)
+                        .write(scalar, BankCell::level_one(value))
+                        .map_err(|_| "format code-table scalar")?;
+                }
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn new() -> Result<Self, StateError> {
         Ok(Self {
             meanings: DenseBank::growing(MeaningWord::UNDEFINED),

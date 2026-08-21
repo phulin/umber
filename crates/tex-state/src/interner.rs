@@ -289,6 +289,70 @@ pub struct Interner {
 }
 
 impl Interner {
+    pub(crate) fn capture_format_names(&self) -> Vec<crate::format::schema::FormatName> {
+        self.entries
+            .iter()
+            .map(|entry| {
+                let kind = match entry.kind {
+                    EntryKind::ControlSequence(ControlSequenceKind::Null) => 0,
+                    EntryKind::ControlSequence(ControlSequenceKind::SingleCharacter) => 1,
+                    EntryKind::ControlSequence(ControlSequenceKind::Named) => 2,
+                    EntryKind::ControlSequence(ControlSequenceKind::ActiveCharacter) => 3,
+                    EntryKind::ControlSequence(ControlSequenceKind::Internal) => 4,
+                    EntryKind::Spelling => 5,
+                };
+                crate::format::schema::FormatName {
+                    kind,
+                    hash_entry: entry.hash_entry,
+                    text: self.entry_text(entry).to_owned(),
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn install_format_name(
+        &mut self,
+        expected_slot: u32,
+        row: &crate::format::schema::FormatName,
+    ) -> Result<Option<Symbol>, &'static str> {
+        let slot = match row.kind {
+            0..=4 => {
+                let kind = match row.kind {
+                    0 => ControlSequenceKind::Null,
+                    1 => ControlSequenceKind::SingleCharacter,
+                    2 => ControlSequenceKind::Named,
+                    3 => ControlSequenceKind::ActiveCharacter,
+                    4 => ControlSequenceKind::Internal,
+                    _ => unreachable!(),
+                };
+                let id = self
+                    .intern_control_sequence(kind, &row.text, row.hash_entry)
+                    .map_err(|_| "format name exceeds destination budget")?;
+                if row.hash_entry {
+                    self.entries[id.raw() as usize].hash_entry = true;
+                }
+                Some(id.symbol())
+            }
+            5 => {
+                if row.hash_entry {
+                    return Err("format spelling cannot be a hash entry");
+                }
+                let id = self
+                    .intern_spelling(&row.text)
+                    .map_err(|_| "format spelling exceeds destination budget")?;
+                if id.raw() != expected_slot {
+                    return Err("duplicate or noncanonical format spelling");
+                }
+                None
+            }
+            _ => return Err("unknown format name kind"),
+        };
+        if slot.is_some_and(|slot| slot.raw() != expected_slot) {
+            return Err("duplicate or noncanonical format control sequence");
+        }
+        Ok(slot)
+    }
+
     /// Creates a fresh, empty session epoch under explicit limits.
     #[must_use]
     pub(crate) fn new(budget: InternerBudget) -> Self {

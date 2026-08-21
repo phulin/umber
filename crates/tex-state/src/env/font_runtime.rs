@@ -40,6 +40,76 @@ impl FontRuntimeBank {
         Self { rows: Vec::new() }
     }
 
+    pub(crate) fn capture_format(
+        &self,
+        font: u32,
+    ) -> Result<crate::format::schema::FormatFontRuntime, BankError> {
+        let row = self.row(font)?;
+        let parameter_count =
+            usize::try_from(row.parameter_count.value).map_err(|_| BankError::IndexOutOfBounds)?;
+        if parameter_count > row.parameters.len() {
+            return Err(BankError::IndexOutOfBounds);
+        }
+        Ok(crate::format::schema::FormatFontRuntime {
+            parameters: row.parameters[..parameter_count]
+                .iter()
+                .map(|cell| cell.value.raw())
+                .collect(),
+            hyphen_char: row.hyphen_char.value,
+            skew_char: row.skew_char.value,
+            pdf_codes: row
+                .pdf_codes
+                .iter()
+                .map(|table| {
+                    table
+                        .as_ref()
+                        .map(|values| values.iter().map(|cell| cell.value).collect())
+                })
+                .collect(),
+            ligatures_disabled: row.ligatures_disabled.value != 0,
+        })
+    }
+
+    pub(crate) fn install_format(
+        &mut self,
+        font: u32,
+        format: &crate::format::schema::FormatFontRuntime,
+    ) -> Result<(), BankError> {
+        if format.pdf_codes.len() != PDF_CODE_TABLES
+            || format
+                .pdf_codes
+                .iter()
+                .flatten()
+                .any(|values| values.len() != PDF_CODE_COUNT)
+        {
+            return Err(BankError::IndexOutOfBounds);
+        }
+        let mut prepared = self.prepare(
+            &format
+                .parameters
+                .iter()
+                .copied()
+                .map(Scaled::from_raw)
+                .collect::<Vec<_>>(),
+            format.hyphen_char,
+            format.skew_char,
+        )?;
+        prepared.row.pdf_codes = core::array::from_fn(|table| {
+            format.pdf_codes[table].as_ref().map(|values| {
+                values
+                    .iter()
+                    .copied()
+                    .map(BankCell::level_one)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice()
+                    .try_into()
+                    .expect("validated PDF font-code table has 256 entries")
+            })
+        });
+        prepared.row.ligatures_disabled = BankCell::level_one(i32::from(format.ligatures_disabled));
+        self.install(font, prepared)
+    }
+
     pub(crate) fn prepare(
         &mut self,
         parameters: &[Scaled],

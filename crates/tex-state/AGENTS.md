@@ -71,6 +71,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   recipes whose generated sources are named by semantic identity.
 - `src/format.rs` and `src/format/tests.rs`: Destination-stamped format
   staging and infallible atomic publication after complete validation.
+- `src/format/schema.rs`: Handle-free schema-11 logical rows for names,
+  immutable values, and sparse environment cells.
 - `src/format_container.rs`: Portable schema-11 format-image header, section directory, authoritative fingerprints, checksum, compression, and structural validation; no compatibility codec is retained.
 - `src/format_container/tests.rs`: Focused frozen-container header, directory, checksum-coverage, fingerprint, compression, and geometry tests.
 - `src/frozen_lookup.rs`: Versioned portable literal bucket/index codecs used to encode and validate cold format structures; decoded token lookup tables own no runtime liveness.

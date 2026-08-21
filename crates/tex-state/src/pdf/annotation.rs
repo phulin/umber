@@ -4,7 +4,7 @@ use super::PdfActionSpec;
 use crate::durable_arena::TokenListId;
 use crate::scaled::Scaled;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PdfAnnotationDimensions {
     pub width: Option<Scaled>,
     pub height: Option<Scaled>,

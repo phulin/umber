@@ -82,7 +82,7 @@ pub enum PdfColorStackTarget {
 }
 
 /// A color-stack mutation retained on the whatsit until final traversal.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum PdfColorStackAction {
     Set(Vec<u8>),
     Push(Vec<u8>),

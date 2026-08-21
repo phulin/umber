@@ -62,6 +62,17 @@ macro_rules! dense_id {
             fn index(self) -> usize {
                 self.row.get() as usize - 1
             }
+
+            pub(crate) fn format_index(self) -> u32 {
+                self.row.get() - 1
+            }
+
+            pub(crate) fn format_validation_coordinate(index: u32) -> Option<Self> {
+                index
+                    .checked_add(1)
+                    .and_then(NonZeroU32::new)
+                    .map(Self::from_row)
+            }
         }
     };
 }
@@ -194,6 +205,18 @@ impl<G> TokenListArena<G> {
     pub(crate) const fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }
+
+    pub(crate) fn capture_format_rows(&self) -> Vec<Vec<u32>> {
+        self.rows
+            .iter()
+            .map(|span| {
+                span.resolve(&self.words)
+                    .iter()
+                    .map(|word| word.raw())
+                    .collect()
+            })
+            .collect()
+    }
 }
 
 /// Durable immutable glue specifications.
@@ -248,6 +271,19 @@ impl<G> GlueArena<G> {
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {
         self.rows.is_empty()
+    }
+
+    pub(crate) fn capture_format_rows(&self) -> Vec<crate::format::schema::FormatGlue> {
+        self.rows
+            .iter()
+            .map(|value| crate::format::schema::FormatGlue {
+                width: value.width.raw(),
+                stretch: value.stretch.raw(),
+                stretch_order: value.stretch_order as u8,
+                shrink: value.shrink.raw(),
+                shrink_order: value.shrink_order as u8,
+            })
+            .collect()
     }
 }
 

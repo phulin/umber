@@ -26,6 +26,21 @@ pub(crate) struct StateCore<G> {
 }
 
 impl<G> StateCore<G> {
+    pub(crate) fn capture_format_values(
+        &self,
+    ) -> (
+        Vec<crate::format::schema::FormatDefinition>,
+        Vec<Vec<u32>>,
+        Vec<crate::format::schema::FormatGlue>,
+    ) {
+        let generation = self.generation.generation();
+        (
+            generation.definitions().capture_format_rows(),
+            generation.token_lists().capture_format_rows(),
+            generation.glue().capture_format_rows(),
+        )
+    }
+
     pub(crate) fn new(generation: Generation<G>) -> Result<Self, StateError> {
         Ok(Self {
             generation: GenerationOwner::new(generation),

@@ -380,11 +380,11 @@ pub struct Universe<G> {
     pub(crate) interner: Interner,
     pub(crate) core: Option<StateCore<G>>,
     page_nodes: PageNodeArena,
-    fonts: FontStore,
+    pub(crate) fonts: FontStore,
     pub(crate) page: PageBuilderState,
     pub(crate) pdf: PdfState<G>,
     sources: SourceMap,
-    hyphenation: HyphenationTable,
+    pub(crate) hyphenation: HyphenationTable,
     pub(crate) world: World,
     dependencies: DependencyRuntime,
     pub(crate) interaction_mode: InteractionMode,
@@ -727,6 +727,21 @@ impl<G> Universe<G> {
 
     pub const fn world_mut(&mut self) -> &mut World {
         &mut self.world
+    }
+
+    /// Captures an opaque cursor into this job's retained terminal input.
+    #[must_use]
+    pub fn capture_terminal_input_position(&self) -> crate::TerminalInputPosition {
+        self.world.terminal_input_position()
+    }
+
+    /// Restores a cursor only when it belongs to this exact caller World.
+    /// Foreign and stale positions are rejected before the live cursor moves.
+    pub fn restore_terminal_input_position(
+        &mut self,
+        position: crate::TerminalInputPosition,
+    ) -> Result<(), crate::WorldError> {
+        self.world.restore_terminal_input_position(position)
     }
 
     #[must_use]

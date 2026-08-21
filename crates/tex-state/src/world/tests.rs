@@ -143,3 +143,30 @@ fn committed_artifact_bytes_are_owned_and_rehash_on_preparation() {
     assert_eq!(committed.bytes(), &[4, 5, 6]);
     assert_ne!(committed.hash(), original_hash);
 }
+
+#[test]
+fn terminal_input_positions_reject_foreign_and_stale_values_before_mutation() {
+    let mut first = World::memory();
+    first
+        .push_memory_terminal_line("first")
+        .expect("memory terminal input");
+    let foreign = first.terminal_input_position();
+
+    let mut second = World::memory();
+    second
+        .push_memory_terminal_line("second")
+        .expect("memory terminal input");
+    assert!(second.restore_terminal_input_position(foreign).is_err());
+    assert_eq!(
+        second.read_terminal_line().expect("terminal read"),
+        Some("second".to_owned())
+    );
+
+    let live = second.terminal_input_position();
+    let stale = TerminalInputPosition {
+        owner: live.owner,
+        next: usize::MAX,
+    };
+    assert!(second.restore_terminal_input_position(stale).is_err());
+    assert_eq!(second.terminal_input_position(), live);
+}

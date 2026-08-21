@@ -16,6 +16,40 @@ use std::hash::{Hash, Hasher};
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct NodeTokenList(Box<[TokenWord]>);
 
+impl serde::Serialize for NodeTokenList {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serde::Serialize::serialize(
+            &self.0.iter().map(|word| word.raw()).collect::<Vec<_>>(),
+            serializer,
+        )
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for NodeTokenList {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let words = <Vec<u32> as serde::Deserialize>::deserialize(deserializer)?
+            .into_iter()
+            .map(TokenWord::from_raw)
+            .collect::<Vec<_>>();
+        Ok(Self::new(words))
+    }
+}
+
+fn serialize_font_id<S: serde::Serializer>(
+    font: &FontId,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_u32(font.raw())
+}
+
+fn deserialize_font_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<FontId, D::Error> {
+    Ok(FontId::new(<u32 as serde::Deserialize>::deserialize(
+        deserializer,
+    )?))
+}
+
 impl NodeTokenList {
     #[must_use]
     pub fn new(words: impl Into<Box<[TokenWord]>>) -> Self {
@@ -119,21 +153,35 @@ impl NodeKind {
 }
 
 /// A frozen TeX node.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(bound(
+    serialize = "List: serde::Serialize, Glue: serde::Serialize, Tokens: serde::Serialize",
+    deserialize = "List: serde::Deserialize<'de>, Glue: serde::Deserialize<'de>, Tokens: serde::Deserialize<'de>"
+))]
 pub enum Node<List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
     Char {
+        #[serde(
+            serialize_with = "serialize_font_id",
+            deserialize_with = "deserialize_font_id"
+        )]
         font: FontId,
         ch: char,
         /// Diagnostic-only source provenance; excluded from semantic identity.
+        #[serde(skip, default)]
         origin: OriginId,
     },
     Lig {
+        #[serde(
+            serialize_with = "serialize_font_id",
+            deserialize_with = "deserialize_font_id"
+        )]
         font: FontId,
         ch: char,
         orig: Vec<char>,
         left_hit: bool,
         right_hit: bool,
         /// One origin per original character consumed by the ligature.
+        #[serde(skip, default)]
         origins: Vec<OriginId>,
     },
     Kern {
@@ -144,6 +192,10 @@ pub enum Node<List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
     MarginKern {
         amount: Scaled,
         side: MarginKernSide,
+        #[serde(
+            serialize_with = "serialize_font_id",
+            deserialize_with = "deserialize_font_id"
+        )]
         font: FontId,
         ch: u8,
     },
@@ -167,6 +219,7 @@ pub enum Node<List = PageListId, Glue = GlueSpec, Tokens = NodeTokenList> {
         post: List,
         replace: List,
         /// TeX's physical `replace_count`, retained only for diagnostics.
+        #[serde(skip, default)]
         physical_replace_count: u8,
     },
     Mark {
@@ -365,6 +418,27 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
             Self::Mark { tokens, .. } => visit_tokens(tokens),
             Self::Ins { split_top_skip, .. } => visit_glue(split_top_skip),
             Self::Whatsit(whatsit) => whatsit.visit_payloads(visit_glue, visit_tokens),
+            _ => {}
+        }
+    }
+
+    /// Visits token words embedded directly in rare PDF action identifiers.
+    /// Generic token-list payload coordinates are reported by `visit_payloads`;
+    /// this companion visitor covers the node-owned name/raw spellings.
+    pub(crate) fn visit_embedded_token_words(&self, mut visit: impl FnMut(TokenWord)) {
+        let mut identifier = |identifier: &NodePdfActionIdentifier| match identifier {
+            NodePdfActionIdentifier::Name(tokens) | NodePdfActionIdentifier::Raw(tokens) => {
+                for &word in tokens.words() {
+                    visit(word);
+                }
+            }
+            NodePdfActionIdentifier::Number(_) => {}
+        };
+        match self {
+            Self::Whatsit(Whatsit::PdfDestination(destination)) => {
+                identifier(&destination.identifier);
+            }
+            Self::Whatsit(Whatsit::PdfThread(thread)) => identifier(&thread.identifier),
             _ => {}
         }
     }
@@ -770,7 +844,7 @@ impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
 ///
 /// Ordinary TeX adjustments migrate after their containing horizontal box;
 /// pdfTeX's `pre` form migrates before it.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct AdjustNode<List = PageListId> {
     pub content: List,
     pub pre: bool,
@@ -794,7 +868,11 @@ impl<List> AdjustNode<List> {
 }
 
 /// A TeX box node payload shared by hlist and vlist nodes.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(bound(
+    serialize = "List: serde::Serialize",
+    deserialize = "List: serde::Deserialize<'de>"
+))]
 pub struct BoxNode<List = PageListId> {
     pub width: Scaled,
     pub height: Scaled,
@@ -807,10 +885,12 @@ pub struct BoxNode<List = PageListId> {
     pub glue_sign: Sign,
     pub glue_order: Order,
     pub children: List,
+    #[serde(skip, default)]
     pub diagnostic_children: Option<List>,
     /// Direct high-memory cells shared with `diagnostic_children` by exact
     /// allocator lineage. This allocator projection is nonsemantic and is not
     /// part of the portable format schema.
+    #[serde(skip, default)]
     pub allocator_high_cell_overlap: u32,
 }
 
@@ -917,7 +997,11 @@ pub enum BoxLr {
 }
 
 /// Repeated material attached to a leader glue node.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(bound(
+    serialize = "List: serde::Serialize",
+    deserialize = "List: serde::Deserialize<'de>"
+))]
 pub enum LeaderPayload<List = PageListId> {
     HList(BoxNode<List>),
     VList(BoxNode<List>),
@@ -947,7 +1031,7 @@ impl<List> LeaderPayload<List> {
 }
 
 /// A TeX unset box used while alignments are being measured and resolved.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct UnsetNode<List = PageListId> {
     pub kind: UnsetKind,
     pub width: Scaled,
@@ -1156,7 +1240,7 @@ pub enum Sign {
 }
 
 /// Extension nodes whose effects are interpreted by later subsystems.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum Whatsit<Glue = GlueSpec, Tokens = NodeTokenList> {
     OpenOut {
         slot: StreamSlot,
@@ -1337,7 +1421,7 @@ impl<Glue, Tokens> Whatsit<Glue, Tokens> {
 }
 
 /// Rare article-thread marker kept out of the hot inline node representation.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PdfThreadNode<Tokens = NodeTokenList> {
     pub identifier: NodePdfActionIdentifier,
     pub dimensions: crate::PdfAnnotationDimensions,
@@ -1346,7 +1430,7 @@ pub struct PdfThreadNode<Tokens = NodeTokenList> {
 }
 
 /// Rare destination marker kept out of the hot inline node representation.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PdfDestinationNode {
     pub identifier: NodePdfActionIdentifier,
     pub structure: Option<u32>,
@@ -1354,7 +1438,7 @@ pub struct PdfDestinationNode {
 }
 
 /// A navigation identifier copied into the semantic lifetime of a node.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum NodePdfActionIdentifier {
     Name(NodeTokenList),
     Number(u32),
@@ -1362,7 +1446,7 @@ pub enum NodePdfActionIdentifier {
 }
 
 /// A page destination view, retained until final traversal resolves geometry.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum PdfDestinationKind {
     Xyz { zoom: Option<i32> },
     FitBoundingBoxHorizontal,
@@ -1381,7 +1465,7 @@ pub enum PdfAccessibilityControl {
     FakeSpace,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum PdfLiteralMode {
     Origin,
     Page,

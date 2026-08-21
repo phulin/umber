@@ -262,7 +262,6 @@ impl TokenWord {
         self.0
     }
 
-    #[cfg(test)]
     pub(crate) const fn from_raw(raw: u32) -> Self {
         Self(raw)
     }

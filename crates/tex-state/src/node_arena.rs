@@ -68,6 +68,14 @@ impl<L> NodeListId<L> {
         Self::EMPTY
     }
 
+    pub(crate) const fn format_validation_coordinate(row: u32) -> Self {
+        if row == 0 {
+            Self::EMPTY
+        } else {
+            Self::from_row(1, row, 1)
+        }
+    }
+
     /// Whether this coordinate names the canonical empty list.
     #[must_use]
     pub const fn is_empty(self) -> bool {

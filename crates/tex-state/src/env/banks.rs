@@ -665,6 +665,22 @@ impl<T: Copy> PagedDenseBank<T> {
     }
 }
 
+impl<T: Copy + PartialEq> PagedDenseBank<T> {
+    pub(crate) fn nondefault_values(&self) -> impl Iterator<Item = (u32, T)> + '_ {
+        self.pages
+            .iter()
+            .enumerate()
+            .filter_map(|(page, values)| values.as_ref().map(|values| (page, values)))
+            .flat_map(move |(page, values)| {
+                values.iter().enumerate().filter_map(move |(offset, cell)| {
+                    let index = page as u32 * PAGE_LEN as u32 + offset as u32;
+                    (index < self.len && cell.value != (self.default)(index))
+                        .then_some((index, cell.value))
+                })
+            })
+    }
+}
+
 /// TeX's dense 0--255 register prefix plus page/index dense e-TeX overflow.
 pub(crate) struct RegisterBank<T: Copy> {
     dense: [BankCell<T>; DENSE_REGISTER_COUNT],

@@ -250,6 +250,146 @@ impl FontStore {
         }
     }
 
+    pub(crate) fn capture_format_fonts(
+        &self,
+        mut runtime: impl FnMut(
+            FontId,
+        )
+            -> Result<crate::format::schema::FormatFontRuntime, &'static str>,
+    ) -> Result<Vec<crate::format::schema::FormatFont>, &'static str> {
+        use crate::format::schema::{FormatFont, FormatFontConstruction};
+
+        self.fonts
+            .iter()
+            .enumerate()
+            .map(|(raw, font)| {
+                if font.opentype().is_some()
+                    || font.encoding_map().is_some()
+                    || font.layout_policy() != tex_fonts::FontLayoutPolicy::ClassicTfmExact
+                    || font.mapping_fallback().is_some()
+                {
+                    return Err("format contains a non-classic font recipe");
+                }
+                let construction = match font.construction() {
+                    FontConstruction::Loaded => FormatFontConstruction::Loaded,
+                    FontConstruction::Copied { source } => FormatFontConstruction::Copied {
+                        source: source.bytes(),
+                    },
+                    FontConstruction::Letterspaced {
+                        source,
+                        amount,
+                        no_ligatures,
+                    } => FormatFontConstruction::Letterspaced {
+                        source: source.bytes(),
+                        amount: *amount,
+                        no_ligatures: *no_ligatures,
+                    },
+                    FontConstruction::Expanded { source, ratio } => {
+                        FormatFontConstruction::Expanded {
+                            source: source.bytes(),
+                            ratio: *ratio,
+                        }
+                    }
+                };
+                Ok(FormatFont {
+                    name: font.name().to_owned(),
+                    content_hash: font.content_hash(),
+                    checksum: font.checksum(),
+                    design_size: font.design_size().raw(),
+                    size: font.size().raw(),
+                    parameters: font.parameters().iter().map(|v| v.raw()).collect(),
+                    source_parameters: font.source_parameters().iter().map(|v| v.raw()).collect(),
+                    font_info_words: font
+                        .font_info_words()
+                        .try_into()
+                        .map_err(|_| "format font-info extent exceeds u32")?,
+                    characters: font.metrics().characters().to_vec(),
+                    lig_kern_program: font.metrics().lig_kern_program().to_vec(),
+                    right_boundary_char: font.metrics().right_boundary_char(),
+                    left_boundary_program: font.metrics().left_boundary_program(),
+                    extensible_recipes: font.metrics().extensible_recipes().to_vec(),
+                    identifier: self.identifiers[raw].map(SymbolId::raw),
+                    expansion: self.expansion_specs[raw],
+                    construction,
+                    runtime: runtime(FontId::new(raw as u32))?,
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn restore_format_fonts(
+        rows: &[crate::format::schema::FormatFont],
+        interner: &crate::interner::Interner,
+    ) -> Result<Self, &'static str> {
+        use crate::format::schema::FormatFontConstruction;
+
+        let rows = rows
+            .iter()
+            .map(|row| {
+                let construction = match row.construction {
+                    FormatFontConstruction::Loaded => FontConstruction::Loaded,
+                    FormatFontConstruction::Copied { source } => FontConstruction::Copied {
+                        source: FontSourceIdentity::from_bytes(source),
+                    },
+                    FormatFontConstruction::Letterspaced {
+                        source,
+                        amount,
+                        no_ligatures,
+                    } => FontConstruction::Letterspaced {
+                        source: FontSourceIdentity::from_bytes(source),
+                        amount,
+                        no_ligatures,
+                    },
+                    FormatFontConstruction::Expanded { source, ratio } => {
+                        FontConstruction::Expanded {
+                            source: FontSourceIdentity::from_bytes(source),
+                            ratio,
+                        }
+                    }
+                };
+                let font = LoadedFont::new(
+                    row.name.clone(),
+                    PathBuf::from(&row.name),
+                    row.content_hash,
+                    row.checksum,
+                    Scaled::from_raw(row.design_size),
+                    Scaled::from_raw(row.size),
+                    row.parameters
+                        .iter()
+                        .copied()
+                        .map(Scaled::from_raw)
+                        .collect(),
+                    FontMetrics::new(
+                        row.characters.clone(),
+                        row.lig_kern_program.clone(),
+                        row.right_boundary_char,
+                        row.left_boundary_program,
+                        row.extensible_recipes.clone(),
+                    ),
+                )
+                .with_font_info_words(row.font_info_words as usize)
+                .with_source_parameters(
+                    row.source_parameters
+                        .iter()
+                        .copied()
+                        .map(Scaled::from_raw)
+                        .collect(),
+                )
+                .with_construction(construction);
+                let identifier = row
+                    .identifier
+                    .map(|slot| {
+                        interner
+                            .symbol_at_slot(slot)
+                            .ok_or("format font identifier is not live")
+                    })
+                    .transpose()?;
+                Ok((font, identifier, row.expansion))
+            })
+            .collect::<Result<Vec<_>, &'static str>>()?;
+        Self::from_frozen(rows, interner)
+    }
+
     pub(crate) fn from_frozen(
         rows: Vec<(LoadedFont, Option<SymbolId>, Option<FontExpansion>)>,
         interner: &crate::interner::Interner,

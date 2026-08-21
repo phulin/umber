@@ -50,6 +50,12 @@ impl<G> core::fmt::Debug for DefinitionId<G> {
     }
 }
 
+impl<G> DefinitionId<G> {
+    pub(crate) const fn format_index(self) -> u32 {
+        self.row.get() - 1
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct TokenSpan {
     start: u32,
@@ -204,6 +210,26 @@ impl<G> DefinitionArena<G> {
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {
         self.rows.is_empty()
+    }
+
+    pub(crate) fn capture_format_rows(&self) -> Vec<crate::format::schema::FormatDefinition> {
+        self.rows
+            .iter()
+            .map(|record| crate::format::schema::FormatDefinition {
+                parameter_text: record
+                    .parameter_text
+                    .resolve(&self.words)
+                    .iter()
+                    .map(|word| word.raw())
+                    .collect(),
+                replacement_text: record
+                    .replacement_text
+                    .resolve(&self.words)
+                    .iter()
+                    .map(|word| word.raw())
+                    .collect(),
+            })
+            .collect()
     }
 }
 

@@ -3,8 +3,14 @@ use super::{
     with_materialized_format,
 };
 use crate::interner::InternerBudget;
+use crate::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
+use crate::node::Node;
+use crate::token::{Catcode, Token, TokenWord};
 use crate::world::{JobClock, World};
-use crate::{InteractionMode, with_universe};
+use crate::{AssignmentScope, CodeTableKind, InteractionMode, with_universe};
+use tex_arith::Scaled;
+use tex_content::ContentHash;
+use tex_fonts::{FontMetrics, LoadedFont};
 
 fn budget() -> InternerBudget {
     InternerBudget::new(32, 64, 4 * 1024).expect("test budget")
@@ -16,6 +22,19 @@ fn image() -> DetachedFormatImage {
         universe.capture_format_image().expect("capture")
     })
     .expect("fresh universe")
+}
+
+fn test_font() -> LoadedFont {
+    LoadedFont::new(
+        "formatfont",
+        "/fonts/formatfont.tfm",
+        ContentHash::from_bytes(b"format font metrics").bytes(),
+        0x1234_5678,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(12 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        FontMetrics::default(),
+    )
 }
 
 #[test]
@@ -125,4 +144,221 @@ fn staging_consumes_destination_once() {
         Ok(())
     })
     .expect("destination episode");
+}
+
+#[test]
+fn logical_rows_roundtrip_aliases_values_codes_and_hyphenation() {
+    let image = with_universe(budget(), |universe| {
+        let alpha = universe.intern("alpha").expect("alpha name");
+        let alias = universe.intern("alias").expect("alias name");
+        let replacement = [TokenWord::pack(Token::Cs(alpha.symbol()))];
+        let definition = universe
+            .allocate_definition(&[], &replacement)
+            .expect("definition");
+        let meaning = MeaningWord::macro_definition(MeaningFlags::LONG, definition);
+        universe
+            .assign_meaning(alpha, meaning, AssignmentScope::Global)
+            .expect("alpha meaning");
+        universe
+            .assign_meaning(alias, meaning, AssignmentScope::Global)
+            .expect("alias meaning");
+        let tokens = universe
+            .allocate_token_list(&replacement)
+            .expect("token list");
+        universe
+            .assign_token_register(7, Some(tokens), AssignmentScope::Global)
+            .expect("token register");
+        let glue_value = crate::glue::GlueSpec {
+            width: Scaled::from_raw(123),
+            stretch: Scaled::from_raw(4),
+            stretch_order: crate::glue::Order::Fil,
+            shrink: Scaled::from_raw(5),
+            shrink_order: crate::glue::Order::Normal,
+        };
+        let glue = universe.allocate_glue(glue_value).expect("glue");
+        universe
+            .assign_glue_register(9, Some(glue), AssignmentScope::Global)
+            .expect("glue register");
+        universe
+            .assign_count(42, 867_530_9, AssignmentScope::Global)
+            .expect("count");
+        universe
+            .assign_code(
+                CodeTableKind::Catcode,
+                '@',
+                i64::from(Catcode::Letter as u8),
+                AssignmentScope::Global,
+            )
+            .expect("catcode");
+        {
+            let mut context = universe.command_context().expect("hyphenation admission");
+            context
+                .add_hyphenation_pattern_for_language(
+                    3,
+                    crate::hyphenation::PatternSpec {
+                        letters: vec!['a', 'b'],
+                        values: vec![0, 1, 0],
+                    },
+                )
+                .expect("pattern");
+            context.close_hyphenation_patterns();
+        }
+        universe.capture_format_image().expect("logical capture")
+    })
+    .expect("source universe");
+
+    with_materialized_format(budget(), World::memory(), &image, |universe| {
+        let alpha = universe.intern("alpha").expect("restored alpha");
+        let alias = universe.intern("alias").expect("restored alias");
+        let alpha_meaning = universe.meaning(alpha.symbol()).expect("alpha meaning");
+        let alias_meaning = universe.meaning(alias.symbol()).expect("alias meaning");
+        assert_eq!(alpha_meaning, alias_meaning);
+        let ResolvedMeaning::Macro { flags, definition } = alpha_meaning else {
+            panic!("restored macro meaning");
+        };
+        assert_eq!(flags, MeaningFlags::LONG);
+        assert_eq!(
+            universe
+                .core
+                .as_ref()
+                .expect("core")
+                .admit()
+                .definition(definition)
+                .replacement_text(),
+            [TokenWord::pack(Token::Cs(alpha.symbol()))]
+        );
+        assert_eq!(universe.count(42).expect("count"), 867_530_9);
+        let tokens = universe
+            .token_register(7)
+            .expect("token register")
+            .expect("token root");
+        assert_eq!(
+            universe
+                .core
+                .as_ref()
+                .expect("core")
+                .admit()
+                .token_list(tokens),
+            [TokenWord::pack(Token::Cs(alpha.symbol()))]
+        );
+        let glue = universe
+            .glue_register(9)
+            .expect("glue register")
+            .expect("glue root");
+        assert_eq!(universe.glue_value(glue).width, Scaled::from_raw(123));
+        assert_eq!(universe.catcode('@'), Catcode::Letter);
+        assert!(
+            universe
+                .command_context()
+                .expect("hyphenation admission")
+                .contains_hyphenation_pattern_for_language(3, &['a', 'b'])
+        );
+        assert_eq!(
+            universe.capture_format_image().expect("redump").as_bytes(),
+            image.as_bytes()
+        );
+    })
+    .expect("materialized logical format");
+}
+
+#[test]
+fn logical_roundtrip_preserves_font_node_box_and_pdf_roots() {
+    let (image, raw_object, form_object) = with_universe(budget(), |universe| {
+        let selector = universe.intern("formatfont").expect("font selector");
+        let font = universe
+            .command_context()
+            .expect("font admission")
+            .intern_font(test_font());
+        universe
+            .assign_meaning(
+                selector,
+                MeaningWord::from_static(Meaning::Font(font)),
+                AssignmentScope::Global,
+            )
+            .expect("font meaning");
+        universe
+            .assign_current_font(font, AssignmentScope::Global)
+            .expect("current font");
+        let page_root = universe.publish_page_nodes(&[Node::Char {
+            font,
+            ch: 'X',
+            origin: crate::token::OriginId::UNKNOWN,
+        }]);
+        universe
+            .assign_page_box(12, Some(page_root), AssignmentScope::Global)
+            .expect("box promotion");
+        let tokens = universe
+            .allocate_token_list(&[TokenWord::pack(Token::Char {
+                ch: 'q',
+                cat: Catcode::Other,
+            })])
+            .expect("PDF token root");
+        let (raw_object, form_object) = {
+            let mut context = universe.command_context().expect("PDF admission");
+            let raw = context.reserve_pdf_raw_object().expect("raw object");
+            context
+                .initialize_pdf_raw_object(raw, false, None, false, tokens, false)
+                .expect("raw object data");
+            let form = context.reserve_pdf_form().expect("form reservation");
+            context
+                .initialize_pdf_form(
+                    form,
+                    page_root,
+                    (
+                        Scaled::from_raw(10),
+                        Scaled::from_raw(20),
+                        Scaled::from_raw(3),
+                    ),
+                    Some(tokens),
+                    None,
+                    false,
+                )
+                .expect("form data");
+            (raw.raw(), form.0)
+        };
+        (
+            universe
+                .capture_format_image()
+                .expect("full logical capture"),
+            raw_object,
+            form_object,
+        )
+    })
+    .expect("source universe");
+
+    with_materialized_format(budget(), World::memory(), &image, |universe| {
+        let selector = universe.intern("formatfont").expect("restored selector");
+        let ResolvedMeaning::Static(Meaning::Font(font)) =
+            universe.meaning(selector.symbol()).expect("font meaning")
+        else {
+            panic!("restored font selector")
+        };
+        assert_eq!(font.raw(), 1);
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("font admission")
+                .font_name(font),
+            "formatfont"
+        );
+        let root = universe
+            .box_register(12)
+            .expect("box register")
+            .expect("box root");
+        let admitted = universe.core.as_ref().expect("core").admit();
+        assert!(matches!(
+            admitted.node_list(root).expect("node list").nodes(),
+            [Node::Char { font: node_font, ch: 'X', .. }] if *node_font == font
+        ));
+        drop(admitted);
+        let context = universe.command_context().expect("PDF admission");
+        assert!(context.pdf_raw_object(raw_object).is_some());
+        assert!(context.pdf_form(form_object).is_some());
+        drop(context);
+        assert_eq!(
+            universe.capture_format_image().expect("redump").as_bytes(),
+            image.as_bytes()
+        );
+    })
+    .expect("materialized full logical format");
 }

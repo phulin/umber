@@ -51,6 +51,35 @@ fn command_episode_admits_session_and_generation_once() {
 }
 
 #[test]
+fn universe_terminal_input_cursor_replays_only_its_caller_world() {
+    let position = with_universe(budget(), |universe| {
+        universe
+            .world_mut()
+            .push_memory_terminal_line("replay")
+            .expect("memory terminal input");
+        let position = universe.capture_terminal_input_position();
+        assert_eq!(
+            universe.world_mut().read_terminal_line().expect("read"),
+            Some("replay".to_owned())
+        );
+        universe
+            .restore_terminal_input_position(position)
+            .expect("same World cursor");
+        assert_eq!(
+            universe.world_mut().read_terminal_line().expect("replay"),
+            Some("replay".to_owned())
+        );
+        position
+    })
+    .expect("source universe");
+
+    with_universe(budget(), |universe| {
+        assert!(universe.restore_terminal_input_position(position).is_err());
+    })
+    .expect("foreign universe");
+}
+
+#[test]
 fn font_meaning_retains_the_exact_live_timeline_coordinate() {
     with_universe(budget(), |universe| {
         let symbol = universe.intern("bodyfont").expect("intern font selector");
