@@ -3,15 +3,16 @@ use tex_state::env::banks::TokParam;
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, Token, TokenWord};
+use tex_state::{AssignmentScope, GroupKind};
 
 use super::committer::AssignmentCommitter;
 
-fn token(ch: char) -> Token {
-    Token::Char {
+fn token(ch: char) -> TokenWord {
+    TokenWord::pack(Token::Char {
         ch,
         cat: Catcode::Other,
-    }
+    })
 }
 
 fn glue(width: i32) -> GlueSpec {
@@ -26,101 +27,167 @@ fn glue(width: i32) -> GlueSpec {
 
 #[test]
 fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
-    let mut universe = tex_state::Universe::new();
-    let mut stores = universe.command_context().expect("test state is admitted");
-    let displaced_register = stores.intern_token_list_ref(&[token('a')]);
-    stores.set_toks_global(0, displaced_register.id());
-    let replacement_register = stores.intern_token_list_ref(&[token('b')]);
-
-    AssignmentCommitter::new(&mut stores).toks(
-        0,
-        replacement_register.id(),
-        ObservationValue::Integer(0),
-        true,
-    );
-    assert_eq!(stores.tokens(stores.toks(0)).as_ref(), &[token('b')]);
-
-    let parameter = TokParam::EVERY_PAR;
-    let displaced_parameter = stores.intern_token_list_ref(&[token('c')]);
-    stores.set_tok_param_option_global(parameter, Some(displaced_parameter.id()));
-    let replacement_parameter = stores.intern_token_list_ref(&[token('d')]);
-
-    AssignmentCommitter::new(&mut stores).token_parameter(
-        parameter.raw(),
-        Some(replacement_parameter.id()),
-        ObservationValue::Integer(0),
-        "everypar".into(),
-        true,
-    );
-    assert_eq!(
+    crate::test_harness::with_universe(|universe| {
+        let mut stores = universe.command_context().expect("test state is admitted");
+        let displaced_register = stores
+            .allocate_token_list(&[token('a')])
+            .expect("token list");
         stores
-            .tokens(stores.tok_param_option(parameter).expect("everypar is set"))
-            .as_ref(),
-        &[token('d')]
-    );
+            .assign_token_register(0, Some(displaced_register), AssignmentScope::Global)
+            .expect("register");
+        let replacement_register = stores
+            .allocate_token_list(&[token('b')])
+            .expect("token list");
+
+        AssignmentCommitter::new(&mut stores).toks(
+            0,
+            replacement_register,
+            ObservationValue::Integer(0),
+            true,
+        );
+        assert_eq!(
+            stores.token_list(stores.token_register(0).expect("register").expect("set")),
+            &[token('b')]
+        );
+
+        let parameter = TokParam::EVERY_PAR;
+        let displaced_parameter = stores
+            .allocate_token_list(&[token('c')])
+            .expect("token list");
+        stores
+            .assign_token_parameter(
+                parameter,
+                Some(displaced_parameter),
+                AssignmentScope::Global,
+            )
+            .expect("parameter");
+        let replacement_parameter = stores
+            .allocate_token_list(&[token('d')])
+            .expect("token list");
+
+        AssignmentCommitter::new(&mut stores).token_parameter(
+            parameter.raw(),
+            Some(replacement_parameter),
+            ObservationValue::Integer(0),
+            "everypar".into(),
+            true,
+        );
+        assert_eq!(
+            stores.token_list(
+                stores
+                    .token_parameter(parameter)
+                    .expect("parameter")
+                    .expect("everypar is set")
+            ),
+            &[token('d')]
+        );
+    });
 }
 
 #[test]
 fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
-    let mut universe = tex_state::Universe::new();
-    let mut stores = universe.command_context().expect("test state is admitted");
-    let displaced = stores.intern_token_list_ref(&[token('a')]);
-    stores.set_toks_global(0, displaced.id());
-    stores.enter_group();
-    let replacement = stores.intern_token_list_ref(&[token('b')]);
+    crate::test_harness::with_universe(|universe| {
+        let mut stores = universe.command_context().expect("test state is admitted");
+        let displaced = stores
+            .allocate_token_list(&[token('a')])
+            .expect("token list");
+        stores
+            .assign_token_register(0, Some(displaced), AssignmentScope::Global)
+            .expect("register");
+        stores.begin_group(GroupKind::Simple, 0).expect("group");
+        let replacement = stores
+            .allocate_token_list(&[token('b')])
+            .expect("token list");
 
-    AssignmentCommitter::new(&mut stores).toks(
-        0,
-        replacement.id(),
-        ObservationValue::Integer(0),
-        false,
-    );
+        AssignmentCommitter::new(&mut stores).toks(
+            0,
+            replacement,
+            ObservationValue::Integer(0),
+            false,
+        );
 
-    assert_eq!(stores.tokens(stores.toks(0)).as_ref(), &[token('b')]);
-    let _ = stores.leave_group();
-    assert_eq!(stores.tokens(stores.toks(0)).as_ref(), &[token('a')]);
+        assert_eq!(
+            stores.token_list(stores.token_register(0).expect("register").expect("set")),
+            &[token('b')]
+        );
+        stores.end_group(GroupKind::Simple).expect("group");
+        assert_eq!(
+            stores.token_list(stores.token_register(0).expect("register").expect("set")),
+            &[token('a')]
+        );
+    });
 }
 
 #[test]
 fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
-    let mut universe = tex_state::Universe::new();
-    let mut stores = universe.command_context().expect("test state is admitted");
-    stores.set_int_param_global(IntParam::TRACING_ASSIGNS, 1);
+    crate::test_harness::with_universe(|universe| {
+        let mut stores = universe.command_context().expect("test state is admitted");
+        stores
+            .assign_int_param(IntParam::TRACING_ASSIGNS, 1, AssignmentScope::Global)
+            .expect("parameter");
 
-    let displaced_skip = stores.intern_glue(glue(1));
-    stores.set_skip_global(0, displaced_skip);
-    AssignmentCommitter::new(&mut stores).skip(0, glue(2), true, false, false, false);
-    assert_eq!(stores.glue(stores.skip(0)), glue(2));
+        let displaced_skip = stores.allocate_glue(glue(1)).expect("glue");
+        stores
+            .assign_glue_register(0, Some(displaced_skip), AssignmentScope::Global)
+            .expect("register");
+        AssignmentCommitter::new(&mut stores).skip(0, glue(2), true, false, false, false);
+        assert_eq!(
+            stores.glue(stores.glue_register(0).expect("register").expect("set")),
+            glue(2)
+        );
 
-    let displaced_muskip = stores.intern_glue(glue(3));
-    stores.set_muskip_global(0, displaced_muskip);
-    AssignmentCommitter::new(&mut stores).skip(0, glue(4), true, true, false, false);
-    assert_eq!(stores.glue(stores.muskip(0)), glue(4));
+        let displaced_muskip = stores.allocate_glue(glue(3)).expect("glue");
+        stores
+            .assign_mu_glue_register(0, Some(displaced_muskip), AssignmentScope::Global)
+            .expect("register");
+        AssignmentCommitter::new(&mut stores).skip(0, glue(4), true, true, false, false);
+        assert_eq!(stores.glue(stores.muskip(0).expect("set")), glue(4));
 
-    let parameter = GlueParam::BASELINE_SKIP;
-    let displaced_parameter = stores.intern_glue(glue(5));
-    stores.set_glue_param_global(parameter, displaced_parameter);
-    AssignmentCommitter::new(&mut stores).glue_parameter(
-        parameter.raw(),
-        glue(6),
-        "baselineskip".into(),
-        true,
-    );
-    assert_eq!(stores.glue(stores.glue_param(parameter)), glue(6));
+        let parameter = GlueParam::BASELINE_SKIP;
+        let displaced_parameter = stores.allocate_glue(glue(5)).expect("glue");
+        stores
+            .assign_glue_parameter(
+                parameter,
+                Some(displaced_parameter),
+                AssignmentScope::Global,
+            )
+            .expect("parameter");
+        AssignmentCommitter::new(&mut stores).glue_parameter(
+            parameter.raw(),
+            glue(6),
+            "baselineskip".into(),
+            true,
+        );
+        assert_eq!(
+            stores.glue(stores.glue_param(parameter).expect("set")),
+            glue(6)
+        );
+    });
 }
 
 #[test]
 fn local_glue_write_undo_is_the_assignment_trace_liveness_negative_control() {
-    let mut universe = tex_state::Universe::new();
-    let mut stores = universe.command_context().expect("test state is admitted");
-    stores.set_int_param_global(IntParam::TRACING_ASSIGNS, 1);
-    let displaced = stores.intern_glue(glue(1));
-    stores.set_skip_global(0, displaced);
-    stores.enter_group();
+    crate::test_harness::with_universe(|universe| {
+        let mut stores = universe.command_context().expect("test state is admitted");
+        stores
+            .assign_int_param(IntParam::TRACING_ASSIGNS, 1, AssignmentScope::Global)
+            .expect("parameter");
+        let displaced = stores.allocate_glue(glue(1)).expect("glue");
+        stores
+            .assign_glue_register(0, Some(displaced), AssignmentScope::Global)
+            .expect("register");
+        stores.begin_group(GroupKind::Simple, 0).expect("group");
 
-    AssignmentCommitter::new(&mut stores).skip(0, glue(2), false, false, false, false);
+        AssignmentCommitter::new(&mut stores).skip(0, glue(2), false, false, false, false);
 
-    assert_eq!(stores.glue(stores.skip(0)), glue(2));
-    let _ = stores.leave_group();
-    assert_eq!(stores.glue(stores.skip(0)), glue(1));
+        assert_eq!(
+            stores.glue(stores.glue_register(0).expect("register").expect("set")),
+            glue(2)
+        );
+        stores.end_group(GroupKind::Simple).expect("group");
+        assert_eq!(
+            stores.glue(stores.glue_register(0).expect("register").expect("set")),
+            glue(1)
+        );
+    });
 }

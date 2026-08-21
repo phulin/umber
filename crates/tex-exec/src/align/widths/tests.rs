@@ -12,7 +12,7 @@ fn columns(count: usize) -> Vec<AlignColumn> {
     let empty = NodeTokenList::default();
     vec![
         AlignColumn {
-            u_template: empty,
+            u_template: empty.clone(),
             v_template: empty,
         };
         count
@@ -53,64 +53,69 @@ fn unset(kind: UnsetKind, natural: i32, span_count: u16) -> Node {
 #[test]
 fn pack_alignment_prototype_applies_spec_in_both_modes() {
     for kind in [AlignmentKind::HAlign, AlignmentKind::VAlign] {
-        let mut universe = tex_state::Universe::new_with_plain_catcodes();
-        let mut stores = universe.command_context().expect("test state is admitted");
-        let flexible = GlueSpec {
-            width: sp(1),
-            stretch: sp(1),
-            stretch_order: Order::Fil,
-            shrink: Scaled::from_raw(0),
-            shrink_order: Order::Normal,
-        };
-        let resolved = ResolvedWidths {
-            columns: vec![sp(4), sp(5)],
-            tabskips: vec![flexible, tex_state::glue::GlueSpec::ZERO, flexible],
-        };
-        let empty = PageListId::empty();
+        crate::test_harness::with_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let diagnostic_context =
+                crate::pack_report::ExecutionDiagnosticContext::source_free("");
+            let flexible = GlueSpec {
+                width: sp(1),
+                stretch: sp(1),
+                stretch_order: Order::Fil,
+                shrink: Scaled::from_raw(0),
+                shrink_order: Order::Normal,
+            };
+            let resolved = ResolvedWidths {
+                columns: vec![sp(4), sp(5)],
+                tabskips: vec![flexible, tex_state::glue::GlueSpec::ZERO, flexible],
+            };
+            let empty = PageListId::empty();
 
-        let exact = pack_prototype(
-            &state(
-                kind,
-                AlignmentPackSpec::Exactly(sp(20)),
-                resolved.tabskips.clone(),
-            ),
-            &resolved,
-            &empty,
-            &mut stores,
-        );
-        let exact_extent = match kind {
-            AlignmentKind::HAlign => exact.box_node.width,
-            AlignmentKind::VAlign => exact.box_node.height + exact.box_node.depth,
-        };
-        assert_eq!(exact_extent, sp(20));
-        assert_eq!(exact.box_node.glue_sign, Sign::Stretching);
-        assert_eq!(exact.box_node.glue_order, Order::Fil);
-        assert_eq!(
-            exact.box_node.glue_set,
-            GlueSetRatio::from_ratio_parts(9, 2)
-        );
+            let exact = pack_prototype(
+                &state(
+                    kind,
+                    AlignmentPackSpec::Exactly(sp(20)),
+                    resolved.tabskips.clone(),
+                ),
+                &resolved,
+                &empty,
+                &mut stores,
+                &diagnostic_context,
+            );
+            let exact_extent = match kind {
+                AlignmentKind::HAlign => exact.box_node.width,
+                AlignmentKind::VAlign => exact.box_node.height + exact.box_node.depth,
+            };
+            assert_eq!(exact_extent, sp(20));
+            assert_eq!(exact.box_node.glue_sign, Sign::Stretching);
+            assert_eq!(exact.box_node.glue_order, Order::Fil);
+            assert_eq!(
+                exact.box_node.glue_set,
+                GlueSetRatio::from_ratio_parts(9, 2)
+            );
 
-        let spread = pack_prototype(
-            &state(
-                kind,
-                AlignmentPackSpec::Spread(sp(3)),
-                resolved.tabskips.clone(),
-            ),
-            &resolved,
-            &empty,
-            &mut stores,
-        );
-        let spread_extent = match kind {
-            AlignmentKind::HAlign => spread.box_node.width,
-            AlignmentKind::VAlign => spread.box_node.height + spread.box_node.depth,
-        };
-        assert_eq!(spread_extent, sp(14));
-        assert_eq!(spread.box_node.glue_sign, Sign::Stretching);
-        assert_eq!(spread.box_node.glue_order, Order::Fil);
-        assert_eq!(
-            spread.box_node.glue_set,
-            GlueSetRatio::from_ratio_parts(3, 2)
-        );
+            let spread = pack_prototype(
+                &state(
+                    kind,
+                    AlignmentPackSpec::Spread(sp(3)),
+                    resolved.tabskips.clone(),
+                ),
+                &resolved,
+                &empty,
+                &mut stores,
+                &diagnostic_context,
+            );
+            let spread_extent = match kind {
+                AlignmentKind::HAlign => spread.box_node.width,
+                AlignmentKind::VAlign => spread.box_node.height + spread.box_node.depth,
+            };
+            assert_eq!(spread_extent, sp(14));
+            assert_eq!(spread.box_node.glue_sign, Sign::Stretching);
+            assert_eq!(spread.box_node.glue_order, Order::Fil);
+            assert_eq!(
+                spread.box_node.glue_set,
+                GlueSetRatio::from_ratio_parts(3, 2)
+            );
+        });
     }
 }
 
@@ -124,87 +129,99 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
         (AlignmentKind::HAlign, "\\unsetbox(0.0+0.0)x4.0"),
         (AlignmentKind::VAlign, "\\unsetbox(4.0+0.0)x0.0"),
     ] {
-        let mut universe = tex_state::Universe::new_with_plain_catcodes();
-        let mut stores = universe.command_context().expect("test state is admitted");
-        let resolved = ResolvedWidths {
-            columns: vec![sp(4)],
-            tabskips: vec![
-                tex_state::glue::GlueSpec::ZERO,
-                tex_state::glue::GlueSpec::ZERO,
-            ],
-        };
-        let empty = PageListId::empty();
-        let prototype = pack_prototype(
-            &state(kind, AlignmentPackSpec::Natural, resolved.tabskips.clone()),
-            &resolved,
-            &empty,
-            &mut stores,
-        );
+        crate::test_harness::with_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let diagnostic_context =
+                crate::pack_report::ExecutionDiagnosticContext::source_free("");
+            let resolved = ResolvedWidths {
+                columns: vec![sp(4)],
+                tabskips: vec![
+                    tex_state::glue::GlueSpec::ZERO,
+                    tex_state::glue::GlueSpec::ZERO,
+                ],
+            };
+            let empty = PageListId::empty();
+            let prototype = pack_prototype(
+                &state(kind, AlignmentPackSpec::Natural, resolved.tabskips.clone()),
+                &resolved,
+                &empty,
+                &mut stores,
+                &diagnostic_context,
+            );
 
-        let dump = crate::node_dump::dump_node_slice(
-            &stores,
-            stores
-                .page_node_list(prototype.box_node.children)
-                .expect("prototype children belong to the page arena")
-                .nodes(),
-            crate::node_dump::DumpConfig {
-                breadth: 10,
-                depth: 10,
-                profile: tex_command::CommandProfile::TEX82,
-            },
-        );
-        assert!(dump.contains(expected), "prototype dump: {dump}");
+            let dump = crate::node_dump::dump_node_slice(
+                &stores,
+                stores
+                    .page_node_list(prototype.box_node.children)
+                    .expect("prototype children belong to the page arena")
+                    .nodes(),
+                crate::node_dump::DumpConfig {
+                    breadth: 10,
+                    depth: 10,
+                    profile: tex_command::CommandProfile::TEX82,
+                },
+            );
+            assert!(dump.contains(expected), "prototype dump: {dump}");
+        });
     }
 }
 
 #[test]
 fn fin_align_orders_groups_packing_pop_and_insertion() {
-    let mut universe = tex_state::Universe::new_with_plain_catcodes();
-    let mut stores = universe.command_context().expect("test state is admitted");
-    let first = unset(UnsetKind::HBox, 4, 1);
-    let second = unset(UnsetKind::HBox, 6, 1);
-    let row_children = stores.publish_page_nodes(vec![
-        tabskip_node(tex_state::glue::GlueSpec::ZERO),
-        first,
-        tabskip_node(tex_state::glue::GlueSpec::ZERO),
-        second,
-        tabskip_node(tex_state::glue::GlueSpec::ZERO),
-    ]);
-    let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
-        kind: UnsetKind::HBox,
-        width: sp(10),
-        height: sp(2),
-        depth: sp(1),
-        span_count: 0,
-        stretch: Scaled::from_raw(0),
-        stretch_order: Order::Normal,
-        shrink: Scaled::from_raw(0),
-        shrink_order: Order::Normal,
-        children: row_children,
-    }));
-    let state = state(
-        AlignmentKind::HAlign,
-        AlignmentPackSpec::Exactly(sp(12)),
-        vec![
-            tex_state::glue::GlueSpec::ZERO,
-            tex_state::glue::GlueSpec::ZERO,
-            tex_state::glue::GlueSpec::ZERO,
-        ],
-    );
+    crate::test_harness::with_plain_universe(|universe| {
+        let mut stores = universe.command_context().expect("test state is admitted");
+        let diagnostic_context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
+        let first = unset(UnsetKind::HBox, 4, 1);
+        let second = unset(UnsetKind::HBox, 6, 1);
+        let row_children = stores.publish_page_nodes(vec![
+            tabskip_node(tex_state::glue::GlueSpec::ZERO),
+            first,
+            tabskip_node(tex_state::glue::GlueSpec::ZERO),
+            second,
+            tabskip_node(tex_state::glue::GlueSpec::ZERO),
+        ]);
+        let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
+            kind: UnsetKind::HBox,
+            width: sp(10),
+            height: sp(2),
+            depth: sp(1),
+            span_count: 0,
+            stretch: Scaled::from_raw(0),
+            stretch_order: Order::Normal,
+            shrink: Scaled::from_raw(0),
+            shrink_order: Order::Normal,
+            children: row_children,
+        }));
+        let state = state(
+            AlignmentKind::HAlign,
+            AlignmentPackSpec::Exactly(sp(12)),
+            vec![
+                tex_state::glue::GlueSpec::ZERO,
+                tex_state::glue::GlueSpec::ZERO,
+                tex_state::glue::GlueSpec::ZERO,
+            ],
+        );
 
-    let finished = finish_alignment(&state, &[row], Scaled::from_raw(0), &mut stores)
+        let finished = finish_alignment(
+            &state,
+            &[row],
+            Scaled::from_raw(0),
+            &mut stores,
+            &diagnostic_context,
+        )
         .expect("the complete width, prototype, and setting pipeline succeeds");
 
-    let [Node::HList(row)] = finished.as_slice() else {
-        panic!("fin_align must convert the unset row to an hlist");
-    };
-    assert_eq!(row.width, sp(12));
-    assert!(
-        stores
-            .page_node_list(row.children)
-            .expect("row children belong to the page arena")
-            .nodes()
-            .iter()
-            .all(|node| !matches!(node, Node::Unset(_)))
-    );
+        let [Node::HList(row)] = finished.as_slice() else {
+            panic!("fin_align must convert the unset row to an hlist");
+        };
+        assert_eq!(row.width, sp(12));
+        assert!(
+            stores
+                .page_node_list(row.children)
+                .expect("row children belong to the page arena")
+                .nodes()
+                .iter()
+                .all(|node| !matches!(node, Node::Unset(_)))
+        );
+    });
 }

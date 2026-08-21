@@ -947,7 +947,7 @@ mod tests {
         ))
     }
 
-    fn diagnostic_text<G>(stores: &CommandContext<'_, G>) -> String {
+    fn diagnostic_text<G>(stores: &tex_state::Universe<G>) -> String {
         stores
             .world()
             .effect_records()
@@ -961,71 +961,99 @@ mod tests {
 
     #[test]
     fn automatic_missing_hyphen_warns_but_disabled_hyphen_does_not() {
-        let mut universe = tex_state::Universe::new_with_plain_catcodes();
-        let mut stores = universe.command_context().expect("test state is admitted");
-        let font = stores.current_font();
-        stores.set_int_param(IntParam::TRACING_LOST_CHARS, 1);
-        stores.set_font_hyphen_char(font, -1);
-        let mut missing = Vec::new();
-        assert_eq!(automatic_hyphen_char(&stores, font, 7, &mut missing), None);
-        assert!(missing.is_empty());
+        crate::test_harness::with_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let font = stores.current_font();
+            stores
+                .assign_int_param(
+                    IntParam::TRACING_LOST_CHARS,
+                    1,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("parameter");
+            stores
+                .assign_int_param(
+                    IntParam::DEFAULT_HYPHEN_CHAR,
+                    -1,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("parameter");
+            let mut missing = Vec::new();
+            assert_eq!(automatic_hyphen_char(&stores, font, 7, &mut missing), None);
+            assert!(missing.is_empty());
 
-        stores.set_font_hyphen_char(font, i32::from(b'?'));
-        assert_eq!(automatic_hyphen_char(&stores, font, 7, &mut missing), None);
-        assert_eq!(missing.len(), 1);
-        assert_eq!(missing[0].node_index, 7);
-        assert_eq!((missing[0].font, missing[0].ch), (font, '?'));
-        crate::diagnostics::report_missing_character_warning(&mut stores, font, '?', false);
-        assert!(
-            diagnostic_text(&stores).contains("Missing character: There is no ? in font nullfont!")
-        );
+            stores
+                .assign_int_param(
+                    IntParam::DEFAULT_HYPHEN_CHAR,
+                    i32::from(b'?'),
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("parameter");
+            assert_eq!(automatic_hyphen_char(&stores, font, 7, &mut missing), None);
+            assert_eq!(missing.len(), 1);
+            assert_eq!(missing[0].node_index, 7);
+            assert_eq!((missing[0].font, missing[0].ch), (font, '?'));
+            crate::diagnostics::report_missing_character_warning(&mut stores, font, '?', false);
+            drop(stores);
+            assert!(
+                diagnostic_text(universe)
+                    .contains("Missing character: There is no ? in font nullfont!")
+            );
+        });
     }
 
     #[test]
     fn pre_hyphenation_candidate_uses_language_minima_and_canonical_delimiters() {
-        let mut universe = tex_state::Universe::new_with_plain_catcodes();
-        let mut stores = universe.command_context().expect("test state is admitted");
-        let font = stores.current_font();
-        stores.set_font_hyphen_char(font, i32::from(b'-'));
-        let nodes = vec![
-            character(font, '.'),
-            Node::Whatsit(tex_state::node::Whatsit::Language {
+        crate::test_harness::with_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let font = stores.current_font();
+            stores
+                .assign_int_param(
+                    IntParam::DEFAULT_HYPHEN_CHAR,
+                    i32::from(b'-'),
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("parameter");
+            let nodes = vec![
+                character(font, '.'),
+                Node::Whatsit(tex_state::node::Whatsit::Language {
+                    language: 7,
+                    left_hyphen_min: 2,
+                    right_hyphen_min: 2,
+                }),
+                Node::Kern {
+                    amount: tex_state::scaled::Scaled::from_raw(0),
+                    kind: KernKind::Font,
+                },
+                character(font, 'a'),
+                character(font, 'b'),
+                character(font, 'c'),
+                character(font, 'd'),
+                character(font, '.'),
+                Node::Penalty(0),
+            ];
+
+            let found = candidate(&stores, &nodes).expect("four letters meet the 2+2 minima");
+            assert_eq!((found.language, found.left, found.right), (7, 2, 2));
+            assert_eq!((found.word_start, found.end), (3, 7));
+            assert!(found.word.iter().all(|letter| letter.font == font));
+            assert_eq!(
+                found
+                    .word
+                    .iter()
+                    .map(|letter| letter.lower)
+                    .collect::<String>(),
+                "abcd"
+            );
+
+            let mut too_short = nodes;
+            too_short[1] = Node::Whatsit(tex_state::node::Whatsit::Language {
                 language: 7,
-                left_hyphen_min: 2,
+                left_hyphen_min: 3,
                 right_hyphen_min: 2,
-            }),
-            Node::Kern {
-                amount: tex_state::scaled::Scaled::from_raw(0),
-                kind: KernKind::Font,
-            },
-            character(font, 'a'),
-            character(font, 'b'),
-            character(font, 'c'),
-            character(font, 'd'),
-            character(font, '.'),
-            Node::Penalty(0),
-        ];
-
-        let found = candidate(&stores, &nodes).expect("four letters meet the 2+2 minima");
-        assert_eq!((found.language, found.left, found.right), (7, 2, 2));
-        assert_eq!((found.word_start, found.end), (3, 7));
-        assert!(found.word.iter().all(|letter| letter.font == font));
-        assert_eq!(
-            found
-                .word
-                .iter()
-                .map(|letter| letter.lower)
-                .collect::<String>(),
-            "abcd"
-        );
-
-        let mut too_short = nodes;
-        too_short[1] = Node::Whatsit(tex_state::node::Whatsit::Language {
-            language: 7,
-            left_hyphen_min: 3,
-            right_hyphen_min: 2,
+            });
+            assert!(candidate(&stores, &too_short).is_none());
         });
-        assert!(candidate(&stores, &too_short).is_none());
     }
 
     #[test]
@@ -1033,127 +1061,146 @@ mod tests {
         // TeX82 §§1362--1363: pre-hyphenation recognizes only the language
         // subtype as state; every base subtype remains in exact list order
         // with its immutable token payload and stream fields still owned.
-        let mut universe = tex_state::Universe::new_with_plain_catcodes();
-        let mut stores = universe.command_context().expect("test state is admitted");
-        let tokens = stores.intern_token_list(&[tex_state::token::Token::Char {
-            ch: 'w',
-            cat: tex_state::token::Catcode::Letter,
-        }]);
-        let tokens = tex_state::node::NodeTokenList::new(stores.tokens(tokens).to_vec());
-        let nodes = vec![
-            Node::Whatsit(tex_state::node::Whatsit::OpenOut {
-                slot: tex_state::StreamSlot::new(15),
-                path: "visit.tex".into(),
-            }),
-            Node::Whatsit(tex_state::node::Whatsit::DeferredWrite {
-                sink: tex_state::PrintSink::Log,
-                tokens,
-            }),
-            Node::Whatsit(tex_state::node::Whatsit::CloseOut {
-                slot: Some(tex_state::StreamSlot::new(0)),
-            }),
-            Node::Whatsit(tex_state::node::Whatsit::CloseOut { slot: None }),
-            Node::Whatsit(tex_state::node::Whatsit::Special {
-                class: "dvi".into(),
-                payload: b"visit".to_vec(),
-            }),
-            Node::Whatsit(tex_state::node::Whatsit::Language {
-                language: 7,
-                left_hyphen_min: 2,
-                right_hyphen_min: 3,
-            }),
-        ];
-        let mut fuel = tex_command::CommandFuelLedger::new(1_000).expect("bounded fuel");
+        crate::test_harness::with_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let tokens =
+                tex_state::node::NodeTokenList::new(vec![tex_state::token::TokenWord::pack(
+                    tex_state::token::Token::Char {
+                        ch: 'w',
+                        cat: tex_state::token::Catcode::Letter,
+                    },
+                )]);
+            let nodes = vec![
+                Node::Whatsit(tex_state::node::Whatsit::OpenOut {
+                    slot: tex_state::StreamSlot::new(15),
+                    path: "visit.tex".into(),
+                }),
+                Node::Whatsit(tex_state::node::Whatsit::DeferredWrite {
+                    sink: tex_state::PrintSink::Log,
+                    tokens: tokens.clone(),
+                }),
+                Node::Whatsit(tex_state::node::Whatsit::CloseOut {
+                    slot: Some(tex_state::StreamSlot::new(0)),
+                }),
+                Node::Whatsit(tex_state::node::Whatsit::CloseOut { slot: None }),
+                Node::Whatsit(tex_state::node::Whatsit::Special {
+                    class: "dvi".into(),
+                    payload: b"visit".to_vec(),
+                }),
+                Node::Whatsit(tex_state::node::Whatsit::Language {
+                    language: 7,
+                    left_hyphen_min: 2,
+                    right_hyphen_min: 3,
+                }),
+            ];
+            let mut fuel = tex_command::CommandFuelLedger::new(1_000).expect("bounded fuel");
 
-        let (visited, diagnostics) =
-            hyphenated_hlist_sequence_with_fuel(&mut stores, nodes.clone(), fuel.fuel_mut())
-                .expect("base-whatsit visit succeeds");
+            let (visited, diagnostics) =
+                hyphenated_hlist_sequence_with_fuel(&mut stores, nodes.clone(), fuel.fuel_mut())
+                    .expect("base-whatsit visit succeeds");
 
-        assert_eq!(visited.semantic(), nodes);
-        assert_eq!(visited.physical(), nodes);
-        assert!(diagnostics.is_empty());
-        let mut physical_post_overrides = Vec::new();
-        let mut missing_hyphens = Vec::new();
-        let mut projection = HyphenationProjection {
-            physical_post_overrides: &mut physical_post_overrides,
-            missing_hyphens: &mut missing_hyphens,
-        };
-        let (_, final_context) = hyphenated_hlist_with_projections(
-            &mut stores,
-            nodes.clone(),
-            fuel.fuel_mut(),
-            &mut projection,
-        )
-        .expect("the traced pre-hyphenation visit succeeds");
-        assert_eq!(
-            final_context,
-            HyphenationContext {
-                language: 7,
-                left: 2,
-                right: 3,
-            },
-            "the actual pre-hyphenation traversal applies the language node's state"
-        );
-        assert_eq!(
-            tokens.words(),
-            [tex_state::token::TokenWord::pack(
-                tex_state::token::Token::Char {
-                    ch: 'w',
-                    cat: tex_state::token::Catcode::Letter,
-                }
-            )]
-        );
-        assert!(stores.world().effect_records().is_empty());
+            assert_eq!(visited.semantic(), nodes);
+            assert_eq!(visited.physical(), nodes);
+            assert!(diagnostics.is_empty());
+            let mut physical_post_overrides = Vec::new();
+            let mut missing_hyphens = Vec::new();
+            let mut projection = HyphenationProjection {
+                physical_post_overrides: &mut physical_post_overrides,
+                missing_hyphens: &mut missing_hyphens,
+            };
+            let (_, final_context) = hyphenated_hlist_with_projections(
+                &mut stores,
+                nodes.clone(),
+                fuel.fuel_mut(),
+                &mut projection,
+            )
+            .expect("the traced pre-hyphenation visit succeeds");
+            assert_eq!(
+                final_context,
+                HyphenationContext {
+                    language: 7,
+                    left: 2,
+                    right: 3,
+                },
+                "the actual pre-hyphenation traversal applies the language node's state"
+            );
+            assert_eq!(
+                tokens.words(),
+                [tex_state::token::TokenWord::pack(
+                    tex_state::token::Token::Char {
+                        ch: 'w',
+                        cat: tex_state::token::Catcode::Letter,
+                    }
+                )]
+            );
+            drop(stores);
+            assert!(universe.world().effect_records().is_empty());
+        });
     }
 
     #[test]
     fn pre_hyphenation_candidate_applies_uppercase_and_same_font_eligibility() {
-        let mut universe = tex_state::Universe::new_with_plain_catcodes();
-        let mut stores = universe.command_context().expect("test state is admitted");
-        let font = stores.current_font();
-        let other_font = second_font(&mut stores);
-        stores.set_font_hyphen_char(font, i32::from(b'-'));
-        stores.set_lccode('A', u32::from('a'));
-        let nodes = vec![
-            character(font, 'A'),
-            character(font, 'b'),
-            character(font, 'c'),
-            character(other_font, 'd'),
-            Node::Penalty(0),
-        ];
+        crate::test_harness::with_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let font = stores.current_font();
+            let other_font = second_font(&mut stores);
+            stores
+                .assign_int_param(
+                    IntParam::DEFAULT_HYPHEN_CHAR,
+                    i32::from(b'-'),
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("parameter");
+            let nodes = vec![
+                character(font, 'A'),
+                character(font, 'b'),
+                character(font, 'c'),
+                character(other_font, 'd'),
+                Node::Penalty(0),
+            ];
 
-        assert!(
-            candidate(&stores, &nodes).is_none(),
-            "uppercase starts need uchyph"
-        );
-        stores.set_int_param(IntParam::UC_HYPH, 1);
-        let found = candidate(&stores, &nodes).expect("enabled uppercase candidate");
-        assert_eq!((found.word_start, found.end), (0, 3));
-        assert!(found.word.iter().all(|letter| letter.font == font));
-        assert_eq!(
-            found
-                .word
-                .iter()
-                .map(|letter| letter.lower)
-                .collect::<String>(),
-            "abc",
-            "the other-font character delimits the same-font lowercase projection"
-        );
+            assert!(
+                candidate(&stores, &nodes).is_none(),
+                "uppercase starts need uchyph"
+            );
+            stores
+                .assign_int_param(IntParam::UC_HYPH, 1, tex_state::AssignmentScope::Global)
+                .expect("parameter");
+            let found = candidate(&stores, &nodes).expect("enabled uppercase candidate");
+            assert_eq!((found.word_start, found.end), (0, 3));
+            assert!(found.word.iter().all(|letter| letter.font == font));
+            assert_eq!(
+                found
+                    .word
+                    .iter()
+                    .map(|letter| letter.lower)
+                    .collect::<String>(),
+                "abc",
+                "the other-font character delimits the same-font lowercase projection"
+            );
+        });
     }
 
     #[test]
     fn pre_hyphenation_candidate_retains_the_63_letter_prefix_at_the_64_boundary() {
-        let mut universe = tex_state::Universe::new_with_plain_catcodes();
-        let mut stores = universe.command_context().expect("test state is admitted");
-        let font = stores.current_font();
-        stores.set_font_hyphen_char(font, i32::from(b'-'));
+        crate::test_harness::with_plain_universe(|universe| {
+            let mut stores = universe.command_context().expect("test state is admitted");
+            let font = stores.current_font();
+            stores
+                .assign_int_param(
+                    IntParam::DEFAULT_HYPHEN_CHAR,
+                    i32::from(b'-'),
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("parameter");
 
-        let sixty_three = vec![character(font, 'a'); 63];
-        let found = candidate(&stores, &sixty_three).expect("63-letter candidate");
-        assert_eq!((found.word.len(), found.word_start, found.end), (63, 0, 63));
+            let sixty_three = vec![character(font, 'a'); 63];
+            let found = candidate(&stores, &sixty_three).expect("63-letter candidate");
+            assert_eq!((found.word.len(), found.word_start, found.end), (63, 0, 63));
 
-        let sixty_four = vec![character(font, 'a'); 64];
-        let found = candidate(&stores, &sixty_four).expect("63-letter prefix at c64");
-        assert_eq!((found.word.len(), found.word_start, found.end), (63, 0, 63));
+            let sixty_four = vec![character(font, 'a'); 64];
+            let found = candidate(&stores, &sixty_four).expect("63-letter prefix at c64");
+            assert_eq!((found.word.len(), found.word_start, found.end), (63, 0, 63));
+        });
     }
 }
