@@ -84,30 +84,31 @@ fn completed_page_release_drops_exact_closure_and_scratch() {
     .expect("fresh universe");
 }
 
-#[test]
-fn aborted_shipout_transaction_publishes_no_diagnostic_program() {
-    crate::test_harness::with_plain_universe(|stores| {
-        stores
-            .world_mut()
-            .write_text(tex_state::PrintSink::Terminal, "open terminal line");
-        let effect_prefix = stores.world().effect_records().to_vec();
-        let partial_lines = stores.world().printable_lines_are_open();
-        let history = stores.world().error_channel().history();
+fn assert_aborted_shipout_diagnostic_is_unpublished<G>(stores: &mut Universe<G>) {
+    stores
+        .world_mut()
+        .write_text(tex_state::PrintSink::Terminal, "open terminal line");
+    let effect_prefix = stores.world().effect_records().to_vec();
+    let partial_lines = stores.world().printable_lines_are_open();
+    let history = stores.world().error_channel().history();
 
-        let mut write = |_: &mut Universe<_>,
-                         _: &mut DiagnosticEffects,
-                         _: tex_state::PrintSink,
-                         _: &[tex_state::token::TokenWord]| {
-            unreachable!("the negative control never begins traversal")
-        };
-        let mut replay = |_: &mut Universe<_>,
-                          _: &mut DiagnosticEffects,
-                          _: crate::shipout::ReplayTextKind,
-                          _: &[tex_state::token::TokenWord]| {
-            unreachable!("the negative control never begins traversal")
-        };
-        let mut geometry = IgnoredGeometry;
-        let mut transaction = crate::shipout::ShipoutTransaction::new(
+    let mut write = |_: &mut Universe<G>,
+                     _: &mut DiagnosticEffects,
+                     _: tex_state::PrintSink,
+                     _: &[tex_state::token::TokenWord]|
+     -> Result<crate::shipout::ExpandedWrite, ExecError> {
+        unreachable!("the negative control never begins traversal")
+    };
+    let mut replay = |_: &mut Universe<G>,
+                      _: &mut DiagnosticEffects,
+                      _: crate::shipout::ReplayTextKind,
+                      _: &[tex_state::token::TokenWord]|
+     -> Result<crate::shipout::ExpandedReplayText, ExecError> {
+        unreachable!("the negative control never begins traversal")
+    };
+    let mut geometry = IgnoredGeometry;
+    let mut transaction: crate::shipout::ShipoutTransaction<'_, G> =
+        crate::shipout::ShipoutTransaction::new(
             &mut write,
             &mut replay,
             &EmptySourceResolver,
@@ -115,22 +116,26 @@ fn aborted_shipout_transaction_publishes_no_diagnostic_program() {
             0,
             &mut geometry,
         );
-        {
-            let command = stores.command_context().expect("diagnostic admission");
-            let mut diagnostic = command.begin_diagnostic(&mut transaction.diagnostic_effects);
-            diagnostic.print_nl("staged shipout diagnostic");
-            diagnostic.end(false);
-        }
-        assert_eq!(transaction.diagnostic_effects.len(), 1);
+    {
+        let command = stores.command_context().expect("diagnostic admission");
+        let mut diagnostic = command.begin_diagnostic(&mut transaction.diagnostic_effects);
+        diagnostic.print_nl("staged shipout diagnostic");
+        diagnostic.end(false);
+    }
+    assert_eq!(transaction.diagnostic_effects.len(), 1);
 
-        // A failed staging result drops the transaction without extracting
-        // its operation-local collector for outer publication.
-        drop(transaction);
+    // A failed staging result drops the transaction without extracting its
+    // operation-local collector for outer publication.
+    drop(transaction);
 
-        assert_eq!(stores.world().effect_records(), effect_prefix);
-        assert_eq!(stores.world().printable_lines_are_open(), partial_lines);
-        assert_eq!(stores.world().error_channel().history(), history);
-    });
+    assert_eq!(stores.world().effect_records(), effect_prefix);
+    assert_eq!(stores.world().printable_lines_are_open(), partial_lines);
+    assert_eq!(stores.world().error_channel().history(), history);
+}
+
+#[test]
+fn aborted_shipout_transaction_publishes_no_diagnostic_program() {
+    crate::test_harness::with_plain_universe(assert_aborted_shipout_diagnostic_is_unpublished);
 }
 
 #[test]
