@@ -589,6 +589,35 @@ impl<'a, G> CommandContext<'a, G> {
         }
     }
 
+    /// Renders TeX82 §252's compact box-register assignment value.
+    #[must_use]
+    pub fn box_assignment_trace_text(&self, value: Option<PageListId>) -> String {
+        let Some(value) = value else {
+            return "void".to_owned();
+        };
+        let list = self
+            .page_node_list(value)
+            .expect("box assignment root belongs to the admitted page arena");
+        let (kind, node) = match (list.len(), list.nodes().first()) {
+            (1, Some(crate::node::Node::HList(node))) => ("hbox", node),
+            (1, Some(crate::node::Node::VList(node))) => ("vbox", node),
+            _ => return "void".to_owned(),
+        };
+        format!(
+            "\\{kind}({}+{})x{}",
+            crate::scaled::print_scaled(node.height),
+            crate::scaled::print_scaled(node.depth),
+            crate::scaled::print_scaled(node.width)
+        )
+    }
+
+    /// Renders one command meaning through the admitted state without
+    /// reopening the aggregate generation barrier.
+    #[must_use]
+    pub fn bounded_meaning_text(&self, token: crate::token::Token, breadth: usize) -> String {
+        crate::token_show::bounded_meaning_text_with(self, token, breadth)
+    }
+
     #[must_use]
     pub fn box_dimension(&self, index: u16, dimension: BoxDimension) -> Option<Scaled> {
         let id = self.box_register(index).ok().flatten()?;

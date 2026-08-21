@@ -6,11 +6,12 @@
 //! token -- the value scanners, `\meaning`, and §310's `show_context` -- reads
 //! one implementation.
 
-use crate::Universe;
+use crate::definition_arena::DefinitionId;
 use crate::env::banks::IntParam;
 use crate::interner::ControlSequenceKind;
 use crate::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePrimitive};
 use crate::token::{Catcode, Token, TokenWord};
+use crate::{CommandContext, Universe};
 
 /// Borrow-only state needed by TeX's token-spelling routines.
 pub trait TokenDisplayState {
@@ -49,16 +50,94 @@ impl<G> TokenDisplayState for Universe<G> {
     }
 }
 
+trait MeaningDisplayState<G>: TokenDisplayState {
+    fn display_active_character_symbol(&self, ch: char) -> Option<crate::interner::Symbol>;
+    fn display_meaning(&self, symbol: crate::interner::Symbol) -> Option<ResolvedMeaning<G>>;
+    fn display_macro_words(&self, definition: DefinitionId<G>) -> (Vec<TokenWord>, Vec<TokenWord>);
+    fn display_font_name(&self, font: crate::ids::FontId) -> String;
+    fn display_primitive_name(&self, meaning: Meaning) -> Option<&str>;
+    fn display_symbol_name(&self, symbol: crate::interner::Symbol) -> Option<&str>;
+}
+
+impl<G> MeaningDisplayState<G> for Universe<G> {
+    fn display_active_character_symbol(&self, ch: char) -> Option<crate::interner::Symbol> {
+        self.active_character_symbol(ch)
+            .map(|symbol| symbol.symbol())
+    }
+
+    fn display_meaning(&self, symbol: crate::interner::Symbol) -> Option<ResolvedMeaning<G>> {
+        self.meaning(symbol).ok()
+    }
+
+    fn display_macro_words(&self, definition: DefinitionId<G>) -> (Vec<TokenWord>, Vec<TokenWord>) {
+        let admitted = self.admitted().expect("live universe");
+        let definition = admitted.definition(definition);
+        (
+            definition.parameter_text().to_vec(),
+            definition.replacement_text().to_vec(),
+        )
+    }
+
+    fn display_font_name(&self, font: crate::ids::FontId) -> String {
+        self.font_name(font).to_owned()
+    }
+
+    fn display_primitive_name(&self, meaning: Meaning) -> Option<&str> {
+        self.primitive_name(meaning)
+    }
+
+    fn display_symbol_name(&self, symbol: crate::interner::Symbol) -> Option<&str> {
+        self.resolve(symbol)
+    }
+}
+
+impl<G> MeaningDisplayState<G> for CommandContext<'_, G> {
+    fn display_active_character_symbol(&self, ch: char) -> Option<crate::interner::Symbol> {
+        self.active_character_symbol(ch)
+    }
+
+    fn display_meaning(&self, symbol: crate::interner::Symbol) -> Option<ResolvedMeaning<G>> {
+        Some(self.meaning(symbol))
+    }
+
+    fn display_macro_words(&self, definition: DefinitionId<G>) -> (Vec<TokenWord>, Vec<TokenWord>) {
+        let definition = self.definition(definition);
+        (
+            definition.parameter_text().to_vec(),
+            definition.replacement_text().to_vec(),
+        )
+    }
+
+    fn display_font_name(&self, font: crate::ids::FontId) -> String {
+        self.font_name(font)
+    }
+
+    fn display_primitive_name(&self, meaning: Meaning) -> Option<&str> {
+        self.primitive_name(meaning)
+    }
+
+    fn display_symbol_name(&self, symbol: crate::interner::Symbol) -> Option<&str> {
+        Some(self.resolve(symbol))
+    }
+}
+
 /// Renders the meaning TeX82's `\meaning` and `\show` expose for one token.
 #[must_use]
 pub fn meaning_text<G>(stores: &Universe<G>, token: Token) -> String {
+    meaning_text_with(stores, token)
+}
+
+pub(crate) fn meaning_text_with<G, S: MeaningDisplayState<G> + ?Sized>(
+    stores: &S,
+    token: Token,
+) -> String {
     match token {
         Token::Char {
             ch,
             cat: Catcode::Active,
-        } => stores.active_character_symbol(ch).map_or_else(
+        } => stores.display_active_character_symbol(ch).map_or_else(
             || "undefined".to_owned(),
-            |symbol| meaning_text(stores, Token::Cs(symbol.symbol())),
+            |symbol| meaning_text_with(stores, Token::Cs(symbol)),
         ),
         Token::Char {
             ch,
@@ -67,7 +146,7 @@ pub fn meaning_text<G>(stores: &Universe<G>, token: Token) -> String {
         Token::Char { ch, .. } => format!("the character {ch}"),
         Token::Param(slot) => format!("macro parameter character #{slot}"),
         Token::Frozen(_) => "end of alignment template".to_owned(),
-        Token::Cs(symbol) => match stores.meaning(symbol).ok() {
+        Token::Cs(symbol) => match stores.display_meaning(symbol) {
             Some(ResolvedMeaning::Static(Meaning::Undefined)) | None => "undefined".to_owned(),
             Some(ResolvedMeaning::Static(Meaning::Relax)) => "\\relax".to_owned(),
             Some(ResolvedMeaning::Static(Meaning::EndV)) => "\\endtemplate".to_owned(),
@@ -102,15 +181,15 @@ pub fn meaning_text<G>(stores: &Universe<G>, token: Token) -> String {
                 | Meaning::TokParam(_)
                 | Meaning::PageDimension(_)
                 | Meaning::PageInteger(_),
-            )) => format!("\\{}", stores.resolve(symbol).unwrap_or("")),
+            )) => format!("\\{}", stores.display_symbol_name(symbol).unwrap_or("")),
             Some(ResolvedMeaning::Static(Meaning::Font(font))) => {
-                format!("select font {}", stores.font_name(font))
+                format!("select font {}", stores.display_font_name(font))
             }
             Some(ResolvedMeaning::Static(meaning @ Meaning::ExpandablePrimitive(_))) => format!(
                 "\\{}",
                 stores
-                    .primitive_name(meaning)
-                    .or_else(|| stores.resolve(symbol))
+                    .display_primitive_name(meaning)
+                    .or_else(|| stores.display_symbol_name(symbol))
                     .unwrap_or("")
             ),
             Some(ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
@@ -119,18 +198,17 @@ pub fn meaning_text<G>(stores: &Universe<G>, token: Token) -> String {
             Some(ResolvedMeaning::Static(meaning @ Meaning::UnexpandablePrimitive(_))) => format!(
                 "\\{}",
                 stores
-                    .primitive_name(meaning)
-                    .or_else(|| stores.resolve(symbol))
+                    .display_primitive_name(meaning)
+                    .or_else(|| stores.display_symbol_name(symbol))
                     .unwrap_or("")
             ),
             Some(ResolvedMeaning::Macro { flags, definition }) => {
-                let admitted = stores.admitted().expect("live universe");
-                let macro_meaning = admitted.definition(definition);
+                let (parameter, replacement) = stores.display_macro_words(definition);
                 let mut text = macro_prefix(flags);
                 text.push_str("macro:");
-                append_token_list(stores, macro_meaning.parameter_text(), &mut text);
+                append_token_list(stores, &parameter, &mut text);
                 text.push_str("->");
-                append_token_list(stores, macro_meaning.replacement_text(), &mut text);
+                append_token_list(stores, &replacement, &mut text);
                 text
             }
             Some(ResolvedMeaning::Static(Meaning::Unknown(_))) => "unknown".to_owned(),
@@ -141,18 +219,23 @@ pub fn meaning_text<G>(stores: &Universe<G>, token: Token) -> String {
 /// TeX82 §252's `show_eqtb` meaning text, bounded like `show_token_list`.
 #[must_use]
 pub fn bounded_meaning_text<G>(stores: &Universe<G>, token: Token, breadth: usize) -> String {
+    bounded_meaning_text_with(stores, token, breadth)
+}
+
+pub(crate) fn bounded_meaning_text_with<G, S: MeaningDisplayState<G> + ?Sized>(
+    stores: &S,
+    token: Token,
+    breadth: usize,
+) -> String {
     let Token::Cs(symbol) = token else {
-        return meaning_text(stores, token);
+        return meaning_text_with(stores, token);
     };
-    let Ok(ResolvedMeaning::Macro { flags, definition }) = stores.meaning(symbol) else {
-        return meaning_text(stores, token);
+    let Some(ResolvedMeaning::Macro { flags, definition }) = stores.display_meaning(symbol) else {
+        return meaning_text_with(stores, token);
     };
-    let admitted = stores.admitted().expect("live universe");
-    let macro_meaning = admitted.definition(definition);
+    let (parameter, replacement) = stores.display_macro_words(definition);
     let mut text = macro_prefix(flags);
     text.push_str("macro:");
-    let parameter = macro_meaning.parameter_text();
-    let replacement = macro_meaning.replacement_text();
     let mut shown = 0;
     let mut tally = 0;
     while shown < parameter.len() && tally < breadth {
@@ -203,7 +286,11 @@ fn macro_prefix(flags: MeaningFlags) -> String {
     text
 }
 
-fn append_token_list<G>(stores: &Universe<G>, tokens: &[TokenWord], text: &mut String) {
+fn append_token_list<S: TokenDisplayState + ?Sized>(
+    stores: &S,
+    tokens: &[TokenWord],
+    text: &mut String,
+) {
     let mut index = 0;
     while index < tokens.len() {
         let token = tokens[index].semantic_token();

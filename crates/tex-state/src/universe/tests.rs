@@ -2,10 +2,11 @@ use super::{UniverseError, with_universe};
 use crate::env::AssignmentScope;
 use crate::interner::InternerBudget;
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
-use crate::node::Node;
+use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use crate::node_arena::NodeArenaError;
+use crate::token::Token;
 use crate::{GroupKind, ParagraphShapeLine, PenaltyArrayKind};
-use tex_arith::Scaled;
+use tex_arith::{GlueSetRatio, Scaled};
 
 fn budget() -> InternerBudget {
     InternerBudget::new(32, 32, 1024).expect("budget")
@@ -225,6 +226,44 @@ fn admitted_penalty_arrays_preserve_etex_projection_and_scope() {
         context.end_group(GroupKind::Simple).expect("end group");
         assert!(context.penalty_array(PenaltyArrayKind::Club).is_empty());
         assert_eq!(context.penalty_array_value(PenaltyArrayKind::Club, 0), 0);
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn admitted_assignment_rendering_never_reopens_the_universe() {
+    with_universe(budget(), |universe| {
+        let symbol = universe.intern("alpha").expect("intern");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::from_static(Meaning::Relax),
+                AssignmentScope::Global,
+            )
+            .expect("meaning");
+        let mut context = universe.command_context().expect("context");
+        assert_eq!(
+            context.bounded_meaning_text(Token::Cs(symbol.symbol()), 32),
+            "\\relax"
+        );
+        assert_eq!(context.box_assignment_trace_text(None), "void");
+
+        let children = context.publish_page_nodes(Vec::new());
+        let root = context.publish_page_nodes(vec![Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: crate::glue::Order::Normal,
+            children,
+        }))]);
+        assert_eq!(
+            context.box_assignment_trace_text(Some(root)),
+            "\\hbox(0.0+0.0)x0.0"
+        );
     })
     .expect("universe allocation");
 }
