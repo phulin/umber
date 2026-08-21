@@ -32,7 +32,7 @@ pub(in crate::main_control) fn leave_group_payloads<G>(
 
 #[allow(clippy::too_many_arguments)] // applies the complete canonical replay state atomically
 pub(in crate::main_control) fn apply<G>(
-    scanned: ColdOperation<G>,
+    scanned: PreparedColdOperation<G>,
     stores: tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     next_alignment_identity: &mut u64,
@@ -763,7 +763,7 @@ pub(in crate::main_control) fn apply<G>(
             tokens,
             global,
         } => {
-            let new = tokens.token_list();
+            let new = tokens;
             let observed = ObservationValue::Tokens(
                 stores
                     .tokens(new)
@@ -1291,7 +1291,7 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::InputStream { request, resource } => {
             match request {
-                InputStreamRequest::Open {
+                RootedInputStreamRequest::Open {
                     stream, file_name, ..
                 } => {
                     let slot = replay_stream_slot(stream);
@@ -1314,7 +1314,7 @@ pub(in crate::main_control) fn apply<G>(
                         Ok::<(), ExecError>(())
                     })?;
                 }
-                InputStreamRequest::Close { stream, .. } => {
+                RootedInputStreamRequest::Close { stream, .. } => {
                     let slot = replay_stream_slot(stream);
                     AssignmentCommitter::new(stores)
                         .unscoped(None, |stores| stores.world_mut().close_in(slot));
@@ -1323,25 +1323,19 @@ pub(in crate::main_control) fn apply<G>(
                 // command core, which also reported §1225's missing-`to`
                 // recovery at the point tex.web reports it; the definition is
                 // all that is left.
-                InputStreamRequest::Read {
+                RootedInputStreamRequest::Read {
                     target,
                     global,
                     tokens,
+                    definition,
                     ..
                 } => {
-                    let parameters = stores.intern_token_list_ref(&[]);
-                    let meaning = MacroMeaning::new(
-                        MeaningFlags::EMPTY,
-                        parameters.id(),
-                        tokens.token_list(),
-                    );
                     // TeX82 §1225 installs `read_toks`'s freshly allocated
                     // macro through `define(p,call,cur_val)`, so e-TeX
                     // [17.687-750] traces the same pre/post eqtb write as a
                     // `\def`, immediately after collection and before the
                     // next command is fetched.
-                    let observed =
-                        ObservationValue::Tokens(observed_read_body(tokens.token_list(), stores));
+                    let observed = ObservationValue::Tokens(observed_read_body(tokens, stores));
                     let record = MutationRecord {
                         target: MutationTarget::Meaning,
                         key: ObservationValue::Name(stores.resolve(target).to_owned()),
@@ -1356,11 +1350,18 @@ pub(in crate::main_control) fn apply<G>(
                                 true,
                                 global,
                                 |stores| {
-                                    if global {
-                                        stores.set_macro_meaning_global(target, meaning)
-                                    } else {
-                                        stores.set_macro_meaning(target, meaning)
-                                    }
+                                    stores
+                                        .assign_resolved_meaning(
+                                            target,
+                                            tex_state::meaning::ResolvedMeaning::Macro {
+                                                flags: MeaningFlags::EMPTY,
+                                                definition,
+                                            },
+                                            assignment_scope(global),
+                                        )
+                                        .expect(
+                                            "prepared read definition belongs to admitted state",
+                                        )
                                 },
                             );
                         });
@@ -1519,7 +1520,7 @@ pub(in crate::main_control) fn apply<G>(
                 );
                 return Ok(ReplayStep::Continue);
             }
-            stores.append_pdf_document_fragment(request.kind, request.text.tokens.token_list());
+            stores.append_pdf_document_fragment(request.kind, request.text.tokens);
             if let Some(action) = request.open_action {
                 if stores.pdf_catalog_open_action().is_some() {
                     return Err(ExecError::PdfDuplicateOpenAction);
@@ -1701,9 +1702,7 @@ pub(in crate::main_control) fn apply<G>(
                 command.fuel,
                 Whatsit::DeferredWrite {
                     sink: replay_write_sink(stream),
-                    tokens: tex_state::node::NodeTokenList::new(
-                        stores.tokens(tokens.token_ref().id()).to_vec(),
-                    ),
+                    tokens: tex_state::node::NodeTokenList::new(stores.tokens(tokens).to_vec()),
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -1718,9 +1717,7 @@ pub(in crate::main_control) fn apply<G>(
                 command.fuel,
                 Whatsit::DeferredSpecial {
                     class: "dvi".to_owned(),
-                    tokens: tex_state::node::NodeTokenList::new(
-                        stores.tokens(tokens.token_ref().id()).to_vec(),
-                    ),
+                    tokens: tex_state::node::NodeTokenList::new(stores.tokens(tokens).to_vec()),
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -1730,7 +1727,7 @@ pub(in crate::main_control) fn apply<G>(
             tokens,
         } => {
             let mut text = String::new();
-            for &token in stores.tokens(tokens.token_ref().id()).iter() {
+            for &token in stores.tokens(tokens).iter() {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
             crate::box_runtime::append_whatsit(
@@ -2035,7 +2032,7 @@ pub(in crate::main_control) fn apply<G>(
             // TeX82 §1279's `issue_message` renders the scanned list through
             // `token_show` into one string and then hands it to §1280 or
             // §1283; neither branch formats or routes its own output.
-            let text = message_tokens_text(stores, tokens.token_ref().id());
+            let text = message_tokens_text(stores, tokens);
             if error {
                 let context = command.state.output_open_context(&**stores);
                 issue_error_message(stores, &text, context)?;
@@ -2075,7 +2072,7 @@ pub(in crate::main_control) fn apply<G>(
             // §1297 prints `token_show(temp_head)` and takes the common
             // `\show` completion path.
             let context = command.state.output_open_context(&**stores);
-            let text = show_tokens_tokens_text(stores, tokens.token_ref().id());
+            let text = show_tokens_tokens_text(stores, tokens);
             // §1297 opens with §62's `print_nl(">␣")`, whose break is
             // conditional on a selected sink already having an open column.
             // An unconditional newline here left a blank line above the
@@ -2121,8 +2118,8 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::ImmediateExtension(extension) => {
             match extension {
-                ImmediateExtension::Continue => {}
-                ImmediateExtension::PdfExtensionInDviMode(primitive) => {
+                RootedImmediateExtension::Continue => {}
+                RootedImmediateExtension::PdfExtensionInDviMode(primitive) => {
                     let name = match primitive {
                         UnexpandablePrimitive::PdfObject => "pdfobj",
                         UnexpandablePrimitive::PdfXForm => "pdfxform",
@@ -2131,7 +2128,7 @@ pub(in crate::main_control) fn apply<G>(
                     };
                     return Err(ExecError::PdfExtensionInDviMode(name));
                 }
-                ImmediateExtension::OpenOut { stream, file_name } => {
+                RootedImmediateExtension::OpenOut { stream, file_name } => {
                     let target = replay_openout_target(file_name.packed());
                     stores.open_output_stream(StreamSlot::new(stream), target.clone());
                     command
@@ -2141,27 +2138,27 @@ pub(in crate::main_control) fn apply<G>(
                         crate::diagnostics::report_openout(stores, stream, &target);
                     }
                 }
-                ImmediateExtension::Write { stream, tokens } => {
-                    let text = write_text(tokens.token_ref().id(), stores);
+                RootedImmediateExtension::Write { stream, tokens } => {
+                    let text = write_text(tokens, stores);
                     if let Some(sink) = immediate_write_sink(stream, stores) {
                         write_immediate_text(stores, sink, &text);
                     }
                 }
-                ImmediateExtension::CloseOut { stream } => {
+                RootedImmediateExtension::CloseOut { stream } => {
                     if let Some(stream) = stream.stream_slot() {
                         stores.close_output_stream(stream);
                     }
                 }
-                ImmediateExtension::PdfObject(request) => {
-                    if matches!(request, PdfObjectRequest::Reserve) {
+                RootedImmediateExtension::PdfObject(request) => {
+                    if matches!(request, RootedPdfObjectRequest::Reserve) {
                         return Err(ExecError::PdfImmediateReservedObject);
                     }
                     apply_pdf_object_request(request, stores, true)?;
                 }
-                ImmediateExtension::PdfForm(request) => {
+                RootedImmediateExtension::PdfForm(request) => {
                     apply_pdf_form_request(request, stores, modes, command, true)?;
                 }
-                ImmediateExtension::PdfImage(_) => {
+                RootedImmediateExtension::PdfImage(_) => {
                     unreachable!("immediate image requests are normalized before resolution")
                 }
             }
@@ -2488,9 +2485,7 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 Node::Mark {
                     class,
-                    tokens: tex_state::node::NodeTokenList::new(
-                        stores.tokens(tokens.token_ref().id()).to_vec(),
-                    ),
+                    tokens: tex_state::node::NodeTokenList::new(stores.tokens(tokens).to_vec()),
                 },
             );
             Ok(ReplayStep::Continue)

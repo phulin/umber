@@ -600,7 +600,8 @@ pub(in crate::main_control) fn scan<G>(
             Ok(ColdOperation::InputStream {
                 request: processor
                     .scan_input_stream_request(primitive, global)
-                    .map_err(command_error)?,
+                    .map_err(command_error)?
+                    .into(),
                 resource: None,
             })
         }
@@ -656,7 +657,10 @@ pub(in crate::main_control) fn scan<G>(
                 });
             }
             Ok(ColdOperation::PdfXImage {
-                request: processor.scan_pdf_image_request().map_err(command_error)?,
+                request: processor
+                    .scan_pdf_image_request()
+                    .map_err(command_error)?
+                    .into(),
                 // This placeholder is replaced after the processor borrow;
                 // it can never reach application.
                 resource: PdfImageResource::Unavailable,
@@ -706,7 +710,10 @@ pub(in crate::main_control) fn scan<G>(
                 return Err(ExecError::PdfExtensionInDviMode("pdfobj"));
             }
             Ok(ColdOperation::PdfObject(
-                processor.scan_pdf_object_request().map_err(command_error)?,
+                processor
+                    .scan_pdf_object_request()
+                    .map_err(command_error)?
+                    .into(),
             ))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfReferenceObject) => {
@@ -738,7 +745,8 @@ pub(in crate::main_control) fn scan<G>(
             Ok(ColdOperation::PdfForm(
                 processor
                     .scan_pdf_form_request(primitive)
-                    .map_err(command_error)?,
+                    .map_err(command_error)?
+                    .into(),
             ))
         }
         Meaning::UnexpandablePrimitive(
@@ -750,7 +758,8 @@ pub(in crate::main_control) fn scan<G>(
         ) => Ok(ColdOperation::PdfDocumentFragment(
             processor
                 .scan_pdf_document_fragment_request(primitive)
-                .map_err(command_error)?,
+                .map_err(command_error)?
+                .into(),
         )),
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfLiteral
@@ -787,7 +796,8 @@ pub(in crate::main_control) fn scan<G>(
                 processor
                     .scan_pdf_graphics_request(primitive)
                     .map_err(command_error)?
-                    .expect("graphics primitive has a typed request"),
+                    .expect("graphics primitive has a typed request")
+                    .into(),
             ))
         }
         Meaning::UnexpandablePrimitive(
@@ -844,7 +854,8 @@ pub(in crate::main_control) fn scan<G>(
             Ok(ColdOperation::PdfNavigation(
                 processor
                     .scan_pdf_navigation_request(primitive)
-                    .map_err(command_error)?,
+                    .map_err(command_error)?
+                    .into(),
             ))
         }
         Meaning::Font(font) => Ok(ColdOperation::FontSelect {
@@ -1214,11 +1225,11 @@ pub(in crate::main_control) fn scan<G>(
             }
             if let ImmediateExtension::PdfImage(request) = extension {
                 Ok(ColdOperation::PdfXImage {
-                    request,
+                    request: request.into(),
                     resource: PdfImageResource::Unavailable,
                 })
             } else {
-                Ok(ColdOperation::ImmediateExtension(extension))
+                Ok(ColdOperation::ImmediateExtension(extension.into()))
             }
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HRule)
