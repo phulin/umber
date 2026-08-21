@@ -997,6 +997,32 @@ impl<'a, G> CommandContext<'a, G> {
         Ok(id)
     }
 
+    pub fn try_copy_font_with_identifier(
+        &mut self,
+        source: crate::ids::FontId,
+        identifier: SymbolId,
+    ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
+        let parameters = self.fonts.get(source).parameters().to_vec();
+        let font = self.fonts.get(source).copied(parameters);
+        self.try_intern_font_with_identifier(font, identifier)
+    }
+
+    pub fn try_letterspace_font_with_identifier(
+        &mut self,
+        source: crate::ids::FontId,
+        identifier: SymbolId,
+        amount: i16,
+        no_ligatures: bool,
+    ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
+        let current_quad = self.font_dimen(source, 6);
+        let font = self
+            .fonts
+            .get(source)
+            .letterspaced(current_quad, amount, no_ligatures)
+            .expect("bounded live TeX font widths support letterspacing");
+        self.try_intern_font_with_identifier(font, identifier)
+    }
+
     pub fn configure_font_expansion(
         &mut self,
         font: crate::ids::FontId,
