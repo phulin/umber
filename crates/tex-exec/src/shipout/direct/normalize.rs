@@ -52,7 +52,10 @@ pub(super) fn normalize_page<G>(
     } = pending;
     let mut effects = effects;
     let snap_reference = if color_target == tex_state::PdfColorStackTarget::Page {
-        stores.pdf_snap_reference()
+        stores
+            .command_context()
+            .expect("shipout normalization runs inside an admitted command episode")
+            .pdf_snap_reference()
     } else {
         (
             tex_state::scaled::Scaled::from_raw(0),
@@ -71,7 +74,11 @@ pub(super) fn normalize_page<G>(
         });
     }
     if color_target == tex_state::PdfColorStackTarget::Page {
-        for restoration in stores.pdf_page_color_stack_restorations() {
+        let restorations = stores
+            .command_context()
+            .expect("shipout normalization runs inside an admitted command episode")
+            .pdf_page_color_stack_restorations();
+        for restoration in restorations {
             effects.push(PageEffect::PdfColorStack {
                 mode: lower_color_stack_mode(restoration.mode),
                 payload: restoration.payload,
@@ -412,11 +419,18 @@ fn append_whatsit_effect<G>(
         Whatsit::OpenOut { slot, path } if !suppress_deferred_streams => {
             // TeX82 §1374 closes the old stream before it attempts the
             // replacement, even when every subsequent open attempt fails.
-            stores.close_output_stream(slot);
-            let path = retry_openout_target(stores, path, &output_open_context)?;
-            stores.open_output_stream(slot, path.clone());
             stores
-                .world_mut()
+                .command_context()
+                .expect("deferred stream execution runs inside an admitted command episode")
+                .close_output_stream(slot);
+            let path = retry_openout_target(stores, path, &output_open_context)?;
+            stores
+                .command_context()
+                .expect("deferred stream execution runs inside an admitted command episode")
+                .open_output_stream(slot, path.clone().into());
+            stores
+                .command_context()
+                .expect("deferred stream execution runs inside an admitted command episode")
                 .set_last_stream_open_context(output_open_context);
             let effect_ordinal = stores
                 .world()
@@ -443,7 +457,10 @@ fn append_whatsit_effect<G>(
         }
         Whatsit::CloseOut { slot } if !suppress_deferred_streams => {
             if let Some(slot) = slot {
-                stores.close_output_stream(slot);
+                stores
+                    .command_context()
+                    .expect("deferred stream execution runs inside an admitted command episode")
+                    .close_output_stream(slot);
                 effects.push(PageEffect::CloseOut { stream: slot.raw() });
             }
         }
@@ -480,6 +497,8 @@ fn append_whatsit_effect<G>(
         }
         Whatsit::PdfReferenceObject { object } => {
             stores
+                .command_context()
+                .expect("PDF object publication runs inside an admitted command episode")
                 .reference_pdf_raw_object(object)
                 .map_err(|_| ExecError::PdfReferencedObjectNotFound)?;
         }
@@ -538,7 +557,11 @@ fn append_whatsit_effect<G>(
         Whatsit::PdfSave => effects.push(PageEffect::PdfSave),
         Whatsit::PdfRestore => effects.push(PageEffect::PdfRestore),
         Whatsit::PdfColorStack { id, action } => {
-            match stores.apply_pdf_color_stack(id, color_target, &action) {
+            let emission = stores
+                .command_context()
+                .expect("PDF color execution runs inside an admitted command episode")
+                .apply_pdf_color_stack(id, color_target, &action);
+            match emission {
                 Ok(emission) => effects.push(PageEffect::PdfColorStack {
                     mode: lower_color_stack_mode(emission.mode),
                     payload: emission.payload,
@@ -571,8 +594,14 @@ fn append_whatsit_effect<G>(
             height,
             depth,
         } => {
-            if stores.pdf_form_artifact(object).is_none() {
+            let artifact = stores
+                .command_context()
+                .expect("PDF form execution runs inside an admitted command episode")
+                .pdf_form_artifact(object);
+            if artifact.is_none() {
                 let form = stores
+                    .command_context()
+                    .expect("PDF form execution runs inside an admitted command episode")
                     .pdf_form(object)
                     .ok_or(ExecError::PdfReferencedObjectNotFound)?;
                 let artifact = super::stage_form(
@@ -581,11 +610,14 @@ fn append_whatsit_effect<G>(
                     expansion.write_expander,
                     expansion.replay_expander,
                 )?;
-                stores.publish_pdf_traversal_positions(
+                let mut command = stores
+                    .command_context()
+                    .expect("PDF form execution runs inside an admitted command episode");
+                command.publish_pdf_traversal_positions(
                     artifact.last_position(),
                     artifact.snap_reference(),
                 );
-                stores.set_pdf_form_artifact(object, artifact);
+                command.set_pdf_form_artifact(object, artifact);
             }
             effects.push(PageEffect::PdfRefXForm {
                 object,
@@ -637,6 +669,8 @@ fn append_whatsit_effect<G>(
                 }
             };
             let definition = stores
+                .command_context()
+                .expect("PDF destination execution runs inside an admitted command episode")
                 .define_pdf_destination(identity.clone(), structure)
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             if definition.duplicate {
@@ -732,6 +766,8 @@ fn append_whatsit_effect<G>(
                 }
             };
             let (thread, bead) = stores
+                .command_context()
+                .expect("PDF thread execution runs inside an admitted command episode")
                 .append_pdf_thread_bead(identity.clone())
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             let identifier = match identity {
@@ -797,12 +833,18 @@ fn append_whatsit_effect<G>(
 /// shipout. `Stream`, `TerminalAndLog`, and `Log` retain §1342's normalized
 /// numbered, above-range, and negative stream identities until this point.
 pub(super) fn deferred_write_sink<G>(
-    stores: &Universe<G>,
+    stores: &mut Universe<G>,
     sink: tex_state::PrintSink,
 ) -> Option<tex_state::PrintSink> {
     let selector = tex_state::print::Selector::for_interaction(stores.interaction_mode());
+    let mut stream_is_open = |slot| {
+        stores
+            .command_context()
+            .expect("deferred write runs inside an admitted command episode")
+            .output_stream_is_open(slot)
+    };
     match sink {
-        tex_state::PrintSink::Stream(slot) if stores.output_stream_is_open(slot) => Some(sink),
+        tex_state::PrintSink::Stream(slot) if stream_is_open(slot) => Some(sink),
         tex_state::PrintSink::Stream(_) | tex_state::PrintSink::TerminalAndLog => selector.sink(),
         tex_state::PrintSink::Log if selector == tex_state::print::Selector::TermAndLog => {
             Some(tex_state::PrintSink::Log)

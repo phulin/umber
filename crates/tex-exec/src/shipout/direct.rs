@@ -78,11 +78,17 @@ pub(crate) fn stage_form<G>(
     write_expander: &mut WriteExpander<'_, G>,
     replay_expander: &mut ReplayTextExpander<'_, G>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    let color_rollback = stores.pdf_form_color_rollback();
+    let color_rollback = stores
+        .command_context()
+        .expect("form shipout runs inside an admitted command episode")
+        .pdf_form_color_rollback();
     let page_cursor = stores.page_node_cursor();
     let result = stage_form_inner(form, stores, write_expander, replay_expander);
     if result.is_err() {
-        stores.rollback_pdf_form_colors(color_rollback);
+        stores
+            .command_context()
+            .expect("form shipout runs inside an admitted command episode")
+            .rollback_pdf_form_colors(color_rollback);
     }
     stores
         .truncate_page_nodes(page_cursor)
@@ -354,7 +360,10 @@ pub(crate) fn stage_shipout<G>(
             .last_saved_position
             .map(|position| saved_position(stores, &root, position))
             .transpose()?;
-        stores.publish_pdf_traversal_positions(last_position, positioned.snap_reference);
+        stores
+            .command_context()
+            .expect("page shipout runs inside an admitted command episode")
+            .publish_pdf_traversal_positions(last_position, positioned.snap_reference);
     }
 
     let retained_diagnostics = overlay.diagnostics.clone();
@@ -421,11 +430,17 @@ fn ensure_pdf_font_resources<G>(
     fonts: &[FontId],
 ) -> Result<(), ExecError> {
     for &font in fonts {
-        let first_use = stores.pdf_font_resource(font).is_none();
-        stores
-            .ensure_pdf_font_resource(font)
-            .map_err(|_| ExecError::ArithmeticOverflow)?;
-        if first_use && stores.int_param(IntParam::PDF_MOVE_CHARS) > 0 {
+        let (first_use, move_chars) = {
+            let mut command = stores
+                .command_context()
+                .expect("PDF font publication runs inside an admitted command episode");
+            let first_use = command.pdf_font_resource(font).is_none();
+            command
+                .ensure_pdf_font_resource(font)
+                .map_err(|_| ExecError::ArithmeticOverflow)?;
+            (first_use, command.int_param(IntParam::PDF_MOVE_CHARS))
+        };
+        if first_use && move_chars > 0 {
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
                 "\npdfTeX warning: Primitive \\pdfmovechars is obsolete.\n",
@@ -434,6 +449,8 @@ fn ensure_pdf_font_resources<G>(
             // assignment therefore restores its saved outer value at group
             // exit, while an ordinary/global value remains zero thereafter.
             stores
+                .command_context()
+                .expect("PDF font publication runs inside an admitted command episode")
                 .assign_int_param(
                     IntParam::PDF_MOVE_CHARS,
                     0,

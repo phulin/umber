@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use tex_command::{DimensionDiagnostic, FatalError};
 use tex_state::env::banks::IntParam;
-use tex_state::page::{PageContents, PageDimension, PageInsertionStatus};
+use tex_state::page::{PageContents, PageDimension, PageInsertion, PageInsertionStatus};
 use tex_state::print::Selector;
 use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
@@ -443,6 +443,8 @@ pub(crate) fn execute_showlists<G>(
 ) -> Result<(), ExecError> {
     let mut text = String::new();
     let summary = nest.summary();
+    let output_routine_active = summary.levels().iter().any(|level| level.entry_line() < 0);
+    let page = page_activity_snapshot(stores, output_routine_active)?;
     for (index, level) in summary.levels().iter().enumerate().rev() {
         text.push_str("### ");
         text.push_str(mode_text(level.mode()));
@@ -465,39 +467,35 @@ pub(crate) fn execute_showlists<G>(
         }
         text.push('\n');
         if index == 0 && level.mode() == Mode::Vertical {
-            if stores.current_page_len() != 0 {
-                let current_page = stores.current_page_nodes();
+            if !page.current_page.is_empty() {
                 text.push_str("### current page:");
                 // TeX82 §218 distinguishes the page retained while §1025's
                 // output routine is active from the ordinary current page.
-                if stores.output_routine_is_active() {
+                if output_routine_active {
                     text.push_str(" (held over for next output)");
                 }
                 text.push('\n');
                 text.push_str(&dump_node_slice(
                     stores,
-                    &current_page,
+                    &page.current_page,
                     DumpConfig::read(stores).for_profile(profile),
                 ));
-                if stores.page_contents() != PageContents::Empty {
+                if page.contents != PageContents::Empty {
                     text.push_str("total height ");
-                    push_page_totals(stores, &mut text);
+                    push_page_totals(&page, &mut text);
                     // TeX82 §218 uses `print_nl(" goal height ")`; the
                     // leading space is part of the diagnostic text.
                     text.push_str("\n goal height ");
-                    text.push_str(&crate::node_dump::format_scaled_for_diagnostics(
-                        stores.page_dimension(PageDimension::Goal),
-                    ));
+                    text.push_str(&crate::node_dump::format_scaled_for_diagnostics(page.goal));
                     text.push('\n');
-                    push_page_insertions(stores, &current_page, &mut text)?;
+                    push_page_insertions(&page.insertions, &page.current_page, &mut text)?;
                 }
             }
-            if !stores.page_contributions().is_empty() {
+            if !page.contributions.is_empty() {
                 text.push_str("### recent contributions:\n");
-                let contributions: Vec<_> = stores.page_contributions().iter().cloned().collect();
                 text.push_str(&dump_node_slice(
                     stores,
-                    &contributions,
+                    &page.contributions,
                     DumpConfig::read(stores).for_profile(profile),
                 ));
             }
@@ -563,6 +561,54 @@ pub(crate) fn execute_showlists<G>(
     Ok(())
 }
 
+struct PageActivitySnapshot {
+    current_page: Vec<tex_state::node::Node>,
+    contributions: Vec<tex_state::node::Node>,
+    insertions: Vec<(PageInsertion, i32)>,
+    contents: PageContents,
+    goal: tex_state::scaled::Scaled,
+    total: tex_state::scaled::Scaled,
+    stretch: [tex_state::scaled::Scaled; 4],
+    shrink: tex_state::scaled::Scaled,
+}
+
+/// Detaches the page-builder evidence before diagnostic formatting can call
+/// back into the live engine. No page-arena borrow crosses the observer seam.
+fn page_activity_snapshot<G>(
+    stores: &mut Universe<G>,
+    output_routine_active: bool,
+) -> Result<PageActivitySnapshot, ExecError> {
+    let command = stores
+        .command_context()
+        .expect("showlists runs inside an admitted command episode");
+    let dimension =
+        |dimension| command.page_dimension_with_output_routine(dimension, output_routine_active);
+    let insertions = command
+        .page_insertions()
+        .iter()
+        .cloned()
+        .map(|insertion| {
+            let count = command.count(insertion.class())?;
+            Ok((insertion, count))
+        })
+        .collect::<Result<Vec<_>, tex_state::StateError>>()?;
+    Ok(PageActivitySnapshot {
+        current_page: command.current_page_nodes().cloned().collect(),
+        contributions: command.page_contributions().iter().cloned().collect(),
+        insertions,
+        contents: command.page_contents(),
+        goal: dimension(PageDimension::Goal),
+        total: dimension(PageDimension::Total),
+        stretch: [
+            dimension(PageDimension::Stretch),
+            dimension(PageDimension::FilStretch),
+            dimension(PageDimension::FillStretch),
+            dimension(PageDimension::FilllStretch),
+        ],
+        shrink: dimension(PageDimension::Shrink),
+    })
+}
+
 /// Returns TeX82 §218's list root for one saved semantic nest level.
 ///
 /// While §1194 scans an equation number, `fin_mlist(null)` has moved the
@@ -593,17 +639,14 @@ fn showlists_level_nodes<G>(
 }
 
 /// TeX82 §218's insertion-record tail of `show_activities`.
-fn push_page_insertions<G>(
-    stores: &Universe<G>,
+fn push_page_insertions(
+    insertions: &[(PageInsertion, i32)],
     current_page: &[tex_state::node::Node],
     text: &mut String,
 ) -> Result<(), ExecError> {
-    for insertion in stores.page_insertions() {
+    for (insertion, count) in insertions {
         let _ = write!(text, "\\insert{} adds ", insertion.class());
-        let scaled_height = crate::page_builder::scaled_insertion_size(
-            insertion.height(),
-            stores.count(insertion.class()),
-        )?;
+        let scaled_height = crate::page_builder::scaled_insertion_size(insertion.height(), *count)?;
         text.push_str(&crate::node_dump::format_scaled_for_diagnostics(
             scaled_height,
         ));
@@ -625,27 +668,20 @@ fn push_page_insertions<G>(
     Ok(())
 }
 
-fn push_page_totals<G>(stores: &Universe<G>, text: &mut String) {
-    text.push_str(&crate::node_dump::format_scaled_for_diagnostics(
-        stores.page_dimension(PageDimension::Total),
-    ));
-    for (dimension, suffix) in [
-        (PageDimension::Stretch, ""),
-        (PageDimension::FilStretch, "fil"),
-        (PageDimension::FillStretch, "fill"),
-        (PageDimension::FilllStretch, "filll"),
-    ] {
-        let value = stores.page_dimension(dimension);
+fn push_page_totals(page: &PageActivitySnapshot, text: &mut String) {
+    text.push_str(&crate::node_dump::format_scaled_for_diagnostics(page.total));
+    for (value, suffix) in page.stretch.into_iter().zip(["", "fil", "fill", "filll"]) {
         if value.raw() != 0 {
             text.push_str(" plus ");
             text.push_str(&crate::node_dump::format_scaled_for_diagnostics(value));
             text.push_str(suffix);
         }
     }
-    let shrink = stores.page_dimension(PageDimension::Shrink);
-    if shrink.raw() != 0 {
+    if page.shrink.raw() != 0 {
         text.push_str(" minus ");
-        text.push_str(&crate::node_dump::format_scaled_for_diagnostics(shrink));
+        text.push_str(&crate::node_dump::format_scaled_for_diagnostics(
+            page.shrink,
+        ));
     }
 }
 
