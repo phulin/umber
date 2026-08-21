@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+mod support;
+
 use test_support::{CompileFailDependency, assert_compile_fail};
 use tex_command::{
     CommandObservation, CommandObserver, CommandProfile, MutationTarget, ObservationValue,
@@ -8,49 +10,58 @@ use tex_command::{
 use tex_exec::{MainControl, MainControlStep, ResourceNeed, StepResult};
 use tex_out::dvi::{DviPagePlan, DviStreamWriter};
 use tex_state::{
-    EffectRecord, InteractionMode, PrintSink, Universe,
+    EffectRecord, PrintSink, PureMemoConfig, PureMemoRuntime, ResolvedMeaning, Universe,
+    env::AssignmentScope,
     meaning::{Meaning, UnexpandablePrimitive},
 };
 
 fn run_tex82(source: &[u8], tracing_online: bool) -> String {
-    let mut stores = Universe::new_with_plain_catcodes();
-    stores.set_interaction_mode(InteractionMode::Nonstop);
-    if tracing_online {
-        stores.set_int_param(tex_state::env::banks::IntParam::TRACING_ONLINE, 1);
-    }
-    let mut control = MainControl::tex82_initex(&mut stores);
-    control
-        .register_root_source(SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(source),
-        ))
-        .expect("test source registers");
-
-    loop {
-        match control.step(&mut stores).expect("test source executes") {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
-            MainControlStep::Continue => {}
+    support::with_plain_universe(|stores| {
+        if tracing_online {
+            stores
+                .command_context()
+                .expect("command admission")
+                .assign_int_param(
+                    tex_state::env::banks::IntParam::TRACING_ONLINE,
+                    1,
+                    AssignmentScope::Global,
+                )
+                .expect("tracing assignment");
         }
-    }
+        let mut control = MainControl::tex82_initex(stores);
+        control
+            .register_root_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(source),
+            ))
+            .expect("test source registers");
 
-    let committed = stores
-        .world()
-        .memory_log_output()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .unwrap_or_default();
-    let pending: String = stores
-        .world()
-        .effect_records()
-        .iter()
-        .filter_map(|effect| match effect {
-            EffectRecord::StreamWrite {
-                sink: PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog,
-                text,
-            } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    committed + &pending
+        loop {
+            match control.step(stores).expect("test source executes") {
+                MainControlStep::End | MainControlStep::EndOfInput => break,
+                MainControlStep::Continue => {}
+            }
+        }
+
+        let committed = stores
+            .world()
+            .memory_log_output()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default();
+        let pending: String = stores
+            .world()
+            .effect_records()
+            .iter()
+            .filter_map(|effect| match effect {
+                EffectRecord::StreamWrite {
+                    sink: PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog,
+                    text,
+                } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        committed + &pending
+    })
 }
 
 #[derive(Default)]
@@ -62,40 +73,33 @@ impl CommandObserver for ObservationCollector {
     }
 }
 
-fn observed_etex(source: &[u8]) -> (Universe, Vec<CommandObservation>) {
-    let mut stores = Universe::new_with_plain_catcodes();
-    stores.set_interaction_mode(InteractionMode::Nonstop);
-    tex_command::install_tex82_expandable_primitives(&mut stores);
-    tex_command::install_etex_expandable_primitives(&mut stores);
-    tex_exec::install_unexpandable_primitives(&mut stores);
-    tex_exec::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
-    control
-        .register_root_source(SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(source),
-        ))
-        .expect("test source registers");
-    let mut observer = ObservationCollector::default();
-    loop {
-        match control
-            .step_with_observer(&mut stores, &mut observer)
-            .expect("observed e-TeX source executes")
-        {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
-            MainControlStep::Continue => {}
+fn observed_etex(source: &[u8]) -> (i32, Vec<CommandObservation>) {
+    support::with_plain_universe(|stores| {
+        let mut control = etex_session(stores, source);
+        let mut observer = ObservationCollector::default();
+        loop {
+            match control
+                .step_with_observer(stores, &mut observer)
+                .expect("observed e-TeX source executes")
+            {
+                MainControlStep::End | MainControlStep::EndOfInput => break,
+                MainControlStep::Continue => {}
+            }
         }
-    }
-    (stores, observer.0)
+        let count = stores
+            .command_context()
+            .expect("command admission")
+            .count(0)
+            .expect("count register");
+        (count, observer.0)
+    })
 }
 
-fn etex_session(source: &[u8]) -> (MainControl, Universe) {
-    let mut stores = Universe::new_with_plain_catcodes();
-    stores.set_interaction_mode(InteractionMode::Nonstop);
-    tex_command::install_tex82_expandable_primitives(&mut stores);
-    tex_command::install_etex_expandable_primitives(&mut stores);
-    tex_exec::install_unexpandable_primitives(&mut stores);
-    tex_exec::install_etex_unexpandable_primitives(&mut stores);
+fn etex_session<G>(stores: &mut Universe<G>, source: &[u8]) -> MainControl<G> {
+    tex_command::install_tex82_expandable_primitives(stores);
+    tex_command::install_etex_expandable_primitives(stores);
+    tex_exec::install_unexpandable_primitives(stores);
+    tex_exec::install_etex_unexpandable_primitives(stores);
     let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     control
         .register_root_source(SourceRegistration::new(
@@ -103,7 +107,7 @@ fn etex_session(source: &[u8]) -> (MainControl, Universe) {
             Arc::<[u8]>::from(source),
         ))
         .expect("test source registers");
-    (control, stores)
+    control
 }
 
 fn serialize_dvi_page(plan: &DviPagePlan) -> Vec<u8> {
@@ -115,64 +119,66 @@ fn serialize_dvi_page(plan: &DviPagePlan) -> Vec<u8> {
 #[test]
 fn fresh_and_memo_shipouts_share_canonical_artifact_dvi() {
     let source: &[u8] = br"\setbox0=\hbox{\kern1pt}\shipout\copy0\shipout\copy0\end";
-    let mut stores = Universe::new_with_plain_catcodes();
-    stores.enable_shipout_memo();
-    let mut control = MainControl::tex82_initex(&mut stores);
-    control.set_dvi_output(true);
-    control
-        .register_root_source(SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(source),
-        ))
-        .expect("test source registers");
+    support::with_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        control.install_pure_memo_runtime(PureMemoRuntime::new(PureMemoConfig::default()));
+        control.set_dvi_output(true);
+        control
+            .register_root_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(source),
+            ))
+            .expect("test source registers");
 
-    loop {
-        match control.step(&mut stores).expect("shipouts execute") {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
-            MainControlStep::Continue => {}
+        loop {
+            match control.step(stores).expect("shipouts execute") {
+                MainControlStep::End | MainControlStep::EndOfInput => break,
+                MainControlStep::Continue => {}
+            }
         }
-    }
 
-    let artifacts = stores.world().committed_artifacts();
-    assert_eq!(artifacts.len(), 2);
-    assert_eq!(artifacts[0].bytes(), artifacts[1].bytes());
-    assert_eq!(control.pure_memo_stats().shipout_hits, 1);
-    let plans = control
-        .take_prepared_dvi_pages()
-        .into_iter()
-        .map(tex_exec::PreparedDviPage::into_plan)
-        .collect::<Vec<_>>();
-    assert_eq!(plans.len(), 2);
-    assert_eq!(plans[0], plans[1]);
-    assert_eq!(serialize_dvi_page(&plans[0]), serialize_dvi_page(&plans[1]));
+        let artifacts = stores.world().committed_artifacts();
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[0].bytes(), artifacts[1].bytes());
+        assert_eq!(control.pure_memo_stats().shipout_hits, 1);
+        let plans = control
+            .take_prepared_dvi_pages()
+            .into_iter()
+            .map(tex_exec::PreparedDviPage::into_plan)
+            .collect::<Vec<_>>();
+        assert_eq!(plans.len(), 2);
+        assert_eq!(plans[0], plans[1]);
+        assert_eq!(serialize_dvi_page(&plans[0]), serialize_dvi_page(&plans[1]));
+    });
 }
 
 #[test]
 fn dvi_disabled_fresh_and_memo_shipouts_both_omit_plans() {
     let source: &[u8] = br"\setbox0=\hbox{\kern1pt}\shipout\copy0\shipout\copy0\end";
-    let mut stores = Universe::new_with_plain_catcodes();
-    stores.enable_shipout_memo();
-    let mut control = MainControl::tex82_initex(&mut stores);
-    control.set_dvi_output(false);
-    control
-        .register_root_source(SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(source),
-        ))
-        .expect("test source registers");
+    support::with_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        control.install_pure_memo_runtime(PureMemoRuntime::new(PureMemoConfig::default()));
+        control.set_dvi_output(false);
+        control
+            .register_root_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(source),
+            ))
+            .expect("test source registers");
 
-    loop {
-        match control.step(&mut stores).expect("shipouts execute") {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
-            MainControlStep::Continue => {}
+        loop {
+            match control.step(stores).expect("shipouts execute") {
+                MainControlStep::End | MainControlStep::EndOfInput => break,
+                MainControlStep::Continue => {}
+            }
         }
-    }
 
-    let artifacts = stores.world().committed_artifacts();
-    assert_eq!(artifacts.len(), 2);
-    assert_eq!(artifacts[0].bytes(), artifacts[1].bytes());
-    assert_eq!(control.pure_memo_stats().shipout_hits, 1);
-    assert!(control.take_prepared_dvi_pages().is_empty());
+        let artifacts = stores.world().committed_artifacts();
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[0].bytes(), artifacts[1].bytes());
+        assert_eq!(control.pure_memo_stats().shipout_hits, 1);
+        assert!(control.take_prepared_dvi_pages().is_empty());
+    });
 }
 
 #[test]
@@ -186,55 +192,80 @@ fn live_shipout_has_no_second_dvi_emitter() {
 #[test]
 fn unified_operation_preserves_state_output_and_typed_evidence() {
     let source = br"\count0=7\afterassignment\relax\count1=9\setbox0=\hbox{A}\halign{#\cr B\cr}\write16{receipt}\end";
-    let (mut ordinary, mut ordinary_stores) = etex_session(source);
-    loop {
-        match ordinary
-            .advance_episode(&mut ordinary_stores)
-            .expect("canonical episode execution")
-        {
-            StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
-            StepResult::Progress(MainControlStep::Continue) => {}
-            StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
+    let ordinary = support::with_plain_universe(|stores| {
+        let mut control = etex_session(stores, source);
+        loop {
+            match control
+                .advance_episode(stores)
+                .expect("canonical episode execution")
+            {
+                StepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => break,
+                StepResult::Progress(MainControlStep::Continue) => {}
+                StepResult::Suspended(need) => panic!("unexpected resource suspension: {need:?}"),
+            }
         }
-    }
+        let telemetry = control.episode_telemetry();
+        let context = stores.command_context().expect("command admission");
+        let state = (
+            context.count(0).expect("count zero"),
+            context.count(1).expect("count one"),
+            context.box_register(0).expect("box zero").is_some(),
+        );
+        drop(context);
+        (
+            state,
+            stores.world().effect_records().to_vec(),
+            stores.world().artifact_commits().to_vec(),
+            stores
+                .world()
+                .memory_terminal_output()
+                .is_some_and(|bytes| !bytes.is_empty()),
+            telemetry,
+        )
+    });
     assert!(
-        ordinary.episode_telemetry().operations() > ordinary.episode_telemetry().commits(),
+        ordinary.4.operations() > ordinary.4.commits(),
         "the broad e-TeX fixture must exercise multi-operation canonical episodes"
     );
 
-    let (mut observed, mut observed_stores) = etex_session(source);
-    let mut evidence = ObservationCollector::default();
-    loop {
-        match observed
-            .step_with_observer(&mut observed_stores, &mut evidence)
-            .expect("observed execution")
-        {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
-            MainControlStep::Continue => {}
+    let (observed, evidence) = support::with_plain_universe(|stores| {
+        let mut control = etex_session(stores, source);
+        let mut evidence = ObservationCollector::default();
+        loop {
+            match control
+                .step_with_observer(stores, &mut evidence)
+                .expect("observed execution")
+            {
+                MainControlStep::End | MainControlStep::EndOfInput => break,
+                MainControlStep::Continue => {}
+            }
         }
-    }
+        let context = stores.command_context().expect("command admission");
+        let state = (
+            context.count(0).expect("count zero"),
+            context.count(1).expect("count one"),
+            context.box_register(0).expect("box zero").is_some(),
+        );
+        drop(context);
+        (
+            (
+                state,
+                stores.world().effect_records().to_vec(),
+                stores.world().artifact_commits().to_vec(),
+            ),
+            evidence,
+        )
+    });
 
-    assert_eq!(
-        ordinary_stores.snapshot().state_hash(),
-        observed_stores.snapshot().state_hash()
-    );
-    assert_eq!(
-        ordinary_stores.world().effect_records(),
-        observed_stores.world().effect_records()
-    );
-    assert_eq!(
-        ordinary_stores.world().artifact_commits(),
-        observed_stores.world().artifact_commits()
-    );
+    assert_eq!(ordinary.0, observed.0);
+    assert_eq!(ordinary.1, observed.1);
+    assert_eq!(ordinary.2, observed.2);
     assert!(
-        ordinary_stores
-            .world()
-            .memory_terminal_output()
-            .is_some_and(|bytes| !bytes.is_empty()),
+        ordinary.3,
         "independent ordinary producer must commit world output"
     );
     assert!(
-        !ordinary_stores.world().artifact_commits().is_empty(),
+        !ordinary.2.is_empty(),
         "independent ordinary producer must exercise artifact publication"
     );
     assert!(
@@ -244,39 +275,40 @@ fn unified_operation_preserves_state_output_and_typed_evidence() {
             .any(|record| matches!(record, CommandObservation::Alignment(_)))
     );
     assert_eq!(register_mutation_keys(&evidence.0), ["count:0", "count:1"]);
-    assert!(observed_stores.copy_box_to_page(0).is_some());
+    assert!(observed.0.2);
 }
 
 #[test]
 fn unified_operation_resource_suspension_is_observation_independent() {
     let source = br"\input absent-resource";
-    let (mut ordinary, mut ordinary_stores) = etex_session(source);
-    let (mut observed, mut observed_stores) = etex_session(source);
-    let mut evidence = ObservationCollector::default();
-
-    let ordinary_need = loop {
-        if let StepResult::Suspended(need) = ordinary
-            .advance(&mut ordinary_stores)
-            .expect("ordinary operation")
-        {
-            break need;
-        }
-    };
-    let observed_need = loop {
-        if let StepResult::Suspended(need) = observed
-            .advance_with_observer(&mut observed_stores, &mut evidence)
-            .expect("observed operation")
-        {
-            break need;
-        }
-    };
+    let (ordinary_need, ordinary_effects) = support::with_plain_universe(|stores| {
+        let mut control = etex_session(stores, source);
+        let need = loop {
+            if let StepResult::Suspended(need) =
+                control.advance(stores).expect("ordinary operation")
+            {
+                break need;
+            }
+        };
+        (need, stores.world().effect_records().to_vec())
+    });
+    let (observed_need, observed_effects, evidence) = support::with_plain_universe(|stores| {
+        let mut control = etex_session(stores, source);
+        let mut evidence = ObservationCollector::default();
+        let need = loop {
+            if let StepResult::Suspended(need) = control
+                .advance_with_observer(stores, &mut evidence)
+                .expect("observed operation")
+            {
+                break need;
+            }
+        };
+        (need, stores.world().effect_records().to_vec(), evidence)
+    });
 
     assert_eq!(ordinary_need, observed_need);
     assert!(matches!(ordinary_need, ResourceNeed::Input { .. }));
-    assert_eq!(
-        ordinary_stores.snapshot().state_hash(),
-        observed_stores.snapshot().state_hash()
-    );
+    assert_eq!(ordinary_effects, observed_effects);
     assert!(
         evidence.0.is_empty(),
         "rolled-back evidence must not publish"
@@ -512,9 +544,9 @@ fn assignment_committer_owns_redundancy_glue_identity_and_afterassignment_order(
 
 #[test]
 fn assignment_committer_emits_sparse_box_receipt_and_suppresses_overflow_write() {
-    let (stores, observations) =
+    let (count, observations) =
         observed_etex(br"\setbox32103=\hbox{}\count0=2147483647\advance\count0 by1\end");
-    assert_eq!(stores.count(0), i32::MAX);
+    assert_eq!(count, i32::MAX);
     let keys = register_mutation_keys(&observations);
     assert!(keys.contains(&"box:32103"));
     assert_eq!(keys.iter().filter(|key| **key == "count:0").count(), 1);
@@ -529,47 +561,56 @@ fn let_endgroup_alias_runs_off_save_and_restores_the_primitive() {
     // `\endgroup`. Frozen alignment sentinels have distinct `EndV`/
     // `EndTemplate` meanings and continue through the alignment dispatch
     // covered by the tests below.
-    let mut stores = Universe::new_with_plain_catcodes();
-    let alias = stores.intern("alias");
-    let restored = stores.intern("restored");
-    stores.set_interaction_mode(InteractionMode::Nonstop);
-    let mut control = MainControl::tex82_initex(&mut stores);
-    control.set_fuel_limit(128).expect("bounded command fuel");
-    control
-        .register_root_source(SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(
-                br"\let\alias=\endgroup{\def\endgroup{\alias\alias}\alias\let\restored=\endgroup\count0=17"
-                    .as_slice(),
-            ),
-        ))
-        .expect("test source registers");
+    support::with_plain_universe(|stores| {
+        let (alias, restored) = {
+            let mut context = stores.command_context().expect("command admission");
+            (
+                context.intern_control_sequence("alias"),
+                context.intern_control_sequence("restored"),
+            )
+        };
+        let mut control = MainControl::tex82_initex(stores);
+        control.set_fuel_limit(128).expect("bounded command fuel");
+        control
+            .register_root_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(
+                    br"\let\alias=\endgroup{\def\endgroup{\alias\alias}\alias\let\restored=\endgroup\count0=17"
+                        .as_slice(),
+                ),
+            ))
+            .expect("test source registers");
 
-    loop {
-        match control.step(&mut stores).expect("alias recovery executes") {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
-            MainControlStep::Continue => {}
+        loop {
+            match control.step(stores).expect("alias recovery executes") {
+                MainControlStep::End | MainControlStep::EndOfInput => break,
+                MainControlStep::Continue => {}
+            }
         }
-    }
 
-    assert_eq!(
-        stores.meaning(alias),
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup)
-    );
-    assert_eq!(stores.meaning(restored), stores.meaning(alias));
-    assert_eq!(stores.count(0), 17);
-    assert!(control.fuel_burned() < 128);
-    let transcript = stores
-        .world()
-        .effect_records()
-        .iter()
-        .filter_map(|effect| match effect {
-            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<String>();
-    assert_eq!(transcript.matches("! Missing } inserted.").count(), 1);
-    assert_eq!(transcript.matches("! Extra \\endgroup.").count(), 1);
+        let context = stores.command_context().expect("command admission");
+        assert_eq!(
+            context.meaning(alias),
+            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::EndGroup
+            ))
+        );
+        assert_eq!(context.meaning(restored), context.meaning(alias));
+        assert_eq!(context.count(0).expect("count register"), 17);
+        drop(context);
+        assert!(control.fuel_burned() < 128);
+        let transcript = stores
+            .world()
+            .effect_records()
+            .iter()
+            .filter_map(|effect| match effect {
+                EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(transcript.matches("! Missing } inserted.").count(), 1);
+        assert_eq!(transcript.matches("! Extra \\endgroup.").count(), 1);
+    });
 }
 
 #[test]
