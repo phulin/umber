@@ -1,6 +1,6 @@
 //! Source-free paragraph completion transaction for canonical command control.
 
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_typeset::linebreak::WidowPenaltySelector;
 
 mod hyphenation;
@@ -44,10 +44,10 @@ impl ParagraphEnd {
         }
     }
 
-    pub(crate) fn finish(
+    pub(crate) fn finish<G>(
         self,
         nest: &mut ModeNest,
-        stores: &mut Universe,
+        stores: &mut CommandContext<'_, G>,
         fuel: &mut tex_command::CommandFuel,
     ) -> Result<ParagraphBreakResult, ExecError> {
         let is_display = self.continuation == ParagraphEndContinuation::DisplayInterruption;
@@ -83,20 +83,20 @@ impl ParagraphEnd {
 }
 
 /// TeX82 §1096 `end_graf` with command-owned diagnostic context.
-pub(crate) fn end_paragraph_with_fuel(
+pub(crate) fn end_paragraph_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
-    command: &tex_command::CommandState,
+    stores: &mut CommandContext<'_, G>,
+    command: &tex_command::CommandState<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    let context = command.output_open_context(&stores.command_context());
+    let context = command.output_open_context(stores);
     ParagraphEnd::end(context).finish(nest, stores, fuel)?;
     Ok(())
 }
 
-pub(crate) fn end_paragraph_with_context(
+pub(crate) fn end_paragraph_with_context<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
     error_context: String,
 ) -> Result<(), ExecError> {
@@ -104,9 +104,9 @@ pub(crate) fn end_paragraph_with_context(
     Ok(())
 }
 
-pub(crate) fn interrupt_paragraph_for_display(
+pub(crate) fn interrupt_paragraph_for_display<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut CommandContext<'_, G>,
     fuel: &mut tex_command::CommandFuel,
     error_context: String,
 ) -> Result<ParagraphBreakResult, ExecError> {
