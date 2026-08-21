@@ -419,14 +419,14 @@ pub(in crate::main_control) fn glue_scale(
 /// and replays §1047's `insert_dollar_sign` instead. `\vrule` in math mode
 /// (§1056's `mmode+vrule`) is an ordinary direct contribution and falls
 /// through the `else` branch below like any other mode.
-pub(in crate::main_control) fn begin_replay_box(
+pub(in crate::main_control) fn begin_replay_box<G>(
     construction: ScannedBoxConstruction,
     target: Option<SetBoxTarget>,
     ships_out: bool,
     modes: &mut ModeNest,
-    stores: &mut Universe,
-    boxes: &mut ReplayBoxes,
-    command: &mut CommandMachine<'_>,
+    stores: &mut Universe<G>,
+    boxes: &mut ReplayBoxes<G>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<(), ExecError> {
     let kind = ReplayBoxKind::from_scanned(construction.kind);
     let packing = match construction.packing {
@@ -500,12 +500,12 @@ pub(in crate::main_control) fn commit_box_normal_paragraph(
 /// payload resolves to a node immediately and is shifted and appended right
 /// here, exactly like `\box<n>`, `\lastbox`, and `\vsplit` do outside a
 /// shift.
-pub(in crate::main_control) fn apply_box_shift(
+pub(in crate::main_control) fn apply_box_shift<G>(
     shift: ScannedBoxShift,
-    command: &mut CommandMachine<'_>,
+    command: &mut CommandMachine<'_, G>,
     modes: &mut ModeNest,
-    stores: &mut Universe,
-    boxes: &mut ReplayBoxes,
+    stores: &mut Universe<G>,
+    boxes: &mut ReplayBoxes<G>,
 ) -> Result<ReplayStep, ExecError> {
     match shift.payload {
         ScannedBoxShiftPayload::Missing => {
@@ -644,7 +644,7 @@ pub(in crate::main_control) fn read_box_register(
     Some(root)
 }
 
-impl ReplayBoxes {
+impl<G> ReplayBoxes<G> {
     /// Resolves the pending `box_context` for a box that reaches `box_end`
     /// immediately, consuming it exactly like tex.web's single-use integer.
     ///

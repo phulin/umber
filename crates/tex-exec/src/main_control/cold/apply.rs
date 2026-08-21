@@ -37,14 +37,14 @@ pub(in crate::main_control) fn leave_group_payloads<G>(
 }
 
 #[allow(clippy::too_many_arguments)] // applies the complete canonical replay state atomically
-pub(in crate::main_control) fn apply(
-    scanned: ColdOperation,
-    stores: &mut Universe,
+pub(in crate::main_control) fn apply<G>(
+    scanned: ColdOperation<G>,
+    stores: &mut Universe<G>,
     modes: &mut ModeNest,
     next_alignment_identity: &mut u64,
-    active_alignment: &mut Option<ActiveReplayAlignment>,
-    command: &mut CommandMachine<'_>,
-    boxes: &mut ReplayBoxes,
+    active_alignment: &mut Option<ActiveReplayAlignment<G>>,
+    command: &mut CommandMachine<'_, G>,
+    boxes: &mut ReplayBoxes<G>,
     active_discretionaries: &[ActiveDiscretionary],
     active_math_choices: &[usize],
     active_math_left_boundaries: &[bool],
@@ -3065,6 +3065,32 @@ pub(in crate::main_control) fn apply(
                     context: "first alignment preamble column",
                 });
             }
+            let mut attempt_templates = Vec::with_capacity(preamble.columns.len() * 2);
+            for templates in &preamble.columns {
+                attempt_templates.extend(templates.u_template);
+                attempt_templates.push(templates.v_template);
+            }
+            let promoted = command
+                .state
+                .promote_attempt_roots(
+                    stores,
+                    tex_command::AttemptPromotionRoots::new(&attempt_templates, &[], &[], &[]),
+                )
+                .map_err(|_| ExecError::MissingToken {
+                    context: "alignment preamble template promotion",
+                })?;
+            let mut promoted_templates = promoted.token_lists.into_iter();
+            let prepared_columns = preamble
+                .columns
+                .iter()
+                .map(|templates| PreparedAlignmentCellTemplates {
+                    u_template: templates
+                        .u_template
+                        .map(|_| promoted_templates.next().expect("promoted u-template")),
+                    v_template: promoted_templates.next().expect("promoted v-template"),
+                })
+                .collect();
+            debug_assert!(promoted_templates.next().is_none());
             // `init_row` reaches `align_peek` before `init_col` selects the
             // first cell. Keep the first pair validated here, but defer
             // `BeginCell` until that lookahead has classified the next token.
@@ -3073,7 +3099,7 @@ pub(in crate::main_control) fn apply(
             if let Some(active) = active_alignment.as_mut()
                 && active.identity == alignment
             {
-                active.columns = preamble.columns;
+                active.columns = prepared_columns;
                 active.tabskips = preamble.tabskips;
                 active.default_tabskip = preamble.default_tabskip;
                 active.repeat_start = preamble.repeat_start;
@@ -3141,13 +3167,7 @@ pub(in crate::main_control) fn apply(
                     })?;
             command
                 .state
-                .apply_alignment_request(
-                    &stores.command_context(),
-                    AlignmentRequest::BeginCell {
-                        alignment,
-                        templates,
-                    },
-                )
+                .begin_prepared_alignment_cell(alignment, templates)
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment next-row lifecycle",
                 })?;

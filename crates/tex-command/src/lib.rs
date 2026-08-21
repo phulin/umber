@@ -31,8 +31,9 @@ macro_rules! observe {
 
 mod attempt;
 pub use attempt::{
-    AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptNameId, AttemptResumePoint,
-    AttemptTokenListId, CommandAttempt, CommandAttemptMark, PendingCommandAttempt,
+    AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptNameId, AttemptPromotionReceipt,
+    AttemptPromotionRoots, AttemptProvenanceId, AttemptResumePoint, AttemptTokenListId,
+    CommandAttempt, CommandAttemptMark, PendingCommandAttempt,
 };
 mod command;
 mod conditionals;
@@ -113,9 +114,10 @@ pub use processor::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
     AlignmentIdentity, AlignmentLifecycleError, AlignmentLookahead, AlignmentPreamble,
     AlignmentRequest, AlignmentRequestResult, CommandDeliveryCursor, CommandProcessor,
-    FinishedAlignmentCell, PrintCommand, append_character_command_text, append_command_token_text,
-    append_print_cmd_chr_text, append_print_esc_text, character_command_text, command_token_text,
-    print_cmd_chr_text, print_esc_text,
+    FinishedAlignmentCell, PreparedAlignmentCellTemplates, PrintCommand,
+    append_character_command_text, append_command_token_text, append_print_cmd_chr_text,
+    append_print_esc_text, character_command_text, command_token_text, print_cmd_chr_text,
+    print_esc_text,
 };
 pub use profile::{
     CharacterCode, CharacterCodeError, CharacterMode, CommandCapabilities, CommandDialect,

@@ -1,7 +1,11 @@
+use tex_state::glue::{GlueSpec, Order};
+use tex_state::provenance::OriginRecord;
+use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{CommandGroupError, CommandState};
 use crate::processor::AlignmentIdentity;
+use crate::{AttemptError, AttemptPromotionRoots};
 
 fn word(ch: char) -> TracedTokenWord {
     TracedTokenWord::pack(
@@ -11,6 +15,171 @@ fn word(ch: char) -> TracedTokenWord {
         },
         OriginId::UNKNOWN,
     )
+}
+
+fn glue(width: i32) -> GlueSpec {
+    GlueSpec {
+        width: Scaled::from_raw(width),
+        stretch: Scaled::ZERO,
+        stretch_order: Order::Normal,
+        shrink: Scaled::ZERO,
+        shrink_order: Order::Normal,
+    }
+}
+
+#[test]
+fn attempt_promotion_preserves_multiple_root_order_and_duplicates() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let first = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('a')])
+            .expect("first list");
+        let second = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('b')])
+            .expect("second list");
+
+        let receipt = state
+            .promote_attempt_roots(
+                universe,
+                AttemptPromotionRoots::new(&[second, first, second], &[], &[], &[]),
+            )
+            .expect("promotion");
+
+        assert_eq!(receipt.token_lists.len(), 3);
+        assert_eq!(receipt.token_lists[0], receipt.token_lists[2]);
+        let admitted = universe.command_context().expect("admission");
+        assert_eq!(
+            admitted.token_list(receipt.token_lists[0]),
+            &[word('b').token_word()]
+        );
+        assert_eq!(
+            admitted.token_list(receipt.token_lists[1]),
+            &[word('a').token_word()]
+        );
+    });
+}
+
+#[test]
+fn attempt_promotion_returns_mixed_roots_in_declared_order() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let parameter = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('#')])
+            .expect("parameter text");
+        let replacement = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("replacement text");
+        let definition = state
+            .attempt
+            .arena_mut()
+            .allocate_definition(parameter, replacement)
+            .expect("definition");
+        let glue_root = state
+            .attempt
+            .arena_mut()
+            .allocate_glue(glue(42))
+            .expect("glue");
+        let provenance = state
+            .attempt
+            .arena_mut()
+            .allocate_provenance(OriginRecord::UnknownBootstrap)
+            .expect("provenance");
+
+        let receipt = state
+            .promote_attempt_roots(
+                universe,
+                AttemptPromotionRoots::new(
+                    &[replacement],
+                    &[glue_root],
+                    &[definition],
+                    &[provenance],
+                ),
+            )
+            .expect("mixed promotion");
+
+        let admitted = universe.command_context().expect("admission");
+        assert_eq!(
+            admitted.token_list(receipt.token_lists[0]),
+            &[word('x').token_word()]
+        );
+        assert_eq!(admitted.glue(receipt.glue[0]), glue(42));
+        assert_eq!(
+            admitted
+                .definition(receipt.definitions[0])
+                .replacement_text(),
+            &[word('x').token_word()]
+        );
+        assert_eq!(
+            admitted.provenance(receipt.provenance[0]),
+            OriginRecord::UnknownBootstrap
+        );
+    });
+}
+
+#[test]
+fn foreign_attempt_root_rejection_is_mutation_free() {
+    crate::test_harness::with_universe(|universe| {
+        let state = CommandState::<_>::default();
+        let mut foreign = CommandState::<()>::default();
+        let foreign_root = foreign
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("foreign root");
+
+        assert!(matches!(
+            state.promote_attempt_roots(
+                universe,
+                AttemptPromotionRoots::new(&[foreign_root], &[], &[], &[]),
+            ),
+            Err(AttemptError::ForeignAttempt)
+        ));
+        let retirement = universe.retire().expect("retirement");
+        assert_eq!(retirement.token_list_rows(), 0);
+        assert_eq!(retirement.definition_rows(), 0);
+        assert_eq!(retirement.glue_rows(), 0);
+        assert_eq!(retirement.provenance_rows(), 0);
+    });
+}
+
+#[test]
+fn stale_root_rejection_validates_complete_batch_before_mutation() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let valid = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('a')])
+            .expect("valid root");
+        let mark = state.begin_attempt_operation();
+        let stale = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('b')])
+            .expect("stale root");
+        state.discard_attempt_operation(mark);
+
+        assert!(matches!(
+            state.promote_attempt_roots(
+                universe,
+                AttemptPromotionRoots::new(&[valid, stale], &[], &[], &[]),
+            ),
+            Err(AttemptError::InvalidCoordinate)
+        ));
+        let retirement = universe.retire().expect("retirement");
+        assert_eq!(retirement.token_list_rows(), 0);
+        assert_eq!(retirement.definition_rows(), 0);
+        assert_eq!(retirement.glue_rows(), 0);
+        assert_eq!(retirement.provenance_rows(), 0);
+    });
 }
 
 #[test]

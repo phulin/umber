@@ -70,6 +70,52 @@ attempt_id!(AttemptTokenBufferId);
 attempt_id!(AttemptNameId);
 attempt_id!(AttemptProvenanceId);
 
+/// Attempt-local roots selected for one atomic durable promotion.
+///
+/// The request is branded by the destination generation even though its
+/// coordinates belong to the current command attempt. This prevents a batch
+/// assembled for one [`Universe`] from being reused with another generation.
+/// Every slice is validated before any durable row is reserved or published.
+#[derive(Clone, Copy, Debug)]
+pub struct AttemptPromotionRoots<'a, G> {
+    pub(crate) token_lists: &'a [AttemptTokenListId],
+    pub(crate) glue: &'a [AttemptGlueId],
+    pub(crate) definitions: &'a [AttemptDefinitionId],
+    pub(crate) provenance: &'a [AttemptProvenanceId],
+    _generation: PhantomData<fn(&G) -> &G>,
+}
+
+impl<'a, G> AttemptPromotionRoots<'a, G> {
+    /// Declares every root that may escape the current command attempt.
+    #[must_use]
+    pub const fn new(
+        token_lists: &'a [AttemptTokenListId],
+        glue: &'a [AttemptGlueId],
+        definitions: &'a [AttemptDefinitionId],
+        provenance: &'a [AttemptProvenanceId],
+    ) -> Self {
+        Self {
+            token_lists,
+            glue,
+            definitions,
+            provenance,
+            _generation: PhantomData,
+        }
+    }
+}
+
+/// Durable coordinates produced by one atomic attempt-root promotion.
+///
+/// Each vector follows the exact order of its corresponding request slice,
+/// including repeated roots.
+#[derive(Debug)]
+pub struct AttemptPromotionReceipt<G> {
+    pub token_lists: Vec<TokenListId<G>>,
+    pub glue: Vec<GlueId<G>>,
+    pub definitions: Vec<DefinitionId<G>>,
+    pub provenance: Vec<ProvenanceId<G>>,
+}
+
 /// Provenance beside one attempt token: either an already-admitted compact
 /// origin or a typed row owned by this attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

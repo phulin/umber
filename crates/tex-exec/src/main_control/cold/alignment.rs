@@ -4,13 +4,13 @@ use super::super::*;
 use super::apply::enter_group;
 use super::support::*;
 
-pub(in crate::main_control) fn begin_next_replay_alignment_cell(
+pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
     alignment: AlignmentIdentity,
     delimiter: AlignmentCellDelimiter,
-    command: &mut CommandMachine<'_>,
-    active_alignment: &mut Option<ActiveReplayAlignment>,
+    command: &mut CommandMachine<'_, G>,
+    active_alignment: &mut Option<ActiveReplayAlignment<G>>,
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
     let active = active_alignment
         .as_mut()
@@ -140,13 +140,7 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell(
         AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => {
             command
                 .state
-                .apply_alignment_request(
-                    &stores.command_context(),
-                    AlignmentRequest::BeginCell {
-                        alignment,
-                        templates,
-                    },
-                )
+                .begin_prepared_alignment_cell(alignment, templates)
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment next-cell lifecycle",
                 })?;
@@ -160,9 +154,9 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell(
 }
 
 /// TeX82 §792's exhausted-preamble diagnostic for a saved tab or span.
-pub(in crate::main_control) fn report_extra_alignment_tab(
-    command: &CommandState,
-    stores: &mut Universe,
+pub(in crate::main_control) fn report_extra_alignment_tab<G>(
+    command: &CommandState<G>,
+    stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
     let context = command.output_open_context(&stores.command_context());
     crate::error_report::report_error(
@@ -246,10 +240,10 @@ pub(in crate::main_control) fn replay_alignment_cell_mode(kind: AlignmentKind) -
     }
 }
 
-pub(in crate::main_control) fn begin_replay_alignment_cell(
-    active: &mut ActiveReplayAlignment,
+pub(in crate::main_control) fn begin_replay_alignment_cell<G>(
+    active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
     if !active.row_open {
         modes.push(replay_alignment_row_mode(active.kind))?;
@@ -285,10 +279,10 @@ pub(in crate::main_control) fn begin_replay_alignment_cell(
     Ok(())
 }
 
-pub(in crate::main_control) fn capture_replay_alignment_cell(
-    active: &mut ActiveReplayAlignment,
+pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
+    active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if !active.cell_open {
@@ -352,10 +346,10 @@ pub(in crate::main_control) fn capture_replay_alignment_cell(
     Ok(())
 }
 
-pub(in crate::main_control) fn finish_replay_alignment_row(
-    active: &mut ActiveReplayAlignment,
+pub(in crate::main_control) fn finish_replay_alignment_row<G>(
+    active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     capture_replay_alignment_cell(active, modes, stores, fuel)?;
@@ -419,10 +413,10 @@ pub(in crate::main_control) fn alignment_pack_spec(
     }
 }
 
-pub(in crate::main_control) fn finish_replay_alignment(
-    active: &mut ActiveReplayAlignment,
+pub(in crate::main_control) fn finish_replay_alignment<G>(
+    active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {
@@ -440,37 +434,37 @@ pub(in crate::main_control) fn finish_replay_alignment(
     result
 }
 
-pub(in crate::main_control) fn finish_replay_alignment_with_origin(
-    active: &ActiveReplayAlignment,
+pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
+    active: &ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     alignment: &mut crate::mode::ModeLevelSummary,
     error_context: &str,
 ) -> Result<(), ExecError> {
     let rows = alignment.list_mutation().take_nodes();
-    let columns = active
-        .columns
-        .iter()
-        .map(|templates| AlignColumn {
-            u_template: tex_state::node::NodeTokenList::new(
-                stores
-                    .tokens(
-                        templates
-                            .u_template
-                            .as_ref()
-                            .expect("alignment columns retain u templates")
-                            .token_ref()
-                            .id(),
-                    )
-                    .to_vec(),
-            ),
-            v_template: tex_state::node::NodeTokenList::new(
-                stores
-                    .tokens(templates.v_template.token_ref().id())
-                    .to_vec(),
-            ),
-        })
-        .collect();
+    let columns = {
+        let admitted = stores
+            .command_context()
+            .expect("alignment lowering requires an admitted live generation");
+        active
+            .columns
+            .iter()
+            .map(|templates| AlignColumn {
+                u_template: tex_state::node::NodeTokenList::new(
+                    admitted
+                        .token_list(
+                            templates
+                                .u_template
+                                .expect("alignment columns retain u templates"),
+                        )
+                        .to_vec(),
+                ),
+                v_template: tex_state::node::NodeTokenList::new(
+                    admitted.token_list(templates.v_template).to_vec(),
+                ),
+            })
+            .collect()
+    };
     let state = AlignState::new(
         active.kind,
         active.packing,
@@ -518,10 +512,10 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin(
 /// Resolves e-TeX 2.6 [49.1292]'s save-stack traversal and its retained live
 /// construction contexts into an immutable diagnostic value without changing
 /// any engine stack.
-pub(in crate::main_control) fn detached_showgroups(
-    stores: &Universe,
-    active_alignment: &Option<ActiveReplayAlignment>,
-    boxes: &ReplayBoxes,
+pub(in crate::main_control) fn detached_showgroups<G>(
+    stores: &Universe<G>,
+    active_alignment: &Option<ActiveReplayAlignment<G>>,
+    boxes: &ReplayBoxes<G>,
     active_discretionaries: &[ActiveDiscretionary],
     active_math_choices: &[usize],
     active_math_left_boundaries: &[bool],
@@ -626,10 +620,10 @@ pub(in crate::main_control) fn detached_showgroups(
 
 /// Replays e-TeX [49.1292]'s inward-to-outward alignment state (`a`) while
 /// retaining the outermost-first frame order used by the detached diagnostic.
-pub(in crate::main_control) fn alignment_group_contexts(
+pub(in crate::main_control) fn alignment_group_contexts<G>(
     frames: &[tex_state::GroupFrame],
-    active_alignment: &Option<ActiveReplayAlignment>,
-    boxes: &ReplayBoxes,
+    active_alignment: &Option<ActiveReplayAlignment<G>>,
+    boxes: &ReplayBoxes<G>,
 ) -> Vec<Option<String>> {
     let mut kinds = boxes
         .suspended_alignments

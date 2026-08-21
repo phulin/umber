@@ -8,21 +8,21 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tex_command::{
-    AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
-    AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
-    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandState,
-    FatalError, FontLoadRequest, FontResource, GeneratedFontKind, HyphenationDataKind,
-    ImmediateExtension, InputStreamRequest, MathDelimiterBoundary, MathDelimiterBoundaryKind,
-    MathFieldBody, MathLimitKind, MathRequest, MathScriptKind, MathStyleKind, MathTextFieldKind,
+    AlignmentCellDelimiter, AlignmentCellOpening, AlignmentDelivery, AlignmentIdentity,
+    AlignmentRequest, AlignmentRequestResult, CommandError, CommandHostCapabilities,
+    CommandHostContext, CommandProcessor, CommandProfile, CommandState, FatalError,
+    FontLoadRequest, FontResource, GeneratedFontKind, HyphenationDataKind, ImmediateExtension,
+    InputStreamRequest, MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFieldBody,
+    MathLimitKind, MathRequest, MathScriptKind, MathStyleKind, MathTextFieldKind,
     PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImageRequest,
     PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfOutlineRequest,
-    PdfReferenceObjectRequest, PdfStartLinkRequest, RegisteredSourceKind, RestrictedIntegerClass,
-    ScannedAccent, ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
-    ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
-    ScannedGeneratedFontDefinition, ScannedInsertConstruction, ScannedLeaderPayload,
-    ScannedMathMuMaterial, ScannedPackingSpec, ScannedSetBoxPath, ScannedVSplit,
-    SourceRegistration, SourceRegistrationError,
+    PdfReferenceObjectRequest, PdfStartLinkRequest, PreparedAlignmentCellTemplates,
+    RegisteredSourceKind, RestrictedIntegerClass, ScannedAccent, ScannedAccentBase,
+    ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload,
+    ScannedDiscretionaryOpening, ScannedDisplayDiagnostic, ScannedGeneratedFontDefinition,
+    ScannedInsertConstruction, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
+    ScannedSetBoxPath, ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
@@ -111,8 +111,8 @@ pub struct MainControl<G> {
     /// diagnostics do not participate in rollback, identity, or formats.
     max_save_stack: usize,
     next_alignment_identity: u64,
-    active_alignment: Option<ActiveReplayAlignment>,
-    boxes: ReplayBoxes,
+    active_alignment: Option<ActiveReplayAlignment<G>>,
+    boxes: ReplayBoxes<G>,
     active_discretionaries: Vec<ActiveDiscretionary>,
     /// TeX82 §1174's `saved(-2)` branch count for each live `\mathchoice`,
     /// outermost first. e-TeX [49.1292] observes it through `\showgroups`.
@@ -419,7 +419,7 @@ impl ReplayBoxKind {
 }
 
 #[derive(Clone, Debug)]
-struct ActiveReplayAlignment {
+struct ActiveReplayAlignment<G> {
     identity: AlignmentIdentity,
     kind: AlignmentKind,
     /// TeX82 §774's `save_cs_ptr`: the delivered control sequence whose
@@ -428,7 +428,7 @@ struct ActiveReplayAlignment {
     /// TeX82 §645's `scan_spec` result, kept from `init_align` until §805
     /// packages the preamble prototype box with it.
     packing: AlignmentPackSpec,
-    columns: Vec<AlignmentCellTemplates>,
+    columns: Vec<PreparedAlignmentCellTemplates<G>>,
     repeat_start: Option<usize>,
     column: usize,
     preamble_opening_pending: bool,
@@ -452,17 +452,33 @@ struct ActiveReplayAlignment {
     cell_open: bool,
 }
 
-#[derive(Clone, Debug, Default)]
-struct ReplayBoxes {
+#[derive(Clone, Debug)]
+struct ReplayBoxes<G> {
     pending_setbox: Option<SetBoxTarget>,
     pending_shipout: bool,
     pending_leader: Option<(GlueKind, LeaderPayload)>,
     active_boxes: Vec<ActiveReplayBox>,
-    suspended_alignments: Vec<ActiveReplayAlignment>,
+    suspended_alignments: Vec<ActiveReplayAlignment<G>>,
     recovery_simple_group_pending: bool,
     recovery_simple_group_open: bool,
     output_routine_active: bool,
     output_routine_opening_pending: bool,
+}
+
+impl<G> Default for ReplayBoxes<G> {
+    fn default() -> Self {
+        Self {
+            pending_setbox: None,
+            pending_shipout: false,
+            pending_leader: None,
+            active_boxes: Vec::new(),
+            suspended_alignments: Vec::new(),
+            recovery_simple_group_pending: false,
+            recovery_simple_group_open: false,
+            output_routine_active: false,
+            output_routine_opening_pending: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2412,7 +2428,6 @@ impl<G> MainControl<G> {
             | AlignmentRequest::Suspend(identity)
             | AlignmentRequest::Resume(identity)
             | AlignmentRequest::Finish(identity) => identity,
-            AlignmentRequest::BeginCell { alignment, .. } => alignment,
         };
         self.command
             .apply_alignment_request(&stores.command_context().expect("live generation"), request)
@@ -7638,7 +7653,7 @@ impl ForgottenGroupOpener {
 fn scan_replay_step<G>(
     processor: &mut CommandProcessor<'_, G>,
     mode: Mode,
-    boxes: &ReplayBoxes,
+    boxes: &ReplayBoxes<G>,
     alignment_preamble: Option<(AlignmentIdentity, AlignmentPreamblePhase)>,
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
@@ -7747,8 +7762,8 @@ enum AlignmentPreamblePhase {
     CellDelivery,
 }
 
-fn alignment_preamble(
-    active: Option<&mut ActiveReplayAlignment>,
+fn alignment_preamble<G>(
+    active: Option<&mut ActiveReplayAlignment<G>>,
 ) -> Option<(AlignmentIdentity, AlignmentPreamblePhase)> {
     let active = active?;
     if active.preamble_opening_pending {
@@ -7837,7 +7852,7 @@ fn scan_alignment_peek<G>(
 fn scan_noalign_body<G>(
     processor: &mut CommandProcessor<'_, G>,
     alignment: AlignmentIdentity,
-    boxes: &ReplayBoxes,
+    boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
     mode: Mode,
     job_is_all_over: bool,
@@ -7889,7 +7904,7 @@ fn scan_noalign_body<G>(
 fn scan_alignment_delivery_step<G>(
     processor: &mut CommandProcessor<'_, G>,
     alignment: AlignmentIdentity,
-    boxes: &ReplayBoxes,
+    boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
     mode: Mode,
     job_is_all_over: bool,
@@ -8053,7 +8068,7 @@ fn settle_preflight_step<G>(
     command: tex_command::CurrentCommand<G>,
     main_loop: bool,
     mode: Mode,
-    boxes: &ReplayBoxes,
+    boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
     display_eq_no: bool,
@@ -8119,7 +8134,7 @@ fn settle_preflight_step<G>(
 fn scan_step<G>(
     processor: &mut CommandProcessor<'_, G>,
     mode: Mode,
-    boxes: &ReplayBoxes,
+    boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
     display_eq_no: bool,
@@ -8210,7 +8225,7 @@ fn execution_error_needs_command_retry(error: &ExecError) -> bool {
 /// is not known until the transactional prefix loop has run.
 fn direct_hot_candidate<G>(
     mode: Mode,
-    boxes: &ReplayBoxes,
+    boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
     command: &tex_command::CurrentCommand<G>,
 ) -> bool {
@@ -8331,7 +8346,7 @@ fn dispatch_main_control_command<G>(
     processor: &mut CommandProcessor<'_, G>,
     mut command: tex_command::CurrentCommand<G>,
     mode: Mode,
-    boxes: &ReplayBoxes,
+    boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
     display_eq_no: bool,
@@ -8420,7 +8435,7 @@ fn dispatch_main_control_command_inner<G>(
     processor: &mut CommandProcessor<'_, G>,
     mut command: tex_command::CurrentCommand<G>,
     mode: Mode,
-    boxes: &ReplayBoxes,
+    boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
     display_eq_no: bool,
@@ -8688,7 +8703,7 @@ fn report_main_control_command_trace<G>(
     processor: &mut CommandProcessor<'_, G>,
     mode: Mode,
     command: &tex_command::CurrentCommand<G>,
-    boxes: &ReplayBoxes,
+    boxes: &ReplayBoxes<G>,
     shown_mode: &mut Option<Mode>,
 ) {
     // Expansion can invoke §299 itself for e-TeX's `\tracingifs`. Its mode
@@ -8936,7 +8951,7 @@ fn scan_command<G>(
     global: bool,
     flags: MeaningFlags,
     mode: Mode,
-    boxes: &ReplayBoxes,
+    boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
     display_eq_no: bool,

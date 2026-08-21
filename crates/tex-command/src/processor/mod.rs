@@ -23,7 +23,7 @@ pub(crate) use alignment::CELL_ALIGN_STATE;
 pub use alignment::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
     AlignmentIdentity, AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest,
-    AlignmentRequestResult, FinishedAlignmentCell,
+    AlignmentRequestResult, FinishedAlignmentCell, PreparedAlignmentCellTemplates,
 };
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 use expand::ExpandedFetch;

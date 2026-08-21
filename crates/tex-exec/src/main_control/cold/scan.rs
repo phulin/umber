@@ -13,7 +13,7 @@ pub(in crate::main_control) fn scan<G>(
     command: tex_command::CurrentCommand<G>,
     global: bool,
     mode: Mode,
-    boxes: &ReplayBoxes,
+    boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
     display_eq_no: bool,

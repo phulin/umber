@@ -4,7 +4,7 @@ use super::{
 
 #[test]
 fn alignment_lifecycle_restores_the_running_outer_brace_state() {
-    let mut state = AlignmentDeliveryState::default();
+    let mut state = AlignmentDeliveryState::<()>::default();
     state.align_state = TOP_LEVEL_ALIGN_STATE + 7;
     let alignment = AlignmentIdentity::new(1);
     state.begin_alignment(alignment);
@@ -15,7 +15,7 @@ fn alignment_lifecycle_restores_the_running_outer_brace_state() {
 
 #[test]
 fn nested_alignment_suspension_restores_the_exact_outer_identity() {
-    let mut state = AlignmentDeliveryState::default();
+    let mut state = AlignmentDeliveryState::<()>::default();
     let outer = AlignmentIdentity::new(1);
     let inner = AlignmentIdentity::new(2);
     state.begin_alignment(outer);

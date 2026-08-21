@@ -2598,6 +2598,20 @@ impl<G> CommandProcessor<'_, G> {
         result
     }
 
+    /// Expands one generation-durable write payload without exposing the
+    /// operation-local coordinate used by the write scanner.
+    ///
+    /// The durable words are copied into the current attempt before the
+    /// artificial brace and frozen-`\endwrite` episode is installed. The
+    /// attempt id remains entirely command-owned.
+    pub fn expand_durable_write_text(
+        &mut self,
+        tokens: tex_state::TokenListId<G>,
+    ) -> Result<ExpandedWriteText, CommandError> {
+        let tokens = self.copy_durable_token_list_into_attempt(Some(tokens))?;
+        self.expand_write_text(tokens)
+    }
+
     fn expand_write_text_inner(
         &mut self,
         tokens: AttemptTokenListId,

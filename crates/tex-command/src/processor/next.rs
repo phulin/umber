@@ -474,7 +474,7 @@ impl<G> CommandProcessor<'_, G> {
         saved_delimiter: crate::AlignmentCellDelimiter,
     ) -> Result<(), CommandError> {
         self.command
-            .begin_alignment_v_template(alignment, saved_delimiter)
+            .begin_alignment_v_template(&self.state, alignment, saved_delimiter)
             .map_err(|_| CommandError::input_invariant())?;
         if let Some(input) = self
             .command
@@ -795,7 +795,7 @@ impl<G> CommandProcessor<'_, G> {
         self.conserve_input_stack()?;
         self.command
             .alignment
-            .undo_delivery(AlignmentDeliveryState::back_input_adjustment(
+            .undo_delivery(AlignmentDeliveryState::<G>::back_input_adjustment(
                 spelling.semantic_token(),
             ));
         let level = self.command.push_token_level(
@@ -844,7 +844,7 @@ impl<G> CommandProcessor<'_, G> {
             let prepended = tokens.len();
             for spelling in tokens.iter().rev() {
                 self.command.alignment.undo_delivery(
-                    AlignmentDeliveryState::back_input_adjustment(spelling.semantic_token()),
+                    AlignmentDeliveryState::<G>::back_input_adjustment(spelling.semantic_token()),
                 );
             }
             let Some(InputLevel::Tokens(cursor)) = self.command.input.levels.last_mut() else {

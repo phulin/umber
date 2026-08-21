@@ -8,6 +8,7 @@
 #[cfg(test)]
 mod tests;
 
+use tex_state::TokenListId;
 use tex_state::glue::GlueSpec;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, Token, TracedTokenWord};
@@ -69,6 +70,34 @@ pub struct AlignmentCellTemplates {
     pub v_template: AttemptTokenListId,
 }
 
+/// Generation-durable templates selected for an active alignment cell.
+///
+/// Raw preamble scanning produces [`AlignmentCellTemplates`] in the current
+/// attempt. The executor must atomically promote the complete preamble before
+/// constructing this value; active delivery therefore retains no attempt
+/// coordinate.
+#[derive(Debug)]
+pub struct PreparedAlignmentCellTemplates<G> {
+    pub u_template: Option<TokenListId<G>>,
+    pub v_template: TokenListId<G>,
+}
+
+impl<G> Copy for PreparedAlignmentCellTemplates<G> {}
+
+impl<G> Clone for PreparedAlignmentCellTemplates<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> PartialEq for PreparedAlignmentCellTemplates<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.u_template == other.u_template && self.v_template == other.v_template
+    }
+}
+
+impl<G> Eq for PreparedAlignmentCellTemplates<G> {}
+
 /// The delimiter saved when `get_next` enters a cell's v-template.
 ///
 /// TeX82 keeps this as `extra_info(cur_align)` until `fin_col` consumes it
@@ -84,7 +113,6 @@ pub enum AlignmentCellDelimiter {
 /// Template data and the saved `fin_col` delimiter returned by `do_endv`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FinishedAlignmentCell {
-    pub templates: AlignmentCellTemplates,
     pub delimiter: AlignmentCellDelimiter,
 }
 
@@ -116,11 +144,6 @@ pub enum AlignmentRequest {
     Begin(AlignmentIdentity),
     /// Restart preamble scanning for a repeated preamble column.
     Preamble(AlignmentIdentity),
-    /// Start one executor-selected cell and its optional u-template.
-    BeginCell {
-        alignment: AlignmentIdentity,
-        templates: AlignmentCellTemplates,
-    },
     /// Restore `align_peek`/`init_col`'s lookahead sentinel before a typed
     /// already-delivered `\\omit` result is installed.
     PrepareCellLookahead(AlignmentIdentity),
@@ -246,8 +269,8 @@ impl std::fmt::Display for AlignmentLifecycleError {
 impl std::error::Error for AlignmentLifecycleError {}
 
 /// Persistent ownership for alignment-sensitive raw delivery.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct AlignmentDeliveryState {
+#[derive(Debug)]
+pub(crate) struct AlignmentDeliveryState<G> {
     pub(crate) align_state: i32,
     /// TeX82 §772's `align_stack`, restricted to the one field this layer
     /// owns: the `align_state` that `push_alignment` saves and
@@ -256,8 +279,8 @@ pub(crate) struct AlignmentDeliveryState {
     /// count that was live when `\\halign`/`\\valign` was read.
     pub(crate) align_stack: Vec<i32>,
     pub(crate) active_alignment: Option<AlignmentIdentity>,
-    pub(crate) suspended: Vec<SuspendedAlignment>,
-    pub(crate) active_cell: Option<ActiveCellDelivery>,
+    pub(crate) suspended: Vec<SuspendedAlignment<G>>,
+    pub(crate) active_cell: Option<ActiveCellDelivery<G>>,
     pub(crate) completed_preamble: Option<AlignmentPreamble>,
     /// The delimiter just returned from `do_endv`, retained until `fin_col`
     /// either starts its next cell or changes an exhausted tab/span to `\\cr`.
@@ -269,7 +292,37 @@ pub(crate) struct AlignmentDeliveryState {
     pub(crate) pending_outer_recovery_cr: Option<TracedTokenWord>,
 }
 
-impl Default for AlignmentDeliveryState {
+impl<G> Clone for AlignmentDeliveryState<G> {
+    fn clone(&self) -> Self {
+        Self {
+            align_state: self.align_state,
+            align_stack: self.align_stack.clone(),
+            active_alignment: self.active_alignment,
+            suspended: self.suspended.clone(),
+            active_cell: self.active_cell.clone(),
+            completed_preamble: self.completed_preamble.clone(),
+            pending_fin_col_delimiter: self.pending_fin_col_delimiter,
+            extra_tab_recovery: self.extra_tab_recovery,
+            pending_outer_recovery_cr: self.pending_outer_recovery_cr,
+        }
+    }
+}
+
+impl<G> PartialEq for AlignmentDeliveryState<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.align_state == other.align_state
+            && self.align_stack == other.align_stack
+            && self.active_alignment == other.active_alignment
+            && self.suspended == other.suspended
+            && self.active_cell == other.active_cell
+            && self.completed_preamble == other.completed_preamble
+            && self.pending_fin_col_delimiter == other.pending_fin_col_delimiter
+            && self.extra_tab_recovery == other.extra_tab_recovery
+            && self.pending_outer_recovery_cr == other.pending_outer_recovery_cr
+    }
+}
+
+impl<G> Default for AlignmentDeliveryState<G> {
     fn default() -> Self {
         Self {
             align_state: TOP_LEVEL_ALIGN_STATE,
@@ -285,16 +338,31 @@ impl Default for AlignmentDeliveryState {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct SuspendedAlignment {
+#[derive(Debug)]
+pub(crate) struct SuspendedAlignment<G> {
     pub(crate) alignment: AlignmentIdentity,
-    pub(crate) active_cell: Option<ActiveCellDelivery>,
+    pub(crate) active_cell: Option<ActiveCellDelivery<G>>,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ActiveCellDelivery {
+impl<G> Clone for SuspendedAlignment<G> {
+    fn clone(&self) -> Self {
+        Self {
+            alignment: self.alignment,
+            active_cell: self.active_cell.clone(),
+        }
+    }
+}
+
+impl<G> PartialEq for SuspendedAlignment<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.alignment == other.alignment && self.active_cell == other.active_cell
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ActiveCellDelivery<G> {
     pub(crate) alignment: AlignmentIdentity,
-    pub(crate) templates: AlignmentCellTemplates,
+    pub(crate) templates: PreparedAlignmentCellTemplates<G>,
     pub(crate) u_template_installed: bool,
     pub(crate) u_level: Option<InputLevelId>,
     pub(crate) v_level: Option<InputLevelId>,
@@ -303,6 +371,34 @@ pub(crate) struct ActiveCellDelivery {
     /// one-token `omit_template`, rather than this column's v-template.
     pub(crate) omit: bool,
     pub(crate) omit_previous_align_state: Option<i32>,
+}
+
+impl<G> Clone for ActiveCellDelivery<G> {
+    fn clone(&self) -> Self {
+        Self {
+            alignment: self.alignment,
+            templates: self.templates,
+            u_template_installed: self.u_template_installed,
+            u_level: self.u_level,
+            v_level: self.v_level,
+            delimiter: self.delimiter,
+            omit: self.omit,
+            omit_previous_align_state: self.omit_previous_align_state,
+        }
+    }
+}
+
+impl<G> PartialEq for ActiveCellDelivery<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.alignment == other.alignment
+            && self.templates == other.templates
+            && self.u_template_installed == other.u_template_installed
+            && self.u_level == other.u_level
+            && self.v_level == other.v_level
+            && self.delimiter == other.delimiter
+            && self.omit == other.omit
+            && self.omit_previous_align_state == other.omit_previous_align_state
+    }
 }
 
 /// The one semantic alignment adjustment made by a raw delivery.
@@ -349,7 +445,7 @@ impl AlignmentDelimiter {
     }
 }
 
-impl AlignmentDeliveryState {
+impl<G> AlignmentDeliveryState<G> {
     /// Applies TeX82 §1127 `align_error`'s pre-insertion correction.
     ///
     /// `None` selects §1128's `@<Express consternation over the fact that no
@@ -400,7 +496,7 @@ impl AlignmentDeliveryState {
         }
     }
 
-    pub(crate) fn needs_closing_brace_recovery<G>(&self, command: &CurrentCommand<G>) -> bool {
+    pub(crate) fn needs_closing_brace_recovery(&self, command: &CurrentCommand<G>) -> bool {
         self.active_cell.is_some()
             && self.align_state == -1
             && matches!(
@@ -462,7 +558,7 @@ impl AlignmentDeliveryState {
     pub(crate) fn begin_cell(
         &mut self,
         alignment: AlignmentIdentity,
-        templates: AlignmentCellTemplates,
+        templates: PreparedAlignmentCellTemplates<G>,
     ) -> Result<(), AlignmentLifecycleError> {
         self.require_alignment(alignment)?;
         if self.active_cell.is_some() {
@@ -504,7 +600,7 @@ impl AlignmentDeliveryState {
     pub(crate) fn active_cell_template(
         &self,
         alignment: AlignmentIdentity,
-    ) -> Result<Option<AttemptTokenListId>, AlignmentLifecycleError> {
+    ) -> Result<Option<TokenListId<G>>, AlignmentLifecycleError> {
         let cell = self.active_cell_ref(alignment)?;
         if cell.u_template_installed {
             return Err(AlignmentLifecycleError::UTemplateAlreadyInstalled);
@@ -558,7 +654,7 @@ impl AlignmentDeliveryState {
     pub(crate) fn v_template(
         &self,
         alignment: AlignmentIdentity,
-    ) -> Result<Option<AttemptTokenListId>, AlignmentLifecycleError> {
+    ) -> Result<Option<TokenListId<G>>, AlignmentLifecycleError> {
         let cell = self.active_cell_ref(alignment)?;
         if cell.u_level.is_some() {
             return Err(AlignmentLifecycleError::UTemplateStillActive);
@@ -606,10 +702,7 @@ impl AlignmentDeliveryState {
             .delimiter
             .ok_or(AlignmentLifecycleError::VTemplateNotExhausted)?;
         self.pending_fin_col_delimiter = Some((alignment, delimiter));
-        Ok(FinishedAlignmentCell {
-            templates: cell.templates,
-            delimiter,
-        })
+        Ok(FinishedAlignmentCell { delimiter })
     }
 
     /// Performs TeX82 §772's exhausted-preamble arm of `fin_col`.
@@ -680,7 +773,7 @@ impl AlignmentDeliveryState {
         Ok(())
     }
 
-    pub(crate) fn classify_delivery<G>(
+    pub(crate) fn classify_delivery(
         &mut self,
         command: &mut CurrentCommand<G>,
     ) -> AlignmentDeliveryAdjustment {
@@ -779,7 +872,7 @@ impl AlignmentDeliveryState {
         self.align_state -= 1;
     }
 
-    fn intercept_delimiter<G>(
+    fn intercept_delimiter(
         &mut self,
         command: &mut CurrentCommand<G>,
         delimiter: AlignmentDelimiter,
@@ -803,7 +896,7 @@ impl AlignmentDeliveryState {
     fn active_cell_ref(
         &self,
         alignment: AlignmentIdentity,
-    ) -> Result<&ActiveCellDelivery, AlignmentLifecycleError> {
+    ) -> Result<&ActiveCellDelivery<G>, AlignmentLifecycleError> {
         self.require_alignment(alignment)?;
         let cell = self
             .active_cell
@@ -818,7 +911,7 @@ impl AlignmentDeliveryState {
     pub(crate) fn active_cell_mut(
         &mut self,
         alignment: AlignmentIdentity,
-    ) -> Result<&mut ActiveCellDelivery, AlignmentLifecycleError> {
+    ) -> Result<&mut ActiveCellDelivery<G>, AlignmentLifecycleError> {
         self.require_alignment(alignment)?;
         let cell = self
             .active_cell

@@ -22,9 +22,9 @@ use crate::input::{
 };
 use crate::macro_call::ParameterState;
 use crate::processor::{
-    AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDeliveryState, AlignmentIdentity,
-    AlignmentLifecycleError, AlignmentRequest, AlignmentRequestResult, CELL_ALIGN_STATE,
-    ExpansionState, ScannerState,
+    AlignmentCellDelimiter, AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError,
+    AlignmentRequest, AlignmentRequestResult, CELL_ALIGN_STATE, ExpansionState,
+    PreparedAlignmentCellTemplates, ScannerState,
 };
 use crate::profile::{
     CommandEngineSemantics, CommandProfile, CommandProfileBoundary, CommandProfileFingerprint,
@@ -67,7 +67,7 @@ pub struct CommandStateRoots<G> {
     pub(crate) parameters: ParameterState<G>,
     pub(crate) scanner: ScannerState,
     pub(crate) conditions: ConditionStack,
-    pub(crate) alignment: AlignmentDeliveryState,
+    pub(crate) alignment: AlignmentDeliveryState<G>,
     pub(crate) expansion: ExpansionState,
     pub(crate) transient: TransientState,
     /// Executor-owned stored levels that remain live in the input stack.
@@ -637,14 +637,39 @@ impl<G> CommandState<G> {
         universe: &mut tex_state::Universe<G>,
         id: crate::AttemptTokenListId,
     ) -> Result<tex_state::TokenListId<G>, crate::AttemptError> {
+        let promotion = self.promote_attempt_roots(
+            universe,
+            crate::AttemptPromotionRoots::new(core::slice::from_ref(&id), &[], &[], &[]),
+        )?;
+        Ok(promotion.token_lists[0])
+    }
+
+    /// Atomically promotes every declared attempt-local root into this
+    /// generation's durable stores.
+    ///
+    /// The command attempt validates the complete request before reserving or
+    /// publishing destination rows. On success, every receipt vector retains
+    /// the corresponding request slice's order, including duplicates.
+    pub fn promote_attempt_roots(
+        &self,
+        universe: &mut tex_state::Universe<G>,
+        roots: crate::AttemptPromotionRoots<'_, G>,
+    ) -> Result<crate::AttemptPromotionReceipt<G>, crate::AttemptError> {
         let promotion = self.attempt.arena().promote(
             universe,
             crate::attempt::AttemptEscapeRoots {
-                token_lists: core::slice::from_ref(&id),
-                ..crate::attempt::AttemptEscapeRoots::default()
+                token_lists: roots.token_lists,
+                glue: roots.glue,
+                definitions: roots.definitions,
+                provenance: roots.provenance,
             },
         )?;
-        Ok(promotion.token_lists[0])
+        Ok(crate::AttemptPromotionReceipt {
+            token_lists: promotion.token_lists,
+            glue: promotion.glue,
+            definitions: promotion.definitions,
+            provenance: promotion.provenance,
+        })
     }
 
     /// Promotes one declared macro-definition root and its schema-owned text
@@ -654,12 +679,9 @@ impl<G> CommandState<G> {
         universe: &mut tex_state::Universe<G>,
         id: crate::AttemptDefinitionId,
     ) -> Result<tex_state::DefinitionId<G>, crate::AttemptError> {
-        let promotion = self.attempt.arena().promote(
+        let promotion = self.promote_attempt_roots(
             universe,
-            crate::attempt::AttemptEscapeRoots {
-                definitions: core::slice::from_ref(&id),
-                ..crate::attempt::AttemptEscapeRoots::default()
-            },
+            crate::AttemptPromotionRoots::new(&[], &[], core::slice::from_ref(&id), &[]),
         )?;
         Ok(promotion.definitions[0])
     }
@@ -733,7 +755,7 @@ impl<G> CommandState<G> {
         };
         let supported_continuation = self.parameters.activations.is_empty()
             && self.scanner.is_quiescent()
-            && self.alignment == AlignmentDeliveryState::default()
+            && self.alignment == AlignmentDeliveryState::<G>::default()
             && self.transient == TransientState::default()
             && self.replay_completions.is_empty()
             && self.pending_replay_completions.is_empty()
@@ -1407,7 +1429,7 @@ impl<G> CommandState<G> {
     /// by [`crate::CommandProcessor`].
     pub fn apply_alignment_request(
         &mut self,
-        _stores: &tex_state::CommandContext<'_, G>,
+        stores: &tex_state::CommandContext<'_, G>,
         request: AlignmentRequest,
     ) -> Result<AlignmentRequestResult, AlignmentLifecycleError> {
         match request {
@@ -1419,13 +1441,6 @@ impl<G> CommandState<G> {
                 self.set_alignment_preamble_phase(alignment)?;
                 Ok(AlignmentRequestResult::Applied)
             }
-            AlignmentRequest::BeginCell {
-                alignment,
-                templates,
-            } => {
-                self.begin_alignment_cell(alignment, templates)?;
-                Ok(AlignmentRequestResult::Applied)
-            }
             AlignmentRequest::PrepareCellLookahead(alignment) => {
                 if self.alignment.active_alignment != Some(alignment) {
                     return Err(AlignmentLifecycleError::WrongAlignment);
@@ -1434,7 +1449,7 @@ impl<G> CommandState<G> {
                 Ok(AlignmentRequestResult::Applied)
             }
             AlignmentRequest::InstallCellTemplate(alignment) => {
-                self.install_alignment_cell_template(alignment)?;
+                self.install_alignment_cell_template(stores, alignment)?;
                 Ok(AlignmentRequestResult::Applied)
             }
             AlignmentRequest::InstallOmitCellTemplate(alignment) => {
@@ -1483,10 +1498,10 @@ impl<G> CommandState<G> {
     /// The source opening brace must be delivered and backed up through a
     /// command processor before [`Self::install_alignment_cell_template`]
     /// installs the optional u-template.
-    pub fn begin_alignment_cell(
+    pub fn begin_prepared_alignment_cell(
         &mut self,
         alignment: AlignmentIdentity,
-        templates: AlignmentCellTemplates,
+        templates: PreparedAlignmentCellTemplates<G>,
     ) -> Result<(), AlignmentLifecycleError> {
         self.alignment.begin_cell(alignment, templates)
     }
@@ -1495,11 +1510,13 @@ impl<G> CommandState<G> {
     /// typed opener phase has completed command-owned brace replay.
     pub fn install_alignment_cell_template(
         &mut self,
+        stores: &tex_state::CommandContext<'_, G>,
         alignment: AlignmentIdentity,
     ) -> Result<(), AlignmentLifecycleError> {
         let template = self.alignment.active_cell_template(alignment)?;
         if let Some(template) = template {
             let level = self.push_alignment_template(
+                stores,
                 template,
                 TokenBehavior::UTemplate,
                 RetirementBehavior::Pop,
@@ -1639,6 +1656,7 @@ impl<G> CommandState<G> {
     /// the canonical raw-delivery loop.
     pub fn begin_alignment_v_template(
         &mut self,
+        stores: &tex_state::CommandContext<'_, G>,
         alignment: AlignmentIdentity,
         delimiter: AlignmentCellDelimiter,
     ) -> Result<(), AlignmentLifecycleError> {
@@ -1655,6 +1673,7 @@ impl<G> CommandState<G> {
                 ReplayTrace::OmitTemplate,
             ),
             Some(template) => self.push_alignment_template(
+                stores,
                 template,
                 TokenBehavior::VTemplate,
                 RetirementBehavior::RetainExhaustedVTemplate,
@@ -2212,18 +2231,18 @@ impl<G> CommandState<G> {
 
     fn push_alignment_template(
         &mut self,
-        template: crate::AttemptTokenListId,
+        stores: &tex_state::CommandContext<'_, G>,
+        template: tex_state::TokenListId<G>,
         behavior: TokenBehavior,
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> InputLevelId {
-        let words = self
-            .attempt
-            .arena()
-            .token_words(template)
-            .expect("alignment template belongs to the installed attempt")
-            .to_vec();
-        self.push_token_level(TokenPayload::transient(words), behavior, retirement, trace)
+        self.push_token_level(
+            TokenPayload::durable(stores.token_list(template)),
+            behavior,
+            retirement,
+            trace,
+        )
     }
 
     /// Splits and normalizes the next physical line on the active source.
