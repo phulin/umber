@@ -433,6 +433,13 @@ continuation crosses a process/thread boundary or enters serialized session
 storage, it must detach to the handle-free continuation schema. Runtime ids
 never become wire identity.
 
+`EffectJournal` is an in-session revision reconciliation package, not a cold
+DTO. It owns detached-value `EffectRecord` rows together with runtime-local
+publication identities, semantic ordinals, and placement sidecars whose only
+meaning is within the current retained revision graph. Cold artifact and
+effect consumers materialize record order and detach record payloads; they do
+not serialize, memoize, or emit the journal's publication sidecars.
+
 ## Crate and module responsibilities
 
 `tex-state` owns the session interning epoch, generation brands and owners,
@@ -464,7 +471,10 @@ The format boundary is a cold `tex-state` codec over handle-free schemas.
 Format loading stages a fresh destination generation and session-local ids;
 format dumping emits canonical logical content and DTO-local references.
 Runtime layout, arena capacity, generation keys, and journal history are not
-format ABI.
+format ABI. PDF format state follows the same rule: live token and durable-node
+coordinates detach through caller-provided recipes into an owned wire payload,
+and decoding returns an unpublished destination-local `PdfState` for the
+aggregate format staging transaction.
 
 The continuation boundary is jointly typed by `tex-command` and `tex-exec`.
 An in-session continuation owns its attempt/generation package; a detached

@@ -180,3 +180,61 @@ fn external_image_payload_is_owned_not_shared() {
         .unwrap();
     assert_eq!(record.bytes(), &[1, 2, 3]);
 }
+
+#[test]
+fn format_pdf_ledger_detaches_and_materializes_before_publication() {
+    with_universe(budget(), |universe| {
+        let tokens = universe
+            .allocate_token_list(&[TokenWord::pack(Token::param(4))])
+            .unwrap();
+        let parameter = PdfTokenParameter {
+            tokens,
+            semantic_id: semantic_id(8),
+        };
+        let mut source = PdfState::default();
+        source.enable();
+        let object = source.reserve_raw_object().unwrap();
+        source
+            .initialize_raw_object(
+                object,
+                PdfRawObjectData::new(false, None, false, parameter),
+                true,
+            )
+            .unwrap();
+
+        let bytes = source
+            .capture_format_bytes(
+                |id| {
+                    assert_eq!(id, tokens);
+                    Ok(vec![4])
+                },
+                |_| Err("unexpected node recipe".to_owned()),
+            )
+            .unwrap()
+            .expect("format-compatible PDF state detaches");
+        let restored = PdfState::restore_format_bytes(
+            &bytes,
+            |recipe| {
+                assert_eq!(recipe, [4]);
+                Ok(parameter)
+            },
+            |_| Err("unexpected node recipe".to_owned()),
+        )
+        .expect("detached PDF state materializes");
+        assert!(restored.enabled());
+        assert_eq!(
+            restored.raw_object(object).unwrap().data().unwrap().data(),
+            tokens
+        );
+
+        assert!(
+            PdfState::<()>::restore_format_bytes(
+                b"not a format",
+                |_| unreachable!(),
+                |_| unreachable!(),
+            )
+            .is_err()
+        );
+    })
+    .unwrap();
+}

@@ -47,7 +47,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
   defaults, exact nested local/global restoration, and cursor rollback tests.
 - `src/epoch.rs`: Monotonic epoch stamps used to coalesce journal entries within a state epoch.
 - `src/epoch/tests.rs`: Unit tests for epoch ordering, raw values, and overflow behavior.
-- `src/effect_journal.rs` and `src/effect_journal/tests.rs`: Validated detached effect-ledger ownership, aligned publication metadata, copy-only deferred-write token coordinates, prefix splicing, and terminal materialization.
+- `src/effect_journal.rs` and `src/effect_journal/tests.rs`: Validated
+  in-session effect-ledger ownership, aligned runtime-local publication
+  metadata, prefix splicing, and terminal materialization. Cold consumers
+  detach the owned `EffectRecord` values; publication identities and ordering
+  sidecars are never serialized.
 - `src/etex_tracing.rs` and `src/etex_tracing/tests.rs`: e-TeX 2.6's `\tracinggroups` group-enter/leave transcript trace, printed through the shared `\tracing*` diagnostic channel; `\tracingassigns`'s value rendering lives in `tex-exec` instead, against the primitives declared here, and `\tracingifs` renders directly in `tex-command` through the same channel.
 - `src/file_framing.rs` and `src/file_framing/tests.rs`: tex.web §54's `open_parens` and the §537/§362/§1335 prints that maintain it, held as print-adjacent `World` state so the command core can close a file's paren at §362's own point, ahead of the `check_outer_validity` diagnostic that follows it.
 - `src/font.rs`: Stateful loaded-font store, font handles, null font, missing-character records, and rollback marks.
@@ -77,9 +81,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
   construction, episode-level guarded admission, cloneable coarse generation
   ownership, and whole-generation retirement.
 - `src/ids.rs`: Opaque snapshot and font handles retained outside the deleted runtime-value ownership substrate.
-- `src/input.rs`: Snapshot-ready lexer/input stack summaries with copy-only token-list ids, macro replay sites and argument slots, source ids, and generic checkpoint future-state comparison.
-- `src/input/tests.rs`: Value and snapshot-isolation tests for frozen input
-  summaries and source payloads.
+- `src/input.rs`: Storage-independent input policy, replay-kind, alignment
+  phase, and source-id vocabulary shared with the command-owned input stack.
+- `src/packed_input.rs`: Fixed-width packed input-frame metadata and flags;
+  token/source replay payload ownership remains in `tex-command`.
 - `src/interner.rs`: Bounded append-only session epoch for control-sequence
   names and retained spellings, with explicit foreign-session admission and
   whole-epoch retirement.
@@ -118,12 +123,14 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/page.rs`: Page-lifetime builder state with directly owned contribution,
   current-page, discard, insertion, and mark buffers; the aggregate Universe
   owns immutable page-list publication and rollback cursors.
-- `src/pdf.rs`: Checkpointed pdfTeX document mode with copy-only token
+- `src/pdf.rs`: Checkpointed pdfTeX document mode with generation-typed token
   coordinates in catalog/page collections, deterministic object allocation,
   durable form-list coordinates, owned checkpoint collections, owned external
-  resource bytes, suffix transfer, and committed-page ledger.
+  resource bytes, suffix transfer, committed-page ledger, and handle-free PDF
+  format wire capture/materialization hooks.
 - `src/pdf/tests.rs`: Generation-typed page/action/object coordinates, owned
-  image payloads, and atomic PDF checkpoint rollback tests.
+  image payloads, atomic PDF checkpoint rollback, and handle-free format-ledger
+  round-trip/rejection tests.
 - `src/provenance_resolver.rs`: Explicit cold-demand admission from
   generation-typed provenance coordinates to owned handle-free diagnostic and
   generated-source presentation DTOs.

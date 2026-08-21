@@ -1386,6 +1386,38 @@ impl<G> PdfState<G> {
         }))
     }
 
+    /// Detaches the format-retained PDF ledger into a handle-free wire image.
+    ///
+    /// Token and node closures run only while capturing the live generation;
+    /// the resulting bytes contain no arena coordinates or generation owner.
+    pub(crate) fn capture_format_bytes(
+        &self,
+        detach_tokens: impl FnMut(TokenListId<G>) -> Result<Vec<u8>, String>,
+        detach_nodes: impl FnMut(DurableListId<G>) -> Result<Vec<u8>, String>,
+    ) -> Result<Option<Vec<u8>>, String> {
+        self.capture_format(detach_tokens, detach_nodes)?
+            .map(|format| {
+                bincode::serialize(&format)
+                    .map_err(|error| format!("cannot encode PDF format resource state: {error}"))
+            })
+            .transpose()
+    }
+
+    /// Validates and materializes one handle-free PDF format wire image.
+    ///
+    /// The returned state is destination-local and unpublished. Its caller
+    /// can therefore stage it beside the other format sections and move it
+    /// into the destination aggregate only after every section succeeds.
+    pub(crate) fn restore_format_bytes(
+        bytes: &[u8],
+        import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter<G>, String>,
+        import_nodes: impl FnMut(&[u8]) -> Result<(DurableListId<G>, StateHashFragment), String>,
+    ) -> Result<Self, String> {
+        let format = bincode::deserialize(bytes)
+            .map_err(|error| format!("cannot decode PDF format resource state: {error}"))?;
+        Self::restore_format(format, import_tokens, import_nodes)
+    }
+
     pub(crate) fn restore_format(
         format: PdfFormatState,
         mut import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter<G>, String>,

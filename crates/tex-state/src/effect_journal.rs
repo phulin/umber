@@ -3,11 +3,14 @@ use crate::{
     EffectRecord, EffectSemanticRecordOrdinal, EffectSequence,
 };
 
-/// Detached, validated ownership unit for one revision's effect ledger.
+/// In-session, validated ownership unit for one revision's effect ledger.
 ///
-/// Publication metadata is deliberately private and aligned with the records.
-/// Callers can splice journals, but cannot construct positional sidecars that
-/// disagree about their length.
+/// Publication identities and ordering domains are revision-local runtime
+/// sidecars, not detached wire identity. They remain private and aligned with
+/// the owned records so callers can splice live revision journals but cannot
+/// construct positional columns that disagree about their length. Cold output
+/// consumes materialized records and detaches their value payloads instead of
+/// serializing this aggregate.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct EffectJournal {
     records: Vec<EffectRecord>,

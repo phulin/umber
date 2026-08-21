@@ -3968,8 +3968,9 @@ impl World {
         self.effects.as_slice()
     }
 
-    /// Closes the live aligned effect columns into one validated revision
-    /// journal. Positional publication sidecars do not cross this boundary.
+    /// Closes the live aligned effect columns into one validated in-session
+    /// revision journal. Positional publication sidecars remain runtime-local;
+    /// cold consumers detach the materialized records instead.
     #[must_use]
     pub fn effect_journal(&self) -> crate::EffectJournal {
         crate::EffectJournal::from_parts(
@@ -3984,7 +3985,7 @@ impl World {
         .expect("World effect columns are aligned")
     }
 
-    /// Installs a previously validated detached journal into a retained World.
+    /// Reinstalls one validated in-session journal's aligned runtime sidecars.
     pub fn install_effect_journal(&mut self, journal: &crate::EffectJournal) {
         self.install_effect_sequences(journal.sequences());
         self.install_effect_publications(journal.publications());
