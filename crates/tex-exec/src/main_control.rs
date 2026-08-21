@@ -772,6 +772,7 @@ impl<G> From<ColdOperation<G>> for ScannedOperation<G> {
 struct PendingResourceOperation<G> {
     scanned: Box<ColdOperation<G>>,
     capabilities: crate::transaction_protocol::CommandCapabilities,
+    attempt: tex_command::CommandAttemptMark,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -784,15 +785,19 @@ enum PendingDiagnosticOperation<G> {
     Assignment {
         command: tex_command::CurrentCommand<G>,
         cursor: tex_command::CommandDeliveryCursor,
+        attempt: tex_command::CommandAttemptMark,
     },
-    Prepared(Box<ColdOperation<G>>),
+    Prepared {
+        scanned: Box<ColdOperation<G>>,
+        attempt: tex_command::CommandAttemptMark,
+    },
 }
 
 impl<G> std::fmt::Debug for PendingDiagnosticOperation<G> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::Assignment { .. } => "PendingDiagnosticOperation::<G>::Assignment",
-            Self::Prepared(_) => "PendingDiagnosticOperation::<G>::Prepared",
+            Self::Prepared { .. } => "PendingDiagnosticOperation::<G>::Prepared",
         })
     }
 }
@@ -845,6 +850,19 @@ struct DirectOperationMark<G> {
     mode: crate::mode::ModeJournalCursor,
     attempt: tex_command::CommandAttemptMark,
     page: tex_state::node_arena::NodeArenaCursor<tex_state::node_arena::PageLifetime>,
+}
+
+/// Whether a completed direct-operation frame still owns attempt-local
+/// coordinates through a typed retry continuation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DirectAttemptDisposition {
+    /// Every declared root has been promoted and installed in its canonical
+    /// owner, so the operation-local suffix is no longer reachable.
+    Discard,
+    /// A typed continuation still owns attempt-local coordinates. The exact
+    /// opening mark moves with that continuation and is discarded only after
+    /// its resumed operation commits or rolls back.
+    RetainForRetry,
 }
 
 impl<G> From<ExecError> for PrepareOperationError<G> {
@@ -3322,10 +3340,30 @@ impl<G> MainControl<G> {
         }
     }
 
-    fn commit_direct_operation(&mut self, _stores: &mut Universe<G>, mark: DirectOperationMark<G>) {
+    fn commit_direct_operation(&mut self, stores: &mut Universe<G>, mark: DirectOperationMark<G>) {
+        self.finish_direct_operation(stores, mark, DirectAttemptDisposition::Discard);
+    }
+
+    fn retain_direct_operation_for_retry(
+        &mut self,
+        stores: &mut Universe<G>,
+        mark: DirectOperationMark<G>,
+    ) {
+        self.finish_direct_operation(stores, mark, DirectAttemptDisposition::RetainForRetry);
+    }
+
+    fn finish_direct_operation(
+        &mut self,
+        _stores: &mut Universe<G>,
+        mark: DirectOperationMark<G>,
+        attempt: DirectAttemptDisposition,
+    ) {
         self.modes
             .commit_journal(mark.mode)
             .expect("direct operation owns the top mode journal frame");
+        if attempt == DirectAttemptDisposition::Discard {
+            self.command.discard_attempt_operation(mark.attempt);
+        }
     }
 
     fn discard_direct_operation(&mut self, stores: &mut Universe<G>, mark: DirectOperationMark<G>) {
@@ -3441,8 +3479,9 @@ impl<G> MainControl<G> {
             // allocation to belong to one fixed-size operation suffix. The
             // mark therefore opens before delivery preflight, while semantic
             // owners still remain untouched until prepared apply.
-            let operation_mark = self.begin_direct_operation(stores);
+            let mut operation_mark = self.begin_direct_operation(stores);
             let preflight = if let Some(pending) = self.pending_resource_operation.take() {
+                operation_mark.attempt = pending.attempt;
                 PreflightDelivery::<G> {
                     delivery: OperationDelivery::<G>::Prepared(pending.scanned),
                     capabilities: pending.capabilities,
@@ -3532,7 +3571,11 @@ impl<G> MainControl<G> {
                             self.episode_telemetry
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource);
                         }
-                        self.commit_direct_operation(stores, operation_mark);
+                        if matches!(result, Ok(StepResult::Suspended(_))) {
+                            self.retain_direct_operation_for_retry(stores, operation_mark);
+                        } else {
+                            self.commit_direct_operation(stores, operation_mark);
+                        }
                         return result;
                     }
                 };
@@ -3626,6 +3669,7 @@ impl<G> MainControl<G> {
                             self.pending_resource_operation = Some(PendingResourceOperation::<G> {
                                 scanned,
                                 capabilities: preflight.capabilities,
+                                attempt: operation_mark.attempt,
                             });
                             self.advance_telemetry.rollbacks += 1;
                             #[cfg(feature = "profiling")]
@@ -3636,7 +3680,7 @@ impl<G> MainControl<G> {
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource);
                             let result =
                                 self.finish_resource_preflight_failure(stores, *failure.error);
-                            self.commit_direct_operation(stores, operation_mark);
+                            self.retain_direct_operation_for_retry(stores, operation_mark);
                             return result;
                         }
                         let result = self.finish_resource_preflight_failure(stores, *failure.error);
@@ -3663,7 +3707,11 @@ impl<G> MainControl<G> {
                             self.episode_telemetry
                                 .record_rollback(crate::SemanticEpisodeBarrier::Resource);
                         }
-                        self.commit_direct_operation(stores, operation_mark);
+                        if matches!(result, Ok(StepResult::Suspended(_))) {
+                            self.retain_direct_operation_for_retry(stores, operation_mark);
+                        } else {
+                            self.commit_direct_operation(stores, operation_mark);
+                        }
                         return result;
                     }
                 };
@@ -3800,10 +3848,11 @@ impl<G> MainControl<G> {
                             self.pending_resource_operation = Some(PendingResourceOperation::<G> {
                                 scanned,
                                 capabilities: preflight.capabilities,
+                                attempt: operation_mark.attempt,
                             });
                             let result =
                                 self.finish_resource_preflight_failure(stores, *failure.error);
-                            self.commit_direct_operation(stores, operation_mark);
+                            self.retain_direct_operation_for_retry(stores, operation_mark);
                             return result;
                         }
                         let result = self.finish_resource_preflight_failure(stores, *failure.error);
@@ -3824,7 +3873,7 @@ impl<G> MainControl<G> {
                                         None => retry,
                                     }
                                 });
-                                self.commit_direct_operation(stores, operation_mark);
+                                self.retain_direct_operation_for_retry(stores, operation_mark);
                                 return Ok(step);
                             }
                             Ok(step) => {
@@ -3841,7 +3890,7 @@ impl<G> MainControl<G> {
                                         None => retry,
                                     }
                                 });
-                                self.commit_direct_operation(stores, operation_mark);
+                                self.retain_direct_operation_for_retry(stores, operation_mark);
                                 Self::publish_pdf_fatal_error(stores, &error)?;
                                 return Err(error);
                             }
@@ -4026,6 +4075,7 @@ impl<G> MainControl<G> {
                         self.pending_resource_operation = Some(PendingResourceOperation::<G> {
                             scanned,
                             capabilities: preflight.capabilities,
+                            attempt: operation_mark.attempt,
                         });
                     }
                     let result = self.finish_resource_preflight_failure(stores, *failure.error);
@@ -4047,7 +4097,11 @@ impl<G> MainControl<G> {
                             }
                         });
                     }
-                    self.commit_direct_operation(stores, operation_mark);
+                    if matches!(result, Ok(StepResult::Suspended(_))) {
+                        self.retain_direct_operation_for_retry(stores, operation_mark);
+                    } else {
+                        self.commit_direct_operation(stores, operation_mark);
+                    }
                     return match result {
                         Err(error) => {
                             let error = {
@@ -4328,13 +4382,19 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<DiagnosticStepResult, ExecError> {
-        let operation_mark = self.begin_direct_operation(stores);
+        let mut operation_mark = self.begin_direct_operation(stores);
         let continuation = self.pending_diagnostic_operation.take();
         let assignment = match continuation {
-            Some(PendingDiagnosticOperation::<G>::Prepared(scanned)) => {
+            Some(PendingDiagnosticOperation::<G>::Prepared { scanned, attempt }) => {
+                operation_mark.attempt = attempt;
                 Some((OperationDelivery::<G>::Prepared(scanned), None))
             }
-            Some(PendingDiagnosticOperation::<G>::Assignment { command, cursor }) => {
+            Some(PendingDiagnosticOperation::<G>::Assignment {
+                command,
+                cursor,
+                attempt,
+            }) => {
+                operation_mark.attempt = attempt;
                 let retry = (command.clone(), cursor);
                 Some((
                     OperationDelivery::<G>::Settled {
@@ -4363,7 +4423,11 @@ impl<G> MainControl<G> {
                     Ok(command) => command,
                     Err(error) => {
                         let result = self.finish_resource_preflight_failure(stores, error);
-                        self.commit_direct_operation(stores, operation_mark);
+                        if matches!(result, Ok(StepResult::Suspended(_))) {
+                            self.retain_direct_operation_for_retry(stores, operation_mark);
+                        } else {
+                            self.commit_direct_operation(stores, operation_mark);
+                        }
                         return match result? {
                             StepResult::Suspended(need) => {
                                 Ok(DiagnosticStepResult::Suspended(need))
@@ -4406,7 +4470,10 @@ impl<G> MainControl<G> {
             Err(failure) => {
                 if let Some(scanned) = failure.unavailable {
                     self.pending_diagnostic_operation =
-                        Some(PendingDiagnosticOperation::<G>::Prepared(scanned));
+                        Some(PendingDiagnosticOperation::<G>::Prepared {
+                            scanned,
+                            attempt: operation_mark.attempt,
+                        });
                 } else if let Some((command, cursor)) = retry {
                     let command = self
                         .command
@@ -4417,6 +4484,7 @@ impl<G> MainControl<G> {
                         Some(PendingDiagnosticOperation::<G>::Assignment {
                             command,
                             cursor: failure.cursor.unwrap_or(cursor),
+                            attempt: operation_mark.attempt,
                         });
                 }
                 let result = self.finish_resource_preflight_failure(stores, *failure.error);
@@ -4426,7 +4494,11 @@ impl<G> MainControl<G> {
                 self.modes
                     .rollback_journal(mode_mark)
                     .expect("diagnostic assignment owns the mode mark");
-                self.commit_direct_operation(stores, operation_mark);
+                if matches!(result, Ok(StepResult::Suspended(_))) {
+                    self.retain_direct_operation_for_retry(stores, operation_mark);
+                } else {
+                    self.commit_direct_operation(stores, operation_mark);
+                }
                 return match result? {
                     StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
                     StepResult::Progress(_) => {

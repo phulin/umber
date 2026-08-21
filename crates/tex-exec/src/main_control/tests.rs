@@ -5355,6 +5355,42 @@ fn ordinary_assignment_opens_no_aggregate_savepoint() {
 }
 
 #[test]
+fn committed_token_scanner_attempt_is_discarded_before_named_checkpoint() {
+    crate::test_harness::with_plain_universe(|mut stores| {
+        let mut control = MainControl::tex82_initex(&mut stores);
+        register_source(&mut control, br"\toks0={A}");
+
+        assert_eq!(
+            control
+                .advance(&mut stores)
+                .expect("token assignment commits"),
+            StepResult::Progress(ReplayStep::Continue)
+        );
+        let stored = admitted!(stores, |context| {
+            let tokens = context
+                .token_register(0)
+                .expect("token register lookup")
+                .expect("token assignment installs its promoted root");
+            context.token_list(tokens).to_vec()
+        });
+        assert_eq!(
+            stored,
+            [tex_state::token::TokenWord::pack(Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            })]
+        );
+        control
+            .capture_checkpoint(
+                crate::EngineBoundary::OuterParagraphEnd,
+                &mut stores,
+                crate::ExecutionBudgetCounters::default(),
+            )
+            .expect("committed scanner attempt no longer blocks a named checkpoint");
+    });
+}
+
+#[test]
 fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
     crate::test_harness::with_plain_universe(|mut stores| {
         let mut control = MainControl::tex82_initex(&mut stores);
@@ -7532,6 +7568,16 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
         assert_eq!(request.page_box, tex_command::PdfImagePageBox::Media);
         assert!(request.page_box_explicit);
         assert!(request.attr.is_some());
+        assert_eq!(
+            control
+                .capture_checkpoint(
+                    crate::EngineBoundary::OuterParagraphEnd,
+                    &mut stores,
+                    crate::ExecutionBudgetCounters::default(),
+                )
+                .expect_err("the suspended image request still owns its attempt suffix"),
+            tex_command::CommandSummaryError::AttemptSuspended
+        );
 
         control.capabilities_mut().register_pdf_image(
             request,
@@ -7566,6 +7612,13 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
             Scaled::from_raw(3 * Scaled::UNITY)
         );
         assert!(control.modes.current_list().nodes().is_empty());
+        control
+            .capture_checkpoint(
+                crate::EngineBoundary::OuterParagraphEnd,
+                &mut stores,
+                crate::ExecutionBudgetCounters::default(),
+            )
+            .expect("fulfilled retry discards the exact retained attempt suffix");
     });
 }
 

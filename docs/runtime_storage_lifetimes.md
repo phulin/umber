@@ -315,6 +315,15 @@ is cleared or dropped when publication completes. Destination rows become
 visible only after every copied child has validated and every root has been
 rewritten; failure leaves the destination unpublished.
 
+Direct-operation completion chooses an explicit disposition for its attempt
+suffix. A fully applied operation discards exactly its opening mark only after
+all declared roots have been promoted and installed in their canonical owners,
+and before a named checkpoint may be published. A resource-unavailable
+operation instead moves that mark together with its scanned operation into the
+typed retry continuation. Resumption reinstates the original mark, so eventual
+commit discards the retained suffix rather than a later empty suffix. Rollback
+restores semantic roots before truncating the same attempt mark.
+
 ## Node lifetimes
 
 Nodes have three storage lifetimes:
