@@ -7,7 +7,7 @@
 use super::*;
 
 use tex_command::{CommandHostCapabilities, RegisteredSourceKind, SourceRegistration};
-use tex_state::{EffectRecord, InteractionMode, JobClock, PrintSink, World};
+use tex_state::{EffectRecord, InteractionMode, JobClock, PrintSink, Universe, World};
 
 #[test]
 fn print_two_uses_absolute_last_two_digits() {
@@ -30,26 +30,34 @@ fn unclosed_group_report_uses_live_escapechar_and_interaction_selector() {
             (i32::from(b'@'), "(@end occurred inside a group at level 1)"),
             (256, "(end occurred inside a group at level 1)"),
         ] {
-            let mut stores = Universe::new();
-            stores.set_interaction_mode(interaction);
-            stores.set_int_param(IntParam::ESCAPE_CHAR, escape);
-            stores.enter_group();
+            crate::test_harness::with_universe(|universe| {
+                universe.set_interaction_mode(interaction);
+                crate::test_harness::assign_int_param(
+                    universe,
+                    IntParam::ESCAPE_CHAR,
+                    escape,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("escape character assignment");
+                crate::test_harness::begin_group(universe, tex_state::GroupKind::Simple, 0)
+                    .expect("test group opens");
 
-            report_unclosed_groups(&mut stores);
+                report_unclosed_groups(universe, 1);
 
-            assert_eq!(log_text(&stores), expected);
-            assert_eq!(
-                terminal_text(&stores),
-                if terminal_visible { expected } else { "" }
-            );
+                assert_eq!(log_text(universe), expected);
+                assert_eq!(
+                    terminal_text(universe),
+                    if terminal_visible { expected } else { "" }
+                );
+            });
         }
     }
 }
 
 use crate::{MainControl, MainControlStep};
 
-fn channel_text(stores: &Universe, matches_sink: impl Fn(PrintSink) -> bool) -> String {
-    stores
+fn channel_text<G>(universe: &Universe<G>, matches_sink: impl Fn(PrintSink) -> bool) -> String {
+    universe
         .world()
         .effect_records()
         .iter()
@@ -60,16 +68,40 @@ fn channel_text(stores: &Universe, matches_sink: impl Fn(PrintSink) -> bool) -> 
         .collect()
 }
 
-fn terminal_text(stores: &Universe) -> String {
-    channel_text(stores, |sink| {
+fn terminal_text<G>(universe: &Universe<G>) -> String {
+    channel_text(universe, |sink| {
         matches!(sink, PrintSink::Terminal | PrintSink::TerminalAndLog)
     })
 }
 
-fn log_text(stores: &Universe) -> String {
-    channel_text(stores, |sink| {
+fn log_text<G>(universe: &Universe<G>) -> String {
+    channel_text(universe, |sink| {
         matches!(sink, PrintSink::Log | PrintSink::TerminalAndLog)
     })
+}
+
+fn finish_test_job<G>(
+    universe: &mut Universe<G>,
+    profile: CommandProfile,
+    binary: EngineBinaryIdentity,
+    job_name: &str,
+    dvi: Option<DviJobOutput>,
+    pdf: Option<&mut PdfJobFinalizationReport>,
+) {
+    let usage = crate::test_harness::with_admitted(universe, |context| {
+        context.detach_engine_usage_statistics()
+    });
+    finish_job(universe, profile, binary, usage, job_name, dvi, pdf);
+}
+
+fn assign_global_int<G>(universe: &mut Universe<G>, parameter: IntParam, value: i32) {
+    crate::test_harness::assign_int_param(
+        universe,
+        parameter,
+        value,
+        tex_state::AssignmentScope::Global,
+    )
+    .expect("job fixture integer assignment");
 }
 
 #[test]
@@ -81,43 +113,53 @@ fn format_dump_publication_confirmation_obeys_selector_and_is_one_shot() {
         (InteractionMode::Batch, false),
     ];
     for (interaction, terminal) in cases {
-        let mut stores = Universe::new();
-        stores.set_interaction_mode(interaction);
-        let mut receipt = FormatDumpReceipt::new("plain".into(), 2026, 7, 30);
-        confirm_format_dump_publication(&mut stores, &mut receipt, "published-name.fmt");
-        confirm_format_dump_publication(&mut stores, &mut receipt, "duplicate.fmt");
-        let expected =
-            "Beginning to dump on file published-name.fmt\n (preloaded format=plain 2026.7.30)";
-        assert_eq!(terminal_text(&stores), if terminal { expected } else { "" });
-        assert_eq!(log_text(&stores), expected);
+        crate::test_harness::with_universe(|universe| {
+            universe.set_interaction_mode(interaction);
+            let mut receipt = FormatDumpReceipt::new("plain".into(), 2026, 7, 30);
+            confirm_format_dump_publication(universe, &mut receipt, "published-name.fmt");
+            confirm_format_dump_publication(universe, &mut receipt, "duplicate.fmt");
+            let expected =
+                "Beginning to dump on file published-name.fmt\n (preloaded format=plain 2026.7.30)";
+            assert_eq!(
+                terminal_text(universe),
+                if terminal { expected } else { "" }
+            );
+            assert_eq!(log_text(universe), expected);
+        });
     }
 }
 
 /// Runs a source through a fresh INITEX session to `\end`/end-of-input and
-/// returns the resulting `Universe`, for tests that need a real committed
-/// page count (`Universe::world().artifact_commits()` is populated only by
-/// the engine's own `\shipout` handling, not by any test-visible setter).
-fn run_source_to_end(source: &[u8]) -> Universe {
-    let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = MainControl::tex82_initex(&mut stores);
-    let registered = control
-        .command_mut()
-        .register_source(SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            source.to_vec(),
-        ))
-        .expect("source registers");
-    control
-        .command_mut()
-        .open_registered_source(registered)
-        .expect("source opens");
-    loop {
-        match control.step(&mut stores).expect("step executes") {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
-            MainControlStep::Continue => {}
+/// Runs a complete source through a fresh branded INITEX session, then lends
+/// the still-live engine to assertions that need committed page evidence.
+fn with_source_to_end<R>(
+    source: &[u8],
+    test: impl for<'id> FnOnce(
+        &mut MainControl<tex_state::GenerationBrand<'id>>,
+        &mut Universe<tex_state::GenerationBrand<'id>>,
+    ) -> R,
+) -> R {
+    crate::test_harness::with_plain_universe(|universe| {
+        let mut control = MainControl::tex82_initex(universe);
+        let registered = control
+            .command_mut()
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                source.to_vec(),
+            ))
+            .expect("source registers");
+        control
+            .command_mut()
+            .open_registered_source(registered)
+            .expect("source opens");
+        loop {
+            match control.step(universe).expect("step executes") {
+                MainControlStep::End | MainControlStep::EndOfInput => break,
+                MainControlStep::Continue => {}
+            }
         }
-    }
-    stores
+        test(&mut control, universe)
+    })
 }
 
 #[test]
@@ -129,33 +171,34 @@ fn begin_job_prints_the_banner_and_clock_stamped_first_line_on_each_channel() {
         month: 7,
         year: 2026,
     };
-    let mut stores = Universe::with_world(World::memory_with_clock(clock));
-    let mut job = JobFraming::default();
-    let mut capabilities = CommandHostCapabilities::default();
+    crate::test_harness::with_world_universe(World::memory_with_clock(clock), |universe| {
+        let mut job = JobFraming::default();
+        let mut capabilities = CommandHostCapabilities::default();
 
-    begin_job(
-        &mut job,
-        &mut stores,
-        &mut capabilities,
-        true,
-        None,
-        JobEngineFraming {
-            binary: EngineBinaryIdentity::Pdftex14029,
-            extended_mode: false,
-        },
-        "show-box.tex",
-    );
+        begin_job(
+            &mut job,
+            universe,
+            &mut capabilities,
+            true,
+            None,
+            JobEngineFraming {
+                binary: EngineBinaryIdentity::Pdftex14029,
+                extended_mode: false,
+            },
+            "show-box.tex",
+        );
 
-    // §61: the terminal's banner plus `format_ident` and a trailing newline,
-    // no clock.
-    assert_eq!(terminal_text(&stores), format!("{BANNER} (INITEX)\n"));
-    // §536/§534: the log's banner carries `format_ident` and the clock, then
-    // a `**` line with the job's first line and a trailing newline.
-    assert_eq!(
-        log_text(&stores),
-        format!("{BANNER} (INITEX)  9 JUL 2026 13:36\n**show-box.tex\n")
-    );
-    assert_eq!(capabilities.job_name(), "show-box");
+        // §61: the terminal's banner plus `format_ident` and a trailing newline,
+        // no clock.
+        assert_eq!(terminal_text(universe), format!("{BANNER} (INITEX)\n"));
+        // §536/§534: the log's banner carries `format_ident` and the clock, then
+        // a `**` line with the job's first line and a trailing newline.
+        assert_eq!(
+            log_text(universe),
+            format!("{BANNER} (INITEX)  9 JUL 2026 13:36\n**show-box.tex\n")
+        );
+        assert_eq!(capabilities.job_name(), "show-box");
+    });
 }
 
 #[test]
@@ -167,168 +210,179 @@ fn begin_job_prints_entering_extended_mode_on_both_channels_before_the_star_star
         month: 7,
         year: 2026,
     };
-    let mut stores = Universe::with_world(World::memory_with_clock(clock));
-    let mut job = JobFraming::default();
-    let mut capabilities = CommandHostCapabilities::default();
+    crate::test_harness::with_world_universe(World::memory_with_clock(clock), |universe| {
+        let mut job = JobFraming::default();
+        let mut capabilities = CommandHostCapabilities::default();
 
-    begin_job(
-        &mut job,
-        &mut stores,
-        &mut capabilities,
-        true,
-        None,
-        JobEngineFraming {
-            binary: EngineBinaryIdentity::Etex26,
-            extended_mode: true,
-        },
-        "etex.tex",
-    );
+        begin_job(
+            &mut job,
+            universe,
+            &mut capabilities,
+            true,
+            None,
+            JobEngineFraming {
+                binary: EngineBinaryIdentity::Etex26,
+                extended_mode: true,
+            },
+            "etex.tex",
+        );
 
-    assert_eq!(
-        terminal_text(&stores),
-        format!("{ETEX26_BANNER} (INITEX)\nentering extended mode\n")
-    );
-    assert_eq!(
-        log_text(&stores),
-        format!("{ETEX26_BANNER} (INITEX)  9 JUL 2026 13:36\nentering extended mode\n**etex.tex\n")
-    );
+        assert_eq!(
+            terminal_text(universe),
+            format!("{ETEX26_BANNER} (INITEX)\nentering extended mode\n")
+        );
+        assert_eq!(
+            log_text(universe),
+            format!(
+                "{ETEX26_BANNER} (INITEX)  9 JUL 2026 13:36\nentering extended mode\n**etex.tex\n"
+            )
+        );
+    });
 }
 
 #[test]
 fn begin_job_called_twice_prints_the_banner_only_once() {
-    let mut stores = Universe::new();
-    let mut job = JobFraming::default();
-    let mut capabilities = CommandHostCapabilities::default();
+    crate::test_harness::with_universe(|universe| {
+        let mut job = JobFraming::default();
+        let mut capabilities = CommandHostCapabilities::default();
 
-    begin_job(
-        &mut job,
-        &mut stores,
-        &mut capabilities,
-        true,
-        None,
-        JobEngineFraming {
-            binary: EngineBinaryIdentity::Pdftex14029,
-            extended_mode: false,
-        },
-        "a.tex",
-    );
-    begin_job(
-        &mut job,
-        &mut stores,
-        &mut capabilities,
-        true,
-        None,
-        JobEngineFraming {
-            binary: EngineBinaryIdentity::Pdftex14029,
-            extended_mode: false,
-        },
-        "a.tex",
-    );
+        begin_job(
+            &mut job,
+            universe,
+            &mut capabilities,
+            true,
+            None,
+            JobEngineFraming {
+                binary: EngineBinaryIdentity::Pdftex14029,
+                extended_mode: false,
+            },
+            "a.tex",
+        );
+        begin_job(
+            &mut job,
+            universe,
+            &mut capabilities,
+            true,
+            None,
+            JobEngineFraming {
+                binary: EngineBinaryIdentity::Pdftex14029,
+                extended_mode: false,
+            },
+            "a.tex",
+        );
 
-    assert_eq!(terminal_text(&stores), format!("{BANNER} (INITEX)\n"));
-    assert_eq!(
-        terminal_text(&stores).matches(BANNER).count(),
-        1,
-        "begin_job must print the banner only once even when called twice"
-    );
+        assert_eq!(terminal_text(universe), format!("{BANNER} (INITEX)\n"));
+        assert_eq!(
+            terminal_text(universe).matches(BANNER).count(),
+            1,
+            "begin_job must print the banner only once even when called twice"
+        );
+    });
 }
 
 const HISTORY_NOTE: &str = "(see the transcript file for additional information)";
 
 #[test]
 fn history_note_is_silent_when_history_is_spotless() {
-    let mut stores = Universe::new();
-    print_history_note(&mut stores);
-    assert!(terminal_text(&stores).is_empty());
+    crate::test_harness::with_universe(|universe| {
+        print_history_note(universe);
+        assert!(terminal_text(universe).is_empty());
+    });
 }
 
 #[test]
 fn history_note_prints_terminal_only_below_errorstop_mode() {
-    let mut stores = Universe::new();
-    stores.set_interaction_mode(InteractionMode::Nonstop);
-    stores
-        .world_mut()
-        .error_channel_mut()
-        .record_error_history();
+    crate::test_harness::with_universe(|universe| {
+        universe.set_interaction_mode(InteractionMode::Nonstop);
+        universe
+            .world_mut()
+            .error_channel_mut()
+            .record_error_history();
 
-    print_history_note(&mut stores);
+        print_history_note(universe);
 
-    assert_eq!(terminal_text(&stores), HISTORY_NOTE);
-    assert!(log_text(&stores).is_empty());
+        assert_eq!(terminal_text(universe), HISTORY_NOTE);
+        assert!(log_text(universe).is_empty());
+    });
 }
 
 #[test]
 fn history_note_is_silent_in_errorstop_mode_unless_history_is_only_a_warning() {
-    // `InteractionMode::default()` is `ErrorStop`.
-    let mut raised_error = Universe::new();
-    raised_error
-        .world_mut()
-        .error_channel_mut()
-        .record_error_history();
-    print_history_note(&mut raised_error);
-    assert!(terminal_text(&raised_error).is_empty());
+    crate::test_harness::with_universe(|universe| {
+        universe.set_interaction_mode(InteractionMode::ErrorStop);
+        universe
+            .world_mut()
+            .error_channel_mut()
+            .record_error_history();
+        print_history_note(universe);
+        assert!(terminal_text(universe).is_empty());
+    });
 
-    let mut raised_warning = Universe::new();
-    raised_warning
-        .world_mut()
-        .error_channel_mut()
-        .record_warning_history();
-    print_history_note(&mut raised_warning);
-    assert_eq!(terminal_text(&raised_warning), HISTORY_NOTE);
+    crate::test_harness::with_universe(|universe| {
+        universe.set_interaction_mode(InteractionMode::ErrorStop);
+        universe
+            .world_mut()
+            .error_channel_mut()
+            .record_warning_history();
+        print_history_note(universe);
+        assert_eq!(terminal_text(universe), HISTORY_NOTE);
+    });
 }
 
 #[test]
 fn history_note_is_silent_in_batch_mode_even_when_history_is_raised() {
     // Batch's selector is `log_only`, never `term_and_log`, so tex.web's
     // `selector=term_and_log` guard fails regardless of `history`.
-    let mut stores = Universe::new();
-    stores.set_interaction_mode(InteractionMode::Batch);
-    stores
-        .world_mut()
-        .error_channel_mut()
-        .record_fatal_history();
+    crate::test_harness::with_universe(|universe| {
+        universe.set_interaction_mode(InteractionMode::Batch);
+        universe
+            .world_mut()
+            .error_channel_mut()
+            .record_fatal_history();
 
-    print_history_note(&mut stores);
+        print_history_note(universe);
 
-    assert!(terminal_text(&stores).is_empty());
-    assert!(log_text(&stores).is_empty());
+        assert!(terminal_text(universe).is_empty());
+        assert!(log_text(universe).is_empty());
+    });
 }
 
 #[test]
 fn finish_job_reports_no_pages_of_output_for_a_zero_page_job() {
-    let mut stores = Universe::new();
+    crate::test_harness::with_universe(|universe| {
+        finish_test_job(
+            universe,
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "show-box",
+            None,
+            None,
+        );
 
-    finish_job(
-        &mut stores,
-        CommandProfile::TEX82,
-        EngineBinaryIdentity::Tex82,
-        "show-box",
-        None,
-        None,
-    );
-
-    assert_eq!(
-        terminal_text(&stores),
-        "No pages of output.\nTranscript written on show-box.log.\n"
-    );
-    // The transcript note is terminal-only.
-    assert_eq!(log_text(&stores), "No pages of output.\n");
+        assert_eq!(
+            terminal_text(universe),
+            "No pages of output.\nTranscript written on show-box.log.\n"
+        );
+        // The transcript note is terminal-only.
+        assert_eq!(log_text(universe), "No pages of output.\n");
+    });
 }
 
 #[test]
 fn finish_job_suppresses_usage_report_when_tracingstats_is_zero() {
-    let mut stores = Universe::new();
-    stores.set_int_param_global(IntParam::TRACING_STATS, 0);
-    finish_job(
-        &mut stores,
-        CommandProfile::TEX82,
-        EngineBinaryIdentity::Tex82,
-        "stats",
-        None,
-        None,
-    );
-    assert!(!terminal_text(&stores).contains("Here is how much"));
-    assert!(!log_text(&stores).contains("Here is how much"));
+    crate::test_harness::with_universe(|universe| {
+        assign_global_int(universe, IntParam::TRACING_STATS, 0);
+        finish_test_job(
+            universe,
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "stats",
+            None,
+            None,
+        );
+        assert!(!terminal_text(universe).contains("Here is how much"));
+        assert!(!log_text(universe).contains("Here is how much"));
+    });
 }
 
 #[test]
@@ -337,34 +391,35 @@ fn finish_job_prints_tex82_usage_report_only_to_log_before_dvi_tail() {
         (InteractionMode::ErrorStop, true),
         (InteractionMode::Batch, false),
     ] {
-        let mut stores = Universe::new();
-        stores.set_interaction_mode(interaction);
-        stores.set_int_param_global(IntParam::TRACING_STATS, 1);
-        finish_job(
-            &mut stores,
-            CommandProfile::TEX82,
-            EngineBinaryIdentity::Tex82,
-            "stats",
-            None,
-            None,
-        );
-        let log = log_text(&stores);
-        let report = "Here is how much of TeX's memory you used:\n";
-        assert!(log.starts_with(report));
-        assert!(log.contains(" strings out of 13973\n"));
-        assert!(log.contains(" string characters out of 18192\n"));
-        assert!(log.contains(" words of memory out of 250000\n"));
-        assert!(log.contains(" multiletter control sequences out of 15000+0\n"));
-        assert!(log.contains(" words of font info for 0 fonts, out of 20000 for 75\n"));
-        assert!(log.contains(" hyphenation exceptions out of 307\n"));
-        assert!(log.contains(
-            "0i,0n,0p,0b,0s stack positions out of 200i,40n,60p,500b,600s\nNo pages of output."
-        ));
-        assert!(!terminal_text(&stores).contains(report));
-        assert_eq!(
-            terminal_text(&stores).contains("No pages of output."),
-            terminal
-        );
+        crate::test_harness::with_universe(|universe| {
+            universe.set_interaction_mode(interaction);
+            assign_global_int(universe, IntParam::TRACING_STATS, 1);
+            finish_test_job(
+                universe,
+                CommandProfile::TEX82,
+                EngineBinaryIdentity::Tex82,
+                "stats",
+                None,
+                None,
+            );
+            let log = log_text(universe);
+            let report = "Here is how much of TeX's memory you used:\n";
+            assert!(log.starts_with(report));
+            assert!(log.contains(" strings out of 13973\n"));
+            assert!(log.contains(" string characters out of 18192\n"));
+            assert!(log.contains(" words of memory out of 250000\n"));
+            assert!(log.contains(" multiletter control sequences out of 15000+0\n"));
+            assert!(log.contains(" words of font info for 0 fonts, out of 20000 for 75\n"));
+            assert!(log.contains(" hyphenation exceptions out of 307\n"));
+            assert!(log.contains(
+                "0i,0n,0p,0b,0s stack positions out of 200i,40n,60p,500b,600s\nNo pages of output."
+            ));
+            assert!(!terminal_text(universe).contains(report));
+            assert_eq!(
+                terminal_text(universe).contains("No pages of output."),
+                terminal
+            );
+        });
     }
 }
 
@@ -385,17 +440,18 @@ fn usage_report_hash_capacity_belongs_to_the_executing_binary() {
             "15000+600000",
         ),
     ] {
-        let mut stores = Universe::new();
-        stores.set_int_param_global(IntParam::TRACING_STATS, 1);
-        finish_job(&mut stores, profile, binary, "stats", None, None);
+        crate::test_harness::with_universe(|universe| {
+            assign_global_int(universe, IntParam::TRACING_STATS, 1);
+            finish_test_job(universe, profile, binary, "stats", None, None);
 
-        assert!(
-            log_text(&stores).contains(&format!(
-                "multiletter control sequences out of {expected}\n"
-            )),
-            "unexpected usage report: {:?}",
-            log_text(&stores)
-        );
+            assert!(
+                log_text(universe).contains(&format!(
+                    "multiletter control sequences out of {expected}\n"
+                )),
+                "unexpected usage report: {:?}",
+                log_text(universe)
+            );
+        });
     }
 }
 
@@ -403,22 +459,27 @@ fn usage_report_hash_capacity_belongs_to_the_executing_binary() {
 fn usage_report_separates_a_partial_final_cleanup_line_before_breaking() {
     // TeX82 §1333's log-only usage report preserves the separator at the
     // final-cleanup column before its first `wlog_cr`-style line break.
-    let mut stores = Universe::new();
-    stores.set_int_param_global(IntParam::TRACING_STATS, 1);
-    Printer::new(&mut stores, Selector::LogOnly).print("unfinished)");
+    crate::test_harness::with_universe(|universe| {
+        assign_global_int(universe, IntParam::TRACING_STATS, 1);
+        universe
+            .printer()
+            .set_selector(Selector::LogOnly)
+            .print("unfinished)");
 
-    finish_job(
-        &mut stores,
-        CommandProfile::TEX82,
-        EngineBinaryIdentity::Tex82,
-        "stats",
-        None,
-        None,
-    );
+        finish_test_job(
+            universe,
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "stats",
+            None,
+            None,
+        );
 
-    assert!(
-        log_text(&stores).starts_with("unfinished) \nHere is how much of TeX's memory you used:\n")
-    );
+        assert!(
+            log_text(universe)
+                .starts_with("unfinished) \nHere is how much of TeX's memory you used:\n")
+        );
+    });
 }
 
 #[test]
@@ -426,23 +487,27 @@ fn usage_report_closes_log_before_shared_dvi_line_break() {
     // TeX82 §1334 closes its last `wlog_ln` row independently. When the
     // terminal remains mid-line, §642's `print_nl` then breaks both sinks:
     // one terminal newline, but a second newline in the already-closed log.
-    let mut stores = Universe::new();
-    stores.set_int_param_global(IntParam::TRACING_STATS, 1);
-    Printer::new(&mut stores, Selector::TermOnly).print("terminal tail");
+    crate::test_harness::with_universe(|universe| {
+        assign_global_int(universe, IntParam::TRACING_STATS, 1);
+        universe
+            .printer()
+            .set_selector(Selector::TermOnly)
+            .print("terminal tail");
 
-    finish_job(
-        &mut stores,
-        CommandProfile::TEX82,
-        EngineBinaryIdentity::Tex82,
-        "stats",
-        None,
-        None,
-    );
+        finish_test_job(
+            universe,
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "stats",
+            None,
+            None,
+        );
 
-    assert!(terminal_text(&stores).starts_with("terminal tail\nNo pages of output."));
-    assert!(log_text(&stores).contains(
-        "0i,0n,0p,0b,0s stack positions out of 200i,40n,60p,500b,600s\n\nNo pages of output."
-    ));
+        assert!(terminal_text(universe).starts_with("terminal tail\nNo pages of output."));
+        assert!(log_text(universe).contains(
+            "0i,0n,0p,0b,0s stack positions out of 200i,40n,60p,500b,600s\n\nNo pages of output."
+        ));
+    });
 }
 
 #[test]
@@ -452,201 +517,213 @@ fn direct_usage_report_preserves_the_open_log_cursor_for_the_dvi_break() {
     // still makes §642's `print_nl` emit one shared line break after the
     // final statistics row. Batch mode is the negative control for a
     // terminal offset: only the stale log cursor can cause this blank line.
-    let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
-    stores.set_interaction_mode(InteractionMode::Batch);
-    stores.set_int_param_global(IntParam::TRACING_STATS, 1);
-    Printer::new(&mut stores, Selector::LogOnly).print(" )");
+    with_source_to_end(br"\shipout\hbox{}\end", |_, universe| {
+        universe.set_interaction_mode(InteractionMode::Batch);
+        assign_global_int(universe, IntParam::TRACING_STATS, 1);
+        universe
+            .printer()
+            .set_selector(Selector::LogOnly)
+            .print(" )");
 
-    finish_job(
-        &mut stores,
-        CommandProfile::TEX82,
-        EngineBinaryIdentity::Tex82,
-        "doc",
-        Some(DviJobOutput {
-            file_name: "doc.dvi".into(),
-            byte_len: 44,
-        }),
-        None,
-    );
+        finish_test_job(
+            universe,
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "doc",
+            Some(DviJobOutput {
+                file_name: "doc.dvi".into(),
+                byte_len: 44,
+            }),
+            None,
+        );
 
-    assert!(terminal_text(&stores).is_empty());
-    assert!(log_text(&stores).contains(
-        "0i,0n,0p,0b,0s stack positions out of 200i,40n,60p,500b,600s\n\n\
-         Output written on doc.dvi (1 page, 44 bytes)."
-    ));
+        assert!(terminal_text(universe).is_empty());
+        assert!(log_text(universe).contains(
+            "0i,0n,0p,0b,0s stack positions out of 200i,40n,60p,500b,600s\n\n\
+             Output written on doc.dvi (1 page, 44 bytes)."
+        ));
+    });
 }
 
 #[test]
 fn finish_job_keeps_log_only_statistics_before_the_committed_page_report() {
-    let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
-    stores.set_int_param_global(IntParam::TRACING_STATS, 1);
+    with_source_to_end(br"\shipout\hbox{}\end", |_, universe| {
+        assign_global_int(universe, IntParam::TRACING_STATS, 1);
 
-    finish_job(
-        &mut stores,
-        CommandProfile::TEX82,
-        EngineBinaryIdentity::Tex82,
-        "doc",
-        Some(DviJobOutput {
-            file_name: "doc.dvi".into(),
-            byte_len: 44,
-        }),
-        None,
-    );
+        finish_test_job(
+            universe,
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "doc",
+            Some(DviJobOutput {
+                file_name: "doc.dvi".into(),
+                byte_len: 44,
+            }),
+            None,
+        );
 
-    let report = "Here is how much of TeX's memory you used:";
-    let output = "Output written on doc.dvi (1 page, 44 bytes).";
-    assert!(!terminal_text(&stores).contains(report));
-    assert!(terminal_text(&stores).contains(output));
-    let log = log_text(&stores);
-    assert!(log.find(report).expect("statistics") < log.find(output).expect("DVI report"));
+        let report = "Here is how much of TeX's memory you used:";
+        let output = "Output written on doc.dvi (1 page, 44 bytes).";
+        assert!(!terminal_text(universe).contains(report));
+        assert!(terminal_text(universe).contains(output));
+        let log = log_text(universe);
+        assert!(log.find(report).expect("statistics") < log.find(output).expect("DVI report"));
+    });
 }
 
 #[test]
 fn finish_job_reports_output_written_with_the_singular_page_form() {
-    let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
-    assert_eq!(stores.world().artifact_commits().len(), 1);
+    with_source_to_end(br"\shipout\hbox{}\end", |_, universe| {
+        assert_eq!(universe.world().artifact_commits().len(), 1);
 
-    finish_job(
-        &mut stores,
-        CommandProfile::TEX82,
-        EngineBinaryIdentity::Tex82,
-        "doc",
-        Some(DviJobOutput {
-            file_name: "doc.dvi".into(),
-            byte_len: 44,
-        }),
-        None,
-    );
+        finish_test_job(
+            universe,
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "doc",
+            Some(DviJobOutput {
+                file_name: "doc.dvi".into(),
+                byte_len: 44,
+            }),
+            None,
+        );
 
-    assert!(
-        terminal_text(&stores).contains("Output written on doc.dvi (1 page, 44 bytes).\n"),
-        "terminal text was: {:?}",
-        terminal_text(&stores)
-    );
+        assert!(
+            terminal_text(universe).contains("Output written on doc.dvi (1 page, 44 bytes).\n"),
+            "terminal text was: {:?}",
+            terminal_text(universe)
+        );
+    });
 }
 
 #[test]
 fn finish_job_reports_output_written_with_the_plural_page_form() {
-    let mut stores = run_source_to_end(br"\shipout\hbox{}\shipout\hbox{}\end");
-    assert_eq!(stores.world().artifact_commits().len(), 2);
+    with_source_to_end(br"\shipout\hbox{}\shipout\hbox{}\end", |_, universe| {
+        assert_eq!(universe.world().artifact_commits().len(), 2);
 
-    finish_job(
-        &mut stores,
-        CommandProfile::TEX82,
-        EngineBinaryIdentity::Tex82,
-        "doc",
-        Some(DviJobOutput {
-            file_name: "doc.dvi".into(),
-            byte_len: 88,
-        }),
-        None,
-    );
+        finish_test_job(
+            universe,
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "doc",
+            Some(DviJobOutput {
+                file_name: "doc.dvi".into(),
+                byte_len: 88,
+            }),
+            None,
+        );
 
-    assert!(
-        terminal_text(&stores).contains("Output written on doc.dvi (2 pages, 88 bytes).\n"),
-        "terminal text was: {:?}",
-        terminal_text(&stores)
-    );
+        assert!(
+            terminal_text(universe).contains("Output written on doc.dvi (2 pages, 88 bytes).\n"),
+            "terminal text was: {:?}",
+            terminal_text(universe)
+        );
+    });
 }
 
 #[test]
 #[should_panic(expected = "no `DviJobOutput` was supplied")]
 fn finish_job_refuses_to_fabricate_a_byte_count_for_a_shipped_page() {
-    let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
-    finish_job(
-        &mut stores,
-        CommandProfile::TEX82,
-        EngineBinaryIdentity::Tex82,
-        "doc",
-        None,
-        None,
-    );
+    with_source_to_end(br"\shipout\hbox{}\end", |_, universe| {
+        finish_test_job(
+            universe,
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "doc",
+            None,
+            None,
+        );
+    });
 }
 
 #[test]
 fn finish_job_transcript_note_is_terminal_only_and_silent_in_batch_mode() {
-    let mut stores = Universe::new();
-    stores.set_interaction_mode(InteractionMode::Batch);
+    crate::test_harness::with_universe(|universe| {
+        universe.set_interaction_mode(InteractionMode::Batch);
 
-    finish_job(
-        &mut stores,
-        CommandProfile::TEX82,
-        EngineBinaryIdentity::Tex82,
-        "show-box",
-        None,
-        None,
-    );
+        finish_test_job(
+            universe,
+            CommandProfile::TEX82,
+            EngineBinaryIdentity::Tex82,
+            "show-box",
+            None,
+            None,
+        );
 
-    assert!(!terminal_text(&stores).contains("Transcript written on"));
-    assert!(!log_text(&stores).contains("Transcript written on"));
+        assert!(!terminal_text(universe).contains("Transcript written on"));
+        assert!(!log_text(universe).contains("Transcript written on"));
+    });
 }
 
 #[test]
 fn pdf_finalization_report_is_profile_aware_exact_and_one_shot() {
-    let mut stores = Universe::new();
-    let mut report = PdfJobFinalizationReport::new(17, 6, 2, 3, 41);
-    finish_job(
-        &mut stores,
-        CommandProfile::PDFTEX14029,
-        EngineBinaryIdentity::Pdftex14029,
-        "doc",
-        None,
-        Some(&mut report),
-    );
-    finish_job(
-        &mut stores,
-        CommandProfile::PDFTEX14029,
-        EngineBinaryIdentity::Pdftex14029,
-        "doc",
-        None,
-        Some(&mut report),
-    );
-    let terminal = terminal_text(&stores);
-    let expected = "PDF statistics:\n 17 PDF objects out of 1000 (max. 8388607)\n 6 compressed objects within 2 object streams\n 3 named destinations out of 1000 (max. 500000)\n 41 words of extra memory for PDF output out of 10000 (max. 10000000)";
-    assert_eq!(terminal.matches("PDF statistics:").count(), 1);
-    assert!(
-        terminal.contains(expected),
-        "terminal text was: {terminal:?}"
-    );
+    crate::test_harness::with_universe(|universe| {
+        let mut report = PdfJobFinalizationReport::new(17, 6, 2, 3, 41);
+        finish_test_job(
+            universe,
+            CommandProfile::PDFTEX14029,
+            EngineBinaryIdentity::Pdftex14029,
+            "doc",
+            None,
+            Some(&mut report),
+        );
+        finish_test_job(
+            universe,
+            CommandProfile::PDFTEX14029,
+            EngineBinaryIdentity::Pdftex14029,
+            "doc",
+            None,
+            Some(&mut report),
+        );
+        let terminal = terminal_text(universe);
+        let expected = "PDF statistics:\n 17 PDF objects out of 1000 (max. 8388607)\n 6 compressed objects within 2 object streams\n 3 named destinations out of 1000 (max. 500000)\n 41 words of extra memory for PDF output out of 10000 (max. 10000000)";
+        assert_eq!(terminal.matches("PDF statistics:").count(), 1);
+        assert!(
+            terminal.contains(expected),
+            "terminal text was: {terminal:?}"
+        );
+    });
 }
 
 #[test]
 fn pdf_fatal_error_has_pdftex_channel_asymmetry() {
-    let mut stores = Universe::new();
-    stores.set_interaction_mode(InteractionMode::Nonstop);
-    report_pdf_fatal_error(
-        &mut stores,
-        "pdfTeX error (ext1): num identifier must be positive",
-    );
+    crate::test_harness::with_universe(|universe| {
+        universe.set_interaction_mode(InteractionMode::Nonstop);
+        report_pdf_fatal_error(
+            universe,
+            "pdfTeX error (ext1): num identifier must be positive",
+        );
 
-    assert_eq!(
-        terminal_text(&stores),
-        "! pdfTeX error (ext1): num identifier must be positive.\n!  ==> Fatal error occurred, no output PDF file produced!\n"
-    );
-    assert_eq!(
-        log_text(&stores),
-        "! pdfTeX error (ext1): num identifier must be positive.\n\n!  ==> Fatal error occurred, no output PDF file produced!\n"
-    );
-    assert_eq!(
-        stores.world().error_channel().history(),
-        ErrorHistory::FatalErrorStop
-    );
+        assert_eq!(
+            terminal_text(universe),
+            "! pdfTeX error (ext1): num identifier must be positive.\n!  ==> Fatal error occurred, no output PDF file produced!\n"
+        );
+        assert_eq!(
+            log_text(universe),
+            "! pdfTeX error (ext1): num identifier must be positive.\n\n!  ==> Fatal error occurred, no output PDF file produced!\n"
+        );
+        assert_eq!(
+            universe.world().error_channel().history(),
+            ErrorHistory::FatalErrorStop
+        );
+    });
 }
 
 #[test]
 fn tex_and_etex_profiles_never_render_a_pdf_finalization_report() {
     for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
-        let mut stores = Universe::new();
-        let mut report = PdfJobFinalizationReport::new(1, 0, 0, 0, 1);
-        finish_job(
-            &mut stores,
-            profile,
-            EngineBinaryIdentity::for_profile(profile),
-            "doc",
-            None,
-            Some(&mut report),
-        );
-        assert!(!terminal_text(&stores).contains("PDF statistics:"));
+        crate::test_harness::with_universe(|universe| {
+            let mut report = PdfJobFinalizationReport::new(1, 0, 0, 0, 1);
+            finish_test_job(
+                universe,
+                profile,
+                EngineBinaryIdentity::for_profile(profile),
+                "doc",
+                None,
+                Some(&mut report),
+            );
+            assert!(!terminal_text(universe).contains("PDF statistics:"));
+        });
     }
 }
 
@@ -654,37 +731,28 @@ fn tex_and_etex_profiles_never_render_a_pdf_finalization_report() {
 fn pdf_navigation_finalization_reports_only_unresolved_objects_in_source_order() {
     use tex_state::PdfDestinationIdentity::{Name, Number};
 
-    let mut stores = Universe::new();
-    stores
-        .reserve_pdf_destination(Name(b"missing-regular".to_vec()), false)
-        .expect("reserve regular destination");
-    stores
-        .define_pdf_destination(Number(7), None)
-        .expect("define ordinary destination");
-    stores
-        .reserve_pdf_destination(Name(b"missing-structure".to_vec()), true)
-        .expect("reserve structure destination");
-    stores
-        .reserve_pdf_thread(Name(b"missing-thread".to_vec()))
-        .expect("reserve thread");
-    stores
-        .append_pdf_thread_bead(Number(23))
-        .expect("define thread with a bead");
+    crate::test_harness::with_universe(|universe| {
+        let missing = [
+            PdfNavigationWarning::Destination(Name(b"missing-regular".to_vec())),
+            PdfNavigationWarning::StructureDestination(Name(b"missing-structure".to_vec())),
+            PdfNavigationWarning::Thread(Name(b"missing-thread".to_vec())),
+        ];
 
-    assert!(report_pdf_navigation_warnings(&mut stores));
+        assert!(report_pdf_navigation_warnings(universe, &missing));
 
-    let expected = concat!(
-        "pdfTeX warning (dest): name{missing-regular} has been referenced but does not e\n",
-        "xist, replaced by a fixed one\n\n",
-        "pdfTeX warning (structure dest): name{missing-structure} has been referenced bu\n",
-        "t does not exist\n\n",
-        "pdfTeX warning (thread): destination name{missing-thread} has been referenced b\n",
-        "ut does not exist, replaced by a fixed one\n\n",
-    );
-    assert_eq!(terminal_text(&stores), expected);
-    assert_eq!(log_text(&stores), expected);
-    assert!(!terminal_text(&stores).contains("num7"));
-    assert!(!terminal_text(&stores).contains("num23"));
+        let expected = concat!(
+            "pdfTeX warning (dest): name{missing-regular} has been referenced but does not e\n",
+            "xist, replaced by a fixed one\n\n",
+            "pdfTeX warning (structure dest): name{missing-structure} has been referenced bu\n",
+            "t does not exist\n\n",
+            "pdfTeX warning (thread): destination name{missing-thread} has been referenced b\n",
+            "ut does not exist, replaced by a fixed one\n\n",
+        );
+        assert_eq!(terminal_text(universe), expected);
+        assert_eq!(log_text(universe), expected);
+        assert!(!terminal_text(universe).contains("num7"));
+        assert!(!terminal_text(universe).contains("num23"));
+    });
 }
 
 /// A loaded-format job prints the format's identity on both sinks, but not
@@ -702,108 +770,111 @@ fn begin_job_frames_a_preloaded_format_with_a_dated_log_and_an_undated_terminal(
         month: 7,
         year: 2026,
     };
-    let mut stores = Universe::with_world(World::memory_with_clock(clock));
-    let mut job = JobFraming::default();
-    let mut capabilities = CommandHostCapabilities::default();
-    let format = PreloadedFormat {
-        dump_name: "etex-loaded".to_owned(),
-        format_name: "etex-loaded".to_owned(),
-        year: 2026,
-        month: 7,
-        day: 9,
-    };
+    crate::test_harness::with_world_universe(World::memory_with_clock(clock), |universe| {
+        let mut job = JobFraming::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let format = PreloadedFormat {
+            dump_name: "etex-loaded".to_owned(),
+            format_name: "etex-loaded".to_owned(),
+            year: 2026,
+            month: 7,
+            day: 9,
+        };
 
-    begin_job(
-        &mut job,
-        &mut stores,
-        &mut capabilities,
-        false,
-        Some(&format),
-        JobEngineFraming {
-            binary: EngineBinaryIdentity::Etex26,
-            extended_mode: true,
-        },
-        "etex-loaded-state-reset.tex",
-    );
+        begin_job(
+            &mut job,
+            universe,
+            &mut capabilities,
+            false,
+            Some(&format),
+            JobEngineFraming {
+                binary: EngineBinaryIdentity::Etex26,
+                extended_mode: true,
+            },
+            "etex-loaded-state-reset.tex",
+        );
 
-    assert_eq!(
-        terminal_text(&stores),
-        format!("{ETEX26_BANNER} (preloaded format=etex-loaded)\nentering extended mode\n")
-    );
-    assert_eq!(
-        log_text(&stores),
-        format!(
-            "{ETEX26_BANNER} (preloaded format=etex-loaded 2026.7.9)  9 JUL 2026 13:36\n\
+        assert_eq!(
+            terminal_text(universe),
+            format!("{ETEX26_BANNER} (preloaded format=etex-loaded)\nentering extended mode\n")
+        );
+        assert_eq!(
+            log_text(universe),
+            format!(
+                "{ETEX26_BANNER} (preloaded format=etex-loaded 2026.7.9)  9 JUL 2026 13:36\n\
              entering extended mode\n**etex-loaded-state-reset.tex\n"
-        )
-    );
+            )
+        );
+    });
 }
 
 #[test]
 fn startup_selector_is_echoed_without_becoming_the_job_name() {
-    let mut stores = Universe::new();
-    let mut job = JobFraming::default();
-    let mut capabilities = CommandHostCapabilities::default();
+    crate::test_harness::with_universe(|universe| {
+        let mut job = JobFraming::default();
+        let mut capabilities = CommandHostCapabilities::default();
 
-    begin_job_with_terminal_banner(
-        &mut job,
-        &mut stores,
-        &mut capabilities,
-        false,
-        None,
-        JobEngineFraming {
-            binary: EngineBinaryIdentity::Tex82,
-            extended_mode: false,
-        },
-        StartupLineFraming {
-            first_line: "&trip inputs/trip.tex",
-            input_name: "inputs/trip.tex",
-            terminal_banner: true,
-        },
-    );
+        begin_job_with_terminal_banner(
+            &mut job,
+            universe,
+            &mut capabilities,
+            false,
+            None,
+            JobEngineFraming {
+                binary: EngineBinaryIdentity::Tex82,
+                extended_mode: false,
+            },
+            StartupLineFraming {
+                first_line: "&trip inputs/trip.tex",
+                input_name: "inputs/trip.tex",
+                terminal_banner: true,
+            },
+        );
 
-    // TeX82 §534 echoes the complete terminal buffer, while §§528--529
-    // select the filename's name component for `job_name`.
-    assert!(log_text(&stores).contains("**&trip inputs/trip.tex\n"));
-    assert_eq!(capabilities.job_name(), "trip");
+        // TeX82 §534 echoes the complete terminal buffer, while §§528--529
+        // select the filename's name component for `job_name`.
+        assert!(log_text(universe).contains("**&trip inputs/trip.tex\n"));
+        assert_eq!(capabilities.job_name(), "trip");
+    });
 }
 
 #[test]
 fn loaded_tex82_banner_is_selected_by_runtime_profile_without_etex_or_pdftex_text() {
-    let mut stores = Universe::new();
-    let mut job = JobFraming::default();
-    let mut capabilities = CommandHostCapabilities::default();
-    let format = PreloadedFormat {
-        dump_name: "umber-tex82-oracle".to_owned(),
-        format_name: "trip".to_owned(),
-        year: 2026,
-        month: 7,
-        day: 9,
-    };
+    crate::test_harness::with_universe(|universe| {
+        let mut job = JobFraming::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let format = PreloadedFormat {
+            dump_name: "umber-tex82-oracle".to_owned(),
+            format_name: "trip".to_owned(),
+            year: 2026,
+            month: 7,
+            day: 9,
+        };
 
-    begin_job(
-        &mut job,
-        &mut stores,
-        &mut capabilities,
-        false,
-        Some(&format),
-        JobEngineFraming {
-            binary: EngineBinaryIdentity::Tex82,
-            extended_mode: false,
-        },
-        "trip.tex",
-    );
+        begin_job(
+            &mut job,
+            universe,
+            &mut capabilities,
+            false,
+            Some(&format),
+            JobEngineFraming {
+                binary: EngineBinaryIdentity::Tex82,
+                extended_mode: false,
+            },
+            "trip.tex",
+        );
 
-    let terminal = terminal_text(&stores);
-    assert_eq!(
-        terminal,
-        format!("{TEX82_BANNER} (preloaded format=umber-tex82-oracle)\n")
-    );
-    assert!(!terminal.contains("pdfTeX"));
-    assert!(!terminal.contains("e-TeX"));
-    let log = log_text(&stores);
-    assert!(log.starts_with(TEX82_BANNER));
-    assert!(log.contains("(preloaded format=trip 2026.7.9)"));
+        let terminal = terminal_text(universe);
+        assert_eq!(
+            terminal,
+            format!("{TEX82_BANNER} (preloaded format=umber-tex82-oracle)\n")
+        );
+        assert!(!terminal.contains("pdfTeX"));
+        assert!(!terminal.contains("e-TeX"));
+        let log = log_text(universe);
+        assert!(log.starts_with(TEX82_BANNER));
+        assert!(log.contains("(preloaded format=trip 2026.7.9)"));
+    });
 }
 
 #[test]
