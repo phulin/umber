@@ -1254,8 +1254,7 @@ pub(in crate::main_control) fn apply<G>(
                         definition.no_ligatures,
                     )?;
                     if zero_em {
-                        stores.write_text(
-                            tex_state::PrintSink::TerminalAndLog,
+                        stores.printer().print_rendered(
                             "\npdfTeX warning (\\letterspacefont): font has zero em size (\\fontdimen6)\n",
                         );
                     }
@@ -1499,12 +1498,9 @@ pub(in crate::main_control) fn apply<G>(
                         unreachable!("pdfnames is rejected before the ignored-fragment warning")
                     }
                 };
-                stores.write_text(
-                    PrintSink::TerminalAndLog,
-                    &format!(
+                stores.printer().print_rendered(&format!(
                         "\npdfTeX warning (\\{name}): not allowed in DVI mode (\\pdfoutput <= 0); ignoring it\n"
-                    ),
-                );
+                    ));
                 return Ok(ReplayStep::Continue);
             }
             stores.append_pdf_document_fragment(request.kind, request.text.tokens);
@@ -1568,10 +1564,11 @@ pub(in crate::main_control) fn apply<G>(
                         GlyphToUnicodeParse::Mapping(mapping) => {
                             stores.set_pdf_glyph_to_unicode(mapping)
                         }
-                        GlyphToUnicodeParse::Warning(message) => stores.write_text(
-                            tex_state::PrintSink::TerminalAndLog,
-                            &format!("\npdfTeX warning: pdftex: ToUnicode: {message}\n"),
-                        ),
+                        GlyphToUnicodeParse::Warning(message) => {
+                            stores.printer().print_rendered(&format!(
+                                "\npdfTeX warning: pdftex: ToUnicode: {message}\n"
+                            ));
+                        }
                     }
                 }
                 UnexpandablePrimitive::PdfMapFile => {
@@ -1600,10 +1597,9 @@ pub(in crate::main_control) fn apply<G>(
                             let name = String::from_utf8_lossy(
                                 duplicates.last().expect("new duplicate has a name"),
                             );
-                            stores.write_text(
-                                tex_state::PrintSink::TerminalAndLog,
-                                &format!("\npdfTeX warning: pdftex: fontmap entry for `{name}' already exists, duplicates ignored\n"),
-                            );
+                            stores.printer().print_rendered(&format!(
+                                "\npdfTeX warning: pdftex: fontmap entry for `{name}' already exists, duplicates ignored\n"
+                            ));
                         }
                     }
                 }
@@ -1714,7 +1710,7 @@ pub(in crate::main_control) fn apply<G>(
             let mut text = String::new();
             for &word in stores.token_list(tokens) {
                 tex_state::token_show::append_token_string_text(
-                    stores,
+                    &**stores,
                     word.semantic_token(),
                     &mut text,
                 );
@@ -2207,8 +2203,10 @@ pub(in crate::main_control) fn apply<G>(
                         if let Some(context) = &split.missing_to_context {
                             report_missing_vsplit_to(context, stores)?;
                         }
+                        let diagnostic_context = command_diagnostic_context(command, stores);
                         let node = crate::box_runtime::split_vbox_register(
                             stores,
+                            &diagnostic_context,
                             split.index,
                             split.height,
                             &split.split_context,
@@ -2233,8 +2231,10 @@ pub(in crate::main_control) fn apply<G>(
             if let Some(context) = &split.missing_to_context {
                 report_missing_vsplit_to(context, stores)?;
             }
+            let diagnostic_context = command_diagnostic_context(command, stores);
             let node = crate::box_runtime::split_vbox_register(
                 stores,
+                &diagnostic_context,
                 split.index,
                 split.height,
                 &split.split_context,
@@ -2602,10 +2602,11 @@ pub(in crate::main_control) fn apply<G>(
             // internal vertical list; merely popping it discards the paragraph.
             // `end_paragraph` is the shared spelling of §1096: it ignores
             // non-horizontal modes and pops a null paragraph without a line.
+            let diagnostic_context = command_diagnostic_context(command, stores);
             crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
                 stores,
-                command.state,
+                diagnostic_context,
                 command.fuel,
             )?;
             let output_level =
@@ -2622,7 +2623,7 @@ pub(in crate::main_control) fn apply<G>(
             crate::page_output::resume_page_builder_after_output(
                 stores,
                 output_level.list().nodes().to_vec(),
-                context,
+                crate::diagnostics::ExecutionDiagnosticContext::source_free(context),
             )?;
             // TeX82 §§1026/1054 resume the same `build_page` invocation that
             // the backed-up final stop started. Once that continuation has
@@ -2793,10 +2794,11 @@ pub(in crate::main_control) fn apply<G>(
             // char node -- and left the box's real internal-vertical level open
             // on the mode nest (`umber2-johp.232`).
             if !box_state.kind.horizontal() {
+                let diagnostic_context = command_diagnostic_context(command, stores);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
-                    command.state,
+                    diagnostic_context,
                     command.fuel,
                 )?;
             }
@@ -2841,24 +2843,40 @@ pub(in crate::main_control) fn apply<G>(
             // fuzz, and overfull-rule parameters authoritative. Max depth is
             // the exception: `package` saved it above before `unsave`.
             let node = if box_state.kind.horizontal() {
+                let diagnostic_context = command_diagnostic_context(command, stores);
                 Node::HList(crate::box_runtime::hpack_with_overfull_rule(
                     stores,
+                    &diagnostic_context,
                     children,
                     box_state.packing,
                 ))
             } else {
                 Node::VList(match box_state.kind {
                     ReplayBoxKind::VBox | ReplayBoxKind::VCenter => {
+                        let diagnostic_context = command_diagnostic_context(command, stores);
                         let mut params = crate::packing_params::vpack_params(stores);
                         params.box_max_depth = box_max_depth;
-                        crate::packing_params::vpack(stores, children, box_state.packing, params)
-                            .node
+                        crate::packing_params::vpack(
+                            stores,
+                            &diagnostic_context,
+                            children,
+                            box_state.packing,
+                            params,
+                        )
+                        .node
                     }
                     ReplayBoxKind::VTop => {
+                        let diagnostic_context = command_diagnostic_context(command, stores);
                         let mut params = crate::packing_params::vpack_params(stores);
                         params.box_max_depth = box_max_depth;
-                        crate::packing_params::vtop(stores, children, box_state.packing, params)
-                            .node
+                        crate::packing_params::vtop(
+                            stores,
+                            &diagnostic_context,
+                            children,
+                            box_state.packing,
+                            params,
+                        )
+                        .node
                     }
                     ReplayBoxKind::HBox => unreachable!("horizontal box was handled above"),
                     ReplayBoxKind::Insert(_, _) => unreachable!(
@@ -3246,10 +3264,11 @@ pub(in crate::main_control) fn apply<G>(
             // the brace, so the following rows were built on the horizontal
             // level and `fin_align` popped that level instead of the alignment
             // (`umber2-usol`).
+            let diagnostic_context = command_diagnostic_context(command, stores);
             crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
                 stores,
-                command.state,
+                diagnostic_context,
                 command.fuel,
             )?;
             leave_group_payloads(stores, command.state, GroupKind::NoAlign).map_err(|_| {
@@ -3357,10 +3376,11 @@ pub(in crate::main_control) fn apply<G>(
                     &error_context,
                 )?;
             } else {
+                let diagnostic_context = command_diagnostic_context(command, stores);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
-                    command.state,
+                    diagnostic_context,
                     command.fuel,
                 )?;
             }

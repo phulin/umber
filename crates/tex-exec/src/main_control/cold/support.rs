@@ -64,6 +64,15 @@ pub(in crate::main_control) const fn assignment_scope(
     }
 }
 
+pub(in crate::main_control) fn command_diagnostic_context<G>(
+    command: &CommandMachine<'_, G>,
+    stores: &tex_state::CommandContext<'_, G>,
+) -> crate::diagnostics::ExecutionDiagnosticContext {
+    crate::diagnostics::ExecutionDiagnosticContext::source_free(
+        command.state.output_open_context(stores),
+    )
+}
+
 /// Applies TeX82 §1055's unscoped box-register dimension mutation through
 /// the admitted durable/page-node bridge.
 pub(in crate::main_control) fn assign_box_dimension<G>(
@@ -618,8 +627,10 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             if let Some(context) = &split.missing_to_context {
                 report_missing_vsplit_to(context, stores)?;
             }
+            let diagnostic_context = command_diagnostic_context(command, stores);
             let node = crate::box_runtime::split_vbox_register(
                 stores,
+                &diagnostic_context,
                 split.index,
                 split.height,
                 &split.split_context,
@@ -852,10 +863,11 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
         match modes.current_mode() {
             Mode::Vertical | Mode::InternalVertical => {}
             Mode::Horizontal => {
+                let diagnostic_context = command_diagnostic_context(command, stores);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
-                    command.state,
+                    diagnostic_context,
                     command.fuel,
                 )?;
             }
@@ -865,7 +877,12 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
             mode => {
                 return Err(ExecError::UnimplementedTypesetting {
                     mode,
-                    token: Token::Cs(stores.intern("hrule").symbol()),
+                    token: Token::Cs(
+                        stores
+                            .intern("hrule")
+                            .expect("rule diagnostic symbol fits the session interner")
+                            .symbol(),
+                    ),
                     origin: tex_state::token::OriginId::UNKNOWN,
                     operation: "\\hrule",
                 });
@@ -975,8 +992,14 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
         modes.current_list_mutation().push(accent_node);
     } else {
         let children = stores.publish_page_nodes(vec![accent_node]);
-        let mut boxed =
-            crate::box_runtime::hpack_with_overfull_rule(stores, children, PackSpec::Natural);
+        let diagnostic_context =
+            crate::diagnostics::ExecutionDiagnosticContext::source_free("accent placement");
+        let mut boxed = crate::box_runtime::hpack_with_overfull_rule(
+            stores,
+            &diagnostic_context,
+            children,
+            PackSpec::Natural,
+        );
         boxed.shift = accent_x_height
             .checked_sub(base_metrics.height)
             .ok_or(ExecError::ArithmeticOverflow)?;
@@ -1124,14 +1147,20 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
     class: u16,
     pre: bool,
     modes: &mut ModeNest,
-    stores: &mut tex_state::CommandContext<'_, G>,
+    stores: &mut LinearCommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
     // TeX82 §§993/1100: an outer-vertical insertion invokes `build_page`
     // before main control fetches another command. Preserve this closing
     // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
     let page_error_context = command.state.output_open_context(stores);
-    crate::paragraph_end::end_paragraph_with_fuel(modes, stores, command.state, command.fuel)?;
+    let diagnostic_context = command_diagnostic_context(command, stores);
+    crate::paragraph_end::end_paragraph_with_fuel(
+        modes,
+        stores,
+        diagnostic_context.clone(),
+        command.fuel,
+    )?;
     let split_top_skip = stores
         .glue_param(GlueParam::SPLIT_TOP_SKIP)
         .map(|id| stores.glue(id))
@@ -1151,7 +1180,13 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         box_max_depth: Scaled::MAX_DIMEN,
         ..crate::packing_params::vpack_params(stores)
     };
-    let packed = crate::packing_params::vpack(stores, content.clone(), PackSpec::Natural, params);
+    let packed = crate::packing_params::vpack(
+        stores,
+        &diagnostic_context,
+        content.clone(),
+        PackSpec::Natural,
+        params,
+    );
     crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
     let node = if class == 255 {
         Node::Adjust(tex_state::node::AdjustNode { content, pre })

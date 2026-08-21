@@ -500,7 +500,11 @@ impl From<tex_command::ImmediateExtension>
 }
 
 #[derive(Clone)]
-pub(in crate::main_control) enum ColdOperation<G, T = tex_command::AttemptTokenListId, D = ()> {
+pub(in crate::main_control) enum ColdOperation<
+    G,
+    T = tex_command::AttemptTokenListId,
+    D = tex_command::AttemptDefinitionId,
+> {
     Continue,
     Relax,
     /// e-TeX 2.6 `etex.ch` [17.3822--3880]'s `hmode+valign` extension:

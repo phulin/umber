@@ -225,8 +225,8 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
             let open = stores
                 .end_pdf_link()
                 .ok_or(ExecError::PdfEndLinkWithoutStart)?;
-            if open.nesting_depth != stores.execution_group_depth() {
-                stores.write_text(PrintSink::TerminalAndLog, "\npdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink\n");
+            if usize::try_from(open.nesting_depth).ok() != Some(stores.execution_group_depth()) {
+                stores.printer().print_rendered("\npdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink\n");
             }
             crate::box_runtime::append_whatsit(
                 modes,
@@ -270,7 +270,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
             let identity = pdf_navigation_identity(stores, &identifier);
             if stores
                 .pdf_destination(&identity, structure.is_some())
-                .is_some_and(tex_state::PdfDestinationRecord::defined)
+                .is_some_and(|record| record.defined())
             {
                 warn_pdf_destination_duplicate(stores, &identity);
                 return Ok(ReplayStep::Continue);
@@ -545,8 +545,7 @@ pub(in crate::main_control) fn apply_pdf_object_request<G>(
                         // pdftex.web §1542 publishes the sticky recovery
                         // sentinel before allocating the fallback object.
                         stores.set_pdf_return_value(-1);
-                        stores.write_text(
-                            PrintSink::TerminalAndLog,
+                        stores.printer().print_rendered(
                             "\npdfTeX warning (\\pdfobj): invalid object number being ignored\n",
                         );
                     }
@@ -832,7 +831,7 @@ fn replay_text_transaction<G>(
     };
     command
         .state
-        .rollback_nested_input_preserving_conditions(&snapshot, stores)
+        .rollback(&snapshot, stores)
         .map_err(|_| ExecError::MissingToken {
             context: "output replay rollback",
         })?;
@@ -862,7 +861,7 @@ fn replay_write_transaction<G>(
     };
     command
         .state
-        .rollback_nested_input_preserving_conditions(&snapshot, stores)
+        .rollback(&snapshot, stores)
         .map_err(|_| ExecError::MissingToken {
             context: "write replay rollback",
         })?;
@@ -983,8 +982,7 @@ pub(in crate::main_control) fn apply_pdf_image_compatibility_policy<G>(
 ) {
     let obsolete_page_box = stores.int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX);
     if obsolete_page_box != 0 {
-        stores.write_text(
-            PrintSink::TerminalAndLog,
+        stores.printer().print_rendered(
             "PDF inclusion: Primitive \\pdfoptionalwaysusepdfpagebox is obsolete; use \\pdfpagebox instead.\n",
         );
         stores
@@ -1005,8 +1003,7 @@ pub(in crate::main_control) fn apply_pdf_image_compatibility_policy<G>(
 
     let obsolete_error_level = stores.int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL);
     if obsolete_error_level != 0 {
-        stores.write_text(
-            PrintSink::TerminalAndLog,
+        stores.printer().print_rendered(
             "PDF inclusion: Primitive \\pdfoptionpdfinclusionerrorlevel is obsolete; use \\pdfinclusionerrorlevel instead.\n",
         );
         stores
@@ -1284,12 +1281,12 @@ pub(in crate::main_control) fn print_ship_out_marker_open<G>(
     }
     if let Some(node) = traced_node {
         stores.printer().print_char(']');
-        let frozen = stores.publish_page_nodes(std::slice::from_ref(node));
-        let text = crate::node_dump::dump_page_list(
-            stores,
-            frozen,
-            crate::node_dump::DumpConfig::read(stores),
-        );
+        let text = {
+            let mut context = stores.command_context().expect("shipout trace admission");
+            let frozen = context.publish_page_nodes(vec![node.clone()]);
+            let config = crate::node_dump::DumpConfig::read(&context);
+            crate::node_dump::dump_page_list(&context, frozen, config)
+        };
         let mut diagnostic = stores.begin_diagnostic();
         // TeX82 §§174/198: `show_box` enters `show_node_list`, whose loop
         // executes `print_ln` before it renders the root node. This is an
@@ -1365,8 +1362,11 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     let tracing_output = stores.int_param(IntParam::TRACING_OUTPUT);
     let tracing_stats = stores.int_param(IntParam::TRACING_STATS);
     let memory_before = (tracing_stats > 1).then(|| stores.shipout_memory_usage(Some(&node)));
-    let counts: [i32; 10] =
-        std::array::from_fn(|index| stores.count(u16::try_from(index).expect("0..=9 fits u16")));
+    let counts: [i32; 10] = std::array::from_fn(|index| {
+        stores
+            .count(u16::try_from(index).expect("0..=9 fits u16"))
+            .expect("shipout count register is admitted")
+    });
     let traced_node = (tracing_output > 0).then(|| node.clone());
     let input_summary = stores.input_summary().clone();
     let output_open_context = {
@@ -1446,31 +1446,52 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             // Publish §367 traces and scanner diagnostics into the
             // shipout transaction now, before normalization appends the
             // payload's stream effect.
-            report_pending_diagnostics(stores, diagnostics)?;
+            {
+                let mut context =
+                    stores
+                        .command_context()
+                        .map_err(|_| ExecError::MissingToken {
+                            context: "deferred write diagnostic admission",
+                        })?;
+                report_pending_diagnostics(&mut context, diagnostics)?;
+            }
             if command_trace_printed {
                 *command.shown_mode = None;
             }
             result
         };
+        let expanded = expanded?;
+        let expanded_words = command
+            .state
+            .state()
+            .attempt_token_words(expanded.tokens)
+            .map_err(|_| ExecError::MissingToken {
+                context: "expanded deferred write",
+            })?
+            .to_vec();
         command
             .state
-            .rollback_nested_input_preserving_conditions(&input_snapshot, stores)
+            .rollback(&input_snapshot, stores)
             .map_err(|_| ExecError::MissingToken {
                 context: "deferred write rollback",
             })?;
-        let expanded = expanded?;
-        if let Some(observations) = command.observations.as_mut() {
+        let observed_tokens = command.observations.is_some().then(|| {
+            let context = stores
+                .command_context()
+                .expect("deferred write observation admission");
+            expanded_words
+                .iter()
+                .copied()
+                .map(|word| observed_macro_token(word.semantic_token(), &context))
+                .collect()
+        });
+        if let (Some(observations), Some(observed_tokens)) =
+            (command.observations.as_mut(), observed_tokens)
+        {
             observations.committed(CommandObservation::Effect(EffectRecord {
                 kind: ObservationEffectKind::Write,
                 channel: write_effect_channel(sink),
-                value: ObservationValue::Tokens(
-                    stores
-                        .tokens(expanded.tokens.token_ref().id())
-                        .iter()
-                        .copied()
-                        .map(|token| observed_macro_token(token, stores))
-                        .collect(),
-                ),
+                value: ObservationValue::Tokens(observed_tokens),
                 source: None,
             }));
         }
@@ -1479,8 +1500,13 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             // Expansion diagnostics above, this report, and the recovered
             // payload all remain in their live-call order inside the
             // atomic page transaction.
+            let mut context = stores
+                .command_context()
+                .map_err(|_| ExecError::MissingToken {
+                    context: "unbalanced write diagnostic admission",
+                })?;
             crate::error_report::report_error(
-                stores,
+                &mut context,
                 "Unbalanced write command",
                 &[
                     "On this page there's a \\write with fewer real {'s than }'s.",
@@ -1492,10 +1518,19 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             )?;
         }
         let mut text = String::new();
-        for &token in stores.tokens(expanded.tokens.token_ref().id()).iter() {
-            tex_state::token_show::append_token_string_text(stores, token, &mut text);
+        let context = stores
+            .command_context()
+            .map_err(|_| ExecError::MissingToken {
+                context: "deferred write rendering admission",
+            })?;
+        for word in expanded_words {
+            tex_state::token_show::append_token_string_text(
+                &context,
+                word.semantic_token(),
+                &mut text,
+            );
         }
-        let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
+        let mut text = crate::diagnostics::print_text_with_newlinechar(&context, &text);
         text.push('\n');
         Ok(crate::shipout::ExpandedWrite::transactional(text))
     };
@@ -1537,7 +1572,14 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     // publications and cross the artifact transaction only after it commits.
     // Deferred writes publish their §1370 expansion diagnostics inside the
     // transaction so they precede the resulting stream payload.
-    report_pending_diagnostics(stores, replay_diagnostics.into_inner())?;
+    {
+        let mut context = stores
+            .command_context()
+            .map_err(|_| ExecError::MissingToken {
+                context: "shipout replay diagnostic admission",
+            })?;
+        report_pending_diagnostics(&mut context, replay_diagnostics.into_inner())?;
+    }
     print_ship_out_marker_close(stores, tracing_output);
     if let Some(publication) = receipt.as_mut() {
         stores.world_mut().claim_effect_publication_boundary(
@@ -1571,11 +1613,16 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     //
     // Memory-backed retained hosts checkpoint this materialized suffix at a
     // later resource suspension and reconcile its exact replay once.
-    stores.commit_effects(stores.world().effect_pos())?;
+    stores.publish_effect_prefix(stores.world().effect_pos())?;
     // TeX82's `ship_out` clears the consecutive-dead-output counter (§638).
     // The shipout boundary owns the page-state bookkeeping, so keep
     // the page-state transition at the typed shipout boundary.
-    stores.set_page_integer(tex_state::page::PageInteger::DeadCycles, 0);
+    stores
+        .command_context()
+        .map_err(|_| ExecError::MissingToken {
+            context: "shipout page-state admission",
+        })?
+        .set_page_integer(tex_state::page::PageInteger::DeadCycles, 0);
     Ok(receipt)
 }
 
