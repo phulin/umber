@@ -9503,6 +9503,10 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
                 )
                 .expect("fixture macro assignment"));
             let mut control = pdftex_interword_control(&mut stores);
+            // These synthetic open modes exercise only the assignment. They
+            // are an authored fragment, so stop at root EOF without inventing
+            // a mode-specific final-cleanup sequence or silently adding `\end`.
+            control.set_root_completion_policy(RootCompletionPolicy::StopAtRootEof);
             if mode != Mode::Vertical {
                 control.modes.push(mode).expect("test mode push");
             }
