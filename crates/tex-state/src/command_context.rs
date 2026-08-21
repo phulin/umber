@@ -391,13 +391,8 @@ impl<'a, G> CommandContext<'a, G> {
         let record = self.admitted.provenance(coordinate);
         let (resolved, generated_origin) = self.detach_origin_source(record, request.demand);
         Ok(
-            crate::provenance_resolver::ProvenanceResolver::admitted(request.demand)
-                .detach_admitted_origin(
-                request.message,
-                record,
-                resolved,
-                generated_origin,
-            ),
+            crate::provenance_resolver::ProvenanceResolver::<G>::admitted(request.demand)
+                .detach_admitted_origin(request.message, record, resolved, generated_origin),
         )
     }
 
