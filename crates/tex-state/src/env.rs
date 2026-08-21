@@ -271,6 +271,19 @@ impl<G> DenseState<G> {
             .value)
     }
 
+    pub(crate) fn assign_dimension_parameter(
+        &mut self,
+        parameter: banks::DimenParam,
+        value: Scaled,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(
+            StateCell::DimensionParameter(parameter.raw()),
+            StateWord::Dimension(value),
+            scope,
+        )
+    }
+
     pub(crate) fn glue_parameter(
         &self,
         parameter: banks::GlueParam,
@@ -286,6 +299,19 @@ impl<G> DenseState<G> {
     ) -> Result<(), StateError> {
         self.assign(
             StateCell::GlueParameter(parameter.raw()),
+            StateWord::Glue(value),
+            scope,
+        )
+    }
+
+    pub(crate) fn assign_mu_glue_register(
+        &mut self,
+        index: u16,
+        value: Option<GlueId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(
+            StateCell::MuGlueRegister(index),
             StateWord::Glue(value),
             scope,
         )
@@ -338,6 +364,40 @@ impl<G> DenseState<G> {
         self.assign(
             StateCell::TokenRegister(index),
             StateWord::TokenList(value),
+            scope,
+        )
+    }
+
+    pub(crate) fn assign_token_parameter(
+        &mut self,
+        parameter: banks::TokParam,
+        value: Option<TokenListId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(
+            StateCell::TokenParameter(parameter.raw()),
+            StateWord::TokenList(value),
+            scope,
+        )
+    }
+
+    pub(crate) fn assign_current_font(
+        &mut self,
+        value: FontId,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(StateCell::CurrentFont, StateWord::Font(value), scope)
+    }
+
+    pub(crate) fn assign_math_family_font(
+        &mut self,
+        index: u8,
+        value: FontId,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(
+            StateCell::MathFamilyFont(index),
+            StateWord::Font(value),
             scope,
         )
     }

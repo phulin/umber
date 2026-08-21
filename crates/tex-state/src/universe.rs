@@ -441,6 +441,158 @@ impl<G> Universe<G> {
             .unwrap_or(0)
     }
 
+    /// Reads one admitted count-register value.
+    pub fn count(&self, index: u16) -> Result<i32, UniverseError> {
+        Ok(self.live_state()?.count(index)?)
+    }
+
+    /// Reads one admitted dimension-register value.
+    pub fn dimension(&self, index: u16) -> Result<Scaled, UniverseError> {
+        Ok(self.live_state()?.dimension(index)?)
+    }
+
+    /// Reads one admitted dimension parameter.
+    pub fn dimen_param(
+        &self,
+        parameter: crate::env::banks::DimenParam,
+    ) -> Result<Scaled, UniverseError> {
+        Ok(self.live_state()?.dimension_parameter(parameter)?)
+    }
+
+    /// Reads one admitted token-register root.
+    pub fn token_register(&self, index: u16) -> Result<Option<TokenListId<G>>, UniverseError> {
+        Ok(self.live_state()?.token_register(index)?)
+    }
+
+    /// Reads one admitted token-parameter root.
+    pub fn token_parameter(
+        &self,
+        parameter: crate::env::banks::TokParam,
+    ) -> Result<Option<TokenListId<G>>, UniverseError> {
+        Ok(self.live_state()?.token_parameter(parameter)?)
+    }
+
+    /// Reads one admitted ordinary glue-register root.
+    pub fn glue_register(&self, index: u16) -> Result<Option<GlueId<G>>, UniverseError> {
+        Ok(self.live_state()?.glue_register(index)?)
+    }
+
+    /// Reads one admitted math-glue-register root.
+    pub fn mu_glue_register(&self, index: u16) -> Result<Option<GlueId<G>>, UniverseError> {
+        Ok(self.live_state()?.mu_glue_register(index)?)
+    }
+
+    /// Reads one admitted glue-parameter root.
+    pub fn glue_parameter(
+        &self,
+        parameter: crate::env::banks::GlueParam,
+    ) -> Result<Option<GlueId<G>>, UniverseError> {
+        Ok(self.live_state()?.glue_parameter(parameter)?)
+    }
+
+    /// Resolves a durable glue coordinate under this generation.
+    pub fn glue(&self, id: GlueId<G>) -> Result<GlueSpec, UniverseError> {
+        Ok(self
+            .core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .admit()
+            .glue(id))
+    }
+
+    /// Returns the current text font from admitted dense state.
+    pub fn current_font(&self) -> Result<crate::ids::FontId, UniverseError> {
+        Ok(self.live_state()?.current_font())
+    }
+
+    /// Returns one current math-family font from admitted dense state.
+    pub fn math_family_font(
+        &self,
+        size: crate::math::MathFontSize,
+        family: u8,
+    ) -> Result<crate::ids::FontId, UniverseError> {
+        let index = u8::try_from(size.index())
+            .expect("math font size is bounded")
+            .saturating_mul(16)
+            .saturating_add(family);
+        Ok(self.live_state()?.math_family_font(index)?)
+    }
+
+    /// Assigns one dimension parameter through the exact save journal.
+    pub fn assign_dimen_param(
+        &mut self,
+        parameter: crate::env::banks::DimenParam,
+        value: Scaled,
+        scope: AssignmentScope,
+    ) -> Result<(), UniverseError> {
+        self.live_state_mut()?
+            .assign_dimension_parameter(parameter, value, scope)?;
+        Ok(())
+    }
+
+    /// Assigns one token parameter through the exact save journal.
+    pub fn assign_token_parameter(
+        &mut self,
+        parameter: crate::env::banks::TokParam,
+        value: Option<TokenListId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), UniverseError> {
+        self.live_state_mut()?
+            .assign_token_parameter(parameter, value, scope)?;
+        Ok(())
+    }
+
+    /// Assigns one glue parameter through the exact save journal.
+    pub fn assign_glue_parameter(
+        &mut self,
+        parameter: crate::env::banks::GlueParam,
+        value: Option<GlueId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), UniverseError> {
+        self.live_state_mut()?
+            .assign_glue_parameter(parameter, value, scope)?;
+        Ok(())
+    }
+
+    /// Assigns one math-glue register through the exact save journal.
+    pub fn assign_mu_glue_register(
+        &mut self,
+        index: u16,
+        value: Option<GlueId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), UniverseError> {
+        self.live_state_mut()?
+            .assign_mu_glue_register(index, value, scope)?;
+        Ok(())
+    }
+
+    /// Assigns the current text font through the exact save journal.
+    pub fn assign_current_font(
+        &mut self,
+        value: crate::ids::FontId,
+        scope: AssignmentScope,
+    ) -> Result<(), UniverseError> {
+        self.live_state_mut()?.assign_current_font(value, scope)?;
+        Ok(())
+    }
+
+    /// Assigns one math-family font through the exact save journal.
+    pub fn assign_math_family_font(
+        &mut self,
+        size: crate::math::MathFontSize,
+        family: u8,
+        value: crate::ids::FontId,
+        scope: AssignmentScope,
+    ) -> Result<(), UniverseError> {
+        let index = u8::try_from(size.index())
+            .expect("math font size is bounded")
+            .saturating_mul(16)
+            .saturating_add(family);
+        self.live_state_mut()?
+            .assign_math_family_font(index, value, scope)?;
+        Ok(())
+    }
+
     pub fn allocate_definition(
         &mut self,
         parameter_text: &[TokenWord],
@@ -969,6 +1121,7 @@ impl<G> Universe<G> {
             &mut self.world,
             &mut self.dependencies,
             &self.fonts,
+            &mut self.page_nodes,
             &mut self.page,
             &mut self.pdf,
             &mut self.sources,

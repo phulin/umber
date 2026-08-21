@@ -21,7 +21,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   checkpoints, bounded cursor tuples, mutation-free restore planning, and the
   owner/state/root/truncation/release ordering barrier.
 - `src/command_context.rs`: Already-admitted session/generation borrow for
-  direct meaning, register, code-table, definition, token-list, and glue reads.
+  direct command and execution work, including typed register mutation,
+  page-list/page-builder access, font metrics, definitions, token lists, and
+  glue values without per-read owner admission.
 - `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, registered World-backed mutation keys, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, generic tracked-region lifecycle and journal-write records, deterministic ordering, rollback failure closure, and handle-independent observation tests.
 - `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
@@ -183,9 +185,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   the sparse owner set once; they never clone it per token before deduplication.
 - `src/token/tests.rs`: Unit tests for token constructors, catcodes, parameter tokens, and display/debug behavior.
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
-- `src/universe.rs`: Public session/generation aggregate, typed mutation and
-  allocation facade, owner-checked journal cursors, admitted command views,
-  and whole-session retirement.
+- `src/universe.rs`: Public session/generation aggregate, typed scalar
+  mutation and allocation facade, owner-checked journal cursors, admitted
+  command/execution views, and whole-session retirement.
 - `src/universe/tests.rs`: Session/generation admission, rollback-independent
   interning, foreign-session rejection, and retirement tests.
 - `src/world.rs`: External-effect boundary for files, atomic downstream

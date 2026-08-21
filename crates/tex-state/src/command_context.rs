@@ -5,13 +5,15 @@ use crate::definition_arena::{DefinitionId, DefinitionView};
 use crate::dependency::{DependencyKey, DependencyRuntime, DependencyValue, TrackedRegionBarrier};
 use crate::durable_arena::{GlueId, ProvenanceId, TokenListId};
 use crate::env::banks::IntParam;
-use crate::env::{CodeTableKind, DenseState, StateError};
+use crate::env::{AssignmentScope, CodeTableKind, DenseState, StateError};
 use crate::font::FontStore;
 use crate::glue::GlueSpec;
 use crate::hyphenation::HyphenationTable;
 use crate::interner::{ControlSequenceKind, Interner, InternerAccessError, Symbol, SymbolId};
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
-use crate::node_arena::{DurableListId, NodeArenaError, NodeList};
+use crate::node_arena::{
+    DurableListId, NodeArenaError, NodeList, PageLifetime, PageListId, PageNodeArena,
+};
 use crate::page::PageBuilderState;
 use crate::pdf::PdfState;
 use crate::provenance::OriginRecord;
@@ -67,6 +69,7 @@ pub struct CommandContext<'a, G> {
     world: &'a mut World,
     dependencies: &'a mut DependencyRuntime,
     fonts: &'a FontStore,
+    page_nodes: &'a mut PageNodeArena,
     page: &'a mut PageBuilderState,
     pdf: &'a mut PdfState<G>,
     sources: &'a mut SourceMap,
@@ -84,6 +87,7 @@ impl<'a, G> CommandContext<'a, G> {
         world: &'a mut World,
         dependencies: &'a mut DependencyRuntime,
         fonts: &'a FontStore,
+        page_nodes: &'a mut PageNodeArena,
         page: &'a mut PageBuilderState,
         pdf: &'a mut PdfState<G>,
         sources: &'a mut SourceMap,
@@ -99,6 +103,7 @@ impl<'a, G> CommandContext<'a, G> {
             world,
             dependencies,
             fonts,
+            page_nodes,
             page,
             pdf,
             sources,
@@ -216,9 +221,27 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.state_ref().count(index)
     }
 
+    pub fn assign_count(
+        &mut self,
+        index: u16,
+        value: i32,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted.state().assign_count(index, value, scope)
+    }
+
     #[inline(always)]
     pub fn dimension(&self, index: u16) -> Result<Scaled, StateError> {
         self.admitted.state_ref().dimension(index)
+    }
+
+    pub fn assign_dimension(
+        &mut self,
+        index: u16,
+        value: Scaled,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted.state().assign_dimension(index, value, scope)
     }
 
     #[inline(always)]
@@ -229,9 +252,31 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("command parameters are admitted")
     }
 
+    pub fn assign_int_param(
+        &mut self,
+        parameter: IntParam,
+        value: i32,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted
+            .state()
+            .assign_integer_parameter(parameter, value, scope)
+    }
+
     #[inline(always)]
     pub fn token_register(&self, index: u16) -> Result<Option<TokenListId<G>>, StateError> {
         self.admitted.state_ref().token_register(index)
+    }
+
+    pub fn assign_token_register(
+        &mut self,
+        index: u16,
+        value: Option<TokenListId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted
+            .state()
+            .assign_token_register(index, value, scope)
     }
 
     #[inline(always)]
@@ -242,14 +287,58 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.state_ref().token_parameter(parameter)
     }
 
+    pub fn assign_token_parameter(
+        &mut self,
+        parameter: crate::env::banks::TokParam,
+        value: Option<TokenListId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted
+            .state()
+            .assign_token_parameter(parameter, value, scope)
+    }
+
     #[inline(always)]
     pub fn glue_register(&self, index: u16) -> Result<Option<GlueId<G>>, StateError> {
         self.admitted.state_ref().glue_register(index)
     }
 
+    pub fn assign_glue_register(
+        &mut self,
+        index: u16,
+        value: Option<GlueId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted
+            .state()
+            .assign_glue_register(index, value, scope)
+    }
+
+    pub fn assign_mu_glue_register(
+        &mut self,
+        index: u16,
+        value: Option<GlueId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted
+            .state()
+            .assign_mu_glue_register(index, value, scope)
+    }
+
     #[inline(always)]
     pub fn box_register(&self, index: u16) -> Result<Option<DurableListId<G>>, StateError> {
         self.admitted.state_ref().box_register(index)
+    }
+
+    pub fn assign_box_register(
+        &mut self,
+        index: u16,
+        value: Option<DurableListId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted
+            .state()
+            .assign_box_register(index, value, scope)
     }
 
     #[inline(always)]
@@ -443,6 +532,93 @@ impl<'a, G> CommandContext<'a, G> {
         code: u8,
     ) -> Option<crate::font::CharMetrics> {
         self.fonts.get(id).metrics().character(code)
+    }
+
+    #[must_use]
+    pub fn font_character_metrics(
+        &self,
+        id: crate::ids::FontId,
+        character: char,
+    ) -> Option<crate::font::CharMetrics> {
+        self.fonts.get(id).character_metrics(character)
+    }
+
+    #[must_use]
+    pub fn font_character_exists(&self, id: crate::ids::FontId, character: char) -> bool {
+        self.fonts.get(id).character_exists(character)
+    }
+
+    #[must_use]
+    pub fn font_uses_tfm_metrics(&self, id: crate::ids::FontId) -> bool {
+        self.fonts.get(id).uses_tfm_metrics()
+    }
+
+    #[must_use]
+    pub fn font_widths(&self, id: crate::ids::FontId) -> &[Scaled; 256] {
+        self.fonts.get(id).metrics().widths()
+    }
+
+    #[must_use]
+    pub fn font_characters(&self, id: crate::ids::FontId) -> &[Option<crate::font::CharMetrics>] {
+        self.fonts.get(id).metrics().characters()
+    }
+
+    #[must_use]
+    pub fn font_parameter(&self, id: crate::ids::FontId, number: u32) -> Scaled {
+        self.font_dimen(id, number)
+    }
+
+    #[must_use]
+    pub fn classic_math_parameter(&self, id: crate::ids::FontId, number: u16) -> Scaled {
+        self.fonts
+            .get(id)
+            .classic_math_parameter_override(number)
+            .unwrap_or_else(|| self.font_dimen(id, u32::from(number)))
+    }
+
+    #[must_use]
+    pub fn classic_math_parameter_count(&self, id: crate::ids::FontId) -> usize {
+        self.fonts
+            .get(id)
+            .classic_math_parameter_count_override()
+            .unwrap_or_else(|| self.fonts.get(id).parameters().len())
+    }
+
+    #[must_use]
+    pub fn font_next_larger(&self, id: crate::ids::FontId, code: u8) -> Option<u8> {
+        self.fonts.get(id).metrics().next_larger(code)
+    }
+
+    #[must_use]
+    pub fn font_extensible_recipe(
+        &self,
+        id: crate::ids::FontId,
+        code: u8,
+    ) -> Option<crate::font::ExtensibleRecipe> {
+        self.fonts.get(id).metrics().extensible_recipe(code)
+    }
+
+    #[must_use]
+    pub fn font_lig_kern_command(
+        &self,
+        id: crate::ids::FontId,
+        left: crate::font::LigKernChar,
+        right: crate::font::LigKernChar,
+    ) -> Option<crate::font::LigKernCommand> {
+        self.fonts.get(id).metrics().lig_kern_command(left, right)
+    }
+
+    #[must_use]
+    pub fn font_math_metrics_source(
+        &self,
+        id: crate::ids::FontId,
+    ) -> tex_fonts::MathMetricsSource<'_> {
+        self.fonts.get(id).math_metrics_source()
+    }
+
+    #[must_use]
+    pub fn font_expansion(&self, id: crate::ids::FontId) -> Option<crate::font::FontExpansion> {
+        self.fonts.expansion(id)
     }
 
     #[must_use]
@@ -791,14 +967,218 @@ impl<'a, G> CommandContext<'a, G> {
             .allocate_color_stack(mode, restore_at_page_start, initial)
     }
 
+    /// Publishes one complete page-lifetime list inside this admitted episode.
+    pub fn publish_page_nodes(&mut self, nodes: Vec<crate::node::Node>) -> PageListId {
+        self.page_nodes
+            .publish(nodes)
+            .expect("page construction contains only live page-arena children")
+    }
+
+    /// Resolves one page-lifetime list while the admitted context is live.
+    pub fn page_node_list(
+        &self,
+        list: PageListId,
+    ) -> Result<NodeList<'_, PageLifetime>, NodeArenaError> {
+        self.page_nodes.get(list)
+    }
+
+    /// Resolves the node slice consumed by pure typesetting kernels.
+    pub fn page_nodes(&self, list: PageListId) -> Result<&[crate::node::Node], NodeArenaError> {
+        Ok(self.page_nodes.get(list)?.nodes())
+    }
+
     #[must_use]
     pub fn page_dimension(&self, dimension: crate::page::PageDimension) -> Scaled {
         self.page.dimension(dimension, false)
     }
 
+    pub fn set_page_dimension(&mut self, dimension: crate::page::PageDimension, value: Scaled) {
+        self.page.set_dimension(dimension, value);
+    }
+
     #[must_use]
     pub fn page_integer(&self, integer: crate::page::PageInteger) -> i32 {
         self.page.integer(integer)
+    }
+
+    pub fn set_page_integer(&mut self, integer: crate::page::PageInteger, value: i32) {
+        self.page.set_integer(integer, value);
+    }
+
+    #[must_use]
+    pub fn page_contents(&self) -> crate::page::PageContents {
+        self.page.contents()
+    }
+
+    pub fn set_page_contents(&mut self, contents: crate::page::PageContents) {
+        self.page.set_contents(contents);
+    }
+
+    #[must_use]
+    pub fn page_max_depth(&self) -> Scaled {
+        self.page.page_max_depth()
+    }
+
+    #[must_use]
+    pub fn insert_penalties(&self) -> i32 {
+        self.page.insert_penalties()
+    }
+
+    #[must_use]
+    pub fn least_page_cost(&self) -> i32 {
+        self.page.least_page_cost()
+    }
+
+    pub fn freeze_page_specs(
+        &mut self,
+        contents: crate::page::PageContents,
+        vsize: Scaled,
+        max_depth: Scaled,
+    ) {
+        self.page.freeze_specs(contents, vsize, max_depth);
+    }
+
+    pub fn record_best_page_break(&mut self, index: usize, best_size: Scaled, cost: i32) {
+        self.page.record_best_break(index, best_size, cost);
+    }
+
+    pub fn record_page_fire_up(&mut self, trigger_index: usize) {
+        self.page.record_fire_up(trigger_index);
+    }
+
+    #[must_use]
+    pub fn page_fire_up(&self) -> Option<crate::page::PageFireUp> {
+        self.page.fire_up()
+    }
+
+    pub fn start_page_after_output(&mut self) {
+        self.page.start_page_after_output();
+    }
+
+    #[must_use]
+    pub fn page_contributions(&self) -> &std::collections::VecDeque<crate::node::Node> {
+        self.page.contribution()
+    }
+
+    pub fn append_page_contribution(&mut self, node: crate::node::Node) {
+        self.page.push_contribution(node);
+    }
+
+    pub fn prepend_page_contribution(&mut self, node: crate::node::Node) {
+        self.page.prepend_contribution(node);
+    }
+
+    pub fn prepend_page_contributions(&mut self, nodes: Vec<crate::node::Node>) {
+        self.page.prepend_contributions(nodes);
+    }
+
+    pub fn remove_page_contribution_range(
+        &mut self,
+        range: std::ops::RangeInclusive<usize>,
+    ) -> Vec<crate::node::Node> {
+        self.page.remove_contribution_range(range)
+    }
+
+    #[must_use]
+    pub fn page_contribution_front(&self) -> Option<&crate::node::Node> {
+        self.page.contribution_front()
+    }
+
+    #[must_use]
+    pub fn page_contribution_second(&self) -> Option<&crate::node::Node> {
+        self.page.contribution_second()
+    }
+
+    pub fn pop_page_contribution_front(&mut self) -> Option<crate::node::Node> {
+        self.page.pop_contribution_front()
+    }
+
+    #[must_use]
+    pub fn current_page_len(&self) -> usize {
+        self.page.current_page_len()
+    }
+
+    #[must_use]
+    pub fn current_page_tail(&self) -> Option<&crate::node::Node> {
+        self.page.current_page_tail()
+    }
+
+    pub fn push_current_page_node(&mut self, node: crate::node::Node) {
+        self.page.push_current_page(node);
+    }
+
+    pub fn take_current_page_prefix(
+        &mut self,
+        split_index: usize,
+    ) -> (Vec<crate::node::Node>, Vec<crate::node::Node>) {
+        self.page.take_current_page_prefix(split_index)
+    }
+
+    pub fn update_page_last_from_node(&mut self, node: &crate::node::Node) {
+        self.page.update_last_from_node(node);
+    }
+
+    #[must_use]
+    pub fn page_has_last_glue(&self) -> bool {
+        self.page.has_last_glue()
+    }
+
+    #[must_use]
+    pub fn page_last_skip(&self) -> Option<GlueSpec> {
+        self.page.last_skip_ref()
+    }
+
+    #[must_use]
+    pub fn page_last_penalty(&self) -> i32 {
+        self.page.last_penalty()
+    }
+
+    #[must_use]
+    pub fn page_last_kern(&self) -> Scaled {
+        self.page.last_kern()
+    }
+
+    #[must_use]
+    pub fn page_last_node_type(&self) -> i32 {
+        self.page.last_node_type()
+    }
+
+    pub fn push_page_discard(&mut self, node: crate::node::Node) {
+        self.page.push_page_discard(node);
+    }
+
+    pub fn take_page_discards(&mut self) -> Vec<crate::node::Node> {
+        self.page.take_page_discards()
+    }
+
+    pub fn clear_page_discards(&mut self) {
+        self.page.clear_page_discards();
+    }
+
+    pub fn set_split_discards(&mut self, nodes: Vec<crate::node::Node>) {
+        self.page.set_split_discards(nodes);
+    }
+
+    pub fn take_split_discards(&mut self) -> Vec<crate::node::Node> {
+        self.page.take_split_discards()
+    }
+
+    pub fn clear_split_discards(&mut self) {
+        self.page.clear_split_discards();
+    }
+
+    #[must_use]
+    pub fn page_insertions(&self) -> &[crate::page::PageInsertion] {
+        self.page.page_insertions()
+    }
+
+    #[must_use]
+    pub fn page_insertion(&self, class: u16) -> Option<crate::page::PageInsertion> {
+        self.page.page_insertion(class)
+    }
+
+    pub fn upsert_page_insertion(&mut self, insertion: crate::page::PageInsertion) {
+        self.page.upsert_page_insertion(insertion);
     }
 
     #[must_use]
