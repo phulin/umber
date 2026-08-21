@@ -6,7 +6,7 @@ use tex_state::node::{BoxNode, Node, NodeTokenList};
 use tex_state::node_arena::PageListId;
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
-use tex_state::{EngineBoundaryHasher, EngineMode, Universe};
+use tex_state::{CommandContext, EngineBoundaryHasher, EngineMode, Universe};
 
 use crate::ExecError;
 
@@ -21,11 +21,9 @@ pub const IGNORE_DEPTH: Scaled = Scaled::from_raw(-65_536_000);
 /// TeX82 and original e-TeX use the fixed `IGNORE_DEPTH` constant. pdfTeX
 /// exposes that value as the assignable `\pdfignoreddimen` parameter and
 /// consults the live cell at every prevdepth initialization and comparison.
-pub(crate) fn ignored_depth<G>(stores: &Universe<G>) -> Scaled {
-    if stores.primitive_meaning("pdfignoreddimen").is_some() {
-        stores
-            .dimen_param(tex_state::env::banks::DimenParam::PDF_IGNORED_DIMEN)
-            .expect("mode reads an admitted live generation")
+pub(crate) fn ignored_depth<G>(stores: &CommandContext<'_, G>) -> Scaled {
+    if stores.primitive_resolved("pdfignoreddimen").is_some() {
+        stores.dimen_param(tex_state::env::banks::DimenParam::PDF_IGNORED_DIMEN)
     } else {
         IGNORE_DEPTH
     }

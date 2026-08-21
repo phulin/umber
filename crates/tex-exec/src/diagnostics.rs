@@ -118,15 +118,12 @@ pub(crate) fn report_irrecoverable_error<G>(
 /// Reports a bad interaction mode with the command processor's live input
 /// context carried across the scan/apply boundary.
 pub(crate) fn report_bad_interaction_mode_with_context<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     value: i32,
     context: String,
 ) -> Result<(), ExecError> {
-    let mut command = stores
-        .command_context()
-        .expect("interaction-mode diagnostics run inside an admitted command episode");
     crate::error_report::report_error(
-        &mut command,
+        stores,
         &format!("Bad interaction mode ({value})"),
         &[
             "Modes are 0=batch, 1=nonstop, 2=scroll, and",
@@ -170,17 +167,12 @@ pub(crate) fn report_missing_character_warning<G>(
 
 /// TeX82 §1049's `you_cant` message followed by §1050's `report_illegal_case`.
 pub(crate) fn report_illegal_case_with_context<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     token: Token,
     mode: Mode,
     context: Option<String>,
 ) -> Result<(), ExecError> {
-    let command = tex_command::command_token_text(
-        &mut stores
-            .command_context()
-            .expect("diagnostics run inside an admitted command episode"),
-        token,
-    );
+    let command = tex_command::command_token_text(stores, token);
     let mode = mode_name(mode);
     // TeX82 §§82 and 1111: `report_illegal_case` installs help and then
     // calls the ordinary error routine. The context therefore precedes help
@@ -221,7 +213,7 @@ use crate::{Mode, ModeNest};
 /// empty string, so the report omits the context instead of printing a blank
 /// one.
 pub(crate) fn report_undefined_control_sequence<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     context: Option<String>,
 ) -> Result<(), ExecError> {
     let mut report = stores.print_err("Undefined control sequence");
@@ -241,7 +233,7 @@ pub(crate) fn report_undefined_control_sequence<G>(
 
 /// TeX82 §1128's no-alignment-in-progress branch of `align_error`.
 pub(crate) fn report_misplaced_alignment_delimiter<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     token: Token,
     context: Option<String>,
 ) -> Result<(), ExecError> {
@@ -253,12 +245,7 @@ pub(crate) fn report_misplaced_alignment_delimiter<G>(
             ch,
             cat: Catcode::EndLine,
         } => format!("end of line character {ch}"),
-        _ => tex_command::command_token_text(
-            &mut stores
-                .command_context()
-                .expect("diagnostics run inside an admitted command episode"),
-            token,
-        ),
+        _ => tex_command::command_token_text(stores, token),
     };
     let tab_mark = matches!(
         token,
@@ -296,7 +283,7 @@ pub(crate) fn report_misplaced_alignment_delimiter<G>(
 
 /// TeX82 §1129's misplaced `\noalign` and `\omit` diagnostics.
 pub(crate) fn report_misplaced_alignment_command<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     name: &str,
     help: &[&str],
     context: Option<String>,
@@ -352,7 +339,7 @@ pub(crate) fn render_showgroups(diagnostic: &ShowGroupsDiagnostic) -> String {
 /// Emits e-TeX 2.6 [49.1292]'s `show_save_groups` display through the shared
 /// §245 diagnostic selector, followed by §1293's ordinary show completion.
 pub(crate) fn execute_showgroups<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     diagnostic: &ShowGroupsDiagnostic,
     context: String,
 ) -> Result<(), ExecError> {
@@ -385,7 +372,7 @@ pub(crate) fn group_kind_text(kind: tex_state::GroupKind) -> &'static str {
 }
 
 pub(crate) fn execute_showbox<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     index: u16,
     context: String,
     profile: tex_command::CommandProfile,
@@ -400,13 +387,10 @@ pub(crate) fn execute_showbox<G>(
         // only to this branch. Section 1296 prints `"void"` directly after
         // the equals sign when the register is null.
         text.push('\n');
-        let command = stores
-            .command_context()
-            .expect("showbox belongs to a live generation");
         text.push_str(&crate::node_dump::dump_page_list(
-            &command,
+            stores,
             owner,
-            DumpConfig::read(&command).for_profile(profile),
+            DumpConfig::read(stores).for_profile(profile),
         ));
     } else {
         text.push_str("void\n");
@@ -428,16 +412,16 @@ pub(crate) fn execute_showbox<G>(
 /// the two `begin_diagnostic` forms (`\showbox`, `\showlists`) fall through
 /// to; `\show` and `\showthe` `goto common_ending` and skip it.
 pub(crate) fn complete_show<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     long: bool,
     context: Option<String>,
 ) -> Result<(), ExecError> {
     let tracing_online = stores.int_param(tex_state::env::banks::IntParam::TRACING_ONLINE);
-    let interactive = stores.interaction_mode() == tex_state::InteractionMode::ErrorStop;
+    let interactive = stores.interaction_mode_value() == 3;
     if !interactive {
         // §1293's `decr(error_count)`, undoing §82's own increment so that
         // showing something never counts toward the 100-error limit.
-        stores.world_mut().error_channel_mut().clear_error_count();
+        stores.clear_error_count();
     }
     let mut report = if long {
         stores.print_err("OK")
@@ -484,7 +468,7 @@ pub(crate) fn complete_show<G>(
 }
 
 pub(crate) fn execute_showlists<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     nest: &ModeNest,
     context: String,
     profile: tex_command::CommandProfile,
@@ -494,9 +478,6 @@ pub(crate) fn execute_showlists<G>(
     let output_routine_active = summary.levels().iter().any(|level| level.entry_line() < 0);
     let page = page_activity_snapshot(stores, output_routine_active)?;
     let ignored_depth = ignored_depth(stores);
-    let command = stores
-        .command_context()
-        .expect("showlists belongs to a live generation");
     for (index, level) in summary.levels().iter().enumerate().rev() {
         text.push_str("### ");
         text.push_str(mode_text(level.mode()));
@@ -528,9 +509,9 @@ pub(crate) fn execute_showlists<G>(
                 }
                 text.push('\n');
                 text.push_str(&dump_node_slice(
-                    &command,
+                    stores,
                     &page.current_page,
-                    DumpConfig::read(&command).for_profile(profile),
+                    DumpConfig::read(stores).for_profile(profile),
                 ));
                 if page.contents != PageContents::Empty {
                     text.push_str("total height ");
@@ -546,19 +527,19 @@ pub(crate) fn execute_showlists<G>(
             if !page.contributions.is_empty() {
                 text.push_str("### recent contributions:\n");
                 text.push_str(&dump_node_slice(
-                    &command,
+                    stores,
                     &page.contributions,
-                    DumpConfig::read(&command).for_profile(profile),
+                    DumpConfig::read(stores).for_profile(profile),
                 ));
             }
-        } else if let Some(nodes) = showlists_level_nodes(&command, summary.levels(), index) {
+        } else if let Some(nodes) = showlists_level_nodes(stores, summary.levels(), index) {
             if index == 0 {
                 text.push_str("### recent contributions:\n");
             }
             text.push_str(&dump_node_slice(
-                &command,
+                stores,
                 &nodes,
-                DumpConfig::read(&command).for_profile(profile),
+                DumpConfig::read(stores).for_profile(profile),
             ));
         }
         match level.mode() {
@@ -593,15 +574,14 @@ pub(crate) fn execute_showlists<G>(
                 if let Some(fraction) = level.list().incomplete_fraction() {
                     text.push_str("this will begin denominator of:\n");
                     text.push_str(&crate::node_dump::dump_incomplete_fraction(
-                        &command,
+                        stores,
                         fraction,
-                        DumpConfig::read(&command).for_profile(profile),
+                        DumpConfig::read(stores).for_profile(profile),
                     ));
                 }
             }
         }
     }
-    drop(command);
     // §218's `show_activities` opens with `print_nl(""); print_ln`, not the
     // single smart `print_nl` `show_box` uses: the forced blank line is why
     // `\showlists`, unlike `\showbox`, always separates its dump from
@@ -628,30 +608,27 @@ struct PageActivitySnapshot {
 /// Detaches the page-builder evidence before diagnostic formatting can call
 /// back into the live engine. No page-arena borrow crosses the observer seam.
 fn page_activity_snapshot<G>(
-    stores: &mut Universe<G>,
+    stores: &CommandContext<'_, G>,
     output_routine_active: bool,
 ) -> Result<PageActivitySnapshot, ExecError> {
-    let command = stores
-        .command_context()
-        .expect("showlists runs inside an admitted command episode");
     let dimension =
-        |dimension| command.page_dimension_with_output_routine(dimension, output_routine_active);
-    let insertions = command
+        |dimension| stores.page_dimension_with_output_routine(dimension, output_routine_active);
+    let insertions = stores
         .page_insertions()
         .iter()
         .cloned()
         .map(|insertion| {
-            let count = command
+            let count = stores
                 .count(insertion.class())
                 .expect("page insertion class is an admitted count register");
             (insertion, count)
         })
         .collect();
     Ok(PageActivitySnapshot {
-        current_page: command.current_page_nodes().cloned().collect(),
-        contributions: command.page_contributions().iter().cloned().collect(),
+        current_page: stores.current_page_nodes().cloned().collect(),
+        contributions: stores.page_contributions().iter().cloned().collect(),
         insertions,
-        contents: command.page_contents(),
+        contents: stores.page_contents(),
         goal: dimension(PageDimension::Goal),
         total: dimension(PageDimension::Total),
         stretch: [
@@ -863,11 +840,15 @@ pub(crate) fn report_insertion_skip_infinite_shrinkage<G>(
 
 /// Appends TeX82's printable token form, including the separator that
 /// `print_cs` emits after a control word.
-pub(crate) fn append_token_show_text<G>(stores: &Universe<G>, token: Token, text: &mut String) {
-    tex_state::token_show::append_token_show_text(stores, token, text);
+pub(crate) fn append_token_show_text<G>(
+    stores: &CommandContext<'_, G>,
+    token: Token,
+    text: &mut String,
+) {
+    stores.append_token_show_text(token, text);
 }
 
-pub(crate) fn print_text_with_newlinechar<G>(stores: &Universe<G>, text: &str) -> String {
+pub(crate) fn print_text_with_newlinechar<G>(stores: &CommandContext<'_, G>, text: &str) -> String {
     let newlinechar = stores.int_param(IntParam::NEWLINE_CHAR);
     let Some(newline) = u32::try_from(newlinechar)
         .ok()
