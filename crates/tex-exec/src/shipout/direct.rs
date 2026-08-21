@@ -18,7 +18,10 @@ use tex_state::node::{
 use tex_state::node_arena::{NodeRef, PageListId};
 use tex_state::token::OriginId;
 use tex_state::token::{Catcode, Token, TokenWord};
-use tex_state::{EffectRecord, PrintSink, Universe, VerifiedArtifact};
+use tex_state::{
+    CommandContext, EffectRecord, FontArtifactConstructionRecipe, PrintSink, Universe,
+    VerifiedArtifact,
+};
 
 use crate::ExecError;
 use crate::diagnostics;
@@ -124,8 +127,13 @@ fn stage_form_inner<G>(
         replay_expander,
         tex_state::PdfColorStackTarget::Form,
     )?;
+    let mag = stores
+        .command_context()
+        .expect("form shipout runs inside an admitted command episode")
+        .prepare_mag()
+        .0;
     let job = JobInfo {
-        mag: stores.prepared_mag().unwrap_or_else(|| stores.mag()),
+        mag,
         banner: DEFAULT_BANNER.to_owned(),
         h_offset: tex_state::scaled::Scaled::from_raw(0),
         v_offset: tex_state::scaled::Scaled::from_raw(0),
@@ -148,9 +156,12 @@ fn stage_form_inner<G>(
         anchor: 0,
     };
     let mut dvi_emitter = DviPagePlanCoEmitter::disabled();
+    let command = stores
+        .command_context()
+        .expect("form shipout runs inside an admitted command episode");
     encoder.stream_root_nodes(|output| {
         emit_node_list(
-            stores,
+            &command,
             &overlay,
             &children,
             output,
@@ -160,6 +171,7 @@ fn stage_form_inner<G>(
             1,
         )
     })?;
+    drop(command);
     ensure_pdf_font_resources(stores, &emission.live_fonts)?;
     let bytes = encoder
         .finish(&emission.fonts, &overlay.effects)
@@ -200,6 +212,8 @@ pub(crate) fn stage_shipout<G>(
     pending_effect_end: usize,
     stores: &mut Universe<G>,
     source_resolver: &dyn ArtifactSourceResolver,
+    provenance_demand: tex_state::ProvenanceDemand,
+    provenance_budget_bytes: usize,
     emit_dvi: bool,
     write_expander: &mut WriteExpander<'_, G>,
     replay_expander: &mut ReplayTextExpander<'_, G>,
@@ -209,34 +223,40 @@ pub(crate) fn stage_shipout<G>(
         announce_openout,
     } = origin;
     let pending_effects = pending_page_effects(stores.world(), pending_effect_end);
-    let counts = page_counts(stores);
-    let (mag, diagnostic) = stores.prepare_mag();
+    let (counts, diagnostic, job) = {
+        let command = stores
+            .command_context()
+            .expect("page shipout runs inside an admitted command episode");
+        let counts = page_counts(&command);
+        let (mag, diagnostic) = command.prepare_mag();
+        const DVI_ONE_INCH: i32 = 4_736_286;
+        let has_configured_page = command.dimen_param(DimenParam::PDF_PAGE_WIDTH).raw() > 0
+            || command.dimen_param(DimenParam::PDF_PAGE_HEIGHT).raw() > 0;
+        let (page_origin_x, page_origin_y) =
+            if command.int_param(IntParam::PDF_OUTPUT) > 0 || has_configured_page {
+                (
+                    command.dimen_param(DimenParam::PDF_H_ORIGIN),
+                    command.dimen_param(DimenParam::PDF_V_ORIGIN),
+                )
+            } else {
+                let inch = tex_state::scaled::Scaled::from_raw(DVI_ONE_INCH);
+                (inch, inch)
+            };
+        let job = JobInfo {
+            mag,
+            banner: DEFAULT_BANNER.to_owned(),
+            h_offset: command.dimen_param(DimenParam::H_OFFSET),
+            v_offset: command.dimen_param(DimenParam::V_OFFSET),
+            page_origin_x,
+            page_origin_y,
+            page_width: command.dimen_param(DimenParam::PDF_PAGE_WIDTH),
+            page_height: command.dimen_param(DimenParam::PDF_PAGE_HEIGHT),
+        };
+        (counts, diagnostic, job)
+    };
     if let Some(diagnostic) = diagnostic {
         diagnostics::report_dimension_diagnostic(stores, DimensionDiagnostic::from(diagnostic));
     }
-    const DVI_ONE_INCH: i32 = 4_736_286;
-    let has_configured_page = stores.dimen_param(DimenParam::PDF_PAGE_WIDTH).raw() > 0
-        || stores.dimen_param(DimenParam::PDF_PAGE_HEIGHT).raw() > 0;
-    let (page_origin_x, page_origin_y) =
-        if stores.int_param(IntParam::PDF_OUTPUT) > 0 || has_configured_page {
-            (
-                stores.dimen_param(DimenParam::PDF_H_ORIGIN),
-                stores.dimen_param(DimenParam::PDF_V_ORIGIN),
-            )
-        } else {
-            let inch = tex_state::scaled::Scaled::from_raw(DVI_ONE_INCH);
-            (inch, inch)
-        };
-    let job = JobInfo {
-        mag,
-        banner: DEFAULT_BANNER.to_owned(),
-        h_offset: stores.dimen_param(DimenParam::H_OFFSET),
-        v_offset: stores.dimen_param(DimenParam::V_OFFSET),
-        page_origin_x,
-        page_origin_y,
-        page_width: stores.dimen_param(DimenParam::PDF_PAGE_WIDTH),
-        page_height: stores.dimen_param(DimenParam::PDF_PAGE_HEIGHT),
-    };
     let (root, children, vertical, root_box_lr) = match node {
         Node::HList(box_node) => (
             lower_box_header(&box_node),
@@ -290,14 +310,17 @@ pub(crate) fn stage_shipout<G>(
     .map_err(invalid_artifact)?;
     let mut encoder = ArtifactEmitter::new(job, counts, &root, vertical);
     let mut emission = EmissionState::page(
-        stores.provenance_demand(),
-        stores.provenance_budgets().detached_artifact_recipe_bytes,
+        provenance_demand,
+        provenance_budget_bytes,
         source_resolver,
         u32::try_from(overlay.pending_effect_count).map_err(|_| ExecError::ArithmeticOverflow)?,
     );
+    let command = stores
+        .command_context()
+        .expect("page shipout runs inside an admitted command episode");
     encoder.stream_root_nodes(|output| {
         emit_node_list(
-            stores,
+            &command,
             &overlay,
             &children,
             output,
@@ -307,6 +330,7 @@ pub(crate) fn stage_shipout<G>(
             1,
         )
     })?;
+    drop(command);
     debug_assert_eq!(
         usize::try_from(emission.anchor).ok(),
         Some(overlay.effects.len()),
@@ -409,7 +433,13 @@ fn ensure_pdf_font_resources<G>(
             // pdfTeX performs a direct parameter write here. A local positive
             // assignment therefore restores its saved outer value at group
             // exit, while an ordinary/global value remains zero thereafter.
-            stores.set_int_param(IntParam::PDF_MOVE_CHARS, 0);
+            stores
+                .assign_int_param(
+                    IntParam::PDF_MOVE_CHARS,
+                    0,
+                    tex_state::AssignmentScope::Local,
+                )
+                .expect("pdfmovechars assignment targets admitted state");
         }
     }
     Ok(())
@@ -422,9 +452,15 @@ fn saved_position<G>(
 ) -> Result<(tex_state::scaled::Scaled, tex_state::scaled::Scaled), ExecError> {
     const DVI_ONE_INCH: i32 = 4_736_286;
     if stores.int_param(IntParam::PDF_OUTPUT) > 0 {
-        let h_origin = stores.dimen_param(DimenParam::PDF_H_ORIGIN);
-        let v_origin = stores.dimen_param(DimenParam::PDF_V_ORIGIN);
-        let configured_height = stores.dimen_param(DimenParam::PDF_PAGE_HEIGHT);
+        let h_origin = stores
+            .dimen_param(DimenParam::PDF_H_ORIGIN)
+            .expect("shipout reads admitted pdfhorigin");
+        let v_origin = stores
+            .dimen_param(DimenParam::PDF_V_ORIGIN)
+            .expect("shipout reads admitted pdfvorigin");
+        let configured_height = stores
+            .dimen_param(DimenParam::PDF_PAGE_HEIGHT)
+            .expect("shipout reads admitted pdfpageheight");
         let page_height = if configured_height.raw() == 0 {
             root.height
                 .checked_add(root.depth)
@@ -449,7 +485,13 @@ fn saved_position<G>(
         let page_height = root
             .height
             .checked_add(root.depth)
-            .and_then(|height| height.checked_add(stores.dimen_param(DimenParam::V_OFFSET)))
+            .and_then(|height| {
+                height.checked_add(
+                    stores
+                        .dimen_param(DimenParam::V_OFFSET)
+                        .expect("shipout reads admitted voffset"),
+                )
+            })
             .ok_or(ExecError::ArithmeticOverflow)?;
         Ok((
             position
@@ -578,7 +620,7 @@ impl<'a> EmissionState<'a> {
 
 #[allow(clippy::too_many_arguments)]
 fn emit_node_list<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     overlay: &PageOverlay,
     list: &PageListId,
     output: &mut ArtifactNodeListEmitter<'_>,
@@ -605,18 +647,28 @@ fn emit_node_list<G>(
         return Ok(());
     }
 
-    let nodes = stores
+    let node_count = stores
         .page_node_list(*list)
-        .expect("shipout list belongs to the live page arena");
+        .expect("shipout list belongs to the live page arena")
+        .len();
     let unmodified = overlay.math.is_empty()
         && overlay.directions.is_empty()
         && overlay.omitted_whatsits.is_empty();
     let mut index = 0;
-    while index < nodes.len() {
-        if let Some(run) = nodes.char_run(index) {
+    while index < node_count {
+        let run = stores
+            .page_node_list(*list)
+            .expect("shipout list belongs to the live page arena")
+            .char_run(index);
+        if let Some(run) = run {
             emit_char_run(stores, run, output, dvi, emission)?;
             index += run.len();
-        } else if unmodified && let Some(NodeRef::Kern { amount, kind }) = nodes.get(index) {
+        } else if unmodified
+            && let Some(NodeRef::Kern { amount, kind }) = stores
+                .page_node_list(*list)
+                .expect("shipout list belongs to the live page arena")
+                .get(index)
+        {
             emission.node_empty();
             output.kern(amount, lower_kern_kind(kind))?;
             dvi.kern(amount).map_err(invalid_artifact)?;
@@ -640,14 +692,14 @@ fn emit_node_list<G>(
 }
 
 fn emit_char_run<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     run: tex_state::node_arena::CharRun<'_>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
     emission: &mut EmissionState<'_>,
 ) -> Result<(), ExecError> {
     let font = run.font();
-    let loaded = stores.font(font);
+    let construction = stores.font_artifact_recipe(font).construction;
     let (font_id, letterspaced) = if let Some((cached_font, font_id, letterspaced)) =
         emission.direct_font
         && cached_font == font
@@ -655,8 +707,8 @@ fn emit_char_run<G>(
         (font_id, letterspaced)
     } else {
         let letterspaced = matches!(
-            loaded.construction(),
-            tex_fonts::FontConstruction::Letterspaced { .. }
+            construction,
+            FontArtifactConstructionRecipe::Letterspaced { .. }
         );
         let font_id = font_resource_id(stores, font, emission);
         emission.direct_font = Some((font, font_id, letterspaced));
@@ -670,8 +722,8 @@ fn emit_char_run<G>(
             {
                 width
             } else {
-                let width = loaded
-                    .character_metrics(char::from(code))
+                let width = stores
+                    .font_character_metrics(font, char::from(code))
                     .map(|metrics| metrics.width)
                     .ok_or(ExecError::UnsupportedShipoutNode {
                         node: "missing character metrics",
@@ -711,7 +763,7 @@ fn emit_char_run<G>(
 
 #[allow(clippy::too_many_arguments)]
 fn emit_index<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     overlay: &PageOverlay,
     list: &PageListId,
     index: usize,
@@ -881,11 +933,7 @@ fn emit_index<G>(
                             tokens_out.char(ch as u32, lower_token_catcode(cat))?;
                         }
                         Token::Cs(symbol) => {
-                            tokens_out.control_sequence(
-                                stores
-                                    .resolve(symbol)
-                                    .expect("shipped control sequence belongs to the live epoch"),
-                            )?;
+                            tokens_out.control_sequence(stores.resolve(symbol))?;
                         }
                         Token::Param(slot) => tokens_out.param(slot)?,
                         Token::Frozen(_) => {
@@ -967,7 +1015,7 @@ fn emit_index<G>(
 
 #[allow(clippy::too_many_arguments)]
 fn emit_box<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     overlay: &PageOverlay,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
@@ -1006,7 +1054,7 @@ fn emit_box<G>(
 
 #[allow(clippy::too_many_arguments)]
 fn emit_glue<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     overlay: &PageOverlay,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
@@ -1122,18 +1170,20 @@ fn omitted_whatsit(overlay: &PageOverlay, list: &PageListId, index: usize) -> bo
 }
 
 fn font_resource_id<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     font: FontId,
     emission: &mut EmissionState<'_>,
 ) -> u32 {
     let logical_id = register_font_resource(stores, font, emission);
-    match stores.font(font).construction() {
-        tex_fonts::FontConstruction::Loaded
-        | tex_fonts::FontConstruction::Copied { .. }
-        | tex_fonts::FontConstruction::Expanded { .. } => logical_id,
-        tex_fonts::FontConstruction::Letterspaced { source, .. } => {
+    match stores.font_artifact_recipe(font).construction {
+        FontArtifactConstructionRecipe::Loaded
+        | FontArtifactConstructionRecipe::Copied { .. }
+        | FontArtifactConstructionRecipe::Expanded { .. } => logical_id,
+        FontArtifactConstructionRecipe::Letterspaced {
+            source_identity, ..
+        } => {
             let source = stores
-                .font_by_source_identity(*source)
+                .font_id_for_source_identity(source_identity)
                 .expect("validated generated font source is live");
             font_resource_id(stores, source, emission)
         }
@@ -1149,15 +1199,18 @@ struct GlyphProjection {
 }
 
 fn glyph_projection<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     font: FontId,
     ch: u32,
     logical_width: tex_state::scaled::Scaled,
     emission: &mut EmissionState<'_>,
 ) -> Result<GlyphProjection, ExecError> {
     let font_id = font_resource_id(stores, font, emission);
-    let loaded = stores.font(font);
-    let tex_fonts::FontConstruction::Letterspaced { source, amount, .. } = loaded.construction()
+    let FontArtifactConstructionRecipe::Letterspaced {
+        source_identity,
+        amount,
+        ..
+    } = stores.font_artifact_recipe(font).construction
     else {
         return Ok(GlyphProjection {
             font_id,
@@ -1167,7 +1220,7 @@ fn glyph_projection<G>(
         });
     };
     let source_font = stores
-        .font_by_source_identity(*source)
+        .font_id_for_source_identity(source_identity)
         .expect("validated letterspaced font source is live");
     let code = u8::try_from(ch).map_err(|_| ExecError::UnsupportedShipoutNode {
         node: "non-byte generated font character",
@@ -1178,8 +1231,8 @@ fn glyph_projection<G>(
         .ok_or(ExecError::UnsupportedShipoutNode {
             node: "missing letterspace source character metrics",
         })?;
-    let quad = stores.font(source_font).parameters()[5];
-    let left = round_scaled_ratio(quad, i32::from(*amount), 2000)?;
+    let quad = stores.font_parameter(source_font, 6);
+    let left = round_scaled_ratio(quad, i32::from(amount), 2000)?;
     let right = logical_width
         .checked_sub(source_width)
         .and_then(|difference| difference.checked_sub(left))
@@ -1194,7 +1247,7 @@ fn glyph_projection<G>(
 
 #[allow(clippy::too_many_arguments)]
 fn emit_glyph<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     font: FontId,
     ch: u32,
     logical_width: tex_state::scaled::Scaled,
@@ -1215,7 +1268,7 @@ fn emit_glyph<G>(
 
 #[allow(clippy::too_many_arguments)]
 fn emit_ligature<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     font: FontId,
     ch: u32,
     source: &[char],
@@ -1273,7 +1326,7 @@ fn round_scaled_ratio(
 }
 
 fn register_font_resource<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     font: FontId,
     emission: &mut EmissionState<'_>,
 ) -> u32 {
@@ -1285,73 +1338,72 @@ fn register_font_resource<G>(
         return id;
     }
     let id = font.raw().checked_sub(1).expect("FontId is one-based");
-    let loaded = stores.font(font);
-    let construction = match loaded.construction() {
-        tex_fonts::FontConstruction::Loaded => FontResourceConstruction::Loaded,
-        tex_fonts::FontConstruction::Copied { source } => {
+    let recipe = stores.font_artifact_recipe(font);
+    let construction = match recipe.construction {
+        FontArtifactConstructionRecipe::Loaded => FontResourceConstruction::Loaded,
+        FontArtifactConstructionRecipe::Copied { source_identity } => {
             let source_font = stores
-                .font_by_source_identity(*source)
+                .font_id_for_source_identity(source_identity)
                 .expect("validated copied font source is live");
             FontResourceConstruction::Copied {
                 source_font_id: register_font_resource(stores, source_font, emission),
-                source_identity: *source,
+                source_identity,
             }
         }
-        tex_fonts::FontConstruction::Letterspaced {
-            source,
+        FontArtifactConstructionRecipe::Letterspaced {
+            source_identity,
             amount,
             no_ligatures,
         } => {
             let source_font = stores
-                .font_by_source_identity(*source)
+                .font_id_for_source_identity(source_identity)
                 .expect("validated letterspaced font source is live");
             FontResourceConstruction::Letterspaced {
                 source_font_id: register_font_resource(stores, source_font, emission),
-                source_identity: *source,
-                amount: *amount,
-                no_ligatures: *no_ligatures,
+                source_identity,
+                amount,
+                no_ligatures,
             }
         }
-        tex_fonts::FontConstruction::Expanded { source, ratio } => {
+        FontArtifactConstructionRecipe::Expanded {
+            source_identity,
+            ratio,
+        } => {
             let source_font = stores
-                .font_by_source_identity(*source)
+                .font_id_for_source_identity(source_identity)
                 .expect("validated expanded font source is live");
             FontResourceConstruction::Expanded {
                 source_font_id: register_font_resource(stores, source_font, emission),
-                source_identity: *source,
-                ratio: *ratio,
+                source_identity,
+                ratio,
             }
         }
     };
     emission.fonts.push(FontResource {
         font_id: id,
-        name: loaded.name().to_owned(),
-        tfm_content_hash: PageContentHash::new(loaded.content_hash()),
-        tfm_checksum: loaded.checksum(),
-        design_size: loaded.design_size(),
-        at_size: loaded.size(),
-        layout_policy: loaded.layout_policy(),
-        mapping_fallback: loaded.mapping_fallback(),
-        opentype: loaded.opentype().map(|font| tex_out::OpenTypeFontResource {
-            program_identity: font.identity,
+        name: recipe.name,
+        tfm_content_hash: PageContentHash::new(recipe.tfm_content_hash),
+        tfm_checksum: recipe.tfm_checksum,
+        design_size: recipe.design_size,
+        at_size: recipe.at_size,
+        layout_policy: recipe.layout_policy,
+        mapping_fallback: recipe.mapping_fallback,
+        opentype: recipe.opentype.map(|font| tex_out::OpenTypeFontResource {
+            program_identity: font.program_identity,
             object_identity: font.object_identity,
-            instance_identity: loaded
-                .opentype_instance_identity()
-                .expect("OpenType font has an instance identity"),
+            instance_identity: font.instance_identity,
             container: font.container,
             face_index: font.face_index,
-            variation: font.variation.clone(),
-            features: font.feature_policy.clone(),
+            variation: font.variation,
+            features: font.features,
             direction: font.direction,
             script: font.script,
-            language: font.language.clone(),
-            encoding_map_version: loaded.encoding_map().map(|map| map.version()),
-            encoding_map_identity: loaded.encoding_map().map(|map| map.identity()),
-            fontdimen_synthesis_version: loaded
-                .encoding_map()
-                .map(|_| tex_fonts::OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION),
+            language: font.language,
+            encoding_map_version: font.encoding_map_version,
+            encoding_map_identity: font.encoding_map_identity,
+            fontdimen_synthesis_version: font.fontdimen_synthesis_version,
         }),
-        semantic_identity: loaded.source_identity(),
+        semantic_identity: recipe.semantic_identity,
         construction,
     });
     emission.live_fonts.push(font);
@@ -1360,7 +1412,7 @@ fn register_font_resource<G>(
 }
 
 fn glyph<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     font: FontId,
     ch: char,
 ) -> Result<(u32, tex_state::scaled::Scaled), ExecError> {

@@ -156,30 +156,28 @@ fn normalize_list<G>(
         depth,
     } = context;
     check_depth(depth)?;
-    let (active_indices, permutation) = {
-        let nodes = stores
-            .page_node_list(list)
-            .expect("shipout root belongs to the live page arena");
-        if !nodes.requires_shipout_normalization() {
-            return Ok(());
-        }
-        let permutation = direction_permutation_for_box(nodes, box_lr);
-        let mut active_indices = SmallVec::<[usize; 32]>::new();
-        if let Some(order) = permutation.as_deref() {
-            active_indices.extend(order.iter().copied().filter(|&index| {
-                nodes
-                    .node_requires_shipout_normalization(index)
-                    .expect("direction permutation index belongs to the frozen list")
-            }));
-        } else {
-            active_indices.extend((0..nodes.len()).filter(|&index| {
-                nodes
-                    .node_requires_shipout_normalization(index)
-                    .expect("normalization index belongs to the frozen list")
-            }));
-        }
-        (active_indices, permutation)
-    };
+    let (active_indices, permutation) =
+        {
+            let nodes = stores
+                .page_node_list(list)
+                .expect("shipout root belongs to the live page arena")
+                .nodes();
+            let permutation = direction_permutation_for_box(nodes, box_lr);
+            let mut active_indices = SmallVec::<[usize; 32]>::new();
+            if let Some(order) = permutation.as_deref() {
+                active_indices.extend(
+                    order
+                        .iter()
+                        .copied()
+                        .filter(|&index| node_requires_normalization(&nodes[index])),
+                );
+            } else {
+                active_indices.extend(nodes.iter().enumerate().filter_map(|(index, node)| {
+                    node_requires_normalization(node).then_some(index)
+                }));
+            }
+            (active_indices, permutation)
+        };
     if let Some(order) = permutation {
         overlay
             .directions
@@ -197,6 +195,30 @@ fn normalize_list<G>(
         )?;
     }
     Ok(())
+}
+
+fn node_requires_normalization(node: &Node) -> bool {
+    matches!(
+        node,
+        Node::HList(_)
+            | Node::VList(_)
+            | Node::Unset(_)
+            | Node::Disc { .. }
+            | Node::Ins { .. }
+            | Node::Whatsit(_)
+            | Node::Direction(_)
+            | Node::MathNoad(_)
+            | Node::FractionNoad(_)
+            | Node::MathStyle(_)
+            | Node::MathChoice(_)
+            | Node::MathList(_)
+            | Node::Nonscript
+            | Node::Adjust(_)
+            | Node::Glue {
+                leader: Some(_),
+                ..
+            }
+    )
 }
 
 fn normalize_index<G>(
@@ -667,7 +689,9 @@ fn append_whatsit_effect<G>(
                 identifier,
                 structure,
                 kind,
-                margin: stores.dimen_param(DimenParam::PDF_DEST_MARGIN),
+                margin: stores
+                    .dimen_param(DimenParam::PDF_DEST_MARGIN)
+                    .expect("shipout reads admitted pdfdestmargin"),
             }));
         }
         Whatsit::PdfThread(thread) => {
@@ -735,7 +759,9 @@ fn append_whatsit_effect<G>(
                 height: dimensions.height,
                 depth: dimensions.depth,
                 attributes: attribute_bytes.into_bytes(),
-                margin: stores.dimen_param(DimenParam::PDF_THREAD_MARGIN),
+                margin: stores
+                    .dimen_param(DimenParam::PDF_THREAD_MARGIN)
+                    .expect("shipout reads admitted pdfthreadmargin"),
             };
             if running {
                 *running_thread_depth = Some(depth);

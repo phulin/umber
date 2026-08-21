@@ -72,6 +72,8 @@ pub(crate) struct ShipoutTransaction<'a, G> {
     write: &'a mut WriteReplayHost<'a, G>,
     replay: &'a mut TextReplayHost<'a, G>,
     source_resolver: &'a dyn crate::output_provenance::ArtifactSourceResolver,
+    provenance_demand: tex_state::ProvenanceDemand,
+    provenance_budget_bytes: usize,
     geometry_sink: &'a mut dyn ShipoutGeometrySink,
 }
 
@@ -80,12 +82,16 @@ impl<'a, G> ShipoutTransaction<'a, G> {
         write: &'a mut WriteReplayHost<'a, G>,
         replay: &'a mut TextReplayHost<'a, G>,
         source_resolver: &'a dyn crate::output_provenance::ArtifactSourceResolver,
+        provenance_demand: tex_state::ProvenanceDemand,
+        provenance_budget_bytes: usize,
         geometry_sink: &'a mut dyn ShipoutGeometrySink,
     ) -> Self {
         Self {
             write,
             replay,
             source_resolver,
+            provenance_demand,
+            provenance_budget_bytes,
             geometry_sink,
         }
     }
@@ -110,6 +116,8 @@ impl<'a, G> ShipoutTransaction<'a, G> {
             pending_effect_end,
             stores,
             self.source_resolver,
+            self.provenance_demand,
+            self.provenance_budget_bytes,
             self.geometry_sink,
             emit_dvi,
             self.write,

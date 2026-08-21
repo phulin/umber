@@ -67,10 +67,12 @@ pub(super) fn lower_effect_record(record: &EffectRecord) -> Option<PageEffect> {
     }
 }
 
-pub(crate) fn page_counts<G>(stores: &Universe<G>) -> [i32; 10] {
+pub(crate) fn page_counts<G>(stores: &CommandContext<'_, G>) -> [i32; 10] {
     let mut counts = [0; 10];
     for (index, value) in counts.iter_mut().enumerate() {
-        *value = stores.count(index as u16);
+        *value = stores
+            .count(index as u16)
+            .expect("shipout count register belongs to admitted state");
     }
     counts
 }

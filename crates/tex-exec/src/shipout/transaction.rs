@@ -76,6 +76,8 @@ pub(crate) fn shipout_node<G>(
     pending_effect_end: usize,
     stores: &mut Universe<G>,
     source_resolver: &dyn crate::output_provenance::ArtifactSourceResolver,
+    provenance_demand: tex_state::ProvenanceDemand,
+    provenance_budget_bytes: usize,
     geometry_sink: &mut dyn ShipoutGeometrySink,
     emit_dvi: bool,
     write_expander: &mut direct::WriteExpander<'_, G>,
@@ -126,7 +128,7 @@ pub(crate) fn shipout_node<G>(
         stores.with_pure_memo(|memo| memo.record_not_attempted(PureMemoLayer::Shipout));
     }
     let cacheable = shipout_memo_enabled
-        && !stores.provenance_demand().rendered_source()
+        && !provenance_demand.rendered_source()
         && effect_free_shipout_graph(stores, &node)
         && stores.world().effect_records()[..pending_effect_end].is_empty()
         && (1..=32_768).contains(&stores.int_param(IntParam::MAG));
@@ -227,6 +229,8 @@ pub(crate) fn shipout_node<G>(
         pending_effect_end,
         &mut transaction,
         source_resolver,
+        provenance_demand,
+        provenance_budget_bytes,
         emit_dvi,
         write_expander,
         replay_expander,
@@ -360,6 +364,8 @@ pub(crate) fn stage_page<G>(
     pending_effect_end: usize,
     stores: &mut Universe<G>,
     source_resolver: &dyn crate::output_provenance::ArtifactSourceResolver,
+    provenance_demand: tex_state::ProvenanceDemand,
+    provenance_budget_bytes: usize,
     geometry_sink: &mut dyn ShipoutGeometrySink,
     emit_dvi: bool,
     write_expander: &mut WriteReplayHost<'_, G>,
@@ -371,6 +377,8 @@ pub(crate) fn stage_page<G>(
         pending_effect_end,
         stores,
         source_resolver,
+        provenance_demand,
+        provenance_budget_bytes,
         geometry_sink,
         emit_dvi,
         write_expander,
@@ -387,14 +395,17 @@ pub(crate) fn stage_form<G>(
     direct::stage_form(form, stores, write_expander, replay_expander)
 }
 
-fn shipout_geometry<G>(node: &Node, stores: &Universe<G>) -> Option<ShipoutGeometry> {
+fn shipout_geometry<G>(node: &Node, stores: &mut Universe<G>) -> Option<ShipoutGeometry> {
     let (Node::HList(node) | Node::VList(node)) = node else {
         return None;
     };
+    let command = stores
+        .command_context()
+        .expect("shipout geometry runs inside an admitted command episode");
     Some(ShipoutGeometry {
         page_width_sp: i64::from(node.width.raw()),
         page_height_sp: i64::from(node.height.raw()) + i64::from(node.depth.raw()),
-        counts: direct::page_counts(stores),
+        counts: direct::page_counts(&command),
     })
 }
 
@@ -435,7 +446,13 @@ fn prepare_pdf_output_policy<G>(
             major,
             error_context,
         )?;
-        stores.set_int_param(IntParam::PDF_MAJOR_VERSION, 1);
+        stores
+            .assign_int_param(
+                IntParam::PDF_MAJOR_VERSION,
+                1,
+                tex_state::AssignmentScope::Local,
+            )
+            .expect("pdf major version assignment targets admitted state");
     }
     let minor = stores.int_param(IntParam::PDF_MINOR_VERSION);
     if !(0..=9).contains(&minor) {
@@ -449,7 +466,13 @@ fn prepare_pdf_output_policy<G>(
             minor,
             error_context,
         )?;
-        stores.set_int_param(IntParam::PDF_MINOR_VERSION, 4);
+        stores
+            .assign_int_param(
+                IntParam::PDF_MINOR_VERSION,
+                4,
+                tex_state::AssignmentScope::Local,
+            )
+            .expect("pdf minor version assignment targets admitted state");
     }
 
     let major = stores.int_param(IntParam::PDF_MAJOR_VERSION);
@@ -497,10 +520,24 @@ fn shipout_key<G>(stores: &mut Universe<G>, root: PageListId) -> PureMemoKey {
     let environment = stores.engine_boundary_hash(SHIPOUT_ENV_HASH_DOMAIN, |hash| {
         hash.page_node_list(stores, root);
         hash.i32(stores.int_param(IntParam::MAG));
-        hash.i32(stores.dimen_param(DimenParam::H_OFFSET).raw());
-        hash.i32(stores.dimen_param(DimenParam::V_OFFSET).raw());
+        hash.i32(
+            stores
+                .dimen_param(DimenParam::H_OFFSET)
+                .expect("shipout memo reads admitted hoffset")
+                .raw(),
+        );
+        hash.i32(
+            stores
+                .dimen_param(DimenParam::V_OFFSET)
+                .expect("shipout memo reads admitted voffset")
+                .raw(),
+        );
         for index in 0..10 {
-            hash.i32(stores.count(index));
+            hash.i32(
+                stores
+                    .count(index)
+                    .expect("shipout memo reads admitted count register"),
+            );
         }
     });
     let mut bytes = Vec::with_capacity(16);
@@ -556,9 +593,19 @@ fn huge_shipout_box<G>(node: &Node, stores: &Universe<G>) -> bool {
         || depth > tex_state::scaled::Scaled::MAX_DIMEN
         || height
             .checked_add(depth)
-            .and_then(|value| value.checked_add(stores.dimen_param(DimenParam::V_OFFSET)))
+            .and_then(|value| {
+                value.checked_add(
+                    stores
+                        .dimen_param(DimenParam::V_OFFSET)
+                        .expect("shipout reads admitted voffset"),
+                )
+            })
             .is_none_or(|value| value > tex_state::scaled::Scaled::MAX_DIMEN)
         || width
-            .checked_add(stores.dimen_param(DimenParam::H_OFFSET))
+            .checked_add(
+                stores
+                    .dimen_param(DimenParam::H_OFFSET)
+                    .expect("shipout reads admitted hoffset"),
+            )
             .is_none_or(|value| value > tex_state::scaled::Scaled::MAX_DIMEN)
 }
