@@ -223,32 +223,29 @@ fn prepared_restore_cannot_be_applied_to_a_foreign_command_machine() {
 }
 
 #[test]
-fn exact_snapshot_restores_roots_before_discarding_attempt_suffix() {
+fn timeline_capture_rejects_nonempty_attempts_and_retains_only_empty_marks() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();
+        let empty = command.begin_attempt_operation();
         command
             .attempt
             .arena_mut()
             .begin_token_list()
-            .expect("checkpoint attempt row allocates");
-        let retained_attempt = command.attempt.arena().mark();
+            .expect("live attempt row allocates");
+        assert!(matches!(
+            command.snapshot(universe),
+            Err(CommandSummaryError::AttemptSuspended)
+        ));
+
+        command.discard_attempt_operation(empty);
         let snapshot = command
             .snapshot(universe)
-            .expect("live command snapshot captures bounded cursors");
-
-        command.begin_file_name().expect("filename guard opens");
-        command
-            .attempt
-            .arena_mut()
-            .begin_token_list()
-            .expect("attempt suffix allocates");
-        assert!(!command.attempt.is_empty());
-
-        command
-            .rollback(&snapshot, universe)
-            .expect("snapshot remains restorable");
-        assert!(!command.name_in_progress());
-        assert_eq!(command.attempt.arena().mark(), retained_attempt);
+            .expect("empty command attempt snapshots");
+        let (_, retained) = command
+            .timeline
+            .resolve(snapshot.cursor())
+            .expect("timeline row resolves");
+        assert!(retained.is_empty());
     });
 }
 

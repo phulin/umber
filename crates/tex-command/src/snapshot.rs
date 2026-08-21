@@ -53,6 +53,9 @@ impl<G> CommandTimeline<G> {
         arenas: CommandArenaCursors,
         stacks: CommandStackCursors,
     ) -> Result<CommandSnapshotCursor, CommandSummaryError> {
+        if !attempt.is_empty() {
+            return Err(CommandSummaryError::AttemptSuspended);
+        }
         let mut rows = self.rows.lock().expect("command timeline is not poisoned");
         let row = u32::try_from(rows.len()).map_err(|_| CommandSummaryError::TimelineCapacity)?;
         rows.push(CommandTimelineRow { roots, attempt });

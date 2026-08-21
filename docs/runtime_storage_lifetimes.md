@@ -316,13 +316,17 @@ visible only after every copied child has validated and every root has been
 rewritten; failure leaves the destination unpublished.
 
 Direct-operation completion chooses an explicit disposition for its attempt
-suffix. A fully applied operation discards exactly its opening mark only after
-all declared roots have been promoted and installed in their canonical owners,
-and before a named checkpoint may be published. A resource-unavailable
-operation instead moves that mark together with its scanned operation into the
-typed retry continuation. Resumption reinstates the original mark, so eventual
-commit discards the retained suffix rather than a later empty suffix. Rollback
-restores semantic roots before truncating the same attempt mark.
+suffix. After a fully applied operation has promoted and installed every
+declared escape root, command state recomputes one private per-table high-water
+cursor from its live input, macro, alignment, builder, and scanner-continuation
+coordinates. It then discards only the suffix beyond that cursor; a macro
+argument created during delivery therefore survives until its activation and
+parameter levels retire. A resource-unavailable operation instead moves its
+opening mark together with the scanned operation into the typed retry
+continuation and performs no reclamation. Rollback restores semantic roots
+before recomputing the same live cursor. Named command timeline rows contain
+only the canonical empty attempt mark; a named checkpoint performs one final
+reclamation before enforcing that durable-only invariant.
 
 ## Node lifetimes
 

@@ -53,7 +53,7 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
             ));
         let checkpoint = EngineCheckpoint::capture_checkpoint(
             EngineBoundary::JobStart,
-            &command,
+            &mut command,
             &mut modes,
             universe,
             ExecutionBudgetCounters::default(),
@@ -116,7 +116,7 @@ fn command_validation_failure_leaves_runtime_and_mode_unchanged() {
             .expect("baseline count");
         let checkpoint = EngineCheckpoint::capture_checkpoint(
             EngineBoundary::JobStart,
-            &CommandState::new(CommandProfile::TEX82),
+            &mut CommandState::new(CommandProfile::TEX82),
             &mut ModeNest::new(),
             universe,
             ExecutionBudgetCounters::default(),

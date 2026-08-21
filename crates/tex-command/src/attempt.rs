@@ -154,6 +154,26 @@ pub(crate) struct AttemptMark {
 }
 
 impl AttemptMark {
+    const fn empty(key: AttemptKey) -> Self {
+        Self {
+            key: key.0,
+            traced_words: 0,
+            traced_origins: 0,
+            token_scratch: 0,
+            origin_scratch: 0,
+            token_builders: 0,
+            token_lists: 0,
+            glue_values: 0,
+            definitions: 0,
+            argument_words: 0,
+            argument_records: 0,
+            token_buffers: 0,
+            name_bytes: 0,
+            names: 0,
+            provenance: 0,
+        }
+    }
+
     pub(crate) const fn is_empty(self) -> bool {
         self.traced_words == 0
             && self.traced_origins == 0
@@ -199,6 +219,15 @@ impl AttemptMark {
         Some(count)
     }
 }
+
+/// Exact per-table high-water cursor required by current command roots.
+///
+/// This is recomputed at borrow-safe command boundaries. It is deliberately
+/// neither a registry nor a retained root set: typed owners contribute their
+/// coordinates, schema children are followed immediately, and only the
+/// unreachable append-only suffix is reclaimed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AttemptLiveCursor(AttemptMark);
 
 /// Invalid foreign coordinates or bounded-capacity failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -299,6 +328,129 @@ impl<G> Default for AttemptArena<G> {
 }
 
 impl<G> AttemptArena<G> {
+    #[must_use]
+    pub(crate) fn empty_live_cursor(&self) -> AttemptLiveCursor {
+        AttemptLiveCursor(AttemptMark::empty(self.key))
+    }
+
+    pub(crate) fn retain_mark(
+        &self,
+        cursor: &mut AttemptLiveCursor,
+        mark: AttemptMark,
+    ) -> Result<(), AttemptError> {
+        self.validate_mark(mark)?;
+        let live = &mut cursor.0;
+        live.traced_words = live.traced_words.max(mark.traced_words);
+        live.traced_origins = live.traced_origins.max(mark.traced_origins);
+        live.token_scratch = live.token_scratch.max(mark.token_scratch);
+        live.origin_scratch = live.origin_scratch.max(mark.origin_scratch);
+        live.token_builders = live.token_builders.max(mark.token_builders);
+        live.token_lists = live.token_lists.max(mark.token_lists);
+        live.glue_values = live.glue_values.max(mark.glue_values);
+        live.definitions = live.definitions.max(mark.definitions);
+        live.argument_words = live.argument_words.max(mark.argument_words);
+        live.argument_records = live.argument_records.max(mark.argument_records);
+        live.token_buffers = live.token_buffers.max(mark.token_buffers);
+        live.name_bytes = live.name_bytes.max(mark.name_bytes);
+        live.names = live.names.max(mark.names);
+        live.provenance = live.provenance.max(mark.provenance);
+        Ok(())
+    }
+
+    pub(crate) fn retain_token_list(
+        &self,
+        cursor: &mut AttemptLiveCursor,
+        id: AttemptTokenListId,
+    ) -> Result<(), AttemptError> {
+        self.validate_key(id.key)?;
+        let row = self
+            .token_lists
+            .get(id.index())
+            .copied()
+            .filter(|row| row.serial == id.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        cursor.0.token_lists = cursor.0.token_lists.max(
+            id.row
+                .checked_add(1)
+                .ok_or(AttemptError::CapacityOverflow)?,
+        );
+        let end = row
+            .value
+            .start
+            .checked_add(row.value.len)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        cursor.0.traced_words = cursor.0.traced_words.max(end);
+        cursor.0.traced_origins = cursor.0.traced_origins.max(end);
+        for origin in row.value.resolve(&self.traced_origins)?.iter().flatten() {
+            self.retain_provenance(cursor, *origin)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn retain_argument_record(
+        &self,
+        cursor: &mut AttemptLiveCursor,
+        id: AttemptArgumentRecordId,
+    ) -> Result<(), AttemptError> {
+        self.validate_key(id.key)?;
+        let row = self
+            .argument_records
+            .get(id.index())
+            .copied()
+            .filter(|row| row.serial == id.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        cursor.0.argument_records = cursor.0.argument_records.max(
+            id.row
+                .checked_add(1)
+                .ok_or(AttemptError::CapacityOverflow)?,
+        );
+        let end = row
+            .value
+            .start
+            .checked_add(row.value.len)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        cursor.0.argument_words = cursor.0.argument_words.max(end);
+        for argument in row.value.resolve(&self.argument_words)? {
+            self.retain_token_list(cursor, *argument)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn retain_token_buffer(
+        &self,
+        cursor: &mut AttemptLiveCursor,
+        id: AttemptTokenBufferId,
+    ) -> Result<(), AttemptError> {
+        self.token_buffer(id)?;
+        cursor.0.token_buffers = cursor.0.token_buffers.max(
+            id.row
+                .checked_add(1)
+                .ok_or(AttemptError::CapacityOverflow)?,
+        );
+        Ok(())
+    }
+
+    pub(crate) fn retain_provenance(
+        &self,
+        cursor: &mut AttemptLiveCursor,
+        id: AttemptProvenanceId,
+    ) -> Result<(), AttemptError> {
+        self.provenance(id)?;
+        cursor.0.provenance = cursor.0.provenance.max(
+            id.row
+                .checked_add(1)
+                .ok_or(AttemptError::CapacityOverflow)?,
+        );
+        Ok(())
+    }
+
+    pub(crate) fn truncate_to_live(
+        &mut self,
+        cursor: AttemptLiveCursor,
+    ) -> Result<(), AttemptError> {
+        self.truncate(cursor.0)
+    }
+
     #[must_use]
     pub(crate) fn mark(&self) -> AttemptMark {
         AttemptMark {

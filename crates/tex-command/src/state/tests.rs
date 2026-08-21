@@ -4,6 +4,7 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{CommandGroupError, CommandState};
+use crate::macro_call::MacroArgumentBuilder;
 use crate::processor::AlignmentIdentity;
 use crate::{AttemptError, AttemptPromotionRoots};
 
@@ -201,6 +202,85 @@ fn operation_discard_truncates_only_the_attempt_suffix() {
         state.discard_attempt_operation(mark);
         assert_eq!(state.attempt_token_words(retained), Ok(&[word('a')][..]));
         assert!(state.attempt_token_words(rejected).is_err());
+    });
+}
+
+#[test]
+fn live_pre_mark_macro_arguments_bound_suffix_reclamation() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("outer").expect("macro name").symbol();
+        let retained = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('a')])
+            .expect("retained argument");
+        let mut arguments = MacroArgumentBuilder::default();
+        arguments.complete(1, retained).expect("first argument");
+        let arguments = arguments
+            .finish(state.attempt.arena_mut())
+            .expect("argument record");
+        let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
+
+        let mark = state.begin_attempt_operation();
+        let discarded = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('b')])
+            .expect("dead operation scratch");
+        state
+            .reclaim_attempt_operation(mark)
+            .expect("live owner census");
+        assert_eq!(state.attempt_token_words(retained), Ok(&[word('a')][..]));
+        assert!(state.attempt_token_words(discarded).is_err());
+
+        state
+            .retire_exhausted_input(level)
+            .expect("empty macro body retires");
+        state
+            .reclaim_unreachable_attempt_suffix()
+            .expect("retired arguments reclaim");
+        assert!(state.attempt.is_empty());
+    });
+}
+
+#[test]
+fn post_mark_macro_arguments_survive_commit_until_activation_retirement() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("inner").expect("macro name").symbol();
+        let mark = state.begin_attempt_operation();
+        let retained = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("new argument");
+        let mut arguments = MacroArgumentBuilder::default();
+        arguments.complete(1, retained).expect("first argument");
+        let arguments = arguments
+            .finish(state.attempt.arena_mut())
+            .expect("argument record");
+        let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
+
+        state
+            .reclaim_attempt_operation(mark)
+            .expect("post-mark command root survives");
+        assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
+
+        state
+            .retire_exhausted_input(level)
+            .expect("empty macro body retires");
+        state
+            .reclaim_unreachable_attempt_suffix()
+            .expect("retired suffix reclaims");
+        assert!(state.attempt.is_empty());
+        assert!(state.attempt_token_words(retained).is_err());
     });
 }
 

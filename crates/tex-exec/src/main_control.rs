@@ -856,9 +856,10 @@ struct DirectOperationMark<G> {
 /// coordinates through a typed retry continuation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DirectAttemptDisposition {
-    /// Every declared root has been promoted and installed in its canonical
-    /// owner, so the operation-local suffix is no longer reachable.
-    Discard,
+    /// Every declared escape root has been promoted and installed. Command
+    /// state now recomputes its remaining live coordinates and reclaims only
+    /// the unreachable suffix.
+    ReclaimUnreachable,
     /// A typed continuation still owns attempt-local coordinates. The exact
     /// opening mark moves with that continuation and is discarded only after
     /// its resumed operation commits or rolls back.
@@ -1535,7 +1536,7 @@ impl<G> MainControl<G> {
     ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
         crate::EngineCheckpoint::capture_checkpoint(
             boundary,
-            &self.command,
+            &mut self.command,
             &mut self.modes,
             stores,
             budget_counters,
@@ -1553,7 +1554,7 @@ impl<G> MainControl<G> {
     ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
         crate::EngineCheckpoint::capture_checkpoint(
             boundary,
-            &self.command,
+            &mut self.command,
             &mut self.modes,
             stores,
             budget_counters,
@@ -3341,7 +3342,7 @@ impl<G> MainControl<G> {
     }
 
     fn commit_direct_operation(&mut self, stores: &mut Universe<G>, mark: DirectOperationMark<G>) {
-        self.finish_direct_operation(stores, mark, DirectAttemptDisposition::Discard);
+        self.finish_direct_operation(stores, mark, DirectAttemptDisposition::ReclaimUnreachable);
     }
 
     fn retain_direct_operation_for_retry(
@@ -3361,8 +3362,10 @@ impl<G> MainControl<G> {
         self.modes
             .commit_journal(mark.mode)
             .expect("direct operation owns the top mode journal frame");
-        if attempt == DirectAttemptDisposition::Discard {
-            self.command.discard_attempt_operation(mark.attempt);
+        if attempt == DirectAttemptDisposition::ReclaimUnreachable {
+            self.command
+                .reclaim_attempt_operation(mark.attempt)
+                .expect("direct operation owns valid command-attempt coordinates");
         }
     }
 
@@ -3373,7 +3376,9 @@ impl<G> MainControl<G> {
         self.modes
             .rollback_journal(mark.mode)
             .expect("direct operation owns the top mode journal frame");
-        self.command.discard_attempt_operation(mark.attempt);
+        self.command
+            .reclaim_attempt_operation(mark.attempt)
+            .expect("rollback roots own valid command-attempt coordinates");
         stores
             .truncate_page_nodes(mark.page)
             .expect("direct operation page cursor belongs to the live page arena");

@@ -704,6 +704,63 @@ impl<G> CommandState<G> {
             .expect("command operation mark belongs to the installed attempt");
     }
 
+    fn live_attempt_cursor(
+        &self,
+    ) -> Result<crate::attempt::AttemptLiveCursor, crate::AttemptError> {
+        let arena = self.attempt.arena();
+        let mut cursor = arena.empty_live_cursor();
+
+        for level in &self.input.levels {
+            let crate::input::InputLevel::Tokens(tokens) = level else {
+                continue;
+            };
+            if let crate::input::TokenPayload::Argument { list, .. } = &tokens.payload {
+                arena.retain_token_list(&mut cursor, *list)?;
+            }
+        }
+        for activation in &self.parameters.activations {
+            if let Some(arguments) = activation.arguments.record() {
+                arena.retain_argument_record(&mut cursor, arguments)?;
+            }
+        }
+        if let Some(preamble) = &self.alignment.completed_preamble {
+            for column in &preamble.columns {
+                if let Some(u_template) = column.u_template {
+                    arena.retain_token_list(&mut cursor, u_template)?;
+                }
+                arena.retain_token_list(&mut cursor, column.v_template)?;
+            }
+        }
+        for builder in &self.transient.builders {
+            arena.retain_token_buffer(&mut cursor, builder.tokens)?;
+        }
+        for pending in &self.pending_scan_toks {
+            pending.retain_attempt_coordinates(arena, &mut cursor)?;
+        }
+        Ok(cursor)
+    }
+
+    /// Reclaims only the attempt suffix unreachable from current command
+    /// roots after validating the executor's opening operation mark.
+    ///
+    /// Scanned operands outside command state must already have been promoted
+    /// and installed or consumed. A resource continuation therefore retains
+    /// its complete attempt and does not call this boundary until resumption.
+    pub fn reclaim_attempt_operation(
+        &mut self,
+        mark: crate::CommandAttemptMark,
+    ) -> Result<(), crate::AttemptError> {
+        self.attempt.arena().validate_mark(mark.attempt_mark())?;
+        self.reclaim_unreachable_attempt_suffix()
+    }
+
+    /// Recomputes exact live per-table watermarks and truncates only the
+    /// unreachable append-only suffix.
+    pub fn reclaim_unreachable_attempt_suffix(&mut self) -> Result<(), crate::AttemptError> {
+        let cursor = self.live_attempt_cursor()?;
+        self.attempt.arena_mut().truncate_to_live(cursor)
+    }
+
     /// Moves the complete operation arena into a resource continuation.
     pub fn suspend_attempt<R>(
         &mut self,

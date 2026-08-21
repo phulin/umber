@@ -66,12 +66,15 @@ impl<G> EngineCheckpoint<G> {
     /// macro matcher, alignment delivery, or attempt arena remains live.
     pub fn capture_checkpoint(
         boundary: EngineBoundary,
-        command: &CommandState<G>,
+        command: &mut CommandState<G>,
         nest: &mut ModeNest,
         universe: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
         _exact_state_identity: bool,
     ) -> Result<Self, CommandSummaryError> {
+        command
+            .reclaim_unreachable_attempt_suffix()
+            .map_err(|_| CommandSummaryError::AttemptSuspended)?;
         let command = command.publish_summary(universe)?;
         let root_anchor = command
             .root_source_anchor()

@@ -173,6 +173,24 @@ impl<G> PendingScanToks<G> {
             _ => None,
         }
     }
+
+    pub(crate) fn retain_attempt_coordinates(
+        &self,
+        arena: &crate::attempt::AttemptArena<G>,
+        cursor: &mut crate::attempt::AttemptLiveCursor,
+    ) -> Result<(), AttemptError> {
+        arena.retain_mark(cursor, self.mark)?;
+        let PendingScanToksPhase::Replacement {
+            parameter_text,
+            progress,
+            ..
+        } = &self.phase
+        else {
+            return Ok(());
+        };
+        arena.retain_token_list(cursor, *parameter_text)?;
+        arena.retain_token_buffer(cursor, progress.output)
+    }
 }
 
 // Every pending field is a scalar, a typed attempt coordinate, or an
