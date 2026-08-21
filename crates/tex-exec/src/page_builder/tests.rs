@@ -357,12 +357,28 @@ fn output_page_reset_retains_totals_until_the_next_page_starts() {
 
         assert_eq!(stores.page_contents(), PageContents::Empty);
         assert_eq!(stores.current_page_len(), 0);
-        assert_eq!(stores.page_dimension(PageDimension::Total), s(52));
-        assert_eq!(stores.page_dimension(PageDimension::Shrink), s(51));
+        assert_eq!(stores.page_dimension(PageDimension::Total), s(0));
+        assert_eq!(stores.page_dimension(PageDimension::Shrink), s(0));
+        assert_eq!(
+            stores.page_dimension_with_output_routine(PageDimension::Total, true),
+            s(52)
+        );
+        assert_eq!(
+            stores.page_dimension_with_output_routine(PageDimension::Shrink, true),
+            s(51)
+        );
 
         freeze_page_specs(&mut stores, PageContents::BoxThere);
         assert_eq!(stores.page_dimension(PageDimension::Total), s(0));
         assert_eq!(stores.page_dimension(PageDimension::Shrink), s(0));
+        assert_eq!(
+            stores.page_dimension_with_output_routine(PageDimension::Total, true),
+            s(0)
+        );
+        assert_eq!(
+            stores.page_dimension_with_output_routine(PageDimension::Shrink, true),
+            s(0)
+        );
     });
 }
 
@@ -425,8 +441,20 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
         stores.assign_page_box_global(register, list).expect("box");
     }
 
+    fn enable_restoration_trace<G>(stores: &mut CommandContext<'_, G>) {
+        for (parameter, value) in [
+            (IntParam::TRACING_RESTORES, 1),
+            (IntParam::NEWLINE_CHAR, 0),
+            (IntParam::ESCAPE_CHAR, i32::from(b'\\')),
+        ] {
+            stores
+                .assign_int_param(parameter, value, tex_state::AssignmentScope::Global)
+                .expect("parameter");
+        }
+    }
+
     fn log_text<G>(stores: &tex_state::Universe<G>) -> String {
-        stores
+        let physical = stores
             .world()
             .effect_records()
             .iter()
@@ -437,19 +465,15 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
                 } => Some(text.as_str()),
                 _ => None,
             })
-            .collect()
+            .collect::<String>();
+        tex_state::print::without_line_breaks(&physical)
     }
 
     let register = 5;
     let recovered_effects = crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
-        stores
-            .assign_int_param(
-                IntParam::TRACING_RESTORES,
-                1,
-                tex_state::AssignmentScope::Global,
-            )
-            .expect("parameter");
+        let mut diagnostic_effects = DiagnosticEffects::new();
+        enable_restoration_trace(&mut stores);
         install_box(&mut stores, register, false);
         stores
             .begin_group(tex_state::GroupKind::Simple, 0)
@@ -465,11 +489,19 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
             s(0)
         );
         install_box(&mut stores, register, true);
-        stores
+        let receipt = stores
             .end_group(tex_state::GroupKind::Simple)
             .expect("group");
+        crate::assignments::tracing::trace_group_restorations(
+            &mut stores,
+            &mut diagnostic_effects,
+            &receipt,
+        );
         assert!(stores.copy_box_to_page(register).is_some());
         drop(stores);
+        universe
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         log_text(universe)
     });
     assert!(
@@ -481,13 +513,8 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
     // save and report the retained global value under TeX82 §§275/283.
     let assigned_effects = crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
-        stores
-            .assign_int_param(
-                IntParam::TRACING_RESTORES,
-                1,
-                tex_state::AssignmentScope::Global,
-            )
-            .expect("parameter");
+        let mut diagnostic_effects = DiagnosticEffects::new();
+        enable_restoration_trace(&mut stores);
         install_box(&mut stores, register, false);
         stores
             .begin_group(tex_state::GroupKind::Simple, 0)
@@ -496,10 +523,18 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
             .assign_page_box(register, None, tex_state::AssignmentScope::Local)
             .expect("box");
         install_box(&mut stores, register, true);
-        stores
+        let receipt = stores
             .end_group(tex_state::GroupKind::Simple)
             .expect("group");
+        crate::assignments::tracing::trace_group_restorations(
+            &mut stores,
+            &mut diagnostic_effects,
+            &receipt,
+        );
         drop(stores);
+        universe
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         log_text(universe)
     });
     assert!(
@@ -785,10 +820,24 @@ fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
         );
         assert_eq!(stores.page_dimension(PageDimension::Shrink), s(12));
         drop(stores);
-        let output = effects(universe);
+        let output = universe
+            .world()
+            .effect_records()
+            .iter()
+            .filter_map(|effect| match effect {
+                tex_state::EffectRecord::StreamWrite {
+                    sink: tex_state::PrintSink::Log | tex_state::PrintSink::TerminalAndLog,
+                    text,
+                } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        let output = tex_state::print::without_line_breaks(&output);
         assert!(output.contains("Infinite glue shrinkage found on current page"));
-        assert!(output.contains("l.27 published "), "{output}");
-        assert!(output.contains("continuation"), "{output}");
+        assert!(
+            output.contains("l.27 published page continuation"),
+            "{output}"
+        );
     });
 }
 
@@ -805,12 +854,19 @@ fn page_break_badness_cost_and_equal_champion_boundaries_match_tex82() {
         );
         check_break(&mut stores, &mut DiagnosticEffects::new(), 0)
             .expect("white-box operation succeeds");
-        assert_eq!(stores.least_page_cost(), 110);
         assert_eq!(stores.least_page_cost(), 100);
         stores.push_current_page_node(Node::Penalty(1));
         check_break(&mut stores, &mut DiagnosticEffects::new(), 0)
             .expect("white-box operation succeeds");
-        assert_eq!(stores.least_page_cost(), 110);
+        assert_eq!(stores.least_page_cost(), 100);
+        stores.record_page_fire_up(stores.current_page_len());
+        assert_eq!(
+            stores
+                .page_fire_up()
+                .expect("the equal-cost breakpoint becomes champion")
+                .best_break(),
+            PageBreak::new(1)
+        );
         stores.set_page_dimension(PageDimension::FilStretch, s(1));
         assert_eq!(
             page_badness(&stores).expect("white-box operation succeeds"),

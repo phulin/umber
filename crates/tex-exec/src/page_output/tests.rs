@@ -71,9 +71,10 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
             .assign_page_box(class, Some(register), tex_state::AssignmentScope::Local)
             .expect("box assignment");
 
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let distributed = distribute_insertions(
             &mut stores,
-            &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            &mut diagnostic_effects,
             &diagnostic_context,
             page_nodes,
         )
@@ -104,6 +105,9 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
             [rule(11), rule(13)]
         );
         drop(stores);
+        universe
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         let effects = format!("{:?}", universe.world().effect_records());
         assert!(effects.contains("Insertions can only be added to a vbox"));
         assert!(effects.contains("The following box has been deleted:"));
