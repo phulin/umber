@@ -12,7 +12,7 @@ fn with_control<R>(
         &mut tex_state::Universe<tex_state::GenerationBrand<'id>>,
     ) -> R,
 ) -> R {
-    crate::test_harness::with_plain_universe(|stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         control
             .register_root_source(SourceRegistration::new(

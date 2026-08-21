@@ -9,7 +9,7 @@ fn sp(raw: i32) -> Scaled {
 
 #[test]
 fn tex82_prune_page_top_prefix_and_split_skip_matrix() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let top = GlueSpec {
             width: sp(10),
@@ -66,7 +66,7 @@ fn tex82_prune_page_top_prefix_and_split_skip_matrix() {
 fn pdftex_prune_page_top_discards_snapy_but_preserves_other_whatsits() {
     // pdftex.web §§1378-1379 adds `pdf_snapy_node` to `prune_page_top`'s
     // discardable prefix without making other whatsit subtypes discardable.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let top = GlueSpec::ZERO;
         let snap_glue = GlueSpec {

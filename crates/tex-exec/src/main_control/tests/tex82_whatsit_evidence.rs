@@ -23,7 +23,7 @@ fn with_observed_run<R>(
         Vec<CommandObservation>,
     ) -> R,
 ) -> R {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut control = MainControl::tex82_initex(universe);
         let mut observations = ObservationRecorder::default();
         register_source(&mut control, source);
@@ -101,7 +101,7 @@ fn output_stream_lifecycle_projects_all_numbered_and_fallback_states() {
     // TeX82 §§1342--1343, 1378: 0..15 are paired file/open entries, while
     // normalized 16 and 17 are permanently closed print fallbacks. Cleanup
     // closes the sparse live set in slot order and repeated closes are inert.
-    crate::test_harness::with_universe(|initial| {
+    crate::test_harness::with_nonstop_universe(|initial| {
         for raw in 0..tex_state::world::STREAM_SLOT_COUNT as u8 {
             assert!(
                 initial
@@ -274,7 +274,7 @@ fn extension_dispatch_executes_every_selector_in_every_tex82_mode() {
     ];
 
     for (mode, source, setlanguage_is_legal) in cases {
-        crate::test_harness::with_plain_universe(|universe| {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut control = MainControl::tex82_initex(universe);
             let mut recorder = ObservationRecorder::default();
             register_source(&mut control, source.as_bytes());
@@ -406,7 +406,7 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
     // writes retain unexpanded tokens, specials retain scan-time expansion,
     // copies share immutable payload ownership, and base whatsits are null
     // dimensional material in both packing directions.
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut control = MainControl::tex82_initex(universe);
         register_source(
         &mut control,
@@ -490,7 +490,7 @@ fn base_whatsit_construction_projects_fields_display_size_and_ownership() {
         }
     });
 
-    crate::test_harness::with_plain_universe(|malformed| {
+    crate::test_harness::with_nonstop_plain_universe(|malformed| {
         let mut malformed_control = MainControl::tex82_initex(malformed);
         register_source(
             &mut malformed_control,
@@ -517,7 +517,7 @@ fn base_whatsits_are_passive_for_page_and_vertical_break_visits() {
     // TeX82 §§1364--1365: all base subtypes pass through page construction
     // without freezing an empty page or performing effects, and vert_break
     // neither measures them nor chooses them as breakpoints.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         crate::test_harness::with_admitted(universe, |context| {
             let whatsits = base_whatsits(context);
             for node in &whatsits {
@@ -566,7 +566,7 @@ fn hlist_and_vlist_visit_each_base_whatsit_once_in_position() {
     for vertical in [false, true] {
         use crate::shipout::direct::{BaseWhatsitVisit, BaseWhatsitVisitKind};
 
-        crate::test_harness::with_plain_universe(|trace_universe| {
+        crate::test_harness::with_nonstop_plain_universe(|trace_universe| {
             let trace_root = crate::test_harness::with_admitted(trace_universe, |context| {
                 let trace_nodes = base_whatsits(context);
                 state_box(context, &trace_nodes, vertical)
@@ -640,7 +640,7 @@ fn hlist_and_vlist_visit_each_base_whatsit_once_in_position() {
             );
         });
 
-        crate::test_harness::with_plain_universe(|universe| {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
             crate::test_harness::with_admitted(universe, |context| {
                 let nodes = base_whatsits(context);
                 let root = state_box(context, &nodes, vertical);

@@ -19,7 +19,7 @@ fn writes<G>(universe: &tex_state::Universe<G>) -> Vec<(PrintSink, String)> {
 
 #[test]
 fn extended_missing_character_forces_online_routing_inside_admission() {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let before = universe.world().effect_records().len();
         let mut command = universe
             .command_context()
@@ -59,7 +59,7 @@ fn extended_missing_character_forces_online_routing_inside_admission() {
 
 #[test]
 fn infinite_shrink_report_uses_only_detached_output_context() {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let context =
             ExecutionDiagnosticContext::new(41, 37, true, "\nl.41 detached diagnostic context\n");
         let mut command = universe
@@ -80,7 +80,7 @@ fn infinite_shrink_report_uses_only_detached_output_context() {
 
 #[test]
 fn ignored_split_error_preserves_forced_online_text() {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let context = ExecutionDiagnosticContext::source_free("unused");
         let before = universe.world().effect_records().len();
         let mut command = universe

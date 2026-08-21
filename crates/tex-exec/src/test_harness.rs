@@ -20,14 +20,23 @@ fn budget() -> InternerBudget {
 }
 
 /// Runs one test inside the fresh generation brand that owns every live id.
+///
+/// TeX82 §74 initializes interaction to `error_stop_mode`; this neutral
+/// fixture preserves that production default.
 pub(crate) fn with_universe<R>(
     test: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
 ) -> R {
-    tex_state::with_universe(budget(), |universe| {
+    tex_state::with_universe(budget(), test).expect("test universe allocation")
+}
+
+/// Runs an unattended test with interaction explicitly set to Nonstop.
+pub(crate) fn with_nonstop_universe<R>(
+    test: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
+) -> R {
+    with_universe(|universe| {
         universe.set_interaction_mode(InteractionMode::Nonstop);
         test(universe)
     })
-    .expect("test universe allocation")
 }
 
 /// Runs one test with the production TeX82 INITEX profile installed.
@@ -40,6 +49,17 @@ pub(crate) fn with_tex82_universe<R>(
     test: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
 ) -> R {
     with_universe(|universe| {
+        tex_command::install_tex82_expandable_primitives(universe);
+        crate::install_unexpandable_primitives(universe);
+        test(universe)
+    })
+}
+
+/// Installs the TeX82 profile after explicitly selecting Nonstop interaction.
+pub(crate) fn with_nonstop_tex82_universe<R>(
+    test: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
+) -> R {
+    with_nonstop_universe(|universe| {
         tex_command::install_tex82_expandable_primitives(universe);
         crate::install_unexpandable_primitives(universe);
         test(universe)
@@ -124,28 +144,42 @@ pub(crate) fn with_plain_universe<R>(
     test: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
 ) -> R {
     with_tex82_universe(|universe| {
-        with_admitted(universe, |context| {
-            for (character, catcode) in [
-                ('{', Catcode::BeginGroup),
-                ('}', Catcode::EndGroup),
-                ('$', Catcode::MathShift),
-                ('&', Catcode::AlignmentTab),
-                ('#', Catcode::Parameter),
-                ('^', Catcode::Superscript),
-                ('_', Catcode::Subscript),
-            ] {
-                context
-                    .assign_code(
-                        CodeTableKind::Catcode,
-                        character,
-                        i64::from(catcode as u8),
-                        AssignmentScope::Global,
-                    )
-                    .expect("plain category code installs");
-            }
-        });
+        install_plain_catcodes(universe);
         test(universe)
     })
+}
+
+/// Installs the Plain prelude after explicitly selecting Nonstop interaction.
+pub(crate) fn with_nonstop_plain_universe<R>(
+    test: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
+) -> R {
+    with_nonstop_tex82_universe(|universe| {
+        install_plain_catcodes(universe);
+        test(universe)
+    })
+}
+
+fn install_plain_catcodes<G>(universe: &mut Universe<G>) {
+    with_admitted(universe, |context| {
+        for (character, catcode) in [
+            ('{', Catcode::BeginGroup),
+            ('}', Catcode::EndGroup),
+            ('$', Catcode::MathShift),
+            ('&', Catcode::AlignmentTab),
+            ('#', Catcode::Parameter),
+            ('^', Catcode::Superscript),
+            ('_', Catcode::Subscript),
+        ] {
+            context
+                .assign_code(
+                    CodeTableKind::Catcode,
+                    character,
+                    i64::from(catcode as u8),
+                    AssignmentScope::Global,
+                )
+                .expect("plain category code installs");
+        }
+    });
 }
 
 #[cfg(test)]
@@ -164,6 +198,24 @@ mod tests {
     #[test]
     fn shared_vocabulary_preserves_the_generation_brand() {
         with_universe(|_| assert_typed_vocabulary::<GenerationBrand<'_>>(None, None, None, None));
+    }
+
+    #[test]
+    fn fresh_and_unattended_fixtures_choose_interaction_explicitly() {
+        // TeX82 §74 initializes a fresh runnable engine in ErrorStop mode.
+        with_universe(|universe| {
+            assert_eq!(universe.interaction_mode(), InteractionMode::ErrorStop);
+        });
+        with_plain_universe(|universe| {
+            assert_eq!(universe.interaction_mode(), InteractionMode::ErrorStop);
+        });
+
+        with_nonstop_universe(|universe| {
+            assert_eq!(universe.interaction_mode(), InteractionMode::Nonstop);
+        });
+        with_nonstop_plain_universe(|universe| {
+            assert_eq!(universe.interaction_mode(), InteractionMode::Nonstop);
+        });
     }
 
     #[test]

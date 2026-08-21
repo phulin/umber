@@ -25,7 +25,7 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
     // Merged e-TeX §§1475 and 1478--1480: a display after a nonempty
     // paragraph copies the saved last-line prototype and replaces its list.
     // Only the no-prototype control calls hpack to create a new line box.
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let diagnostic_context = crate::pack_report::ExecutionDiagnosticContext::source_free("");

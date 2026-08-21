@@ -135,14 +135,14 @@ fn assert_aborted_shipout_diagnostic_is_unpublished<G>(stores: &mut Universe<G>)
 
 #[test]
 fn aborted_shipout_transaction_publishes_no_diagnostic_program() {
-    crate::test_harness::with_plain_universe(|stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         assert_aborted_shipout_diagnostic_is_unpublished(stores);
     });
 }
 
 #[test]
 fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
-    crate::test_harness::with_tex82_universe(|untraced| {
+    crate::test_harness::with_nonstop_tex82_universe(|untraced| {
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let root = untraced.publish_page_nodes(&[empty_vbox()]);
         report_huge_page_deleted_box(untraced, &mut diagnostic_effects, root, 0);
@@ -156,7 +156,7 @@ fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
         );
     });
 
-    crate::test_harness::with_tex82_universe(|traced| {
+    crate::test_harness::with_nonstop_tex82_universe(|traced| {
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         traced
             .assign_int_param(IntParam::TRACING_OUTPUT, 1, AssignmentScope::Global)

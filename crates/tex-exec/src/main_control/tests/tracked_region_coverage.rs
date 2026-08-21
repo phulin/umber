@@ -13,7 +13,7 @@ struct ParityOutcome {
 }
 
 fn run_complete_job(tracked: bool) -> ParityOutcome {
-    crate::test_harness::with_plain_universe(|stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
@@ -59,7 +59,7 @@ struct SuspensionOutcome {
 }
 
 fn run_missing_font(tracked: bool) -> SuspensionOutcome {
-    crate::test_harness::with_plain_universe(|stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\font\missing=not-installed");
         let (step, region_was_published) = if tracked {
@@ -93,7 +93,7 @@ fn recording_enabled_and_disabled_jobs_have_identical_committed_outcomes() {
 
 #[test]
 fn fatal_attempt_publishes_the_typed_partial_commit_barrier() {
-    crate::test_harness::with_plain_universe(|stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\noindent\discretionary{}{}{}");
         assert_eq!(

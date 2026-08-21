@@ -19,7 +19,7 @@ fn channel_text<G>(universe: &Universe<G>, sink: PrintSink) -> String {
 #[test]
 fn lazy_dvi_and_log_names_follow_job_name_and_texput_default() {
     for (job_name, stem) in [("paper", "paper"), ("", "texput"), ("texput", "texput")] {
-        crate::test_harness::with_universe(|universe| {
+        crate::test_harness::with_nonstop_universe(|universe| {
             let mut output = JobOutput::default();
 
             assert!(!output.log_opened());
@@ -78,7 +78,7 @@ fn output_and_transcript_open_retry_preserve_canonical_selector_behavior() {
         assert!(log.contains("alternate-transcript.log\n"));
     });
 
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe.set_interaction_mode(InteractionMode::Batch);
         universe.world_mut().deny_memory_output("paper.log");
         let mut output = JobOutput::default();

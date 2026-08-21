@@ -10192,7 +10192,7 @@ mod discretionary_hyphen_tests {
     fn disabled_hyphen_char_leaves_pre_break_empty() {
         // TeX82 §1113 inserts the current font's hyphen character only in
         // 0..256. In particular, -1 disables the visible pre-break.
-        crate::test_harness::with_plain_universe(|stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             crate::test_harness::with_admitted(stores, |context| {
                 context.set_font_hyphen_char(context.current_font(), -1);
             });
@@ -10228,7 +10228,7 @@ mod discretionary_hyphen_tests {
     fn missing_hyphen_glyph_leaves_pre_break_empty() {
         // TeX82 §§581/1113: an in-range hyphen character is constructed via
         // `new_character`, which warns and returns null for an absent glyph.
-        crate::test_harness::with_plain_universe(|stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             let mut control = MainControl::tex82_initex(stores);
             crate::test_harness::with_admitted(stores, |context| {
                 context
@@ -10266,7 +10266,7 @@ mod discretionary_hyphen_tests {
         // TeX82 §§1369--1372: `write_out` traces the write-text token list
         // and expands its condition before testing the frozen `\endwrite`
         // stopper. Atomic shipout staging must retain that live-call order.
-        crate::test_harness::with_plain_universe(|stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             *stores.world_mut() = tex_state::World::memory();
             let mut control = MainControl::tex82_initex(stores);
             control

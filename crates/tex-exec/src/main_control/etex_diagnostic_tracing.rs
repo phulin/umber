@@ -11,7 +11,7 @@ fn with_etex_control<R>(
         &mut MainControl<tex_state::GenerationBrand<'id>>,
     ) -> R,
 ) -> R {
-    crate::test_harness::with_plain_universe(|stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let _initialized = MainControl::tex82_initex(stores);
         tex_command::install_etex_expandable_primitives(stores);
         crate::install_etex_unexpandable_primitives(stores);

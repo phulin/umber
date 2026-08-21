@@ -13,7 +13,7 @@ use crate::{
 
 #[test]
 fn retained_checkpoint_restores_command_and_mode_token_roots() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let command_root = universe
             .command_context()
             .expect("command context")
@@ -132,7 +132,7 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
 
 #[test]
 fn retained_checkpoint_rejects_a_fresh_command_timeline_before_mutation() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe
             .assign_count(0, 10, AssignmentScope::Global)
             .expect("baseline count");
@@ -177,7 +177,7 @@ fn retained_checkpoint_rejects_a_fresh_command_timeline_before_mutation() {
 
 #[test]
 fn command_validation_failure_leaves_runtime_and_mode_unchanged() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe
             .assign_count(0, 10, AssignmentScope::Global)
             .expect("baseline count");

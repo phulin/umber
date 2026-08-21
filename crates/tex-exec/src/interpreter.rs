@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn admission_survives_the_shorter_processor_episode() {
-        crate::test_harness::with_universe(|universe| {
+        crate::test_harness::with_nonstop_universe(|universe| {
             let mut interpreter = PersistentInterpreter::default();
             let context = universe.command_context().expect("command admission");
             let context = round_trip_context(&mut interpreter, context);

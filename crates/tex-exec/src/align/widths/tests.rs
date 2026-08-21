@@ -53,7 +53,7 @@ fn unset(kind: UnsetKind, natural: i32, span_count: u16) -> Node {
 #[test]
 fn pack_alignment_prototype_applies_spec_in_both_modes() {
     for kind in [AlignmentKind::HAlign, AlignmentKind::VAlign] {
-        crate::test_harness::with_plain_universe(|universe| {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let mut diagnostic_effects = DiagnosticEffects::new();
             let diagnostic_context =
@@ -132,7 +132,7 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
         (AlignmentKind::HAlign, "\\unsetbox(0.0+0.0)x4.0"),
         (AlignmentKind::VAlign, "\\unsetbox(4.0+0.0)x0.0"),
     ] {
-        crate::test_harness::with_plain_universe(|universe| {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let mut diagnostic_effects = DiagnosticEffects::new();
             let diagnostic_context =
@@ -173,7 +173,7 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
 
 #[test]
 fn fin_align_orders_groups_packing_pop_and_insertion() {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let diagnostic_context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
         let first = unset(UnsetKind::HBox, 4, 1);

@@ -68,7 +68,7 @@ fn with_run<R>(
         &mut Universe<GenerationBrand<'id>>,
     ) -> R,
 ) -> R {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut control = MainControl::tex82_initex(universe);
         control.set_fuel_limit(100_000).expect("bounded fuel");
         if with_font {
@@ -177,7 +177,7 @@ fn with_run_observed<R>(
         Observations,
     ) -> R,
 ) -> R {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut control = MainControl::tex82_initex(universe);
         control.set_fuel_limit(100_000).expect("bounded fuel");
         if with_font {
@@ -228,7 +228,7 @@ fn with_run_until_count<R>(
         &mut Universe<GenerationBrand<'id>>,
     ) -> R,
 ) -> R {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut control = MainControl::tex82_initex(universe);
         control.set_fuel_limit(100_000).expect("bounded fuel");
         let registered = control

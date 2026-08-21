@@ -70,7 +70,7 @@ fn state(columns: usize, tabskips: Vec<GlueSpec>) -> AlignState {
 
 #[test]
 fn span_width_list_orders_counts_and_keeps_maximum() {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let middle = glue(&mut stores, 1);
         let alignment = state(
@@ -116,7 +116,7 @@ fn span_width_list_orders_counts_and_keeps_maximum() {
 
 #[test]
 fn resolve_alignment_widths_applies_tex82_recurrence() {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let middle = glue(&mut stores, 1);
         let state = state(
@@ -152,7 +152,7 @@ fn resolve_alignment_widths_applies_tex82_recurrence() {
 
 #[test]
 fn resolve_alignment_widths_zeroes_null_column_tabskip() {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let middle = glue(&mut stores, 1);
         let trailing = glue(&mut stores, 2);
@@ -173,7 +173,7 @@ fn resolve_alignment_widths_zeroes_null_column_tabskip() {
 fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
     // TeX82 §§800--802 merge equal span counts by maximum width, process
     // shorter counts first, and retain negative residual requirements.
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let middle = glue(&mut stores, 2);
         let alignment = state(

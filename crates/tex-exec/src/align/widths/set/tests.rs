@@ -56,7 +56,7 @@ fn unset_cell<List>(
 
 #[test]
 fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let diagnostic_context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
         let empty = PageListId::empty();
@@ -189,7 +189,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
 
 #[test]
 fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let diagnostic_context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
         let empty = PageListId::empty();
@@ -296,7 +296,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
     // TeX82 §§803--807 traverse the alignment list in place: non-row nodes
     // retain their relative positions, running rules use prototype dimensions,
     // and each unset row becomes a set box at that same position.
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let diagnostic_context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
         let empty = PageListId::empty();

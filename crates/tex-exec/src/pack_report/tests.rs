@@ -51,7 +51,7 @@ fn sink_text<G>(stores: &tex_state::Universe<G>, terminal: bool) -> String {
 
 #[test]
 fn short_display_skips_the_physical_discretionary_replacement_count() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let empty = tex_state::node_arena::PageListId::empty();
         let replacement = stores.publish_page_nodes(vec![Node::Kern {
@@ -110,7 +110,7 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
     // display's `\discretionary{...}{...}{...}` after math conversion: the
     // immutable replacement remains available, but no replacement node is
     // linked after the disc, and the following rule must print as `|`.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let empty = tex_state::node_arena::PageListId::empty();
         let replacement = stores.publish_page_nodes(vec![Node::Kern {
@@ -162,7 +162,7 @@ fn short_display_physical_count_is_independent_of_empty_side_list() {
     // Counterexample in the other direction: physical replacement nodes are
     // skipped even when this frozen representation no longer needs to retain
     // their source side list.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let empty = tex_state::node_arena::PageListId::empty();
         let nodes = [
@@ -196,7 +196,7 @@ fn line_trace_projection_renders_detached_replacement_content() {
     // while its three replacement characters remain in the displayed
     // projection. Applying the frozen list's physical count would incorrectly
     // reduce TeX82's `B-BBB` to `B-B`.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let font = tex_state::font::NULL_FONT;
         let chars = |text: &str| {
@@ -232,7 +232,7 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
     // physically linked replacement. This is the remaining TRIP underfull
     // line shape: `BB`, then `-`/`B-`, one hidden replacement node, then
     // `BBB`, yielding exactly `BB-B-BBB`.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let font = tex_state::font::NULL_FONT;
         let chars = |text: &str| {
@@ -270,7 +270,7 @@ fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
 
 #[test]
 fn short_display_maps_all_node_classes() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let empty = tex_state::node_arena::PageListId::empty();
         let zero_glue = GlueSpec::ZERO;
@@ -337,7 +337,7 @@ fn short_display_maps_all_node_classes() {
 
 #[test]
 fn etex_direction_nodes_follow_short_display_subtypes_without_mutation() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let stores = universe.command_context().expect("test state is admitted");
         let nodes = [
             Node::Direction(tex_state::node::Direction::BeginM),
@@ -364,7 +364,7 @@ fn short_display_renderer_retains_font_across_fragments_until_reset() {
     // TeX82 §§174/851: one line-breaking pass initializes
     // `font_in_short_display` once, then successive feasible-break fragments
     // omit an unchanged font identifier. The next pass resets it.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let stores = universe.command_context().expect("test state is admitted");
         let font = tex_state::font::NULL_FONT;
         let fragment = [Node::Char {
@@ -390,7 +390,7 @@ fn short_display_renderer_retains_font_across_fragments_until_reset() {
 
 #[test]
 fn short_display_uses_print_ascii_for_eight_bit_character_codes() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let stores = universe.command_context().expect("test state is admitted");
         let font = tex_state::font::NULL_FONT;
         let nodes = [
@@ -424,7 +424,7 @@ fn short_display_honors_live_newline_character() {
     // TeX82 §§59/174: `short_display` prints a character node through the
     // one-character string path, where `\newlinechar` is recognized before
     // the `^^` spelling for an unprintable character.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         stores
             .assign_int_param(
@@ -476,7 +476,7 @@ fn short_display_renders_byte_zero_in_a_font_identifier_through_print() {
         vec![Scaled::from_raw(0); 7],
         FontMetrics::new(Vec::new(), Vec::new(), None, None, Vec::new()),
     );
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let font = stores.intern_font(loaded);
         let nodes = [Node::Char {
@@ -511,7 +511,7 @@ fn short_display_renders_byte_zero_in_a_font_identifier_through_print() {
 
 #[test]
 fn batch_mode_routes_pack_headline_and_box_dump_to_log_only() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe.set_interaction_mode(tex_state::InteractionMode::Batch);
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
@@ -546,7 +546,7 @@ fn batch_mode_routes_pack_headline_and_box_dump_to_log_only() {
 
 #[test]
 fn nonstop_mode_keeps_pack_headline_before_dump_on_both_channels() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
@@ -593,7 +593,7 @@ fn output_active_vbox_dump_supplies_the_headline_newline() {
     // `print_ln`; `show_box` supplies exactly one newline before the node.
     // Outside `\output`, §675's explicit newline remains in addition.
     for (output_active, separator) in [(true, "\n"), (false, "\n\n")] {
-        crate::test_harness::with_tex82_universe(|universe| {
+        crate::test_harness::with_nonstop_tex82_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let mut diagnostic_effects = DiagnosticEffects::new();
             let context = ExecutionDiagnosticContext::new(0, 0, output_active, "");
@@ -650,7 +650,7 @@ fn pack_diagnostic_origin_contexts() {
 
     for (pack_begin_line, output_active, origin) in origins {
         for (mode, headline_on_terminal) in modes {
-            crate::test_harness::with_tex82_universe(|universe| {
+            crate::test_harness::with_nonstop_tex82_universe(|universe| {
                 universe.set_interaction_mode(mode);
                 let mut stores = universe.command_context().expect("test state is admitted");
                 let mut diagnostic_effects = DiagnosticEffects::new();

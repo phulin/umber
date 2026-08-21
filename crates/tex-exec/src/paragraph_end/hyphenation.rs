@@ -999,7 +999,7 @@ mod tests {
 
     #[test]
     fn automatic_missing_hyphen_warns_but_disabled_hyphen_does_not() {
-        crate::test_harness::with_plain_universe(|universe| {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let font = stores.current_font();
             stores
@@ -1052,7 +1052,7 @@ mod tests {
 
     #[test]
     fn pre_hyphenation_candidate_uses_language_minima_and_canonical_delimiters() {
-        crate::test_harness::with_plain_universe(|universe| {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let font = stores.current_font();
             stores
@@ -1109,7 +1109,7 @@ mod tests {
         // TeX82 §§1362--1363: pre-hyphenation recognizes only the language
         // subtype as state; every base subtype remains in exact list order
         // with its immutable token payload and stream fields still owned.
-        crate::test_harness::with_plain_universe(|universe| {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
             let tokens =
@@ -1194,7 +1194,7 @@ mod tests {
 
     #[test]
     fn pre_hyphenation_candidate_applies_uppercase_and_same_font_eligibility() {
-        crate::test_harness::with_plain_universe(|universe| {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let font = stores.current_font();
             let other_font = second_font(&mut stores);
@@ -1237,7 +1237,7 @@ mod tests {
 
     #[test]
     fn pre_hyphenation_candidate_retains_the_63_letter_prefix_at_the_64_boundary() {
-        crate::test_harness::with_plain_universe(|universe| {
+        crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let font = stores.current_font();
             stores

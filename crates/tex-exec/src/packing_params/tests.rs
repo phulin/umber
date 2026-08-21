@@ -24,7 +24,7 @@ fn log_text<G>(stores: &tex_state::Universe<G>) -> String {
 
 #[test]
 fn ordinary_hpack_reports_once_without_decorating_its_list() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe.set_interaction_mode(tex_state::InteractionMode::Batch);
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
@@ -65,7 +65,7 @@ fn vtop_readjusts_leading_glue_height_and_depth() {
     // vpackages that list to (height=-3mm, depth=0); §1087 then gives a
     // leading-glue vtop height zero and transfers the total size to depth.
     const NEGATIVE_THREE_MM: Scaled = Scaled::from_raw(-559_403);
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
         let context = crate::pack_report::ExecutionDiagnosticContext::new(330, 0, false, "");

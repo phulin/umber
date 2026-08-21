@@ -146,7 +146,7 @@ fn pdftex_page_top_discards_snapy_but_preserves_other_whatsits() {
     // pdftex.web §§1378-1379 extends the page builder's discardable top
     // material with `pdf_snapy_node` only. `\pdfsnaprefpoint` is the subtype
     // negative control, and saving_vdiscards must retain the discarded node.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 0, 0);
         stores
@@ -188,7 +188,7 @@ fn pdftex_page_top_discards_snapy_but_preserves_other_whatsits() {
 
 #[test]
 fn page_state_freezes_specs_and_tracks_sorted_insertion_records() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 17, 0);
         freeze_page_specs(&mut stores, PageContents::InsertsOnly);
@@ -234,7 +234,7 @@ fn page_state_freezes_specs_and_tracks_sorted_insertion_records() {
 
 #[test]
 fn page_builder_output_active_boundary_preserves_pending_contributions() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         // TeX.web §§980--990: the frozen page specifications and all accumulated
         // quantities survive calls made while §989's output boundary is pending.
@@ -292,7 +292,7 @@ fn page_builder_output_active_boundary_preserves_pending_contributions() {
 
 #[test]
 fn new_current_page_resets_nodes_totals_depth_and_last_item_state() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 9, 0);
         freeze_page_specs(&mut stores, PageContents::BoxThere);
@@ -345,7 +345,7 @@ fn new_current_page_resets_nodes_totals_depth_and_last_item_state() {
 
 #[test]
 fn output_page_reset_retains_totals_until_the_next_page_starts() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 9, 0);
         freeze_page_specs(&mut stores, PageContents::BoxThere);
@@ -368,7 +368,7 @@ fn output_page_reset_retains_totals_until_the_next_page_starts() {
 
 #[test]
 fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         assert_eq!(
             insertion_box_size(
@@ -441,7 +441,7 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
     }
 
     let register = 5;
-    let recovered_effects = crate::test_harness::with_universe(|universe| {
+    let recovered_effects = crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         stores
             .assign_int_param(
@@ -479,7 +479,7 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
 
     // Negative control: the ordinary local assignment barrier must still
     // save and report the retained global value under TeX82 §§275/283.
-    let assigned_effects = crate::test_harness::with_universe(|universe| {
+    let assigned_effects = crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         stores
             .assign_int_param(
@@ -510,7 +510,7 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
 
 #[test]
 fn outer_vertical_contribution_routes_every_node_kind_canonically() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 10_000, 10, 10);
         stores
@@ -624,7 +624,7 @@ fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
     ];
 
     for node in impossible {
-        crate::test_harness::with_universe(|universe| {
+        crate::test_harness::with_nonstop_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             params(&mut stores, 1_000, 17, 0);
             stores.set_page_contents(PageContents::BoxThere);
@@ -656,7 +656,7 @@ fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
 
 #[test]
 fn page_topskip_totals_depth_and_terminal_kern_boundaries_match_tex82() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 10_000, 3, 10);
         stores.append_page_contribution(rule(5, 4));
@@ -684,7 +684,7 @@ fn page_contribution_last_items_and_max_depth_matrix() {
     // TeX.web §§994--1004: each contribution refreshes the last-item
     // enquiries, while §1004 corrects the preceding depth immediately before
     // the next node is linked to the current page.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 10_000, 3, 0);
 
@@ -741,7 +741,7 @@ fn page_contribution_last_items_and_max_depth_matrix() {
 
 #[test]
 fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 10_000, 10, 0);
         stores.append_page_contribution(rule(1, 0));
@@ -794,7 +794,7 @@ fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
 
 #[test]
 fn page_break_badness_cost_and_equal_champion_boundaries_match_tex82() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         stores.set_page_contents(PageContents::BoxThere);
         stores.set_page_dimension(PageDimension::Goal, s(100));
@@ -828,7 +828,7 @@ fn page_break_badness_cost_and_equal_champion_boundaries_match_tex82() {
 
 #[test]
 fn page_break_eject_and_awful_cost_paths_fire_the_selected_champion() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut forced = universe.command_context().expect("test state is admitted");
         forced.set_page_contents(PageContents::BoxThere);
         forced.set_page_dimension(PageDimension::Goal, s(10));
@@ -844,7 +844,7 @@ fn page_break_eject_and_awful_cost_paths_fire_the_selected_champion() {
             PageBreak::new(0)
         );
     });
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut awful = universe.command_context().expect("test state is admitted");
         awful.set_page_contents(PageContents::BoxThere);
         awful.set_page_dimension(PageDimension::Goal, s(10));
@@ -861,7 +861,7 @@ fn page_break_eject_and_awful_cost_paths_fire_the_selected_champion() {
         );
     });
 
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut insertion_overflow = universe.command_context().expect("test state is admitted");
         insertion_overflow.set_page_contents(PageContents::BoxThere);
         insertion_overflow.set_page_dimension(PageDimension::Goal, s(10));
@@ -873,7 +873,7 @@ fn page_break_eject_and_awful_cost_paths_fire_the_selected_champion() {
         assert!(insertion_overflow.page_fire_up().is_some());
     });
 
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut prohibited = universe.command_context().expect("test state is admitted");
         prohibited.set_page_contents(PageContents::BoxThere);
         prohibited.set_page_dimension(PageDimension::Goal, s(10));
@@ -886,7 +886,7 @@ fn page_break_eject_and_awful_cost_paths_fire_the_selected_champion() {
 
 #[test]
 fn page_insertion_class_order_scaling_skip_and_fit_match_tex82() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 100_000, 0, 0);
         freeze_page_specs(&mut stores, PageContents::InsertsOnly);
@@ -924,7 +924,7 @@ fn page_insertion_class_order_scaling_skip_and_fit_match_tex82() {
 
 #[test]
 fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 1_000, 0, 0);
         freeze_page_specs(&mut stores, PageContents::InsertsOnly);
@@ -975,7 +975,7 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
 
 #[test]
 fn page_insertion_split_tracing_reports_class_height_and_penalty() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
         params(&mut stores, 5, 0, 0);
@@ -1014,7 +1014,7 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
     // TeX.web §§1008--1011: a class's correction glue is charged once, every
     // repeated insertion is count-scaled, equality fits both the page and the
     // class capacity, and a null split contributes the eject penalty.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut repeated = universe.command_context().expect("test state is admitted");
         params(&mut repeated, 100_000, 0, 0);
         freeze_page_specs(&mut repeated, PageContents::InsertsOnly);
@@ -1042,7 +1042,7 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
         assert_eq!(repeated.page_dimension(PageDimension::Stretch), s(3_000));
     });
 
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut exact = universe.command_context().expect("test state is admitted");
         params(&mut exact, 10, 0, 0);
         freeze_page_specs(&mut exact, PageContents::InsertsOnly);
@@ -1066,7 +1066,7 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
         );
     });
 
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut null_split = universe.command_context().expect("test state is admitted");
         params(&mut null_split, 0, 0, 0);
         freeze_page_specs(&mut null_split, PageContents::InsertsOnly);

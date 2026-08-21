@@ -28,7 +28,7 @@ fn glue(width: i32) -> GlueSpec {
 
 #[test]
 fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
         let displaced_register = stores
@@ -88,7 +88,7 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
 
 #[test]
 fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
         let displaced = stores
@@ -123,7 +123,7 @@ fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
 
 #[test]
 fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
         stores
@@ -185,7 +185,7 @@ fn global_glue_writes_keep_displaced_values_live_through_assignment_trace() {
 
 #[test]
 fn local_glue_write_undo_is_the_assignment_trace_liveness_negative_control() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
         stores

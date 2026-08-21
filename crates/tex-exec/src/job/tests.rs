@@ -30,7 +30,7 @@ fn unclosed_group_report_uses_live_escapechar_and_interaction_selector() {
             (i32::from(b'@'), "(@end occurred inside a group at level 1)"),
             (256, "(end occurred inside a group at level 1)"),
         ] {
-            crate::test_harness::with_universe(|universe| {
+            crate::test_harness::with_nonstop_universe(|universe| {
                 universe.set_interaction_mode(interaction);
                 crate::test_harness::assign_int_param(
                     universe,
@@ -113,7 +113,7 @@ fn format_dump_publication_confirmation_obeys_selector_and_is_one_shot() {
         (InteractionMode::Batch, false),
     ];
     for (interaction, terminal) in cases {
-        crate::test_harness::with_universe(|universe| {
+        crate::test_harness::with_nonstop_universe(|universe| {
             universe.set_interaction_mode(interaction);
             let mut receipt = FormatDumpReceipt::new("plain".into(), 2026, 7, 30);
             confirm_format_dump_publication(universe, &mut receipt, "published-name.fmt");
@@ -139,7 +139,7 @@ fn with_source_to_end<R>(
         &mut Universe<tex_state::GenerationBrand<'id>>,
     ) -> R,
 ) -> R {
-    crate::test_harness::with_plain_universe(|universe| {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut control = MainControl::tex82_initex(universe);
         let registered = control
             .command_mut()
@@ -242,7 +242,7 @@ fn begin_job_prints_entering_extended_mode_on_both_channels_before_the_star_star
 
 #[test]
 fn begin_job_called_twice_prints_the_banner_only_once() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut job = JobFraming::default();
         let mut capabilities = CommandHostCapabilities::default();
 
@@ -284,7 +284,7 @@ const HISTORY_NOTE: &str = "(see the transcript file for additional information)
 
 #[test]
 fn history_note_is_silent_when_history_is_spotless() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         print_history_note(universe);
         assert!(terminal_text(universe).is_empty());
     });
@@ -292,7 +292,7 @@ fn history_note_is_silent_when_history_is_spotless() {
 
 #[test]
 fn history_note_prints_terminal_only_below_errorstop_mode() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe.set_interaction_mode(InteractionMode::Nonstop);
         universe
             .world_mut()
@@ -308,7 +308,7 @@ fn history_note_prints_terminal_only_below_errorstop_mode() {
 
 #[test]
 fn history_note_is_silent_in_errorstop_mode_unless_history_is_only_a_warning() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe.set_interaction_mode(InteractionMode::ErrorStop);
         universe
             .world_mut()
@@ -318,7 +318,7 @@ fn history_note_is_silent_in_errorstop_mode_unless_history_is_only_a_warning() {
         assert!(terminal_text(universe).is_empty());
     });
 
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe.set_interaction_mode(InteractionMode::ErrorStop);
         universe
             .world_mut()
@@ -333,7 +333,7 @@ fn history_note_is_silent_in_errorstop_mode_unless_history_is_only_a_warning() {
 fn history_note_is_silent_in_batch_mode_even_when_history_is_raised() {
     // Batch's selector is `log_only`, never `term_and_log`, so tex.web's
     // `selector=term_and_log` guard fails regardless of `history`.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe.set_interaction_mode(InteractionMode::Batch);
         universe
             .world_mut()
@@ -349,7 +349,7 @@ fn history_note_is_silent_in_batch_mode_even_when_history_is_raised() {
 
 #[test]
 fn finish_job_reports_no_pages_of_output_for_a_zero_page_job() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         finish_test_job(
             universe,
             CommandProfile::TEX82,
@@ -370,7 +370,7 @@ fn finish_job_reports_no_pages_of_output_for_a_zero_page_job() {
 
 #[test]
 fn finish_job_suppresses_usage_report_when_tracingstats_is_zero() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         assign_global_int(universe, IntParam::TRACING_STATS, 0);
         finish_test_job(
             universe,
@@ -391,7 +391,7 @@ fn finish_job_prints_tex82_usage_report_only_to_log_before_dvi_tail() {
         (InteractionMode::ErrorStop, true),
         (InteractionMode::Batch, false),
     ] {
-        crate::test_harness::with_universe(|universe| {
+        crate::test_harness::with_nonstop_universe(|universe| {
             universe.set_interaction_mode(interaction);
             assign_global_int(universe, IntParam::TRACING_STATS, 1);
             finish_test_job(
@@ -440,7 +440,7 @@ fn usage_report_hash_capacity_belongs_to_the_executing_binary() {
             "15000+600000",
         ),
     ] {
-        crate::test_harness::with_universe(|universe| {
+        crate::test_harness::with_nonstop_universe(|universe| {
             assign_global_int(universe, IntParam::TRACING_STATS, 1);
             finish_test_job(universe, profile, binary, "stats", None, None);
 
@@ -459,7 +459,7 @@ fn usage_report_hash_capacity_belongs_to_the_executing_binary() {
 fn usage_report_separates_a_partial_final_cleanup_line_before_breaking() {
     // TeX82 §1333's log-only usage report preserves the separator at the
     // final-cleanup column before its first `wlog_cr`-style line break.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         assign_global_int(universe, IntParam::TRACING_STATS, 1);
         crate::test_harness::with_admitted(universe, |context| {
             let mut printer = context.printer();
@@ -488,7 +488,7 @@ fn usage_report_closes_log_before_shared_dvi_line_break() {
     // TeX82 §1334 closes its last `wlog_ln` row independently. When the
     // terminal remains mid-line, §642's `print_nl` then breaks both sinks:
     // one terminal newline, but a second newline in the already-closed log.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         assign_global_int(universe, IntParam::TRACING_STATS, 1);
         crate::test_harness::with_admitted(universe, |context| {
             let mut printer = context.printer();
@@ -641,7 +641,7 @@ fn finish_job_refuses_to_fabricate_a_byte_count_for_a_shipped_page() {
 
 #[test]
 fn finish_job_transcript_note_is_terminal_only_and_silent_in_batch_mode() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe.set_interaction_mode(InteractionMode::Batch);
 
         finish_test_job(
@@ -660,7 +660,7 @@ fn finish_job_transcript_note_is_terminal_only_and_silent_in_batch_mode() {
 
 #[test]
 fn pdf_finalization_report_is_profile_aware_exact_and_one_shot() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut report = PdfJobFinalizationReport::new(17, 6, 2, 3, 41);
         finish_test_job(
             universe,
@@ -690,7 +690,7 @@ fn pdf_finalization_report_is_profile_aware_exact_and_one_shot() {
 
 #[test]
 fn pdf_fatal_error_has_pdftex_channel_asymmetry() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe.set_interaction_mode(InteractionMode::Nonstop);
         report_pdf_fatal_error(
             universe,
@@ -715,7 +715,7 @@ fn pdf_fatal_error_has_pdftex_channel_asymmetry() {
 #[test]
 fn tex_and_etex_profiles_never_render_a_pdf_finalization_report() {
     for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
-        crate::test_harness::with_universe(|universe| {
+        crate::test_harness::with_nonstop_universe(|universe| {
             let mut report = PdfJobFinalizationReport::new(1, 0, 0, 0, 1);
             finish_test_job(
                 universe,
@@ -734,7 +734,7 @@ fn tex_and_etex_profiles_never_render_a_pdf_finalization_report() {
 fn pdf_navigation_finalization_reports_only_unresolved_objects_in_source_order() {
     use tex_state::PdfDestinationIdentity::{Name, Number};
 
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let missing = [
             PdfNavigationWarning::Destination(Name(b"missing-regular".to_vec())),
             PdfNavigationWarning::StructureDestination(Name(b"missing-structure".to_vec())),
@@ -813,7 +813,7 @@ fn begin_job_frames_a_preloaded_format_with_a_dated_log_and_an_undated_terminal(
 
 #[test]
 fn startup_selector_is_echoed_without_becoming_the_job_name() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut job = JobFraming::default();
         let mut capabilities = CommandHostCapabilities::default();
 
@@ -843,7 +843,7 @@ fn startup_selector_is_echoed_without_becoming_the_job_name() {
 
 #[test]
 fn loaded_tex82_banner_is_selected_by_runtime_profile_without_etex_or_pdftex_text() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut job = JobFraming::default();
         let mut capabilities = CommandHostCapabilities::default();
         let format = PreloadedFormat {

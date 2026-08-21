@@ -69,7 +69,7 @@ fn mode_summary_restores_an_independent_semantic_builder() {
 
 #[test]
 fn episode_boundary_freezes_builder_sidecars_and_mutation_invalidates_them() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut nest = ModeNest::new();
         nest.current_list_mutation().push(kern(11));
         assert!(nest.levels[0].list.sequence.frozen_sidecars().is_none());
@@ -160,7 +160,7 @@ fn mode_projection_is_canonical_and_content_sensitive() {
     changed.push(Mode::Horizontal).expect("test mode push");
     changed.current_list_mutation().push(kern(12));
 
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let first_hash = first.summary().semantic_fingerprint(universe);
         assert_eq!(equal.summary().semantic_fingerprint(universe), first_hash);
         assert_ne!(changed.summary().semantic_fingerprint(universe), first_hash);

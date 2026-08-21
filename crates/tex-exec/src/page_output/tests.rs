@@ -32,7 +32,7 @@ fn insertion<G>(stores: &mut CommandContext<'_, G>, class: u16, height: i32) -> 
 
 #[test]
 fn fire_up_recovers_hbox_insertion_register_before_distribution() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         let mut stores = universe.command_context().expect("test state is admitted");
         let diagnostic_context = ExecutionDiagnosticContext::source_free("fire-up context");
@@ -113,7 +113,7 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
 
 #[test]
 fn input_free_box255_recovery_uses_explicit_context() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let deleted = stores.publish_page_nodes(vec![rule(7)]);
@@ -147,7 +147,7 @@ fn input_free_box255_recovery_uses_explicit_context() {
 
 #[test]
 fn fire_up_preserves_void_and_vbox_insertion_queues() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         assert_eq!(
             insertion_box_nodes(
@@ -204,7 +204,7 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
 
 #[test]
 fn earlier_break_preserves_unrelated_pending_penalty() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         stores.append_page_contribution(Node::Penalty(EJECT_PENALTY));
         let glue = GlueSpec {
@@ -236,7 +236,7 @@ fn earlier_break_preserves_unrelated_pending_penalty() {
 
 #[test]
 fn chosen_pending_penalty_is_rewritten() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         stores.append_page_contribution(Node::Penalty(EJECT_PENALTY));
         let mut after_break = Vec::new();
@@ -252,7 +252,7 @@ fn chosen_pending_penalty_is_rewritten() {
 
 #[test]
 fn end_cleanup_uses_tex_its_all_over_penalty() {
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
 
         append_end_job_contributions(&mut stores);
@@ -269,7 +269,7 @@ fn job_is_all_over_only_when_page_and_contributions_are_empty() {
     // TeX82 §1054: `(page_head=page_tail) and (head=tail) and
     // (dead_cycles=0)`. A residual contribution alone keeps `\end` from
     // ending the job, which is what makes the end-job trio reachable.
-    crate::test_harness::with_universe(|universe| {
+    crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         assert!(job_is_all_over(&stores));
 
