@@ -134,8 +134,8 @@ pub use resource::{
 };
 
 pub use command_context::{
-    BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, PenaltyArrayKind,
-    PrepareMagDiagnostic,
+    BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, ParagraphShapeLine,
+    PenaltyArrayKind, PrepareMagDiagnostic,
 };
 pub use definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
 pub use dependency::{

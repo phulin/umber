@@ -4,6 +4,8 @@ use crate::interner::InternerBudget;
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
 use crate::node::Node;
 use crate::node_arena::NodeArenaError;
+use crate::{GroupKind, ParagraphShapeLine, PenaltyArrayKind};
+use tex_arith::Scaled;
 
 fn budget() -> InternerBudget {
     InternerBudget::new(32, 32, 1024).expect("budget")
@@ -149,6 +151,80 @@ fn malformed_aggregate_restore_does_not_touch_dense_state() {
             41,
             "page-cursor rejection must precede dense-state mutation"
         );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn admitted_paragraph_shape_is_detached_and_group_restorable() {
+    with_universe(budget(), |universe| {
+        let mut context = universe.command_context().expect("context");
+        let baseline = [ParagraphShapeLine {
+            indent: Scaled::from_raw(10),
+            width: Scaled::from_raw(100),
+        }];
+        context
+            .assign_paragraph_shape(&baseline, AssignmentScope::Global)
+            .expect("baseline shape");
+        context.begin_group(GroupKind::Simple, 1).expect("group");
+        let local = [
+            ParagraphShapeLine {
+                indent: Scaled::from_raw(20),
+                width: Scaled::from_raw(200),
+            },
+            ParagraphShapeLine {
+                indent: Scaled::from_raw(30),
+                width: Scaled::from_raw(300),
+            },
+        ];
+        context
+            .assign_paragraph_shape(&local, AssignmentScope::Local)
+            .expect("local shape");
+
+        assert_eq!(context.paragraph_shape(), local);
+        assert_eq!(context.paragraph_shape_len(), 2);
+        assert_eq!(
+            context.paragraph_shape_dimension(3, false),
+            Scaled::from_raw(30),
+            "lines after the explicit shape repeat its final entry"
+        );
+        assert_eq!(
+            context.paragraph_shape_dimension(3, true),
+            Scaled::from_raw(300)
+        );
+        assert_eq!(
+            context.paragraph_shape_dimension(0, true),
+            Scaled::from_raw(0)
+        );
+
+        context.end_group(GroupKind::Simple).expect("end group");
+        assert_eq!(context.paragraph_shape(), baseline);
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn admitted_penalty_arrays_preserve_etex_projection_and_scope() {
+    with_universe(budget(), |universe| {
+        let mut context = universe.command_context().expect("context");
+        context.begin_group(GroupKind::Simple, 1).expect("group");
+        context
+            .assign_penalty_array(
+                PenaltyArrayKind::Club,
+                &[10, 20, 30],
+                AssignmentScope::Local,
+            )
+            .expect("local penalty array");
+
+        assert_eq!(context.penalty_array(PenaltyArrayKind::Club), [10, 20, 30]);
+        assert_eq!(context.penalty_array_value(PenaltyArrayKind::Club, -1), 0);
+        assert_eq!(context.penalty_array_value(PenaltyArrayKind::Club, 0), 3);
+        assert_eq!(context.penalty_array_value(PenaltyArrayKind::Club, 2), 20);
+        assert_eq!(context.penalty_array_value(PenaltyArrayKind::Club, 8), 30);
+
+        context.end_group(GroupKind::Simple).expect("end group");
+        assert!(context.penalty_array(PenaltyArrayKind::Club).is_empty());
+        assert_eq!(context.penalty_array_value(PenaltyArrayKind::Club, 0), 0);
     })
     .expect("universe allocation");
 }

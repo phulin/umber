@@ -51,6 +51,24 @@ pub enum PenaltyArrayKind {
     DisplayWidow,
 }
 
+impl PenaltyArrayKind {
+    const fn storage(self) -> crate::env::banks::TokParam {
+        match self {
+            Self::InterLine => crate::env::banks::TokParam::INTER_LINE_PENALTIES_INTERNAL,
+            Self::Club => crate::env::banks::TokParam::CLUB_PENALTIES_INTERNAL,
+            Self::Widow => crate::env::banks::TokParam::WIDOW_PENALTIES_INTERNAL,
+            Self::DisplayWidow => crate::env::banks::TokParam::DISPLAY_WIDOW_PENALTIES_INTERNAL,
+        }
+    }
+}
+
+/// One detached indent/width pair in TeX's current `\parshape` value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParagraphShapeLine {
+    pub indent: Scaled,
+    pub width: Scaled,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PrepareMagDiagnostic {
     IllegalMagnification { attempted: i32 },
@@ -1590,31 +1608,180 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
-    pub fn paragraph_shape_len(&self) -> usize {
-        0
+    pub fn paragraph_shape(&self) -> Vec<ParagraphShapeLine> {
+        let Some(root) = self
+            .token_parameter(crate::env::banks::TokParam::PAR_SHAPE_INTERNAL)
+            .expect("paragraph-shape parameter is admitted")
+        else {
+            return Vec::new();
+        };
+        let words = self.token_list(root);
+        assert_eq!(words.len() % 8, 0, "paragraph-shape payload is truncated");
+        words
+            .chunks_exact(8)
+            .map(|chunk| {
+                let mut bytes = [0_u8; 8];
+                for (byte, word) in bytes.iter_mut().zip(chunk) {
+                    *byte = match word.semantic_token() {
+                        crate::token::Token::Char {
+                            ch,
+                            cat: crate::token::Catcode::Invalid,
+                        } if u8::try_from(ch as u32).is_ok() => ch as u8,
+                        _ => panic!("paragraph-shape payload contains a non-byte token"),
+                    };
+                }
+                ParagraphShapeLine {
+                    indent: Scaled::from_raw(i32::from_le_bytes([
+                        bytes[0], bytes[1], bytes[2], bytes[3],
+                    ])),
+                    width: Scaled::from_raw(i32::from_le_bytes([
+                        bytes[4], bytes[5], bytes[6], bytes[7],
+                    ])),
+                }
+            })
+            .collect()
     }
 
     #[must_use]
-    pub fn paragraph_shape_dimension(&self, _line: i32, _width: bool) -> Scaled {
-        Scaled::from_raw(0)
+    pub fn paragraph_shape_len(&self) -> usize {
+        self.token_parameter(crate::env::banks::TokParam::PAR_SHAPE_INTERNAL)
+            .expect("paragraph-shape parameter is admitted")
+            .map_or(0, |root| {
+                let len = self.token_list(root).len();
+                assert_eq!(len % 8, 0, "paragraph-shape payload is truncated");
+                len / 8
+            })
+    }
+
+    #[must_use]
+    pub fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled {
+        if line <= 0 {
+            return Scaled::from_raw(0);
+        }
+        let shape = self.paragraph_shape();
+        if shape.is_empty() {
+            return Scaled::from_raw(0);
+        }
+        let line = (line as usize).min(shape.len()) - 1;
+        if width {
+            shape[line].width
+        } else {
+            shape[line].indent
+        }
+    }
+
+    pub fn assign_paragraph_shape(
+        &mut self,
+        lines: &[ParagraphShapeLine],
+        scope: AssignmentScope,
+    ) -> Result<(), DurableAllocationError> {
+        let parameter = crate::env::banks::TokParam::PAR_SHAPE_INTERNAL;
+        if lines.is_empty()
+            && scope == AssignmentScope::Local
+            && self
+                .token_parameter(parameter)
+                .expect("paragraph-shape parameter is admitted")
+                .is_none()
+        {
+            return Ok(());
+        }
+        let root = if lines.is_empty() {
+            None
+        } else {
+            let words = lines
+                .iter()
+                .flat_map(|line| {
+                    line.indent
+                        .raw()
+                        .to_le_bytes()
+                        .into_iter()
+                        .chain(line.width.raw().to_le_bytes())
+                        .map(|byte| {
+                            TokenWord::pack(crate::token::Token::Char {
+                                ch: char::from(byte),
+                                cat: crate::token::Catcode::Invalid,
+                            })
+                        })
+                })
+                .collect::<Vec<_>>();
+            Some(self.allocate_token_list(&words)?)
+        };
+        self.assign_token_parameter(parameter, root, scope)
+            .expect("paragraph-shape parameter is admitted");
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn penalty_array(&self, kind: PenaltyArrayKind) -> Vec<i32> {
+        let Some(root) = self
+            .token_parameter(kind.storage())
+            .expect("penalty-array parameter is admitted")
+        else {
+            return Vec::new();
+        };
+        let words = self.token_list(root);
+        assert_eq!(words.len() % 4, 0, "penalty-array payload is truncated");
+        words
+            .chunks_exact(4)
+            .map(|chunk| {
+                let mut bytes = [0_u8; 4];
+                for (byte, word) in bytes.iter_mut().zip(chunk) {
+                    *byte = match word.semantic_token() {
+                        crate::token::Token::Char {
+                            ch,
+                            cat: crate::token::Catcode::Invalid,
+                        } if u8::try_from(ch as u32).is_ok() => ch as u8,
+                        _ => panic!("penalty-array payload contains a non-byte token"),
+                    };
+                }
+                i32::from_le_bytes(bytes)
+            })
+            .collect()
     }
 
     #[must_use]
     pub fn penalty_array_value(&self, kind: PenaltyArrayKind, index: i32) -> i32 {
-        if index < 0 {
-            return 0;
+        let values = self.penalty_array(kind);
+        if index <= 0 || values.is_empty() {
+            return if index == 0 { values.len() as i32 } else { 0 };
         }
-        let parameter = match kind {
-            PenaltyArrayKind::InterLine => IntParam::INTERLINE_PENALTY,
-            PenaltyArrayKind::Club => IntParam::CLUB_PENALTY,
-            PenaltyArrayKind::Widow => IntParam::WIDOW_PENALTY,
-            PenaltyArrayKind::DisplayWidow => IntParam::DISPLAY_WIDOW_PENALTY,
-        };
-        if index == 0 {
-            1
+        values[(index as usize).min(values.len()) - 1]
+    }
+
+    pub fn assign_penalty_array(
+        &mut self,
+        kind: PenaltyArrayKind,
+        values: &[i32],
+        scope: AssignmentScope,
+    ) -> Result<(), DurableAllocationError> {
+        let parameter = kind.storage();
+        if values.is_empty()
+            && scope == AssignmentScope::Local
+            && self
+                .token_parameter(parameter)
+                .expect("penalty-array parameter is admitted")
+                .is_none()
+        {
+            return Ok(());
+        }
+        let root = if values.is_empty() {
+            None
         } else {
-            self.int_param(parameter)
-        }
+            let words = values
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .map(|byte| {
+                    TokenWord::pack(crate::token::Token::Char {
+                        ch: char::from(byte),
+                        cat: crate::token::Catcode::Invalid,
+                    })
+                })
+                .collect::<Vec<_>>();
+            Some(self.allocate_token_list(&words)?)
+        };
+        self.assign_token_parameter(parameter, root, scope)
+            .expect("penalty-array parameter is admitted");
+        Ok(())
     }
 
     pub fn observe_command_rendering_dependencies(&mut self) {
