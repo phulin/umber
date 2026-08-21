@@ -15,8 +15,6 @@ mod tokenizer;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-pub(crate) use levels::SharedTokenBuffer;
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, PackedInputFrame, ReplayTrace,
     RetirementBehavior, SourceLevel, SourceOpenDepths, SourceRetirement, StoredReplayReason,

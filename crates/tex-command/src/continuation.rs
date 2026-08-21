@@ -16,6 +16,7 @@ mod materialize;
 #[path = "continuation/schema.rs"]
 mod schema;
 
+#[cfg(test)]
 pub(crate) use detach::ContinuationRecipeBuilder;
 pub(crate) use materialize::{
     CommandContinuationDestination, MaterializationError, ValidatedCommandContinuation,

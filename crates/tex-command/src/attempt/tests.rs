@@ -20,17 +20,21 @@ fn word(ch: char) -> TracedTokenWord {
 
 fn glue(width: i32) -> GlueSpec {
     GlueSpec {
-        width: Scaled(width),
-        stretch: Scaled::ZERO,
+        width: Scaled::from_raw(width),
+        stretch: Scaled::from_raw(0),
         stretch_order: Order::Normal,
-        shrink: Scaled::ZERO,
+        shrink: Scaled::from_raw(0),
         shrink_order: Order::Normal,
     }
 }
 
+fn budget() -> InternerBudget {
+    InternerBudget::new(64, 64, 4096).expect("test budget")
+}
+
 #[test]
 fn mark_truncates_every_suffix_without_inspecting_values() {
-    tex_state::with_universe(InternerBudget::default(), |universe| {
+    tex_state::with_universe(budget(), |universe| {
         let mut attempt = AttemptArena::default();
         let retained = attempt.allocate_token_list([word('a')]).unwrap();
         let mark = attempt.mark();
@@ -75,10 +79,10 @@ fn mark_truncates_every_suffix_without_inspecting_values() {
 
 #[test]
 fn foreign_marks_and_offsets_are_rejected() {
-    tex_state::with_universe(InternerBudget::default(), |_universe| {
-        let first = AttemptArena::<_>::default();
+    tex_state::with_universe(budget(), |_universe| {
+        let first = AttemptArena::<()>::default();
         let mark = first.mark();
-        let mut second = AttemptArena::<_>::default();
+        let mut second = AttemptArena::<()>::default();
         assert_eq!(second.truncate(mark), Err(AttemptError::ForeignAttempt));
     })
     .unwrap();
@@ -86,7 +90,7 @@ fn foreign_marks_and_offsets_are_rejected() {
 
 #[test]
 fn promotion_follows_only_declared_roots_and_definition_children() {
-    tex_state::with_universe(InternerBudget::default(), |universe| {
+    tex_state::with_universe(budget(), |universe| {
         let mut attempt = AttemptArena::default();
         let parameter = attempt.allocate_token_list([word('#')]).unwrap();
         let replacement = attempt.allocate_token_list([word('x')]).unwrap();
@@ -102,6 +106,7 @@ fn promotion_follows_only_declared_roots_and_definition_children() {
                     token_lists: &[replacement],
                     glue: &[promoted_glue],
                     definitions: &[definition],
+                    ..AttemptEscapeRoots::default()
                 },
             )
             .unwrap();
@@ -133,7 +138,7 @@ fn promotion_follows_only_declared_roots_and_definition_children() {
 
 #[test]
 fn promotion_copies_only_declared_provenance_roots() {
-    tex_state::with_universe(InternerBudget::default(), |universe| {
+    tex_state::with_universe(budget(), |universe| {
         let mut attempt = AttemptArena::default();
         let retained = attempt
             .allocate_provenance(tex_state::provenance::OriginRecord::UnknownBootstrap)
@@ -167,8 +172,8 @@ fn promotion_copies_only_declared_provenance_roots() {
 
 #[test]
 fn nested_builders_keep_outer_and_inner_scratch_disjoint() {
-    tex_state::with_universe(InternerBudget::default(), |_universe| {
-        let mut attempt = AttemptArena::<_>::default();
+    tex_state::with_universe(budget(), |_universe| {
+        let mut attempt = AttemptArena::<()>::default();
         let outer = attempt.begin_token_list().unwrap();
         attempt.push_token(outer, word('a')).unwrap();
         let inner = attempt.begin_token_list().unwrap();
@@ -185,8 +190,8 @@ fn nested_builders_keep_outer_and_inner_scratch_disjoint() {
 
 #[test]
 fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
-    tex_state::with_universe(InternerBudget::default(), |_universe| {
-        let mut attempt = AttemptArena::<_>::default();
+    tex_state::with_universe(budget(), |_universe| {
+        let mut attempt = AttemptArena::<()>::default();
         let mark = attempt.mark();
         let buffer = attempt.allocate_token_buffer().unwrap();
         attempt.push_buffer_token(buffer, word('a')).unwrap();
@@ -216,8 +221,8 @@ fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
 
 #[test]
 fn argument_records_reject_more_than_texs_nine_slots() {
-    tex_state::with_universe(InternerBudget::default(), |_universe| {
-        let mut attempt = AttemptArena::<_>::default();
+    tex_state::with_universe(budget(), |_universe| {
+        let mut attempt = AttemptArena::<()>::default();
         let empty = attempt.allocate_token_list([]).unwrap();
         assert_eq!(
             attempt.allocate_arguments(&[empty; 10]),
@@ -229,8 +234,8 @@ fn argument_records_reject_more_than_texs_nine_slots() {
 
 #[test]
 fn attempt_local_provenance_stays_aligned_through_nested_builders() {
-    tex_state::with_universe(InternerBudget::default(), |_universe| {
-        let mut attempt = AttemptArena::<_>::default();
+    tex_state::with_universe(budget(), |_universe| {
+        let mut attempt = AttemptArena::<()>::default();
         let origin = attempt
             .allocate_provenance(tex_state::provenance::OriginRecord::UnknownBootstrap)
             .unwrap();
@@ -257,8 +262,8 @@ fn attempt_local_provenance_stays_aligned_through_nested_builders() {
 
 #[test]
 fn truncated_row_cannot_alias_a_reallocated_coordinate() {
-    tex_state::with_universe(InternerBudget::default(), |_universe| {
-        let mut attempt = AttemptArena::<_>::default();
+    tex_state::with_universe(budget(), |_universe| {
+        let mut attempt = AttemptArena::<()>::default();
         let mark = attempt.mark();
         let stale = attempt.allocate_token_list([word('a')]).unwrap();
         attempt.truncate(mark).unwrap();
@@ -275,8 +280,8 @@ fn truncated_row_cannot_alias_a_reallocated_coordinate() {
 
 #[test]
 fn macro_arguments_are_attempt_local_ranges_and_rollback_with_their_mark() {
-    tex_state::with_universe(InternerBudget::default(), |_universe| {
-        let mut attempt = AttemptArena::<_>::default();
+    tex_state::with_universe(budget(), |_universe| {
+        let mut attempt = AttemptArena::<()>::default();
         let first = attempt.allocate_token_list([word('a')]).unwrap();
         let second = attempt.allocate_token_list([word('b')]).unwrap();
         let mark = attempt.mark();
@@ -295,7 +300,7 @@ fn macro_arguments_are_attempt_local_ranges_and_rollback_with_their_mark() {
 
 #[test]
 fn pending_attempt_owns_generation_and_resumes_without_a_borrow() {
-    tex_state::with_universe(InternerBudget::default(), |universe| {
+    tex_state::with_universe(budget(), |universe| {
         let generation = universe.generation_owner().unwrap();
         let pending = PendingCommandAttempt::new(
             CommandAttempt::default(),
@@ -308,8 +313,18 @@ fn pending_attempt_owns_generation_and_resumes_without_a_borrow() {
             },
             "font request",
         );
+        let allocated_while_pinned = universe
+            .allocate_token_list(&[])
+            .expect("a coarse owner pins retirement, not append-only allocation");
+        assert!(
+            universe
+                .command_context()
+                .expect("context")
+                .token_list(allocated_while_pinned)
+                .is_empty()
+        );
         assert_eq!(
-            universe.allocate_token_list(&[]),
+            universe.retire(),
             Err(tex_state::UniverseError::State(
                 tex_state::StateError::GenerationInUse
             ))
@@ -326,7 +341,7 @@ fn pending_attempt_owns_generation_and_resumes_without_a_borrow() {
 
 #[test]
 fn pending_owner_rejects_retirement_without_partially_retiring_universe() {
-    tex_state::with_universe(InternerBudget::default(), |universe| {
+    tex_state::with_universe(budget(), |universe| {
         let owner = universe.generation_owner().unwrap();
         assert_eq!(
             universe.retire(),

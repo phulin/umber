@@ -20,10 +20,6 @@ use crate::input::InputLevelId;
 use crate::observation::CommandObserver;
 
 pub(crate) use alignment::CELL_ALIGN_STATE;
-#[cfg(test)]
-pub(crate) use alignment::TOP_LEVEL_ALIGN_STATE;
-#[cfg(test)]
-pub(crate) use alignment::{ActiveCellDelivery, SuspendedAlignment};
 pub use alignment::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
     AlignmentIdentity, AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest,
@@ -127,11 +123,6 @@ pub(super) enum DeliveryEvent<G> {
     Alignment(AlignmentDeliveryEvent<G>),
 }
 pub(crate) use status::ConditionId;
-#[cfg(test)]
-pub(crate) use status::{
-    AbsorbingContext, AlignmentId, AlignmentScanContext, ArgumentBuilderId, DefinitionContext,
-    MatchingContext, ScannerWarning, SkippingContext, TokenBuilderId,
-};
 pub(crate) use status::{ScannerState, ScannerStatus};
 
 /// Borrow-only capability facade for one bounded executor operation.

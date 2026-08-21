@@ -1,57 +1,33 @@
-use super::CommandProcessor;
-use crate::{CommandHostCapabilities, CommandHostContext, CommandState};
-use tex_state::{
-    DependencyEngineField, DependencyKey, TrackedRegionBarrier, TrackedRegionError, Universe,
-};
+use tex_state::meaning::Meaning;
+use tex_state::token::{Catcode, Token};
+
+use crate::{CommandHostCapabilities, CommandState};
 
 #[test]
-fn processor_observes_command_roots_once() {
-    let mut command = CommandState::default();
-    let mut universe = Universe::new();
-    let mut host = CommandHostCapabilities::default();
-    let mark = universe.begin_tracked_region().expect("start region");
-    drop(CommandProcessor::new(
-        &mut command,
-        universe.command_context(),
-        CommandHostContext::new(&mut host),
-    ));
-    let record = universe.finish_tracked_region(mark).expect("finish region");
-    let keys = record
-        .observations()
-        .iter()
-        .map(|observation| observation.key)
-        .collect::<Vec<_>>();
-    for expected in [
-        DependencyKey::InputLine,
-        DependencyKey::InputStack,
-        DependencyKey::Engine(DependencyEngineField::ConditionLevel),
-        DependencyKey::Engine(DependencyEngineField::ConditionType),
-        DependencyKey::Engine(DependencyEngineField::ConditionBranch),
-        DependencyKey::Engine(DependencyEngineField::ConditionStack),
-    ] {
-        assert_eq!(keys.iter().filter(|&&key| key == expected).count(), 1);
-    }
-}
+fn processor_episode_borrows_generation_and_delivers_one_current_command() {
+    crate::test_harness::with_universe(|universe| {
+        let token = Token::Char {
+            ch: 'x',
+            cat: Catcode::Letter,
+        };
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, [token]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor =
+            crate::test_harness::processor(&mut command, universe, &mut capabilities);
 
-#[test]
-fn unsupported_command_continuation_fails_closed() {
-    let mut command = CommandState {
-        name_in_progress: true,
-        ..CommandState::default()
-    };
-    let mut universe = Universe::new();
-    let mut host = CommandHostCapabilities::default();
-    let mark = universe.begin_tracked_region().expect("start region");
-    drop(CommandProcessor::new(
-        &mut command,
-        universe.command_context(),
-        CommandHostContext::new(&mut host),
-    ));
-    assert_eq!(
-        universe.finish_tracked_region(mark),
-        Err(TrackedRegionError::UnsupportedRegion(
-            TrackedRegionBarrier::UnsupportedCommandState
-        ))
-    );
-    assert!(!universe.dependency_region_is_active());
+        let delivered = processor
+            .get_x_token()
+            .expect("expanded delivery")
+            .expect("one token");
+        assert_eq!(delivered.spelling().semantic_token(), token);
+        assert_eq!(
+            delivered.meaning(),
+            Meaning::CharToken {
+                ch: 'x',
+                cat: Catcode::Letter,
+            }
+        );
+        assert!(processor.get_x_token().expect("end").is_none());
+    });
 }

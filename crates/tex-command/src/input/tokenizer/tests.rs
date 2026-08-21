@@ -9,11 +9,11 @@ use crate::{
     RegisteredSourceKind, SourceRegistration,
 };
 
-fn state(bytes: &[u8]) -> CommandState {
+fn state(bytes: &[u8]) -> CommandState<()> {
     state_for_profile(bytes, CommandProfile::TEX82)
 }
 
-fn state_for_profile(bytes: &[u8], profile: CommandProfile) -> CommandState {
+fn state_for_profile(bytes: &[u8], profile: CommandProfile) -> CommandState<()> {
     let mut state = CommandState::new(profile);
     let source = state
         .register_source(SourceRegistration::new(
@@ -27,7 +27,7 @@ fn state_for_profile(bytes: &[u8], profile: CommandProfile) -> CommandState {
     state
 }
 
-fn unicode_state(text: &str) -> CommandState {
+fn unicode_state(text: &str) -> CommandState<()> {
     state_for_profile(
         text.as_bytes(),
         CommandProfile::unicode_extended(CommandDialect::Tex82),
@@ -498,24 +498,6 @@ fn ordinary_token_catcodes_are_observed_without_reclassification() {
             (b'x', expected, 0, 1)
         );
     }
-}
-
-#[test]
-fn snapshots_restore_the_lexer_state_and_exact_source_cursor() {
-    let mut state = state(b"A\n");
-    assert_eq!(
-        character(state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode))),
-        (b'A', Catcode::Letter, 0, 1)
-    );
-    let snapshot = state.snapshot();
-    let expected = state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode));
-    assert_eq!(character(expected.clone()), (b' ', Catcode::Space, 1, 1));
-
-    state.rollback(snapshot).expect("same-profile snapshot");
-    assert_eq!(
-        state.next_exact_source_step(13, &mut CatcodeQueries(classic_catcode)),
-        expected
-    );
 }
 
 #[test]

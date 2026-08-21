@@ -228,7 +228,7 @@ fn command_delivery_has_specialized_typed_loops_and_direct_input_mutation() {
         !format!("{expansion}\n{raw}").contains("pending_expanded_delivery"),
         "pending observation ownership must be typed, never a boolean"
     );
-    assert!(expansion.contains("fn expand(&mut self, command: &CurrentCommand)"));
+    assert!(expansion.contains("fn expand(&mut self, command: &CurrentCommand<G>)"));
     assert!(expansion.contains("match self.macro_call(command)?"));
     assert!(expansion.contains("MacroCallOutcome::Activated"));
     assert!(expansion.contains("MacroCallOutcome::PrefixMismatchRecovered"));
@@ -271,7 +271,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
     assert!(collector.contains("pending_expansion.take()"));
     assert!(collector.contains("PendingCollectorExpansion"));
     assert!(collector.contains("self.expand(&command)"));
-    assert!(collector.contains("self.append_direct_the_toks(&mut output)"));
+    assert!(collector.contains("self.append_direct_the_toks(output)"));
     assert!(
         !collector.contains("self.get_x_token()?"),
         "the replacement collector must not enter a second ordinary expansion loop"
@@ -280,7 +280,7 @@ fn scan_toks_keeps_its_one_step_collector_and_direct_splice_boundary() {
         splice.contains("let target = self.get_x_token()?"),
         "\\the must expand its internal-value target before selecting a token list"
     );
-    assert!(splice.contains("output.extend_unowned("));
+    assert!(splice.contains("self.push_attempt_token(output, token)?"));
     assert!(
         !splice.contains("self.expand("),
         "direct token-list splicing must not recursively expand its contents"
@@ -336,7 +336,7 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     // alignment stack rather than giving any other record its own field.
     assert_eq!(alignment.matches("align_state: i32").count(), 1);
     assert_eq!(alignment.matches("align_stack: Vec<i32>").count(), 1);
-    assert_eq!(alignment.matches("fn classify_delivery(").count(), 1);
+    assert_eq!(alignment.matches("fn classify_delivery<G>(").count(), 1);
     assert_eq!(
         next.matches("self.command.alignment.classify_delivery(")
             .count(),
@@ -432,7 +432,7 @@ fn semantic_and_runtime_fields_are_opaque() {
         "command-opaque-state",
         &manifest_dir.join("tests/ui/opaque_state.rs"),
         &dependencies,
-        &["E0616", "field `input`", "field `state`"],
+        &["E0616", "field `input`", "field `generation`"],
     );
 }
 

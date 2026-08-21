@@ -11,7 +11,7 @@ use crate::{CommandProfile, CommandState};
 
 #[test]
 fn unicode_registration_rejects_the_exact_malformed_range_before_allocation() {
-    let mut state = CommandState::new(CommandProfile::unicode_extended(
+    let mut state = CommandState::<()>::new(CommandProfile::unicode_extended(
         crate::CommandDialect::Tex82,
     ));
     let malformed = SourceRegistration::new(
@@ -243,7 +243,7 @@ fn with_name_survives_registration_into_the_backing() {
 
 #[test]
 fn opening_requires_a_retained_registration() {
-    let mut state = CommandState::new(CommandProfile::TEX82);
+    let mut state = CommandState::<()>::new(CommandProfile::TEX82);
 
     let error = state
         .open_registered_source(SourceId::new(77))
