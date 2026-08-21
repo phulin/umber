@@ -965,14 +965,15 @@ impl<'a, G> CommandContext<'a, G> {
     /// The restoration receipt itself owns no printer or World borrow. The
     /// executor consumes it synchronously and opens this short-lived channel
     /// only while publishing the matching detached entry.
-    pub fn begin_group_restoration_diagnostic(
-        &mut self,
+    pub fn begin_group_restoration_diagnostic<'effects>(
+        &self,
+        effects: &'effects mut crate::diagnostic::DiagnosticEffects,
         trace: crate::GroupRestorationTraceState,
-    ) -> crate::diagnostic::Diagnostic<'_, G> {
+    ) -> crate::diagnostic::Diagnostic<'effects> {
         crate::diagnostic::Diagnostic::from_parts(
-            self.world,
-            self.interaction_mode,
-            self.error_context_widths,
+            effects,
+            *self.interaction_mode,
+            self.error_context_widths.max_print_line(),
             trace.tracing_online(),
             trace.newline_char(),
             trace.escape_char(),
@@ -2908,14 +2909,17 @@ impl<'a, G> CommandContext<'a, G> {
         self.error_context_widths
     }
 
-    pub fn begin_diagnostic(&mut self) -> crate::diagnostic::Diagnostic<'_, G> {
+    pub fn begin_diagnostic<'effects>(
+        &self,
+        effects: &'effects mut crate::diagnostic::DiagnosticEffects,
+    ) -> crate::diagnostic::Diagnostic<'effects> {
         let tracing_online = self.int_param(IntParam::TRACING_ONLINE);
         let newline = self.int_param(IntParam::NEWLINE_CHAR);
         let escape = self.int_param(IntParam::ESCAPE_CHAR);
         crate::diagnostic::Diagnostic::from_parts(
-            self.world,
-            self.interaction_mode,
-            self.error_context_widths,
+            effects,
+            *self.interaction_mode,
+            self.error_context_widths.max_print_line(),
             tracing_online,
             newline,
             escape,
@@ -2927,13 +2931,16 @@ impl<'a, G> CommandContext<'a, G> {
     /// e-TeX 2.6 change 17.516 temporarily forces `tracing_online` while
     /// reporting level-two missing characters. This is a print-channel
     /// override, not an eqtb assignment.
-    pub fn begin_online_diagnostic(&mut self) -> crate::diagnostic::Diagnostic<'_, G> {
+    pub fn begin_online_diagnostic<'effects>(
+        &self,
+        effects: &'effects mut crate::diagnostic::DiagnosticEffects,
+    ) -> crate::diagnostic::Diagnostic<'effects> {
         let newline = self.int_param(IntParam::NEWLINE_CHAR);
         let escape = self.int_param(IntParam::ESCAPE_CHAR);
         crate::diagnostic::Diagnostic::from_parts(
-            self.world,
-            self.interaction_mode,
-            self.error_context_widths,
+            effects,
+            *self.interaction_mode,
+            self.error_context_widths.max_print_line(),
             1,
             newline,
             escape,

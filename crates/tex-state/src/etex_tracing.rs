@@ -22,11 +22,17 @@ impl<G> Universe<G> {
     /// `level` is e-TeX's `qo(cur_level)`: the number of groups open
     /// *including* the one just entered, matching `\currentgrouplevel` and
     /// the level `\showgroups` prints for the same frame.
-    pub(crate) fn trace_group_enter(&mut self, kind: GroupKind, level: u32, entered_line: u32) {
+    pub(crate) fn trace_group_enter(
+        &self,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+        kind: GroupKind,
+        level: u32,
+        entered_line: u32,
+    ) {
         if self.int_param(IntParam::TRACING_GROUPS) <= 0 {
             return;
         }
-        let mut diagnostic = self.begin_diagnostic();
+        let mut diagnostic = self.begin_diagnostic(effects);
         diagnostic
             .print_char('{')
             .print("entering ")
@@ -49,11 +55,17 @@ impl<G> Universe<G> {
     ///
     /// `level` and `entered_line` were captured from the group being closed
     /// before restoration popped its frame.
-    pub(crate) fn trace_group_leave(&mut self, kind: GroupKind, level: u32, entered_line: u32) {
+    pub(crate) fn trace_group_leave(
+        &self,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+        kind: GroupKind,
+        level: u32,
+        entered_line: u32,
+    ) {
         if self.int_param(IntParam::TRACING_GROUPS) <= 0 {
             return;
         }
-        let mut diagnostic = self.begin_diagnostic();
+        let mut diagnostic = self.begin_diagnostic(effects);
         diagnostic
             .print_char('{')
             .print("leaving ")

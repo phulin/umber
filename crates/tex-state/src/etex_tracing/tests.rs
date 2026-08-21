@@ -32,10 +32,22 @@ fn enable_tracing<G>(universe: &mut Universe<G>) {
         .expect("enable tracinggroups");
 }
 
+fn trace_enter<G>(universe: &mut Universe<G>, kind: GroupKind, level: u32, line: u32) {
+    let mut effects = crate::diagnostic::DiagnosticEffects::new();
+    universe.trace_group_enter(&mut effects, kind, level, line);
+    universe.world_mut().publish_diagnostic_effects(effects);
+}
+
+fn trace_leave<G>(universe: &mut Universe<G>, kind: GroupKind, level: u32, line: u32) {
+    let mut effects = crate::diagnostic::DiagnosticEffects::new();
+    universe.trace_group_leave(&mut effects, kind, level, line);
+    universe.world_mut().publish_diagnostic_effects(effects);
+}
+
 #[test]
 fn tracinggroups_zero_emits_nothing() {
     with_test_universe(|universe| {
-        universe.trace_group_enter(GroupKind::Simple, 1, 5);
+        trace_enter(universe, GroupKind::Simple, 1, 5);
         assert_eq!(routed_log(universe), "");
     });
 }
@@ -44,8 +56,8 @@ fn tracinggroups_zero_emits_nothing() {
 fn entering_groups_reports_kind_depth_and_source_line() {
     with_test_universe(|universe| {
         enable_tracing(universe);
-        universe.trace_group_enter(GroupKind::Simple, 1, 4);
-        universe.trace_group_enter(GroupKind::AdjustedHBox, 2, 5);
+        trace_enter(universe, GroupKind::Simple, 1, 4);
+        trace_enter(universe, GroupKind::AdjustedHBox, 2, 5);
         assert_eq!(
             routed_log(universe),
             "{entering simple group (level 1) at line 4}\n\
@@ -58,7 +70,7 @@ fn entering_groups_reports_kind_depth_and_source_line() {
 fn zero_source_line_is_omitted() {
     with_test_universe(|universe| {
         enable_tracing(universe);
-        universe.trace_group_enter(GroupKind::Simple, 1, 0);
+        trace_enter(universe, GroupKind::Simple, 1, 0);
         assert_eq!(routed_log(universe), "{entering simple group (level 1)}\n");
     });
 }
@@ -70,13 +82,13 @@ fn leaving_a_group_reports_the_closed_frame() {
         let frame = universe
             .begin_group(GroupKind::VBox, 313)
             .expect("begin vbox group");
-        universe.trace_group_enter(frame.kind(), 1, frame.entered_line());
+        trace_enter(universe, frame.kind(), 1, frame.entered_line());
         let before_leave = routed_log(universe).len();
         let frame = universe
             .end_group(GroupKind::VBox)
             .expect("end vbox group")
             .frame();
-        universe.trace_group_leave(frame.kind(), 1, frame.entered_line());
+        trace_leave(universe, frame.kind(), 1, frame.entered_line());
 
         assert_eq!(
             &routed_log(universe)[before_leave..],
@@ -99,7 +111,7 @@ fn restored_tracinggroups_value_controls_the_exit_trace() {
             .end_group(GroupKind::SemiSimple)
             .expect("end group")
             .frame();
-        universe.trace_group_leave(frame.kind(), 1, frame.entered_line());
+        trace_leave(universe, frame.kind(), 1, frame.entered_line());
 
         assert_eq!(
             routed_log(universe),

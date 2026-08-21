@@ -3567,6 +3567,122 @@ impl World {
         }
     }
 
+    /// Publishes the ordered diagnostics produced by one committed command
+    /// operation.
+    ///
+    /// Each detached effect is evaluated against the then-current terminal
+    /// and transcript partial lines. A logical diagnostic appends no records
+    /// when it has no routed bytes, one record when both sinks receive the
+    /// same payload, or two physical records sharing one effect sequence when
+    /// their independently wrapped payloads differ. No intermediate print
+    /// primitive is observable in the World journal.
+    pub fn publish_diagnostic_effects(
+        &mut self,
+        mut effects: crate::diagnostic::DiagnosticEffects,
+    ) {
+        for effect in effects.drain() {
+            self.publish_diagnostic_effect(effect);
+        }
+    }
+
+    fn publish_diagnostic_effect(&mut self, effect: crate::diagnostic::DetachedDiagnosticEffect) {
+        if effect.records_warning_history() {
+            self.error_channel_mut().record_warning_history();
+        }
+        let Some(sink) = effect.selector().sink() else {
+            return;
+        };
+        let max_print_line = effect.max_print_line();
+        let (terminal_line, log_line) = {
+            let bufs = self.stream_bufs();
+            (
+                bufs.terminal_partial_line.clone(),
+                bufs.log_partial_line.clone(),
+            )
+        };
+        let render =
+            |line: &str| render_detached_diagnostic(effect.operations(), line, max_print_line);
+        let mut records = Vec::with_capacity(2);
+        match sink {
+            PrintSink::Terminal => {
+                let (text, _) = render(&terminal_line);
+                if !text.is_empty() {
+                    records.push(EffectRecord::StreamWrite {
+                        sink: PrintSink::Terminal,
+                        text,
+                    });
+                }
+            }
+            PrintSink::Log => {
+                let (text, _) = render(&log_line);
+                if !text.is_empty() {
+                    records.push(EffectRecord::StreamWrite {
+                        sink: PrintSink::Log,
+                        text,
+                    });
+                }
+            }
+            PrintSink::TerminalAndLog => {
+                let (terminal, _) = render(&terminal_line);
+                let (log, _) = render(&log_line);
+                if terminal == log {
+                    if !terminal.is_empty() {
+                        records.push(EffectRecord::StreamWrite {
+                            sink: PrintSink::TerminalAndLog,
+                            text: terminal,
+                        });
+                    }
+                } else {
+                    if !terminal.is_empty() {
+                        records.push(EffectRecord::StreamWrite {
+                            sink: PrintSink::Terminal,
+                            text: terminal,
+                        });
+                    }
+                    if !log.is_empty() {
+                        records.push(EffectRecord::StreamWrite {
+                            sink: PrintSink::Log,
+                            text: log,
+                        });
+                    }
+                }
+            }
+            PrintSink::Stream(_) => {
+                unreachable!("§245 diagnostics never select a numbered stream")
+            }
+        }
+        self.append_printable_batch(records);
+    }
+
+    fn append_printable_batch(&mut self, records: Vec<EffectRecord>) {
+        let start = self.effects.len();
+        for record in &records {
+            let EffectRecord::StreamWrite { sink, text } = record else {
+                unreachable!("a diagnostic batch contains printable writes only")
+            };
+            let bufs = self.stream_bufs_mut();
+            match sink {
+                PrintSink::Terminal => append_partial_line(&mut bufs.terminal_partial_line, text),
+                PrintSink::Log => append_partial_line(&mut bufs.log_partial_line, text),
+                PrintSink::TerminalAndLog => {
+                    append_partial_line(&mut bufs.terminal_partial_line, text);
+                    append_partial_line(&mut bufs.log_partial_line, text);
+                }
+                PrintSink::Stream(_) => {
+                    unreachable!("a diagnostic batch contains printable writes only")
+                }
+            }
+        }
+        for record in records {
+            self.append_effect(record);
+        }
+        let end = self.effects.len();
+        if end > start + 1 {
+            let sequence = self.effect_sequences[start];
+            Arc::make_mut(&mut self.effect_sequences)[start..end].fill(sequence);
+        }
+    }
+
     /// Buffers bytes that have already crossed the active character-profile
     /// encoding boundary.
     ///
@@ -5595,6 +5711,35 @@ fn wrap_print_lines_at(text: &str, offset: usize, limit: usize) -> String {
         }
     }
     wrapped
+}
+
+/// Replays one detached diagnostic for a single printable sink. The caller
+/// runs this independently for terminal and transcript, because §§57--62
+/// maintain distinct offsets for those sinks.
+fn render_detached_diagnostic(
+    operations: &[crate::diagnostic::DiagnosticPrintOperation],
+    initial_partial_line: &str,
+    max_print_line: usize,
+) -> (String, String) {
+    let mut output = String::new();
+    let mut partial_line = initial_partial_line.to_owned();
+    for operation in operations {
+        match operation {
+            crate::diagnostic::DiagnosticPrintOperation::Rendered(text) => {
+                let wrapped =
+                    wrap_print_lines_at(text, partial_line.chars().count(), max_print_line);
+                append_partial_line(&mut partial_line, &wrapped);
+                output.push_str(&wrapped);
+            }
+            crate::diagnostic::DiagnosticPrintOperation::EnsureLineStart => {
+                if !partial_line.is_empty() {
+                    partial_line.clear();
+                    output.push('\n');
+                }
+            }
+        }
+    }
+    (output, partial_line)
 }
 
 /// The byte-domain counterpart of [`wrap_print_lines_at`]. Every TeX82 output

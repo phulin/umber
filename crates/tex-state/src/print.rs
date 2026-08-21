@@ -142,7 +142,7 @@ pub fn without_line_breaks(text: &str) -> String {
 /// The discriminants are tex.web's own, so `decr`/`incr` on a selector and
 /// the `odd(selector)` and `selector>=log_only` tests are the module's
 /// arithmetic rather than a re-derivation.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(u8)]
 pub enum Selector {
     /// §54's `no_print=16`.
