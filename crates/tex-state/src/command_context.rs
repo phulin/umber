@@ -851,6 +851,15 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.state_ref().group_frames().len()
     }
 
+    #[must_use]
+    pub fn innermost_group_kind(&self) -> Option<crate::GroupKind> {
+        self.admitted
+            .state_ref()
+            .group_frames()
+            .last()
+            .map(|frame| frame.kind())
+    }
+
     pub fn begin_group(
         &mut self,
         kind: crate::GroupKind,

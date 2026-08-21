@@ -2658,8 +2658,13 @@ impl<G> MainControl<G> {
         // episode here instead of asking only whether another fire-up is
         // currently pending; otherwise its observations survive into the
         // next command step and that command's raw delivery overtakes them.
+        let page_fire_up_pending = stores
+            .command_context()
+            .expect("live generation")
+            .page_fire_up()
+            .is_some();
         let opens_output_batch = !self.page_output_observations.is_empty()
-            || (stores.page_fire_up().is_some() && !self.boxes.output_routine_active);
+            || (page_fire_up_pending && !self.boxes.output_routine_active);
         self.fire_pending_page_output(stores)?;
         {
             #[cfg(feature = "profiling")]
@@ -2739,13 +2744,17 @@ impl<G> MainControl<G> {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            start_paragraph(&mut self.command, &mut self.modes, stores, true)?;
+            let mut context = stores.command_context().expect("live generation");
+            start_paragraph(&mut self.command, &mut self.modes, &mut context, true)?;
         }
-        crate::box_runtime::flush_pending_hchars_with_fuel(
-            &mut self.modes,
-            stores,
-            self.fuel.fuel_mut(),
-        )?;
+        {
+            let mut context = stores.command_context().expect("live generation");
+            crate::box_runtime::flush_pending_hchars_with_fuel(
+                &mut self.modes,
+                &mut context,
+                self.fuel.fuel_mut(),
+            )?;
+        }
         self.open_discretionary_part(stores)?;
         self.active_discretionaries.push(ActiveDiscretionary {
             parts: Vec::new(),
@@ -2767,7 +2776,8 @@ impl<G> MainControl<G> {
                 .try_into()
                 .unwrap_or(i32::MAX),
         )?;
-        enter_group(stores, &mut self.command, GroupKind::Disc);
+        let mut context = stores.command_context().expect("live generation");
+        enter_group(&mut context, &mut self.command, GroupKind::Disc);
         Ok(())
     }
 
@@ -2778,8 +2788,14 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
-        let level =
-            crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
+        let level = {
+            let mut context = stores.command_context().expect("live generation");
+            crate::box_runtime::commit_current_list(
+                &mut self.modes,
+                &mut context,
+                self.fuel.fuel_mut(),
+            )?
+        };
         // TeX82 §1121 advances `q` across the admissible prefix and, on the
         // first forbidden node `p`, severs `link(q)`. Thus the prefix remains
         // this discretionary part while `show_box(p)` reports and flushes the
@@ -2796,16 +2812,19 @@ impl<G> MainControl<G> {
             )
         });
         let prefix_end = first_forbidden.unwrap_or(level.list().nodes().len());
-        let nodes = stores.publish_page_nodes(&level.list().nodes()[..prefix_end]);
-        let deleted =
-            first_forbidden.map(|index| stores.publish_page_nodes(&level.list().nodes()[index..]));
-        let aftergroup =
-            leave_group_payloads(stores, &mut self.command, GroupKind::Disc).map_err(|_| {
-                ExecError::MissingToken {
+        let (nodes, deleted) = {
+            let context = stores.command_context().expect("live generation");
+            let mut stores = LinearCommandContext::new(context);
+            let nodes = stores.publish_page_nodes(level.list().nodes()[..prefix_end].to_vec());
+            let deleted = first_forbidden
+                .map(|index| stores.publish_page_nodes(level.list().nodes()[index..].to_vec()));
+            let aftergroup = leave_group_payloads(&mut stores, &mut self.command, GroupKind::Disc)
+                .map_err(|_| ExecError::MissingToken {
                     context: "discretionary group",
-                }
-            })?;
-        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
+                })?;
+            schedule_aftergroup(&mut self.command_machine(), &mut stores, aftergroup)?;
+            (nodes, deleted)
+        };
 
         let (part_count, replacement_too_long) = {
             let active = self
@@ -2821,17 +2840,15 @@ impl<G> MainControl<G> {
             (part_count, replacement_too_long)
         };
         if let Some(deleted) = deleted {
-            let context = self
-                .command
-                .output_open_context(&stores.command_context().expect("live generation"));
-            report_improper_discretionary(stores, deleted, context)?;
+            let mut stores = stores.command_context().expect("live generation");
+            let context = self.command.output_open_context(&stores);
+            report_improper_discretionary(&mut stores, deleted, context)?;
         }
         if replacement_too_long {
-            let context = self
-                .command
-                .output_open_context(&stores.command_context().expect("live generation"));
+            let mut stores = stores.command_context().expect("live generation");
+            let context = self.command.output_open_context(&stores);
             crate::error_report::report_error(
-                stores,
+                &mut stores,
                 "Discretionary list is too long",
                 &["Wow---I never thought anybody would tweak me here."],
                 context,
@@ -2858,7 +2875,10 @@ impl<G> MainControl<G> {
                 );
             }
             self.capture_first_causal_context(stores, &diagnostics);
-            report_pending_diagnostics(stores, diagnostics)?;
+            {
+                let mut context = stores.command_context().expect("live generation");
+                report_pending_diagnostics(&mut context, diagnostics)?;
+            }
             self.open_discretionary_part(stores)?;
             return Ok(ReplayStep::Continue);
         }
@@ -2893,7 +2913,11 @@ impl<G> MainControl<G> {
             )?;
             replace = tex_state::node_arena::PageListId::empty();
         }
-        let physical_replace_count = replace
+        let physical_replace_count = stores
+            .command_context()
+            .expect("live generation")
+            .page_node_list(replace)
+            .expect("discretionary replacement is a live page list")
             .len()
             .try_into()
             .expect("TeX discretionary replacement count fits a quarterword");
@@ -2917,34 +2941,38 @@ impl<G> MainControl<G> {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            start_paragraph(&mut self.command, &mut self.modes, stores, true)?;
+            let mut context = stores.command_context().expect("live generation");
+            start_paragraph(&mut self.command, &mut self.modes, &mut context, true)?;
         }
-        crate::box_runtime::flush_pending_hchars_with_fuel(
-            &mut self.modes,
-            stores,
-            self.fuel.fuel_mut(),
-        )?;
-        let font = stores.current_font();
-        let pre = match u8::try_from(stores.font_hyphen_char(font)) {
-            Ok(hyphen) if stores.font_char_metrics(font, hyphen).is_some() => stores
-                .publish_page_nodes(&[Node::Char {
-                    font,
-                    ch: char::from(hyphen),
-                    origin,
-                }]),
-            Ok(hyphen) => {
-                // TeX82 §1113 delegates the in-range hyphen to §581's
-                // `new_character`: an absent glyph warns and leaves the
-                // pre-break list empty.
-                crate::diagnostics::report_missing_character_warning(
-                    stores,
-                    font,
-                    char::from(hyphen),
-                    self.command_profile() == CommandProfile::ETEX26,
-                );
-                stores.publish_page_nodes(&[])
+        let pre = {
+            let mut stores = stores.command_context().expect("live generation");
+            crate::box_runtime::flush_pending_hchars_with_fuel(
+                &mut self.modes,
+                &mut stores,
+                self.fuel.fuel_mut(),
+            )?;
+            let font = stores.current_font();
+            match u8::try_from(stores.font_hyphen_char(font)) {
+                Ok(hyphen) if stores.font_char_metrics(font, hyphen).is_some() => stores
+                    .publish_page_nodes(vec![Node::Char {
+                        font,
+                        ch: char::from(hyphen),
+                        origin,
+                    }]),
+                Ok(hyphen) => {
+                    // TeX82 §1113 delegates the in-range hyphen to §581's
+                    // `new_character`: an absent glyph warns and leaves the
+                    // pre-break list empty.
+                    crate::diagnostics::report_missing_character_warning(
+                        &mut stores,
+                        font,
+                        char::from(hyphen),
+                        self.command_profile() == CommandProfile::ETEX26,
+                    );
+                    stores.publish_page_nodes(Vec::new())
+                }
+                Err(_) => stores.publish_page_nodes(Vec::new()),
             }
-            Err(_) => stores.publish_page_nodes(&[]),
         };
         let empty = tex_state::node_arena::PageListId::empty();
         self.modes.current_list_mutation().push(Node::Disc {
@@ -3046,7 +3074,7 @@ impl<G> MainControl<G> {
 
     fn command_requires_transaction(
         &self,
-        stores: &Universe<G>,
+        stores: &mut Universe<G>,
         capabilities: crate::transaction_protocol::CommandCapabilities,
         delivery: &OperationDelivery<G>,
     ) -> bool {
@@ -3063,7 +3091,11 @@ impl<G> MainControl<G> {
         if capabilities
             .mutation()
             .contains(crate::transaction_protocol::StateOwners::PDF)
-            && stores.int_param(IntParam::PDF_OUTPUT) <= 0
+            && stores
+                .command_context()
+                .expect("live generation")
+                .int_param(IntParam::PDF_OUTPUT)
+                <= 0
         {
             return true;
         }
@@ -3100,11 +3132,13 @@ impl<G> MainControl<G> {
                     ..
                 })
             )
-            && self
-                .boxes
-                .active_boxes
-                .last()
-                .is_some_and(|active| stores.innermost_group_kind() == Some(active.group_kind))
+            && self.boxes.active_boxes.last().is_some_and(|active| {
+                stores
+                    .command_context()
+                    .expect("live generation")
+                    .innermost_group_kind()
+                    == Some(active.group_kind)
+            })
         {
             return true;
         }
@@ -4391,36 +4425,40 @@ impl<G> MainControl<G> {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            start_paragraph(&mut self.command, &mut self.modes, stores, true)?;
+            let mut context = stores.command_context().expect("live generation");
+            start_paragraph(&mut self.command, &mut self.modes, &mut context, true)?;
         }
+        let mut context = stores.command_context().expect("live generation");
         crate::box_runtime::flush_pending_hchars_with_fuel(
             &mut self.modes,
-            stores,
+            &mut context,
             self.fuel.fuel_mut(),
         )?;
         let accent = u8::try_from(scanned.accent).map_err(|_| ExecError::InvalidCode {
             context: "\\accent",
             value: scanned.accent,
         })?;
-        let accent_font = stores.current_font();
+        let accent_font = context.current_font();
         // §1123's `p:=new_character(f,cur_val); if p<>null then`: a missing
         // accent character skips `do_assignments` and the base lookahead
         // entirely, so nothing after this point runs.
-        let Some(accent_metrics) = stores.font_char_metrics(accent_font, accent) else {
+        let Some(accent_metrics) = context.font_char_metrics(accent_font, accent) else {
             crate::diagnostics::report_missing_character_warning(
-                stores,
+                &mut context,
                 accent_font,
                 char::from(accent),
                 self.command_profile() == CommandProfile::ETEX26,
             );
             return Ok(ReplayStep::Continue);
         };
+        drop(context);
         let base = self.do_assignments_then_accent_base(stores)?;
         let accent_origin = scanned.accent_provenance.primary;
         let etex_extended = self.command_profile() == CommandProfile::ETEX26;
+        let mut context = stores.command_context().expect("live generation");
         apply_accent_nodes(
             &mut self.modes,
-            stores,
+            &mut context,
             etex_extended,
             AccentPlacement {
                 accent,
@@ -4493,13 +4531,19 @@ impl<G> MainControl<G> {
     /// flush it after that step's own mutation and effect records.
     fn fire_pending_page_output(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
         while !self.boxes.output_routine_active {
-            let Some(fire_up) = stores.page_fire_up() else {
-                break;
+            let selected = {
+                let mut context = stores.command_context().expect("live generation");
+                let Some(fire_up) = context.page_fire_up() else {
+                    break;
+                };
+                let error_context = self.command.output_open_context(&context);
+                crate::page_output::select_pending_page_output(
+                    &mut context,
+                    fire_up,
+                    error_context,
+                )?
             };
-            let error_context = self
-                .command
-                .output_open_context(&stores.command_context().expect("live generation"));
-            match crate::page_output::select_pending_page_output(stores, fire_up, error_context)? {
+            match selected {
                 crate::page_output::SelectedPageOutput::Default(page) => {
                     let mut command = CommandMachine {
                         state: &mut self.command,
@@ -4557,12 +4601,12 @@ impl<G> MainControl<G> {
                         self.page_output_observations.append(&mut deferred);
                     }
                     opened?;
-                    enter_group(stores, &mut self.command, GroupKind::Output);
+                    let mut context = stores.command_context().expect("live generation");
+                    enter_group(&mut context, &mut self.command, GroupKind::Output);
                     self.modes.push_at_line(
                         Mode::InternalVertical,
                         -i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
                     )?;
-                    stores.set_output_routine_active(true);
                     self.boxes.output_routine_active = true;
                     self.boxes.output_routine_opening_pending = true;
                 }
@@ -4706,7 +4750,8 @@ impl<G> MainControl<G> {
             )),
             MathFieldBody::OpenGroup => {
                 let list = self.execute_live_math_group(GroupKind::Math, stores)?;
-                Ok(collapse_singleton_math_group(stores, list))
+                let context = stores.command_context().expect("live generation");
+                Ok(collapse_singleton_math_group(&context, list))
             }
         }
     }
@@ -4957,8 +5002,11 @@ impl<G> MainControl<G> {
                     )?;
                 } else {
                     let display = take_finished_math_list(&mut self.modes, stores)?;
-                    enter_group(stores, &mut self.command, GroupKind::MathShift);
-                    stores.set_int_param(IntParam::FAM, -1);
+                    let mut context = stores.command_context().expect("live generation");
+                    enter_group(&mut context, &mut self.command, GroupKind::MathShift);
+                    context
+                        .assign_int_param(IntParam::FAM, -1, tex_state::AssignmentScope::Local)
+                        .expect("family parameter is admitted");
                     self.modes.push_at_line(
                         Mode::Math,
                         self.command
@@ -5162,8 +5210,12 @@ impl<G> MainControl<G> {
         display: bool,
         stores: &mut Universe<G>,
     ) -> Result<(), ExecError> {
-        enter_group(stores, &mut self.command, GroupKind::MathShift);
-        stores.set_int_param(IntParam::FAM, -1);
+        let mut context = stores.command_context().expect("live generation");
+        enter_group(&mut context, &mut self.command, GroupKind::MathShift);
+        context
+            .assign_int_param(IntParam::FAM, -1, tex_state::AssignmentScope::Local)
+            .expect("family parameter is admitted");
+        drop(context);
         self.modes.push_at_line(
             if display {
                 Mode::DisplayMath
@@ -5185,49 +5237,63 @@ impl<G> MainControl<G> {
     }
 
     fn enter_display(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
-        let error_context = self
-            .command
-            .output_open_context(&stores.command_context().expect("live generation"));
-        let paragraph = crate::paragraph_end::interrupt_paragraph_for_display(
-            &mut self.modes,
-            stores,
-            self.fuel.fuel_mut(),
-            error_context,
-        )?;
-        let dimensions = crate::paragraph_end::display_line_dimensions(&self.modes, stores);
-        let pre_display_size = paragraph
-            .last_line
-            .as_ref()
-            .map_or(Scaled::from_raw(-Scaled::MAX_DIMEN.raw()), |line| {
-                crate::math::display::pre_display_size(stores, line)
-            });
-        let prototype = if stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 {
-            paragraph
+        let (paragraph, dimensions, pre_display_size, prototype, extended) = {
+            let mut context = stores.command_context().expect("live generation");
+            let error_context = self.command.output_open_context(&context);
+            let paragraph = crate::paragraph_end::interrupt_paragraph_for_display(
+                &mut self.modes,
+                &mut context,
+                self.fuel.fuel_mut(),
+                error_context,
+            )?;
+            let dimensions = crate::paragraph_end::display_line_dimensions(&self.modes, &context);
+            let pre_display_size = paragraph
                 .last_line
-                .map(|line| crate::math::display::display_line_prototype(stores, line))
-        } else {
-            None
+                .as_ref()
+                .map_or(Scaled::from_raw(-Scaled::MAX_DIMEN.raw()), |line| {
+                    crate::math::display::pre_display_size(&context, line)
+                });
+            let extended = context.int_param(IntParam::ETEX_EXTENDED_MODE) > 0;
+            let prototype = if extended {
+                paragraph
+                    .last_line
+                    .as_ref()
+                    .map(|line| crate::math::display::display_line_prototype(&context, line))
+            } else {
+                None
+            };
+            (paragraph, dimensions, pre_display_size, prototype, extended)
         };
         // TeX82 §1145 opens `math_shift_group` before these local parameter
         // definitions, so §283 restores all of them when the display ends.
         // `\everydisplay` is scheduled only after the definitions are live.
         self.enter_math_level(true, stores)?;
-        stores.set_dimen_param(DimenParam::PRE_DISPLAY_SIZE, pre_display_size);
-        stores.set_dimen_param(DimenParam::DISPLAY_WIDTH, dimensions.width);
-        stores.set_dimen_param(DimenParam::DISPLAY_INDENT, dimensions.indent);
+        let mut context = stores.command_context().expect("live generation");
+        for (parameter, value) in [
+            (DimenParam::PRE_DISPLAY_SIZE, pre_display_size),
+            (DimenParam::DISPLAY_WIDTH, dimensions.width),
+            (DimenParam::DISPLAY_INDENT, dimensions.indent),
+        ] {
+            context
+                .assign_dimen_param(parameter, value, tex_state::AssignmentScope::Local)
+                .expect("display dimension parameter is admitted");
+        }
         // e-TeX 2.6 [32.1145] adds this definition only in extended mode;
         // TeX82 compatibility mode has no corresponding save-stack word.
-        if stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 {
-            stores.set_int_param(
-                IntParam::PRE_DISPLAY_DIRECTION,
-                match paragraph.active_directions.last() {
-                    Some(tex_state::node::Direction::BeginL) => 1,
-                    Some(tex_state::node::Direction::BeginR) => -1,
-                    _ => 0,
-                },
-            );
+        if extended {
+            context
+                .assign_int_param(
+                    IntParam::PRE_DISPLAY_DIRECTION,
+                    match paragraph.active_directions.last() {
+                        Some(tex_state::node::Direction::BeginL) => 1,
+                        Some(tex_state::node::Direction::BeginR) => -1,
+                        _ => 0,
+                    },
+                    tex_state::AssignmentScope::Local,
+                )
+                .expect("display direction parameter is admitted");
         }
-        schedule_everymath(&mut self.command, stores, true);
+        schedule_everymath(&mut self.command, &mut context, true);
         self.modes
             .current_list_mutation()
             .set_display_interrupt(crate::mode::DisplayInterrupt {
@@ -5436,8 +5502,10 @@ impl<G> MainControl<G> {
         // over/underfull lines as §663's "in paragraph at lines A--B" rather
         // than falling back to "detected at line B" for want of a
         // `pack_begin_line`.
-        stores.push_paragraph_start_line(stores.current_input_line());
-        let (language, left, right) = crate::box_runtime::hmode::current_hyphen_context(stores);
+        let (language, left, right) = {
+            let context = stores.command_context().expect("live generation");
+            crate::box_runtime::hmode::current_hyphen_context(&context)
+        };
         self.modes
             .current_list_mutation()
             .set_hyphen_context(language, left, right);
@@ -5512,7 +5580,8 @@ impl<G> MainControl<G> {
         // the following outer main-control step report them only after
         // build_page has emitted its tracingpages state.
         self.capture_first_causal_context(stores, &diagnostics);
-        report_pending_diagnostics(stores, diagnostics)
+        let mut context = stores.command_context().expect("live generation");
+        report_pending_diagnostics(&mut context, diagnostics)
     }
 
     fn apply_math_delimiter(
@@ -5888,7 +5957,10 @@ impl<G> MainControl<G> {
         self.drain_file_framing_events(stores);
         self.refresh_host_capabilities(stores);
 
-        let innermost_group = stores.innermost_group_kind();
+        let innermost_group = stores
+            .command_context()
+            .expect("live generation")
+            .innermost_group_kind();
         let mut diagnostics = Vec::new();
         let raw_main_loop_delivery = self.main_loop_active;
         let (delivery, settled_in_preflight, trace_reported, fused_hot, fused_retry, fused_error) = {
@@ -6045,7 +6117,10 @@ impl<G> MainControl<G> {
             return Err(error);
         }
         self.capture_first_causal_context(stores, &diagnostics);
-        report_pending_diagnostics(stores, diagnostics)?;
+        {
+            let mut context = stores.command_context().expect("live generation");
+            report_pending_diagnostics(&mut context, diagnostics)?;
+        }
         self.drain_file_framing_events(stores);
 
         if let Some((operation, meaning)) = fused_hot {
@@ -6243,8 +6318,13 @@ impl<G> MainControl<G> {
         self.refresh_host_capabilities(stores);
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
-        let innermost_group = stores.innermost_group_kind();
-        let job_is_all_over = crate::page_output::job_is_all_over(stores);
+        let (innermost_group, job_is_all_over) = {
+            let context = stores.command_context().expect("live generation");
+            (
+                context.innermost_group_kind(),
+                crate::page_output::job_is_all_over(&context),
+            )
+        };
         let mut diagnostics = Vec::new();
         let scanned = if let OperationDelivery::<G>::Hot(operation) = delivery {
             ScannedOperation::<G>::Hot(operation)
@@ -6485,19 +6565,19 @@ impl<G> MainControl<G> {
         // §1091's `mode_line` both name the line the command is *on*, and a
         // command that is the first thing on a line is scanned by a step
         // that began on the previous one.
-        stores.set_current_input_position(
-            i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
-            self.command.current_file_source_id(),
-        );
         if self.first_causal_context.is_none() && stores.world().error_channel().error_count() > 0 {
+            let context = stores.command_context().expect("live generation");
             self.first_causal_context = Some(crate::FrozenDiagnosticContext::capture(
-                stores,
+                &context,
                 self.command.diagnostic_input_context(8),
                 "command-error",
             ));
         }
         self.capture_first_causal_context(stores, &diagnostics);
-        report_pending_diagnostics(stores, diagnostics)?;
+        {
+            let mut context = stores.command_context().expect("live generation");
+            report_pending_diagnostics(&mut context, diagnostics)?;
+        }
         self.drain_file_framing_events(stores);
         let scanned = match scanned {
             ScannedOperation::<G>::Cold(scanned) => scanned,
@@ -7080,7 +7160,7 @@ impl<G> MainControl<G> {
 /// frozen before validation so its detached node list remains available to
 /// `show_box` even though recovery rejects the enclosing discretionary.
 fn report_improper_discretionary<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     deleted: tex_state::node_arena::PageListId,
     context: String,
 ) -> Result<(), ExecError> {
@@ -7463,14 +7543,14 @@ fn finish_math_list<G>(
 /// noad by copying its nucleus field into the destination. This preserves an
 /// author box as `sub_box` instead of wrapping it in a second natural hpack.
 fn collapse_singleton_math_group<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     list: tex_state::node_arena::PageListId,
 ) -> MathField {
     let nodes = stores
         .page_node_list(list)
         .expect("math group belongs to the live page arena")
         .nodes();
-    if let [Node::MathNoad(noad)] = nodes.as_slice()
+    if let [Node::MathNoad(noad)] = nodes
         && noad.kind == NoadKind::Normal(NoadClass::Ord)
         && matches!(noad.subscript, MathField::Empty)
         && matches!(noad.superscript, MathField::Empty)
@@ -7600,12 +7680,17 @@ fn report_unpaired_display_end<G>(
     Ok(())
 }
 
-fn left_group_open<G>(modes: &ModeNest, stores: &Universe<G>) -> bool {
+fn left_group_open<G>(modes: &ModeNest, stores: &mut Universe<G>) -> bool {
     // e-TeX etex.ch [48.1192] admits `\middle` through the same
     // `math_left_group` case as `\right`.  Seeing a leading left noad is not
     // sufficient: a simple group nested inside that left/right group is an
     // invalid context and must take the `Extra \middle` recovery arm.
-    if stores.innermost_group_kind() != Some(GroupKind::MathLeft) {
+    if stores
+        .command_context()
+        .expect("live generation")
+        .innermost_group_kind()
+        != Some(GroupKind::MathLeft)
+    {
         return false;
     }
     let starts_left_node = |node: Option<&Node>| {

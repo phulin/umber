@@ -12038,7 +12038,13 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
             NoadKind::Normal(NoadClass::Ord),
             nucleus.clone(),
         ))]);
-        assert_eq!(collapse_singleton_math_group(&stores, list), nucleus);
+        assert_eq!(
+            collapse_singleton_math_group(
+                &stores.command_context().expect("live generation"),
+                list,
+            ),
+            nucleus
+        );
     }
 
     let scripted = stores.publish_page_nodes(&[Node::MathNoad(MathNoad {
@@ -12063,7 +12069,10 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
     ]);
     for list in [scripted, non_ord, multiple] {
         assert_eq!(
-            collapse_singleton_math_group(&stores, list.clone()),
+            collapse_singleton_math_group(
+                &stores.command_context().expect("live generation"),
+                list.clone(),
+            ),
             MathField::SubMlist(list)
         );
     }
