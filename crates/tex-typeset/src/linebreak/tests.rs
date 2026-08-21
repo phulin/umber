@@ -6,8 +6,8 @@ use tex_state::font::FontExpansion;
 use tex_state::font::NULL_FONT;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{DiscKind, GlueKind, KernKind, Node, Whatsit};
-use tex_state::provenance::OriginRef;
 use tex_state::scaled::Scaled;
+use tex_state::token::OriginId;
 use tex_state::token::{Catcode, Token};
 
 fn sp(raw: i32) -> Scaled {
@@ -506,7 +506,7 @@ fn microtype_char(font: tex_state::ids::FontId, ch: char) -> Node {
     Node::Char {
         font,
         ch,
-        origin: tex_state::provenance::OriginRef::unknown(),
+        origin: OriginId::UNKNOWN,
     }
 }
 
@@ -3192,14 +3192,14 @@ fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() 
         orig: orig.to_vec(),
         left_hit: false,
         right_hit: false,
-        origins: vec![OriginRef::unknown(); 2],
+        origins: vec![OriginId::UNKNOWN; 2],
     };
     let bb = universe.publish_page_nodes(&[lig('A', ['B', 'B'])]);
     let ca = universe.publish_page_nodes(&[lig('\u{82}', ['C', 'A'])]);
     let character = |ch| Node::Char {
         font: NULL_FONT,
         ch,
-        origin: OriginRef::unknown(),
+        origin: OriginId::UNKNOWN,
     };
     let disc = |replace| Node::Disc {
         kind: DiscKind::AutomaticHyphen,

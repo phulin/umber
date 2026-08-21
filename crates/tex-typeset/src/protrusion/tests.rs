@@ -38,7 +38,7 @@ fn character(font: tex_state::ids::FontId, ch: char) -> Node {
     Node::Char {
         font,
         ch,
-        origin: tex_state::provenance::OriginRef::unknown(),
+        origin: tex_state::token::OriginId::UNKNOWN,
     }
 }
 

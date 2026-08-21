@@ -4,7 +4,7 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns pure 
 
 ## Crate Role
 
-`tex-typeset` contains list-in/list-out algorithms such as badness calculation, hpack/vpack/vtop packing, line-breaking support, and post-processing over node lists. Its public entry points read immutable state through narrow traits, copy required parameters into plain values, perform TeX arithmetic, and return packed boxes, diagnostics, or transformed lists without mutating `Universe`.
+`tex-typeset` contains list-in/list-out algorithms such as badness calculation, hpack/vpack/vtop packing, line-breaking support, and post-processing over node lists. Its public entry points read immutable state through narrow traits, copy required parameters into plain values, perform TeX arithmetic, and return packed boxes, diagnostics, or transformed lists. The crate does not implement those traits for `Universe`; an execution-layer adapter must hold the admitted state/page borrows and resolve typed coordinates for the duration of one call.
 
 Use this crate for layout algorithms whose correctness can be tested as pure functions over node/font/glue inputs. Stomach code in `tex-exec` should prepare lists and apply side effects before or after calling into these kernels.
 
@@ -12,7 +12,7 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 
 - `AGENTS.md`: local guidance for future agents working in this crate.
 - `Cargo.toml`: crate manifest, local dependencies, and workspace lint configuration.
-- `src/lib.rs`: public crate surface, `TypesetState`, `badness`, and packing exports.
+- `src/lib.rs`: public crate surface, the execution-adapter-facing `TypesetState` trait, `badness`, and packing exports.
 - `src/alignment.rs`: pure detached alignment column/span width planning.
 - `src/alignment/tests.rs`: unit tests for independent alignment width planning.
 - `src/expansion.rs`: pure pdfTeX font-expansion validation, capacity, final-ratio, and discrete-step arithmetic.
@@ -34,14 +34,23 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/linebreak/post.rs`: post-line-break list surgery for broken lines, skips, migrated disc material, and penalties.
 - `src/linebreak/tests.rs`: unit tests for line dimensions, break selection, hyphenation hooks, penalties, and post-break output.
 - `src/linebreak/widths.rs`: line width accumulation, prefix width tables, glue stretch/shrink accounting, and line badness.
+- `tests/production_traits.rs`: public-boundary smoke tests proving packing,
+  line-breaking, and math conversion through a typed page-arena adapter with
+  copied parameter values and no runtime owner facade.
 
 ## Boundaries
 
-- Do not mutate `Universe` from this crate.
+- Do not access or mutate `Universe` from this crate. Runtime consumers provide
+  a narrow adapter over an already admitted generation and the matching page
+  arena.
 - Do not handle primitive dispatch, grouping, mode transitions, file effects, or artifact commits here.
 - Keep font and durable parameter access through narrow immutable traits;
   page nodes carry glue values directly, and nested lists resolve only through
   the borrowed page arena.
+- Copy glue parameters into `GlueSpec` while taking a math-parameter snapshot;
+  generation-branded `GlueId<G>` values do not cross the pure-kernel trait.
+- Treat `PageListId` as a coordinate only. Resolve it through
+  `TypesetState::page_nodes` before reading length or contents.
 - Preserve TeX.web arithmetic and badness rules exactly; route shared fixed-point operations through `tex-arith`/`tex-state::scaled` as appropriate.
 
 ## Validation

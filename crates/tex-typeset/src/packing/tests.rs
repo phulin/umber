@@ -99,10 +99,7 @@ fn scalar_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement {
             }
             NodeRef::Kern { amount, .. } => out.width = add(out.width, amount),
             NodeRef::Glue { spec, .. } => {
-                out.observe_horizontal(
-                    MetricEvent::Glue(state.glue_spec(*spec)),
-                    MetricOverflow::PACKING,
-                );
+                out.observe_horizontal(MetricEvent::Glue(spec), MetricOverflow::PACKING);
             }
             NodeRef::MathOn(width) | NodeRef::MathOff(width) => out.width = add(out.width, width),
             NodeRef::Penalty(_) => {}
@@ -136,13 +133,13 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
                 0 => nodes.push(Node::Char {
                     font,
                     ch: '\u{100}',
-                    origin: tex_state::provenance::OriginRef::unknown(),
+                    origin: tex_state::token::OriginId::UNKNOWN,
                 }),
                 1 => nodes.push(Node::Lig {
                     font,
                     ch: char::from(code),
                     orig: vec!['a', 'b'],
-                    origins: vec![tex_state::provenance::OriginRef::unknown(); 2],
+                    origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
                     left_hit: false,
                     right_hit: false,
                 }),
@@ -159,7 +156,7 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
                 _ => nodes.push(Node::Char {
                     font,
                     ch: char::from(code),
-                    origin: tex_state::provenance::OriginRef::unknown(),
+                    origin: tex_state::token::OriginId::UNKNOWN,
                 }),
             }
         }
