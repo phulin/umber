@@ -90,6 +90,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/interpreter.rs`: session-lived canonical command-state ownership,
   borrow-scoped processor facades, and assertion-bearing interpreter lifecycle
   accounting across semantic and host barriers.
+- `src/typeset_context.rs`: crate-private pure-kernel trait adapter over one
+  already-admitted `CommandContext`; it owns no state, owner, or arena root.
 - `src/**/tests.rs` and crate-local `#[cfg(test)]` modules: active semantic,
   replay, diagnostic, state, and exact-operand regression coverage selected by
   the library test target.

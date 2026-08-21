@@ -3,7 +3,7 @@
 use crate::InteractionMode;
 use crate::definition_arena::{DefinitionId, DefinitionView};
 use crate::dependency::{DependencyKey, DependencyRuntime, DependencyValue, TrackedRegionBarrier};
-use crate::durable_arena::{GlueId, ProvenanceId, TokenListId};
+use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
 use crate::env::banks::IntParam;
 use crate::env::{AssignmentScope, CodeTableKind, DenseState, StateError};
 use crate::font::FontStore;
@@ -211,6 +211,10 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.glue(id)
     }
 
+    pub fn allocate_glue(&mut self, value: GlueSpec) -> Result<GlueId<G>, DurableAllocationError> {
+        self.admitted.allocate_glue(value)
+    }
+
     #[inline(always)]
     pub fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
         self.admitted.provenance(id)
@@ -325,6 +329,17 @@ impl<'a, G> CommandContext<'a, G> {
             .assign_mu_glue_register(index, value, scope)
     }
 
+    pub fn assign_glue_parameter(
+        &mut self,
+        parameter: crate::env::banks::GlueParam,
+        value: Option<GlueId<G>>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted
+            .state()
+            .assign_glue_parameter(parameter, value, scope)
+    }
+
     #[inline(always)]
     pub fn box_register(&self, index: u16) -> Result<Option<DurableListId<G>>, StateError> {
         self.admitted.state_ref().box_register(index)
@@ -391,6 +406,17 @@ impl<'a, G> CommandContext<'a, G> {
             .state_ref()
             .dimension_parameter(parameter)
             .unwrap_or_else(|_| Scaled::from_raw(0))
+    }
+
+    pub fn assign_dimen_param(
+        &mut self,
+        parameter: crate::env::banks::DimenParam,
+        value: Scaled,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted
+            .state()
+            .assign_dimension_parameter(parameter, value, scope)
     }
 
     #[must_use]
