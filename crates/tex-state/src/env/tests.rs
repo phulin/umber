@@ -1,6 +1,7 @@
 use super::{
     AssignmentScope, CodeTableKind, DenseState, FreshParameterDefault, FreshParameterInstallError,
-    FreshParameterInstallation, FreshParameterProfile,
+    FreshParameterInstallation, FreshParameterProfile, GroupRestorationCell,
+    GroupRestorationOutcome, GroupRestorationValue,
 };
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::group::GroupKind;
@@ -136,6 +137,137 @@ fn later_global_assignment_suppresses_every_applicable_restore() {
     state.end_group(GroupKind::SemiSimple).expect("inner end");
     state.end_group(GroupKind::Simple).expect("outer end");
     assert_eq!(state.count(0).expect("read"), 4);
+}
+
+#[test]
+fn restoration_receipts_preserve_nested_reverse_order_and_exact_font_outcomes() {
+    let mut state = state();
+    let outer_font = FontId::testing_new(7);
+    let inner_font = FontId::testing_new(8);
+    let outer_retained_font = FontId::testing_new(10);
+    let inner_retained_font = FontId::testing_new(11);
+    let global_font = FontId::testing_new(12);
+    state
+        .assign_count(0, 1, AssignmentScope::Global)
+        .expect("base count");
+
+    state.begin_group(GroupKind::Simple, 1).expect("outer");
+    state
+        .assign_count(0, 2, AssignmentScope::Local)
+        .expect("outer count");
+    state
+        .assign_math_family_font(18, outer_font, AssignmentScope::Local)
+        .expect("outer restored font");
+    state
+        .assign_math_family_font(19, outer_retained_font, AssignmentScope::Local)
+        .expect("outer retained font");
+
+    state.begin_group(GroupKind::SemiSimple, 2).expect("inner");
+    state
+        .assign_count(0, 3, AssignmentScope::Local)
+        .expect("inner count");
+    state
+        .assign_math_family_font(18, inner_font, AssignmentScope::Local)
+        .expect("inner restored font");
+    state
+        .assign_math_family_font(19, inner_retained_font, AssignmentScope::Local)
+        .expect("inner retained font");
+    state
+        .assign_count(0, 4, AssignmentScope::Global)
+        .expect("global count");
+    state
+        .assign_math_family_font(19, global_font, AssignmentScope::Global)
+        .expect("global font");
+
+    let inner = state.end_group(GroupKind::SemiSimple).expect("inner end");
+    let inner_entries = inner.entries();
+    assert_eq!(inner_entries.len(), 3);
+    assert_eq!(
+        inner_entries[0].cell(),
+        GroupRestorationCell::MathFamilyFont(19)
+    );
+    assert_eq!(
+        inner_entries[0].saved_value(),
+        GroupRestorationValue::Font(outer_retained_font)
+    );
+    assert_eq!(
+        inner_entries[0].live_value(),
+        GroupRestorationValue::Font(global_font)
+    );
+    assert_eq!(
+        inner_entries[0].outcome(),
+        GroupRestorationOutcome::Retained
+    );
+    assert_eq!(
+        inner_entries[1].cell(),
+        GroupRestorationCell::MathFamilyFont(18)
+    );
+    assert_eq!(
+        inner_entries[1].saved_value(),
+        GroupRestorationValue::Font(outer_font)
+    );
+    assert_eq!(
+        inner_entries[1].live_value(),
+        GroupRestorationValue::Font(outer_font)
+    );
+    assert_eq!(
+        inner_entries[1].outcome(),
+        GroupRestorationOutcome::Restored
+    );
+    assert_eq!(inner_entries[2].cell(), GroupRestorationCell::Count(0));
+    assert_eq!(
+        inner_entries[2].saved_value(),
+        GroupRestorationValue::Integer(2)
+    );
+    assert_eq!(
+        inner_entries[2].live_value(),
+        GroupRestorationValue::Integer(4)
+    );
+    assert_eq!(
+        inner_entries[2].outcome(),
+        GroupRestorationOutcome::Retained
+    );
+
+    let outer = state.end_group(GroupKind::Simple).expect("outer end");
+    let outer_entries = outer.entries();
+    assert_eq!(outer_entries.len(), 3);
+    assert_eq!(
+        outer_entries[0].cell(),
+        GroupRestorationCell::MathFamilyFont(19)
+    );
+    assert_eq!(
+        outer_entries[0].live_value(),
+        GroupRestorationValue::Font(global_font)
+    );
+    assert_eq!(
+        outer_entries[0].outcome(),
+        GroupRestorationOutcome::Retained
+    );
+    assert_eq!(
+        outer_entries[1].cell(),
+        GroupRestorationCell::MathFamilyFont(18)
+    );
+    assert_eq!(
+        outer_entries[1].saved_value(),
+        GroupRestorationValue::Font(FontId::new(0))
+    );
+    assert_eq!(
+        outer_entries[1].live_value(),
+        GroupRestorationValue::Font(FontId::new(0))
+    );
+    assert_eq!(
+        outer_entries[1].outcome(),
+        GroupRestorationOutcome::Restored
+    );
+    assert_eq!(outer_entries[2].cell(), GroupRestorationCell::Count(0));
+    assert_eq!(
+        outer_entries[2].live_value(),
+        GroupRestorationValue::Integer(4)
+    );
+    assert_eq!(
+        outer_entries[2].outcome(),
+        GroupRestorationOutcome::Retained
+    );
 }
 
 #[test]

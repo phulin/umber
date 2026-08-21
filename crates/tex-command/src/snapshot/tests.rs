@@ -326,7 +326,8 @@ fn snapshot_restores_group_and_assignment_payload_roots() {
             assert_eq!(
                 command
                     .end_group(&mut state, tex_state::GroupKind::Simple)
-                    .expect("restored group closes"),
+                    .expect("restored group closes")
+                    .into_aftergroup(),
                 vec![word('a')]
             );
         }
@@ -373,7 +374,8 @@ fn summary_restores_group_and_assignment_payload_roots() {
         assert_eq!(
             command
                 .end_group(&mut state, tex_state::GroupKind::Simple)
-                .expect("summary group closes"),
+                .expect("summary group closes")
+                .into_aftergroup(),
             vec![word('a')]
         );
     });

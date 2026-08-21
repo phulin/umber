@@ -1785,7 +1785,10 @@ impl<G> Universe<G> {
         Ok(self.live_state_mut()?.begin_group(kind, entered_line)?)
     }
 
-    pub fn end_group(&mut self, kind: GroupKind) -> Result<GroupFrame, UniverseError> {
+    pub fn end_group(
+        &mut self,
+        kind: GroupKind,
+    ) -> Result<crate::GroupRestorationReceipt<G>, UniverseError> {
         Ok(self.live_state_mut()?.end_group(kind)?)
     }
 

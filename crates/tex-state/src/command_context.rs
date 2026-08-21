@@ -952,8 +952,31 @@ impl<'a, G> CommandContext<'a, G> {
         self.admitted.state().begin_group(kind, entered_line)
     }
 
-    pub fn end_group(&mut self, kind: crate::GroupKind) -> Result<crate::GroupFrame, StateError> {
+    pub fn end_group(
+        &mut self,
+        kind: crate::GroupKind,
+    ) -> Result<crate::GroupRestorationReceipt<G>, StateError> {
         self.admitted.state().end_group(kind)
+    }
+
+    /// Opens §245's diagnostic channel with the print controls captured after
+    /// one ordered §283 restoration decision.
+    ///
+    /// The restoration receipt itself owns no printer or World borrow. The
+    /// executor consumes it synchronously and opens this short-lived channel
+    /// only while publishing the matching detached entry.
+    pub fn begin_group_restoration_diagnostic(
+        &mut self,
+        trace: crate::GroupRestorationTraceState,
+    ) -> crate::diagnostic::Diagnostic<'_, G> {
+        crate::diagnostic::Diagnostic::from_parts(
+            self.world,
+            self.interaction_mode,
+            self.error_context_widths,
+            trace.tracing_online(),
+            trace.newline_char(),
+            trace.escape_char(),
+        )
     }
 
     #[must_use]

@@ -146,6 +146,202 @@ pub(crate) enum StateCell {
     FontRuntime(FontRuntimeCell),
 }
 
+/// One mutable cell named by an in-session group-restoration receipt.
+///
+/// This is a borrow-free coordinate, not a cold DTO: token, glue, node, and
+/// definition coordinates carried by the matching value remain valid only
+/// under the admitted generation which produced the receipt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupRestorationCell {
+    Meaning(Symbol),
+    Count(u16),
+    Dimension(u16),
+    TokenRegister(u16),
+    GlueRegister(u16),
+    BoxRegister(u16),
+    MuGlueRegister(u16),
+    IntegerParameter(u16),
+    DimensionParameter(u16),
+    TokenParameter(u16),
+    GlueParameter(u16),
+    CurrentFont,
+    MathFamilyFont(u8),
+    Code(CodeTableKind, u32),
+    FontRuntime(GroupRestorationFontRuntimeCell),
+}
+
+/// One mutable per-font cell named by a restoration receipt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupRestorationFontRuntimeCell {
+    ParameterCount(u32),
+    Dimension { font: u32, number: u32 },
+    HyphenChar(u32),
+    SkewChar(u32),
+    PdfCode { table: u8, font: u32, code: u8 },
+    LigaturesDisabled(u32),
+}
+
+/// One exact saved or live state word in a group-restoration receipt.
+///
+/// The value is owned and contains no borrow or coarse owner. Generation
+/// coordinates are deliberately retained because the executor consumes the
+/// receipt synchronously under the same [`crate::CommandContext`].
+pub enum GroupRestorationValue<G> {
+    Meaning(ResolvedMeaning<G>),
+    Integer(i32),
+    Dimension(Scaled),
+    TokenList(Option<TokenListId<G>>),
+    Glue(Option<GlueId<G>>),
+    NodeList(Option<DurableListId<G>>),
+    Font(FontId),
+    Code(i64),
+}
+
+impl<G> Clone for GroupRestorationValue<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for GroupRestorationValue<G> {}
+
+impl<G> core::fmt::Debug for GroupRestorationValue<G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Meaning(value) => value.fmt(formatter),
+            Self::Integer(value) => value.fmt(formatter),
+            Self::Dimension(value) => value.fmt(formatter),
+            Self::TokenList(None) => formatter.write_str("TokenList(None)"),
+            Self::TokenList(Some(_)) => formatter.write_str("TokenList(Some(..))"),
+            Self::Glue(None) => formatter.write_str("Glue(None)"),
+            Self::Glue(Some(_)) => formatter.write_str("Glue(Some(..))"),
+            Self::NodeList(None) => formatter.write_str("NodeList(None)"),
+            Self::NodeList(Some(_)) => formatter.write_str("NodeList(Some(..))"),
+            Self::Font(value) => value.fmt(formatter),
+            Self::Code(value) => value.fmt(formatter),
+        }
+    }
+}
+
+impl<G> PartialEq for GroupRestorationValue<G> {
+    fn eq(&self, other: &Self) -> bool {
+        match (*self, *other) {
+            (Self::Meaning(left), Self::Meaning(right)) => left == right,
+            (Self::Integer(left), Self::Integer(right)) => left == right,
+            (Self::Dimension(left), Self::Dimension(right)) => left == right,
+            (Self::TokenList(left), Self::TokenList(right)) => left == right,
+            (Self::Glue(left), Self::Glue(right)) => left == right,
+            (Self::NodeList(left), Self::NodeList(right)) => left == right,
+            (Self::Font(left), Self::Font(right)) => left == right,
+            (Self::Code(left), Self::Code(right)) => left == right,
+            _ => false,
+        }
+    }
+}
+
+impl<G> Eq for GroupRestorationValue<G> {}
+
+/// Whether TeX restored the saved word or retained a later global word.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupRestorationOutcome {
+    Restored,
+    Retained,
+}
+
+/// The live print controls immediately after one §283 restoration decision.
+///
+/// Capturing these scalars per entry preserves the order-sensitive case where
+/// `unsave` itself restores a tracing or print parameter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GroupRestorationTraceState {
+    tracing_restores: i32,
+    tracing_online: i32,
+    newline_char: i32,
+    escape_char: i32,
+}
+
+impl GroupRestorationTraceState {
+    #[must_use]
+    pub const fn tracing_restores(self) -> i32 {
+        self.tracing_restores
+    }
+
+    #[must_use]
+    pub const fn tracing_online(self) -> i32 {
+        self.tracing_online
+    }
+
+    #[must_use]
+    pub const fn newline_char(self) -> i32 {
+        self.newline_char
+    }
+
+    #[must_use]
+    pub const fn escape_char(self) -> i32 {
+        self.escape_char
+    }
+}
+
+/// One entry in TeX82 §283's top-down `unsave` restoration order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GroupRestorationEntry<G> {
+    cell: GroupRestorationCell,
+    saved: GroupRestorationValue<G>,
+    live: GroupRestorationValue<G>,
+    outcome: GroupRestorationOutcome,
+    trace: GroupRestorationTraceState,
+}
+
+impl<G> GroupRestorationEntry<G> {
+    #[must_use]
+    pub const fn cell(&self) -> GroupRestorationCell {
+        self.cell
+    }
+
+    #[must_use]
+    pub const fn saved_value(&self) -> GroupRestorationValue<G> {
+        self.saved
+    }
+
+    #[must_use]
+    pub const fn live_value(&self) -> GroupRestorationValue<G> {
+        self.live
+    }
+
+    #[must_use]
+    pub const fn outcome(&self) -> GroupRestorationOutcome {
+        self.outcome
+    }
+
+    #[must_use]
+    pub const fn trace_state(&self) -> GroupRestorationTraceState {
+        self.trace
+    }
+}
+
+/// Ordered, borrow-free result of closing one TeX save level.
+///
+/// This receipt is an admitted in-session handoff, not a serialization or
+/// cold-detachment boundary. Consumers must render it synchronously under the
+/// generation which produced it and before replaying its `\aftergroup` input.
+#[derive(Debug, Eq, PartialEq)]
+pub struct GroupRestorationReceipt<G> {
+    frame: GroupFrame,
+    entries: Vec<GroupRestorationEntry<G>>,
+}
+
+impl<G> GroupRestorationReceipt<G> {
+    #[must_use]
+    pub const fn frame(&self) -> GroupFrame {
+        self.frame
+    }
+
+    #[must_use]
+    pub fn entries(&self) -> &[GroupRestorationEntry<G>] {
+        &self.entries
+    }
+}
+
 /// One packed scalar or typed generation coordinate stored by a bank/journal.
 pub(crate) enum StateWord<G> {
     Meaning(MeaningWord<G>),
@@ -876,7 +1072,10 @@ impl<G> DenseState<G> {
     }
 
     /// Performs TeX82 §283 restoration in exact reverse save order.
-    pub(crate) fn end_group(&mut self, expected: GroupKind) -> Result<GroupFrame, StateError> {
+    pub(crate) fn end_group(
+        &mut self,
+        expected: GroupKind,
+    ) -> Result<GroupRestorationReceipt<G>, StateError> {
         let frame = *self
             .groups
             .last()
@@ -889,6 +1088,20 @@ impl<G> DenseState<G> {
         }
 
         let end = self.journal.len();
+        let restoration_count = (frame.journal_start as usize..end)
+            .filter(|&index| {
+                matches!(
+                    self.journal.entry(index),
+                    JournalEntry::Mutation(saved)
+                        if saved.kind == MutationKind::Assignment
+                            && saved.saved_at == Some(frame.level)
+                )
+            })
+            .count();
+        let mut entries = Vec::new();
+        entries
+            .try_reserve_exact(restoration_count)
+            .map_err(|_| StateError::Bank(BankError::AllocationFailed))?;
         for index in (frame.journal_start as usize..end).rev() {
             let JournalEntry::Mutation(saved) = self.journal.entry(index) else {
                 continue;
@@ -899,29 +1112,47 @@ impl<G> DenseState<G> {
             let current = self.read_cell(saved.cell)?;
             // A global definition made after this save suppresses it exactly
             // as TeX's `level_one` check in `unsave` does.
-            if current.level == LEVEL_ONE {
-                continue;
-            }
-            self.write_cell(
-                saved.cell,
-                BankCell {
-                    value: saved.before,
-                    level: saved.before_level,
-                },
-            )?;
-            self.journal.push(JournalEntry::Mutation(Mutation {
-                cell: saved.cell,
-                before: current.value,
-                before_level: current.level,
-                after: saved.before,
-                after_level: saved.before_level,
-                saved_at: None,
-                kind: MutationKind::GroupRestore,
-            }));
+            let (live, outcome) = if current.level == LEVEL_ONE {
+                (current.value, GroupRestorationOutcome::Retained)
+            } else {
+                self.write_cell(
+                    saved.cell,
+                    BankCell {
+                        value: saved.before,
+                        level: saved.before_level,
+                    },
+                )?;
+                self.journal.push(JournalEntry::Mutation(Mutation {
+                    cell: saved.cell,
+                    before: current.value,
+                    before_level: current.level,
+                    after: saved.before,
+                    after_level: saved.before_level,
+                    saved_at: None,
+                    kind: MutationKind::GroupRestore,
+                }));
+                (saved.before, GroupRestorationOutcome::Restored)
+            };
+            entries.push(GroupRestorationEntry {
+                cell: restoration_cell(saved.cell),
+                saved: restoration_value(saved.before),
+                live: restoration_value(live),
+                outcome,
+                trace: self.group_restoration_trace_state()?,
+            });
         }
         self.groups.pop();
         self.journal.push(JournalEntry::GroupExit(frame));
-        Ok(frame)
+        Ok(GroupRestorationReceipt { frame, entries })
+    }
+
+    fn group_restoration_trace_state(&self) -> Result<GroupRestorationTraceState, StateError> {
+        Ok(GroupRestorationTraceState {
+            tracing_restores: self.integer_parameter(IntParam::TRACING_RESTORES)?,
+            tracing_online: self.integer_parameter(IntParam::TRACING_ONLINE)?,
+            newline_char: self.integer_parameter(IntParam::NEWLINE_CHAR)?,
+            escape_char: self.integer_parameter(IntParam::ESCAPE_CHAR)?,
+        })
     }
 
     /// Atomically restores all banks and open-group state to `cursor`.
@@ -1256,6 +1487,54 @@ impl<T: Copy> BankCell<T> {
             value,
             level: self.level,
         }
+    }
+}
+
+fn restoration_cell(cell: StateCell) -> GroupRestorationCell {
+    match cell {
+        StateCell::Meaning(index) => GroupRestorationCell::Meaning(Symbol::from_packed_slot(index)),
+        StateCell::Count(index) => GroupRestorationCell::Count(index),
+        StateCell::Dimension(index) => GroupRestorationCell::Dimension(index),
+        StateCell::TokenRegister(index) => GroupRestorationCell::TokenRegister(index),
+        StateCell::GlueRegister(index) => GroupRestorationCell::GlueRegister(index),
+        StateCell::BoxRegister(index) => GroupRestorationCell::BoxRegister(index),
+        StateCell::MuGlueRegister(index) => GroupRestorationCell::MuGlueRegister(index),
+        StateCell::IntegerParameter(index) => GroupRestorationCell::IntegerParameter(index),
+        StateCell::DimensionParameter(index) => GroupRestorationCell::DimensionParameter(index),
+        StateCell::TokenParameter(index) => GroupRestorationCell::TokenParameter(index),
+        StateCell::GlueParameter(index) => GroupRestorationCell::GlueParameter(index),
+        StateCell::CurrentFont => GroupRestorationCell::CurrentFont,
+        StateCell::MathFamilyFont(index) => GroupRestorationCell::MathFamilyFont(index),
+        StateCell::Code(kind, index) => GroupRestorationCell::Code(kind, index),
+        StateCell::FontRuntime(cell) => GroupRestorationCell::FontRuntime(match cell {
+            FontRuntimeCell::ParameterCount(font) => {
+                GroupRestorationFontRuntimeCell::ParameterCount(font)
+            }
+            FontRuntimeCell::Dimen { font, number } => {
+                GroupRestorationFontRuntimeCell::Dimension { font, number }
+            }
+            FontRuntimeCell::HyphenChar(font) => GroupRestorationFontRuntimeCell::HyphenChar(font),
+            FontRuntimeCell::SkewChar(font) => GroupRestorationFontRuntimeCell::SkewChar(font),
+            FontRuntimeCell::PdfCode { table, font, code } => {
+                GroupRestorationFontRuntimeCell::PdfCode { table, font, code }
+            }
+            FontRuntimeCell::LigaturesDisabled(font) => {
+                GroupRestorationFontRuntimeCell::LigaturesDisabled(font)
+            }
+        }),
+    }
+}
+
+fn restoration_value<G>(word: StateWord<G>) -> GroupRestorationValue<G> {
+    match word {
+        StateWord::Meaning(value) => GroupRestorationValue::Meaning(value.resolve()),
+        StateWord::Integer(value) => GroupRestorationValue::Integer(value),
+        StateWord::Dimension(value) => GroupRestorationValue::Dimension(value),
+        StateWord::TokenList(value) => GroupRestorationValue::TokenList(value),
+        StateWord::Glue(value) => GroupRestorationValue::Glue(value),
+        StateWord::NodeList(value) => GroupRestorationValue::NodeList(value),
+        StateWord::Font(value) => GroupRestorationValue::Font(value),
+        StateWord::Code(value) => GroupRestorationValue::Code(value),
     }
 }
 

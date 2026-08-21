@@ -151,7 +151,10 @@ pub use engine_state::{EngineMode, EngineStateSnapshot};
 pub use env::group::{GroupFrame, GroupKind, GroupMismatch};
 pub use env::{
     AssignmentScope, CodeTableKind, FreshParameterBank, FreshParameterDefault,
-    FreshParameterInstallError, FreshParameterInstallation, FreshParameterProfile, StateError,
+    FreshParameterInstallError, FreshParameterInstallation, FreshParameterProfile,
+    GroupRestorationCell, GroupRestorationEntry, GroupRestorationFontRuntimeCell,
+    GroupRestorationOutcome, GroupRestorationReceipt, GroupRestorationTraceState,
+    GroupRestorationValue, StateError,
 };
 pub use font::PdfFontCode;
 pub use generation::GenerationBrand;

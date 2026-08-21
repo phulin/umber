@@ -72,7 +72,10 @@ fn leaving_a_group_reports_the_closed_frame() {
             .expect("begin vbox group");
         universe.trace_group_enter(frame.kind(), 1, frame.entered_line());
         let before_leave = routed_log(universe).len();
-        let frame = universe.end_group(GroupKind::VBox).expect("end vbox group");
+        let frame = universe
+            .end_group(GroupKind::VBox)
+            .expect("end vbox group")
+            .frame();
         universe.trace_group_leave(frame.kind(), 1, frame.entered_line());
 
         assert_eq!(
@@ -94,7 +97,8 @@ fn restored_tracinggroups_value_controls_the_exit_trace() {
             .expect("locally disable tracinggroups");
         let frame = universe
             .end_group(GroupKind::SemiSimple)
-            .expect("end group");
+            .expect("end group")
+            .frame();
         universe.trace_group_leave(frame.kind(), 1, frame.entered_line());
 
         assert_eq!(

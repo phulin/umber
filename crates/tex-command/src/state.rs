@@ -465,6 +465,28 @@ impl<G> CommandGroupPayload<G> {
     }
 }
 
+/// One synchronized state/command group close.
+///
+/// The restoration receipt is consumed by the executor before it replays the
+/// returned `\aftergroup` tokens. Both values are owned and borrow-free, but
+/// remain admitted-generation-local and must not enter a cold summary.
+pub struct CommandGroupExit<G> {
+    restorations: tex_state::GroupRestorationReceipt<G>,
+    aftergroup: Vec<TracedTokenWord>,
+}
+
+impl<G> CommandGroupExit<G> {
+    #[must_use]
+    pub fn restorations(&self) -> &tex_state::GroupRestorationReceipt<G> {
+        &self.restorations
+    }
+
+    #[must_use]
+    pub fn into_aftergroup(self) -> Vec<TracedTokenWord> {
+        self.aftergroup
+    }
+}
+
 /// Failure to coordinate generation-bound command payloads with TeX's state
 /// save journal. Every variant is detected before either owner mutates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -565,32 +587,36 @@ impl<G> CommandState<G> {
         Ok(())
     }
 
-    /// Restores one exact state save level and returns its `\aftergroup`
-    /// payload in save order. Both owners and the expected kind are validated
-    /// before state restoration begins; after it succeeds, removing the
-    /// already-proven command frame is infallible.
+    /// Restores one exact state save level and returns its ordered restoration
+    /// receipt plus `\aftergroup` payload in save order. Both owners and the
+    /// expected kind are validated before state restoration begins; after it
+    /// succeeds, removing the already-proven command frame is infallible.
     pub fn end_group(
         &mut self,
         state: &mut CommandContext<'_, G>,
         expected: GroupKind,
-    ) -> Result<Vec<TracedTokenWord>, CommandGroupError> {
+    ) -> Result<CommandGroupExit<G>, CommandGroupError> {
         self.validate_group_payloads(state)?;
         let actual = self.group_payloads.last().map(|group| group.frame.kind());
         if actual != Some(expected) {
             return Err(CommandGroupError::GroupMismatch { expected, actual });
         }
-        state
+        let restorations = state
             .end_group(expected)
             .map_err(CommandGroupError::State)?;
         let group = self
             .group_payloads
             .pop()
             .expect("validated command group frame remains present");
-        Ok(group
+        let aftergroup = group
             .tokens
             .into_iter()
             .map(|payload| payload.spelling)
-            .collect())
+            .collect();
+        Ok(CommandGroupExit {
+            restorations,
+            aftergroup,
+        })
     }
 
     /// Replaces TeX82 §1269's pending `\afterassignment` token inside the

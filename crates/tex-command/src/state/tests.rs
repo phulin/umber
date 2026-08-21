@@ -330,13 +330,15 @@ fn nested_group_payloads_restore_exact_save_order() {
         assert_eq!(
             command
                 .end_group(&mut state, tex_state::GroupKind::Math)
-                .expect("inner closes"),
+                .expect("inner closes")
+                .into_aftergroup(),
             vec![word('c'), word('d')]
         );
         assert_eq!(
             command
                 .end_group(&mut state, tex_state::GroupKind::Simple)
-                .expect("outer closes"),
+                .expect("outer closes")
+                .into_aftergroup(),
             vec![word('a'), word('b')]
         );
     });

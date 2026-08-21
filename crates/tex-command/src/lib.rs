@@ -151,8 +151,9 @@ pub use snapshot::{
     CommandSummaryError, PreparedCommandRestore,
 };
 pub use state::{
-    CommandGroupError, CommandReplayDelivery, CommandReplayEpisode, CommandSemanticDiagnostic,
-    CommandStackUsage, CommandState, RunawayPrelude, UnknownRegisteredSource,
+    CommandGroupError, CommandGroupExit, CommandReplayDelivery, CommandReplayEpisode,
+    CommandSemanticDiagnostic, CommandStackUsage, CommandState, RunawayPrelude,
+    UnknownRegisteredSource,
 };
 pub use tex_state::SourceId;
 pub use tex_state::token::Catcode;
