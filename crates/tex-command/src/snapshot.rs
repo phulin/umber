@@ -553,6 +553,16 @@ pub struct PreparedCommandRestore<G> {
 }
 
 impl<G> CommandState<G> {
+    /// Reports whether the live command machine can publish one named
+    /// boundary without retaining a scanner, delivery, or attempt owner.
+    ///
+    /// The executor recomputes unreachable attempt suffixes before calling
+    /// this projection. It does not allocate a timeline row or mutate state.
+    #[must_use]
+    pub fn named_boundary_is_quiescent(&self) -> bool {
+        self.validate_summary_quiescence().is_ok()
+    }
+
     fn checkpoint_arenas(
         &self,
         attempt: AttemptMark,

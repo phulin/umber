@@ -5255,6 +5255,159 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
 }
 
 #[test]
+fn literal_and_macro_paragraph_boundaries_publish_once_before_the_next_command() {
+    for source in [
+        br"\count0=1 A\par\count0=2\end".as_slice(),
+        br"\count0=1\def\finish{A\par}\finish\count0=2\end".as_slice(),
+    ] {
+        crate::test_harness::with_plain_universe(|mut stores| {
+            let mut control = MainControl::tex82_initex(&mut stores);
+            register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+            register_source(&mut control, source);
+            let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+            let mut checkpoints = Vec::new();
+            let cancellation = crate::Cancellation::new();
+
+            let committed = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+                .step(&mut checkpoints, &cancellation);
+            assert!(
+                matches!(committed, crate::CanonicalStepResult::Committed(_)),
+                "paragraph boundary result: {committed:?}"
+            );
+            assert_eq!(stores.count(0).expect("count register"), 1);
+            assert_eq!(
+                checkpoints
+                    .iter()
+                    .filter(|checkpoint| {
+                        checkpoint.boundary() == crate::EngineBoundary::OuterParagraphEnd
+                    })
+                    .count(),
+                1
+            );
+
+            for _ in 0..32 {
+                if matches!(
+                    crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger,)
+                        .step(&mut checkpoints, &cancellation),
+                    crate::CanonicalStepResult::Completed(_)
+                ) {
+                    break;
+                }
+            }
+            assert_eq!(stores.count(0).expect("count register"), 2);
+            assert_eq!(
+                checkpoints
+                    .iter()
+                    .filter(|checkpoint| {
+                        checkpoint.boundary() == crate::EngineBoundary::OuterParagraphEnd
+                    })
+                    .count(),
+                1,
+                "one paragraph intent publishes exactly once"
+            );
+        });
+    }
+}
+
+#[test]
+fn paragraph_boundary_waits_for_a_live_macro_argument_record() {
+    crate::test_harness::with_plain_universe(|mut stores| {
+        let mut control = MainControl::tex82_initex(&mut stores);
+        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\def\finish#1{A\par#1}\finish{\count0=2}\end",
+        );
+        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut checkpoints = Vec::new();
+        let cancellation = crate::Cancellation::new();
+
+        let committed = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+            .step(&mut checkpoints, &cancellation);
+        assert!(
+            matches!(committed, crate::CanonicalStepResult::Committed(_)),
+            "macro-owned boundary result: {committed:?}"
+        );
+        assert_eq!(
+            stores.count(0).expect("count register"),
+            2,
+            "the argument remains live and executes before its owner can retire"
+        );
+        assert_eq!(
+            checkpoints
+                .iter()
+                .filter(|checkpoint| {
+                    checkpoint.boundary() == crate::EngineBoundary::OuterParagraphEnd
+                })
+                .count(),
+            1
+        );
+    });
+}
+
+#[test]
+fn pending_paragraph_boundary_does_not_cross_a_resource_suspension() {
+    crate::test_harness::with_plain_universe(|mut stores| {
+        let mut control = MainControl::tex82_initex(&mut stores);
+        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\def\finish{A\par\input child}\finish\count0=2\end",
+        );
+        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut checkpoints = Vec::new();
+        let cancellation = crate::Cancellation::new();
+
+        let need = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+            .step(&mut checkpoints, &cancellation);
+        let need = match need {
+            crate::CanonicalStepResult::ResourceNeed(need @ ResourceNeed::Input { .. }) => need,
+            other => panic!("expected input suspension, got {other:?}"),
+        };
+        assert!(checkpoints.is_empty());
+        let name = match &need {
+            ResourceNeed::Input { name, .. } => name.clone(),
+            _ => unreachable!(),
+        };
+        ledger
+            .fulfill(
+                &mut control,
+                &need,
+                crate::ResourceFulfillment::Input {
+                    name,
+                    source: SourceRegistration::new(
+                        RegisteredSourceKind::Generated,
+                        Arc::<[u8]>::from(&b""[..]),
+                    ),
+                },
+            )
+            .expect("input fulfillment matches");
+
+        for _ in 0..32 {
+            let result = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+                .step(&mut checkpoints, &cancellation);
+            if matches!(result, crate::CanonicalStepResult::Committed(_)) {
+                break;
+            }
+            assert!(
+                !matches!(result, crate::CanonicalStepResult::Failed(_)),
+                "resumed boundary result: {result:?}"
+            );
+        }
+        assert_eq!(stores.count(0).expect("count register"), 0);
+        assert_eq!(
+            checkpoints
+                .iter()
+                .filter(|checkpoint| {
+                    checkpoint.boundary() == crate::EngineBoundary::OuterParagraphEnd
+                })
+                .count(),
+            1
+        );
+    });
+}
+
+#[test]
 fn observed_resource_retry_moves_the_unpublished_prefix_exactly_once() {
     let source = br"\input child\end";
     let child =

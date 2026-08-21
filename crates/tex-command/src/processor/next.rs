@@ -179,6 +179,39 @@ impl<G> CommandProcessor<'_, '_, G> {
         }
     }
 
+    /// Retires depleted token-list levels without fetching the next command.
+    ///
+    /// Named executor boundaries use this after the command that ended an
+    /// outer paragraph. TeX normally performs the same conservation loop at
+    /// the next `get_next`, but a checkpoint must become quiescent before it
+    /// can fetch (and therefore semantically cross) that next command.
+    pub fn retire_exhausted_token_levels_for_named_boundary(
+        &mut self,
+    ) -> Result<usize, CommandError> {
+        let mut retired = 0_usize;
+        loop {
+            let Some(identity) = self.command.input.levels.last().and_then(|level| {
+                let InputLevel::Tokens(cursor) = level else {
+                    return None;
+                };
+                (!matches!(cursor.behavior, TokenBehavior::VTemplate)
+                    && Self::next_stored_token(cursor, &self.state, self.command.attempt.arena())
+                        .is_none())
+                .then(|| cursor.identity())
+            }) else {
+                return Ok(retired);
+            };
+            match self.retire_and_restart(identity)? {
+                RetirementRestart::Continue | RetirementRestart::Completed => {
+                    retired = retired.saturating_add(1);
+                }
+                RetirementRestart::Stop | RetirementRestart::EndV(_) => {
+                    return Err(CommandError::input_invariant());
+                }
+            }
+        }
+    }
+
     /// Delivers one expanded command, separating an intercepted alignment
     /// delimiter from ordinary main-control delivery.
     ///

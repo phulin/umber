@@ -274,6 +274,9 @@ pub struct MainControl<G> {
     /// Those commits form one outer completion and cannot publish a durable
     /// checkpoint until the routine and every other nested builder unwind.
     pending_shipout_boundary: bool,
+    /// A completed outer paragraph waiting for command-owned macro/scanner
+    /// continuations to become checkpoint-quiescent.
+    pending_paragraph_boundary: bool,
     /// Source site of the most recent typed resource suspension. This is
     /// retained outside snapshots so a host protocol no-progress invariant
     /// can still identify the command whose retry failed to advance.
@@ -1220,6 +1223,7 @@ impl<G> Default for MainControl<G> {
             prepared_shipout: None,
             completed_boundaries: Vec::new(),
             pending_shipout_boundary: false,
+            pending_paragraph_boundary: false,
             pending_resource_site: None,
             pending_preflight_command: None,
             pending_resource_operation: None,
@@ -1583,6 +1587,7 @@ impl<G> MainControl<G> {
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
         self.pending_shipout_boundary = false;
+        self.pending_paragraph_boundary = false;
         self.fatal = None;
         self.captured_fatal_origin = None;
         Ok(())
@@ -2850,23 +2855,54 @@ impl<G> MainControl<G> {
             self.page_output_observations.clear();
         }
         self.finish_shipout_publication(artifact_count, _effect_count, stores);
-        self.finish_paragraph_boundary(outer_paragraph_was_active, stores);
+        self.finish_paragraph_boundary(outer_paragraph_was_active);
         Ok(applied)
     }
 
     /// Publishes the ordinary cold paragraph boundary after `end_graf`.
-    fn finish_paragraph_boundary(
-        &mut self,
-        outer_paragraph_was_active: bool,
-        _stores: &mut Universe<G>,
-    ) {
+    fn finish_paragraph_boundary(&mut self, outer_paragraph_was_active: bool) {
         if outer_paragraph_was_active
             && self.modes.current_mode() == Mode::Vertical
             && self.modes.depth() == 1
         {
-            self.completed_boundaries
-                .push(crate::EngineBoundary::OuterParagraphEnd);
+            self.pending_paragraph_boundary = true;
         }
+    }
+
+    /// Publishes a pending paragraph boundary only after command-owned
+    /// continuations have retired. This runs before another delivery, so a
+    /// captured row cannot include effects from the following command.
+    fn publish_pending_paragraph_boundary(
+        &mut self,
+        stores: &mut Universe<G>,
+    ) -> Result<bool, ExecError> {
+        if !self.pending_paragraph_boundary || self.has_external_attempt_owner() {
+            return Ok(false);
+        }
+        {
+            let mut processor = command_processor(
+                &mut self.command,
+                self.fuel.fuel_mut(),
+                &mut self.capabilities,
+                &mut self.operation_observations,
+                stores.command_context().expect("named-boundary admission"),
+            );
+            processor
+                .retire_exhausted_token_levels_for_named_boundary()
+                .map_err(command_error)?;
+        }
+        self.command
+            .reclaim_unreachable_attempt_suffix()
+            .map_err(|_| ExecError::MissingToken {
+                context: "named-boundary attempt roots",
+            })?;
+        if !self.command.named_boundary_is_quiescent() {
+            return Ok(false);
+        }
+        self.completed_boundaries
+            .push(crate::EngineBoundary::OuterParagraphEnd);
+        self.pending_paragraph_boundary = false;
+        Ok(true)
     }
 
     /// Enters TeX82 §1117's live `disc_group` after the command processor has
@@ -3478,6 +3514,9 @@ impl<G> MainControl<G> {
         mut initial_delivery: Option<OperationDelivery<G>>,
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
     ) -> Result<StepResult, ExecError> {
+        if self.publish_pending_paragraph_boundary(stores)? {
+            return Ok(StepResult::Progress(ReplayStep::Continue));
+        }
         let initial_boundaries = self.completed_boundaries.len();
         let initial_effect_pos = stores.world().effect_pos();
         let initial_artifacts = stores.world().artifact_commits().len();
@@ -3485,6 +3524,7 @@ impl<G> MainControl<G> {
         let initial_diagnostic = self.first_causal_context.is_some();
         let initial_error_count = stores.world().error_channel().error_count();
         let mut operations = 0_usize;
+        let mut last_step = ReplayStep::Continue;
         let mut direct_attempt_recorded = false;
         let mut episode_tracked_mark = if tracked_region.is_some() {
             match stores.begin_dependency_region() {
@@ -3501,6 +3541,19 @@ impl<G> MainControl<G> {
         };
 
         loop {
+            if operations != 0 && self.publish_pending_paragraph_boundary(stores)? {
+                self.record_direct_episode_commit(
+                    stores,
+                    operations,
+                    crate::EpisodeCommitBoundary::NamedCheckpoint(
+                        crate::EngineBoundary::OuterParagraphEnd,
+                    ),
+                    initial_artifacts,
+                    initial_boundaries,
+                    initial_effect_pos,
+                );
+                return Ok(StepResult::Progress(last_step));
+            }
             // Private revisions require every scanner-time immutable
             // allocation to belong to one fixed-size operation suffix. The
             // mark therefore opens before delivery preflight, while semantic
@@ -4201,6 +4254,7 @@ impl<G> MainControl<G> {
                 return Err(error);
             }
             self.commit_direct_operation(stores, operation_mark);
+            last_step = step;
             let tracked_result = tracked_mark.map(|mark| {
                 stores
                     .finish_dependency_region(mark)
@@ -7052,7 +7106,7 @@ impl<G> MainControl<G> {
         self.page_output_observations.clear();
         if result.is_ok() {
             self.finish_shipout_publication(artifact_count, effect_count, stores);
-            self.finish_paragraph_boundary(outer_paragraph_was_active, stores);
+            self.finish_paragraph_boundary(outer_paragraph_was_active);
         }
         result
     }
@@ -7495,7 +7549,7 @@ impl<G> MainControl<G> {
         self.page_output_observations.clear();
         if result.is_ok() {
             self.finish_shipout_publication(artifact_count, effect_count, stores);
-            self.finish_paragraph_boundary(outer_paragraph_was_active, stores);
+            self.finish_paragraph_boundary(outer_paragraph_was_active);
         }
         result
     }
