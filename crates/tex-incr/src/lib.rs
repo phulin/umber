@@ -23,11 +23,12 @@ use tex_command::{
 };
 use tex_exec::{
     Cancellation, CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner,
-    CheckpointIdentity, CheckpointSink, EngineBoundary, EngineCheckpoint, MainControl,
-    MainControlStep, OutputLedger, ResourceFulfillment, ResourceHost, ResourceNeed,
-    ResourceOutcome, ResourceWorld, canonical_font_resource_path,
+    CheckpointIdentity, CheckpointSink, DetachedEngineCompletion, DetachedPreparedPage,
+    EngineBoundary, EngineCheckpoint, EngineCompletionDemand, MainControl, MainControlStep,
+    OutputLedger, ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome, ResourceWorld,
+    canonical_font_resource_path,
 };
-use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
+use tex_out::dvi::{DviError, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
 use tex_state::interner::InternerBudget;
 use tex_state::{
@@ -255,20 +256,105 @@ pub enum SameHistoryStop {
 }
 
 /// Detached result of one accepted editor revision.
-#[derive(Clone, Debug)]
+///
+/// The completion is the sole owner of accepted effects, artifacts, DVI page
+/// plans, and PDF state.  Session metadata remains generation-free and never
+/// duplicates those output families.
+#[derive(Debug)]
 pub struct AcceptedOutput {
+    output_id: RenderedOutputId,
     pub revision: RevisionId,
     pub content_hash: ContentHash,
-    pub effects: Vec<EffectRecord>,
-    pub artifacts: Vec<CommittedArtifact>,
-    pub dvi_pages: Vec<DviPagePlan>,
+    completion: DetachedEngineCompletion,
     pub reuse: ReuseMetrics,
     pub retention: RetentionMetrics,
 }
 
 impl AcceptedOutput {
+    #[must_use]
+    pub const fn output_id(&self) -> RenderedOutputId {
+        self.output_id
+    }
+
+    #[must_use]
+    pub const fn completion(&self) -> &DetachedEngineCompletion {
+        &self.completion
+    }
+
+    #[must_use]
+    pub fn pages(&self) -> &[DetachedPreparedPage] {
+        self.completion.pages()
+    }
+
+    #[must_use]
+    pub const fn pdf(&self) -> Option<&tex_state::DetachedPdfCompletion> {
+        self.completion.pdf()
+    }
+
+    pub fn into_completion(self) -> DetachedEngineCompletion {
+        self.completion
+    }
+
     pub fn dvi_bytes(&self) -> Result<Vec<u8>, DviError> {
-        dvi_bytes(&self.dvi_pages)
+        dvi_bytes(&self.completion)
+    }
+}
+
+/// Borrowed terminal resource-discovery view.
+///
+/// Construction is possible only after a candidate reaches terminal
+/// completion.  Every exposed value is owned by the detached completion; the
+/// runtime generation has already been dropped.
+#[derive(Clone, Copy, Debug)]
+pub struct CompletionResourceDiscovery<'a> {
+    output_id: RenderedOutputId,
+    revision: RevisionId,
+    content_hash: ContentHash,
+    completion: &'a DetachedEngineCompletion,
+}
+
+impl<'a> CompletionResourceDiscovery<'a> {
+    #[must_use]
+    pub const fn output_id(self) -> RenderedOutputId {
+        self.output_id
+    }
+
+    #[must_use]
+    pub const fn revision(self) -> RevisionId {
+        self.revision
+    }
+
+    #[must_use]
+    pub const fn content_hash(self) -> ContentHash {
+        self.content_hash
+    }
+
+    #[must_use]
+    pub const fn completion(self) -> &'a DetachedEngineCompletion {
+        self.completion
+    }
+
+    #[must_use]
+    pub const fn pdf(self) -> Option<&'a tex_state::DetachedPdfCompletion> {
+        self.completion.pdf()
+    }
+
+    pub fn pdf_fonts(self) -> impl Iterator<Item = &'a tex_state::DetachedPdfFontResource> {
+        self.pdf().into_iter().flat_map(|pdf| pdf.fonts())
+    }
+
+    pub fn pdf_font_operations(
+        self,
+    ) -> impl Iterator<Item = &'a tex_state::DetachedPdfFontOperation> {
+        self.pdf().into_iter().flat_map(|pdf| pdf.font_operations())
+    }
+
+    pub fn pdf_raw_object_file_needs(
+        self,
+    ) -> impl Iterator<Item = &'a tex_state::DetachedPdfRawObjectFileNeed> {
+        self.pdf()
+            .into_iter()
+            .flat_map(|pdf| pdf.raw_object_file_needs())
     }
 }
 
@@ -282,7 +368,7 @@ pub struct RevisionTransaction {
     fragments: FragmentStore,
     layout: EditorLayout,
     content_hash: ContentHash,
-    output: tex_exec::RevisionOutputPatch,
+    completion: DetachedEngineCompletion,
     history: Vec<BoundaryRecord>,
     dependencies: Vec<tex_state::InputDependency>,
     reuse: ReuseMetrics,
@@ -308,8 +394,13 @@ impl RevisionTransaction {
     }
 
     #[must_use]
-    pub fn artifacts(&self) -> &[CommittedArtifact] {
-        self.output.artifacts().artifacts()
+    pub const fn completion(&self) -> &DetachedEngineCompletion {
+        &self.completion
+    }
+
+    #[must_use]
+    pub fn pages(&self) -> &[DetachedPreparedPage] {
+        self.completion.pages()
     }
 
     #[must_use]
@@ -318,7 +409,7 @@ impl RevisionTransaction {
     }
 
     pub fn dvi_bytes(&self) -> Result<Vec<u8>, DviError> {
-        dvi_bytes(self.output.dvi_pages())
+        dvi_bytes(&self.completion)
     }
 }
 
@@ -335,7 +426,7 @@ struct CandidatePlan {
 }
 
 struct CandidateCompletion {
-    output: tex_exec::RevisionOutputPatch,
+    completion: DetachedEngineCompletion,
     history: Vec<BoundaryRecord>,
     dependencies: Vec<tex_state::InputDependency>,
     delivered_commands: usize,
@@ -441,10 +532,7 @@ impl RevisionCandidate {
             .retained_bytes()
             .saturating_add(self.plan.layout.retained_bytes());
         let output_bytes = self.completed.as_ref().map_or(0, |completion| {
-            detached_output_bytes(
-                completion.output.effects().records(),
-                completion.output.artifacts().artifacts(),
-            )
+            detached_output_bytes(&completion.completion)
         });
         RetentionMetrics {
             checkpoint_root_bytes: 0,
@@ -461,6 +549,20 @@ impl RevisionCandidate {
         frozen: &tex_exec::FrozenDiagnosticOrigin,
     ) -> Option<ResolvedSourceLocation> {
         resolve_frozen(frozen, &self.plan.source, &self.plan.layout)
+    }
+
+    /// Returns the terminal, handle-free resource projection after completion.
+    /// Suspended and not-yet-driven candidates expose no projection.
+    #[must_use]
+    pub fn completion_resource_discovery(&self) -> Option<CompletionResourceDiscovery<'_>> {
+        self.completed
+            .as_ref()
+            .map(|completed| CompletionResourceDiscovery {
+                output_id: self.session_output_id,
+                revision: self.plan.revision,
+                content_hash: ContentHash::from_bytes(self.plan.source.as_bytes()),
+                completion: &completed.completion,
+            })
     }
 }
 
@@ -578,16 +680,17 @@ fn execute_plan<G>(
                 answered_needs.clear();
                 delivered_commands = delivered_commands.saturating_add(1);
                 if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
-                    let output =
-                        ledger
-                            .close_revision(&mut control, universe)
-                            .map_err(|error| {
-                                SessionError::InvalidRevisionOutputPatch(format!("{error:?}"))
-                            })?;
                     let dependencies = universe.world().input_dependencies().cloned().collect();
+                    let completion = ledger.close_revision(
+                        &mut control,
+                        universe,
+                        EngineCompletionDemand::new(
+                            candidate.profile.dialect() == tex_command::CommandDialect::Pdftex14029,
+                        ),
+                    )?;
                     return Ok(PlanExecution::Complete(
                         CandidateCompletion {
-                            output,
+                            completion,
                             history: sink.records,
                             dependencies,
                             delivered_commands,
@@ -691,7 +794,9 @@ fn candidate_control<G>(
             tex_exec::install_etex_unexpandable_primitives(universe);
         }
         if options.profile.dialect() == tex_command::CommandDialect::Pdftex14029 {
+            universe.enable_pdf_output();
             tex_command::install_pdftex_expandable_primitives(universe);
+            tex_command::install_pdftex_unexpandable_primitives(universe);
         }
     }
     let mut control = if options.initex {
@@ -699,6 +804,9 @@ fn candidate_control<G>(
     } else {
         MainControl::with_profile(options.profile)
     };
+    if options.profile.dialect() == tex_command::CommandDialect::Pdftex14029 {
+        control.set_engine_binary(tex_exec::EngineBinaryIdentity::Pdftex14029);
+    }
     control.set_dvi_output(options.emit_dvi);
     let mut registration = SourceRegistration::new(RegisteredSourceKind::Generated, options.bytes)
         .with_name(options.source_path)
@@ -831,7 +939,6 @@ pub struct Session {
     fragments: FragmentStore,
     layout: EditorLayout,
     content_hash: ContentHash,
-    output: tex_exec::RevisionOutputPatch,
     history: Vec<BoundaryRecord>,
     dependencies: Vec<tex_state::InputDependency>,
     checkpoint_budget: usize,
@@ -944,7 +1051,6 @@ impl Session {
             source,
             fragments,
             layout,
-            output: empty_output_patch()?,
             history: Vec::new(),
             dependencies: Vec::new(),
             checkpoint_budget,
@@ -1214,7 +1320,7 @@ impl Session {
             candidate.plan.source.len(),
             completion.delivered_commands,
             candidate.plan.revision_setup_latency,
-            completion.output.artifacts().artifacts().len(),
+            completion.completion.pages().len(),
         );
         Ok(RevisionTransaction {
             session_output_id: candidate.session_output_id,
@@ -1225,7 +1331,7 @@ impl Session {
             source: candidate.plan.source,
             fragments: candidate.plan.fragments,
             layout: candidate.plan.layout,
-            output: completion.output,
+            completion: completion.completion,
             history: completion.history,
             dependencies: completion.dependencies,
             reuse,
@@ -1257,17 +1363,13 @@ impl Session {
         self.fragments = transaction.fragments;
         self.layout = transaction.layout;
         self.content_hash = transaction.content_hash;
-        self.output = transaction.output;
         self.history = prune_history(transaction.history, self.checkpoint_budget);
         self.dependencies = transaction.dependencies;
         self.dumped_format = transaction.dumped_format;
         self.format_dump_receipt = transaction.format_dump_receipt;
         self.expansion_stats = transaction.expansion_stats;
         self.render_maps.borrow_mut().clear();
-        let output_bytes = detached_output_bytes(
-            self.output.effects().records(),
-            self.output.artifacts().artifacts(),
-        );
+        let output_bytes = detached_output_bytes(&transaction.completion);
         let retention = RetentionMetrics {
             checkpoint_root_bytes: std::mem::size_of_val(self.history.as_slice()),
             memo_result_bytes: 0,
@@ -1281,7 +1383,14 @@ impl Session {
         self.accepted_retention = Some(retention);
         let mut reuse = transaction.reuse;
         reuse.acceptance_latency = acceptance.elapsed();
-        Ok(self.output(reuse, retention))
+        Ok(AcceptedOutput {
+            output_id: self.output_id,
+            revision: self.revision,
+            content_hash: self.content_hash,
+            completion: transaction.completion,
+            reuse,
+            retention,
+        })
     }
 
     pub fn advance(
@@ -1375,6 +1484,7 @@ impl Session {
 
     pub fn rendered_source_location(
         &self,
+        output: &AcceptedOutput,
         page: u32,
         event: u32,
         unit: Option<u32>,
@@ -1391,7 +1501,12 @@ impl Session {
                 accepted: self.revision,
             }));
         }
-        let Some(origin) = self.rendered_artifact_origin(page, event, unit)? else {
+        if output.output_id != self.output_id || output.revision != self.revision {
+            return Ok(Some(RenderedSourceResult::StaleRevision {
+                accepted: self.revision,
+            }));
+        }
+        let Some(origin) = self.rendered_artifact_origin(output, page, event, unit)? else {
             return Ok(None);
         };
         let ArtifactOrigin::Detached(recipe) = origin else {
@@ -1420,12 +1535,16 @@ impl Session {
 
     pub fn rendered_source_origin(
         &self,
+        output: &AcceptedOutput,
         page: u32,
         event: u32,
         unit: Option<u32>,
     ) -> Result<Option<LayoutResolvedOrigin>, SessionError> {
+        if output.output_id != self.output_id || output.revision != self.revision {
+            return Ok(None);
+        }
         let Some(ArtifactOrigin::Detached(recipe)) =
-            self.rendered_artifact_origin(page, event, unit)?
+            self.rendered_artifact_origin(output, page, event, unit)?
         else {
             return Ok(None);
         };
@@ -1451,6 +1570,7 @@ impl Session {
 
     fn rendered_artifact_origin(
         &self,
+        output: &AcceptedOutput,
         page: u32,
         event: u32,
         unit: Option<u32>,
@@ -1458,7 +1578,12 @@ impl Session {
         let Some(page_index) = page.checked_sub(1).map(|page| page as usize) else {
             return Ok(None);
         };
-        let Some(artifact) = self.output.artifacts().artifacts().get(page_index) else {
+        let Some(artifact) = output
+            .completion
+            .pages()
+            .get(page_index)
+            .map(DetachedPreparedPage::artifact)
+        else {
             return Ok(None);
         };
         let mut maps = self.render_maps.borrow_mut();
@@ -1474,18 +1599,6 @@ impl Session {
         let origin = map.origin(event, unit);
         maps.admit(page_index, map);
         Ok(origin)
-    }
-
-    fn output(&self, reuse: ReuseMetrics, retention: RetentionMetrics) -> AcceptedOutput {
-        AcceptedOutput {
-            revision: self.revision,
-            content_hash: self.content_hash,
-            effects: self.output.effects().records().to_vec(),
-            artifacts: self.output.artifacts().artifacts().to_vec(),
-            dvi_pages: self.output.dvi_pages().to_vec(),
-            reuse,
-            retention,
-        }
     }
 }
 
@@ -1575,16 +1688,6 @@ fn compare_histories(
     }
 }
 
-fn empty_output_patch() -> Result<tex_exec::RevisionOutputPatch, SessionError> {
-    tex_exec::RevisionOutputPatch::recompose(
-        tex_state::EffectJournal::default(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    )
-    .map_err(|error| SessionError::InvalidRevisionOutputPatch(format!("{error:?}")))
-}
-
 fn source_file_bytes(source: &str, byte_projection: bool) -> Vec<u8> {
     if !byte_projection {
         return source.as_bytes().to_vec();
@@ -1620,10 +1723,12 @@ fn map_step_failure(error: CanonicalStepFailure) -> SessionError {
     }
 }
 
-fn dvi_bytes(pages: &[DviPagePlan]) -> Result<Vec<u8>, DviError> {
+fn dvi_bytes(completion: &DetachedEngineCompletion) -> Result<Vec<u8>, DviError> {
     let mut writer = DviStreamWriter::new(Vec::new());
-    for plan in pages {
-        writer.write_page_plan(plan)?;
+    for page in completion.pages() {
+        if let Some(plan) = page.dvi() {
+            writer.write_page_plan(plan)?;
+        }
     }
     writer.finish()
 }
@@ -1804,15 +1909,18 @@ fn prune_history(mut history: Vec<BoundaryRecord>, budget: usize) -> Vec<Boundar
     history
 }
 
-fn detached_output_bytes(effects: &[EffectRecord], artifacts: &[CommittedArtifact]) -> usize {
-    effects
+fn detached_output_bytes(completion: &DetachedEngineCompletion) -> usize {
+    completion
+        .effects()
         .iter()
         .map(EffectRecord::retained_bytes)
         .sum::<usize>()
         .saturating_add(
-            artifacts
+            completion
+                .pages()
                 .iter()
-                .map(|artifact| {
+                .map(|page| {
+                    let artifact = page.artifact();
                     artifact
                         .bytes()
                         .len()
@@ -1907,7 +2015,7 @@ impl Timer {
 /// Errors at the generation-free editor/session boundary.
 #[derive(Debug)]
 pub enum SessionError {
-    InvalidRevisionOutputPatch(String),
+    EngineCompletion(tex_exec::EngineCompletionError),
     OutputIdentity(getrandom::Error),
     StaleRevision {
         expected: RevisionId,
@@ -1936,8 +2044,8 @@ pub enum SessionError {
 impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidRevisionOutputPatch(message) => {
-                write!(f, "invalid executor revision output patch: {message}")
+            Self::EngineCompletion(error) => {
+                write!(f, "incremental terminal completion failed: {error}")
             }
             Self::OutputIdentity(error) => write!(f, "could not create output identity: {error}"),
             Self::StaleRevision { expected, actual } => write!(
@@ -1991,6 +2099,12 @@ impl SessionError {
 impl From<tex_exec::ExecError> for SessionError {
     fn from(value: tex_exec::ExecError) -> Self {
         Self::Execute(value)
+    }
+}
+
+impl From<tex_exec::EngineCompletionError> for SessionError {
+    fn from(value: tex_exec::EngineCompletionError) -> Self {
+        Self::EngineCompletion(value)
     }
 }
 
