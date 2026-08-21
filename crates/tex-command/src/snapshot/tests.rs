@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use std::rc::Rc;
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
     CommandArenaCursors, CommandRestoreError, CommandSnapshotCursor, CommandStackCursors,
@@ -7,6 +8,16 @@ use super::{
 };
 
 struct Brand;
+
+fn word(ch: char) -> TracedTokenWord {
+    TracedTokenWord::pack(
+        Token::Char {
+            ch,
+            cat: Catcode::Other,
+        },
+        OriginId::UNKNOWN,
+    )
+}
 
 #[derive(Debug)]
 struct CountingOwner {
@@ -34,6 +45,9 @@ fn cursor(seed: u32) -> CommandSnapshotCursor {
             seed + 10,
             seed + 11,
             seed + 12,
+            seed + 13,
+            seed + 14,
+            seed % 2 == 0,
         ),
     )
 }
@@ -55,6 +69,8 @@ fn snapshot_clone_retains_one_coarse_owner_and_copies_only_cursors() {
     assert_eq!(cloned.cursor().command_journal(), 7);
     assert_eq!(cloned.cursor().arenas().attempt_rows(), 12);
     assert_eq!(cloned.cursor().stacks().framing_event_count(), 19);
+    assert_eq!(cloned.cursor().stacks().group_payload_depth(), 20);
+    assert_eq!(cloned.cursor().stacks().aftergroup_payload_count(), 21);
 }
 
 #[test]
@@ -152,6 +168,9 @@ fn invalid_summary_cursor_leaves_live_command_state_unchanged() {
                 stacks.replay_depth(),
                 stacks.diagnostic_count() + 1,
                 stacks.framing_event_count(),
+                stacks.group_payload_depth(),
+                stacks.aftergroup_payload_count(),
+                stacks.afterassignment_present(),
             ),
         );
         command.begin_file_name().expect("filename guard opens");
@@ -267,5 +286,138 @@ fn invalid_snapshot_validation_does_not_truncate_attempt_or_replace_roots() {
         ));
         assert!(command.name_in_progress());
         assert_eq!(command.attempt.arena().mark(), live_attempt);
+    });
+}
+
+#[test]
+fn snapshot_restores_group_and_assignment_payload_roots() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        {
+            let mut state = universe.command_context().expect("admitted state");
+            command
+                .begin_group(&mut state, tex_state::GroupKind::Simple, 7)
+                .expect("group opens");
+            command
+                .save_aftergroup(&state, word('a'))
+                .expect("aftergroup saved");
+            command
+                .set_afterassignment(&state, word('x'))
+                .expect("afterassignment saved");
+        }
+        let snapshot = command
+            .snapshot(universe)
+            .expect("snapshot captures payloads");
+        {
+            let state = universe.command_context().expect("admitted state");
+            command
+                .save_aftergroup(&state, word('b'))
+                .expect("candidate aftergroup");
+            command
+                .set_afterassignment(&state, word('y'))
+                .expect("candidate afterassignment");
+        }
+        command
+            .rollback(&snapshot, universe)
+            .expect("snapshot restores payload roots");
+        {
+            let mut state = universe.command_context().expect("admitted state");
+            assert_eq!(
+                command.take_afterassignment(&state).expect("take restored"),
+                Some(word('x'))
+            );
+            assert_eq!(
+                command
+                    .end_group(&mut state, tex_state::GroupKind::Simple)
+                    .expect("restored group closes"),
+                vec![word('a')]
+            );
+        }
+    });
+}
+
+#[test]
+fn summary_restores_group_and_assignment_payload_roots() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        {
+            let mut state = universe.command_context().expect("admitted state");
+            command
+                .begin_group(&mut state, tex_state::GroupKind::Simple, 7)
+                .expect("group opens");
+            command
+                .save_aftergroup(&state, word('a'))
+                .expect("aftergroup saved");
+            command
+                .set_afterassignment(&state, word('x'))
+                .expect("afterassignment saved");
+        }
+        let summary = command
+            .publish_summary(universe)
+            .expect("summary captures payloads");
+        {
+            let state = universe.command_context().expect("admitted state");
+            command
+                .save_aftergroup(&state, word('b'))
+                .expect("candidate aftergroup");
+            command
+                .set_afterassignment(&state, word('y'))
+                .expect("candidate afterassignment");
+        }
+
+        command
+            .restore_summary(&summary, universe)
+            .expect("summary restores payload roots");
+        let mut state = universe.command_context().expect("admitted state");
+        assert_eq!(
+            command.take_afterassignment(&state).expect("take summary"),
+            Some(word('x'))
+        );
+        assert_eq!(
+            command
+                .end_group(&mut state, tex_state::GroupKind::Simple)
+                .expect("summary group closes"),
+            vec![word('a')]
+        );
+    });
+}
+
+#[test]
+fn invalid_payload_cursor_leaves_live_payloads_unchanged() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let mut summary = command
+            .publish_summary(universe)
+            .expect("summary publishes");
+        let captured = summary.cursor;
+        let stacks = captured.stacks();
+        summary.cursor = CommandSnapshotCursor::new(
+            captured.command_journal(),
+            captured.arenas(),
+            CommandStackCursors::new(
+                stacks.input_depth(),
+                stacks.parameter_depth(),
+                stacks.condition_depth(),
+                stacks.alignment_depth(),
+                stacks.replay_depth(),
+                stacks.diagnostic_count(),
+                stacks.framing_event_count(),
+                stacks.group_payload_depth(),
+                stacks.aftergroup_payload_count() + 1,
+                stacks.afterassignment_present(),
+            ),
+        );
+        {
+            let state = universe.command_context().expect("admitted state");
+            command
+                .set_afterassignment(&state, word('z'))
+                .expect("live payload");
+        }
+
+        assert!(matches!(
+            command.prepare_summary_restore(&summary, universe),
+            Err(CommandRestoreError::InvalidCursor)
+        ));
+        assert!(command.has_afterassignment());
     });
 }

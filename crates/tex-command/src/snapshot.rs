@@ -189,6 +189,9 @@ pub struct CommandStackCursors {
     replay_depth: u32,
     diagnostic_count: u32,
     framing_event_count: u32,
+    group_payload_depth: u32,
+    aftergroup_payload_count: u32,
+    afterassignment_present: bool,
 }
 
 impl CommandStackCursors {
@@ -201,6 +204,9 @@ impl CommandStackCursors {
         replay_depth: u32,
         diagnostic_count: u32,
         framing_event_count: u32,
+        group_payload_depth: u32,
+        aftergroup_payload_count: u32,
+        afterassignment_present: bool,
     ) -> Self {
         Self {
             input_depth,
@@ -210,6 +216,9 @@ impl CommandStackCursors {
             replay_depth,
             diagnostic_count,
             framing_event_count,
+            group_payload_depth,
+            aftergroup_payload_count,
+            afterassignment_present,
         }
     }
 
@@ -246,6 +255,21 @@ impl CommandStackCursors {
     #[must_use]
     pub const fn framing_event_count(self) -> u32 {
         self.framing_event_count
+    }
+
+    #[must_use]
+    pub const fn group_payload_depth(self) -> u32 {
+        self.group_payload_depth
+    }
+
+    #[must_use]
+    pub const fn aftergroup_payload_count(self) -> u32 {
+        self.aftergroup_payload_count
+    }
+
+    #[must_use]
+    pub const fn afterassignment_present(self) -> bool {
+        self.afterassignment_present
     }
 }
 
@@ -537,6 +561,14 @@ impl<G> CommandState<G> {
     }
 
     fn checkpoint_stacks(&self) -> Result<CommandStackCursors, CommandSummaryError> {
+        let aftergroup_payload_count = self
+            .group_payloads
+            .iter()
+            .try_fold(0_u32, |count, group| {
+                let group_count = u32::try_from(group.tokens.len()).ok()?;
+                count.checked_add(group_count)
+            })
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
         Ok(CommandStackCursors::new(
             u32::try_from(self.input.levels.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
@@ -552,6 +584,10 @@ impl<G> CommandState<G> {
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
             u32::try_from(self.file_framing_events.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
+            u32::try_from(self.group_payloads.len())
+                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
+            aftergroup_payload_count,
+            self.afterassignment.is_some(),
         ))
     }
 
@@ -639,6 +675,15 @@ impl<G> CommandState<G> {
             && stacks.replay_depth() as usize == roots.replay_completions.len()
             && stacks.diagnostic_count() as usize == roots.semantic_diagnostics.len()
             && stacks.framing_event_count() as usize == roots.file_framing_events.len();
+        let root_aftergroup_payload_count =
+            roots.group_payloads.iter().try_fold(0_u32, |count, group| {
+                let group_count = u32::try_from(group.tokens.len()).ok()?;
+                count.checked_add(group_count)
+            });
+        let matches = matches
+            && stacks.group_payload_depth() as usize == roots.group_payloads.len()
+            && Some(stacks.aftergroup_payload_count()) == root_aftergroup_payload_count
+            && stacks.afterassignment_present() == roots.afterassignment.is_some();
         if !matches {
             return Err(CommandRestoreError::InvalidCursor);
         }

@@ -573,6 +573,16 @@ impl<'a, G> CommandContext<'a, G> {
             .collect()
     }
 
+    /// Borrows the exact open-group frames for command-layer coordination.
+    ///
+    /// The slice is valid only for this admitted command episode. Persistent
+    /// command state copies the compact frames it needs and never retains a
+    /// reference into the mutable state bank.
+    #[must_use]
+    pub fn group_frames(&self) -> &[crate::GroupFrame] {
+        self.admitted.state_ref().group_frames()
+    }
+
     #[must_use]
     pub fn group_frames_from(&self, start: usize) -> Vec<(usize, &'static str, u32)> {
         self.admitted

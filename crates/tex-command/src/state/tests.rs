@@ -1,6 +1,6 @@
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use super::CommandState;
+use super::{CommandGroupError, CommandState};
 use crate::processor::AlignmentIdentity;
 
 fn word(ch: char) -> TracedTokenWord {
@@ -59,5 +59,53 @@ fn default_command_state_is_quiescent_at_a_cold_summary_boundary() {
         assert!(state.input.levels.is_empty());
         assert!(state.pending_expansions.is_empty());
         assert!(state.pending_scan_toks.is_empty());
+    });
+}
+
+#[test]
+fn nested_group_payloads_restore_exact_save_order() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let mut state = universe.command_context().expect("admitted state");
+        command
+            .begin_group(&mut state, tex_state::GroupKind::Simple, 1)
+            .expect("outer group");
+        command.save_aftergroup(&state, word('a')).expect("outer a");
+        command.save_aftergroup(&state, word('b')).expect("outer b");
+        command
+            .begin_group(&mut state, tex_state::GroupKind::Math, 2)
+            .expect("inner group");
+        command.save_aftergroup(&state, word('c')).expect("inner c");
+        command.save_aftergroup(&state, word('d')).expect("inner d");
+
+        assert_eq!(
+            command
+                .end_group(&mut state, tex_state::GroupKind::Math)
+                .expect("inner closes"),
+            vec![word('c'), word('d')]
+        );
+        assert_eq!(
+            command
+                .end_group(&mut state, tex_state::GroupKind::Simple)
+                .expect("outer closes"),
+            vec![word('a'), word('b')]
+        );
+    });
+}
+
+#[test]
+fn stale_state_group_rejection_precedes_payload_mutation() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let mut state = universe.command_context().expect("admitted state");
+        state
+            .begin_group(tex_state::GroupKind::Simple, 1)
+            .expect("bypass creates stale state");
+
+        assert_eq!(
+            command.set_afterassignment(&state, word('x')),
+            Err(CommandGroupError::StaleGroupState)
+        );
+        assert!(!command.has_afterassignment());
     });
 }
