@@ -2,7 +2,7 @@
 
 use tex_state::node::Node;
 use tex_state::token::TokenWord;
-use tex_state::{InputSummary, PdfFormArtifact, PdfFormRecord, PrintSink, Universe};
+use tex_state::{PdfFormArtifact, PdfFormRecord, PrintSink, Universe};
 
 use crate::ExecError;
 use crate::dispatch::CommittedPagePublication;
@@ -20,9 +20,25 @@ pub(crate) enum ReplayTextKind {
 
 /// Detached job state captured before staging begins.
 pub(crate) struct ShipoutOrigin {
-    pub(crate) output_open_context: Option<String>,
-    pub(crate) pending_end: usize,
+    pub(crate) output_open_context: String,
     pub(crate) announce_openout: bool,
+}
+
+/// Handle-free geometry emitted only after a page publication commits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ShipoutGeometry {
+    pub(crate) page_width_sp: i64,
+    pub(crate) page_height_sp: i64,
+    pub(crate) counts: [i32; 10],
+}
+
+/// Publication callback owned by the surrounding execution boundary.
+///
+/// Main control may attach its live line/source attribution while forwarding
+/// this DTO to an in-process observer. Shipout never stores those runtime
+/// coordinates in the committed output.
+pub(crate) trait ShipoutGeometrySink {
+    fn committed_shipout_geometry(&mut self, geometry: ShipoutGeometry);
 }
 
 pub(crate) struct ExpandedWrite {
@@ -46,31 +62,40 @@ impl ExpandedWrite {
 
 pub(crate) struct ExpandedReplayText(pub(crate) Vec<u8>);
 
-pub(crate) type WriteReplayHost<'a> =
-    dyn FnMut(&mut Universe, PrintSink, &[TokenWord]) -> Result<ExpandedWrite, ExecError> + 'a;
-pub(crate) type TextReplayHost<'a> = dyn FnMut(&mut Universe, ReplayTextKind, &[TokenWord]) -> Result<ExpandedReplayText, ExecError>
+pub(crate) type WriteReplayHost<'a, G> =
+    dyn FnMut(&mut Universe<G>, PrintSink, &[TokenWord]) -> Result<ExpandedWrite, ExecError> + 'a;
+pub(crate) type TextReplayHost<'a, G> = dyn FnMut(&mut Universe<G>, ReplayTextKind, &[TokenWord]) -> Result<ExpandedReplayText, ExecError>
     + 'a;
 
 /// Staging capabilities borrowed for one atomic page/form traversal.
-pub(crate) struct ShipoutTransaction<'a> {
-    write: &'a mut WriteReplayHost<'a>,
-    replay: &'a mut TextReplayHost<'a>,
+pub(crate) struct ShipoutTransaction<'a, G> {
+    write: &'a mut WriteReplayHost<'a, G>,
+    replay: &'a mut TextReplayHost<'a, G>,
+    source_resolver: &'a dyn crate::output_provenance::ArtifactSourceResolver,
+    geometry_sink: &'a mut dyn ShipoutGeometrySink,
 }
 
-impl<'a> ShipoutTransaction<'a> {
+impl<'a, G> ShipoutTransaction<'a, G> {
     pub(crate) fn new(
-        write: &'a mut WriteReplayHost<'a>,
-        replay: &'a mut TextReplayHost<'a>,
+        write: &'a mut WriteReplayHost<'a, G>,
+        replay: &'a mut TextReplayHost<'a, G>,
+        source_resolver: &'a dyn crate::output_provenance::ArtifactSourceResolver,
+        geometry_sink: &'a mut dyn ShipoutGeometrySink,
     ) -> Self {
-        Self { write, replay }
+        Self {
+            write,
+            replay,
+            source_resolver,
+            geometry_sink,
+        }
     }
 
     pub(crate) fn stage_page(
         &mut self,
         node: Node,
-        input_summary: InputSummary,
         origin: ShipoutOrigin,
-        stores: &mut Universe,
+        pending_effect_end: usize,
+        stores: &mut Universe<G>,
         emit_dvi: bool,
     ) -> Result<Option<CommittedPagePublication>, ExecError> {
         let prior_attempt = stores.world().active_effect_output_attempt();
@@ -81,9 +106,11 @@ impl<'a> ShipoutTransaction<'a> {
             .set_active_effect_output_attempt(Some(output_attempt));
         let publication = transaction::stage_page(
             node,
-            input_summary,
             origin,
+            pending_effect_end,
             stores,
+            self.source_resolver,
+            self.geometry_sink,
             emit_dvi,
             self.write,
             self.replay,
@@ -106,8 +133,8 @@ impl<'a> ShipoutTransaction<'a> {
 
     pub(crate) fn stage_form(
         &mut self,
-        form: PdfFormRecord,
-        stores: &mut Universe,
+        form: PdfFormRecord<G>,
+        stores: &mut Universe<G>,
     ) -> Result<PdfFormArtifact, ExecError> {
         transaction::stage_form(form, stores, self.write, self.replay)
     }

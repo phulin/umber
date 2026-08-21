@@ -1,10 +1,11 @@
 use super::*;
 use smallvec::SmallVec;
+use tex_state::world::ArtifactEffectOrdinal;
 
 pub(super) struct PageOverlay {
     pub(super) pending_effect_count: usize,
     pub(super) effects: Vec<PageEffect>,
-    pub(super) open_out_occurrences: Vec<(usize, tex_state::ArtifactEffectOrdinal)>,
+    pub(super) open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
     pub(super) math: Vec<MathSubstitution>,
     pub(super) directions: Vec<DirectionPermutation>,
     pub(super) omitted_whatsits: Vec<(tex_state::node_arena::PageListId, usize)>,
@@ -28,19 +29,19 @@ pub(super) struct DirectionPermutation {
     pub(super) order: Vec<usize>,
 }
 
-struct NormalizeExpansion<'a> {
-    write_expander: &'a mut super::WriteExpander<'a>,
-    replay_expander: &'a mut super::ReplayTextExpander<'a>,
+struct NormalizeExpansion<'a, G> {
+    write_expander: &'a mut super::WriteExpander<'a, G>,
+    replay_expander: &'a mut super::ReplayTextExpander<'a, G>,
 }
 
 #[allow(clippy::too_many_arguments)] // Output traversal keeps independent immutable/replay inputs.
-pub(super) fn normalize_page(
+pub(super) fn normalize_page<G>(
     root: tex_state::node_arena::PageListId,
     root_box: (bool, tex_state::node::BoxLr),
     effects_and_context: (PendingPageEffects, String, bool),
-    stores: &mut Universe,
-    write_expander: &mut super::WriteExpander<'_>,
-    replay_expander: &mut super::ReplayTextExpander<'_>,
+    stores: &mut Universe<G>,
+    write_expander: &mut super::WriteExpander<'_, G>,
+    replay_expander: &mut super::ReplayTextExpander<'_, G>,
     color_target: tex_state::PdfColorStackTarget,
 ) -> Result<PageOverlay, ExecError> {
     let (root_vertical, root_box_lr) = root_box;
@@ -141,9 +142,9 @@ struct NormalizeListContext {
     depth: usize,
 }
 
-fn normalize_list(
-    stores: &mut Universe,
-    expansion: &mut NormalizeExpansion<'_>,
+fn normalize_list<G>(
+    stores: &mut Universe<G>,
+    expansion: &mut NormalizeExpansion<'_, G>,
     list: tex_state::node_arena::PageListId,
     context: NormalizeListContext,
     overlay: &mut PageOverlay,
@@ -198,9 +199,9 @@ fn normalize_list(
     Ok(())
 }
 
-fn normalize_index(
-    stores: &mut Universe,
-    expansion: &mut NormalizeExpansion<'_>,
+fn normalize_index<G>(
+    stores: &mut Universe<G>,
+    expansion: &mut NormalizeExpansion<'_, G>,
     list: tex_state::node_arena::PageListId,
     index: usize,
     suppress_deferred_streams: bool,
@@ -369,9 +370,9 @@ fn base_whatsit_visit_kind(whatsit: &Whatsit) -> Option<BaseWhatsitVisitKind> {
     }
 }
 
-fn append_whatsit_effect(
-    stores: &mut Universe,
-    expansion: &mut NormalizeExpansion<'_>,
+fn append_whatsit_effect<G>(
+    stores: &mut Universe<G>,
+    expansion: &mut NormalizeExpansion<'_, G>,
     overlay: &mut PageOverlay,
     whatsit: Whatsit,
     suppress_deferred_streams: bool,
@@ -406,10 +407,7 @@ fn append_whatsit_effect(
                         "detached artifact effect ordinal overflow".to_owned(),
                     )
                 })?;
-            open_out_occurrences.push((
-                effects.len(),
-                tex_state::ArtifactEffectOrdinal::new(effect_ordinal),
-            ));
+            open_out_occurrences.push((effects.len(), ArtifactEffectOrdinal::new(effect_ordinal)));
             // web2c's `[53.1374]` log notice, which follows `write_open[j]:=
             // true`. It has to come after the context attach above, which
             // requires the `StreamOpen` record to still be the last effect.
@@ -542,7 +540,7 @@ fn append_whatsit_effect(
         Whatsit::PdfSavePos => effects.push(PageEffect::PdfSavePosition),
         Whatsit::PdfSnapRefPoint => effects.push(PageEffect::PdfSnapRefPoint),
         Whatsit::PdfSnapY { glue } => effects.push(PageEffect::PdfSnapY {
-            spec: super::lower_glue(*glue),
+            spec: super::lower_glue(glue),
         }),
         Whatsit::PdfSnapYComp { ratio } => effects.push(PageEffect::PdfSnapYComp { ratio }),
         Whatsit::PdfRefXForm {
@@ -601,7 +599,11 @@ fn append_whatsit_effect(
                 tex_state::node::NodePdfActionIdentifier::Name(tokens) => {
                     let mut text = String::new();
                     for &token in tokens.words() {
-                        tex_state::token_show::append_token_string_text(stores, token, &mut text);
+                        tex_state::token_show::append_token_string_text(
+                            stores,
+                            token.semantic_token(),
+                            &mut text,
+                        );
                     }
                     tex_state::PdfDestinationIdentity::Name(text.into_bytes())
                 }
@@ -690,7 +692,11 @@ fn append_whatsit_effect(
                 tex_state::node::NodePdfActionIdentifier::Name(tokens) => {
                     let mut text = String::new();
                     for &token in tokens.words() {
-                        tex_state::token_show::append_token_string_text(stores, token, &mut text);
+                        tex_state::token_show::append_token_string_text(
+                            stores,
+                            token.semantic_token(),
+                            &mut text,
+                        );
                     }
                     tex_state::PdfDestinationIdentity::Name(text.into_bytes())
                 }
@@ -716,7 +722,7 @@ fn append_whatsit_effect(
             for &token in attributes.words() {
                 tex_state::token_show::append_token_string_text(
                     stores,
-                    token,
+                    token.semantic_token(),
                     &mut attribute_bytes,
                 );
             }
@@ -764,8 +770,8 @@ fn append_whatsit_effect(
 /// Resolves TeX82 §1370's live selector when a deferred write reaches
 /// shipout. `Stream`, `TerminalAndLog`, and `Log` retain §1342's normalized
 /// numbered, above-range, and negative stream identities until this point.
-pub(super) fn deferred_write_sink(
-    stores: &Universe,
+pub(super) fn deferred_write_sink<G>(
+    stores: &Universe<G>,
     sink: tex_state::PrintSink,
 ) -> Option<tex_state::PrintSink> {
     let selector = tex_state::print::Selector::for_interaction(stores.interaction_mode());
@@ -781,8 +787,8 @@ pub(super) fn deferred_write_sink(
 }
 
 /// TeX82 §§1373--1374's `out_what` open loop.
-fn retry_openout_target(
-    stores: &mut Universe,
+fn retry_openout_target<G>(
+    stores: &mut Universe<G>,
     name: String,
     context: &str,
 ) -> Result<String, ExecError> {
@@ -813,6 +819,7 @@ fn retry_openout_target(
         drop(report);
         let replacement = stores
             .command_context()
+            .expect("output retry runs inside an admitted command episode")
             .input_ln(tex_state::CommandLineSource::Terminal { prompt: ": " })
             .ok_or(ExecError::Fatal(tex_command::FatalError::emergency_stop(
                 "End of file on the terminal!",
@@ -897,7 +904,7 @@ fn lower_color_stack_mode(mode: tex_state::PdfColorStackMode) -> tex_out::PdfLit
 }
 
 pub(super) fn direction_permutation_for_box(
-    nodes: NodeList<'_>,
+    nodes: &[Node],
     box_lr: tex_state::node::BoxLr,
 ) -> Option<Vec<usize>> {
     if box_lr == tex_state::node::BoxLr::Reversed {
@@ -906,7 +913,7 @@ pub(super) fn direction_permutation_for_box(
     direction_permutation(nodes)
 }
 
-fn direction_permutation(nodes: NodeList<'_>) -> Option<Vec<usize>> {
+fn direction_permutation(nodes: &[Node]) -> Option<Vec<usize>> {
     struct Segment {
         begin: Direction,
         chunks: Vec<Vec<usize>>,
@@ -933,12 +940,12 @@ fn direction_permutation(nodes: NodeList<'_>) -> Option<Vec<usize>> {
         }
     }
 
-    if !nodes.contains_direction() {
+    if !nodes.iter().any(|node| matches!(node, Node::Direction(_))) {
         return None;
     }
     let mut reordered = Vec::with_capacity(nodes.len());
     let mut stack = Vec::<Segment>::new();
-    for (index, node) in nodes.into_iter().enumerate() {
+    for (index, node) in nodes.iter().map(NodeRef::from).enumerate() {
         match node {
             NodeRef::Direction(
                 begin @ (Direction::BeginM | Direction::BeginL | Direction::BeginR),
@@ -982,7 +989,7 @@ fn direction_permutation(nodes: NodeList<'_>) -> Option<Vec<usize>> {
 /// §1370 writes an unopened stream through `print_nl("")`, whose guard is
 /// `((term_offset>0)and(odd(selector)))or((file_offset>0)and(selector>=
 /// log_only))`. A `\write` to a real file has no column to break.
-pub(super) fn write_line_is_open(stores: &Universe, sink: tex_state::PrintSink) -> bool {
+pub(super) fn write_line_is_open<G>(stores: &Universe<G>, sink: tex_state::PrintSink) -> bool {
     let bufs = stores.world().stream_bufs();
     let terminal = !bufs.terminal_partial_line().is_empty();
     let log = !bufs.log_partial_line().is_empty();

@@ -1,8 +1,9 @@
 use super::*;
+use tex_state::world::ArtifactEffectOrdinal;
 
 pub(super) struct PendingPageEffects {
     pub(super) effects: Vec<PageEffect>,
-    pub(super) open_out_occurrences: Vec<(usize, tex_state::ArtifactEffectOrdinal)>,
+    pub(super) open_out_occurrences: Vec<(usize, ArtifactEffectOrdinal)>,
 }
 
 /// Lowers the effects a page must carry forward: the whatsit output produced
@@ -34,7 +35,7 @@ pub(super) fn pending_page_effects(
         if matches!(effect, PageEffect::OpenOut { .. }) {
             let ordinal = u32::try_from(world_index + 1)
                 .expect("page-visible effect ordinal exceeds detached artifact schema");
-            open_out_occurrences.push((page_index, tex_state::ArtifactEffectOrdinal::new(ordinal)));
+            open_out_occurrences.push((page_index, ArtifactEffectOrdinal::new(ordinal)));
         }
         effects.push(effect);
     }
@@ -66,7 +67,7 @@ pub(super) fn lower_effect_record(record: &EffectRecord) -> Option<PageEffect> {
     }
 }
 
-pub(crate) fn page_counts(stores: &Universe) -> [i32; 10] {
+pub(crate) fn page_counts<G>(stores: &Universe<G>) -> [i32; 10] {
     let mut counts = [0; 10];
     for (index, value) in counts.iter_mut().enumerate() {
         *value = stores.count(index as u16);

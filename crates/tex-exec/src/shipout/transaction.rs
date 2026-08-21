@@ -2,15 +2,15 @@ use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::{Node, NodeKind};
 use tex_state::node_arena::{NodeRef, PageListId};
 use tex_state::{
-    ContentHash, DetachedArtifact, GeometryObservation, MemoTimingPhase, MemoValueLimits,
-    PrintSink, PureMemoKey, PureMemoLayer, PureShipoutEntry, Universe,
+    ContentHash, DetachedArtifact, MemoTimingPhase, MemoValueLimits, PrintSink, PureMemoKey,
+    PureMemoLayer, PureShipoutEntry, Universe,
 };
 
 use crate::ExecError;
 use crate::dispatch::{CommittedPagePublication, PreparedDviPage};
 
 use super::direct;
-use super::{ShipoutOrigin, TextReplayHost, WriteReplayHost};
+use super::{ShipoutGeometry, ShipoutGeometrySink, ShipoutOrigin, TextReplayHost, WriteReplayHost};
 
 #[cfg(test)]
 mod tests;
@@ -21,8 +21,8 @@ const SHIPOUT_ENV_HASH_DOMAIN: u64 = 0x7368_6970_656e_7601;
 
 /// Resumes TeX82 §§530 and 1373--1375 after an authoritative output-open
 /// failure retained the failed effect and its following suffix.
-pub fn retry_unavailable_stream_open(
-    stores: &mut Universe,
+pub fn retry_unavailable_stream_open<G>(
+    stores: &mut Universe<G>,
     failed: &tex_state::StreamOpenFailure,
 ) -> Result<std::path::PathBuf, ExecError> {
     let interaction = stores.interaction_mode();
@@ -49,6 +49,7 @@ pub fn retry_unavailable_stream_open(
     drop(report);
     let replacement = stores
         .command_context()
+        .expect("output retry runs inside an admitted command episode")
         .input_ln(tex_state::CommandLineSource::Terminal { prompt: ": " })
         .ok_or(ExecError::Fatal(tex_command::FatalError::emergency_stop(
             "End of file on the terminal!",
@@ -63,29 +64,24 @@ pub fn retry_unavailable_stream_open(
 // compact-list traversal writes canonical artifact bytes. The same detached
 // artifact-to-DVI compiler serves fresh and memo-hit publication.
 
-/// What the surrounding job already was when a `\shipout` began.
+/// Ships a completed box using already-rendered diagnostic context.
 ///
-/// Both fields are boundaries between the job and the page: the §82 context
-/// an `\openout` retry reports against, and the point in the live effect log
-/// past which nothing belongs to the page. They travel together because a
-/// caller that knows one always knows the other.
-/// Ships a completed box using an already-owned publication summary.
-///
-/// Command replay has no independent source stack: it publishes the
-/// most recently committed input summary while retaining command input in its
-/// own state.  The direct artifact kernel needs only this detached summary,
-/// never a source-consumption capability.
-pub(crate) fn shipout_node_with_input_summary(
+/// Command replay has no independent source stack. The surrounding command
+/// boundary therefore renders §82's context before staging and passes only
+/// its owned string here. The live pending-effect offset remains a separate
+/// transaction argument rather than entering that detached value.
+pub(crate) fn shipout_node<G>(
     node: Node,
-    input_summary: tex_state::InputSummary,
     origin: ShipoutOrigin,
-    stores: &mut Universe,
+    pending_effect_end: usize,
+    stores: &mut Universe<G>,
+    source_resolver: &dyn crate::output_provenance::ArtifactSourceResolver,
+    geometry_sink: &mut dyn ShipoutGeometrySink,
     emit_dvi: bool,
-    write_expander: &mut direct::WriteExpander<'_>,
-    replay_expander: &mut direct::ReplayTextExpander<'_>,
+    write_expander: &mut direct::WriteExpander<'_, G>,
+    replay_expander: &mut direct::ReplayTextExpander<'_, G>,
 ) -> Result<Option<CommittedPagePublication>, ExecError> {
-    let pending_end = origin.pending_end;
-    prepare_pdf_output_policy(stores)?;
+    prepare_pdf_output_policy(stores, &origin.output_open_context)?;
     let page_before_shipout = stores.page_node_cursor();
     let page_root = stores.publish_page_nodes(std::slice::from_ref(&node));
     let shipout_scratch = stores.page_node_cursor();
@@ -95,10 +91,8 @@ pub(crate) fn shipout_node_with_input_summary(
         // is the whole of the engine's response. Shipout also runs from
         // command replay, which owns no live source stack. Its caller
         // captured §82's display from the command-owned stack before
-        // releasing that borrow; the Universe summary is only republished
-        // later by successful artifact staging and can still name an older
-        // input position here.
-        let context = shipout_error_context(stores, &input_summary, &origin);
+        // releasing that borrow.
+        let context = origin.output_open_context.clone();
         let reported = crate::error_report::report_error(
             stores,
             "Huge page cannot be shipped out",
@@ -119,9 +113,7 @@ pub(crate) fn shipout_node_with_input_summary(
             page_root,
             stores.int_param(IntParam::TRACING_OUTPUT),
         );
-        stores
-            .release_completed_page(page_root)
-            .expect("discarded page root is exclusively owned");
+        release_published_page(stores, shipout_scratch, page_root);
         return Ok(None);
     }
     let memo_enabled = stores
@@ -134,8 +126,9 @@ pub(crate) fn shipout_node_with_input_summary(
         stores.with_pure_memo(|memo| memo.record_not_attempted(PureMemoLayer::Shipout));
     }
     let cacheable = shipout_memo_enabled
+        && !stores.provenance_demand().rendered_source()
         && effect_free_shipout_graph(stores, &node)
-        && stores.world().effect_records()[..pending_end].is_empty()
+        && stores.world().effect_records()[..pending_effect_end].is_empty()
         && (1..=32_768).contains(&stores.int_param(IntParam::MAG));
     let validation_started = crate::timing::TelemetryTimer::start();
     let key = cacheable.then(|| shipout_key(stores, page_root));
@@ -162,8 +155,8 @@ pub(crate) fn shipout_node_with_input_summary(
             let imported_bytes = entry.artifact.retained_bytes();
             let replayed = stores.commit_replayed_artifact(
                 detached.payload,
-                entry.render_origin_ends,
-                entry.render_provenance,
+                Vec::new(),
+                Default::default(),
                 None,
             );
             let (hash, artifact, publication) = match replayed {
@@ -188,11 +181,9 @@ pub(crate) fn shipout_node_with_input_summary(
             // publication boundary so callers never need to lower
             // an already-committed page during finalization.
             if let Some(geometry) = geometry {
-                stores.record_geometry_observation(geometry);
+                geometry_sink.committed_shipout_geometry(geometry);
             }
-            stores
-                .release_completed_page(page_root)
-                .expect("memo-replayed page root is exclusively owned");
+            release_published_page(stores, shipout_scratch, page_root);
             let plan = direct::compile_dvi_plan(
                 stores
                     .world()
@@ -232,9 +223,10 @@ pub(crate) fn shipout_node_with_input_summary(
     let mut transaction = stores.begin_shipout();
     let staged = direct::stage_shipout(
         node,
-        input_summary,
         origin,
+        pending_effect_end,
         &mut transaction,
+        source_resolver,
         emit_dvi,
         write_expander,
         replay_expander,
@@ -253,23 +245,13 @@ pub(crate) fn shipout_node_with_input_summary(
         .to_vec()
         .into_boxed_slice();
     let retained_diagnostics = staged.retained_diagnostics.clone();
-    let memo_payload =
-        (key.is_some() && !staged.artifact.has_deferred_render_origins()).then(|| {
-            let artifact_bytes = staged.artifact.bytes().to_vec();
-            let render_origin_ends = staged.artifact.render_origin_ends_for_memo().to_vec();
-            let render_origins = staged
-                .artifact
-                .render_origins_for_memo()
-                .iter()
-                .flat_map(|origins| origins.iter().copied())
-                .collect::<Vec<_>>();
-            (artifact_bytes, render_origin_ends, render_origins)
-        });
+    let memo_payload = key.is_some().then(|| staged.artifact.bytes().to_vec());
     let reservation = transaction
         .world_mut()
         .reserve_active_artifact_publication_at(effect_start, None);
     let effect_end = transaction.world().effect_records().len();
-    let committed = transaction.commit(staged.artifact, staged.effect_pos, reservation);
+    let staged_effect_pos = transaction.world().effect_pos();
+    let committed = transaction.commit(staged.artifact, staged_effect_pos, reservation);
     let (hash, publication) = match committed {
         Ok(committed) => committed,
         Err(error) => {
@@ -279,12 +261,7 @@ pub(crate) fn shipout_node_with_input_summary(
             return Err(error);
         }
     };
-    stores
-        .truncate_page_nodes(shipout_scratch)
-        .expect("shipout normalization restores its scratch suffix");
-    stores
-        .release_completed_page(page_root)
-        .expect("committed page root is exclusively owned");
+    release_published_page(stores, shipout_scratch, page_root);
     let effect_publication = stores.world_mut().reserve_effect_publication();
     stores
         .world_mut()
@@ -296,28 +273,25 @@ pub(crate) fn shipout_node_with_input_summary(
     let artifact =
         tex_state::PageOutputPublicationReceipt::committed(effect_publication, publication);
     if let Some(geometry) = geometry {
-        stores.record_geometry_observation(geometry);
+        geometry_sink.committed_shipout_geometry(geometry);
     }
     for (sink, text) in retained_diagnostics {
         stores.world_mut().write_text(sink, &text);
     }
-    if let (Some(key), Some((artifact_bytes, render_origin_ends, render_origins))) =
-        (key, memo_payload)
+    if let (Some(key), Some(artifact_bytes)) = (key, memo_payload)
         && stores.world().effect_pos() == effect_pos_start
         && let Ok(artifact) = tex_state::DetachedMemoValue::from_artifact(&DetachedArtifact {
             artifact_schema: 10,
             payload: artifact_bytes,
         })
-        && let Some(render_provenance) =
-            crate::output_provenance::provenance_recipe_for_origins(stores, render_origins)
     {
         stores.with_pure_memo(|memo| {
             memo.insert_shipout(
                 key,
                 PureShipoutEntry {
                     artifact,
-                    render_origin_ends,
-                    render_provenance,
+                    render_origin_ends: Vec::new(),
+                    render_provenance: Default::default(),
                 },
             );
         });
@@ -336,12 +310,34 @@ pub(crate) fn shipout_node_with_input_summary(
     }))
 }
 
+/// Drops exactly the completed page closure after publication has succeeded.
+///
+/// Normalization scratch is always newer than the published root, so it must
+/// be truncated first. The root then owns the complete remaining closure and
+/// can be released without disturbing older, unrelated page rows.
+fn release_published_page<G>(
+    stores: &mut Universe<G>,
+    shipout_scratch: tex_state::node_arena::NodeArenaCursor<tex_state::node_arena::PageLifetime>,
+    page_root: PageListId,
+) {
+    stores
+        .truncate_page_nodes(shipout_scratch)
+        .expect("shipout restores only its normalization scratch suffix");
+    stores
+        .release_completed_page(page_root)
+        .expect("completed page root is exclusively owned");
+}
+
 /// TeX82 §641's huge-page recovery tail.
 ///
 /// Positive `\tracingoutput` has already displayed the page at §638. At
 /// zero or below, `ship_out` must identify and display the rejected box here
 /// before its caller prints the closing page marker.
-fn report_huge_page_deleted_box(stores: &mut Universe, page_root: PageListId, tracing_output: i32) {
+fn report_huge_page_deleted_box<G>(
+    stores: &mut Universe<G>,
+    page_root: PageListId,
+    tracing_output: i32,
+) {
     if tracing_output > 0 {
         return;
     }
@@ -358,60 +354,54 @@ fn report_huge_page_deleted_box(stores: &mut Universe, page_root: PageListId, tr
     diagnostic.end(true);
 }
 
-fn shipout_error_context(
-    stores: &Universe,
-    input_summary: &tex_state::InputSummary,
-    origin: &ShipoutOrigin,
-) -> String {
-    origin
-        .output_open_context
-        .clone()
-        .unwrap_or_else(|| crate::diagnostics::show_context(stores, input_summary))
-}
-
-pub(crate) fn stage_page(
+pub(crate) fn stage_page<G>(
     node: Node,
-    input_summary: tex_state::InputSummary,
     origin: ShipoutOrigin,
-    stores: &mut Universe,
+    pending_effect_end: usize,
+    stores: &mut Universe<G>,
+    source_resolver: &dyn crate::output_provenance::ArtifactSourceResolver,
+    geometry_sink: &mut dyn ShipoutGeometrySink,
     emit_dvi: bool,
-    write_expander: &mut WriteReplayHost<'_>,
-    replay_expander: &mut TextReplayHost<'_>,
+    write_expander: &mut WriteReplayHost<'_, G>,
+    replay_expander: &mut TextReplayHost<'_, G>,
 ) -> Result<Option<CommittedPagePublication>, ExecError> {
-    shipout_node_with_input_summary(
+    shipout_node(
         node,
-        input_summary,
         origin,
+        pending_effect_end,
         stores,
+        source_resolver,
+        geometry_sink,
         emit_dvi,
         write_expander,
         replay_expander,
     )
 }
 
-pub(crate) fn stage_form(
-    form: tex_state::PdfFormRecord,
-    stores: &mut Universe,
-    write_expander: &mut WriteReplayHost<'_>,
-    replay_expander: &mut TextReplayHost<'_>,
+pub(crate) fn stage_form<G>(
+    form: tex_state::PdfFormRecord<G>,
+    stores: &mut Universe<G>,
+    write_expander: &mut WriteReplayHost<'_, G>,
+    replay_expander: &mut TextReplayHost<'_, G>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
     direct::stage_form(form, stores, write_expander, replay_expander)
 }
 
-fn shipout_geometry(node: &Node, stores: &Universe) -> Option<GeometryObservation> {
+fn shipout_geometry<G>(node: &Node, stores: &Universe<G>) -> Option<ShipoutGeometry> {
     let (Node::HList(node) | Node::VList(node)) = node else {
         return None;
     };
-    Some(GeometryObservation::Shipout {
+    Some(ShipoutGeometry {
         page_width_sp: i64::from(node.width.raw()),
         page_height_sp: i64::from(node.height.raw()) + i64::from(node.depth.raw()),
         counts: direct::page_counts(stores),
-        line: stores.current_input_line().max(0) as u32,
-        source: stores.current_input_source(),
     })
 }
 
-fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
+fn prepare_pdf_output_policy<G>(
+    stores: &mut Universe<G>,
+    error_context: &str,
+) -> Result<(), ExecError> {
     let current_output = stores.int_param(IntParam::PDF_OUTPUT);
     if let Some(fixed) = stores.fixed_pdf_output_parameters() {
         if current_output != fixed.output {
@@ -443,6 +433,7 @@ fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
                 "I changed this to 1.",
             ],
             major,
+            error_context,
         )?;
         stores.set_int_param(IntParam::PDF_MAJOR_VERSION, 1);
     }
@@ -456,6 +447,7 @@ fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
                 "I changed this to 4.",
             ],
             minor,
+            error_context,
         )?;
         stores.set_int_param(IntParam::PDF_MINOR_VERSION, 4);
     }
@@ -481,23 +473,27 @@ fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
 /// tex.web §91's `int_error` naming the rejected value.
 ///
 /// The version is fixed at the first page, long after the command that set it
-/// was scanned, so §82's context is whatever input the job last published.
-fn report_invalid_pdf_version(
-    stores: &mut Universe,
+/// was scanned, so the caller supplies the already-rendered §82 context owned
+/// by the shipout request.
+fn report_invalid_pdf_version<G>(
+    stores: &mut Universe<G>,
     message: &str,
     help: &[&str],
     value: i32,
+    error_context: &str,
 ) -> Result<(), ExecError> {
-    let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err(message);
     // pdftex.web breaks the line before the value; `print_nl` on an open line
     // is that `print_ln`.
-    report.print_nl("").help(help).context(context);
+    report
+        .print_nl("")
+        .help(help)
+        .context(error_context.to_owned());
     report.int_error(value).jump_out()?;
     Ok(())
 }
 
-fn shipout_key(stores: &mut Universe, root: PageListId) -> PureMemoKey {
+fn shipout_key<G>(stores: &mut Universe<G>, root: PageListId) -> PureMemoKey {
     let environment = stores.engine_boundary_hash(SHIPOUT_ENV_HASH_DOMAIN, |hash| {
         hash.page_node_list(stores, root);
         hash.i32(stores.int_param(IntParam::MAG));
@@ -517,7 +513,7 @@ fn shipout_key(stores: &mut Universe, root: PageListId) -> PureMemoKey {
     )
 }
 
-fn effect_free_shipout_graph(stores: &Universe, root: &Node) -> bool {
+fn effect_free_shipout_graph<G>(stores: &Universe<G>, root: &Node) -> bool {
     let mut nodes = vec![root.clone()];
     while let Some(node) = nodes.pop() {
         let view = NodeRef::from(&node);
@@ -551,7 +547,7 @@ fn effect_free_shipout_graph(stores: &Universe, root: &Node) -> bool {
     true
 }
 
-fn huge_shipout_box(node: &Node, stores: &Universe) -> bool {
+fn huge_shipout_box<G>(node: &Node, stores: &Universe<G>) -> bool {
     let Some(box_node) = NodeRef::from(node).box_node() else {
         return false;
     };

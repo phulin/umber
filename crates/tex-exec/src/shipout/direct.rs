@@ -22,11 +22,12 @@ use tex_state::{EffectRecord, PrintSink, Universe, VerifiedArtifact};
 
 use crate::ExecError;
 use crate::diagnostics;
+use crate::output_provenance::{ArtifactSourceResolver, OutputProvenanceBuilder};
 
 const MAX_SHIPOUT_DEPTH: usize = 4096;
 
-pub(crate) type WriteExpander<'a> = dyn FnMut(
-        &mut Universe,
+pub(crate) type WriteExpander<'a, G> = dyn FnMut(
+        &mut Universe<G>,
         PrintSink,
         &[TokenWord],
     ) -> Result<crate::shipout::ExpandedWrite, ExecError>
@@ -34,8 +35,8 @@ pub(crate) type WriteExpander<'a> = dyn FnMut(
 
 pub(crate) use crate::shipout::ReplayTextKind;
 
-pub(crate) type ReplayTextExpander<'a> = dyn FnMut(
-        &mut Universe,
+pub(crate) type ReplayTextExpander<'a, G> = dyn FnMut(
+        &mut Universe<G>,
         ReplayTextKind,
         &[TokenWord],
     ) -> Result<crate::shipout::ExpandedReplayText, ExecError>
@@ -44,7 +45,6 @@ pub(crate) type ReplayTextExpander<'a> = dyn FnMut(
 pub(crate) struct StagedShipout {
     pub(crate) artifact: VerifiedArtifact,
     pub(crate) dvi_plan: Option<DviPagePlan>,
-    pub(crate) effect_pos: tex_state::EffectPos,
     pub(crate) retained_diagnostics: Vec<(PrintSink, String)>,
     #[cfg(test)]
     pub(crate) base_whatsit_visits: Vec<BaseWhatsitVisit>,
@@ -69,11 +69,11 @@ pub(crate) struct BaseWhatsitVisit {
     pub(crate) kind: BaseWhatsitVisitKind,
 }
 
-pub(crate) fn stage_form(
-    form: tex_state::PdfFormRecord,
-    stores: &mut Universe,
-    write_expander: &mut WriteExpander<'_>,
-    replay_expander: &mut ReplayTextExpander<'_>,
+pub(crate) fn stage_form<G>(
+    form: tex_state::PdfFormRecord<G>,
+    stores: &mut Universe<G>,
+    write_expander: &mut WriteExpander<'_, G>,
+    replay_expander: &mut ReplayTextExpander<'_, G>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
     let color_rollback = stores.pdf_form_color_rollback();
     let page_cursor = stores.page_node_cursor();
@@ -87,11 +87,11 @@ pub(crate) fn stage_form(
     result
 }
 
-fn stage_form_inner(
-    form: tex_state::PdfFormRecord,
-    stores: &mut Universe,
-    write_expander: &mut WriteExpander<'_>,
-    replay_expander: &mut ReplayTextExpander<'_>,
+fn stage_form_inner<G>(
+    form: tex_state::PdfFormRecord<G>,
+    stores: &mut Universe<G>,
+    write_expander: &mut WriteExpander<'_, G>,
+    replay_expander: &mut ReplayTextExpander<'_, G>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
     let form_root = stores
         .copy_durable_page_nodes(form.box_list())
@@ -143,7 +143,8 @@ fn stage_form_inner(
         direct_glyph: None,
         dvi_font_count: 0,
         render_origin_ends: None,
-        render_origins: tex_state::RenderProvenanceBuilder::default(),
+        render_origins: None,
+        source_resolver: None,
         anchor: 0,
     };
     let mut dvi_emitter = DviPagePlanCoEmitter::disabled();
@@ -193,21 +194,21 @@ fn stage_form_inner(
 }
 
 #[allow(clippy::too_many_arguments)] // Shipout staging capabilities remain explicit at this seam.
-pub(crate) fn stage_shipout(
+pub(crate) fn stage_shipout<G>(
     node: Node,
-    input_summary: tex_state::InputSummary,
     origin: super::ShipoutOrigin,
-    stores: &mut Universe,
+    pending_effect_end: usize,
+    stores: &mut Universe<G>,
+    source_resolver: &dyn ArtifactSourceResolver,
     emit_dvi: bool,
-    write_expander: &mut WriteExpander<'_>,
-    replay_expander: &mut ReplayTextExpander<'_>,
+    write_expander: &mut WriteExpander<'_, G>,
+    replay_expander: &mut ReplayTextExpander<'_, G>,
 ) -> Result<StagedShipout, ExecError> {
     let super::ShipoutOrigin {
         output_open_context,
-        pending_end,
         announce_openout,
     } = origin;
-    let pending_effects = pending_page_effects(stores.world(), pending_end);
+    let pending_effects = pending_page_effects(stores.world(), pending_effect_end);
     let counts = page_counts(stores);
     let (mag, diagnostic) = stores.prepare_mag();
     if let Some(diagnostic) = diagnostic {
@@ -263,8 +264,6 @@ pub(crate) fn stage_shipout(
 
     // Phase A is the only mutable pass. It executes deferred effects, freezes
     // math substitutions, and records the rare direction permutations.
-    let output_open_context = output_open_context
-        .unwrap_or_else(|| crate::diagnostics::show_context(stores, &input_summary));
     let overlay = normalize_page(
         children.clone(),
         (vertical, root_box_lr),
@@ -291,7 +290,9 @@ pub(crate) fn stage_shipout(
     .map_err(invalid_artifact)?;
     let mut encoder = ArtifactEmitter::new(job, counts, &root, vertical);
     let mut emission = EmissionState::page(
-        stores.provenance_demand().rendered_source(),
+        stores.provenance_demand(),
+        stores.provenance_budgets().detached_artifact_recipe_bytes,
+        source_resolver,
         u32::try_from(overlay.pending_effect_count).map_err(|_| ExecError::ArithmeticOverflow)?,
     );
     encoder.stream_root_nodes(|output| {
@@ -332,19 +333,16 @@ pub(crate) fn stage_shipout(
         stores.publish_pdf_traversal_positions(last_position, positioned.snap_reference);
     }
 
-    stores.set_input_summary(input_summary);
-    let effect_pos = stores.world().effect_pos();
     let retained_diagnostics = overlay.diagnostics.clone();
-    let artifact = if let Some(render_origin_ends) = emission.render_origin_ends {
-        VerifiedArtifact::new(artifact_bytes)
-            .with_built_render_origins(render_origin_ends, emission.render_origins)
-    } else {
-        VerifiedArtifact::new(artifact_bytes)
+    let artifact = match (emission.render_origin_ends, emission.render_origins) {
+        (Some(render_origin_ends), Some(render_origins)) => VerifiedArtifact::new(artifact_bytes)
+            .with_built_render_origins(render_origin_ends, render_origins.finish()),
+        (None, None) => VerifiedArtifact::new(artifact_bytes),
+        _ => unreachable!("rendered-source ends and recipes are selected together"),
     };
     Ok(StagedShipout {
         artifact: artifact.with_open_out_occurrences(overlay.open_out_occurrences),
         dvi_plan,
-        effect_pos,
         retained_diagnostics,
         #[cfg(test)]
         base_whatsit_visits: overlay.base_whatsit_visits,
@@ -394,7 +392,10 @@ fn needs_positioned_shipout(effects: &[PageEffect]) -> bool {
     })
 }
 
-fn ensure_pdf_font_resources(stores: &mut Universe, fonts: &[FontId]) -> Result<(), ExecError> {
+fn ensure_pdf_font_resources<G>(
+    stores: &mut Universe<G>,
+    fonts: &[FontId],
+) -> Result<(), ExecError> {
     for &font in fonts {
         let first_use = stores.pdf_font_resource(font).is_none();
         stores
@@ -414,8 +415,8 @@ fn ensure_pdf_font_resources(stores: &mut Universe, fonts: &[FontId]) -> Result<
     Ok(())
 }
 
-fn saved_position(
-    stores: &Universe,
+fn saved_position<G>(
+    stores: &Universe<G>,
     root: &PageBoxNode,
     position: (tex_state::scaled::Scaled, tex_state::scaled::Scaled),
 ) -> Result<(tex_state::scaled::Scaled, tex_state::scaled::Scaled), ExecError> {
@@ -489,7 +490,7 @@ pub(crate) fn terminal_output_name(line: &str) -> String {
     normalize::scan_terminal_output_name(line)
 }
 
-struct EmissionState {
+struct EmissionState<'a> {
     fonts: Vec<FontResource>,
     live_fonts: Vec<FontId>,
     font_slots: Vec<Option<u32>>,
@@ -498,11 +499,18 @@ struct EmissionState {
     dvi_font_count: usize,
     anchor: u32,
     render_origin_ends: Option<Vec<u32>>,
-    render_origins: tex_state::RenderProvenanceBuilder,
+    render_origins: Option<OutputProvenanceBuilder>,
+    source_resolver: Option<&'a dyn ArtifactSourceResolver>,
 }
 
-impl EmissionState {
-    fn page(rendered_source: bool, anchor: u32) -> Self {
+impl<'a> EmissionState<'a> {
+    fn page(
+        demand: tex_state::ProvenanceDemand,
+        budget_bytes: usize,
+        source_resolver: &'a dyn ArtifactSourceResolver,
+        anchor: u32,
+    ) -> Self {
+        let render_origins = OutputProvenanceBuilder::for_demand(demand, budget_bytes);
         Self {
             fonts: Vec::new(),
             live_fonts: Vec::new(),
@@ -512,23 +520,27 @@ impl EmissionState {
             dvi_font_count: 0,
             // The artifact root is a synthetic box header preceding its children.
             // Batch jobs retain no column at all; editor sessions select it once.
-            render_origin_ends: rendered_source.then(|| vec![0]),
-            render_origins: tex_state::RenderProvenanceBuilder::default(),
+            render_origin_ends: render_origins.as_ref().map(|_| vec![0]),
+            render_origins,
+            source_resolver: demand.rendered_source().then_some(source_resolver),
             anchor,
         }
     }
 
-    fn node(&mut self, stores: &Universe, origins: impl IntoIterator<Item = OriginId>) {
+    fn node(&mut self, origins: impl IntoIterator<Item = OriginId>) {
         let Some(ends) = &mut self.render_origin_ends else {
             return;
         };
+        let builder = self
+            .render_origins
+            .as_mut()
+            .expect("rendered-source ends and recipes are selected together");
+        let resolver = self
+            .source_resolver
+            .expect("rendered-source demand installs its cold resolver");
         let mut len = 0_u32;
         for origin in origins {
-            if let Some(span) = stores.root_span_for_origin(origin) {
-                self.render_origins.push_stable_span(span);
-            } else {
-                stores.push_render_origin(&mut self.render_origins, origin);
-            }
+            builder.push_origin(resolver, origin);
             len = len
                 .checked_add(1)
                 .expect("artifact render provenance exceeds u32 entries");
@@ -542,9 +554,9 @@ impl EmissionState {
         );
     }
 
-    fn character_node(&mut self, stores: &Universe, origin: OriginId) {
+    fn character_node(&mut self, origin: OriginId) {
         if self.render_origin_ends.is_some() {
-            self.node(stores, [origin]);
+            self.node([origin]);
         }
     }
 
@@ -565,13 +577,13 @@ impl EmissionState {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_node_list(
-    stores: &Universe,
+fn emit_node_list<G>(
+    stores: &Universe<G>,
     overlay: &PageOverlay,
     list: &PageListId,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
-    emission: &mut EmissionState,
+    emission: &mut EmissionState<'_>,
     suppress_deferred_streams: bool,
     depth: usize,
 ) -> Result<(), ExecError> {
@@ -627,12 +639,12 @@ fn emit_node_list(
     Ok(())
 }
 
-fn emit_char_run(
-    stores: &Universe,
+fn emit_char_run<G>(
+    stores: &Universe<G>,
     run: tex_state::node_arena::CharRun<'_>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
-    emission: &mut EmissionState,
+    emission: &mut EmissionState<'_>,
 ) -> Result<(), ExecError> {
     let font = run.font();
     let loaded = stores.font(font);
@@ -667,7 +679,7 @@ fn emit_char_run(
                 emission.direct_glyph = Some((font, code, width));
                 width
             };
-            emission.character_node(stores, origin);
+            emission.character_node(origin);
             output.char(font_id, u32::from(code), width)?;
             emission.sync_dvi_fonts(dvi)?;
             dvi.char(font_id, u32::from(code), width)
@@ -698,14 +710,14 @@ fn emit_char_run(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_index(
-    stores: &Universe,
+fn emit_index<G>(
+    stores: &Universe<G>,
     overlay: &PageOverlay,
     list: &PageListId,
     index: usize,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
-    emission: &mut EmissionState,
+    emission: &mut EmissionState<'_>,
     suppress_deferred_streams: bool,
     depth: usize,
 ) -> Result<(), ExecError> {
@@ -755,7 +767,7 @@ fn emit_index(
             )?;
         }
         NodeRef::Kern { amount, kind } => {
-            emission.node(stores, []);
+            emission.node([]);
             output.kern(amount, lower_kern_kind(kind))?;
             dvi.kern(amount).map_err(invalid_artifact)?;
         }
@@ -767,19 +779,19 @@ fn emit_index(
         } => {
             let (code, width) = glyph(stores, font, char::from(ch))?;
             let projection = glyph_projection(stores, font, code, width, emission)?;
-            emission.node(stores, []);
+            emission.node([]);
             output.margin_kern(amount, lower_margin_kern_side(side), projection.font_id, ch)?;
             dvi.kern(amount).map_err(invalid_artifact)?;
         }
         NodeRef::Glue { spec, kind, leader } => {
-            let spec = lower_glue(*spec);
+            let spec = lower_glue(spec);
             let kind = lower_glue_kind(kind);
             emit_glue(
                 stores, overlay, output, dvi, emission, spec, kind, leader, depth,
             )?;
         }
         NodeRef::Penalty(value) => {
-            emission.node(stores, []);
+            emission.node([]);
             output.penalty(value)?;
         }
         NodeRef::Rule {
@@ -787,7 +799,7 @@ fn emit_index(
             height,
             depth,
         } => {
-            emission.node(stores, []);
+            emission.node([]);
             output.rule(width, height, depth)?;
             dvi.rule(width, height, depth).map_err(invalid_artifact)?;
         }
@@ -817,7 +829,7 @@ fn emit_index(
             replace,
             ..
         } => {
-            emission.node(stores, []);
+            emission.node([]);
             let dvi_font_count = emission.dvi_font_count;
             let mut ignored_dvi = DviPagePlanCoEmitter::disabled();
             output.disc(lower_disc_kind(kind), |disc| {
@@ -861,7 +873,7 @@ fn emit_index(
             emission.dvi_font_count = dvi_font_count;
         }
         NodeRef::Mark { class, tokens } => {
-            emission.node(stores, []);
+            emission.node([]);
             output.mark_stream(class, |tokens_out| {
                 for token in tokens.words().iter().map(|word| word.semantic_token()) {
                     match token {
@@ -869,7 +881,11 @@ fn emit_index(
                             tokens_out.char(ch as u32, lower_token_catcode(cat))?;
                         }
                         Token::Cs(symbol) => {
-                            tokens_out.control_sequence(stores.resolve(symbol))?;
+                            tokens_out.control_sequence(
+                                stores
+                                    .resolve(symbol)
+                                    .expect("shipped control sequence belongs to the live epoch"),
+                            )?;
                         }
                         Token::Param(slot) => tokens_out.param(slot)?,
                         Token::Frozen(_) => {
@@ -881,7 +897,7 @@ fn emit_index(
             })?;
         }
         NodeRef::Ins { class, content, .. } => {
-            emission.node(stores, []);
+            emission.node([]);
             let dvi_font_count = emission.dvi_font_count;
             let mut ignored_dvi = DviPagePlanCoEmitter::disabled();
             output.insert(class, |nodes| {
@@ -902,25 +918,25 @@ fn emit_index(
             if let Some(effect_index) =
                 anchor_for_whatsit(whatsit, suppress_deferred_streams, &mut emission.anchor)?
             {
-                emission.node(stores, []);
+                emission.node([]);
                 output.whatsit_anchor(effect_index)?;
                 dvi.whatsit(effect_index, &overlay.effects)
                     .map_err(invalid_artifact)?;
             }
         }
         NodeRef::MathOn(width) => {
-            emission.node(stores, []);
+            emission.node([]);
             output.math_on(width)?;
             dvi.math(width).map_err(invalid_artifact)?;
         }
         NodeRef::MathOff(width) => {
-            emission.node(stores, []);
+            emission.node([]);
             output.math_off(width)?;
             dvi.math(width).map_err(invalid_artifact)?;
         }
         NodeRef::Direction(_) => {}
         NodeRef::Adjust(content) => {
-            emission.node(stores, []);
+            emission.node([]);
             let dvi_font_count = emission.dvi_font_count;
             let mut ignored_dvi = DviPagePlanCoEmitter::disabled();
             output.adjust(|nodes| {
@@ -950,12 +966,12 @@ fn emit_index(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_box(
-    stores: &Universe,
+fn emit_box<G>(
+    stores: &Universe<G>,
     overlay: &PageOverlay,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
-    emission: &mut EmissionState,
+    emission: &mut EmissionState<'_>,
     box_node: StateBoxNode<PageListId>,
     vertical: bool,
     suppress_deferred_streams: bool,
@@ -989,12 +1005,12 @@ fn emit_box(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_glue(
-    stores: &Universe,
+fn emit_glue<G>(
+    stores: &Universe<G>,
     overlay: &PageOverlay,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
-    emission: &mut EmissionState,
+    emission: &mut EmissionState<'_>,
     spec: PageGlueSpec,
     kind: PageGlueKind,
     leader: Option<StateLeaderPayload<PageListId>>,
@@ -1003,7 +1019,7 @@ fn emit_glue(
     let vertical_leader = matches!(&leader, Some(StateLeaderPayload::VList(_)));
     match leader {
         None => {
-            emission.node(stores, []);
+            emission.node([]);
             output.glue(spec, kind)?;
             dvi.glue(spec).map_err(invalid_artifact)?;
         }
@@ -1012,14 +1028,14 @@ fn emit_glue(
             height,
             depth,
         }) => {
-            emission.node(stores, []);
+            emission.node([]);
             output.glue_rule_leader(spec, kind, width, height, depth)?;
             dvi.leader_requires_replay();
         }
         Some(StateLeaderPayload::HList(box_node)) | Some(StateLeaderPayload::VList(box_node)) => {
             let vertical = vertical_leader;
             let fields = lower_box_header(&box_node);
-            emission.node(stores, []);
+            emission.node([]);
             dvi.leader_requires_replay();
             output.glue_box_leader(spec, kind, vertical, &fields, |nodes| {
                 emit_node_list(
@@ -1105,7 +1121,11 @@ fn omitted_whatsit(overlay: &PageOverlay, list: &PageListId, index: usize) -> bo
         .any(|(candidate, candidate_index)| candidate == list && *candidate_index == index)
 }
 
-fn font_resource_id(stores: &Universe, font: FontId, emission: &mut EmissionState) -> u32 {
+fn font_resource_id<G>(
+    stores: &Universe<G>,
+    font: FontId,
+    emission: &mut EmissionState<'_>,
+) -> u32 {
     let logical_id = register_font_resource(stores, font, emission);
     match stores.font(font).construction() {
         tex_fonts::FontConstruction::Loaded
@@ -1128,12 +1148,12 @@ struct GlyphProjection {
     right: tex_state::scaled::Scaled,
 }
 
-fn glyph_projection(
-    stores: &Universe,
+fn glyph_projection<G>(
+    stores: &Universe<G>,
     font: FontId,
     ch: u32,
     logical_width: tex_state::scaled::Scaled,
-    emission: &mut EmissionState,
+    emission: &mut EmissionState<'_>,
 ) -> Result<GlyphProjection, ExecError> {
     let font_id = font_resource_id(stores, font, emission);
     let loaded = stores.font(font);
@@ -1173,19 +1193,19 @@ fn glyph_projection(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_glyph(
-    stores: &Universe,
+fn emit_glyph<G>(
+    stores: &Universe<G>,
     font: FontId,
     ch: u32,
     logical_width: tex_state::scaled::Scaled,
     origins: impl IntoIterator<Item = OriginId>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
-    emission: &mut EmissionState,
+    emission: &mut EmissionState<'_>,
 ) -> Result<(), ExecError> {
     let projection = glyph_projection(stores, font, ch, logical_width, emission)?;
     emit_projection_kern(projection.left, output, dvi, emission)?;
-    emission.node(stores, origins);
+    emission.node(origins);
     output.char(projection.font_id, ch, projection.width)?;
     emission.sync_dvi_fonts(dvi)?;
     dvi.char(projection.font_id, ch, projection.width)
@@ -1194,8 +1214,8 @@ fn emit_glyph(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_ligature(
-    stores: &Universe,
+fn emit_ligature<G>(
+    stores: &Universe<G>,
     font: FontId,
     ch: u32,
     source: &[char],
@@ -1203,11 +1223,11 @@ fn emit_ligature(
     origins: impl IntoIterator<Item = OriginId>,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
-    emission: &mut EmissionState,
+    emission: &mut EmissionState<'_>,
 ) -> Result<(), ExecError> {
     let projection = glyph_projection(stores, font, ch, logical_width, emission)?;
     emit_projection_kern(projection.left, output, dvi, emission)?;
-    emission.node(stores, origins);
+    emission.node(origins);
     output.lig(
         projection.font_id,
         ch,
@@ -1224,7 +1244,7 @@ fn emit_projection_kern(
     amount: tex_state::scaled::Scaled,
     output: &mut ArtifactNodeListEmitter<'_>,
     dvi: &mut DviPagePlanCoEmitter,
-    emission: &mut EmissionState,
+    emission: &mut EmissionState<'_>,
 ) -> Result<(), ExecError> {
     if amount.raw() == 0 {
         return Ok(());
@@ -1252,7 +1272,11 @@ fn round_scaled_ratio(
     ))
 }
 
-fn register_font_resource(stores: &Universe, font: FontId, emission: &mut EmissionState) -> u32 {
+fn register_font_resource<G>(
+    stores: &Universe<G>,
+    font: FontId,
+    emission: &mut EmissionState<'_>,
+) -> u32 {
     let slot = font.raw() as usize;
     if emission.font_slots.len() <= slot {
         emission.font_slots.resize(slot + 1, None);
@@ -1335,8 +1359,8 @@ fn register_font_resource(stores: &Universe, font: FontId, emission: &mut Emissi
     id
 }
 
-fn glyph(
-    stores: &Universe,
+fn glyph<G>(
+    stores: &Universe<G>,
     font: FontId,
     ch: char,
 ) -> Result<(u32, tex_state::scaled::Scaled), ExecError> {

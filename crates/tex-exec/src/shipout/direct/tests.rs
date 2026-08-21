@@ -1,5 +1,20 @@
+use std::cell::Cell;
+
+use tex_state::token::OriginId;
+use tex_state::world::ArtifactSourceRecipe;
+
 use super::EmissionState;
 use super::lower::pending_page_effects;
+use crate::output_provenance::ArtifactSourceResolver;
+
+struct Resolver(Cell<usize>);
+
+impl ArtifactSourceResolver for Resolver {
+    fn detach_artifact_source(&self, _origin: OriginId) -> Option<ArtifactSourceRecipe> {
+        self.0.set(self.0.get() + 1);
+        None
+    }
+}
 
 #[test]
 fn detached_open_out_sidecars_use_artifact_local_effect_ordinals() {
@@ -18,14 +33,27 @@ fn detached_open_out_sidecars_use_artifact_local_effect_ordinals() {
 
 #[test]
 fn no_rendered_source_consumer_builds_no_artifact_origin_column() {
-    let mut batch = EmissionState::page(false, 0);
-    let stores = tex_state::Universe::new();
-    batch.node(&stores, [tex_state::provenance::OriginRef::unknown()]);
-    assert!(batch.render_origin_ends.is_none());
-    assert!(batch.render_origins.is_empty());
+    let resolver = Resolver(Cell::new(0));
+    let mut batch = EmissionState::page(tex_state::ProvenanceDemand::DIAGNOSTICS, 0, &resolver, 0);
+    batch.node([OriginId::UNKNOWN]);
 
-    let mut editor = EmissionState::page(true, 0);
-    editor.node(&stores, [tex_state::provenance::OriginRef::unknown()]);
+    assert!(batch.render_origin_ends.is_none());
+    assert!(batch.render_origins.is_none());
+    assert_eq!(resolver.0.get(), 0);
+}
+
+#[test]
+fn rendered_source_consumer_resolves_each_requested_origin() {
+    let resolver = Resolver(Cell::new(0));
+    let mut editor = EmissionState::page(
+        tex_state::ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
+        0,
+        &resolver,
+        0,
+    );
+    editor.node([OriginId::UNKNOWN]);
+
     assert_eq!(editor.render_origin_ends.as_deref(), Some(&[0, 1][..]));
-    assert!(!editor.render_origins.is_empty());
+    assert!(editor.render_origins.is_some());
+    assert_eq!(resolver.0.get(), 1);
 }

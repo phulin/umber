@@ -1,9 +1,15 @@
 use super::*;
 
+use tex_state::env::AssignmentScope;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::Order;
+use tex_state::interner::InternerBudget;
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
+
+fn budget() -> InternerBudget {
+    InternerBudget::new(32, 32, 1024).expect("test interner budget")
+}
 
 fn empty_vbox() -> Node {
     Node::VList(BoxNode::new(BoxNodeFields {
@@ -19,7 +25,7 @@ fn empty_vbox() -> Node {
     }))
 }
 
-fn pending_text(stores: &Universe) -> String {
+fn pending_text<G>(stores: &Universe<G>) -> String {
     stores
         .world()
         .effect_records()
@@ -32,58 +38,79 @@ fn pending_text(stores: &Universe) -> String {
 }
 
 #[test]
-fn pre_staging_shipout_error_uses_live_command_context() {
-    // TeX82 §§82 and 641: `ship_out` reports the huge-page error against the
-    // current input stack. Successful artifact staging republishes its
-    // detached summary only later, so the command-owned entry context wins.
-    let stores = Universe::new();
-    let stale = tex_state::InputSummary::default();
-    let origin = ShipoutOrigin {
-        output_open_context: Some("\n<recently read> }\n                  ".to_owned()),
-        pending_end: 0,
-        announce_openout: false,
-    };
+fn completed_page_release_drops_exact_closure_and_scratch() {
+    tex_state::with_universe(budget(), |stores| {
+        let older = stores.publish_page_nodes(&[Node::Penalty(1)]);
+        let child = stores.publish_page_nodes(&[Node::Penalty(2)]);
+        let page = Node::VList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: child,
+        }));
+        let root = stores.publish_page_nodes(&[page]);
+        let scratch = stores.page_node_cursor();
+        let speculative = stores.publish_page_nodes(&[Node::Penalty(3)]);
 
-    assert_eq!(
-        shipout_error_context(&stores, &stale, &origin),
-        "\n<recently read> }\n                  "
-    );
+        release_published_page(stores, scratch, root);
+
+        assert!(stores.page_node_list(older).is_ok());
+        assert!(stores.page_node_list(child).is_err());
+        assert!(stores.page_node_list(root).is_err());
+        assert!(stores.page_node_list(speculative).is_err());
+    })
+    .expect("fresh universe");
 }
 
 #[test]
 fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
-    // TeX82 §641: after the huge-page error, `ship_out` calls `show_box(p)`
-    // only when §638 did not already do so under positive `\tracingoutput`.
-    let mut untraced = Universe::new();
-    let node = empty_vbox();
-    report_huge_page_deleted_box(&mut untraced, &node, 0);
-    let text = pending_text(&untraced);
-    assert!(
-        text.contains("The following box has been deleted:\n\\vbox(16383.99998+0.0)x0.0"),
-        "{text:?}"
-    );
+    tex_state::with_universe(budget(), |untraced| {
+        let root = untraced.publish_page_nodes(&[empty_vbox()]);
+        report_huge_page_deleted_box(untraced, root, 0);
+        let text = pending_text(untraced);
+        assert!(
+            text.contains("The following box has been deleted:\n\\vbox(16383.99998+0.0)x0.0"),
+            "{text:?}"
+        );
+    })
+    .expect("fresh universe");
 
-    let mut traced = Universe::new();
-    traced.set_int_param(IntParam::TRACING_OUTPUT, 1);
-    let node = empty_vbox();
-    let tracing_output = traced.int_param(IntParam::TRACING_OUTPUT);
-    report_huge_page_deleted_box(&mut traced, &node, tracing_output);
-    assert_eq!(pending_text(&traced), "");
+    tex_state::with_universe(budget(), |traced| {
+        traced
+            .assign_int_param(IntParam::TRACING_OUTPUT, 1, AssignmentScope::Global)
+            .expect("assign tracingoutput");
+        let root = traced.publish_page_nodes(&[empty_vbox()]);
+        let tracing_output = traced.int_param(IntParam::TRACING_OUTPUT);
+        report_huge_page_deleted_box(traced, root, tracing_output);
+        assert_eq!(pending_text(traced), "");
+    })
+    .expect("fresh universe");
 }
 
 #[test]
 fn huge_page_deleted_box_display_uses_live_escape_character() {
-    // TeX82 §§63/183/641: `ship_out` delegates the deleted box to
-    // `show_box`, whose list-node name is printed through `print_esc`.
-    let mut stores = Universe::new();
-    stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-    let node = empty_vbox();
+    tex_state::with_universe(budget(), |stores| {
+        stores
+            .assign_int_param(
+                IntParam::ESCAPE_CHAR,
+                i32::from(b'|'),
+                AssignmentScope::Global,
+            )
+            .expect("assign escapechar");
+        let root = stores.publish_page_nodes(&[empty_vbox()]);
 
-    report_huge_page_deleted_box(&mut stores, &node, 0);
+        report_huge_page_deleted_box(stores, root, 0);
 
-    let text = pending_text(&stores);
-    assert!(
-        text.contains("The following box has been deleted:\n|vbox(16383.99998+0.0)x0.0"),
-        "{text:?}"
-    );
+        let text = pending_text(stores);
+        assert!(
+            text.contains("The following box has been deleted:\n|vbox(16383.99998+0.0)x0.0"),
+            "{text:?}"
+        );
+    })
+    .expect("fresh universe");
 }

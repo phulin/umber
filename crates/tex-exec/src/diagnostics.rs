@@ -21,8 +21,8 @@ use crate::node_dump::{DumpConfig, dump_node_slice};
 /// typed errors below main control, so the one `jump_out` boundary must
 /// compose their report while the triggering command's input context is
 /// still live.
-pub(crate) fn report_irrecoverable_error(
-    stores: &mut Universe,
+pub(crate) fn report_irrecoverable_error<G>(
+    stores: &mut Universe<G>,
     fatal: FatalError,
     context: String,
 ) {
@@ -71,8 +71,8 @@ pub(crate) fn report_irrecoverable_error(
 /// the message line rather than as a second report.
 /// Reports a bad interaction mode with the command processor's live input
 /// context carried across the scan/apply boundary.
-pub(crate) fn report_bad_interaction_mode_with_context(
-    stores: &mut Universe,
+pub(crate) fn report_bad_interaction_mode_with_context<G>(
+    stores: &mut Universe<G>,
     value: i32,
     context: String,
 ) -> Result<(), ExecError> {
@@ -90,8 +90,8 @@ pub(crate) fn report_bad_interaction_mode_with_context(
 
 /// TeX82 §581's missing-character warning, including e-TeX 2.6 change
 /// section 17.516's level-two terminal routing.
-pub(crate) fn report_missing_character_warning(
-    stores: &mut Universe,
+pub(crate) fn report_missing_character_warning<G>(
+    stores: &mut Universe<G>,
     font: tex_state::ids::FontId,
     ch: char,
     etex_extended: bool,
@@ -102,7 +102,11 @@ pub(crate) fn report_missing_character_warning(
     // TeX82 §581's `char_warning` prints `font_name[f]` directly.  Unlike
     // `\fontname`, that stored external name never gains an `at <size>pt`
     // suffix when the font was loaded away from its design size.
-    let font_name = stores.font(font).name().to_owned();
+    let font_name = stores
+        .command_context()
+        .expect("diagnostics run inside an admitted command episode")
+        .font_external_name(font)
+        .to_owned();
     let force_online =
         etex_extended && stores.int_param(tex_state::env::banks::IntParam::TRACING_LOST_CHARS) > 1;
     let mut diagnostic = if force_online {
@@ -120,13 +124,18 @@ pub(crate) fn report_missing_character_warning(
 }
 
 /// TeX82 §1049's `you_cant` message followed by §1050's `report_illegal_case`.
-pub(crate) fn report_illegal_case_with_context(
-    stores: &mut Universe,
+pub(crate) fn report_illegal_case_with_context<G>(
+    stores: &mut Universe<G>,
     token: Token,
     mode: Mode,
     context: Option<String>,
 ) -> Result<(), ExecError> {
-    let command = tex_command::command_token_text(&mut stores.command_context(), token);
+    let command = tex_command::command_token_text(
+        &mut stores
+            .command_context()
+            .expect("diagnostics run inside an admitted command episode"),
+        token,
+    );
     let mode = mode_name(mode);
     // TeX82 §§82 and 1111: `report_illegal_case` installs help and then
     // calls the ordinary error routine. The context therefore precedes help
@@ -166,8 +175,8 @@ use crate::{Mode, ModeNest};
 /// A caller that cannot supply that display passes `None` rather than an
 /// empty string, so the report omits the context instead of printing a blank
 /// one.
-pub(crate) fn report_undefined_control_sequence(
-    stores: &mut Universe,
+pub(crate) fn report_undefined_control_sequence<G>(
+    stores: &mut Universe<G>,
     context: Option<String>,
 ) -> Result<(), ExecError> {
     let mut report = stores.print_err("Undefined control sequence");
@@ -186,8 +195,8 @@ pub(crate) fn report_undefined_control_sequence(
 }
 
 /// TeX82 §1128's no-alignment-in-progress branch of `align_error`.
-pub(crate) fn report_misplaced_alignment_delimiter(
-    stores: &mut Universe,
+pub(crate) fn report_misplaced_alignment_delimiter<G>(
+    stores: &mut Universe<G>,
     token: Token,
     context: Option<String>,
 ) -> Result<(), ExecError> {
@@ -199,7 +208,12 @@ pub(crate) fn report_misplaced_alignment_delimiter(
             ch,
             cat: Catcode::EndLine,
         } => format!("end of line character {ch}"),
-        _ => tex_command::command_token_text(&mut stores.command_context(), token),
+        _ => tex_command::command_token_text(
+            &mut stores
+                .command_context()
+                .expect("diagnostics run inside an admitted command episode"),
+            token,
+        ),
     };
     let tab_mark = matches!(
         token,
@@ -236,8 +250,8 @@ pub(crate) fn report_misplaced_alignment_delimiter(
 }
 
 /// TeX82 §1129's misplaced `\noalign` and `\omit` diagnostics.
-pub(crate) fn report_misplaced_alignment_command(
-    stores: &mut Universe,
+pub(crate) fn report_misplaced_alignment_command<G>(
+    stores: &mut Universe<G>,
     name: &str,
     help: &[&str],
     context: Option<String>,
@@ -292,8 +306,8 @@ pub(crate) fn render_showgroups(diagnostic: &ShowGroupsDiagnostic) -> String {
 
 /// Emits e-TeX 2.6 [49.1292]'s `show_save_groups` display through the shared
 /// §245 diagnostic selector, followed by §1293's ordinary show completion.
-pub(crate) fn execute_showgroups(
-    stores: &mut Universe,
+pub(crate) fn execute_showgroups<G>(
+    stores: &mut Universe<G>,
     diagnostic: &ShowGroupsDiagnostic,
     context: String,
 ) -> Result<(), ExecError> {
@@ -325,8 +339,8 @@ pub(crate) fn group_kind_text(kind: tex_state::GroupKind) -> &'static str {
     kind.group_text()
 }
 
-pub(crate) fn execute_showbox(
-    stores: &mut Universe,
+pub(crate) fn execute_showbox<G>(
+    stores: &mut Universe<G>,
     index: u16,
     context: String,
     profile: tex_command::CommandProfile,
@@ -365,8 +379,8 @@ pub(crate) fn execute_showbox(
 /// Every `\show` family member ends here. `long` selects §1298, which only
 /// the two `begin_diagnostic` forms (`\showbox`, `\showlists`) fall through
 /// to; `\show` and `\showthe` `goto common_ending` and skip it.
-pub(crate) fn complete_show(
-    stores: &mut Universe,
+pub(crate) fn complete_show<G>(
+    stores: &mut Universe<G>,
     long: bool,
     context: Option<String>,
 ) -> Result<(), ExecError> {
@@ -421,8 +435,8 @@ pub(crate) fn complete_show(
     Ok(())
 }
 
-pub(crate) fn execute_showlists(
-    stores: &mut Universe,
+pub(crate) fn execute_showlists<G>(
+    stores: &mut Universe<G>,
     nest: &ModeNest,
     context: String,
     profile: tex_command::CommandProfile,
@@ -556,8 +570,8 @@ pub(crate) fn execute_showlists(
 /// linked display-level head still roots that mlist for `show_activities`;
 /// project Umber's typed `DisplayEqNo` owner back onto that level instead of
 /// displaying the now-empty construction list.
-fn showlists_level_nodes(
-    stores: &Universe,
+fn showlists_level_nodes<G>(
+    stores: &Universe<G>,
     levels: &[crate::mode::ModeLevelSummary],
     index: usize,
 ) -> Option<Vec<tex_state::node::Node>> {
@@ -579,8 +593,8 @@ fn showlists_level_nodes(
 }
 
 /// TeX82 §218's insertion-record tail of `show_activities`.
-fn push_page_insertions(
-    stores: &Universe,
+fn push_page_insertions<G>(
+    stores: &Universe<G>,
     current_page: &[tex_state::node::Node],
     text: &mut String,
 ) -> Result<(), ExecError> {
@@ -611,7 +625,7 @@ fn push_page_insertions(
     Ok(())
 }
 
-fn push_page_totals(stores: &Universe, text: &mut String) {
+fn push_page_totals<G>(stores: &Universe<G>, text: &mut String) {
     text.push_str(&crate::node_dump::format_scaled_for_diagnostics(
         stores.page_dimension(PageDimension::Total),
     ));
@@ -646,7 +660,10 @@ fn mode_text(mode: Mode) -> &'static str {
     }
 }
 
-pub(crate) fn report_dimension_diagnostic(stores: &mut Universe, diagnostic: DimensionDiagnostic) {
+pub(crate) fn report_dimension_diagnostic<G>(
+    stores: &mut Universe<G>,
+    diagnostic: DimensionDiagnostic,
+) {
     match diagnostic {
         DimensionDiagnostic::IllegalMagnification { attempted } => {
             write_diagnostic(stores, &format!("\n! {diagnostic} ({attempted}).\n"))
@@ -663,18 +680,14 @@ pub(crate) fn report_dimension_diagnostic(stores: &mut Universe, diagnostic: Dim
 
 /// TeX82 §1004's `<Update the current page measurements with respect to the
 /// glue or kern specified by node p>`.
-pub(crate) fn report_page_infinite_shrinkage(
-    stores: &mut Universe,
-    error_context: Option<&str>,
+pub(crate) fn report_page_infinite_shrinkage<G>(
+    stores: &mut Universe<G>,
+    error_context: &str,
 ) -> Result<(), ExecError> {
     // TeX82 §1004 reaches §82's `error` while the command that contributed
     // this glue still owns the live input stack. Callers at that boundary
-    // supply its display; input-free continuations retain the published
-    // summary fallback.
-    let context = error_context.map_or_else(
-        || show_context(stores, stores.input_summary()),
-        str::to_owned,
-    );
+    // supply its already-rendered display explicitly.
+    let context = error_context.to_owned();
     crate::error_report::report_error(
         stores,
         "Infinite glue shrinkage found on current page",
@@ -690,8 +703,8 @@ pub(crate) fn report_page_infinite_shrinkage(
 }
 
 /// TeX82 §825's once-per-paragraph infinite-shrink recovery.
-pub(crate) fn report_paragraph_infinite_shrinkage(
-    stores: &mut Universe,
+pub(crate) fn report_paragraph_infinite_shrinkage<G>(
+    stores: &mut Universe<G>,
     context: String,
 ) -> Result<(), ExecError> {
     crate::error_report::report_error(
@@ -711,9 +724,9 @@ pub(crate) fn report_paragraph_infinite_shrinkage(
 
 /// TeX82 §976's `<Update the current height and depth measurements with
 /// respect to a glue or kern node p>`.
-pub(crate) fn report_split_infinite_shrinkage(
-    stores: &mut Universe,
-    error_context: Option<&str>,
+pub(crate) fn report_split_infinite_shrinkage<G>(
+    stores: &mut Universe<G>,
+    error_context: &str,
 ) -> Result<(), ExecError> {
     if stores.int_param(IntParam::IGNORE_PRIMITIVE_ERROR) & 1 != 0 {
         write_diagnostic(
@@ -723,12 +736,9 @@ pub(crate) fn report_split_infinite_shrinkage(
         return Ok(());
     }
     // TeX82 §976 is shared by command-time `\vsplit` and page-builder
-    // insertion splitting. The former supplies the scanner-owned live stack;
-    // only an input-free page continuation uses the published summary.
-    let context = error_context.map_or_else(
-        || show_context(stores, stores.input_summary()),
-        str::to_owned,
-    );
+    // insertion splitting. Both callers render the applicable command
+    // context before crossing this diagnostic boundary.
+    let context = error_context.to_owned();
     crate::error_report::report_error(
         stores,
         "Infinite glue shrinkage found in box being split",
@@ -744,15 +754,12 @@ pub(crate) fn report_split_infinite_shrinkage(
 }
 
 /// TeX82 §1009's `<Subtract the natural width of the insertion ...>`.
-pub(crate) fn report_insertion_skip_infinite_shrinkage(
-    stores: &mut Universe,
+pub(crate) fn report_insertion_skip_infinite_shrinkage<G>(
+    stores: &mut Universe<G>,
     class: u16,
-    error_context: Option<&str>,
+    error_context: &str,
 ) -> Result<(), ExecError> {
-    let context = error_context.map_or_else(
-        || show_context(stores, stores.input_summary()),
-        str::to_owned,
-    );
+    let context = error_context.to_owned();
     crate::error_report::report_error(
         stores,
         &format!("Infinite glue shrinkage inserted from \\skip{class}"),
@@ -768,20 +775,11 @@ pub(crate) fn report_insertion_skip_infinite_shrinkage(
 
 /// Appends TeX82's printable token form, including the separator that
 /// `print_cs` emits after a control word.
-pub(crate) fn append_token_show_text(stores: &Universe, token: Token, text: &mut String) {
+pub(crate) fn append_token_show_text<G>(stores: &Universe<G>, token: Token, text: &mut String) {
     tex_state::token_show::append_token_show_text(stores, token, text);
 }
 
-/// tex.web §310's `show_context` display for the gullet's replay stack.
-///
-/// The implementation is [`tex_state::InputSummary::show_context`]; the
-/// pseudoprint arithmetic it shares with the command core.s own
-/// stack is [`tex_state::print::render_error_context`].
-pub(crate) fn show_context(stores: &Universe, input: &tex_state::InputSummary) -> String {
-    input.show_context(stores)
-}
-
-pub(crate) fn print_text_with_newlinechar(stores: &Universe, text: &str) -> String {
+pub(crate) fn print_text_with_newlinechar<G>(stores: &Universe<G>, text: &str) -> String {
     let newlinechar = stores.int_param(IntParam::NEWLINE_CHAR);
     let Some(newline) = u32::try_from(newlinechar)
         .ok()
@@ -795,7 +793,7 @@ pub(crate) fn print_text_with_newlinechar(stores: &Universe, text: &str) -> Stri
         .collect()
 }
 
-fn write_diagnostic(stores: &mut Universe, text: &str) {
+fn write_diagnostic<G>(stores: &mut Universe<G>, text: &str) {
     stores
         .world_mut()
         .write_text(PrintSink::TerminalAndLog, text);
@@ -829,7 +827,7 @@ fn write_diagnostic(stores: &mut Universe, text: &str) {
 /// call: it is a fixed announcement with no interleaving, and the stream
 /// tests that assert on `World::effect_records` are about stream
 /// transitions, not about how many `print` calls compose a fixed line.
-pub(crate) fn report_openout(stores: &mut tex_state::Universe, stream: u8, path: &str) {
+pub(crate) fn report_openout<G>(stores: &mut Universe<G>, stream: u8, path: &str) {
     let terminal = stores.int_param(tex_state::env::banks::IntParam::TRACING_ONLINE) > 0;
     let sink = if terminal {
         tex_state::PrintSink::TerminalAndLog
