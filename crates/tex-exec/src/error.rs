@@ -1094,3 +1094,11 @@ impl From<tex_state::font::FontExpansionConfigError> for ExecError {
         Self::FontExpansionConfig(value)
     }
 }
+
+impl From<tex_state::font::FontStoreCapacityError> for ExecError {
+    fn from(_value: tex_state::font::FontStoreCapacityError) -> Self {
+        Self::FontParameter(FontParameterError::TooManyFonts {
+            maximum: tex_state::font::MAX_FONT_DIMEN_FONT_ID,
+        })
+    }
+}

@@ -641,10 +641,12 @@ fn page_activity_snapshot<G>(
         .iter()
         .cloned()
         .map(|insertion| {
-            let count = command.count(insertion.class())?;
-            Ok((insertion, count))
+            let count = command
+                .count(insertion.class())
+                .expect("page insertion class is an admitted count register");
+            (insertion, count)
         })
-        .collect::<Result<Vec<_>, tex_state::StateError>>()?;
+        .collect();
     Ok(PageActivitySnapshot {
         current_page: command.current_page_nodes().cloned().collect(),
         contributions: command.page_contributions().iter().cloned().collect(),
