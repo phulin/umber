@@ -1,9 +1,9 @@
 use std::fmt;
 
 use tex_command::{CommandError, FatalError};
+use tex_state::CommandContext;
 use tex_state::FontParameterError;
 use tex_state::ProvenanceResolver;
-use tex_state::Universe;
 use tex_state::WorldError;
 use tex_state::meaning::ExpandablePrimitive;
 use tex_state::meaning::UnexpandablePrimitive;
@@ -52,8 +52,8 @@ pub struct FrozenDiagnosticEvidence {
 }
 
 impl FrozenDiagnosticContext {
-    pub(crate) fn capture(
-        stores: &Universe,
+    pub(crate) fn capture<G>(
+        stores: &CommandContext<'_, G>,
         input_context: (usize, Vec<&'static str>),
         cause_kind: &'static str,
     ) -> Self {
@@ -863,9 +863,9 @@ impl ExecError {
 
     /// Freezes the primary diagnostic origin without retaining speculative
     /// provenance arena entries past rollback.
-    pub(crate) fn freeze_diagnostic_origin(
+    pub(crate) fn freeze_diagnostic_origin<G>(
         mut self,
-        stores: &Universe,
+        stores: &CommandContext<'_, G>,
         input_context: (usize, Vec<&'static str>),
     ) -> Self {
         if let Self::Captured { site, frozen, .. } = &mut self
@@ -924,14 +924,14 @@ impl ExecError {
 
     /// Renders this error with lazy provenance context from the live universe.
     #[must_use]
-    pub fn format_with_provenance(&self, stores: &Universe) -> String {
+    pub fn format_with_provenance<G>(&self, stores: &CommandContext<'_, G>) -> String {
         ProvenanceResolver::new(stores).render_diagnostic_site(
             &self.message_with_token_names(stores),
             &self.diagnostic_site(),
         )
     }
 
-    fn message_with_token_names(&self, stores: &Universe) -> String {
+    fn message_with_token_names<G>(&self, stores: &CommandContext<'_, G>) -> String {
         match self {
             Self::Captured { error, .. } => error.message_with_token_names(stores),
             Self::UnimplementedTypesetting {
@@ -948,7 +948,10 @@ impl ExecError {
     }
 }
 
-fn freeze_diagnostic_origin(stores: &Universe, origin: OriginId) -> Option<FrozenDiagnosticOrigin> {
+fn freeze_diagnostic_origin<G>(
+    stores: &CommandContext<'_, G>,
+    origin: OriginId,
+) -> Option<FrozenDiagnosticOrigin> {
     let resolver = ProvenanceResolver::new(stores);
     stores
         .root_span_for_origin(origin)
@@ -962,8 +965,8 @@ fn freeze_diagnostic_origin(stores: &Universe, origin: OriginId) -> Option<Froze
         })
 }
 
-fn freeze_diagnostic_context(
-    stores: &Universe,
+fn freeze_diagnostic_context<G>(
+    stores: &CommandContext<'_, G>,
     input_context: (usize, Vec<&'static str>),
     cause_kind: &'static str,
 ) -> FrozenDiagnosticContext {
@@ -973,9 +976,10 @@ fn freeze_diagnostic_context(
         cause_kind,
         input_frame_count: input_context.0,
         input_frame_tail: input_context.1.into_iter().take(TAIL_LIMIT).collect(),
-        group_depth: stores.group_depth(),
+        group_depth: u32::try_from(stores.group_frames().len()).unwrap_or(u32::MAX),
         group_tail: stores
             .group_frames()
+            .iter()
             .rev()
             .take(TAIL_LIMIT)
             .map(|frame| FrozenDiagnosticGroup {

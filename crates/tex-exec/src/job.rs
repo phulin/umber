@@ -33,7 +33,7 @@ use tex_command::{CommandHostCapabilities, CommandProfile};
 use tex_state::env::banks::IntParam;
 use tex_state::print::{ErrorHistory, Printer, Selector};
 use tex_state::world::PrintSink;
-use tex_state::{CommandContext, EngineUsageStatistics, Universe};
+use tex_state::{CommandContext, EngineUsageStatistics, RetainedStringAllocation, Universe};
 
 /// pdftex.web §2's `banner`: the production reference engine's start-up string.
 ///
@@ -386,15 +386,15 @@ pub(crate) fn begin_job_with_terminal_banner<G>(
         stores
             .command_context()
             .expect("job framing belongs to a live generation")
-            .make_string_pool_string(&log_name);
+            .record_retained_strings(RetainedStringAllocation::one(&log_name));
     } else if initex {
         // TeX82 §§534--537 retain the scanned job-name component and the
         // opened transcript name before INITEX reaches §1328's format dump.
         let mut command = stores
             .command_context()
             .expect("job framing belongs to a live generation");
-        command.make_string_pool_string(capabilities.job_name());
-        command.make_string_pool_string(&log_name);
+        command.record_retained_strings(RetainedStringAllocation::one(capabilities.job_name()));
+        command.record_retained_strings(RetainedStringAllocation::one(&log_name));
     }
 
     // §61: the terminal's very first output -- `format_ident` and a
@@ -681,11 +681,12 @@ pub(crate) fn finish_job<G>(
     stores: &mut Universe<G>,
     profile: CommandProfile,
     binary: EngineBinaryIdentity,
+    usage: EngineUsageStatistics,
     job_name: &str,
     dvi: Option<DviJobOutput>,
     pdf: Option<&mut PdfJobFinalizationReport>,
 ) {
-    let statistics_left_file_offset_open = print_usage_statistics(stores, binary);
+    let statistics_left_file_offset_open = print_usage_statistics(stores, binary, usage);
     print_dvi_report(stores, dvi, statistics_left_file_offset_open);
     print_pdf_report(stores, profile, pdf);
     print_transcript_note(stores, job_name);
@@ -847,11 +848,14 @@ fn print_u32<G>(printer: &mut Printer<'_, G>, value: u32) {
     printer.print_int(i32::try_from(value).unwrap_or(i32::MAX));
 }
 
-fn print_usage_statistics<G>(stores: &mut Universe<G>, binary: EngineBinaryIdentity) -> bool {
+fn print_usage_statistics<G>(
+    stores: &mut Universe<G>,
+    binary: EngineBinaryIdentity,
+    usage: EngineUsageStatistics,
+) -> bool {
     if stores.int_param(IntParam::TRACING_STATS) <= 0 {
         return false;
     }
-    let usage = stores.engine_usage_statistics();
     let file_offset_was_open = stores.printer().log_offset() > 0;
     // TeX82 §1333 deliberately uses `wlog*` rather than the live selector
     // for this block: statistics belong to the transcript even when ordinary

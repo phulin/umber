@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use tex_state::print::{Printer, Selector};
-use tex_state::{RetainedOutputOpenOutcome, Universe};
+use tex_state::{RetainedOutputOpenOutcome, RetainedStringAllocation, Universe};
 
 /// Engine-owned output names and the one semantic transcript-open bit.
 ///
@@ -36,7 +36,7 @@ impl JobOutput {
             stores
                 .command_context()
                 .expect("job output belongs to a live generation")
-                .make_string_pool_string(&opened);
+                .record_retained_strings(RetainedStringAllocation::one(&opened));
             self.dvi_name = Some(opened);
         }
         Ok(self.dvi_name.as_deref().expect("DVI name was initialized"))
