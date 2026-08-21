@@ -1,4 +1,4 @@
-use tex_state::Universe;
+use tex_state::CommandContext;
 use tex_state::interner::ControlSequenceKind;
 use tex_state::scaled::FontSizeSpec;
 
@@ -11,8 +11,8 @@ pub(crate) enum FontLoadFailure {
     MalformedTfm,
 }
 
-pub(crate) fn report_font_not_loadable_with_context(
-    stores: &mut Universe,
+pub(crate) fn report_font_not_loadable_with_context<G>(
+    stores: &mut CommandContext<'_, G>,
     selector_kind: ControlSequenceKind,
     selector: &str,
     font_name: &str,
@@ -54,8 +54,8 @@ pub(crate) fn report_font_not_loadable_with_context(
     Ok(())
 }
 
-pub(crate) fn report_font_capacity(
-    stores: &mut Universe,
+pub(crate) fn report_font_capacity<G>(
+    stores: &mut CommandContext<'_, G>,
     selector_kind: ControlSequenceKind,
     selector: &str,
     font_name: &str,
@@ -81,7 +81,7 @@ pub(crate) fn report_font_capacity(
     Ok(())
 }
 
-fn print_size(report: &mut tex_state::print::ErrorReport<'_>, size_spec: FontSizeSpec) {
+fn print_size<G>(report: &mut tex_state::print::ErrorReport<'_, G>, size_spec: FontSizeSpec) {
     match size_spec {
         FontSizeSpec::At(size) => {
             report.print(" at ").print_scaled(size).print("pt");
@@ -93,12 +93,12 @@ fn print_size(report: &mut tex_state::print::ErrorReport<'_>, size_spec: FontSiz
     }
 }
 
-pub(crate) fn warn_pdf_destination_duplicate(
-    stores: &mut Universe,
+pub(crate) fn warn_pdf_destination_duplicate<G>(
+    stores: &CommandContext<'_, G>,
     identity: &tex_state::PdfDestinationIdentity,
-) {
+) -> Option<(tex_state::PrintSink, String)> {
     if stores.int_param(tex_state::env::banks::IntParam::PDF_SUPPRESS_WARNING_DUP_DEST) > 0 {
-        return;
+        return None;
     }
     let identity = match identity {
         tex_state::PdfDestinationIdentity::Name(name) => {
@@ -106,10 +106,12 @@ pub(crate) fn warn_pdf_destination_duplicate(
         }
         tex_state::PdfDestinationIdentity::Number(number) => format!("num{number}"),
     };
-    stores.world_mut().write_text(
+    Some((
         tex_state::PrintSink::TerminalAndLog,
-        &format!("\npdfTeX warning (ext4): destination with the same identifier ({identity}) has been already used, duplicate ignored\n"),
-    );
+        format!(
+            "\npdfTeX warning (ext4): destination with the same identifier ({identity}) has been already used, duplicate ignored\n"
+        ),
+    ))
 }
 
 pub(crate) enum GlyphToUnicodeParse {
