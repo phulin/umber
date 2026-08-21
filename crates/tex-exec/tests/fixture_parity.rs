@@ -159,6 +159,7 @@ impl<'a> ReferenceObservation<'a> {
     }
 }
 
+#[derive(Debug)]
 struct ActualObservation {
     terminal: String,
     log: String,
@@ -318,7 +319,7 @@ fn channel_text<G>(stores: &Universe<G>, channel: PrintSink) -> String {
     let mut bytes = committed.to_vec();
     for effect in stores.world().effect_records() {
         if let EffectRecord::StreamWrite { sink, text } = effect
-            && (sink == channel || sink == PrintSink::TerminalAndLog)
+            && (*sink == channel || *sink == PrintSink::TerminalAndLog)
         {
             bytes.extend_from_slice(text.as_bytes());
         }
