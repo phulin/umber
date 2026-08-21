@@ -24,6 +24,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
   direct command and execution work, including typed register mutation,
   page-list/page-builder access, font metrics and detached artifact recipes,
   generated-font lookup, grouped box transfer, page marks, hyphenation,
+  PDF traversal/form/color operations, output-stream normalization,
   definitions, token/glue allocation, and dependency-aware mutations without
   per-read owner admission.
 - `src/dependency.rs`: Region-scoped dependency keys with scope-free `CellId` environment identity, typed recorder lifecycle and first-reason poison barrier, detached observations, changed-at validation, conservative page/PDF family clocks, registered World-backed mutation keys, semantic backdating, and opaque cross-Universe memo validation stamps.

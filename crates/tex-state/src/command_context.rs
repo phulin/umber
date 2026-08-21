@@ -8,7 +8,7 @@ use crate::env::banks::IntParam;
 use crate::env::{AssignmentScope, CodeTableKind, DenseState, StateError};
 use crate::font::FontStore;
 use crate::glue::GlueSpec;
-use crate::hyphenation::{ExceptionSpec, HyphenationTable};
+use crate::hyphenation::{ExceptionSpec, HyphenationTable, PatternSpec};
 use crate::interner::{ControlSequenceKind, Interner, InternerAccessError, Symbol, SymbolId};
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
 use crate::node_arena::{
@@ -1118,6 +1118,14 @@ impl<'a, G> CommandContext<'a, G> {
         self.hyphenation.close_patterns();
     }
 
+    pub fn add_hyphenation_pattern_for_language(
+        &mut self,
+        language: u8,
+        pattern: PatternSpec,
+    ) -> Result<bool, crate::hyphenation::HyphenationCapacityError> {
+        self.hyphenation.add_pattern_for_language(language, pattern)
+    }
+
     pub fn add_hyphenation_exception_for_language(
         &mut self,
         language: u8,
@@ -1200,6 +1208,76 @@ impl<'a, G> CommandContext<'a, G> {
             .allocate_color_stack(mode, restore_at_page_start, initial)
     }
 
+    pub fn apply_pdf_color_stack(
+        &mut self,
+        id: u32,
+        target: crate::PdfColorStackTarget,
+        action: &crate::PdfColorStackAction,
+    ) -> Result<crate::PdfColorStackEmission, crate::PdfColorStackApplyError> {
+        self.pdf.apply_color_stack(id, target, action)
+    }
+
+    pub fn pdf_page_color_stack_restorations(&mut self) -> Vec<crate::PdfColorStackEmission> {
+        self.pdf.page_color_stack_restorations()
+    }
+
+    #[must_use]
+    pub fn pdf_snap_reference(&self) -> (Scaled, Scaled) {
+        self.pdf.snap_reference()
+    }
+
+    pub fn publish_pdf_traversal_positions(
+        &mut self,
+        last_position: Option<(Scaled, Scaled)>,
+        snap_reference: (Scaled, Scaled),
+    ) {
+        self.pdf
+            .publish_traversal_positions(last_position, snap_reference);
+    }
+
+    #[must_use]
+    pub fn pdf_font_resource(
+        &self,
+        font: crate::ids::FontId,
+    ) -> Option<crate::PdfFontResourceRecord> {
+        self.pdf.font_resource(font)
+    }
+
+    pub fn set_pdf_form_artifact(&mut self, object: u32, artifact: crate::PdfFormArtifact) {
+        self.pdf.set_form_artifact(object, artifact);
+    }
+
+    #[must_use]
+    pub fn pdf_form_artifact(&self, object: u32) -> Option<crate::PdfFormArtifact> {
+        self.pdf.form_artifact(object).cloned()
+    }
+
+    #[must_use]
+    pub fn pdf_form_color_rollback(&self) -> crate::PdfFormColorRollback {
+        self.pdf.form_color_rollback()
+    }
+
+    pub fn rollback_pdf_form_colors(&mut self, rollback: crate::PdfFormColorRollback) {
+        self.pdf.rollback_form_colors(rollback);
+    }
+
+    pub fn open_output_stream(&mut self, slot: crate::world::StreamSlot, path: std::path::PathBuf) {
+        self.world.open_out(slot, path);
+    }
+
+    pub fn close_output_stream(&mut self, slot: crate::world::StreamSlot) -> bool {
+        self.world.close_out(slot)
+    }
+
+    #[must_use]
+    pub fn output_stream_is_open(&self, slot: crate::world::StreamSlot) -> bool {
+        self.world.write_stream_is_open(slot)
+    }
+
+    pub fn set_last_stream_open_context(&mut self, context: impl Into<String>) {
+        self.world.set_last_stream_open_context(context);
+    }
+
     /// Publishes one complete page-lifetime list inside this admitted episode.
     pub fn publish_page_nodes(&mut self, nodes: Vec<crate::node::Node>) -> PageListId {
         self.page_nodes
@@ -1220,9 +1298,23 @@ impl<'a, G> CommandContext<'a, G> {
         Ok(self.page_nodes.get(list)?.nodes())
     }
 
+    /// Borrows the live page-builder sequence for diagnostic rendering only.
+    pub fn current_page_nodes(&self) -> impl DoubleEndedIterator<Item = &crate::node::Node> {
+        self.page.current_page()
+    }
+
     #[must_use]
     pub fn page_dimension(&self, dimension: crate::page::PageDimension) -> Scaled {
         self.page.dimension(dimension, false)
+    }
+
+    #[must_use]
+    pub fn page_dimension_with_output_routine(
+        &self,
+        dimension: crate::page::PageDimension,
+        output_routine_active: bool,
+    ) -> Scaled {
+        self.page.dimension(dimension, output_routine_active)
     }
 
     pub fn set_page_dimension(&mut self, dimension: crate::page::PageDimension, value: Scaled) {
