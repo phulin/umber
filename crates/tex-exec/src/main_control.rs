@@ -34,21 +34,20 @@ use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
 use tex_state::interner::{ControlSequenceKind, Symbol, SymbolId};
-use tex_state::macro_store::MacroMeaning;
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFontSize, MathFraction,
     MathNoad, MathStyle, NoadClass, NoadKind,
 };
-use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, LeaderPayload, Node, Whatsit};
 use tex_state::page::{PageDimension, PageInteger};
 use tex_state::scaled::Scaled;
-use tex_state::token::TracedTokenWord;
 use tex_state::token::{Catcode, Token};
+use tex_state::token::{OriginId, TracedTokenWord};
 use tex_state::{
-    DependencyEngineField, DependencyKey, DependencyValue, GroupKind, InputOpenState,
-    InputReadState, ParagraphShapeLine, PenaltyArrayKind, PrintSink, StreamSlot, TracedTokenList,
-    TrackedRegionBarrier, TrackedRegionError, TrackedRegionRecord, Universe,
+    DependencyEngineField, DependencyKey, DependencyRegionError, DependencyValue, GroupKind,
+    InputOpenState, InputReadState, ObservedDependency, ParagraphShapeLine, PenaltyArrayKind,
+    PrintSink, StreamSlot, TrackedRegionBarrier, Universe,
 };
 use tex_state::{GlueId, TokenListId};
 use tex_typeset::PackSpec;
@@ -260,7 +259,7 @@ pub struct MainControl<G> {
     /// Source site of the most recent typed resource suspension. This is
     /// retained outside snapshots so a host protocol no-progress invariant
     /// can still identify the command whose retry failed to advance.
-    pending_resource_site: Option<tex_state::provenance::DiagnosticSite>,
+    pending_resource_site: Option<OriginId>,
     /// Settled command retained across a typed resource retry.
     /// Preflight has already committed its delivery, so retry resumes operand
     /// scanning without cloning or replaying earlier ordinary commands.
@@ -289,7 +288,7 @@ pub struct MainControl<G> {
     /// seam. Diagnostic session drivers surface this exact location to their
     /// caller; complete-job drivers retain TeX's terminal completion semantics.
     captured_fatal_origin: Option<(
-        tex_state::provenance::DiagnosticSite,
+        OriginId,
         Option<crate::FrozenDiagnosticOrigin>,
         Option<crate::FrozenDiagnosticContext>,
     )>,
@@ -510,7 +509,24 @@ pub struct TrackedStepResult {
     pub step: StepResult,
     /// `None` means the operation suspended or failed and the recorder was
     /// abandoned before direct-operation completion.
-    pub region: Option<Result<TrackedRegionRecord, TrackedRegionError>>,
+    pub region: Option<Result<TrackedRegionRecord, DependencyRegionError>>,
+}
+
+/// Detached dependency evidence from one completed direct command episode.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrackedRegionRecord {
+    observations: Vec<ObservedDependency>,
+}
+
+impl TrackedRegionRecord {
+    fn new(observations: Vec<ObservedDependency>) -> Self {
+        Self { observations }
+    }
+
+    #[must_use]
+    pub fn observations(&self) -> &[ObservedDependency] {
+        &self.observations
+    }
 }
 
 /// Host decision sampled immediately before a direct operation.
@@ -832,7 +848,27 @@ struct ObservationBuffer {
 struct OperationReceiptStart {
     effect: u64,
     artifact: usize,
-    geometry: Option<usize>,
+}
+
+/// Explicit live-observer boundary for detached shipout geometry.
+struct MainControlShipoutGeometrySink<'a, G> {
+    command: &'a PersistentInterpreter<G>,
+    observations: &'a mut ObservationSlot,
+}
+
+impl<G> crate::shipout::ShipoutGeometrySink for MainControlShipoutGeometrySink<'_, G> {
+    fn committed_shipout_geometry(&mut self, geometry: crate::shipout::ShipoutGeometry) {
+        let Some(observations) = self.observations.as_mut() else {
+            return;
+        };
+        observations.committed(CommandObservation::Geometry(GeometryRecord::Shipout {
+            page_width_sp: geometry.page_width_sp,
+            page_height_sp: geometry.page_height_sp,
+            counts: geometry.counts,
+            line: self.command.current_file_line_number(),
+            source: self.command.current_file_source_id(),
+        }));
+    }
 }
 
 impl Default for ObservationBuffer {
@@ -1008,14 +1044,27 @@ struct CommandMachine<'a, G> {
 }
 
 impl<G> CommandMachine<'_, G> {
-    fn processor<'a>(&'a mut self, stores: &'a mut Universe<G>) -> InterpreterProcessor<'a, G> {
-        command_processor(
-            self.state,
+    fn processor<'a>(
+        &'a mut self,
+        context: tex_state::CommandContext<'a, G>,
+    ) -> InterpreterProcessor<'a, G> {
+        let observer = self
+            .observations
+            .as_mut()
+            .map(|buffer| buffer as &mut dyn CommandObserver);
+        self.state.processor(
+            context,
+            CommandHostContext::new(self.capabilities),
             self.fuel,
-            self.capabilities,
-            self.observations,
-            stores,
+            observer,
         )
+    }
+
+    fn shipout_geometry_sink(&mut self) -> MainControlShipoutGeometrySink<'_, G> {
+        MainControlShipoutGeometrySink {
+            command: self.state,
+            observations: self.observations,
+        }
     }
 
     fn retain_assignment_receipt(
@@ -1209,7 +1258,7 @@ impl<G> MainControl<G> {
         )
         .error_context();
         crate::error_report::report_error(
-            stores,
+            &mut stores.command_context().expect("live generation"),
             "Interruption",
             &[
                 "You rang?",
@@ -1222,9 +1271,10 @@ impl<G> MainControl<G> {
 
     fn local_glue_pointer_reassigned(
         &self,
-        stores: &Universe<G>,
+        stores: &mut Universe<G>,
         scanned: &ColdOperation<G>,
     ) -> bool {
+        let context = stores.command_context().expect("live generation");
         let (index, value, source_identity, source_is_target, physical, pointer_sources) =
             match scanned {
                 ColdOperation::<G>::Skip {
@@ -1239,7 +1289,10 @@ impl<G> MainControl<G> {
                     value,
                     source_identity,
                     *source_skip_index == Some(*index),
-                    stores.skip(*index),
+                    match context.glue_register(*index).ok().flatten() {
+                        Some(physical) => physical,
+                        None => return false,
+                    },
                     &self.skip_pointer_sources,
                 ),
                 ColdOperation::<G>::Muskip {
@@ -1253,12 +1306,15 @@ impl<G> MainControl<G> {
                     value,
                     source_identity,
                     false,
-                    stores.muskip(*index),
+                    match context.muskip(*index) {
+                        Some(physical) => physical,
+                        None => return false,
+                    },
                     &self.muskip_pointer_sources,
                 ),
                 _ => return false,
             };
-        if stores.glue(physical) == GlueSpec::ZERO && *value == GlueSpec::ZERO {
+        if context.glue(physical) == GlueSpec::ZERO && *value == GlueSpec::ZERO {
             // TeX82 §1237's `trap_zero_glue` canonicalizes every scanned
             // zero specification before e-TeX [19.277] compares pointers.
             return true;
@@ -1351,7 +1407,7 @@ impl<G> MainControl<G> {
 
     /// Returns the immutable profile of this command processor.
     #[must_use]
-    pub const fn command_profile(&self) -> CommandProfile {
+    pub fn command_profile(&self) -> CommandProfile {
         self.command.state().profile()
     }
 
@@ -1408,7 +1464,7 @@ impl<G> MainControl<G> {
         boundary: crate::EngineBoundary,
         stores: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
-    ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
+    ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
         crate::EngineCheckpoint::capture_checkpoint(
             boundary,
             &self.command,
@@ -1426,7 +1482,7 @@ impl<G> MainControl<G> {
         boundary: crate::EngineBoundary,
         stores: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
-    ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
+    ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
         crate::EngineCheckpoint::capture_checkpoint(
             boundary,
             &self.command,
@@ -1442,7 +1498,7 @@ impl<G> MainControl<G> {
     /// rather than serialized into a durable format or editor boundary.
     pub fn restore_checkpoint(
         &mut self,
-        checkpoint: &crate::EngineCheckpoint,
+        checkpoint: &crate::EngineCheckpoint<G>,
         stores: &mut Universe<G>,
     ) -> Result<(), crate::CheckpointRestoreError> {
         checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
@@ -1599,16 +1655,6 @@ impl<G> MainControl<G> {
         dvi: Option<crate::DviJobOutput>,
         pdf: Option<&mut crate::PdfJobFinalizationReport>,
     ) {
-        let command = self.command.stack_usage();
-        stores.record_engine_stack_usage(tex_state::EngineStackUsage {
-            input_stack: command.input_stack,
-            nest_stack: self.modes.maximum_saved_depth(),
-            parameter_stack: command.parameter_stack,
-            buffer_stack: command.buffer_stack,
-            // TeX82 §1334 prints `max_save_stack+6`; §273 explains that the
-            // margin is the conservative reservation at checked mutations.
-            save_stack: self.max_save_stack.saturating_add(6),
-        });
         crate::job::finish_job(
             stores,
             self.command_profile(),
@@ -1646,7 +1692,7 @@ impl<G> MainControl<G> {
     /// diagnostics.
     fn drain_file_framing_events(&mut self, stores: &mut Universe<G>) {
         self.command
-            .render_file_framing_events(&mut stores.command_context());
+            .render_file_framing_events(&mut stores.command_context().expect("live generation"));
     }
 
     /// tex.web §1335 `final_cleanup`'s tail, run once a step has produced
@@ -1719,7 +1765,7 @@ impl<G> MainControl<G> {
     fn resolve_font_resource(
         &self,
         scanned: ColdOperation<G>,
-        stores: &Universe<G>,
+        stores: &mut Universe<G>,
     ) -> Result<ColdOperation<G>, Box<UnavailablePreparedResource<G>>> {
         let ColdOperation::<G>::FontDefinition {
             request, global, ..
@@ -1727,7 +1773,7 @@ impl<G> MainControl<G> {
         else {
             return Ok(scanned);
         };
-        stores.poison_tracked_region(TrackedRegionBarrier::UnsupportedHostCapability);
+        stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let path = crate::canonical_font_resource_path(&request.name);
         let Some(resource) = self.capabilities.font(&path) else {
             return Err(Box::new(UnavailablePreparedResource::<G> {
@@ -1751,7 +1797,7 @@ impl<G> MainControl<G> {
     fn resolve_input_stream_resource(
         &self,
         scanned: ColdOperation<G>,
-        stores: &Universe<G>,
+        stores: &mut Universe<G>,
     ) -> Result<ColdOperation<G>, Box<UnavailablePreparedResource<G>>> {
         let ColdOperation::<G>::InputStream {
             mut request,
@@ -1760,7 +1806,7 @@ impl<G> MainControl<G> {
         else {
             return Ok(scanned);
         };
-        stores.poison_tracked_region(TrackedRegionBarrier::UnsupportedHostCapability);
+        stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         let resource = match &mut request {
             InputStreamRequest::Open { file_name, .. } => {
                 // tex.web §1275: `if cur_ext="" then cur_ext:=".tex";
@@ -1807,7 +1853,7 @@ impl<G> MainControl<G> {
         let ColdOperation::<G>::PdfXImage { mut request, .. } = scanned else {
             return Ok(scanned);
         };
-        stores.poison_tracked_region(TrackedRegionBarrier::UnsupportedHostCapability);
+        stores.poison_dependency_region(TrackedRegionBarrier::UnsupportedHostCapability);
         // pdfTeX checks \pdfoutput before it enters `scan_image`; in DVI
         // mode this must be the diagnostic, not a host-resource suspension.
         if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -1908,23 +1954,23 @@ impl<G> MainControl<G> {
         // reached it through §§516--520's `end_name`. The following §537
         // `a_make_name_string` result is immediately flushed when it is last.
         let path = std::path::Path::new(startup_name);
-        stores.record_string_pool_allocations(
-            1 + usize::from(
-                path.parent()
-                    .is_some_and(|area| !area.as_os_str().is_empty()),
-            ) + usize::from(path.extension().is_some()),
-            startup_name.len(),
-        );
-        if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
-            stores.remember_string_pool_string(stem);
-        }
-        if let Some(extension) = path.extension().and_then(|value| value.to_str()) {
-            stores.remember_string_pool_string(&format!(".{extension}"));
-        }
+        stores
+            .command_context()
+            .expect("startup accounting requires a live generation")
+            .record_retained_strings(tex_state::RetainedStringAllocation {
+                strings: 1
+                    + usize::from(
+                        path.parent()
+                            .is_some_and(|area| !area.as_os_str().is_empty()),
+                    )
+                    + usize::from(path.extension().is_some()),
+                characters: startup_name.len(),
+            });
         let id = self.register_root_source(source)?;
         if has_resolved_name {
-            self.command
-                .render_file_framing_events(&mut stores.command_context());
+            self.command.render_file_framing_events(
+                &mut stores.command_context().expect("live generation"),
+            );
         } else {
             crate::job::open_startup_input_after_log(stores, startup_name);
         }
@@ -1947,14 +1993,25 @@ impl<G> MainControl<G> {
             // §§534--536 retain the startup name component as `job_name`
             // and the transcript's opened name before §537 retains the
             // requested and host-resolved input names below.
-            stores.make_string_pool_string(stem);
-            stores.make_string_pool_string(&format!("{stem}.log"));
+            let mut context = stores
+                .command_context()
+                .expect("startup accounting requires a live generation");
+            context.record_retained_strings(tex_state::RetainedStringAllocation::one(stem));
+            context.record_retained_strings(tex_state::RetainedStringAllocation::one(&format!(
+                "{stem}.log"
+            )));
         }
-        stores.make_string_pool_string(requested_name);
+        stores
+            .command_context()
+            .expect("startup accounting requires a live generation")
+            .record_retained_strings(tex_state::RetainedStringAllocation::one(requested_name));
         if let Some(resolved_name) = resolved_name
             && resolved_name != requested_name
         {
-            stores.make_string_pool_string(resolved_name);
+            stores
+                .command_context()
+                .expect("startup accounting requires a live generation")
+                .record_retained_strings(tex_state::RetainedStringAllocation::one(resolved_name));
         }
     }
 
@@ -1962,7 +2019,7 @@ impl<G> MainControl<G> {
     ///
     /// This is intentionally call-local capability state rather than part of
     /// a command snapshot or durable session summary.
-    pub fn refresh_host_capabilities(&mut self, stores: &Universe<G>) {
+    pub fn refresh_host_capabilities(&mut self, stores: &mut Universe<G>) {
         self.capabilities
             .set_conditional_state(self.modes.conditional_state());
         self.capabilities.set_space_factor(
@@ -1995,12 +2052,15 @@ impl<G> MainControl<G> {
             .set_last_node(self.last_node_value(stores));
         self.capabilities
             .set_last_node_type(self.last_node_type_value(stores));
-        self.capabilities.set_page_insertion_heights(
-            stores
-                .page_insertions()
-                .iter()
-                .map(|insertion| (insertion.class(), insertion.height())),
-        );
+        let insertion_heights = stores
+            .command_context()
+            .expect("live generation")
+            .page_insertions()
+            .iter()
+            .map(|insertion| (insertion.class(), insertion.height()))
+            .collect::<Vec<_>>();
+        self.capabilities
+            .set_page_insertion_heights(insertion_heights);
     }
 
     /// TeX82 §424's "Fetch an item in the current node, if appropriate": the
@@ -2020,17 +2080,18 @@ impl<G> MainControl<G> {
     /// builder sweeps a node onto the page) exactly when the contribution
     /// list has been swept empty; while it is nonempty, the real
     /// contribution tail governs, just as it does for `\unskip`.
-    fn last_node_value(&self, stores: &Universe<G>) -> Option<tex_command::LastNodeItem> {
+    fn last_node_value(&self, stores: &mut Universe<G>) -> Option<tex_command::LastNodeItem> {
+        let context = stores.command_context().expect("live generation");
         if is_outer_vertical(&self.modes) {
             return match crate::effective_tail::EffectiveTail::find(
-                stores.page_contributions().iter(),
+                context.page_contributions().iter(),
             ) {
-                Some(tail) => Self::classify_last_node(stores, tail.node()),
-                None => match stores.page_last_node_type() {
-                    11 => Some(tex_command::LastNodeItem::Glue(stores.page_last_skip())),
-                    12 => Some(tex_command::LastNodeItem::Kern(stores.page_last_kern())),
+                Some(tail) => Self::classify_last_node(&context, tail.node()),
+                None => match context.page_last_node_type() {
+                    11 => Some(tex_command::LastNodeItem::Glue(context.page_last_skip())),
+                    12 => Some(tex_command::LastNodeItem::Kern(context.page_last_kern())),
                     13 => Some(tex_command::LastNodeItem::Penalty(
-                        stores.page_last_penalty(),
+                        context.page_last_penalty(),
                     )),
                     _ => None,
                 },
@@ -2040,16 +2101,17 @@ impl<G> MainControl<G> {
             return None;
         }
         crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes().iter())
-            .and_then(|tail| Self::classify_last_node(stores, tail.node()))
+            .and_then(|tail| Self::classify_last_node(&context, tail.node()))
     }
 
     /// e-TeX 2.6 `etex.ch` [26.424]'s `find_effective_tail` result for
     /// `\lastnodetype`.
-    fn last_node_type_value(&self, stores: &Universe<G>) -> i32 {
+    fn last_node_type_value(&self, stores: &mut Universe<G>) -> i32 {
         if is_outer_vertical(&self.modes) {
-            return crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
+            let context = stores.command_context().expect("live generation");
+            return crate::effective_tail::EffectiveTail::find(context.page_contributions().iter())
                 .map_or_else(
-                    || stores.page_last_node_type(),
+                    || context.page_last_node_type(),
                     |tail| tail.node().etex_type(),
                 );
         }
@@ -2069,7 +2131,10 @@ impl<G> MainControl<G> {
     /// other node shape (including a character, which tex.web excludes via
     /// `is_char_node`) has no matching case, exactly like tex.web's
     /// `case cur_chr of ... end {there are no other cases}`.
-    fn classify_last_node(stores: &Universe<G>, node: &Node) -> Option<tex_command::LastNodeItem> {
+    fn classify_last_node(
+        stores: &tex_state::CommandContext<'_, G>,
+        node: &Node,
+    ) -> Option<tex_command::LastNodeItem> {
         match node {
             Node::Penalty(value) => Some(tex_command::LastNodeItem::Penalty(*value)),
             Node::Kern { amount, .. } => Some(tex_command::LastNodeItem::Kern(*amount)),
@@ -2181,7 +2246,9 @@ impl<G> MainControl<G> {
         let error =
             error.freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
         if let Some(fatal) = error.as_fatal() {
-            let context = self.command.output_open_context(&stores.command_context());
+            let context = self
+                .command
+                .output_open_context(&stores.command_context().expect("live generation"));
             crate::diagnostics::report_irrecoverable_error(stores, fatal, context);
             self.captured_fatal_origin = match &error {
                 ExecError::Captured { site, frozen, .. } if fatal != FatalError::TooManyErrors => {
@@ -2266,8 +2333,8 @@ impl<G> MainControl<G> {
 
     /// Returns the command site retained for the most recent resource need.
     #[must_use]
-    pub fn pending_resource_site(&self) -> Option<tex_state::provenance::DiagnosticSite> {
-        self.pending_resource_site.clone()
+    pub const fn pending_resource_site(&self) -> Option<OriginId> {
+        self.pending_resource_site
     }
 
     /// Drains committed shipout receipts in artifact order.
@@ -2348,7 +2415,7 @@ impl<G> MainControl<G> {
             AlignmentRequest::BeginCell { alignment, .. } => alignment,
         };
         self.command
-            .apply_alignment_request(&stores.command_context(), request)
+            .apply_alignment_request(&stores.command_context().expect("live generation"), request)
             .map(|_| ())
             .map_err(|_| ExecError::MissingToken {
                 context: "alignment lifecycle",
@@ -2360,7 +2427,7 @@ impl<G> MainControl<G> {
             if let Some(outer) = self.boxes.suspended_alignments.pop() {
                 self.command
                     .apply_alignment_request(
-                        &stores.command_context(),
+                        &stores.command_context().expect("live generation"),
                         AlignmentRequest::Resume(outer.identity),
                     )
                     .map_err(|_| ExecError::MissingToken {
@@ -2556,7 +2623,9 @@ impl<G> MainControl<G> {
             // and executed before its own `begin_token_list` trace.
             let mut records: Vec<CommandObservation> = self
                 .command
-                .publish_named_token_list_pushes(&mut stores.command_context())
+                .publish_named_token_list_pushes(
+                    &mut stores.command_context().expect("live generation"),
+                )
                 .into_iter()
                 .map(CommandObservation::Input)
                 .collect();
@@ -2643,10 +2712,7 @@ impl<G> MainControl<G> {
                 .try_into()
                 .unwrap_or(i32::MAX),
         )?;
-        stores.enter_group_with_kind_at_line(
-            GroupKind::Disc,
-            self.command.current_file_line_number(),
-        );
+        enter_group(stores, &mut self.command, GroupKind::Disc);
         Ok(())
     }
 
@@ -2679,11 +2745,11 @@ impl<G> MainControl<G> {
         let deleted =
             first_forbidden.map(|index| stores.publish_page_nodes(&level.list().nodes()[index..]));
         let aftergroup =
-            stores
-                .leave_group_with_kind(GroupKind::Disc)
-                .map_err(|_| ExecError::MissingToken {
+            leave_group_payloads(stores, &mut self.command, GroupKind::Disc).map_err(|_| {
+                ExecError::MissingToken {
                     context: "discretionary group",
-                })?;
+                }
+            })?;
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
 
         let (part_count, replacement_too_long) = {
@@ -2700,11 +2766,15 @@ impl<G> MainControl<G> {
             (part_count, replacement_too_long)
         };
         if let Some(deleted) = deleted {
-            let context = self.command.output_open_context(&stores.command_context());
+            let context = self
+                .command
+                .output_open_context(&stores.command_context().expect("live generation"));
             report_improper_discretionary(stores, deleted, context)?;
         }
         if replacement_too_long {
-            let context = self.command.output_open_context(&stores.command_context());
+            let context = self
+                .command
+                .output_open_context(&stores.command_context().expect("live generation"));
             crate::error_report::report_error(
                 stores,
                 "Discretionary list is too long",
@@ -2753,7 +2823,9 @@ impl<G> MainControl<G> {
         {
             // TeX82 §1120 diagnoses and deletes only a nonempty third part
             // in math mode; the discretionary and its first two parts survive.
-            let context = self.command.output_open_context(&stores.command_context());
+            let context = self
+                .command
+                .output_open_context(&stores.command_context().expect("live generation"));
             report_escaped_error(
                 stores,
                 "Illegal math ",
@@ -2784,7 +2856,7 @@ impl<G> MainControl<G> {
     /// Executes TeX82 §1113's `append_discretionary` shorthand for `\-`.
     fn apply_discretionary_hyphen(
         &mut self,
-        origin: tex_state::provenance::OriginRef,
+        origin: OriginId,
         stores: &mut Universe<G>,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
@@ -2946,10 +3018,12 @@ impl<G> MainControl<G> {
             Mode::Vertical | Mode::InternalVertical
         ) && matches!(
             delivery,
-            OperationDelivery::<G>::Replay(Some(command))
+                OperationDelivery::<G>::Replay(Some(command))
                 if matches!(
                     command.meaning(),
-                    Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfStartLink)
+                    ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                        UnexpandablePrimitive::PdfStartLink
+                    ))
                 )
         ) {
             return true;
@@ -2967,10 +3041,10 @@ impl<G> MainControl<G> {
         if let OperationDelivery::<G>::Replay(Some(command)) = delivery
             && matches!(
                 command.meaning(),
-                Meaning::CharToken {
+                ResolvedMeaning::Static(Meaning::CharToken {
                     cat: Catcode::EndGroup,
                     ..
-                }
+                })
             )
             && self
                 .boxes
@@ -2985,14 +3059,14 @@ impl<G> MainControl<G> {
             OperationDelivery::<G>::Replay(Some(command))
                 if matches!(
                     command.meaning(),
-                    Meaning::UnexpandablePrimitive(
+                    ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                         UnexpandablePrimitive::Global
                             | UnexpandablePrimitive::Long
                             | UnexpandablePrimitive::Outer
                             | UnexpandablePrimitive::Protected
                             | UnexpandablePrimitive::IgnoreSpaces
                             | UnexpandablePrimitive::NoBoundary
-                    )
+                    ))
                 )
         )
     }
@@ -3100,7 +3174,9 @@ impl<G> MainControl<G> {
             self.discard_direct_operation(stores, operation_mark);
             return Err(error);
         };
-        let context = self.command.output_open_context(&stores.command_context());
+        let context = self
+            .command
+            .output_open_context(&stores.command_context().expect("live generation"));
         crate::diagnostics::report_irrecoverable_error(stores, fatal, context);
         self.captured_fatal_origin = match &error {
             ExecError::Captured { site, frozen, .. } if fatal != FatalError::TooManyErrors => {
@@ -3148,7 +3224,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         max_operations: usize,
         mut initial_delivery: Option<OperationDelivery<G>>,
-        mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
+        mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
     ) -> Result<StepResult, ExecError> {
         let initial_boundaries = self.completed_boundaries.len();
         let initial_effect_pos = stores.world().effect_pos();
@@ -3159,7 +3235,7 @@ impl<G> MainControl<G> {
         let mut operations = 0_usize;
         let mut direct_attempt_recorded = false;
         let mut episode_tracked_mark = if tracked_region.is_some() {
-            match stores.begin_tracked_region() {
+            match stores.begin_dependency_region() {
                 Ok(mark) => Some(mark),
                 Err(error) => {
                     if let Some(outcome) = tracked_region.as_deref_mut() {
@@ -3186,9 +3262,10 @@ impl<G> MainControl<G> {
             } else if let Some(delivery) = initial_delivery.take() {
                 PreflightDelivery::<G> {
                     delivery,
-                    capabilities: crate::transaction_protocol::canonical_command_capabilities(
-                        Meaning::Relax,
-                    ),
+                    capabilities:
+                        crate::transaction_protocol::canonical_static_command_capabilities(
+                            Meaning::Relax,
+                        ),
                 }
             } else if let Some(pending) = self.pending_alignment_delivery.take() {
                 PreflightDelivery::<G> {
@@ -3196,9 +3273,10 @@ impl<G> MainControl<G> {
                         alignment: pending.alignment,
                         cursor: pending.cursor,
                     },
-                    capabilities: crate::transaction_protocol::canonical_command_capabilities(
-                        Meaning::Relax,
-                    ),
+                    capabilities:
+                        crate::transaction_protocol::canonical_static_command_capabilities(
+                            Meaning::Relax,
+                        ),
                 }
             } else if let Some(command) = self.pending_preflight_command.take() {
                 match command {
@@ -3238,7 +3316,9 @@ impl<G> MainControl<G> {
                         let meaning = Meaning::UnexpandablePrimitive(primitive);
                         PreflightDelivery::<G> {
                             capabilities:
-                                crate::transaction_protocol::canonical_command_capabilities(meaning),
+                                crate::transaction_protocol::canonical_static_command_capabilities(
+                                    meaning,
+                                ),
                             delivery: OperationDelivery::<G>::ImmediatePdfRetry(primitive),
                         }
                     }
@@ -3248,7 +3328,7 @@ impl<G> MainControl<G> {
                     Ok(preflight) => preflight,
                     Err(error) => {
                         if let Some(mark) = episode_tracked_mark.take() {
-                            let _ = stores.abandon_tracked_region(mark);
+                            let _ = stores.abandon_dependency_region(mark);
                         }
                         if execution_error_is_fuel(&error) {
                             self.episode_telemetry
@@ -3292,9 +3372,9 @@ impl<G> MainControl<G> {
                         OperationDelivery::<G>::Replay(Some(command))
                             if matches!(
                                 command.meaning(),
-                                Meaning::UnexpandablePrimitive(
+                                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                                     UnexpandablePrimitive::PdfXImage
-                                )
+                                ))
                             )
                     ))
             {
@@ -3352,7 +3432,7 @@ impl<G> MainControl<G> {
                     Ok(prepared) => prepared,
                     Err(failure) => {
                         if let Some(mark) = tracked_mark {
-                            let _ = stores.abandon_tracked_region(mark);
+                            let _ = stores.abandon_dependency_region(mark);
                         }
                         if let Some(scanned) = failure.unavailable {
                             self.pending_resource_operation = Some(PendingResourceOperation::<G> {
@@ -3437,7 +3517,11 @@ impl<G> MainControl<G> {
                     return Err(error);
                 }
                 self.commit_direct_operation(stores, operation_mark);
-                let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
+                let tracked_result = tracked_mark.map(|mark| {
+                    stores
+                        .finish_dependency_region(mark)
+                        .map(TrackedRegionRecord::new)
+                });
                 self.record_direct_episode_commit(
                     stores,
                     1,
@@ -3522,7 +3606,7 @@ impl<G> MainControl<G> {
                     Ok(prepared) => prepared,
                     Err(failure) => {
                         if let Some(mark) = tracked_mark {
-                            let _ = stores.abandon_tracked_region(mark);
+                            let _ = stores.abandon_dependency_region(mark);
                         }
                         if let Some(scanned) = failure.unavailable {
                             self.pending_resource_operation = Some(PendingResourceOperation::<G> {
@@ -3609,15 +3693,17 @@ impl<G> MainControl<G> {
                     Err(error) => {
                         if let Some(mark) = tracked_mark {
                             if error.as_fatal().is_some() {
-                                stores.poison_tracked_region(
+                                stores.poison_dependency_region(
                                     TrackedRegionBarrier::FatalPartialCommit,
                                 );
-                                let result = stores.finish_tracked_region(mark);
+                                let result = stores
+                                    .finish_dependency_region(mark)
+                                    .map(TrackedRegionRecord::new);
                                 if let Some(outcome) = tracked_region.as_deref_mut() {
                                     *outcome = Some(result);
                                 }
                             } else {
-                                let _ = stores.abandon_tracked_region(mark);
+                                let _ = stores.abandon_dependency_region(mark);
                             }
                         }
                         if error.as_fatal().is_none() {
@@ -3651,7 +3737,11 @@ impl<G> MainControl<G> {
                     return Err(error);
                 }
                 self.commit_direct_operation(stores, operation_mark);
-                let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
+                let tracked_result = tracked_mark.map(|mark| {
+                    stores
+                        .finish_dependency_region(mark)
+                        .map(TrackedRegionRecord::new)
+                });
                 self.record_direct_episode_commit(
                     stores,
                     1,
@@ -3678,7 +3768,10 @@ impl<G> MainControl<G> {
                 &preflight.delivery,
                 OperationDelivery::<G>::Replay(Some(command))
                     | OperationDelivery::<G>::Settled { command, .. }
-                    if matches!(command.meaning(), Meaning::Undefined | Meaning::Unknown(_))
+                    if matches!(
+                        command.meaning(),
+                        ResolvedMeaning::Static(Meaning::Undefined | Meaning::Unknown(_))
+                    )
             );
             // Capability preflight preserves an undefined command instead of
             // diagnosing it inside expansion. The executor reports that one
@@ -3735,7 +3828,7 @@ impl<G> MainControl<G> {
                         stores.set_interaction_mode(interaction);
                     }
                     if let Some(mark) = tracked_mark {
-                        let _ = stores.abandon_tracked_region(mark);
+                        let _ = stores.abandon_dependency_region(mark);
                     }
                     if let Some(scanned) = failure.unavailable {
                         self.pending_resource_operation = Some(PendingResourceOperation::<G> {
@@ -3800,13 +3893,16 @@ impl<G> MainControl<G> {
                 Err(error) => {
                     if let Some(mark) = tracked_mark {
                         if error.as_fatal().is_some() {
-                            stores.poison_tracked_region(TrackedRegionBarrier::FatalPartialCommit);
-                            let result = stores.finish_tracked_region(mark);
+                            stores
+                                .poison_dependency_region(TrackedRegionBarrier::FatalPartialCommit);
+                            let result = stores
+                                .finish_dependency_region(mark)
+                                .map(TrackedRegionRecord::new);
                             if let Some(outcome) = tracked_region.as_deref_mut() {
                                 *outcome = Some(result);
                             }
                         } else {
-                            let _ = stores.abandon_tracked_region(mark);
+                            let _ = stores.abandon_dependency_region(mark);
                         }
                     }
                     return self.finish_direct_failure(
@@ -3829,7 +3925,11 @@ impl<G> MainControl<G> {
                 return Err(error);
             }
             self.commit_direct_operation(stores, operation_mark);
-            let tracked_result = tracked_mark.map(|mark| stores.finish_tracked_region(mark));
+            let tracked_result = tracked_mark.map(|mark| {
+                stores
+                    .finish_dependency_region(mark)
+                    .map(TrackedRegionRecord::new)
+            });
             if let Some(boundary) = boundary {
                 self.record_direct_episode_commit(
                     stores,
@@ -3855,7 +3955,7 @@ impl<G> MainControl<G> {
         delivery: OperationDelivery<G>,
         transaction: OperationTransaction,
         max_operations: usize,
-        tracked_region: Option<&mut Option<Result<TrackedRegionRecord, TrackedRegionError>>>,
+        tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
     ) -> Result<StepResult, ExecError> {
         if self.operation_observations.is_none() {
             // A caller may resume an observed resource suspension through
@@ -3874,7 +3974,6 @@ impl<G> MainControl<G> {
             }
             return result.map(StepResult::Progress);
         }
-        debug_assert!(stores.direct_operation_supported());
         let initial_delivery =
             matches!(transaction, OperationTransaction::Alignment).then_some(delivery);
         self.execute_direct_episode(stores, max_operations, initial_delivery, tracked_region)
@@ -3933,15 +4032,6 @@ impl<G> MainControl<G> {
         }
         for artifact in &stores.world().artifact_commits()[start.artifact..] {
             pending.record_artifact(*artifact);
-        }
-        if let Some(geometry_start) = start.geometry {
-            pending.extend(
-                stores
-                    .geometry_observations_since(geometry_start)
-                    .iter()
-                    .copied()
-                    .map(Self::geometry_observation),
-            );
         }
         pending.receipt.set_termination(termination);
         self.operation_evidence_limit_error()
@@ -4267,17 +4357,7 @@ impl<G> MainControl<G> {
             return Ok(ReplayStep::Continue);
         };
         let base = self.do_assignments_then_accent_base(stores)?;
-        let accent_origin = stores
-            .origin_ref(scanned.accent_provenance.primary)
-            .unwrap_or_else(|| {
-                tex_state::provenance::OriginRef::direct(scanned.accent_provenance.primary)
-            });
-        let base = base.map(|(character, origin)| {
-            let root = stores
-                .origin_ref(origin)
-                .unwrap_or_else(|| tex_state::provenance::OriginRef::direct(origin));
-            (character, root)
-        });
+        let accent_origin = scanned.accent_provenance.primary;
         let etex_extended = self.command_profile() == CommandProfile::ETEX26;
         apply_accent_nodes(
             &mut self.modes,
@@ -4357,7 +4437,9 @@ impl<G> MainControl<G> {
             let Some(fire_up) = stores.page_fire_up() else {
                 break;
             };
-            let error_context = self.command.output_open_context(&stores.command_context());
+            let error_context = self
+                .command
+                .output_open_context(&stores.command_context().expect("live generation"));
             match crate::page_output::select_pending_page_output(stores, fire_up, error_context)? {
                 crate::page_output::SelectedPageOutput::Default(page) => {
                     let mut command = CommandMachine {
@@ -4385,7 +4467,9 @@ impl<G> MainControl<G> {
                             .expect("observed page-output episode has a buffer")
                             .extend(
                                 self.command
-                                    .publish_named_token_list_pushes(&mut stores.command_context())
+                                    .publish_named_token_list_pushes(
+                                        &mut stores.command_context().expect("live generation"),
+                                    )
                                     .into_iter()
                                     .map(CommandObservation::Input),
                             );
@@ -4414,10 +4498,7 @@ impl<G> MainControl<G> {
                         self.page_output_observations.append(&mut deferred);
                     }
                     opened?;
-                    stores.enter_group_with_kind_at_line(
-                        GroupKind::Output,
-                        self.command.current_file_line_number(),
-                    );
+                    enter_group(stores, &mut self.command, GroupKind::Output);
                     self.modes.push_at_line(
                         Mode::InternalVertical,
                         -i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
@@ -4453,8 +4534,12 @@ impl<G> MainControl<G> {
         // kind, is what identifies this group's own closing brace: a nested
         // subformula opens another `math_group`, and any brace group inside
         // the body opens a `simple_group`.
-        let enclosing_depth = stores.group_depth();
-        stores.enter_group_with_kind_at_line(kind, self.command.current_file_line_number());
+        let enclosing_depth = stores
+            .command_context()
+            .expect("live generation")
+            .group_frames()
+            .len();
+        enter_group(stores, &mut self.command, kind);
         self.modes.push_at_line(
             Mode::Math,
             self.command
@@ -4463,7 +4548,13 @@ impl<G> MainControl<G> {
                 .unwrap_or(i32::MAX),
         )?;
         self.main_loop_active = false;
-        while stores.group_depth() > enclosing_depth {
+        while stores
+            .command_context()
+            .expect("live generation")
+            .group_frames()
+            .len()
+            > enclosing_depth
+        {
             match self.execute_nested_operation(stores, None)? {
                 ReplayStep::End | ReplayStep::EndOfInput => {
                     return Err(ExecError::MissingToken {
@@ -4486,7 +4577,9 @@ impl<G> MainControl<G> {
         while left_group_open(&self.modes, stores) {
             // The `\right.` applied below is exactly the closer §1065 selects
             // for `math_left_group`, so the report is §1064's `off_save`.
-            let context = self.command.output_open_context(&stores.command_context());
+            let context = self
+                .command
+                .output_open_context(&stores.command_context().expect("live generation"));
             report_escaped_error(
                 stores,
                 "Missing ",
@@ -4639,7 +4732,9 @@ impl<G> MainControl<G> {
                     // §1159 falls through to the error only when the tail is
                     // not an `op_noad`; the switch is dropped and the job
                     // continues.
-                    let context = self.command.output_open_context(&stores.command_context());
+                    let context = self
+                        .command
+                        .output_open_context(&stores.command_context().expect("live generation"));
                     let mut report = stores.print_err("Limit controls must follow a math operator");
                     report.help(&["I'm ignoring this misplaced \\limits or \\nolimits command."]);
                     report.context(context);
@@ -4648,7 +4743,9 @@ impl<G> MainControl<G> {
             }
             MathRequest::Fraction(fraction) => {
                 if !start_fraction(self.modes.current_list_mutation(), stores, fraction) {
-                    let context = self.command.output_open_context(&stores.command_context());
+                    let context = self
+                        .command
+                        .output_open_context(&stores.command_context().expect("live generation"));
                     let mut report = stores.print_err("Ambiguous; you need another { and }");
                     report.help(&[
                         "I'm ignoring this fraction specification, since I don't",
@@ -4730,7 +4827,9 @@ impl<G> MainControl<G> {
                     // §436's `scan_fifteen_bit_int`. In particular, §82's
                     // context must still own an exhausted token-list level
                     // whose last command was the text `\accent`.
-                    let context = self.command.output_open_context(&stores.command_context());
+                    let context = self
+                        .command
+                        .output_open_context(&stores.command_context().expect("live generation"));
                     let mut report =
                         stores.print_err("Please use \\mathaccent for accents in math mode");
                     report.help(&[
@@ -4777,7 +4876,9 @@ impl<G> MainControl<G> {
                     };
                     let token = Token::Cs(stores.intern(primitive).symbol());
                     let mode = self.modes.current_mode();
-                    let context = self.command.output_open_context(&stores.command_context());
+                    let context = self
+                        .command
+                        .output_open_context(&stores.command_context().expect("live generation"));
                     crate::diagnostics::report_illegal_case_with_context(
                         stores,
                         token,
@@ -4786,10 +4887,7 @@ impl<G> MainControl<G> {
                     )?;
                 } else {
                     let display = take_finished_math_list(&mut self.modes, stores)?;
-                    stores.enter_group_with_kind_at_line(
-                        GroupKind::MathShift,
-                        self.command.current_file_line_number(),
-                    );
+                    enter_group(stores, &mut self.command, GroupKind::MathShift);
                     stores.set_int_param(IntParam::FAM, -1);
                     self.modes.push_at_line(
                         Mode::Math,
@@ -4831,7 +4929,9 @@ impl<G> MainControl<G> {
         // §1207 calls back_error before resume_after_display. The backup
         // level must already be live when §82 renders context, and ordinary
         // main control must retry the command in the resumed paragraph.
-        let context = self.command.output_open_context(&stores.command_context());
+        let context = self
+            .command
+            .output_open_context(&stores.command_context().expect("live generation"));
         crate::error_report::report_error(
             stores,
             "Missing $$ inserted",
@@ -4932,7 +5032,9 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
-        let math_font_context = self.command.output_open_context(&stores.command_context());
+        let math_font_context = self
+            .command
+            .output_open_context(&stores.command_context().expect("live generation"));
         let rejected = crate::math::reject_invalid_math_fonts(stores, math_font_context)?;
         let content = take_finished_math_list(&mut self.modes, stores)?;
         Ok(if rejected {
@@ -4968,8 +5070,11 @@ impl<G> MainControl<G> {
         self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
         let shown_mode = self.shown_mode;
+        let context = stores
+            .command_context()
+            .expect("display-end scan requires a live generation");
         let mut machine = self.command_machine();
-        let mut processor = machine.processor(stores);
+        let mut processor = machine.processor(context);
         prepare_command_trace(&mut processor, mode, shown_mode);
         let paired = processor
             .scan_display_end_math_shift()
@@ -4987,10 +5092,7 @@ impl<G> MainControl<G> {
         display: bool,
         stores: &mut Universe<G>,
     ) -> Result<(), ExecError> {
-        stores.enter_group_with_kind_at_line(
-            GroupKind::MathShift,
-            self.command.current_file_line_number(),
-        );
+        enter_group(stores, &mut self.command, GroupKind::MathShift);
         stores.set_int_param(IntParam::FAM, -1);
         self.modes.push_at_line(
             if display {
@@ -5013,7 +5115,9 @@ impl<G> MainControl<G> {
     }
 
     fn enter_display(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
-        let error_context = self.command.output_open_context(&stores.command_context());
+        let error_context = self
+            .command
+            .output_open_context(&stores.command_context().expect("live generation"));
         let paragraph = crate::paragraph_end::interrupt_paragraph_for_display(
             &mut self.modes,
             stores,
@@ -5066,9 +5170,12 @@ impl<G> MainControl<G> {
     fn finish_inline_math(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
         let mut content = take_finished_math_list(&mut self.modes, stores)?;
         let conversion_error_context = crate::math::MathConversionErrorContext::new(
-            self.command.output_open_context(&stores.command_context()),
+            self.command
+                .output_open_context(&stores.command_context().expect("live generation")),
         );
-        let math_font_context = self.command.output_open_context(&stores.command_context());
+        let math_font_context = self
+            .command
+            .output_open_context(&stores.command_context().expect("live generation"));
         if crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
             content = tex_state::node_arena::PageListId::empty();
         }
@@ -5086,8 +5193,7 @@ impl<G> MainControl<G> {
         );
         self.modes.current_list_mutation().append(nodes);
         self.modes.current_list_mutation().set_space_factor(1000);
-        let aftergroup = stores
-            .leave_group_with_kind(GroupKind::MathShift)
+        let aftergroup = leave_group_payloads(stores, &mut self.command, GroupKind::MathShift)
             .map_err(|_| ExecError::MissingToken {
                 context: "math shift group",
             })?;
@@ -5125,7 +5231,8 @@ impl<G> MainControl<G> {
         ExecError,
     > {
         let conversion_error_context = crate::math::MathConversionErrorContext::new(
-            self.command.output_open_context(&stores.command_context()),
+            self.command
+                .output_open_context(&stores.command_context().expect("live generation")),
         );
         let finished = crate::math::display::finish_eq_no(
             stores,
@@ -5133,8 +5240,7 @@ impl<G> MainControl<G> {
             content,
             Some(&conversion_error_context),
         );
-        let aftergroup = stores
-            .leave_group_with_kind(GroupKind::MathShift)
+        let aftergroup = leave_group_payloads(stores, &mut self.command, GroupKind::MathShift)
             .map_err(|_| ExecError::MissingToken {
                 context: "equation number group",
             })?;
@@ -5167,8 +5273,7 @@ impl<G> MainControl<G> {
                     context: "display alignment interrupt",
                 })?;
         crate::math::display::finish_display_alignment(&mut self.modes, stores, finished)?;
-        let aftergroup = stores
-            .leave_group_with_kind(GroupKind::MathShift)
+        let aftergroup = leave_group_payloads(stores, &mut self.command, GroupKind::MathShift)
             .map_err(|_| ExecError::MissingToken {
                 context: "display alignment group",
             })?;
@@ -5186,11 +5291,14 @@ impl<G> MainControl<G> {
         display_level: Option<crate::mode::ModeLevelSummary>,
     ) -> Result<(), ExecError> {
         let conversion_error_context = crate::math::MathConversionErrorContext::new(
-            self.command.output_open_context(&stores.command_context()),
+            self.command
+                .output_open_context(&stores.command_context().expect("live generation")),
         );
         // TeX82 §1194 performs this check before every display `fin_mlist`,
         // including the saved outer mlist after an equation number.
-        let math_font_context = self.command.output_open_context(&stores.command_context());
+        let math_font_context = self
+            .command
+            .output_open_context(&stores.command_context().expect("live generation"));
         if !fonts_checked && crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
             content = tex_state::node_arena::PageListId::empty();
         }
@@ -5217,8 +5325,7 @@ impl<G> MainControl<G> {
             interrupt.prototype,
             Some(&conversion_error_context),
         )?;
-        let aftergroup = stores
-            .leave_group_with_kind(GroupKind::MathShift)
+        let aftergroup = leave_group_payloads(stores, &mut self.command, GroupKind::MathShift)
             .map_err(|_| ExecError::MissingToken {
                 context: "display math group",
             })?;
@@ -5271,7 +5378,9 @@ impl<G> MainControl<G> {
         if scan_optional_space {
             self.scan_optional_space(stores)?;
         }
-        let error_context = self.command.output_open_context(&stores.command_context());
+        let error_context = self
+            .command
+            .output_open_context(&stores.command_context().expect("live generation"));
         crate::math::display::build_page_after_display_resume(&self.modes, stores, &error_context)
     }
 
@@ -5289,8 +5398,11 @@ impl<G> MainControl<G> {
     fn scan_optional_space(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
         let mode = self.modes.current_mode();
         let shown_mode = self.shown_mode;
+        let context = stores
+            .command_context()
+            .expect("optional-space scan requires a live generation");
         let mut machine = self.command_machine();
-        let mut processor = machine.processor(stores);
+        let mut processor = machine.processor(context);
         let mut diagnostics = Vec::new();
         // TeX82 §§299/1200: resume_after_display has already pushed the new
         // horizontal mode when its scanner expands this token. The expansion
@@ -5303,10 +5415,10 @@ impl<G> MainControl<G> {
             Ok(Some(command))
                 if !matches!(
                     command.meaning(),
-                    Meaning::CharToken {
+                    ResolvedMeaning::Static(Meaning::CharToken {
                         cat: Catcode::Space,
                         ..
-                    }
+                    })
                 ) =>
             {
                 processor.back_input(command).map_err(command_error)?;
@@ -5344,10 +5456,7 @@ impl<G> MainControl<G> {
                 // mode level and a save-stack level. Keeping those owners
                 // paired lets §1193 route a premature `$` through §1027's
                 // `off_save`, which inserts `\right.` before retrying it.
-                stores.enter_group_with_kind_at_line(
-                    GroupKind::MathLeft,
-                    self.command.current_file_line_number(),
-                );
+                enter_group(stores, &mut self.command, GroupKind::MathLeft);
                 self.modes.push_at_line(
                     Mode::Math,
                     self.command
@@ -5380,18 +5489,14 @@ impl<G> MainControl<G> {
                         self.fuel.fuel_mut(),
                     )?;
                     let aftergroup =
-                        stores
-                            .leave_group_with_kind(GroupKind::MathLeft)
+                        leave_group_payloads(stores, &mut self.command, GroupKind::MathLeft)
                             .map_err(|_| ExecError::MissingToken {
                                 context: "math left group",
                             })?;
                     self.active_math_left_boundaries.pop();
                     schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
 
-                    stores.enter_group_with_kind_at_line(
-                        GroupKind::MathLeft,
-                        self.command.current_file_line_number(),
-                    );
+                    enter_group(stores, &mut self.command, GroupKind::MathLeft);
                     self.modes.push_at_line(
                         Mode::Math,
                         self.command
@@ -5415,7 +5520,9 @@ impl<G> MainControl<G> {
                         ))]));
                 } else {
                     // etex.ch [48.1192] splits §1192's report by noad type.
-                    let context = self.command.output_open_context(&stores.command_context());
+                    let context = self
+                        .command
+                        .output_open_context(&stores.command_context().expect("live generation"));
                     report_escaped_error(
                         stores,
                         "Extra ",
@@ -5430,7 +5537,9 @@ impl<G> MainControl<G> {
                 if !left_group_open(&self.modes, stores) {
                     // TeX82 §1192's `<Try to recover from mismatched \right>`
                     // in its `math_shift_group` arm.
-                    let context = self.command.output_open_context(&stores.command_context());
+                    let context = self
+                        .command
+                        .output_open_context(&stores.command_context().expect("live generation"));
                     report_escaped_error(
                         stores,
                         "Extra ",
@@ -5448,11 +5557,11 @@ impl<G> MainControl<G> {
                     self.fuel.fuel_mut(),
                 )?;
                 let aftergroup =
-                    stores
-                        .leave_group_with_kind(GroupKind::MathLeft)
-                        .map_err(|_| ExecError::MissingToken {
+                    leave_group_payloads(stores, &mut self.command, GroupKind::MathLeft).map_err(
+                        |_| ExecError::MissingToken {
                             context: "math left group",
-                        })?;
+                        },
+                    )?;
                 self.active_math_left_boundaries.pop();
                 schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
                 let mut nodes = stores
@@ -5571,10 +5680,6 @@ impl<G> MainControl<G> {
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
-        let geometry_start = observer.observes_geometry().then(|| {
-            stores.enable_geometry_observation();
-            stores.geometry_observation_len()
-        });
         let effect_start = stores.world().effect_pos();
         let artifact_start = stores.world().artifact_commits().len();
         // Occupying the slot is what makes this operation observed. Every
@@ -5588,7 +5693,6 @@ impl<G> MainControl<G> {
             self.operation_receipt_start = Some(OperationReceiptStart {
                 effect: effect_start.raw(),
                 artifact: artifact_start,
-                geometry: geometry_start,
             });
         }
         let stepped = self.execute_operation(
@@ -5640,51 +5744,6 @@ impl<G> MainControl<G> {
         debug_assert!(consumed.records <= MAX_EXECUTION_RECEIPT_RECORDS);
         debug_assert_eq!(consumed.termination, expected_termination);
         stepped
-    }
-
-    fn geometry_observation(observation: GeometryObservation) -> CommandObservation {
-        let record = match observation {
-            GeometryObservation::Hpack {
-                width_sp,
-                height_sp,
-                depth_sp,
-                line,
-                source,
-            } => GeometryRecord::Hpack {
-                width_sp,
-                height_sp,
-                depth_sp,
-                line,
-                source,
-            },
-            GeometryObservation::Vpack {
-                width_sp,
-                height_sp,
-                depth_sp,
-                line,
-                source,
-            } => GeometryRecord::Vpack {
-                width_sp,
-                height_sp,
-                depth_sp,
-                line,
-                source,
-            },
-            GeometryObservation::Shipout {
-                page_width_sp,
-                page_height_sp,
-                counts,
-                line,
-                source,
-            } => GeometryRecord::Shipout {
-                page_width_sp,
-                page_height_sp,
-                counts,
-                line,
-                source,
-            },
-        };
-        CommandObservation::Geometry(record)
     }
 
     /// TeX82 §93's `succumb`: `history:=fatal_error_stop; jump_out`.
@@ -5741,7 +5800,7 @@ impl<G> MainControl<G> {
         {
             return Ok(Some(PreflightDelivery::<G> {
                 delivery: OperationDelivery::<G>::Replay(None),
-                capabilities: crate::transaction_protocol::canonical_command_capabilities(
+                capabilities: crate::transaction_protocol::canonical_static_command_capabilities(
                     Meaning::Relax,
                 ),
             }));
@@ -5750,7 +5809,9 @@ impl<G> MainControl<G> {
         if self.enter_main_control(stores) {
             let entry_records: Vec<CommandObservation> = self
                 .command
-                .publish_named_token_list_pushes(&mut stores.command_context())
+                .publish_named_token_list_pushes(
+                    &mut stores.command_context().expect("live generation"),
+                )
                 .into_iter()
                 .map(CommandObservation::Input)
                 .collect();
@@ -5781,10 +5842,9 @@ impl<G> MainControl<G> {
                 Some(tex_command::CommandReplayDelivery::Command(command))
                     if matches!(
                         command.meaning(),
-                        Meaning::Macro { .. }
-                            | Meaning::ExpandablePrimitive(_)
-                            | Meaning::Undefined
-                            | Meaning::Unknown(_)
+                        ResolvedMeaning::Macro { .. }
+                            | ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_))
+                            | ResolvedMeaning::Static(Meaning::Undefined | Meaning::Unknown(_))
                     ) =>
                 {
                     prepare_command_trace(&mut processor, mode, self.shown_mode);
@@ -5842,11 +5902,13 @@ impl<G> MainControl<G> {
                 let continues_main_loop = self.main_loop_active
                     && matches!(
                         command.meaning(),
-                        Meaning::CharToken {
-                            cat: Catcode::Letter | Catcode::Other,
-                            ..
-                        } | Meaning::CharGiven(_)
-                            | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+                        ResolvedMeaning::Static(
+                            Meaning::CharToken {
+                                cat: Catcode::Letter | Catcode::Other,
+                                ..
+                            } | Meaning::CharGiven(_)
+                                | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+                        )
                     );
                 if !continues_main_loop {
                     prepare_command_trace(&mut processor, mode, self.shown_mode);
@@ -5926,7 +5988,7 @@ impl<G> MainControl<G> {
         }
 
         let passive =
-            || crate::transaction_protocol::canonical_command_capabilities(Meaning::Relax);
+            || crate::transaction_protocol::canonical_static_command_capabilities(Meaning::Relax);
         let Some(delivery) = delivery else {
             return Ok(Some(PreflightDelivery::<G> {
                 delivery: OperationDelivery::<G>::Prepared(Box::new(
@@ -5950,11 +6012,13 @@ impl<G> MainControl<G> {
         let continues_main_loop = self.main_loop_active
             && matches!(
                 command.meaning(),
-                Meaning::CharToken {
-                    cat: Catcode::Letter | Catcode::Other,
-                    ..
-                } | Meaning::CharGiven(_)
-                    | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+                ResolvedMeaning::Static(
+                    Meaning::CharToken {
+                        cat: Catcode::Letter | Catcode::Other,
+                        ..
+                    } | Meaning::CharGiven(_)
+                        | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+                )
             );
         if !continues_main_loop && !trace_reported {
             let mut processor = command_processor(
@@ -5978,7 +6042,9 @@ impl<G> MainControl<G> {
             && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
             && matches!(
                 command.meaning(),
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary)
+                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::NoBoundary
+                ))
             )
             && self.operation_observations.is_none()
         {
@@ -6052,8 +6118,12 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         delivery: OperationDelivery<G>,
     ) -> Result<OperationReadiness<G>, PrepareOperationError<G>> {
-        if stores.dependency_region_is_active() {
-            let mode = self.modes.current_mode();
+        let mode = self.modes.current_mode();
+        let mode_fingerprint = self.modes.summary().semantic_fingerprint(stores);
+        let last_node_type = self.last_node_type_value(stores);
+        if let Ok(mut context) = stores.command_context()
+            && context.tracked_region_is_active()
+        {
             let mode_key = DependencyKey::Engine(DependencyEngineField::Mode);
             let inner_key = DependencyKey::Engine(DependencyEngineField::InnerMode);
             let last_node_key = DependencyKey::Engine(DependencyEngineField::LastNodeType);
@@ -6061,28 +6131,26 @@ impl<G> MainControl<G> {
             // Advance their conservative generation once per observed outer
             // operation so validation always compares the canonical value
             // after another operation has had a chance to mutate the nest.
-            for key in [mode_key, inner_key, last_node_key] {
-                stores.mark_dependency_changed(key);
-            }
-            stores.track_dependency(mode_key);
-            stores.record_dependency(
+            context.observe_changed_command_projection(
                 mode_key,
                 DependencyValue::Projection {
                     schema: 1,
-                    fingerprint: self.modes.summary().semantic_fingerprint(stores),
+                    fingerprint: mode_fingerprint,
                 },
             );
-            stores.track_dependency(inner_key);
-            stores.record_dependency(inner_key, DependencyValue::Bool(mode.is_inner()));
-            let last_node_type = self.last_node_type_value(stores);
-            stores.track_dependency(last_node_key);
-            stores.record_dependency(
+            context.observe_changed_command_projection(
+                inner_key,
+                DependencyValue::Bool(mode.is_inner()),
+            );
+            context.observe_changed_command_projection(
                 last_node_key,
                 DependencyValue::Integer(i64::from(last_node_type)),
             );
-            stores.observe_semantic_dependency(DependencyKey::Engine(
-                DependencyEngineField::PageInsertions,
-            ));
+            let insertions = context.page_insertions().len();
+            context.observe_changed_command_projection(
+                DependencyKey::Engine(DependencyEngineField::PageInsertions),
+                DependencyValue::Integer(i64::try_from(insertions).unwrap_or(i64::MAX)),
+            );
         }
         // Observation is an instrumentation boundary, not an alternate
         // execution mode. Keep the command processor's borrowed mode facts
@@ -6095,7 +6163,9 @@ impl<G> MainControl<G> {
             // the step's own applied records.
             let entry_records: Vec<CommandObservation> = self
                 .command
-                .publish_named_token_list_pushes(&mut stores.command_context())
+                .publish_named_token_list_pushes(
+                    &mut stores.command_context().expect("live generation"),
+                )
                 .into_iter()
                 .map(CommandObservation::Input)
                 .collect();
@@ -6103,7 +6173,6 @@ impl<G> MainControl<G> {
         }
         self.drain_file_framing_events(stores);
         self.refresh_host_capabilities(stores);
-        let mode = self.modes.current_mode();
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
@@ -6197,10 +6266,10 @@ impl<G> MainControl<G> {
                                     if tex_command::exceeds_max_non_prefixed_command(meaning)
                                         || matches!(
                                             meaning,
-                                            Meaning::CharToken {
+                                            ResolvedMeaning::Static(Meaning::CharToken {
                                                 cat: Catcode::MathShift,
                                                 ..
-                                            }
+                                            })
                                         ) =>
                                 {
                                     dispatch_main_control_command(
@@ -6451,7 +6520,9 @@ impl<G> MainControl<G> {
         if result.is_ok() {
             let mut records = self
                 .command
-                .publish_named_token_list_pushes(&mut stores.command_context())
+                .publish_named_token_list_pushes(
+                    &mut stores.command_context().expect("live generation"),
+                )
                 .into_iter()
                 .map(CommandObservation::Input)
                 .collect::<Vec<_>>();
@@ -6691,7 +6762,12 @@ impl<G> MainControl<G> {
             // TeX82 §1328 builds and retains `format_ident` before §1309
             // serializes the string pool. The host publication filename is
             // made only for display and immediately flushed.
-            stores.make_string_pool_string(&receipt.pool_string());
+            stores
+                .command_context()
+                .expect("format accounting requires a live generation")
+                .record_retained_strings(tex_state::RetainedStringAllocation::one(
+                    &receipt.pool_string(),
+                ));
             self.dumped_format = Some(receipt);
         }
         if let (
@@ -6741,7 +6817,9 @@ impl<G> MainControl<G> {
             // is published ahead of the transition's own committed records.
             records.extend(
                 self.command
-                    .publish_named_token_list_pushes(&mut stores.command_context())
+                    .publish_named_token_list_pushes(
+                        &mut stores.command_context().expect("live generation"),
+                    )
                     .into_iter()
                     .map(CommandObservation::Input),
             );
@@ -7067,13 +7145,25 @@ fn set_math_char<G>(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<(), ExecError> {
-    stores.observe_semantic_dependency(tex_state::DependencyKey::Code {
-        table: tex_state::DependencyCodeTable::Mathcode,
-        scalar: ch.into(),
-    });
-    let code = stores.mathcode(ch);
+    let code = {
+        let mut context = stores
+            .command_context()
+            .expect("main control operates on one live admitted generation");
+        let code = context.mathcode(ch);
+        context.observe_command_projection(
+            tex_state::DependencyKey::Code {
+                table: tex_state::DependencyCodeTable::Mathcode,
+                scalar: ch.into(),
+            },
+            DependencyValue::Integer(i64::from(code)),
+        );
+        code
+    };
     if code >= 0x8000 {
-        let mut processor = command.processor(stores);
+        let context = stores
+            .command_context()
+            .expect("active math character requires a live generation");
+        let mut processor = command.processor(context);
         let treated = processor.treat_as_active_character(ch, origin);
         treated.map_err(command_error)?;
         return Ok(());
@@ -7380,7 +7470,7 @@ fn report_missing_box<G>(
     command: &CommandState<G>,
     stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
-    let context = command.output_open_context(&stores.command_context());
+    let context = command.output_open_context(&stores.command_context().expect("live generation"));
     crate::error_report::report_error(
         stores,
         "A <box> was supposed to be here",
@@ -7432,7 +7522,7 @@ fn report_unpaired_display_end<G>(
     command: &CommandState<G>,
     stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
-    let context = command.output_open_context(&stores.command_context());
+    let context = command.output_open_context(&stores.command_context().expect("live generation"));
     crate::error_report::report_error(
         stores,
         "Display math should end with $$",
@@ -7706,25 +7796,25 @@ fn scan_alignment_peek<G>(
             context: "alignment lookahead",
         })?;
     match lookahead.command().meaning() {
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoAlign) => {
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoAlign)) => {
             let _ = processor.commit_alignment_lookahead_delivery(lookahead);
             processor
                 .scan_alignment_noalign_opening()
                 .map_err(command_error)?;
             Ok(ColdOperation::<G>::BeginNoAlign { alignment })
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr) => {
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr)) => {
             let _ = processor.commit_alignment_lookahead_delivery(lookahead);
             Ok(ColdOperation::<G>::AlignPeekRestart { alignment })
         }
-        Meaning::CharToken {
+        ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::EndGroup,
             ..
-        } => {
+        }) => {
             let _ = processor.commit_alignment_lookahead_delivery(lookahead);
             Ok(ColdOperation::<G>::AlignmentFinish { alignment })
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit) => {
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit)) => {
             let _ = processor.commit_alignment_lookahead_delivery(lookahead);
             Ok(ColdOperation::<G>::AlignmentPeekCell {
                 alignment,
@@ -7760,10 +7850,10 @@ fn scan_noalign_body<G>(
     };
     report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
     match command.meaning() {
-        Meaning::CharToken {
+        ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::EndGroup,
             ..
-        } if innermost_group == Some(GroupKind::NoAlign) => {
+        }) if innermost_group == Some(GroupKind::NoAlign) => {
             if partoken_context_replays(processor, mode, 2) {
                 processor
                     .insert_partoken_before(command)
@@ -7831,11 +7921,13 @@ fn scan_alignment_delivery_step<G>(
             let continues_main_loop = main_loop_active
                 && matches!(
                     command.meaning(),
-                    Meaning::CharToken {
-                        cat: Catcode::Letter | Catcode::Other,
-                        ..
-                    } | Meaning::CharGiven(_)
-                        | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+                    ResolvedMeaning::Static(
+                        Meaning::CharToken {
+                            cat: Catcode::Letter | Catcode::Other,
+                            ..
+                        } | Meaning::CharGiven(_)
+                            | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+                    )
                 );
             if !continues_main_loop {
                 report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
@@ -7851,10 +7943,10 @@ fn scan_alignment_delivery_step<G>(
             if innermost_group == Some(GroupKind::Align)
                 && matches!(
                     command.meaning(),
-                    Meaning::CharToken {
+                    ResolvedMeaning::Static(Meaning::CharToken {
                         cat: Catcode::EndGroup,
                         ..
-                    }
+                    })
                 )
             {
                 processor
@@ -7864,7 +7956,7 @@ fn scan_alignment_delivery_step<G>(
                     .map_err(command_error)?;
                 return Ok(ColdOperation::<G>::MissingAlignmentCr.into());
             }
-            if matches!(command.meaning(), Meaning::EndV) {
+            if matches!(command.meaning(), ResolvedMeaning::Static(Meaning::EndV)) {
                 // TeX82 §§1046-1047 route `mmode+endv` through
                 // `insert_dollar_sign`, just like every other command that
                 // reaches an alignment v-template before its math mode has
@@ -7983,11 +8075,13 @@ fn settle_preflight_step<G>(
     let continues_main_loop = main_loop
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
-                cat: Catcode::Letter | Catcode::Other,
-                ..
-            } | Meaning::CharGiven(_)
-                | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+            ResolvedMeaning::Static(
+                Meaning::CharToken {
+                    cat: Catcode::Letter | Catcode::Other,
+                    ..
+                } | Meaning::CharGiven(_)
+                    | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+            )
         );
     if !continues_main_loop {
         report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
@@ -7996,7 +8090,9 @@ fn settle_preflight_step<G>(
         && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
         && matches!(
             command.meaning(),
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary)
+            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::NoBoundary
+            ))
         )
     {
         return Ok(ColdOperation::<G>::NoBoundary {
@@ -8057,11 +8153,13 @@ fn scan_step<G>(
     let continues_main_loop = main_loop_active
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
-                cat: Catcode::Letter | Catcode::Other,
-                ..
-            } | Meaning::CharGiven(_)
-                | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+            ResolvedMeaning::Static(
+                Meaning::CharToken {
+                    cat: Catcode::Letter | Catcode::Other,
+                    ..
+                } | Meaning::CharGiven(_)
+                    | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+            )
         );
     if !continues_main_loop {
         report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
@@ -8070,7 +8168,9 @@ fn scan_step<G>(
         && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
         && matches!(
             command.meaning(),
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary)
+            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::NoBoundary
+            ))
         )
     {
         return Ok(ColdOperation::<G>::NoBoundary {
@@ -8118,7 +8218,7 @@ fn direct_hot_candidate<G>(
         return false;
     }
     match command.meaning() {
-        Meaning::UnexpandablePrimitive(
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             UnexpandablePrimitive::Def
             | UnexpandablePrimitive::Edef
             | UnexpandablePrimitive::Gdef
@@ -8127,22 +8227,22 @@ fn direct_hot_candidate<G>(
             | UnexpandablePrimitive::FutureLet
             | UnexpandablePrimitive::CatCode
             | UnexpandablePrimitive::BeginGroup,
-        ) => true,
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup) => {
-            innermost_group == Some(GroupKind::SemiSimple)
-        }
-        Meaning::CharToken {
+        )) => true,
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+            UnexpandablePrimitive::EndGroup,
+        )) => innermost_group == Some(GroupKind::SemiSimple),
+        ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::BeginGroup,
             ..
-        } => {
+        }) => {
             !matches!(mode, Mode::Math | Mode::DisplayMath)
                 && !boxes.output_routine_opening_pending
                 && !boxes.recovery_simple_group_pending
         }
-        Meaning::CharToken {
+        ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::EndGroup,
             ..
-        } => innermost_group == Some(GroupKind::Simple) && !boxes.recovery_simple_group_open,
+        }) => innermost_group == Some(GroupKind::Simple) && !boxes.recovery_simple_group_open,
         _ => false,
     }
 }
@@ -8161,7 +8261,9 @@ fn scan_direct_hot_command<G>(
         tex_state::measurement::record_hot_core_command_family(hot_core_command_family(
             command.meaning(),
         ));
-        if let Meaning::UnexpandablePrimitive(primitive) = command.meaning() {
+        if let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) =
+            command.meaning()
+        {
             tex_state::measurement::record_hot_core_unexpandable_opcode(
                 usize::try_from(primitive.operand())
                     .expect("unexpandable primitive operand fits usize"),
@@ -8171,10 +8273,10 @@ fn scan_direct_hot_command<G>(
     if innermost_group == Some(GroupKind::Simple)
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
+            ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::EndGroup,
                 ..
-            }
+            })
         )
     {
         return Ok(hot_apply::HotOperation::<G>::end_ordinary_group());
@@ -8183,9 +8285,9 @@ fn scan_direct_hot_command<G>(
         processor.int_param(IntParam::GLOBAL_DEFS),
         matches!(
             command.meaning(),
-            Meaning::UnexpandablePrimitive(
+            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                 UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
-            )
+            ))
         ),
     );
     match hot_apply::scan(
@@ -8197,7 +8299,7 @@ fn scan_direct_hot_command<G>(
     ) {
         Ok(Some(operation)) => Ok(operation),
         Ok(None) => unreachable!("direct hot candidate reaches the ranked hot scanner"),
-        Err(error) => Err(error.capture_command_origin_ref(command.origin_ref().clone())),
+        Err(error) => Err(error.capture_command_origin(command.origin())),
     }
 }
 
@@ -8245,10 +8347,12 @@ fn dispatch_main_control_command<G>(
     if boxes.pending_leader.is_some()
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
-                cat: Catcode::Space,
-                ..
-            } | Meaning::Relax
+            ResolvedMeaning::Static(
+                Meaning::CharToken {
+                    cat: Catcode::Space,
+                    ..
+                } | Meaning::Relax
+            )
         )
     {
         command = processor
@@ -8258,7 +8362,7 @@ fn dispatch_main_control_command<G>(
                 context: "leader glue",
             })?;
     }
-    let origin = command.origin_ref().clone();
+    let origin = command.origin();
     dispatch_main_control_command_inner(
         processor,
         command,
@@ -8272,38 +8376,42 @@ fn dispatch_main_control_command<G>(
         alignment,
         set_box_allowed,
     )
-    .map_err(|error| error.capture_command_origin_ref(origin))
+    .map_err(|error| error.capture_command_origin(origin))
 }
 
 #[cfg(feature = "profiling")]
-fn hot_core_command_family(meaning: Meaning) -> tex_state::measurement::HotCoreCommandFamily {
+fn hot_core_command_family<G>(
+    meaning: ResolvedMeaning<G>,
+) -> tex_state::measurement::HotCoreCommandFamily {
     use tex_state::measurement::HotCoreCommandFamily as Family;
 
     match meaning {
-        Meaning::CharGiven(_) | Meaning::CharToken { .. } | Meaning::MathCharGiven(_) => {
-            Family::Character
-        }
-        Meaning::Relax => Family::Relax,
-        Meaning::Undefined => Family::Undefined,
-        Meaning::Macro { .. } => Family::Macro,
-        Meaning::ExpandablePrimitive(_) => Family::ExpandablePrimitive,
-        Meaning::UnexpandablePrimitive(_) => Family::UnexpandablePrimitive,
-        Meaning::CountRegister(_)
-        | Meaning::DimenRegister(_)
-        | Meaning::SkipRegister(_)
-        | Meaning::MuskipRegister(_)
-        | Meaning::ToksRegister(_)
-        | Meaning::IntParam(_)
-        | Meaning::DimenParam(_)
-        | Meaning::GlueParam(_)
-        | Meaning::MuGlueParam(_)
-        | Meaning::TokParam(_)
-        | Meaning::PageDimension(_)
-        | Meaning::PageInteger(_) => Family::RegisterOrParameter,
-        Meaning::Font(_) => Family::Font,
-        Meaning::InternalInteger(_) => Family::InternalQuantity,
-        Meaning::EndV => Family::EndTemplate,
-        Meaning::Unknown(_) => Family::Unknown,
+        ResolvedMeaning::Static(
+            Meaning::CharGiven(_) | Meaning::CharToken { .. } | Meaning::MathCharGiven(_),
+        ) => Family::Character,
+        ResolvedMeaning::Static(Meaning::Relax) => Family::Relax,
+        ResolvedMeaning::Static(Meaning::Undefined) => Family::Undefined,
+        ResolvedMeaning::Macro { .. } => Family::Macro,
+        ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_)) => Family::ExpandablePrimitive,
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(_)) => Family::UnexpandablePrimitive,
+        ResolvedMeaning::Static(
+            Meaning::CountRegister(_)
+            | Meaning::DimenRegister(_)
+            | Meaning::SkipRegister(_)
+            | Meaning::MuskipRegister(_)
+            | Meaning::ToksRegister(_)
+            | Meaning::IntParam(_)
+            | Meaning::DimenParam(_)
+            | Meaning::GlueParam(_)
+            | Meaning::MuGlueParam(_)
+            | Meaning::TokParam(_)
+            | Meaning::PageDimension(_)
+            | Meaning::PageInteger(_),
+        ) => Family::RegisterOrParameter,
+        ResolvedMeaning::Static(Meaning::Font(_)) => Family::Font,
+        ResolvedMeaning::Static(Meaning::InternalInteger(_)) => Family::InternalQuantity,
+        ResolvedMeaning::Static(Meaning::EndV) => Family::EndTemplate,
+        ResolvedMeaning::Static(Meaning::Unknown(_)) => Family::Unknown,
     }
 }
 
@@ -8354,7 +8462,9 @@ fn dispatch_main_control_command_inner<G>(
                 tex_state::measurement::record_hot_core_command_family(hot_core_command_family(
                     command.meaning(),
                 ));
-                if let Meaning::UnexpandablePrimitive(primitive) = command.meaning() {
+                if let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) =
+                    command.meaning()
+                {
                     tex_state::measurement::record_hot_core_unexpandable_opcode(
                         usize::try_from(primitive.operand())
                             .expect("unexpandable primitive operand fits usize"),
@@ -8362,16 +8472,18 @@ fn dispatch_main_control_command_inner<G>(
                 }
             }
             match command.meaning() {
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global) => global = true,
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Long) => {
-                    flags = flags | MeaningFlags::LONG
-                }
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Outer) => {
-                    flags = flags | MeaningFlags::OUTER
-                }
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Protected) => {
-                    flags = flags | MeaningFlags::PROTECTED
-                }
+                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Global,
+                )) => global = true,
+                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Long,
+                )) => flags = flags | MeaningFlags::LONG,
+                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Outer,
+                )) => flags = flags | MeaningFlags::OUTER,
+                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::Protected,
+                )) => flags = flags | MeaningFlags::PROTECTED,
                 _ => break,
             }
             command = processor
@@ -8404,12 +8516,12 @@ fn dispatch_main_control_command_inner<G>(
         if flags.bits() & (MeaningFlags::LONG | MeaningFlags::OUTER).bits() != 0
             && !matches!(
                 command.meaning(),
-                Meaning::UnexpandablePrimitive(
+                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                     UnexpandablePrimitive::Def
                         | UnexpandablePrimitive::Edef
                         | UnexpandablePrimitive::Gdef
                         | UnexpandablePrimitive::Xdef
-                )
+                ))
             )
         {
             let etex = processor.profile().capabilities().supports_etex();
@@ -8427,7 +8539,9 @@ fn dispatch_main_control_command_inner<G>(
         // (`umber2-johp.196`).
         if matches!(
             command.meaning(),
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::IgnoreSpaces)
+            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::IgnoreSpaces
+            ))
         ) {
             let next = if let Some(alignment) = alignment {
                 loop {
@@ -8446,10 +8560,10 @@ fn dispatch_main_control_command_inner<G>(
                         Some(AlignmentDelivery::Command(next))
                             if matches!(
                                 next.meaning(),
-                                Meaning::CharToken {
+                                ResolvedMeaning::Static(Meaning::CharToken {
                                     cat: Catcode::Space,
                                     ..
-                                }
+                                })
                             ) => {}
                         Some(AlignmentDelivery::Command(next)) => break next,
                     }
@@ -8467,7 +8581,9 @@ fn dispatch_main_control_command_inner<G>(
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
             && matches!(
                 command.meaning(),
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoBoundary)
+                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
+                    UnexpandablePrimitive::NoBoundary
+                ))
             )
         {
             let Some(next) = processor.get_x_token().map_err(command_error)? else {
@@ -8475,11 +8591,13 @@ fn dispatch_main_control_command_inner<G>(
             };
             suppress_left_boundary = matches!(
                 next.meaning(),
-                Meaning::CharToken {
-                    cat: Catcode::Letter | Catcode::Other,
-                    ..
-                } | Meaning::CharGiven(_)
-                    | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+                ResolvedMeaning::Static(
+                    Meaning::CharToken {
+                        cat: Catcode::Letter | Catcode::Other,
+                        ..
+                    } | Meaning::CharGiven(_)
+                        | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+                )
             );
             command = next;
             report_command_trace(processor, mode, &command, shown_mode);
@@ -8495,9 +8613,9 @@ fn dispatch_main_control_command_inner<G>(
             global
                 || matches!(
                     command.meaning(),
-                    Meaning::UnexpandablePrimitive(
+                    ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                         UnexpandablePrimitive::Gdef | UnexpandablePrimitive::Xdef
-                    )
+                    ))
                 ),
         );
         let mut scanned = scan_command(
@@ -8581,19 +8699,19 @@ fn report_main_control_command_trace<G>(
     let output_routine_opening = boxes.output_routine_opening_pending
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
+            ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::BeginGroup,
                 ..
-            }
+            })
         );
     let shipout_box_constructor = boxes.pending_shipout
         && matches!(
             command.meaning(),
-            Meaning::UnexpandablePrimitive(
+            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
                 UnexpandablePrimitive::HBox
                     | UnexpandablePrimitive::VBox
                     | UnexpandablePrimitive::VTop
-            )
+            ))
         );
     if boxes.pending_leader.is_none() && !output_routine_opening && !shipout_box_constructor {
         report_command_trace(processor, mode, command, shown_mode);
@@ -8682,7 +8800,7 @@ fn scan_leader_glue_command<G>(
         Mode::Horizontal | Mode::RestrictedHorizontal | Mode::Math | Mode::DisplayMath
     );
     let primitive = match command.meaning() {
-        Meaning::UnexpandablePrimitive(primitive) => primitive,
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) => primitive,
         _ => {
             processor.back_input(command).map_err(command_error)?;
             return Ok(None);
@@ -8750,19 +8868,19 @@ fn scan_leader_glue_command<G>(
 /// tex.web's big case is `case abs(mode)+cur_cmd of`, so `vmode+x` covers both
 /// `vmode` and `-vmode`. Membership is decided purely from the delivered
 /// command, exactly as tex.web decides it from `cur_cmd`.
-fn starts_paragraph_in_vertical_mode(meaning: Meaning) -> bool {
+fn starts_paragraph_in_vertical_mode<G>(meaning: ResolvedMeaning<G>) -> bool {
     match meaning {
         // `vmode+letter`, `vmode+other_char`, and `vmode+math_shift`. A
         // `spacer` is deliberately absent: §1045's `vmode+spacer: do_nothing`
         // leaves vertical mode untouched, and every other category code
         // (braces, `#`, `^`, `_`, `~`) has its own case elsewhere.
-        Meaning::CharToken { cat, .. } => {
+        ResolvedMeaning::Static(Meaning::CharToken { cat, .. }) => {
             matches!(cat, Catcode::Letter | Catcode::Other | Catcode::MathShift)
         }
         // `vmode+char_given`: a `\chardef`'d token (§1224 installs it as
         // `char_given`), which §1090 treats exactly like `char_num`.
-        Meaning::CharGiven(_) => true,
-        Meaning::UnexpandablePrimitive(primitive) => matches!(
+        ResolvedMeaning::Static(Meaning::CharGiven(_)) => true,
+        ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive)) => matches!(
             primitive,
             // `vmode+char_num`: §265's `primitive("char",char_num,0)`.
             UnexpandablePrimitive::Char
@@ -8811,15 +8929,6 @@ fn starts_paragraph_in_vertical_mode(meaning: Meaning) -> bool {
     }
 }
 
-fn material_origin<G>(
-    processor: &mut CommandProcessor<'_, G>,
-    command: &tex_command::CurrentCommand<G>,
-) -> tex_state::provenance::OriginRef {
-    processor
-        .active_macro_origin()
-        .unwrap_or_else(|| command.origin_ref().clone())
-}
-
 #[allow(clippy::too_many_arguments)] // mirrors TeX main-control dispatch inputs
 fn scan_command<G>(
     processor: &mut CommandProcessor<'_, G>,
@@ -8834,11 +8943,11 @@ fn scan_command<G>(
     set_box_allowed: bool,
     shown_mode: &mut Option<Mode>,
 ) -> Result<ScannedOperation<G>, ExecError> {
-    if let Meaning::UnexpandablePrimitive(
+    if let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
         primitive @ (UnexpandablePrimitive::TextFont
         | UnexpandablePrimitive::ScriptFont
         | UnexpandablePrimitive::ScriptScriptFont),
-    ) = command.meaning()
+    )) = command.meaning()
     {
         let size = tex_command::MathFamilySize::of_primitive(primitive)
             .expect("the outer match restricts this to `def_family`");
@@ -8864,11 +8973,11 @@ fn scan_command<G>(
     // driver receives a typed scalar request and schedules any opaque field
     // episode only after this processor borrow has ended.
     if matches!(mode, Mode::Math | Mode::DisplayMath)
-        && let Meaning::UnexpandablePrimitive(
+        && let ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Left
             | UnexpandablePrimitive::Right
             | UnexpandablePrimitive::Middle),
-        ) = command.meaning()
+        )) = command.meaning()
     {
         let kind = match primitive {
             UnexpandablePrimitive::Left => MathDelimiterBoundaryKind::Left,
@@ -8891,10 +9000,10 @@ fn scan_command<G>(
         return Ok(ColdOperation::<G>::Math(request).into());
     }
     if matches!(mode, Mode::Math | Mode::DisplayMath)
-        && let Meaning::CharToken {
+        && let ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::Superscript,
             ..
-        } = command.meaning()
+        }) = command.meaning()
     {
         return Ok(
             ColdOperation::<G>::Math(MathRequest::Script(tex_command::ScannedMathScript {
@@ -8907,10 +9016,10 @@ fn scan_command<G>(
         );
     }
     if matches!(mode, Mode::Math | Mode::DisplayMath)
-        && let Meaning::CharToken {
+        && let ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::Subscript,
             ..
-        } = command.meaning()
+        }) = command.meaning()
     {
         return Ok(
             ColdOperation::<G>::Math(MathRequest::Script(tex_command::ScannedMathScript {
@@ -8926,10 +9035,10 @@ fn scan_command<G>(
     if boxes.output_routine_opening_pending
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
+            ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::BeginGroup,
                 ..
-            }
+            })
         )
     {
         return Ok(ColdOperation::<G>::OutputRoutineOpeningBrace.into());
@@ -8940,10 +9049,10 @@ fn scan_command<G>(
     if boxes.recovery_simple_group_pending
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
+            ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::BeginGroup,
                 ..
-            }
+            })
         )
     {
         return Ok(ColdOperation::<G>::BeginSimpleGroup.into());
@@ -8951,10 +9060,10 @@ fn scan_command<G>(
     if boxes.recovery_simple_group_open
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
+            ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::EndGroup,
                 ..
-            }
+            })
         )
     {
         return Ok(ColdOperation::<G>::EndSimpleGroup.into());
@@ -8965,10 +9074,10 @@ fn scan_command<G>(
     if innermost_group == Some(GroupKind::Simple)
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
+            ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::EndGroup,
                 ..
-            }
+            })
         )
     {
         return Ok(ScannedOperation::<G>::Hot(
@@ -8984,10 +9093,10 @@ fn scan_command<G>(
     if let Some(kind @ (GroupKind::Math | GroupKind::MathChoice)) = innermost_group
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
+            ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::EndGroup,
                 ..
-            }
+            })
         )
     {
         return Ok(ColdOperation::<G>::EndMathGroup(kind).into());
@@ -8995,10 +9104,10 @@ fn scan_command<G>(
     if innermost_group == Some(GroupKind::Disc)
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
+            ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::EndGroup,
                 ..
-            }
+            })
         )
     {
         return Ok(ColdOperation::<G>::DiscretionaryPartEnd.into());
@@ -9023,10 +9132,10 @@ fn scan_command<G>(
     // `scan_left_brace` (TeX82 §403) consumed it while the construction was
     // still being scanned.
     if matches!(mode, Mode::Math | Mode::DisplayMath)
-        && let Meaning::CharToken {
+        && let ResolvedMeaning::Static(Meaning::CharToken {
             cat: Catcode::BeginGroup,
             ..
-        } = command.meaning()
+        }) = command.meaning()
     {
         processor.back_input(command).map_err(command_error)?;
         return Ok(ColdOperation::<G>::Math(MathRequest::TextField(MathTextFieldKind::Ord)).into());
@@ -9045,10 +9154,10 @@ fn scan_command<G>(
         && innermost_group == Some(box_state.group_kind)
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
+            ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::EndGroup,
                 ..
-            }
+            })
         )
     {
         let threshold = match box_state.kind {
@@ -9074,10 +9183,10 @@ fn scan_command<G>(
         && innermost_group == Some(GroupKind::Output)
         && matches!(
             command.meaning(),
-            Meaning::CharToken {
+            ResolvedMeaning::Static(Meaning::CharToken {
                 cat: Catcode::EndGroup,
                 ..
-            }
+            })
         )
     {
         if partoken_context_replays(processor, mode, 2) {
