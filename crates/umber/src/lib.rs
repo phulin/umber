@@ -612,6 +612,16 @@ impl PlannedFinalization {
         Ok(Self { publication, files })
     }
 
+    #[must_use]
+    pub fn pages(&self) -> &[tex_exec::DetachedPreparedPage] {
+        self.publication.pages()
+    }
+
+    #[must_use]
+    pub fn remaining_effects(&self) -> &[EffectRecord] {
+        self.publication.remaining_effects()
+    }
+
     pub fn retarget_stream_open(
         &mut self,
         failed: &tex_exec::CompletionPublicationFailure,
@@ -1720,6 +1730,24 @@ mod tests {
 
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 
+    fn publication(source: &str) -> tex_exec::PreparedEnginePublication {
+        let mut session = crate::VirtualCompileSession::new(crate::SessionOptions::default())
+            .expect("finalization test session");
+        session
+            .add_user_file("main.tex", source.as_bytes().to_vec())
+            .expect("finalization test source");
+        assert!(matches!(
+            session.compile_attempt(),
+            crate::CompileAttemptResult::Complete(_)
+        ));
+        session
+            .into_accepted_finalization()
+            .expect("accepted finalization")
+            .completion
+            .into_publication()
+            .expect("prepared engine publication")
+    }
+
     #[test]
     fn tex_run_status_preserves_web2c_history_threshold() {
         use tex_state::print::ErrorHistory;
@@ -2147,21 +2175,20 @@ mod tests {
     fn driver_materialization_follows_engine_effect_commit() {
         let temp = tempfile::tempdir().expect("temp dir");
         let output = temp.path().join("shared.out");
-        let mut stores = Universe::with_world(World::real()).with_plain_catcodes();
-        let slot = StreamSlot::new(1);
-        stores.world_mut().open_out(slot, &output);
-        stores
-            .world_mut()
-            .write_text(PrintSink::Stream(slot), "engine");
+        let publication = publication(&format!(
+            "\\openout1={} \\write1{{engine}}\\closeout1\\end",
+            output.display()
+        ));
         let plan = PlannedFinalization::new(
-            stores.world().effect_pos(),
+            publication,
             vec![DriverFile::new(output.clone(), b"driver".to_vec())],
         )
         .expect("paths are distinct");
+        let mut world = World::real();
 
-        plan.commit_effects(&mut stores)
+        plan.commit_effects(&mut world)
             .expect("effects commit")
-            .materialize(&mut stores)
+            .materialize(&mut world)
             .expect("driver materializes");
 
         assert_eq!(std::fs::read(output).expect("read output"), b"driver");
@@ -2170,20 +2197,19 @@ mod tests {
     #[test]
     fn failed_effect_commit_cannot_materialize_driver_file() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let mut stores = Universe::with_world(World::real()).with_plain_catcodes();
-        let slot = StreamSlot::new(1);
-        stores.world_mut().open_out(slot, temp.path());
-        stores
-            .world_mut()
-            .write_text(PrintSink::Stream(slot), "cannot write a directory");
+        let publication = publication(&format!(
+            "\\openout1={} \\write1{{cannot write a directory}}\\end",
+            temp.path().display()
+        ));
         let driver_path = temp.path().join("driver.dvi");
         let plan = PlannedFinalization::new(
-            stores.world().effect_pos(),
+            publication,
             vec![DriverFile::new(driver_path.clone(), b"driver".to_vec())],
         )
         .expect("paths are distinct");
+        let mut world = World::real();
 
-        assert!(plan.commit_effects(&mut stores).is_err());
+        assert!(plan.commit_effects(&mut world).is_err());
         assert!(!driver_path.exists());
     }
 
@@ -2194,67 +2220,58 @@ mod tests {
         let prefix_path = temp.path().join("prefix.out");
         let replacement_path = temp.path().join("replacement.out");
         let driver_path = temp.path().join("driver.dvi");
-        let mut stores = Universe::with_world(World::real()).with_plain_catcodes();
-        let prefix_slot = StreamSlot::new(1);
-        let retry_slot = StreamSlot::new(2);
-        stores.world_mut().open_out(prefix_slot, &prefix_path);
-        stores
-            .world_mut()
-            .write_text(PrintSink::Stream(prefix_slot), "once");
-        stores.world_mut().open_out(retry_slot, temp.path());
-        stores
-            .world_mut()
-            .write_text(PrintSink::Stream(retry_slot), "suffix");
+        let publication = publication(&format!(
+            "\\openout1={} \\write1{{once}}\\closeout1 \\openout2={} \\write2{{suffix}}\\end",
+            prefix_path.display(),
+            temp.path().display()
+        ));
         let plan = PlannedFinalization::new(
-            stores.world().effect_pos(),
+            publication,
             vec![DriverFile::new(driver_path.clone(), b"driver".to_vec())],
         )
         .expect("plan");
+        let mut world = World::real();
 
-        let FinalizationCommit::Retry { plan, error } = plan
-            .commit_effects_retryable(&mut stores)
+        let FinalizationCommit::Retry { mut plan, failure } = plan
+            .commit_effects_retryable(&mut world)
             .expect("retry-safe failure is retained")
         else {
             panic!("directory open must suspend finalization");
         };
-        let failed = error
-            .stream_open_unavailable()
-            .expect("typed unavailable open")
-            .clone();
-        assert_eq!(failed.path(), temp.path());
+        assert_eq!(failure.path(), Some(temp.path()));
         assert_eq!(
             std::fs::read(&prefix_path).expect("committed prefix"),
-            b"once"
+            b"once\n"
         );
         assert!(!driver_path.exists());
 
-        stores
-            .world_mut()
-            .retarget_pending_stream_open(&failed, &replacement_path)
+        plan.retarget_stream_open(&failure, &replacement_path)
             .expect("retarget pending open");
         let FinalizationCommit::Committed(committed) = plan
-            .commit_effects_retryable(&mut stores)
+            .commit_effects_retryable(&mut world)
             .expect("replacement commits")
         else {
             panic!("replacement must finish the retained plan");
         };
         committed
-            .materialize(&mut stores)
+            .materialize(&mut world)
             .expect("driver materializes");
 
-        assert_eq!(std::fs::read(prefix_path).expect("prefix remains"), b"once");
+        assert_eq!(
+            std::fs::read(prefix_path).expect("prefix remains"),
+            b"once\n"
+        );
         assert_eq!(
             std::fs::read(replacement_path).expect("suffix commits"),
-            b"suffix"
+            b"suffix\n"
         );
         assert_eq!(std::fs::read(driver_path).expect("driver"), b"driver");
     }
 
     #[test]
     fn duplicate_driver_paths_are_rejected_before_finalization() {
-        let stores = Universe::with_world(World::memory()).with_plain_catcodes();
         let result = PlannedFinalization::new(
-            stores.world().effect_pos(),
+            publication("\\end"),
             vec![
                 DriverFile::new(PathBuf::from("same.out"), vec![1]),
                 DriverFile::new(PathBuf::from("same.out"), vec![2]),
@@ -2268,9 +2285,8 @@ mod tests {
 
     #[test]
     fn lexically_aliased_driver_paths_are_rejected_before_finalization() {
-        let stores = Universe::with_world(World::memory()).with_plain_catcodes();
         let result = PlannedFinalization::new(
-            stores.world().effect_pos(),
+            publication("\\end"),
             vec![
                 DriverFile::new(PathBuf::from("out"), vec![1]),
                 DriverFile::new(PathBuf::from("./out"), vec![2]),
@@ -2282,7 +2298,7 @@ mod tests {
         ));
 
         let result = PlannedFinalization::new(
-            stores.world().effect_pos(),
+            publication("\\end"),
             vec![
                 DriverFile::new(PathBuf::from("build/out"), vec![1]),
                 DriverFile::new(PathBuf::from("build/tmp/../out"), vec![2]),
@@ -2296,19 +2312,17 @@ mod tests {
 
     #[test]
     fn fixture_policy_preserves_effects_without_materializing_files() {
-        let mut stores = Universe::with_world(World::memory()).with_plain_catcodes();
-        stores
-            .world_mut()
-            .write_text(PrintSink::Terminal, "fixture");
+        let publication = publication("\\message{fixture}\\end");
         let plan = PlannedFinalization::new(
-            stores.world().effect_pos(),
+            publication,
             vec![DriverFile::new(PathBuf::from("fixture.dvi"), vec![1])],
         )
         .expect("path is unique");
 
         plan.discard_uncommitted();
 
-        assert_eq!(stores.world().effect_records().len(), 1);
-        assert_eq!(stores.world().memory_output("fixture.dvi"), None);
+        let world = World::memory();
+        assert_eq!(world.memory_terminal_output(), Some([].as_slice()));
+        assert_eq!(world.memory_output("fixture.dvi"), None);
     }
 }

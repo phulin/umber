@@ -12,7 +12,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
 use tex_state::{FormatError, Universe, World, WorldError};
 use umber::EngineMode as RunEngine;
-use umber::{DriverFile, MemoryOutputFile, PlannedFinalization};
+use umber::{DriverFile, PlannedFinalization};
 
 #[cfg(feature = "profiling")]
 #[global_allocator]
@@ -1041,12 +1041,6 @@ fn input_record_receipt(
     Ok(receipt)
 }
 
-fn receipt_path_key(path: &Path) -> PathBuf {
-    path.components()
-        .filter(|component| !matches!(component, std::path::Component::CurDir))
-        .collect()
-}
-
 fn insert_input_record(
     records: &mut BTreeMap<PathBuf, usize>,
     path: PathBuf,
@@ -1254,7 +1248,6 @@ impl From<umber::cli_resource::NativeRunError> for CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tex_state::{InputOrigin, PrintSink, StreamSlot};
 
     #[test]
     fn causal_diagnostic_is_bounded_and_content_free() {
@@ -1293,56 +1286,18 @@ mod tests {
     }
 
     #[test]
-    fn input_receipt_deduplicates_external_reads_and_excludes_same_run_outputs() {
-        let mut world = World::memory();
-        world
-            .set_memory_file("external.cfg", b"external".to_vec())
-            .expect("seed external input");
-        let first = world
-            .read_file("external.cfg")
-            .expect("first external read");
-        let second = world
-            .read_file("external.cfg")
-            .expect("repeated external read");
-        assert_eq!(first.origin(), InputOrigin::External);
-        assert_eq!(second.origin(), InputOrigin::External);
-
-        let slot = StreamSlot::new(1);
-        world.open_out(slot, "generated.tmp");
-        world.write_text(PrintSink::Stream(slot), "generated");
-        world.close_out(slot);
-        let generated = world
-            .read_file("generated.tmp")
-            .expect("same-run generated read");
-        assert_eq!(generated.origin(), InputOrigin::SameRunGenerated);
-
-        let receipt = input_record_receipt(&world, &BTreeMap::new(), &[], None, &[])
+    fn input_receipt_deduplicates_accepted_resolved_reads() {
+        let path = PathBuf::from("external.cfg");
+        let receipt = input_record_receipt(&[(path.clone(), 8), (path, 8)], None)
             .expect("build input receipt");
         assert_eq!(receipt, b"8\texternal.cfg\n");
     }
 
     #[test]
-    fn input_receipt_prefers_resolved_paths_and_excludes_normalized_output_aliases() {
-        let mut world = World::memory();
-        world
-            .set_memory_file("logical.ltx", b"resolved".to_vec())
-            .expect("seed logical input");
-        world
-            .set_memory_file("./texsys.aux", b"generated".to_vec())
-            .expect("seed reconstructed output read");
-        world.read_file("logical.ltx").expect("read logical input");
-        world
-            .read_file("./texsys.aux")
-            .expect("read reconstructed output");
-
+    fn input_receipt_uses_resolved_paths() {
         let resolved = PathBuf::from("/locked/texmf/logical.ltx");
-        let path_map = BTreeMap::from([(PathBuf::from("logical.ltx"), resolved.clone())]);
-        let outputs = vec![MemoryOutputFile {
-            path: PathBuf::from("texsys.aux"),
-            bytes: b"generated".to_vec(),
-        }];
-        let receipt = input_record_receipt(&world, &path_map, &[(resolved, 8)], None, &outputs)
-            .expect("build authoritative receipt");
+        let receipt =
+            input_record_receipt(&[(resolved, 8)], None).expect("build authoritative receipt");
 
         assert_eq!(receipt, b"8\t/locked/texmf/logical.ltx\n");
     }
@@ -1350,14 +1305,8 @@ mod tests {
     #[test]
     fn input_receipt_rejects_unescaped_tsv_delimiters() {
         for path in ["tab\tname.tex", "line\nname.tex", "return\rname.tex"] {
-            let error = input_record_receipt(
-                &World::memory(),
-                &BTreeMap::new(),
-                &[(PathBuf::from(path), 1)],
-                None,
-                &[],
-            )
-            .expect_err("receipt paths containing delimiters must be rejected");
+            let error = input_record_receipt(&[(PathBuf::from(path), 1)], None)
+                .expect_err("receipt paths containing delimiters must be rejected");
             assert!(matches!(error, CliError::InputReceipt(_)));
         }
     }

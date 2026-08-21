@@ -376,20 +376,20 @@ fn accepted_finalization_transfers_uncommitted_engine_state() {
         panic!("revision should complete");
     };
 
-    let mut finalization = session
+    let finalization = session
         .into_accepted_finalization()
         .expect("accepted finalization");
-    assert_eq!(
-        finalization.stores.world().commit_mode(),
-        tex_state::WorldCommitMode::Retained
-    );
-    assert!(!finalization.stores.world().effect_records().is_empty());
-    finalization
-        .stores
-        .export_retained_effects()
+    assert!(!finalization.completion.effects().is_empty());
+    let mut destination = World::memory();
+    let publication = finalization
+        .completion
+        .into_publication()
+        .expect("prepare accepted publication");
+    let plan = crate::PlannedFinalization::new(publication, Vec::new()).expect("empty driver plan");
+    plan.commit_effects(&mut destination)
         .expect("commit accepted effects");
     assert_eq!(
-        finalization.stores.world().memory_terminal_output(),
+        destination.memory_terminal_output(),
         Some(output.terminal.as_slice())
     );
     assert!(!finalization.dumped_format);
@@ -408,21 +408,10 @@ fn accepted_finalization_keeps_openout_page_unpublished() {
     let finalization = session
         .into_accepted_finalization()
         .expect("accepted finalization");
-    assert!(
-        finalization.stores.world().committed_artifacts().is_empty(),
-        "fallible page artifact must not publish before authoritative open"
-    );
-    assert!(
-        finalization.stores.pdf_pages().is_empty(),
-        "fallible PDF page must not publish before authoritative open"
-    );
-    let prepared = finalization
-        .prepared_pages
-        .as_ref()
-        .expect("openout page stays prepared");
-    assert_eq!(prepared.artifacts().len(), 1);
-    let page = tex_out::PageArtifact::from_bytes(prepared.artifacts()[0].bytes())
-        .expect("prepared artifact parses");
+    assert_eq!(finalization.completion.pages().len(), 1);
+    let page =
+        tex_out::PageArtifact::from_bytes(finalization.completion.pages()[0].artifact().bytes())
+            .expect("prepared artifact parses");
     assert!(page.effects.iter().any(|effect| {
         matches!(
             effect,
@@ -452,41 +441,28 @@ fn replacement_openout_name_becomes_published_artifact_identity() {
         matches!(attempt, CompileAttemptResult::Complete(_)),
         "{attempt:#?}"
     );
-    let mut finalization = session
+    let finalization = session
         .into_accepted_finalization()
         .expect("accepted finalization");
-    let original_hash = finalization
-        .prepared_pages
-        .as_ref()
-        .expect("prepared openout page")
-        .artifacts()[0]
-        .hash();
-    finalization
-        .stores
-        .world_mut()
-        .retarget_output_backend(&World::real_with_artifact_dir(
-            temp.path().join("artifacts"),
-        ))
-        .expect("real finalization backend");
+    let original_hash = finalization.completion.pages()[0].artifact().hash();
+    let publication = finalization
+        .completion
+        .into_publication()
+        .expect("prepare accepted publication");
+    let mut destination = World::real_with_artifact_dir(temp.path().join("artifacts"));
     let mut plan =
-        crate::PlannedFinalization::new(finalization.stores.world().effect_pos(), Vec::new())
-            .expect("empty driver plan")
-            .with_prepared_pages(finalization.prepared_pages);
+        crate::PlannedFinalization::new(publication, Vec::new()).expect("empty driver plan");
     let crate::FinalizationCommit::Retry {
         plan: retained,
-        error,
+        failure,
     } = plan
-        .commit_effects_retryable(&mut finalization.stores)
+        .commit_effects_retryable(&mut destination)
         .expect("retry-safe open failure")
     else {
         panic!("directory open must retain finalization");
     };
-    assert!(finalization.stores.world().committed_artifacts().is_empty());
-    let failed = error
-        .stream_open_unavailable()
-        .expect("failed target")
-        .to_owned();
-    let context_lines = failed.context().lines().collect::<Vec<_>>();
+    assert!(destination.committed_artifacts().is_empty());
+    let context_lines = failure.message().lines().collect::<Vec<_>>();
     assert!(context_lines.len() >= 2);
     let context_lines = &context_lines[context_lines.len() - 2..];
     // §318 prints the location descriptor before §316 starts measuring, so
@@ -494,21 +470,21 @@ fn replacement_openout_name_becomes_published_artifact_identity() {
     assert!(
         context_lines[0].starts_with("l.1 ..."),
         "{:?}",
-        failed.context()
+        failure.message()
     );
     assert!(context_lines[0].ends_with("\\shipout\\copy0\\end"));
     assert_eq!(context_lines[0].chars().count(), 50);
     assert_eq!(context_lines[1].chars().count(), 50);
     plan = retained;
-    plan.retarget_stream_open(&mut finalization.stores, &failed, &replacement)
+    plan.retarget_stream_open(&failure, &replacement)
         .expect("retarget prepared page");
     assert!(matches!(
-        plan.commit_effects_retryable(&mut finalization.stores)
+        plan.commit_effects_retryable(&mut destination)
             .expect("replacement succeeds"),
         crate::FinalizationCommit::Committed(_)
     ));
 
-    let [published] = finalization.stores.world().committed_artifacts() else {
+    let [published] = destination.committed_artifacts() else {
         panic!("one page publishes after the open succeeds");
     };
     assert_ne!(published.hash(), original_hash);
@@ -546,30 +522,22 @@ fn finalization_retry_context_traverses_nested_sources_with_limit() {
         session.compile_attempt(),
         CompileAttemptResult::Complete(_)
     ));
-    let mut finalization = session
+    let finalization = session
         .into_accepted_finalization()
         .expect("accepted finalization");
-    finalization
-        .stores
-        .world_mut()
-        .retarget_output_backend(&World::real_with_artifact_dir(
-            temp.path().join("artifacts"),
-        ))
-        .expect("real finalization backend");
-    let plan =
-        crate::PlannedFinalization::new(finalization.stores.world().effect_pos(), Vec::new())
-            .expect("empty driver plan")
-            .with_prepared_pages(finalization.prepared_pages);
-    let crate::FinalizationCommit::Retry { error, .. } = plan
-        .commit_effects_retryable(&mut finalization.stores)
+    let publication = finalization
+        .completion
+        .into_publication()
+        .expect("prepare accepted publication");
+    let mut destination = World::real_with_artifact_dir(temp.path().join("artifacts"));
+    let plan = crate::PlannedFinalization::new(publication, Vec::new()).expect("empty driver plan");
+    let crate::FinalizationCommit::Retry { failure, .. } = plan
+        .commit_effects_retryable(&mut destination)
         .expect("retry-safe open failure")
     else {
         panic!("directory open must retain finalization");
     };
-    let context = error
-        .stream_open_unavailable()
-        .expect("typed unavailable open")
-        .context();
+    let context = failure.message();
     assert!(context.contains("LEAF-CONTEXT"), "{context:?}");
     // tex.web §310's `bottom_line` stops at the first real-file level. The
     // enclosing files therefore do not consume the `\errorcontextlines`
@@ -590,132 +558,56 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
         .expect("temporary output root");
     let target =
         Path::new(temp.path().file_name().expect("relative temporary name")).join("same.out");
+    let blocked =
+        Path::new(temp.path().file_name().expect("relative temporary name")).join("blocked.out");
+    std::fs::create_dir(&blocked).expect("second output target is unavailable");
     let replacement = Path::new(temp.path().file_name().expect("relative temporary name"))
         .join("replacement.out");
     let source = format!(
         "\\shipout\\hbox{{A\\openout1={0} }}\
-         \\shipout\\hbox{{B\\openout1={0} \\openout1={0}\
+         \\shipout\\hbox{{B\\openout1={1} \\openout1={1}\
          \\write16{{same}}\\write1{{same}}\\write1{{second}}}}\\end",
-        target.display()
+        target.display(),
+        blocked.display()
     );
     let mut session = session(&source);
     assert!(matches!(
         session.compile_attempt(),
         CompileAttemptResult::Complete(_)
     ));
-    let mut finalization = session
+    let finalization = session
         .into_accepted_finalization()
         .expect("accepted finalization");
-    assert_eq!(
-        finalization
-            .prepared_pages
-            .as_ref()
-            .expect("cross-page prepared suffix")
-            .artifacts()
-            .len(),
-        2
-    );
-    finalization
-        .stores
-        .world_mut()
-        .retarget_output_backend(&World::real_with_artifact_dir(
-            temp.path().join("artifacts"),
-        ))
-        .expect("real finalization backend");
-    let records = finalization.stores.world().effect_records();
-    let first_target = records
-        .iter()
-        .find_map(|effect| match effect {
-            tex_state::EffectRecord::StreamOpen { target, .. } => Some(target.path().to_owned()),
-            _ => None,
-        })
-        .expect("first occurrence is open");
-    assert_eq!(first_target, target);
-    let remaining = u64::try_from(records.len()).expect("effect count fits");
-    let effect_base = finalization
-        .stores
-        .world()
-        .effect_pos()
-        .retreated_by(remaining);
-    let open_positions = records
-        .iter()
-        .enumerate()
-        .filter(|(_, effect)| matches!(effect, tex_state::EffectRecord::StreamOpen { .. }))
-        .map(|(index, _)| {
-            effect_base.advanced_by(u64::try_from(index + 1).expect("effect index fits"))
-        })
-        .collect::<Vec<_>>();
-    let [first_open, second_open, _third_open, ..] = open_positions.as_slice() else {
-        panic!("cross-page test needs at least three opens");
-    };
-    finalization
-        .stores
-        .export_retained_effects_through(*first_open)
-        .expect("first same-path occurrence commits");
-    std::fs::remove_file(&first_target).expect("replace first output with unavailable directory");
-    std::fs::create_dir(&first_target).expect("second occurrence becomes unavailable");
-
+    assert_eq!(finalization.completion.pages().len(), 2);
+    let publication = finalization
+        .completion
+        .into_publication()
+        .expect("prepare accepted publication");
+    let mut destination = World::real_with_artifact_dir(temp.path().join("artifacts"));
     let mut plan =
-        crate::PlannedFinalization::new(finalization.stores.world().effect_pos(), Vec::new())
-            .expect("empty driver plan")
-            .with_prepared_pages(finalization.prepared_pages);
+        crate::PlannedFinalization::new(publication, Vec::new()).expect("empty driver plan");
     let crate::FinalizationCommit::Retry {
         plan: retained,
-        error,
+        failure,
     } = plan
-        .commit_effects_retryable(&mut finalization.stores)
+        .commit_effects_retryable(&mut destination)
         .expect("second occurrence suspends")
     else {
         panic!("second occurrence must fail");
     };
-    let failed = error
-        .stream_open_unavailable()
-        .expect("exact failed occurrence")
-        .clone();
-    assert_eq!(failed.slot(), tex_state::StreamSlot::new(1));
-    assert_eq!(failed.position(), *second_open);
-    let effects_before_missing = finalization.stores.world().effect_records().to_vec();
-    let artifacts_before_missing = finalization.stores.world().committed_artifacts().len();
-    let pdf_pages_before_missing = finalization.stores.pdf_pages().len();
-    let mut missing_plan =
-        crate::PlannedFinalization::new(finalization.stores.world().effect_pos(), Vec::new())
-            .expect("empty missing-artifact plan");
-    assert!(
-        missing_plan
-            .retarget_stream_open(&mut finalization.stores, &failed, &replacement)
-            .is_err(),
-        "missing prepared occurrence must fail"
-    );
-    assert_eq!(
-        finalization.stores.world().effect_records(),
-        effects_before_missing,
-        "missing occurrence cannot partially mutate World"
-    );
-    assert_eq!(
-        finalization.stores.world().committed_artifacts().len(),
-        artifacts_before_missing,
-        "missing occurrence cannot publish an artifact"
-    );
-    assert_eq!(
-        finalization.stores.pdf_pages().len(),
-        pdf_pages_before_missing,
-        "missing occurrence cannot publish PDF history"
-    );
+    assert_eq!(failure.slot(), Some(tex_state::StreamSlot::new(1)));
+    assert_eq!(failure.path(), Some(blocked.as_path()));
     plan = retained;
-    plan.retarget_stream_open(&mut finalization.stores, &failed, &replacement)
+    plan.retarget_stream_open(&failure, &replacement)
         .expect("exact occurrence retargets");
 
-    let prepared = plan
-        .prepared_pages
-        .as_ref()
-        .expect("prepared suffix retained");
-    assert_eq!(prepared.artifacts().len(), 2);
-    let opens = prepared
-        .artifacts()
+    assert_eq!(plan.pages().len(), 2);
+    let opens = plan
+        .pages()
         .iter()
-        .map(|artifact| {
-            let page =
-                tex_out::PageArtifact::from_bytes(artifact.bytes()).expect("prepared page parses");
+        .map(|prepared| {
+            let page = tex_out::PageArtifact::from_bytes(prepared.artifact().bytes())
+                .expect("prepared page parses");
             page.effects
                 .iter()
                 .filter_map(|effect| match effect {
@@ -730,13 +622,12 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
         [
             vec![(1, target.to_string_lossy().into_owned())],
             vec![
-                (1, target.to_string_lossy().into_owned()),
                 (1, replacement.to_string_lossy().into_owned()),
-                (1, target.to_string_lossy().into_owned()),
+                (1, blocked.to_string_lossy().into_owned()),
             ],
         ]
     );
-    let second_page = tex_out::PageArtifact::from_bytes(prepared.artifacts()[1].bytes())
+    let second_page = tex_out::PageArtifact::from_bytes(plan.pages()[1].artifact().bytes())
         .expect("second prepared page parses");
     let same_writes = second_page
         .effects
@@ -754,51 +645,27 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
         ],
         "equal write text with different sinks cannot influence OpenOut identity"
     );
-    let retargeted_hashes = prepared
-        .artifacts()
+    let retargeted_hashes = plan
+        .pages()
         .iter()
-        .map(tex_state::CommittedArtifact::hash)
+        .map(|page| page.artifact().hash())
         .collect::<Vec<_>>();
-    let effects_before_stale = finalization.stores.world().effect_records().to_vec();
-    let artifacts_before_stale = finalization.stores.world().committed_artifacts().len();
-    let pdf_pages_before_stale = finalization.stores.pdf_pages().len();
-
     assert!(
-        plan.retarget_stream_open(&mut finalization.stores, &failed, Path::new("stale.out"))
+        plan.retarget_stream_open(&failure, Path::new("stale.out"))
             .is_err(),
         "stale occurrence identity must fail"
     );
     assert_eq!(
-        plan.prepared_pages
-            .as_ref()
-            .expect("prepared suffix survives")
-            .artifacts()
+        plan.pages()
             .iter()
-            .map(tex_state::CommittedArtifact::hash)
+            .map(|page| page.artifact().hash())
             .collect::<Vec<_>>(),
         retargeted_hashes,
         "stale failure is atomic for prepared history"
     );
-    assert_eq!(
-        finalization.stores.world().effect_records(),
-        effects_before_stale,
-        "stale occurrence cannot partially mutate World"
-    );
-    assert_eq!(
-        finalization.stores.world().committed_artifacts().len(),
-        artifacts_before_stale,
-        "stale occurrence cannot publish an artifact"
-    );
-    assert_eq!(
-        finalization.stores.pdf_pages().len(),
-        pdf_pages_before_stale,
-        "stale occurrence cannot publish PDF history"
-    );
-    assert!(matches!(
-        finalization.stores.world().effect_records().first(),
-        Some(tex_state::EffectRecord::StreamOpen { target, .. })
-            if target.path() == replacement
-    ));
+    plan.commit_effects(&mut destination)
+        .expect("retargeted publication succeeds");
+    assert_eq!(destination.committed_artifacts().len(), 2);
 }
 
 #[test]
@@ -837,60 +704,46 @@ fn incremental_effect_prefix_edit_preserves_openout_retry_identity() {
     ));
     assert_eq!(session.revision(), Some(RevisionId::new(2)));
 
-    let mut finalization = session
+    let finalization = session
         .into_accepted_finalization()
         .expect("accepted finalization");
     let hashes_before = finalization
-        .prepared_pages
-        .as_ref()
-        .expect("prepared page suffix")
-        .artifacts()
+        .completion
+        .pages()
         .iter()
-        .map(tex_state::CommittedArtifact::hash)
+        .map(|page| page.artifact().hash())
         .collect::<Vec<_>>();
-    finalization
-        .stores
-        .world_mut()
-        .retarget_output_backend(&World::real_with_artifact_dir(
-            temp.path().join("artifacts"),
-        ))
-        .expect("real finalization backend");
-    let plan =
-        crate::PlannedFinalization::new(finalization.stores.world().effect_pos(), Vec::new())
-            .expect("empty driver plan")
-            .with_prepared_pages(finalization.prepared_pages);
-    let crate::FinalizationCommit::Retry { mut plan, error } = plan
-        .commit_effects_retryable(&mut finalization.stores)
+    let publication = finalization
+        .completion
+        .into_publication()
+        .expect("prepare accepted publication");
+    let mut destination = World::real_with_artifact_dir(temp.path().join("artifacts"));
+    let plan = crate::PlannedFinalization::new(publication, Vec::new()).expect("empty driver plan");
+    let crate::FinalizationCommit::Retry { mut plan, failure } = plan
+        .commit_effects_retryable(&mut destination)
         .expect("unavailable adopted OpenOut suspends")
     else {
         panic!("unavailable adopted OpenOut must retry");
     };
-    let failed = error
-        .stream_open_unavailable()
-        .expect("typed exact failure")
-        .clone();
-    let effects_before = finalization.stores.world().effect_records().to_vec();
+    let remaining_before = plan.remaining_effects().len();
     let replacement = Path::new(temp.path().file_name().expect("relative temporary name"))
         .join("replacement.out");
-    plan.retarget_stream_open(&mut finalization.stores, &failed, &replacement)
+    plan.retarget_stream_open(&failure, &replacement)
         .expect("rebased exact occurrence retargets");
     assert_eq!(
-        finalization.stores.world().effect_records().len(),
-        effects_before.len(),
+        plan.remaining_effects().len(),
+        remaining_before,
         "retry retarget preserves effect history length"
     );
     assert_ne!(
-        plan.prepared_pages
-            .as_ref()
-            .expect("prepared suffix retained")
-            .artifacts()
+        plan.pages()
             .iter()
-            .map(tex_state::CommittedArtifact::hash)
+            .map(|page| page.artifact().hash())
             .collect::<Vec<_>>(),
         hashes_before,
         "only successful retarget changes prepared artifact identity"
     );
-    plan.commit_effects(&mut finalization.stores)
+    plan.commit_effects(&mut destination)
         .expect("replacement finalization succeeds");
 }
 
@@ -1756,15 +1609,9 @@ fn pdf_raw_object_file_uses_an_identity_pinned_accepted_payload() {
         PdfRawObjectFileSource::Resolved(key) if key == request.key()
     ));
 
-    let mut stores = accepted.stores;
-    let mut artifacts = stores.world().committed_artifacts().to_vec();
-    if let Some(prepared) = &accepted.prepared_pages {
-        artifacts.extend_from_slice(prepared.artifacts());
-    }
+    let pdf_completion = accepted.completion.pdf().expect("accepted PDF completion");
     let pdf = crate::pdf_from_accepted_artifacts_with_virtual_fonts(
-        &mut stores,
-        &artifacts,
-        accepted.prepared_pages.as_ref(),
+        pdf_completion,
         &accepted.virtual_font_resources,
         &accepted.pdf_raw_object_file_receipt,
     )
@@ -1830,15 +1677,9 @@ fn detached_pdf_rejects_a_stale_raw_object_payload_identity() {
         .values_mut()
         .next()
         .expect("receipt entry")
-        .bytes = Arc::from(b"changed after acceptance".as_slice());
-    let mut artifacts = accepted.stores.world().committed_artifacts().to_vec();
-    if let Some(prepared) = &accepted.prepared_pages {
-        artifacts.extend_from_slice(prepared.artifacts());
-    }
+        .bytes = b"changed after acceptance".to_vec();
     let error = crate::pdf_from_accepted_artifacts_with_virtual_fonts(
-        &mut accepted.stores,
-        &artifacts,
-        accepted.prepared_pages.as_ref(),
+        accepted.completion.pdf().expect("accepted PDF completion"),
         &accepted.virtual_font_resources,
         &accepted.pdf_raw_object_file_receipt,
     )
@@ -1979,12 +1820,17 @@ fn pdf_virtual_font_closure_uses_typed_bounded_retries() {
             .local_tfms
             .contains_key("cmsy10")
     );
-    assert!(finalization.stores.pdf_encoding(b"fixture.enc").is_some());
     assert!(
         finalization
-            .stores
-            .pdf_type1_program(b"fixture.pfb")
-            .is_some()
+            .virtual_font_resources
+            .encodings
+            .contains_key(b"fixture.enc".as_slice())
+    );
+    assert!(
+        finalization
+            .virtual_font_resources
+            .type1_programs
+            .contains_key(b"fixture.pfb".as_slice())
     );
     let receipt = &finalization.pdf_font_closure_receipt.entries;
     for (kind, name, resolved) in [
@@ -2865,10 +2711,6 @@ fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent(
         panic!("preloaded run must complete uninterrupted");
     };
     let preloaded_telemetry = preloaded.compile_telemetry();
-    let mut preloaded_final = preloaded
-        .into_accepted_finalization()
-        .expect("preloaded finalization");
-    let preloaded_hash = preloaded_final.stores.snapshot().state_hash();
 
     let mut partitioned = session(source);
     loop {
@@ -2940,13 +2782,6 @@ fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent(
     assert!(
         partitioned_telemetry.execution.cumulative_fuel
             >= preloaded_telemetry.execution.cumulative_fuel
-    );
-    let mut partitioned_final = partitioned
-        .into_accepted_finalization()
-        .expect("partitioned finalization");
-    assert_eq!(
-        partitioned_final.stores.snapshot().state_hash(),
-        preloaded_hash
     );
 }
 
