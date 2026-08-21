@@ -488,7 +488,8 @@ fn append_whatsit_effect<G>(
             }
         }
         Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
-            let expanded = (expansion.write_expander)(stores, sink, tokens.words())?;
+            let expanded =
+                (expansion.write_expander)(stores, diagnostic_effects, sink, tokens.words())?;
             let text = expanded.text;
             if let Some(sink) = deferred_write_sink(stores, sink) {
                 // TeX82 §1370's `write_out` frames the expansion as
@@ -513,6 +514,7 @@ fn append_whatsit_effect<G>(
         Whatsit::DeferredSpecial { class, tokens } => {
             let crate::shipout::ExpandedReplayText(payload) = (expansion.replay_expander)(
                 stores,
+                diagnostic_effects,
                 super::ReplayTextKind::Special,
                 tokens.words(),
             )?;
@@ -565,6 +567,7 @@ fn append_whatsit_effect<G>(
         Whatsit::DeferredPdfLiteral { mode, tokens } => {
             let crate::shipout::ExpandedReplayText(payload) = (expansion.replay_expander)(
                 stores,
+                diagnostic_effects,
                 super::ReplayTextKind::PdfLiteral,
                 tokens.words(),
             )?;
@@ -630,6 +633,7 @@ fn append_whatsit_effect<G>(
                 let artifact = super::stage_form(
                     form,
                     stores,
+                    diagnostic_effects,
                     expansion.write_expander,
                     expansion.replay_expander,
                 )?;

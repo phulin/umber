@@ -31,6 +31,7 @@ const MAX_SHIPOUT_DEPTH: usize = 4096;
 
 pub(crate) type WriteExpander<'a, G> = dyn FnMut(
         &mut Universe<G>,
+        &mut tex_state::diagnostic::DiagnosticEffects,
         PrintSink,
         &[TokenWord],
     ) -> Result<crate::shipout::ExpandedWrite, ExecError>
@@ -40,6 +41,7 @@ pub(crate) use crate::shipout::ReplayTextKind;
 
 pub(crate) type ReplayTextExpander<'a, G> = dyn FnMut(
         &mut Universe<G>,
+        &mut tex_state::diagnostic::DiagnosticEffects,
         ReplayTextKind,
         &[TokenWord],
     ) -> Result<crate::shipout::ExpandedReplayText, ExecError>

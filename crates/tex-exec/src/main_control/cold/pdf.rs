@@ -666,20 +666,25 @@ pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
     geometry_sink: &mut dyn crate::shipout::ShipoutGeometrySink,
 ) -> Result<(), ExecError> {
     let command = std::cell::RefCell::new(command);
-    let mut write = |stores: &mut Universe<G>, _: PrintSink, tokens: &[TokenWord]| {
+    let mut write = |stores: &mut Universe<G>,
+                     _: &mut DiagnosticEffects,
+                     _: PrintSink,
+                     tokens: &[TokenWord]| {
         replay_write_transaction(&mut command.borrow_mut(), stores, tokens, &mut Vec::new())
     };
-    let mut replay =
-        |stores: &mut Universe<G>, kind: crate::shipout::ReplayTextKind, tokens: &[TokenWord]| {
-            replay_text_transaction(
-                &mut command.borrow_mut(),
-                stores,
-                kind,
-                tokens,
-                &mut Vec::new(),
-            )
-            .map(crate::shipout::ExpandedReplayText)
-        };
+    let mut replay = |stores: &mut Universe<G>,
+                      _: &mut DiagnosticEffects,
+                      kind: crate::shipout::ReplayTextKind,
+                      tokens: &[TokenWord]| {
+        replay_text_transaction(
+            &mut command.borrow_mut(),
+            stores,
+            kind,
+            tokens,
+            &mut Vec::new(),
+        )
+        .map(crate::shipout::ExpandedReplayText)
+    };
     let mut transaction = crate::shipout::ShipoutTransaction::new(
         &mut write,
         &mut replay,
@@ -1496,7 +1501,10 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         .emit_dvi_override
         .unwrap_or(!supports_pdftex_profile);
     let command_cell = std::cell::RefCell::new(command);
-    let mut expand_write = |stores: &mut Universe<G>, sink: PrintSink, tokens: &[TokenWord]| {
+    let mut expand_write = |stores: &mut Universe<G>,
+                            diagnostic_effects: &mut DiagnosticEffects,
+                            sink: PrintSink,
+                            tokens: &[TokenWord]| {
         let mut command = command_cell.borrow_mut();
         let input_snapshot =
             command
@@ -1556,7 +1564,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                         .map_err(|_| ExecError::MissingToken {
                             context: "deferred write diagnostic admission",
                         })?;
-                report_pending_diagnostics(&mut context, command.diagnostic_effects, diagnostics)?;
+                report_pending_diagnostics(&mut context, diagnostic_effects, diagnostics)?;
             }
             if command_trace_printed {
                 *command.shown_mode = None;
@@ -1638,6 +1646,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         Ok(crate::shipout::ExpandedWrite::transactional(text))
     };
     let mut expand_replay = |stores: &mut Universe<G>,
+                             _: &mut DiagnosticEffects,
                              kind: crate::shipout::ReplayTextKind,
                              tokens: &[TokenWord]| {
         let mut command = command_cell.borrow_mut();

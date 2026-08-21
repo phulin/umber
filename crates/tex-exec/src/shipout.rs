@@ -62,9 +62,19 @@ impl ExpandedWrite {
 
 pub(crate) struct ExpandedReplayText(pub(crate) Vec<u8>);
 
-pub(crate) type WriteReplayHost<'a, G> =
-    dyn FnMut(&mut Universe<G>, PrintSink, &[TokenWord]) -> Result<ExpandedWrite, ExecError> + 'a;
-pub(crate) type TextReplayHost<'a, G> = dyn FnMut(&mut Universe<G>, ReplayTextKind, &[TokenWord]) -> Result<ExpandedReplayText, ExecError>
+pub(crate) type WriteReplayHost<'a, G> = dyn FnMut(
+        &mut Universe<G>,
+        &mut tex_state::diagnostic::DiagnosticEffects,
+        PrintSink,
+        &[TokenWord],
+    ) -> Result<ExpandedWrite, ExecError>
+    + 'a;
+pub(crate) type TextReplayHost<'a, G> = dyn FnMut(
+        &mut Universe<G>,
+        &mut tex_state::diagnostic::DiagnosticEffects,
+        ReplayTextKind,
+        &[TokenWord],
+    ) -> Result<ExpandedReplayText, ExecError>
     + 'a;
 
 /// Staging capabilities borrowed for one atomic page/form traversal.
