@@ -575,6 +575,28 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
+    pub fn font_is_left_to_right_shaping(&self, id: crate::ids::FontId) -> bool {
+        self.fonts
+            .get(id)
+            .opentype()
+            .is_some_and(|font| font.direction == tex_fonts::WritingDirection::LeftToRight)
+    }
+
+    #[must_use]
+    pub fn font_mapped_text(&self, id: crate::ids::FontId, character: char) -> Option<&str> {
+        self.fonts.get(id).mapped_text(character)
+    }
+
+    #[must_use]
+    pub fn shape_font_run(
+        &self,
+        id: crate::ids::FontId,
+        request: tex_fonts::ShapingRequest<'_>,
+    ) -> Option<tex_fonts::ShapedRun> {
+        self.fonts.get(id).shape_run(request)
+    }
+
+    #[must_use]
     pub fn font_uses_tfm_metrics(&self, id: crate::ids::FontId) -> bool {
         self.fonts.get(id).uses_tfm_metrics()
     }
