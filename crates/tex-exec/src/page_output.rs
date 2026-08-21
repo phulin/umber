@@ -55,7 +55,6 @@ pub(crate) fn select_pending_page_output<G>(
         stores.clear_page_discards();
         return Ok(SelectedPageOutput::Default(page));
     }
-    stores.with_pure_memo(tex_state::PureMemoRuntime::record_output_routine_execution);
     stores.set_page_integer(PageInteger::DeadCycles, dead_cycles + 1);
     Ok(SelectedPageOutput::UserRoutine)
 }
@@ -151,7 +150,7 @@ fn update_page_marks_at_fire_up<G>(stores: &mut CommandContext<'_, G>, page_node
             old_bot.filter(|tokens| !tokens.is_empty())
         };
         match top {
-            Some(top) => stores.set_page_mark_class(PageMark::Top, class, top),
+            Some(top) => stores.set_page_mark_class(PageMark::Top, class, top.clone()),
             None => stores.clear_page_mark_class(PageMark::Bot, class),
         }
 
@@ -179,8 +178,8 @@ fn update_page_marks_at_fire_up<G>(stores: &mut CommandContext<'_, G>, page_node
             _ => {
                 if let Some(top) = top {
                     // e-TeX 2.6 `etex.ch` [26.1397] `fire_up_done`.
-                    stores.set_page_mark_class(PageMark::First, class, top);
-                    stores.set_page_mark_class(PageMark::Bot, class, top);
+                    stores.set_page_mark_class(PageMark::First, class, top.clone());
+                    stores.set_page_mark_class(PageMark::Bot, class, top.clone());
                 } else {
                     stores.clear_page_mark_class(PageMark::First, class);
                     stores.clear_page_mark_class(PageMark::Bot, class);

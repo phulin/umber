@@ -372,12 +372,6 @@ pub(crate) fn indent_in_hmode<G>(
         return Ok(());
     }
     fn make_indent_box<G>(stores: &mut CommandContext<'_, G>) -> Node {
-        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell(
-            tex_state::cell::CellId::new(
-                tex_state::cell::BankTag::DimenParam,
-                u32::from(tex_state::env::banks::DimenParam::PAR_INDENT.raw()),
-            ),
-        ));
         let children = tex_state::node_arena::PageListId::empty();
         Node::HList(BoxNode::new(BoxNodeFields {
             width: stores.dimen_param(tex_state::env::banks::DimenParam::PAR_INDENT),

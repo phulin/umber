@@ -63,24 +63,8 @@ fn finish_math_list_node_with_reads<G>(
         &params,
     );
     let family_mask = sink.family_mask.get();
-    for index in 0..48 {
-        if family_mask & (1_u64 << index) != 0 {
-            sink.stores
-                .observe_semantic_dependency(tex_state::DependencyKey::Cell(
-                    tex_state::cell::CellId::new(tex_state::cell::BankTag::MathFamilyFont, index),
-                ));
-        }
-    }
     let mut nodes = Vec::new();
     if !list.display {
-        // AppG rule 22
-        sink.stores
-            .observe_semantic_dependency(tex_state::DependencyKey::Cell(
-                tex_state::cell::CellId::new(
-                    tex_state::cell::BankTag::DimenParam,
-                    u32::from(DimenParam::MATH_SURROUND.raw()),
-                ),
-            ));
         let surround = sink.stores.dimen_param(DimenParam::MATH_SURROUND);
         nodes.push(Node::MathOn(surround));
     }

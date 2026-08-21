@@ -1,6 +1,7 @@
 //! TeX.web page-builder accounting for outer vertical contributions.
 
 use tex_command::FatalError;
+use tex_state::CommandContext;
 use tex_state::diagnostic::Diagnostic;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -11,17 +12,9 @@ use tex_state::page::{
     PageInsertionStatus,
 };
 use tex_state::scaled::{Scaled, nx_plus_y, x_over_n};
-use tex_state::{
-    CommandContext, ContentHash, MemoTimingPhase, MemoValueLimits, PureMemoKey, PureMemoLayer,
-    PurePageEntry,
-};
 use tex_typeset::{INF_BAD, VerticalBreakError, badness, vert_break};
 
 use crate::{ExecError, diagnostics};
-
-const PAGE_EPISODE_DOMAIN: u32 = 3;
-const PAGE_EPISODE_SCHEMA: u32 = 1;
-const PAGE_ENV_HASH_DOMAIN: u64 = 0x7061_6765_656e_7601;
 
 #[cfg(test)]
 pub(crate) fn build_page<G>(stores: &mut CommandContext<'_, G>) -> Result<(), ExecError> {
@@ -37,164 +30,11 @@ pub(crate) fn build_page_with_error_context<G>(
     build_page_impl(stores, Some(error_context))
 }
 
-/// The shared implementation. `None` is reserved for input-free continuations
-/// that have no borrowed command cursor and therefore use the last published
-/// Universe summary.
 fn build_page_impl<G>(
     stores: &mut CommandContext<'_, G>,
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
-    if stores.page_fire_up().is_some() {
-        return Ok(());
-    }
-    if stores.page_contributions().is_empty() {
-        return build_page_cold(stores, error_context);
-    }
-    if !stores
-        .with_pure_memo(|memo| memo.page_episodes_enabled())
-        .unwrap_or(false)
-    {
-        if stores
-            .with_pure_memo(|memo| memo.is_enabled())
-            .unwrap_or(false)
-        {
-            stores.with_pure_memo(|memo| memo.record_not_attempted(PureMemoLayer::Page));
-        }
-        return build_page_cold(stores, error_context);
-    }
-    let validation_started = crate::timing::TelemetryTimer::start();
-    let key = page_episode_key(stores);
-    stores.with_pure_memo(|memo| {
-        memo.record_timing(
-            PureMemoLayer::Page,
-            MemoTimingPhase::Validation,
-            validation_started.elapsed(),
-        );
-    });
-    let input_origins = stores.page_memo_origins().ok();
-    if let Some(entry) = stores
-        .with_pure_memo(|memo| memo.lookup_page(key))
-        .flatten()
-    {
-        let import_started = crate::timing::TelemetryTimer::start();
-        let imported_bytes = entry.transition.retained_bytes();
-        let replay_origins = input_origins.as_ref().map(|input_origins| {
-            entry
-                .origin_ordinals
-                .iter()
-                .map(|ordinal| {
-                    usize::try_from(*ordinal)
-                        .ok()
-                        .and_then(|ordinal| input_origins.get(ordinal))
-                        .cloned()
-                        .unwrap_or_else(tex_state::token::OriginId::UNKNOWN)
-                })
-                .collect::<Vec<_>>()
-        });
-        let imported = replay_origins.as_ref().is_some_and(|origins| {
-            stores
-                .import_page_memo_transition(&entry.transition, MemoValueLimits::default(), origins)
-                .is_ok()
-        });
-        stores.with_pure_memo(|memo| {
-            memo.record_timing(
-                PureMemoLayer::Page,
-                MemoTimingPhase::Import,
-                import_started.elapsed(),
-            );
-        });
-        if imported {
-            stores.with_pure_memo(|memo| {
-                memo.record_page_hit(entry.contributions, imported_bytes);
-            });
-            return Ok(());
-        }
-        stores.with_pure_memo(|memo| {
-            memo.record_page_import_failure();
-            memo.reject(key);
-        });
-    }
-    let contributions = stores.page_contributions().len();
-    let effect_start = stores.world().effect_records().len();
-    build_page_cold(stores, error_context)?;
-    if stores.world().effect_records().len() == effect_start
-        && let Some(input_origins) = input_origins
-        && let Ok((transition, output_origins)) = stores.detach_page_memo_transition()
-    {
-        let origin_ordinals = output_origins
-            .iter()
-            .map(|origin| {
-                input_origins
-                    .iter()
-                    .position(|candidate| candidate == origin)
-                    .and_then(|index| u32::try_from(index).ok())
-                    .unwrap_or(u32::MAX)
-            })
-            .collect();
-        stores.with_pure_memo(|memo| {
-            memo.insert_page(
-                key,
-                PurePageEntry {
-                    transition,
-                    contributions,
-                    origin_ordinals,
-                },
-            );
-        });
-    }
-    Ok(())
-}
-
-fn page_episode_key<G>(stores: &CommandContext<'_, G>) -> PureMemoKey {
-    let page = stores.page_memo_fingerprint();
-    let mut classes: Vec<u16> = stores
-        .page_contributions()
-        .iter()
-        .filter_map(|node| match node {
-            Node::Ins { class, .. } => Some(*class),
-            _ => None,
-        })
-        .collect();
-    classes.sort_unstable();
-    classes.dedup();
-    let environment = stores.engine_boundary_hash(PAGE_ENV_HASH_DOMAIN, |hash| {
-        hash.i32(stores.dimen_param(DimenParam::V_SIZE).raw());
-        hash.i32(stores.dimen_param(DimenParam::MAX_DEPTH).raw());
-        hash.glue(stores.glue_param(GlueParam::TOP_SKIP));
-        hash.i32(stores.int_param(IntParam::SAVING_V_DISCARDS));
-        // A traced episode prints; reuse must not silently swallow its text.
-        hash.i32(stores.int_param(IntParam::TRACING_PAGES));
-        hash.i32(stores.int_param(IntParam::TRACING_ONLINE));
-        for class in &classes {
-            hash.u16(*class);
-            hash.i32(
-                stores
-                    .count(*class)
-                    .expect("insertion count register is admitted"),
-            );
-            hash.i32(stores.dimen(*class).raw());
-            hash.glue(stores.skip(*class));
-            match stores.copy_box_to_page(*class) {
-                Some(list) => {
-                    hash.u32(1);
-                    hash.page_node_list(stores, list);
-                }
-                None => hash.u32(0),
-            }
-        }
-    });
-    let mut bytes = Vec::with_capacity(24 + classes.len() * 2);
-    bytes.extend_from_slice(&PAGE_EPISODE_SCHEMA.to_le_bytes());
-    bytes.extend_from_slice(&page.to_le_bytes());
-    bytes.extend_from_slice(&environment.to_le_bytes());
-    for class in classes {
-        bytes.extend_from_slice(&class.to_le_bytes());
-    }
-    PureMemoKey::new(
-        PAGE_EPISODE_DOMAIN,
-        page ^ environment,
-        ContentHash::from_bytes(&bytes),
-    )
+    build_page_cold(stores, error_context)
 }
 
 fn build_page_cold<G>(
@@ -370,7 +210,10 @@ fn create_page_insertion<G>(
             .count(class)
             .expect("insertion count register is admitted"),
     )?;
-    let skip = stores.glue(stores.skip(class));
+    let skip = stores
+        .glue_register(class)
+        .expect("insertion skip register is admitted")
+        .map_or(GlueSpec::ZERO, |id| stores.glue(id));
     let goal = sub(stores.page_dimension(PageDimension::Goal), scaled_height)?;
     let goal = sub(goal, skip.width)?;
     stores.set_page_dimension(PageDimension::Goal, goal);

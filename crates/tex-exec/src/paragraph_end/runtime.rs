@@ -75,7 +75,6 @@ pub(crate) fn break_current_paragraph<G>(
     let mut level = commit_current_list(nest, stores, fuel)?;
     let mut hlist =
         crate::math::finish_math_lists_owned(stores, level.list_mutation().take_nodes(), true);
-    observe_paragraph_material_dependencies(stores, &hlist);
     let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
     normalize_paragraph_infinite_shrink(
         stores,
@@ -93,8 +92,6 @@ pub(crate) fn break_current_paragraph<G>(
     }
     let (mut decisions, trace, missing_hyphens) =
         break_hlist_with_trace(stores, hlist, line_params, fuel, tracing)?;
-    stores.observe_line_break_memory_search(&decisions.memory);
-    let break_memory = decisions.memory.clone();
     if tracing {
         report_line_break_trace(stores, decisions.tape.nodes(), &trace, &missing_hyphens);
     } else {
@@ -202,7 +199,6 @@ pub(crate) fn break_current_paragraph<G>(
         }
         line_nodes = broken.nodes;
     }
-    stores.observe_line_break_memory_cleanup(&break_memory);
     stores.set_pack_begin_line(restore_pack_begin_line);
     nest.current_list_mutation().set_prev_graf(
         params
@@ -449,20 +445,6 @@ impl PdfLineDimensions {
 }
 
 fn pdf_line_dimensions<G>(stores: &mut CommandContext<'_, G>) -> PdfLineDimensions {
-    for param in [
-        DimenParam::PDF_IGNORED_DIMEN,
-        DimenParam::PDF_FIRST_LINE_HEIGHT,
-        DimenParam::PDF_LAST_LINE_DEPTH,
-        DimenParam::PDF_EACH_LINE_HEIGHT,
-        DimenParam::PDF_EACH_LINE_DEPTH,
-    ] {
-        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell(
-            tex_state::cell::CellId::new(
-                tex_state::cell::BankTag::DimenParam,
-                u32::from(param.raw()),
-            ),
-        ));
-    }
     PdfLineDimensions {
         ignored: stores.dimen_param(DimenParam::PDF_IGNORED_DIMEN),
         first_height: stores.dimen_param(DimenParam::PDF_FIRST_LINE_HEIGHT),
@@ -738,147 +720,21 @@ fn report_line_break_trace<G>(
     diagnostic.end(true);
 }
 
-/// Looks up or computes the pure pretolerance line-breaking plan.
+/// Computes the pure pretolerance line-breaking plan.
 ///
-/// Callers retain ownership of the node list. The cache value contains only
-/// stable positions, scalar demerits, and detached glue content.
+/// The public name is retained for callers whose outer execution service
+/// memoizes this pure result. The admitted hot kernel itself owns no memo
+/// runtime or generation-crossing cache values.
 pub fn cached_pretolerance_plan<G>(
     stores: &mut CommandContext<'_, G>,
     hlist: &[Node],
     line_params: &LineBreakParams,
 ) -> Option<tex_typeset::linebreak::BreakPlan> {
-    if !stores
-        .with_pure_memo(|memo| memo.pretolerance_enabled())
-        .unwrap_or(false)
-    {
-        if stores
-            .with_pure_memo(|memo| memo.is_enabled())
-            .unwrap_or(false)
-        {
-            stores.with_pure_memo(|memo| {
-                memo.record_not_attempted(tex_state::PureMemoLayer::Pretolerance);
-            });
-        }
-        return try_line_break_without_hyphenation(
-            &crate::typeset_context::TypesetContext::new(stores),
-            hlist,
-            line_params,
-        );
-    }
-    let validation_started = crate::timing::TelemetryTimer::start();
-    let key = pretolerance_memo_key(stores, hlist, line_params);
-    stores.with_pure_memo(|memo| {
-        memo.record_timing(
-            tex_state::PureMemoLayer::Pretolerance,
-            tex_state::MemoTimingPhase::Validation,
-            validation_started.elapsed(),
-        );
-    });
-    match stores
-        .with_pure_memo(|memo| memo.lookup_pretolerance(key))
-        .flatten()
-    {
-        Some(plan) => plan,
-        None => compute_and_cache_pretolerance(stores, key, hlist, line_params),
-    }
-}
-
-const PRETOLERANCE_MEMO_DOMAIN: u32 = 1;
-const PRETOLERANCE_PLAN_SCHEMA: u32 = 2;
-const PRETOLERANCE_HASH_DOMAINS: [u64; 4] = [
-    0x6c62_7072_6574_0001,
-    0x6c62_7072_6574_0002,
-    0x6c62_7072_6574_0003,
-    0x6c62_7072_6574_0004,
-];
-
-fn compute_and_cache_pretolerance<G>(
-    stores: &mut CommandContext<'_, G>,
-    key: PureMemoKey,
-    hlist: &[Node],
-    params: &LineBreakParams,
-) -> Option<tex_typeset::linebreak::BreakPlan> {
-    let plan = try_line_break_without_hyphenation(
+    try_line_break_without_hyphenation(
         &crate::typeset_context::TypesetContext::new(stores),
         hlist,
-        params,
-    );
-    stores.with_pure_memo(|memo| memo.insert_pretolerance(key, plan.clone()));
-    plan
-}
-
-fn pretolerance_memo_key<G>(
-    stores: &CommandContext<'_, G>,
-    hlist: &[Node],
-    params: &LineBreakParams,
-) -> PureMemoKey {
-    let node_hashes =
-        stores.engine_boundary_hashes(PRETOLERANCE_HASH_DOMAINS, |hash| hash.nodes(hlist));
-    let mut bytes = Vec::with_capacity(256);
-    bytes.extend_from_slice(&PRETOLERANCE_PLAN_SCHEMA.to_le_bytes());
-    for hash in node_hashes {
-        bytes.extend_from_slice(&hash.to_le_bytes());
-    }
-    encode_line_break_params(params, &mut bytes);
-    PureMemoKey::new(
-        PRETOLERANCE_MEMO_DOMAIN,
-        node_hashes[0],
-        ContentHash::from_bytes(&bytes),
+        line_params,
     )
-}
-
-fn encode_line_break_params(params: &LineBreakParams, out: &mut Vec<u8>) {
-    for value in [
-        params.pretolerance,
-        params.tolerance,
-        params.line_penalty,
-        params.hyphen_penalty,
-        params.ex_hyphen_penalty,
-        params.adj_demerits,
-        params.double_hyphen_demerits,
-        params.final_hyphen_demerits,
-        params.emergency_stretch.raw(),
-        params.looseness,
-        params.last_line_fit,
-        params.pdf_adjust_spacing,
-        params.pdf_protrude_chars,
-    ] {
-        out.extend_from_slice(&value.to_le_bytes());
-    }
-    match params.expansion_steps {
-        Some((stretch, shrink)) => {
-            out.push(1);
-            out.extend_from_slice(&stretch.to_le_bytes());
-            out.extend_from_slice(&shrink.to_le_bytes());
-        }
-        None => out.push(0),
-    }
-    encode_glue_spec(params.left_skip, out);
-    encode_glue_spec(params.right_skip, out);
-    encode_glue_spec(params.par_fill_skip, out);
-    out.extend_from_slice(&params.shape.hsize.raw().to_le_bytes());
-    out.extend_from_slice(&params.shape.hang_indent.raw().to_le_bytes());
-    out.extend_from_slice(&params.shape.hang_after.to_le_bytes());
-    out.extend_from_slice(&(params.shape.line_offset as u64).to_le_bytes());
-    match &params.shape.parshape {
-        Some(shape) => {
-            out.push(1);
-            out.extend_from_slice(&(shape.lines.len() as u64).to_le_bytes());
-            for line in &shape.lines {
-                out.extend_from_slice(&line.indent.raw().to_le_bytes());
-                out.extend_from_slice(&line.width.raw().to_le_bytes());
-            }
-        }
-        None => out.push(0),
-    }
-}
-
-fn encode_glue_spec(spec: tex_state::glue::GlueSpec, out: &mut Vec<u8>) {
-    out.extend_from_slice(&spec.width.raw().to_le_bytes());
-    out.extend_from_slice(&spec.stretch.raw().to_le_bytes());
-    out.push(spec.stretch_order as u8);
-    out.extend_from_slice(&spec.shrink.raw().to_le_bytes());
-    out.push(spec.shrink_order as u8);
 }
 
 fn extract_migrating_material<G>(
@@ -920,91 +776,10 @@ fn extract_migrating_material<G>(
     }
 }
 
-fn observe_paragraph_material_dependencies<G>(stores: &mut CommandContext<'_, G>, nodes: &[Node]) {
-    let mut fonts = std::collections::BTreeSet::new();
-    let mut characters = std::collections::BTreeSet::new();
-    for node in nodes {
-        match node {
-            Node::Char { font, ch, .. } => {
-                fonts.insert(*font);
-                characters.insert(*ch);
-            }
-            Node::Lig { font, ch, orig, .. } => {
-                fonts.insert(*font);
-                characters.insert(*ch);
-                characters.extend(orig.iter().copied());
-            }
-            _ => {}
-        }
-    }
-    for font in fonts {
-        for index in [2, 3, 4, 7] {
-            stores.observe_semantic_dependency(tex_state::DependencyKey::Font {
-                field: tex_state::DependencyFontField::Parameter,
-                font: font.raw(),
-                index,
-            });
-        }
-    }
-    for ch in characters {
-        stores.observe_semantic_dependency(tex_state::DependencyKey::Code {
-            table: tex_state::DependencyCodeTable::Sfcode,
-            scalar: ch as u32,
-        });
-    }
-}
-
 fn snapshot_paragraph_params<G>(
     nest: &ModeNest,
     stores: &mut CommandContext<'_, G>,
 ) -> ParagraphParams {
-    use tex_state::cell::{BankTag, CellId};
-    use tex_state::{DependencyEngineField, DependencyKey};
-    for param in [
-        IntParam::HANG_AFTER,
-        IntParam::LOOSENESS,
-        IntParam::PRETOLERANCE,
-        IntParam::TOLERANCE,
-        IntParam::LINE_PENALTY,
-        IntParam::HYPHEN_PENALTY,
-        IntParam::EX_HYPHEN_PENALTY,
-        IntParam::ADJ_DEMERITS,
-        IntParam::DOUBLE_HYPHEN_DEMERITS,
-        IntParam::FINAL_HYPHEN_DEMERITS,
-        IntParam::LAST_LINE_FIT,
-        IntParam::INTERLINE_PENALTY,
-        IntParam::CLUB_PENALTY,
-        IntParam::WIDOW_PENALTY,
-        IntParam::DISPLAY_WIDOW_PENALTY,
-        IntParam::BROKEN_PENALTY,
-    ] {
-        stores.observe_semantic_dependency(DependencyKey::Cell(CellId::new(
-            BankTag::IntParam,
-            u32::from(param.raw()),
-        )));
-    }
-    for param in [
-        DimenParam::HANG_INDENT,
-        DimenParam::EMERGENCY_STRETCH,
-        DimenParam::H_SIZE,
-    ] {
-        stores.observe_semantic_dependency(DependencyKey::Cell(CellId::new(
-            BankTag::DimenParam,
-            u32::from(param.raw()),
-        )));
-    }
-    for param in [
-        GlueParam::LEFT_SKIP,
-        GlueParam::RIGHT_SKIP,
-        GlueParam::PAR_FILL_SKIP,
-    ] {
-        stores.observe_semantic_dependency(DependencyKey::Cell(CellId::new(
-            BankTag::GlueParam,
-            u32::from(param.raw()),
-        )));
-    }
-    stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::ParShape));
-    stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::PenaltyArrays));
     ParagraphParams {
         left_skip: glue_parameter_value(stores, GlueParam::LEFT_SKIP),
         right_skip: glue_parameter_value(stores, GlueParam::RIGHT_SKIP),
@@ -1191,7 +966,7 @@ pub(crate) fn start_paragraph<G>(
         }
         mode => Err(ExecError::UnimplementedTypesetting {
             mode,
-            token: tex_state::token::Token::Cs(stores.intern("par").symbol()),
+            token: tex_state::token::Token::Cs(stores.intern_control_sequence("par")),
             origin: tex_state::token::OriginId::UNKNOWN,
             operation: "canonical paragraph start",
         }),
@@ -1212,7 +987,7 @@ use tex_state::font::PdfFontCode;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, Direction, GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::{CommandContext, ContentHash, PenaltyArrayKind, PureMemoKey};
+use tex_state::{CommandContext, PenaltyArrayKind};
 use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
     LineBreakParams, LineBreakPass, LineBreakResult, LineBreakTrace, LineDimensions,
