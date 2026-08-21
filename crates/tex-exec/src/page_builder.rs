@@ -221,7 +221,11 @@ fn create_page_insertion<G>(
     let shrink = add(stores.page_dimension(PageDimension::Shrink), skip.shrink)?;
     stores.set_page_dimension(PageDimension::Shrink, shrink);
     if skip.shrink_order != Order::Normal && skip.shrink.raw() != 0 {
-        diagnostics::report_insertion_skip_infinite_shrinkage(stores, class, error_context)?;
+        diagnostics::report_insertion_skip_infinite_shrinkage(
+            stores,
+            class,
+            error_context.unwrap_or_default(),
+        )?;
     }
     Ok(insertion)
 }
@@ -519,7 +523,7 @@ fn finite_page_shrink<G>(
     error_context: Option<&str>,
 ) -> Result<GlueSpec, ExecError> {
     if spec.shrink_order != Order::Normal && spec.shrink.raw() != 0 {
-        diagnostics::report_page_infinite_shrinkage(stores, error_context)?;
+        diagnostics::report_page_infinite_shrinkage(stores, error_context.unwrap_or_default())?;
         spec.shrink_order = Order::Normal;
     }
     Ok(spec)
@@ -545,7 +549,7 @@ fn normalize_insert_content_shrink<G>(
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
-        diagnostics::report_split_infinite_shrinkage(stores, error_context)?;
+        diagnostics::report_split_infinite_shrinkage(stores, error_context.unwrap_or_default())?;
         finite.shrink_order = Order::Normal;
         content_nodes[index] = Node::Glue {
             spec: finite,

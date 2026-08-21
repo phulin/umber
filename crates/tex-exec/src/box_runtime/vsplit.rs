@@ -112,7 +112,7 @@ fn normalize_split_infinite_shrink<G>(
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
-        diagnostics::report_split_infinite_shrinkage(stores, Some(error_context))?;
+        diagnostics::report_split_infinite_shrinkage(stores, error_context)?;
         finite.shrink_order = Order::Normal;
         nodes[index] = Node::Glue {
             spec: finite,

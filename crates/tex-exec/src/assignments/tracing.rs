@@ -459,7 +459,7 @@ fn tokens_text<G>(stores: &mut CommandContext<'_, G>, tokens: Option<TokenListId
     let mut text = String::new();
     let words = tokens.map_or_else(Vec::new, |id| stores.token_list(id).to_vec());
     for token in words {
-        crate::diagnostics::append_token_show_text(stores, token, &mut text);
+        stores.append_token_show_text(token.semantic_token(), &mut text);
     }
     text
 }
@@ -522,7 +522,7 @@ pub(crate) fn trace_meaning_write<G>(
         return;
     }
     let mut name = String::new();
-    crate::diagnostics::append_token_show_text(stores, token, &mut name);
+    stores.append_token_show_text(token, &mut name);
     if global {
         let old_text = stores.bounded_meaning_text(token, 32);
         write(stores);
@@ -563,7 +563,7 @@ pub(crate) fn trace_completed_provisional_meaning_write<G>(
         return;
     }
     let mut name = String::new();
-    crate::diagnostics::append_token_show_text(stores, token, &mut name);
+    stores.append_token_show_text(token, &mut name);
     let old_text = meaning_value_text(stores, old);
     let new_text = meaning_value_text(stores, ResolvedMeaning::Static(new));
     trace_scalar(
@@ -638,7 +638,7 @@ fn meaning_value_text<G>(
                     break;
                 }
                 let before = text.chars().count();
-                crate::diagnostics::append_token_show_text(stores, token, &mut text);
+                stores.append_token_show_text(token.semantic_token(), &mut text);
                 shown += text.chars().count() - before;
             }
             if !remaining && shown < 32 {
@@ -650,7 +650,7 @@ fn meaning_value_text<G>(
                         break;
                     }
                     let before = text.chars().count();
-                    crate::diagnostics::append_token_show_text(stores, token, &mut text);
+                    stores.append_token_show_text(token.semantic_token(), &mut text);
                     shown += text.chars().count() - before;
                 }
             } else {
