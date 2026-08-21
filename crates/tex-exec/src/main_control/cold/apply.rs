@@ -719,8 +719,11 @@ pub(in crate::main_control) fn apply<G>(
             // straight through and silently ignored a nonzero
             // `\globaldefs`; it was missed by both earlier sweeps because
             // `set_shape` belongs to neither definition family.
-            AssignmentCommitter::new(stores)
-                .unscoped(None, |stores| stores.set_paragraph_shape(&lines, global));
+            AssignmentCommitter::new(stores).unscoped(None, |stores| {
+                stores
+                    .assign_paragraph_shape(&lines, assignment_scope(global))
+                    .expect("paragraph shape fits admitted durable storage")
+            });
             Ok(ReplayStep::Continue)
         }
         ColdOperation::PenaltyArray {
@@ -747,7 +750,9 @@ pub(in crate::main_control) fn apply<G>(
             };
             let receipt = AssignmentCommitter::new(stores).unscoped(Some(record), |stores| {
                 let old = stores.penalty_array(kind);
-                stores.set_penalty_array(kind, &values, global);
+                stores
+                    .assign_penalty_array(kind, &values, assignment_scope(global))
+                    .expect("penalty array fits admitted durable storage");
                 assignment_tracing::trace_penalty_array(stores, kind, global, &old, &values);
             });
             command.retain_assignment_receipt(receipt);
@@ -1127,15 +1132,15 @@ pub(in crate::main_control) fn apply<G>(
                     observe_font_definition,
                 );
                 AssignmentCommitter::new(stores).unscoped(record, |stores| {
-                    if global {
-                        stores.set_meaning_global(
+                    stores
+                        .assign_resolved_meaning(
                             request.target,
-                            Meaning::Font(tex_state::font::NULL_FONT),
-                        );
-                    } else {
-                        stores
-                            .set_meaning(request.target, Meaning::Font(tex_state::font::NULL_FONT));
-                    }
+                            tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(
+                                tex_state::font::NULL_FONT,
+                            )),
+                            assignment_scope(global),
+                        )
+                        .expect("font selector belongs to admitted state");
                     stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, identifier);
                 })
             };
@@ -1225,11 +1230,13 @@ pub(in crate::main_control) fn apply<G>(
             let record =
                 font_definition_mutation(stores, request.target, global, observe_font_definition);
             let receipt = AssignmentCommitter::new(stores).unscoped(record, |stores| {
-                if global {
-                    stores.set_meaning_global(request.target, Meaning::Font(id))
-                } else {
-                    stores.set_meaning(request.target, Meaning::Font(id))
-                }
+                stores
+                    .assign_resolved_meaning(
+                        request.target,
+                        tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
+                        assignment_scope(global),
+                    )
+                    .expect("font selector belongs to admitted state")
             });
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
@@ -1271,11 +1278,13 @@ pub(in crate::main_control) fn apply<G>(
             };
             let record = font_definition_mutation(stores, definition.target, global, true);
             let receipt = AssignmentCommitter::new(stores).unscoped(record, |stores| {
-                if global {
-                    stores.set_meaning_global(definition.target, Meaning::Font(id))
-                } else {
-                    stores.set_meaning(definition.target, Meaning::Font(id))
-                }
+                stores
+                    .assign_resolved_meaning(
+                        definition.target,
+                        tex_state::meaning::ResolvedMeaning::Static(Meaning::Font(id)),
+                        assignment_scope(global),
+                    )
+                    .expect("generated-font selector belongs to admitted state")
             });
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
@@ -1874,11 +1883,13 @@ pub(in crate::main_control) fn apply<G>(
                 observed,
                 global,
                 |stores| {
-                    if global {
-                        stores.set_meaning_global(target, meaning)
-                    } else {
-                        stores.set_meaning(target, meaning)
-                    }
+                    stores
+                        .assign_resolved_meaning(
+                            target,
+                            tex_state::meaning::ResolvedMeaning::Static(meaning),
+                            assignment_scope(global),
+                        )
+                        .expect("character-definition target belongs to admitted state")
                 },
             );
             command.retain_assignment_receipt(receipt);
@@ -1930,11 +1941,13 @@ pub(in crate::main_control) fn apply<G>(
                 ObservationValue::Name(observed_name.into()),
                 global,
                 |stores| {
-                    if global {
-                        stores.set_meaning_global(target, meaning)
-                    } else {
-                        stores.set_meaning(target, meaning)
-                    }
+                    stores
+                        .assign_resolved_meaning(
+                            target,
+                            tex_state::meaning::ResolvedMeaning::Static(meaning),
+                            assignment_scope(global),
+                        )
+                        .expect("register-definition target belongs to admitted state")
                 },
             );
             command.retain_assignment_receipt(receipt);
