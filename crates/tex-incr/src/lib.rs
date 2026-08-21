@@ -23,18 +23,19 @@ use tex_command::{
 };
 use tex_exec::{
     Cancellation, CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner,
-    CheckpointIdentity, CheckpointSink, DetachedEngineCompletion, DetachedPreparedPage,
-    EngineBoundary, EngineCheckpoint, EngineCompletionDemand, MainControl, MainControlStep,
-    OutputLedger, ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome, ResourceWorld,
-    canonical_font_resource_path,
+    CheckpointIdentity, CheckpointSink, DetachedEngineCompletion, DetachedFormatDump,
+    DetachedPreparedPage, EngineBoundary, EngineCheckpoint, EngineCompletionDemand, MainControl,
+    MainControlStep, OutputLedger, ResourceFulfillment, ResourceHost, ResourceNeed,
+    ResourceOutcome, ResourceWorld, canonical_font_resource_path,
 };
 use tex_out::dvi::{DviError, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
 use tex_state::interner::InternerBudget;
 use tex_state::{
-    ArtifactOrigin, AssignmentScope, CodeTableKind, CommittedArtifact, ContentHash, EditorLayout,
-    EditorLayoutError, EffectRecord, FragmentStore, GenerationBrand, LayoutGeneration,
-    LayoutResolvedOrigin, Piece, ResolvedSourceLocation, Universe, WorldError,
+    ArtifactOrigin, AssignmentScope, CodeTableKind, CommittedArtifact, ContentHash,
+    DetachedFormatImage, EditorLayout, EditorLayoutError, EffectRecord, FragmentStore,
+    GenerationBrand, JobClock, LayoutGeneration, LayoutResolvedOrigin, Piece,
+    ResolvedSourceLocation, Universe, World, WorldError,
 };
 
 mod trace;
@@ -266,6 +267,7 @@ pub struct AcceptedOutput {
     pub revision: RevisionId,
     pub content_hash: ContentHash,
     completion: DetachedEngineCompletion,
+    format_dump: Option<DetachedFormatDump>,
     pub reuse: ReuseMetrics,
     pub retention: RetentionMetrics,
 }
@@ -293,6 +295,15 @@ impl AcceptedOutput {
 
     pub fn into_completion(self) -> DetachedEngineCompletion {
         self.completion
+    }
+
+    #[must_use]
+    pub const fn format_dump(&self) -> Option<&DetachedFormatDump> {
+        self.format_dump.as_ref()
+    }
+
+    pub fn into_terminal(self) -> (DetachedEngineCompletion, Option<DetachedFormatDump>) {
+        (self.completion, self.format_dump)
     }
 
     pub fn dvi_bytes(&self) -> Result<Vec<u8>, DviError> {
@@ -372,8 +383,7 @@ pub struct RevisionTransaction {
     history: Vec<BoundaryRecord>,
     dependencies: Vec<tex_state::InputDependency>,
     reuse: ReuseMetrics,
-    dumped_format: bool,
-    format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
+    format_dump: Option<DetachedFormatDump>,
     expansion_stats: ExpansionStats,
 }
 
@@ -430,8 +440,7 @@ struct CandidateCompletion {
     history: Vec<BoundaryRecord>,
     dependencies: Vec<tex_state::InputDependency>,
     delivered_commands: usize,
-    dumped_format: bool,
-    format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
+    format_dump: Option<DetachedFormatDump>,
 }
 
 /// Handle-free plan for one revision execution.
@@ -451,6 +460,8 @@ pub struct RevisionCandidate {
     root_framing: SourceFramingPolicy,
     root_framing_name: Option<String>,
     root_source_is_byte_projection: bool,
+    format_image: Option<DetachedFormatImage>,
+    job_clock: JobClock,
     completed: Option<CandidateCompletion>,
     cumulative_fuel_limit: u64,
     execution_budgets: tex_exec::ExecutionBudgets,
@@ -475,10 +486,21 @@ impl RevisionCandidate {
         if self.completed.is_some() {
             return Ok(RevisionCandidateResult::Complete);
         }
-        let result = tex_state::with_universe(session_interner_budget(), |universe| {
-            execute_plan(universe, self, host, cancellation)
-        })
-        .map_err(SessionError::State)??;
+        let result = if let Some(image) = &self.format_image {
+            tex_state::with_materialized_format(
+                session_interner_budget(),
+                World::memory_with_clock(self.job_clock),
+                image,
+                |universe| execute_plan(universe, self, host, cancellation),
+            )
+            .map_err(SessionError::Format)??
+        } else {
+            tex_state::with_universe(session_interner_budget(), |universe| {
+                *universe.world_mut() = World::memory_with_clock(self.job_clock);
+                execute_plan(universe, self, host, cancellation)
+            })
+            .map_err(SessionError::State)??
+        };
         match result {
             PlanExecution::Suspended(need) => {
                 self.suspension_serial = self.suspension_serial.saturating_add(1);
@@ -624,10 +646,13 @@ fn execute_plan<G>(
     host: &mut dyn ResourceHost,
     cancellation: &Cancellation,
 ) -> Result<PlanExecution, SessionError> {
-    *universe.world_mut() = tex_state::World::memory();
     universe.begin_retained_session()?;
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    install_plain_catcodes(universe)?;
+    if candidate.format_image.is_none() {
+        install_plain_catcodes(universe)?;
+    } else {
+        register_materialized_primitives(universe, candidate.profile);
+    }
     for (path, bytes) in &candidate.registered_inputs {
         universe.world_mut().set_memory_file(path, bytes.clone())?;
     }
@@ -682,6 +707,9 @@ fn execute_plan<G>(
                 delivered_commands = delivered_commands.saturating_add(1);
                 if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
                     let dependencies = universe.world().input_dependencies().cloned().collect();
+                    let format_dump = control
+                        .take_format_dump(universe)
+                        .map_err(SessionError::FormatDump)?;
                     let completion = ledger.close_revision(
                         &mut control,
                         universe,
@@ -695,8 +723,7 @@ fn execute_plan<G>(
                             history: sink.records,
                             dependencies,
                             delivered_commands,
-                            dumped_format: control.dumped_format(),
-                            format_dump_receipt: control.format_dump_receipt().cloned(),
+                            format_dump,
                         },
                         control.fuel_burned(),
                     ));
@@ -728,6 +755,19 @@ fn execute_plan<G>(
             }
             CanonicalStepResult::Failed(error) => return Err(map_step_failure(error)),
         }
+    }
+}
+
+fn register_materialized_primitives<G>(universe: &mut Universe<G>, profile: CommandProfile) {
+    tex_command::register_tex82_expandable_primitives(universe);
+    tex_exec::register_unexpandable_primitives(universe);
+    if profile.capabilities().supports_etex() {
+        tex_command::register_etex_expandable_primitives(universe);
+        tex_exec::register_etex_unexpandable_primitives(universe);
+    }
+    if profile.capabilities().supports_pdftex() {
+        tex_command::register_pdftex_expandable_primitives(universe);
+        tex_command::register_pdftex_unexpandable_primitives(universe);
     }
 }
 
@@ -945,8 +985,8 @@ pub struct Session {
     checkpoint_budget: usize,
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
     accepted_retention: Option<RetentionMetrics>,
-    dumped_format: bool,
-    format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
+    format_image: Option<DetachedFormatImage>,
+    job_clock: JobClock,
     utf8_input_as_bytes: bool,
     dvi_output: bool,
     root_framing: SourceFramingPolicy,
@@ -1057,8 +1097,8 @@ impl Session {
             checkpoint_budget,
             registered_inputs: BTreeMap::new(),
             accepted_retention: None,
-            dumped_format: false,
-            format_dump_receipt: None,
+            format_image: None,
+            job_clock: JobClock::default(),
             utf8_input_as_bytes: false,
             dvi_output: true,
             root_framing: SourceFramingPolicy::Canonical,
@@ -1112,6 +1152,23 @@ impl Session {
         assert!(self.history.is_empty(), "profile is fixed after execution");
         self.command_profile = profile;
         self.initex = initex;
+    }
+
+    /// Selects one validated, handle-free format image for every candidate.
+    /// Each drive materializes it inside a fresh generation and drops that
+    /// generation before retaining any candidate or accepted state.
+    pub fn set_format_image(&mut self, image: DetachedFormatImage) {
+        assert!(self.history.is_empty(), "format is fixed after execution");
+        self.format_image = Some(image);
+        self.initex = false;
+    }
+
+    pub fn set_job_clock(&mut self, clock: JobClock) {
+        assert!(
+            self.history.is_empty(),
+            "job clock is fixed after execution"
+        );
+        self.job_clock = clock;
     }
 
     pub fn set_root_source_framing(&mut self, framing: SourceFramingPolicy) {
@@ -1186,7 +1243,7 @@ impl Session {
     }
 
     pub fn start_cold_candidate(&self) -> Result<RevisionCandidate, SessionError> {
-        Ok(self.candidate(CandidatePlan {
+        self.candidate(CandidatePlan {
             base_revision: self.revision,
             base_content_hash: self.content_hash,
             revision: self.revision,
@@ -1196,7 +1253,7 @@ impl Session {
             old_history: Vec::new(),
             execution_path: RevisionExecutionPath::Cold,
             revision_setup_latency: Duration::ZERO,
-        }))
+        })
     }
 
     pub fn accept_cold_candidate(
@@ -1228,7 +1285,7 @@ impl Session {
     }
 
     pub fn start_external_input_delta_candidate(&self) -> Result<RevisionCandidate, SessionError> {
-        Ok(self.candidate(CandidatePlan {
+        self.candidate(CandidatePlan {
             base_revision: self.revision,
             base_content_hash: self.content_hash,
             revision: self.revision,
@@ -1238,7 +1295,7 @@ impl Session {
             old_history: self.history.clone(),
             execution_path: RevisionExecutionPath::ExternalInputDelta,
             revision_setup_latency: Duration::ZERO,
-        }))
+        })
     }
 
     fn start_advance_candidate_with_path(
@@ -1265,7 +1322,7 @@ impl Session {
             expanded_replacement.len(),
             LayoutGeneration::new(next_revision.raw()),
         )?;
-        Ok(self.candidate(CandidatePlan {
+        self.candidate(CandidatePlan {
             base_revision: self.revision,
             base_content_hash: self.content_hash,
             revision: next_revision,
@@ -1275,11 +1332,17 @@ impl Session {
             old_history: self.history.clone(),
             execution_path,
             revision_setup_latency: started.elapsed(),
-        }))
+        })
     }
 
-    fn candidate(&self, plan: CandidatePlan) -> RevisionCandidate {
-        RevisionCandidate {
+    fn candidate(&self, plan: CandidatePlan) -> Result<RevisionCandidate, SessionError> {
+        let format_image = self
+            .format_image
+            .as_ref()
+            .map(|image| DetachedFormatImage::try_from_bytes(image.as_bytes().to_vec()))
+            .transpose()
+            .map_err(SessionError::Format)?;
+        Ok(RevisionCandidate {
             session_output_id: self.output_id,
             job_name: self.job_name.clone(),
             source_path: plan.layout.path().to_owned(),
@@ -1295,13 +1358,15 @@ impl Session {
             root_framing: self.root_framing,
             root_framing_name: self.root_framing_name.clone(),
             root_source_is_byte_projection: self.root_source_is_byte_projection,
+            format_image,
+            job_clock: self.job_clock,
             completed: None,
             cumulative_fuel_limit: MainControl::<GenerationBrand<'static>>::DEFAULT_FUEL_LIMIT,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             suspension_serial: 0,
             advance_calls: 0,
             cumulative_fuel: 0,
-        }
+        })
     }
 
     pub fn prepare_revision_candidate(
@@ -1336,8 +1401,7 @@ impl Session {
             history: completion.history,
             dependencies: completion.dependencies,
             reuse,
-            dumped_format: completion.dumped_format,
-            format_dump_receipt: completion.format_dump_receipt,
+            format_dump: completion.format_dump,
             expansion_stats: ExpansionStats::default(),
         })
     }
@@ -1366,8 +1430,6 @@ impl Session {
         self.content_hash = transaction.content_hash;
         self.history = prune_history(transaction.history, self.checkpoint_budget);
         self.dependencies = transaction.dependencies;
-        self.dumped_format = transaction.dumped_format;
-        self.format_dump_receipt = transaction.format_dump_receipt;
         self.expansion_stats = transaction.expansion_stats;
         self.render_maps.borrow_mut().clear();
         let output_bytes = detached_output_bytes(&transaction.completion);
@@ -1389,6 +1451,7 @@ impl Session {
             revision: self.revision,
             content_hash: self.content_hash,
             completion: transaction.completion,
+            format_dump: transaction.format_dump,
             reuse,
             retention,
         })
@@ -1466,16 +1529,6 @@ impl Session {
             return Err(SessionError::InvalidEditRange);
         }
         Ok(())
-    }
-
-    #[must_use]
-    pub const fn accepted_dumped_format(&self) -> bool {
-        self.dumped_format
-    }
-
-    #[must_use]
-    pub fn accepted_format_dump_receipt(&self) -> Option<&tex_exec::FormatDumpReceipt> {
-        self.format_dump_receipt.as_ref()
     }
 
     #[must_use]
@@ -2034,6 +2087,8 @@ pub enum SessionError {
     SourceRegistration(SourceRegistrationError),
     CommandSummary(tex_command::CommandSummaryError),
     Execute(tex_exec::ExecError),
+    Format(tex_state::FormatError),
+    FormatDump(tex_exec::FormatDumpError),
     World(WorldError),
     State(tex_state::StateError),
     Universe(tex_state::UniverseError),
@@ -2067,6 +2122,8 @@ impl fmt::Display for SessionError {
             Self::SourceRegistration(error) => write!(f, "source registration failed: {error}"),
             Self::CommandSummary(error) => write!(f, "checkpoint failed: {error}"),
             Self::Execute(error) => write!(f, "incremental execution failed: {error}"),
+            Self::Format(error) => write!(f, "incremental format materialization failed: {error}"),
+            Self::FormatDump(error) => write!(f, "incremental format capture failed: {error}"),
             Self::World(error) => write!(f, "incremental world failed: {error}"),
             Self::State(error) => write!(f, "incremental generation failed: {error:?}"),
             Self::Universe(error) => write!(f, "incremental runtime setup failed: {error:?}"),
