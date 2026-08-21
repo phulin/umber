@@ -473,11 +473,12 @@ impl<G> DenseState<G> {
     }
 
     pub(crate) fn font_dimen(&self, font: FontId, number: u32) -> Result<Scaled, StateError> {
-        let StateWord::Dimension(value) =
-            self.read_cell(StateCell::FontRuntime(FontRuntimeCell::Dimen {
+        let StateWord::Dimension(value) = self
+            .read_cell(StateCell::FontRuntime(FontRuntimeCell::Dimen {
                 font: font.raw(),
                 number,
             }))?
+            .value
         else {
             return Err(StateError::CellKindMismatch);
         };
@@ -599,7 +600,7 @@ impl<G> DenseState<G> {
     }
 
     fn font_runtime_integer(&self, cell: FontRuntimeCell) -> Result<i32, StateError> {
-        let StateWord::Integer(value) = self.read_cell(StateCell::FontRuntime(cell))? else {
+        let StateWord::Integer(value) = self.read_cell(StateCell::FontRuntime(cell))?.value else {
             return Err(StateError::CellKindMismatch);
         };
         Ok(value)

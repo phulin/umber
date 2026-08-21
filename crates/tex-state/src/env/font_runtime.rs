@@ -1,6 +1,6 @@
 //! Direct-index mutable per-font TeX and pdfTeX state.
 
-use crate::env::banks::{BankCell, BankError, LEVEL_ONE};
+use crate::env::banks::{BankCell, BankError};
 use crate::font::PdfFontCode;
 use crate::scaled::Scaled;
 use crate::state_hash::StateHasher;

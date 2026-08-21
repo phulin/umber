@@ -1581,16 +1581,6 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
-    pub fn pdf_font_code(
-        &self,
-        _table: crate::font::PdfFontCode,
-        _font: crate::ids::FontId,
-        _code: u8,
-    ) -> i32 {
-        0
-    }
-
-    #[must_use]
     pub fn pdf_font_configuration(&self) -> crate::PdfFontConfiguration {
         crate::PdfFontConfiguration {
             adjust_spacing: self.int_param(IntParam::PDF_ADJUST_SPACING),
