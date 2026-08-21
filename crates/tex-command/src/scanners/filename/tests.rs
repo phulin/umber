@@ -21,9 +21,15 @@ fn filename_scan_stops_at_space_and_keeps_area_name_and_extension() {
             .collect::<Vec<_>>();
         crate::test_harness::push(&mut command, tokens);
         let mut capabilities = CommandHostCapabilities::default();
-        let scanned = crate::test_harness::processor(&mut command, universe, &mut capabilities)
-            .scan_file_name()
-            .expect("filename");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let scanned = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        )
+        .scan_file_name()
+        .expect("filename");
 
         assert_eq!(scanned.packed(), "dir/job.tex");
         assert_eq!(scanned.components.area, "dir/");

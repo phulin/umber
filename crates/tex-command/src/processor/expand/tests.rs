@@ -37,8 +37,13 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [Token::Cs(symbol.symbol())]);
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
 
         let expanded = processor
             .get_x_token()
@@ -83,8 +88,13 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [noexpand, macro_token, macro_token]);
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
 
         let suppressed = processor
             .get_x_token()

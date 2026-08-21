@@ -632,7 +632,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 });
             return;
         }
-        let mut diagnostic = self.state.begin_diagnostic();
+        let mut diagnostic = self.begin_diagnostic();
         diagnostic.print_nl(&text);
         diagnostic.end(false);
     }
@@ -678,7 +678,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 });
             return;
         }
-        let mut diagnostic = self.state.begin_diagnostic();
+        let mut diagnostic = self.begin_diagnostic();
         diagnostic.print_nl(&text);
         diagnostic.end(false);
     }
@@ -1337,7 +1337,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 });
             return;
         }
-        let mut diagnostic = self.state.begin_diagnostic();
+        let mut diagnostic = self.begin_diagnostic();
         diagnostic.print_char('{');
         if let Some(mode_prefix) = mode_prefix {
             diagnostic.print(&mode_prefix).print(": ");
@@ -1386,7 +1386,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 });
             return;
         }
-        let mut diagnostic = self.state.begin_diagnostic();
+        let mut diagnostic = self.begin_diagnostic();
         diagnostic
             .print_char('{')
             .print(&delimiter_name)
@@ -1537,7 +1537,7 @@ fn conditional_trace_suffix(level: usize, condition: Option<String>, source_line
 
 /// e-TeX 2.6 [49.3715]'s `print_if_line`: `if #<>0 then begin print(" entered
 /// on line "); print_int(#); end`, shared by `\tracingifs` and `\showifs`.
-fn print_if_line<G>(diagnostic: &mut tex_state::diagnostic::Diagnostic<'_, G>, source_line: u32) {
+fn print_if_line(diagnostic: &mut tex_state::diagnostic::Diagnostic<'_>, source_line: u32) {
     if source_line != 0 {
         diagnostic
             .print(" entered on line ")

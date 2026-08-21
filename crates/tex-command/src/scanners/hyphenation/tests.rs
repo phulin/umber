@@ -21,9 +21,15 @@ fn pattern_scan_keeps_letters_and_interleaved_numeric_weights() {
             .collect::<Vec<_>>();
         crate::test_harness::push(&mut command, tokens);
         let mut capabilities = CommandHostCapabilities::default();
-        let scanned = crate::test_harness::processor(&mut command, universe, &mut capabilities)
-            .scan_hyphenation_data(HyphenationDataKind::Patterns)
-            .expect("patterns");
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let scanned = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        )
+        .scan_hyphenation_data(HyphenationDataKind::Patterns)
+        .expect("patterns");
 
         let pattern = scanned.patterns.first().expect("one pattern");
         assert_eq!(pattern.letters, ['a', 'b', 'c']);

@@ -1120,6 +1120,7 @@ impl<G> CommandMachine<'_, G> {
             CommandHostContext::new(self.capabilities),
             self.fuel,
             observer,
+            self.diagnostic_effects,
         )
     }
 
@@ -1164,6 +1165,7 @@ fn command_processor<'episode, 'admission, G>(
     fuel: &'episode mut tex_command::CommandFuel,
     capabilities: &'episode mut CommandHostCapabilities,
     observations: &'episode mut ObservationSlot,
+    diagnostic_effects: &'episode mut DiagnosticEffects,
     stores: CommandContext<'admission, G>,
 ) -> InterpreterProcessor<'episode, 'admission, G> {
     let observer = observations
@@ -1174,6 +1176,7 @@ fn command_processor<'episode, 'admission, G>(
         CommandHostContext::new(capabilities),
         fuel,
         observer,
+        diagnostic_effects,
     )
 }
 
@@ -1312,16 +1315,18 @@ impl<G> MainControl<G> {
         // cursor untouched when the dialog returns.
         stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
         self.refresh_host_capabilities(stores);
+        let mut diagnostic_effects = DiagnosticEffects::new();
         let processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
+            &mut diagnostic_effects,
             stores.command_context().expect("live generation"),
         );
         let context = processor.error_context();
         let mut command_context = processor.into_context();
-        crate::error_report::report_error(
+        let result = crate::error_report::report_error(
             &mut command_context,
             "Interruption",
             &[
@@ -1330,7 +1335,12 @@ impl<G> MainControl<G> {
                 "unless you just want to quit by typing `X'.",
             ],
             context,
-        )
+        );
+        drop(command_context);
+        stores
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
+        result
     }
 
     fn local_glue_pointer_reassigned<T, D>(
@@ -2829,6 +2839,7 @@ impl<G> MainControl<G> {
                 .command
                 .publish_named_token_list_pushes(
                     &mut stores.command_context().expect("live generation"),
+                    diagnostic_effects,
                 )
                 .into_iter()
                 .map(CommandObservation::Input)
@@ -2897,18 +2908,23 @@ impl<G> MainControl<G> {
         {
             return Ok(None);
         }
+        let mut diagnostic_effects = DiagnosticEffects::new();
         {
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
+                &mut diagnostic_effects,
                 stores.command_context().expect("named-boundary admission"),
             );
             processor
                 .retire_exhausted_token_levels_for_named_boundary()
                 .map_err(command_error)?;
         }
+        stores
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         self.command
             .reclaim_unreachable_attempt_suffix()
             .map_err(|_| ExecError::MissingToken {
@@ -3074,6 +3090,7 @@ impl<G> MainControl<G> {
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
+                    diagnostic_effects,
                     stores.command_context().expect("live generation"),
                 );
                 let _ = processor
@@ -3684,34 +3701,35 @@ impl<G> MainControl<G> {
                     }
                 }
             } else {
-                let preflight = match self.preflight_replay_delivery(stores) {
-                    Ok(preflight) => preflight,
-                    Err(error) => {
-                        if let Some(mark) = episode_tracked_mark.take() {
-                            let _ = stores.abandon_dependency_region(mark);
+                let preflight =
+                    match self.preflight_replay_delivery(stores, &mut diagnostic_effects) {
+                        Ok(preflight) => preflight,
+                        Err(error) => {
+                            if let Some(mark) = episode_tracked_mark.take() {
+                                let _ = stores.abandon_dependency_region(mark);
+                            }
+                            if execution_error_is_fuel(&error) {
+                                self.episode_telemetry
+                                    .record_semantic_barrier(crate::SemanticEpisodeBarrier::Fuel);
+                            }
+                            let result = self.finish_resource_preflight_failure(stores, error);
+                            if matches!(result, Ok(StepResult::Suspended(_))) {
+                                self.advance_telemetry.rollbacks += 1;
+                                #[cfg(feature = "profiling")]
+                                self.episode_telemetry
+                                    .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
+                                #[cfg(not(feature = "profiling"))]
+                                self.episode_telemetry
+                                    .record_rollback(crate::SemanticEpisodeBarrier::Resource);
+                            }
+                            if matches!(result, Ok(StepResult::Suspended(_))) {
+                                self.retain_direct_operation_for_retry(stores, operation_mark);
+                            } else {
+                                self.commit_direct_operation(stores, operation_mark);
+                            }
+                            return result;
                         }
-                        if execution_error_is_fuel(&error) {
-                            self.episode_telemetry
-                                .record_semantic_barrier(crate::SemanticEpisodeBarrier::Fuel);
-                        }
-                        let result = self.finish_resource_preflight_failure(stores, error);
-                        if matches!(result, Ok(StepResult::Suspended(_))) {
-                            self.advance_telemetry.rollbacks += 1;
-                            #[cfg(feature = "profiling")]
-                            self.episode_telemetry
-                                .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
-                            #[cfg(not(feature = "profiling"))]
-                            self.episode_telemetry
-                                .record_rollback(crate::SemanticEpisodeBarrier::Resource);
-                        }
-                        if matches!(result, Ok(StepResult::Suspended(_))) {
-                            self.retain_direct_operation_for_retry(stores, operation_mark);
-                        } else {
-                            self.commit_direct_operation(stores, operation_mark);
-                        }
-                        return result;
-                    }
-                };
+                    };
                 preflight.expect("alignment delivery has a direct preflight")
             };
 
@@ -4574,6 +4592,7 @@ impl<G> MainControl<G> {
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
                         &mut self.operation_observations,
+                        &mut diagnostic_effects,
                         stores.command_context().expect("live generation"),
                     );
                     let command = processor
@@ -4852,6 +4871,7 @@ impl<G> MainControl<G> {
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
+                    diagnostic_effects,
                     stores.command_context().expect("live generation"),
                 );
                 let outcome = processor.scan_accent_base();
@@ -4944,6 +4964,7 @@ impl<G> MainControl<G> {
                                 self.command
                                     .publish_named_token_list_pushes(
                                         &mut stores.command_context().expect("live generation"),
+                                        diagnostic_effects,
                                     )
                                     .into_iter()
                                     .map(CommandObservation::Input),
@@ -4954,6 +4975,7 @@ impl<G> MainControl<G> {
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
                         &mut self.operation_observations,
+                        diagnostic_effects,
                         stores.command_context().expect("live generation"),
                     );
                     processor
@@ -5107,7 +5129,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
-        self.command_scan_math_choice_group(stores)?;
+        self.command_scan_math_choice_group(stores, diagnostic_effects)?;
         self.execute_live_math_group(GroupKind::MathChoice, stores, diagnostic_effects)
     }
 
@@ -5336,7 +5358,7 @@ impl<G> MainControl<G> {
                     ]);
                     report.context(context);
                     report.error().jump_out()?;
-                    self.command_scan_math_character(stores)?
+                    self.command_scan_math_character(stores, diagnostic_effects)?
                 };
                 let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
                 let field = self.execute_math_field(episode, stores, diagnostic_effects)?;
@@ -6276,13 +6298,14 @@ impl<G> MainControl<G> {
     fn command_scan_math_field(
         &mut self,
         stores: &mut Universe<G>,
-        _diagnostic_effects: &mut DiagnosticEffects,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_command::MathFieldEpisode, ExecError> {
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
+            diagnostic_effects,
             stores.command_context().expect("live generation"),
         );
         let scanned = processor.scan_math_field_episode();
@@ -6294,12 +6317,14 @@ impl<G> MainControl<G> {
     fn command_scan_math_character(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_command::ScannedMathCharacter, ExecError> {
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
+            diagnostic_effects,
             stores.command_context().expect("live generation"),
         );
         processor.scan_math_character().map_err(command_error)
@@ -6311,12 +6336,14 @@ impl<G> MainControl<G> {
     fn command_scan_math_choice_group(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<bool, ExecError> {
         let mut processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
+            diagnostic_effects,
             stores.command_context().expect("live generation"),
         );
         let scanned = processor.scan_math_choice_group();
@@ -6480,6 +6507,7 @@ impl<G> MainControl<G> {
     fn preflight_replay_delivery(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<Option<PreflightDelivery<G>>, ExecError> {
         let mode = self.modes.current_mode();
         if self.active_alignment.is_some()
@@ -6498,6 +6526,7 @@ impl<G> MainControl<G> {
                 .command
                 .publish_named_token_list_pushes(
                     &mut stores.command_context().expect("live generation"),
+                    diagnostic_effects,
                 )
                 .into_iter()
                 .map(CommandObservation::Input)
@@ -6519,6 +6548,7 @@ impl<G> MainControl<G> {
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
+                diagnostic_effects,
                 stores.command_context().expect("live generation"),
             );
             processor
@@ -6719,6 +6749,7 @@ impl<G> MainControl<G> {
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
+                diagnostic_effects,
                 stores.command_context().expect("live generation"),
             );
             prepare_command_trace(&mut processor, mode, self.shown_mode);
@@ -6861,6 +6892,7 @@ impl<G> MainControl<G> {
                 .command
                 .publish_named_token_list_pushes(
                     &mut stores.command_context().expect("live generation"),
+                    diagnostic_effects,
                 )
                 .into_iter()
                 .map(CommandObservation::Input)
@@ -6895,6 +6927,7 @@ impl<G> MainControl<G> {
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
+                diagnostic_effects,
                 stores.command_context().expect("live generation"),
             );
             let display_alignment_tail = matches!(&delivery, OperationDelivery::<G>::Replay(None))
@@ -7293,6 +7326,7 @@ impl<G> MainControl<G> {
                 .command
                 .publish_named_token_list_pushes(
                     &mut stores.command_context().expect("live generation"),
+                    diagnostic_effects,
                 )
                 .into_iter()
                 .map(CommandObservation::Input)
@@ -7681,6 +7715,7 @@ impl<G> MainControl<G> {
                 self.command
                     .publish_named_token_list_pushes(
                         &mut stores.command_context().expect("live generation"),
+                        diagnostic_effects,
                     )
                     .into_iter()
                     .map(CommandObservation::Input),
@@ -7795,17 +7830,22 @@ impl<G> MainControl<G> {
         observer: &mut dyn CommandObserver,
     ) -> Result<String, ExecError> {
         self.operation_observations = Some(ObservationBuffer::default());
-        let scanned = self.scan_startup_file_name_once(stores);
+        let mut diagnostic_effects = DiagnosticEffects::new();
+        let scanned = self.scan_startup_file_name_once(stores, &mut diagnostic_effects);
         self.operation_observations
             .take()
             .unwrap_or_default()
             .consume_into(Some(observer));
+        stores
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         scanned
     }
 
     fn scan_startup_file_name_once(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<String, ExecError> {
         let filename =
             {
@@ -7814,6 +7854,7 @@ impl<G> MainControl<G> {
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
+                    diagnostic_effects,
                     stores.command_context().expect("live generation"),
                 );
                 let first = processor.get_x_token().map_err(command_error)?.ok_or(
@@ -7856,6 +7897,7 @@ impl<G> MainControl<G> {
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
+            diagnostic_effects,
             stores.command_context().expect("live generation"),
         );
         let exhausted = processor.get_x_token();

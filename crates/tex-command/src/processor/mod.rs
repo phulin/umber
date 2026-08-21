@@ -138,6 +138,7 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     pub(crate) host: CommandHostContext<'episode>,
     observer: Option<&'episode mut dyn CommandObserver>,
     fuel: ProcessorFuel<'episode>,
+    diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     /// The §53 write scanner registers its replay level here solely to name
     /// that level in detached observation. This is processor-local observer
     /// metadata: raw delivery neither reads replay provenance nor lets this
@@ -293,6 +294,10 @@ impl<G> CommandProcessor<'_, '_, G> {
 }
 
 impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
+    pub(crate) fn begin_diagnostic(&mut self) -> tex_state::diagnostic::Diagnostic<'_> {
+        self.state.begin_diagnostic(self.diagnostic_effects)
+    }
+
     /// Retires this borrow facade and returns its unique admitted state view.
     ///
     /// Callers use this linear handoff when one command episode must perform
@@ -403,7 +408,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
                 });
             return;
         }
-        let mut output = self.state.begin_diagnostic();
+        let mut output = self.begin_diagnostic();
         output.print_nl(&text);
         output.end(false);
     }
@@ -444,12 +449,14 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         command: &'episode mut CommandState<G>,
         state: CommandContext<'admission, G>,
         host: CommandHostContext<'episode>,
+        diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Self {
         Self::from_parts(
             command,
             state,
             host,
             ProcessorFuel::Owned(CommandFuelLedger::default()),
+            diagnostic_effects,
             None,
         )
     }
@@ -467,8 +474,16 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         host: CommandHostContext<'episode>,
         fuel: &'episode mut CommandFuel,
         observer: Option<&'episode mut dyn CommandObserver>,
+        diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Self {
-        Self::from_parts(command, state, host, ProcessorFuel::Shared(fuel), observer)
+        Self::from_parts(
+            command,
+            state,
+            host,
+            ProcessorFuel::Shared(fuel),
+            diagnostic_effects,
+            observer,
+        )
     }
 
     fn from_parts(
@@ -476,6 +491,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         mut state: CommandContext<'admission, G>,
         host: CommandHostContext<'episode>,
         fuel: ProcessorFuel<'episode>,
+        diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
         observer: Option<&'episode mut dyn CommandObserver>,
     ) -> Self {
         command.observe_tracked_dependencies(&mut state);
@@ -485,6 +501,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             host,
             observer,
             fuel,
+            diagnostic_effects,
             immediate_write_retirement: None,
             pending_file_warning_context: None,
             last_delivery: None,

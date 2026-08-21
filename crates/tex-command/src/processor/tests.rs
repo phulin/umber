@@ -13,8 +13,13 @@ fn processor_episode_borrows_generation_and_delivers_one_current_command() {
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [token]);
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
 
         let delivered = processor
             .get_x_token()

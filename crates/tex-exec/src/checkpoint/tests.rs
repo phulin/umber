@@ -31,12 +31,14 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
             cat: Catcode::Other,
         })]);
         let mut command = CommandState::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         command.push_everypar(
             &universe.command_context().expect("command context"),
             command_root,
         );
         command.publish_named_token_list_pushes(
             &mut universe.command_context().expect("command context"),
+            &mut diagnostic_effects,
         );
         let mut modes = ModeNest::new();
         modes
@@ -76,6 +78,7 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
         );
         let _ = command.publish_named_token_list_pushes(
             &mut universe.command_context().expect("command context"),
+            &mut diagnostic_effects,
         );
         modes
             .current_list_mutation()
@@ -90,6 +93,7 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
             &mut command,
             universe.command_context().expect("command context"),
             CommandHostContext::new(&mut capabilities),
+            &mut diagnostic_effects,
         );
         assert_eq!(
             processor

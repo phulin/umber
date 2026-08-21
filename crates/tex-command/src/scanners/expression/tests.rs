@@ -47,8 +47,13 @@ fn numexpr_honors_precedence_and_leaves_its_relax_terminator_consumed() {
             ],
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
         assert_eq!(processor.scan_integer().expect("expression").value, 14);
         assert_eq!(
             processor

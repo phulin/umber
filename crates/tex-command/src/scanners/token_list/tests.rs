@@ -22,8 +22,13 @@ fn token_register_assignment_returns_attempt_local_balanced_text() {
             ],
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
         let scanned = processor
             .scan_token_register_assignment(owner)
             .expect("token assignment");

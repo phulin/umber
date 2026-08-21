@@ -80,6 +80,7 @@ impl<G> PersistentInterpreter<G> {
         host: CommandHostContext<'episode>,
         fuel: &'episode mut CommandFuel,
         observer: Option<&'episode mut dyn CommandObserver>,
+        diagnostic_effects: &'episode mut tex_state::diagnostic::DiagnosticEffects,
     ) -> InterpreterProcessor<'episode, 'admission, G> {
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_interpreter_operation_entry();
@@ -99,7 +100,8 @@ impl<G> PersistentInterpreter<G> {
         lifecycle.live_processors = 1;
         lifecycle.maximum_live_processors = lifecycle.maximum_live_processors.max(1);
 
-        let processor = CommandProcessor::borrowed(command, state, host, fuel, observer);
+        let processor =
+            CommandProcessor::borrowed(command, state, host, fuel, observer, diagnostic_effects);
         InterpreterProcessor {
             processor: Some(processor),
             lifecycle,
@@ -195,12 +197,14 @@ mod tests {
     ) -> CommandContext<'admission, G> {
         let mut capabilities = CommandHostCapabilities::default();
         let mut fuel = CommandFuelLedger::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         interpreter
             .processor(
                 context,
                 CommandHostContext::new(&mut capabilities),
                 fuel.fuel_mut(),
                 None,
+                &mut diagnostic_effects,
             )
             .into_context()
     }

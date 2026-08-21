@@ -154,8 +154,13 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
             [macro_token, letter('x'), other(','), letter('z')],
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
         let call = processor
             .get_next()
             .expect("macro delivery")
@@ -214,8 +219,13 @@ fn delimited_argument_ignores_delimiters_inside_literal_braces() {
             ],
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
         let call = processor
             .get_next()
             .expect("macro delivery")

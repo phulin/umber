@@ -21,8 +21,13 @@ fn registered_source_delivers_through_the_generation_typed_processor() {
             .expect("source registration");
         command.open_registered_source(source).expect("source open");
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
 
         assert!(matches!(
             processor
@@ -47,8 +52,13 @@ fn transient_replay_preserves_authored_token_categories() {
             }],
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
         assert_eq!(
             processor
                 .get_next()
@@ -83,9 +93,14 @@ fn invalid_source_character_is_reported_once_and_delivery_restarts() {
             .expect("source registration");
         command.open_registered_source(source).expect("source open");
         let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         {
-            let mut processor =
-                crate::test_harness::processor(&mut command, universe, &mut capabilities);
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                universe,
+                &mut capabilities,
+                &mut diagnostic_effects,
+            );
             assert!(matches!(
                 processor
                     .get_next()

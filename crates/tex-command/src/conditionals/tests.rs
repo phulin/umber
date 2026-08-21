@@ -121,8 +121,13 @@ fn false_boolean_skips_to_else_and_matching_fi_retires_the_frame() {
             [if_false, other('f'), otherwise, other('t'), fi],
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
 
         assert_eq!(next_character(&mut processor), 't');
         assert_eq!(
@@ -160,8 +165,13 @@ fn ifx_compares_raw_operands_without_expanding_them() {
             ],
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor =
-            crate::test_harness::processor(&mut command, universe, &mut capabilities);
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
 
         assert_eq!(next_character(&mut processor), 'y');
         assert!(processor.get_x_token().expect("matching fi").is_none());
@@ -175,9 +185,14 @@ fn extra_delimiter_recovery_keeps_following_input_and_owns_its_diagnostic() {
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, [or, other('t')]);
         let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         {
-            let mut processor =
-                crate::test_harness::processor(&mut command, universe, &mut capabilities);
+            let mut processor = crate::test_harness::processor(
+                &mut command,
+                universe,
+                &mut capabilities,
+                &mut diagnostic_effects,
+            );
             assert_eq!(next_character(&mut processor), 't');
         }
         assert!(

@@ -24,10 +24,12 @@ fn external_command_boundary_delivers_registered_source_characters() {
             .expect("source registration");
         command.open_registered_source(source).expect("source open");
         let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
         let mut processor = CommandProcessor::new(
             &mut command,
             universe.command_context().expect("command context"),
             CommandHostContext::new(&mut capabilities),
+            &mut diagnostic_effects,
         );
 
         assert_eq!(

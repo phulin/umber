@@ -1306,6 +1306,7 @@ impl<G> CommandState<G> {
     pub fn publish_named_token_list_pushes(
         &mut self,
         state: &mut tex_state::CommandContext<'_, G>,
+        diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     ) -> Vec<crate::InputRecord> {
         self.named_token_list_pushes
             .drain(..)
@@ -1332,7 +1333,7 @@ impl<G> CommandState<G> {
                             state, token, &mut text,
                         );
                     }
-                    let mut output = state.begin_diagnostic();
+                    let mut output = state.begin_diagnostic(diagnostic_effects);
                     output.print_nl(&text);
                     output.end(false);
                 }

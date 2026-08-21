@@ -26,7 +26,8 @@ line path. It is the one line source for both of tex.web's callers -- §363's
 prints its own prompt inside the acquisition, so the command core has no
 print channel of its own outside the borrowed
 `tex_state::CommandContext::begin_diagnostic` diagnostic channel
-`\tracingifs` uses (see `src/conditionals.rs`).
+`\tracingifs` uses with the executor's operation-local detached-effect
+collector (see `src/conditionals.rs`).
 
 ## File Map
 
@@ -67,8 +68,8 @@ print channel of its own outside the borrowed
   cursor moved across an executor-owned typed resource continuation; it
   restores observation ordering but owns no command/input semantics.
   Production borrows use `CommandProcessor::borrowed`, which takes the
-  session-owned fuel and observer directly and constructs no temporary owned
-  ledger.
+  session-owned fuel, observer, and operation-local diagnostic-effects
+  collector directly and constructs no temporary owned ledger.
 - `src/error.rs`: command error and resource-need representation plus the
   shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
   and canonical scanner paths.
@@ -213,9 +214,10 @@ print channel of its own outside the borrowed
 - `src/conditionals.rs`: private independent condition-stack machine; also
   renders e-TeX 2.6's `\tracingifs` `{...}` trace lines at conditional entry
   and at each `\or`/`\else`/`\fi` delimiter resolution, printed directly
-  through `tex_state::CommandContext::begin_diagnostic` because tex.web's
-  `show_cur_cmd_chr` fires from inside `conditional`/`pass_text` itself
-  rather than through the executor.
+  through `tex_state::CommandContext::begin_diagnostic` into the enclosing
+  operation's detached-effect collector because tex.web's `show_cur_cmd_chr`
+  fires from inside `conditional`/`pass_text` itself rather than through the
+  executor.
 - `src/tracing_nesting.rs`: renders e-TeX 2.6's `\tracingnesting`
   `file_warning` -- "Warning: end of file when ... is incomplete" for every
   group and conditional still open at a source level's natural EOF, compared

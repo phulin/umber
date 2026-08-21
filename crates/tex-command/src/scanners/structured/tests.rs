@@ -15,9 +15,15 @@ fn scan_write_stream(tokens: impl IntoIterator<Item = Token>) -> WriteStreamSele
         let mut command = CommandState::default();
         crate::test_harness::push(&mut command, tokens);
         let mut capabilities = CommandHostCapabilities::default();
-        crate::test_harness::processor(&mut command, universe, &mut capabilities)
-            .scan_write_stream()
-            .expect("write stream")
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        )
+        .scan_write_stream()
+        .expect("write stream")
     })
 }
 

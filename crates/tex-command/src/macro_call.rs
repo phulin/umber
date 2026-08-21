@@ -293,7 +293,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // §323 uses `print_nl`, unlike §389's unconditional `print_ln` for
         // an ordinary macro invocation. At an existing line boundary this
         // must not introduce a blank line before the named list.
-        let mut output = self.state.begin_diagnostic();
+        let mut output = self.begin_diagnostic();
         output.print_nl(&text);
         output.end(false);
     }
@@ -624,7 +624,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // command-trace boundary does. A pending diagnostic took the queued
         // branch above so its earlier report still cannot be overtaken.
         self.command.render_file_framing_events(&mut self.state);
-        let mut output = self.state.begin_diagnostic();
+        let mut output = self.begin_diagnostic();
         if force_newline {
             output.print_ln().print(&text);
         } else {

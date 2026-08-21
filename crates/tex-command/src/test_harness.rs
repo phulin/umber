@@ -40,6 +40,7 @@ pub(crate) fn processor<'a, G>(
     command: &'a mut CommandState<G>,
     universe: &'a mut Universe<G>,
     capabilities: &'a mut CommandHostCapabilities,
+    diagnostic_effects: &'a mut tex_state::diagnostic::DiagnosticEffects,
 ) -> CommandProcessor<'a, 'a, G> {
     CommandProcessor::new(
         command,
@@ -47,5 +48,6 @@ pub(crate) fn processor<'a, G>(
             .command_context()
             .expect("admitted command context"),
         CommandHostContext::new(capabilities),
+        diagnostic_effects,
     )
 }
