@@ -4,6 +4,7 @@
 //! expansion, macro calls, input nesting, and operand collection remain in
 //! `tex-command`; no independent source stack is accepted here.
 
+use std::collections::VecDeque;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -267,16 +268,9 @@ pub struct MainControl<G> {
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
     completed_boundaries: Vec<crate::EngineBoundary>,
-    /// A committed artifact prefix waiting for the outer main-control owner.
-    ///
-    /// TeX82 §§1025--1026 may execute several `ship_out` calls while an
-    /// output routine owns the input, mode, and save-stack continuations.
-    /// Those commits form one outer completion and cannot publish a durable
-    /// checkpoint until the routine and every other nested builder unwind.
-    pending_shipout_boundary: bool,
-    /// A completed outer paragraph waiting for command-owned macro/scanner
-    /// continuations to become checkpoint-quiescent.
-    pending_paragraph_boundary: bool,
+    /// Ordered named-boundary intents waiting for command-owned scanner,
+    /// macro, resource, and structural continuations to become quiescent.
+    pending_named_boundaries: VecDeque<crate::EngineBoundary>,
     /// Source site of the most recent typed resource suspension. This is
     /// retained outside snapshots so a host protocol no-progress invariant
     /// can still identify the command whose retry failed to advance.
@@ -1222,8 +1216,7 @@ impl<G> Default for MainControl<G> {
             immediate_prints: Vec::new(),
             prepared_shipout: None,
             completed_boundaries: Vec::new(),
-            pending_shipout_boundary: false,
-            pending_paragraph_boundary: false,
+            pending_named_boundaries: VecDeque::new(),
             pending_resource_site: None,
             pending_preflight_command: None,
             pending_resource_operation: None,
@@ -1586,8 +1579,7 @@ impl<G> MainControl<G> {
         checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
-        self.pending_shipout_boundary = false;
-        self.pending_paragraph_boundary = false;
+        self.pending_named_boundaries.clear();
         self.fatal = None;
         self.captured_fatal_origin = None;
         Ok(())
@@ -2510,27 +2502,22 @@ impl<G> MainControl<G> {
         std::mem::take(&mut self.completed_boundaries)
     }
 
-    /// Records newly committed artifacts and releases their one outermost
-    /// checkpoint boundary only after all continuation-owning work unwinds.
+    /// Records one ordered named-boundary intent per newly committed shipout.
+    /// Structural and command-owned continuations gate later publication.
     fn finish_shipout_publication(
         &mut self,
         artifact_count: usize,
         _effect_count: usize,
         stores: &mut Universe<G>,
     ) {
-        self.pending_shipout_boundary |= stores.world().artifact_commits().len() != artifact_count;
-        if self.pending_shipout_boundary
-            && !self.boxes.output_routine_active
-            && self.modes.depth() == 1
-            && stores
-                .command_context()
-                .expect("live generation")
-                .execution_group_depth()
-                == 0
-        {
-            self.completed_boundaries
-                .push(crate::EngineBoundary::ShipoutComplete);
-            self.pending_shipout_boundary = false;
+        let committed = stores
+            .world()
+            .artifact_commits()
+            .len()
+            .saturating_sub(artifact_count);
+        for _ in 0..committed {
+            self.pending_named_boundaries
+                .push_back(crate::EngineBoundary::ShipoutComplete);
         }
     }
 
@@ -2865,19 +2852,34 @@ impl<G> MainControl<G> {
             && self.modes.current_mode() == Mode::Vertical
             && self.modes.depth() == 1
         {
-            self.pending_paragraph_boundary = true;
+            self.pending_named_boundaries
+                .push_back(crate::EngineBoundary::OuterParagraphEnd);
         }
     }
 
-    /// Publishes a pending paragraph boundary only after command-owned
-    /// continuations have retired. This runs before another delivery, so a
+    /// Publishes at most one queued named boundary after every command-owned
+    /// continuation has retired. This runs before another delivery, so a
     /// captured row cannot include effects from the following command.
-    fn publish_pending_paragraph_boundary(
+    fn publish_pending_named_boundary(
         &mut self,
         stores: &mut Universe<G>,
-    ) -> Result<bool, ExecError> {
-        if !self.pending_paragraph_boundary || self.has_external_attempt_owner() {
-            return Ok(false);
+    ) -> Result<Option<crate::EngineBoundary>, ExecError> {
+        let Some(boundary) = self.pending_named_boundaries.front().copied() else {
+            return Ok(None);
+        };
+        if self.has_external_attempt_owner() {
+            return Ok(None);
+        }
+        if boundary == crate::EngineBoundary::ShipoutComplete
+            && (self.boxes.output_routine_active
+                || self.modes.depth() != 1
+                || stores
+                    .command_context()
+                    .expect("shipout-boundary admission")
+                    .execution_group_depth()
+                    != 0)
+        {
+            return Ok(None);
         }
         {
             let mut processor = command_processor(
@@ -2897,12 +2899,15 @@ impl<G> MainControl<G> {
                 context: "named-boundary attempt roots",
             })?;
         if !self.command.named_boundary_is_quiescent() {
-            return Ok(false);
+            return Ok(None);
         }
-        self.completed_boundaries
-            .push(crate::EngineBoundary::OuterParagraphEnd);
-        self.pending_paragraph_boundary = false;
-        Ok(true)
+        let published = self
+            .pending_named_boundaries
+            .pop_front()
+            .expect("inspected named-boundary intent remains queued");
+        debug_assert_eq!(published, boundary);
+        self.completed_boundaries.push(published);
+        Ok(Some(published))
     }
 
     /// Enters TeX82 §1117's live `disc_group` after the command processor has
@@ -3514,7 +3519,7 @@ impl<G> MainControl<G> {
         mut initial_delivery: Option<OperationDelivery<G>>,
         mut tracked_region: Option<&mut Option<Result<TrackedRegionRecord, DependencyRegionError>>>,
     ) -> Result<StepResult, ExecError> {
-        if self.publish_pending_paragraph_boundary(stores)? {
+        if self.publish_pending_named_boundary(stores)?.is_some() {
             return Ok(StepResult::Progress(ReplayStep::Continue));
         }
         let initial_boundaries = self.completed_boundaries.len();
@@ -3541,13 +3546,13 @@ impl<G> MainControl<G> {
         };
 
         loop {
-            if operations != 0 && self.publish_pending_paragraph_boundary(stores)? {
+            if operations != 0
+                && let Some(boundary) = self.publish_pending_named_boundary(stores)?
+            {
                 self.record_direct_episode_commit(
                     stores,
                     operations,
-                    crate::EpisodeCommitBoundary::NamedCheckpoint(
-                        crate::EngineBoundary::OuterParagraphEnd,
-                    ),
+                    crate::EpisodeCommitBoundary::NamedCheckpoint(boundary),
                     initial_artifacts,
                     initial_boundaries,
                     initial_effect_pos,
