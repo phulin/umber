@@ -267,3 +267,63 @@ fn admitted_assignment_rendering_never_reopens_the_universe() {
     })
     .expect("universe allocation");
 }
+
+#[test]
+fn dropped_shipout_restores_aggregate_roots_before_page_suffix_truncation() {
+    with_universe(budget(), |universe| {
+        universe
+            .assign_count(0, 7, AssignmentScope::Global)
+            .expect("baseline count");
+        let speculative_root = {
+            let mut transaction = universe.begin_shipout();
+            transaction
+                .assign_count(0, 99, AssignmentScope::Global)
+                .expect("speculative count");
+            transaction
+                .world_mut()
+                .write_text(crate::PrintSink::Terminal, "speculative");
+            let mut context = transaction.command_context().expect("context");
+            let children = context.publish_page_nodes(vec![Node::Penalty(17)]);
+            context.append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                shift: Scaled::from_raw(0),
+                box_lr: BoxLr::Normal,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: crate::glue::Order::Normal,
+                children,
+            })));
+            children
+        };
+
+        assert_eq!(universe.count(0).expect("count"), 7);
+        assert!(universe.page_node_list(speculative_root).is_err());
+        assert!(universe.world().effect_records().is_empty());
+        assert!(
+            universe
+                .command_context()
+                .expect("context")
+                .page_contributions()
+                .is_empty()
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn pure_memo_capability_is_borrowed_and_does_not_keep_runtime_alive() {
+    with_universe(budget(), |universe| {
+        let runtime = std::sync::Arc::new(std::sync::Mutex::new(crate::PureMemoRuntime::default()));
+        universe.attach_pure_memo_capability(&runtime);
+        assert!(
+            universe
+                .with_pure_memo(|_| 41)
+                .is_some_and(|value| value == 41)
+        );
+        drop(runtime);
+        assert_eq!(universe.with_pure_memo(|_| 0), None);
+    })
+    .expect("universe allocation");
+}

@@ -179,8 +179,8 @@ pub use source_fragments::{
 };
 pub use universe::{
     DefinitionPromotion, InteractionMode, NodePromotionError, PromotionError, PromotionReceipt,
-    StateCheckpoint, StateCheckpointMark, TokenListPromotion, Universe, UniverseError,
-    UniverseRetirement, with_universe,
+    ShipoutTransaction, StateCheckpoint, StateCheckpointMark, TokenListPromotion, Universe,
+    UniverseError, UniverseRetirement, with_universe,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

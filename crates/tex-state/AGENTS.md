@@ -194,7 +194,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/token_show.rs`: tex.web §§49/262--294's printable token spellings -- `show_token_list`, `print_cs`, and `\string` rendering over the interner, catcodes, and `\escapechar`.
 - `src/universe.rs`: Public session/generation aggregate, typed scalar
   mutation and allocation facade, owner-checked journal cursors, admitted
-  command/execution views, and whole-session retirement.
+  command/execution views, borrow-only pure-memo capability, root-before-suffix
+  shipout transactions, and whole-session retirement.
 - `src/universe/tests.rs`: Session/generation admission, rollback-independent
   interning, foreign-session rejection, and retirement tests.
 - `src/world.rs`: External-effect boundary for files, atomic downstream

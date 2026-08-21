@@ -297,7 +297,7 @@ impl PageInsertion {
 }
 
 /// Snapshot-owned state for TeX.web's page builder.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct PageBuilderState {
     contribution: VecDeque<Node>,
     current_page: PageNodeSequence,

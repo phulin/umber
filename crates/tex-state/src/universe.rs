@@ -32,6 +32,49 @@ use crate::stores::{StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
 use crate::world::World;
 
+/// Aggregate rollback roots retained while one shipout is speculative.
+struct ShipoutRollback<G> {
+    state: StateCheckpoint<G>,
+    page: PageBuilderState,
+    pdf: crate::pdf::PdfStateSnapshot<G>,
+    world: crate::world::WorldSnapshot,
+}
+
+/// Exclusive aggregate transaction for one staged shipout.
+pub struct ShipoutTransaction<'a, G> {
+    universe: &'a mut Universe<G>,
+    rollback: Option<ShipoutRollback<G>>,
+    empty_tokens: TokenListId<G>,
+}
+
+impl<G> std::ops::Deref for ShipoutTransaction<'_, G> {
+    type Target = Universe<G>;
+
+    fn deref(&self) -> &Self::Target {
+        self.universe
+    }
+}
+
+impl<G> std::ops::DerefMut for ShipoutTransaction<'_, G> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.universe
+    }
+}
+
+impl<G> Drop for ShipoutTransaction<'_, G> {
+    fn drop(&mut self) {
+        let Some(rollback) = self.rollback.take() else {
+            return;
+        };
+        self.universe.page = rollback.page;
+        self.universe.pdf.rollback(rollback.pdf);
+        self.universe.world.rollback(&rollback.world);
+        self.universe
+            .restore_state_checkpoint(&rollback.state)
+            .expect("validated shipout rollback remains restorable");
+    }
+}
+
 #[cfg(test)]
 #[path = "universe/tests.rs"]
 mod tests;
@@ -187,6 +230,10 @@ pub struct Universe<G> {
     error_context_widths: ErrorContextWidths,
     pub(crate) primitive_names: Vec<String>,
     pub(crate) primitive_meanings: Vec<MeaningWord<G>>,
+    /// Driver-requested cache policy consumed exactly once by MainControl.
+    pure_memo_config: Option<crate::PureMemoConfig>,
+    /// Borrow-only capability for the execution-owned cache service.
+    pure_memo_capability: std::sync::Weak<std::sync::Mutex<crate::PureMemoRuntime>>,
     restore_owner: Option<GenerationOwner<G>>,
 }
 
@@ -207,6 +254,8 @@ impl<G> Universe<G> {
             error_context_widths: ErrorContextWidths::default(),
             primitive_names: Vec::new(),
             primitive_meanings: Vec::new(),
+            pure_memo_config: None,
+            pure_memo_capability: std::sync::Weak::new(),
             restore_owner: None,
         }
     }
@@ -420,6 +469,121 @@ impl<G> Universe<G> {
 
     pub const fn set_interaction_mode(&mut self, mode: InteractionMode) {
         self.interaction_mode = mode;
+    }
+
+    /// Requests a bounded execution-owned pure-query cache.
+    pub const fn enable_pure_memo(&mut self, config: crate::PureMemoConfig) {
+        self.pure_memo_config = Some(config);
+    }
+
+    /// Clears a cache request which MainControl has not consumed.
+    pub const fn disable_pure_memo(&mut self) {
+        self.pure_memo_config = None;
+    }
+
+    #[doc(hidden)]
+    pub fn take_pure_memo_config(&mut self) -> Option<crate::PureMemoConfig> {
+        self.pure_memo_config.take()
+    }
+
+    /// Installs a borrow-only capability to MainControl's cache runtime.
+    #[doc(hidden)]
+    pub fn attach_pure_memo_capability(
+        &mut self,
+        runtime: &std::sync::Arc<std::sync::Mutex<crate::PureMemoRuntime>>,
+    ) {
+        self.pure_memo_capability = std::sync::Arc::downgrade(runtime);
+    }
+
+    /// Borrows the execution-owned cache without transferring its ownership.
+    #[doc(hidden)]
+    pub fn with_pure_memo<R>(
+        &self,
+        operation: impl FnOnce(&mut crate::PureMemoRuntime) -> R,
+    ) -> Option<R> {
+        let runtime = self.pure_memo_capability.upgrade()?;
+        let mut runtime = runtime.lock().expect("memo runtime mutex is not poisoned");
+        Some(operation(&mut runtime))
+    }
+
+    /// Returns the PDF controls frozen by the first committed page.
+    #[must_use]
+    pub const fn fixed_pdf_output_parameters(&self) -> Option<crate::PdfOutputParameters> {
+        self.pdf.output_parameters()
+    }
+
+    fn current_pdf_output_parameters(&self) -> crate::PdfOutputParameters {
+        use crate::env::banks::IntParam;
+        crate::PdfOutputParameters {
+            output: self.int_param(IntParam::PDF_OUTPUT),
+            major_version: self.int_param(IntParam::PDF_MAJOR_VERSION),
+            minor_version: self.int_param(IntParam::PDF_MINOR_VERSION),
+            compress_level: self.int_param(IntParam::PDF_COMPRESS_LEVEL),
+            object_compress_level: self.int_param(IntParam::PDF_OBJ_COMPRESS_LEVEL),
+            decimal_digits: self.int_param(IntParam::PDF_DECIMAL_DIGITS),
+            gamma: self.int_param(IntParam::PDF_GAMMA),
+            image_gamma: self.int_param(IntParam::PDF_IMAGE_GAMMA),
+            image_hicolor: self.int_param(IntParam::PDF_IMAGE_HICOLOR),
+            image_apply_gamma: self.int_param(IntParam::PDF_IMAGE_APPLY_GAMMA),
+            draft_mode: self.int_param(IntParam::PDF_DRAFT_MODE),
+            inclusion_copy_fonts: self.int_param(IntParam::PDF_INCLUSION_COPY_FONTS),
+            pk_resolution: self.int_param(IntParam::PDF_PK_RESOLUTION),
+            unique_resource_names: self.int_param(IntParam::PDF_UNIQUE_RESNAME),
+        }
+        .normalized()
+    }
+
+    fn pdf_token_parameter(&self, tokens: TokenListId<G>) -> crate::pdf::PdfTokenParameter<G> {
+        let admitted = self.admitted().expect("live shipout generation");
+        let words = admitted.token_list(tokens);
+        let semantic_id = crate::state_hash::StateHashFragment::from_exact_builder(
+            0x7064_665f_746f_6b70,
+            |hasher| {
+                hasher.usize(words.len());
+                for word in words {
+                    hasher.u32(word.raw());
+                }
+            },
+        );
+        crate::pdf::PdfTokenParameter {
+            tokens,
+            semantic_id,
+        }
+    }
+
+    fn current_pdf_page_parameters(
+        &self,
+        empty_tokens: TokenListId<G>,
+    ) -> crate::pdf::PdfPageParameters<G> {
+        use crate::env::banks::{DimenParam, IntParam, TokParam};
+        let token_parameter = |parameter| {
+            self.pdf_token_parameter(
+                self.token_parameter(parameter)
+                    .expect("PDF token parameter is admitted")
+                    .unwrap_or(empty_tokens),
+            )
+        };
+        crate::pdf::PdfPageParameters {
+            h_origin: self
+                .dimen_param(DimenParam::PDF_H_ORIGIN)
+                .expect("PDF dimension parameter is admitted"),
+            v_origin: self
+                .dimen_param(DimenParam::PDF_V_ORIGIN)
+                .expect("PDF dimension parameter is admitted"),
+            width: self
+                .dimen_param(DimenParam::PDF_PAGE_WIDTH)
+                .expect("PDF dimension parameter is admitted"),
+            height: self
+                .dimen_param(DimenParam::PDF_PAGE_HEIGHT)
+                .expect("PDF dimension parameter is admitted"),
+            link_margin: self
+                .dimen_param(DimenParam::PDF_LINK_MARGIN)
+                .expect("PDF dimension parameter is admitted"),
+            page_attr: token_parameter(TokParam::PDF_PAGE_ATTR),
+            resources: token_parameter(TokParam::PDF_PAGE_RESOURCES),
+            omit_procset: self.int_param(IntParam::PDF_OMIT_PROCSET),
+            space_font_name: self.pdf.current_space_font_name_id(),
+        }
     }
 
     /// Returns the process-selected tex.web §3 display widths.
@@ -1083,6 +1247,65 @@ impl<G> Universe<G> {
         ))
     }
 
+    /// Begins one exclusive, rollback-capable artifact publication.
+    #[must_use]
+    pub fn begin_shipout(&mut self) -> ShipoutTransaction<'_, G> {
+        let rollback = ShipoutRollback {
+            state: self
+                .state_checkpoint()
+                .expect("live shipout generation can be retained"),
+            page: self.page.clone(),
+            pdf: self.pdf.snapshot(),
+            world: self.world.snapshot(),
+        };
+        let empty_tokens = self
+            .allocate_token_list(&[])
+            .expect("shipout can allocate its canonical empty token root");
+        ShipoutTransaction {
+            universe: self,
+            rollback: Some(rollback),
+            empty_tokens,
+        }
+    }
+
+    /// Publishes already-verified replay bytes through the ordinary shipout
+    /// barrier. Memo replay is disabled whenever rendered-source provenance is
+    /// demanded, so the legacy compact provenance input is intentionally not
+    /// attached to the detached artifact.
+    #[doc(hidden)]
+    pub fn commit_replayed_artifact(
+        &mut self,
+        bytes: Vec<u8>,
+        _render_origin_ends: Vec<u32>,
+        _render_provenance: crate::OutputProvenanceRecipe,
+        receipt: Option<crate::PageOutputPublicationReceiptId>,
+    ) -> Result<
+        (
+            crate::ContentHash,
+            crate::PageOutputPublicationReceipt,
+            crate::ArtifactPublicationRecord,
+        ),
+        crate::WorldError,
+    > {
+        let effect_pos = self.world.effect_pos();
+        let effect_index = self.world.effect_records().len();
+        let reservation = self
+            .world
+            .reserve_active_artifact_publication_at(effect_index, receipt);
+        let transaction = self.begin_shipout();
+        let (hash, publication) =
+            transaction.commit(crate::VerifiedArtifact::new(bytes), effect_pos, reservation)?;
+        let effect_publication = self.world.reserve_effect_publication();
+        self.world
+            .link_artifact_effect_publication(publication.publication(), effect_publication);
+        let publication = publication.with_effect_publication(effect_publication);
+        Ok((
+            hash,
+            crate::PageOutputPublicationReceipt::committed(effect_publication, publication),
+            publication,
+        ))
+    }
+
     /// Restores the state-owned portion of a retained checkpoint atomically.
     ///
     /// Validation is complete before the first mutation. The retained owner is
@@ -1186,6 +1409,54 @@ impl<G> Universe<G> {
     #[must_use]
     pub const fn is_retired(&self) -> bool {
         self.core.is_none()
+    }
+}
+
+impl<G> ShipoutTransaction<'_, G> {
+    /// Atomically commits the staged artifact, effect prefix, and fixed PDF
+    /// page record. Dropping before this point restores aggregate roots before
+    /// it truncates the state/page suffixes they address.
+    pub fn commit(
+        mut self,
+        artifact: crate::VerifiedArtifact,
+        effect_pos: crate::EffectPos,
+        reservation: crate::ArtifactPublicationReservation,
+    ) -> Result<(crate::ContentHash, crate::ArtifactPublicationRecord), crate::WorldError> {
+        let output_parameters = self.current_pdf_output_parameters();
+        let page_parameters = self.current_pdf_page_parameters(self.empty_tokens);
+        let pk_mode = self.pdf_token_parameter(
+            self.token_parameter(crate::env::banks::TokParam::PDF_PK_MODE)
+                .expect("PDF token parameter is admitted")
+                .unwrap_or(self.empty_tokens),
+        );
+        self.pdf
+            .ensure_page_capacity(output_parameters)
+            .map_err(|()| crate::WorldError::pdf_object_ids_exhausted())?;
+        let hash = self.world.store_verified_artifact(&artifact)?;
+        if self.world.commit_mode() != crate::WorldCommitMode::Retained
+            && let Err(error) = self.world.commit_effects(effect_pos)
+        {
+            // A partially materialized effect prefix is irreversible. Preserve
+            // that canonical state and prevent Drop from pretending rollback
+            // remained possible.
+            self.rollback = None;
+            return Err(error);
+        }
+        self.page
+            .set_integer(crate::page::PageInteger::DeadCycles, 0);
+        self.pdf
+            .commit_page(hash, output_parameters, page_parameters, pk_mode);
+        let record = reservation.record();
+        let (bytes, render_provenance, open_out_occurrences) = artifact.into_parts();
+        self.world.record_artifact_commit(
+            hash,
+            bytes,
+            render_provenance,
+            open_out_occurrences,
+            reservation,
+        );
+        self.rollback = None;
+        Ok((hash, record))
     }
 }
 
