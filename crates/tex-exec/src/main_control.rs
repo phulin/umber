@@ -497,6 +497,20 @@ impl<G> Default for ReplayBoxes<G> {
     }
 }
 
+impl<G> ReplayBoxes<G> {
+    fn format_dump_is_quiescent(&self) -> bool {
+        self.pending_setbox.is_none()
+            && !self.pending_shipout
+            && self.pending_leader.is_none()
+            && self.active_boxes.is_empty()
+            && self.suspended_alignments.is_empty()
+            && !self.recovery_simple_group_pending
+            && !self.recovery_simple_group_open
+            && !self.output_routine_active
+            && !self.output_routine_opening_pending
+    }
+}
+
 #[derive(Clone, Debug)]
 struct ActiveDiscretionary {
     parts: Vec<tex_state::node_arena::PageListId>,
@@ -1534,6 +1548,60 @@ impl<G> MainControl<G> {
     #[must_use]
     pub fn format_dump_receipt(&self) -> Option<&crate::job::FormatDumpReceipt> {
         self.dumped_format.as_ref()
+    }
+
+    /// Captures and consumes one successful quiescent INITEX dump transition.
+    ///
+    /// The state image is built before the receipt is taken, so every
+    /// rejection is mutation-free and a successful transition is observable
+    /// exactly once.
+    pub fn take_format_dump(
+        &mut self,
+        stores: &Universe<G>,
+    ) -> Result<Option<crate::DetachedFormatDump>, crate::FormatDumpError> {
+        if self.dumped_format.is_none() {
+            return Ok(None);
+        }
+        if !self.command.format_dump_is_quiescent() {
+            return Err(crate::FormatDumpError::LiveCommandState);
+        }
+        if self.has_external_attempt_owner()
+            || self.active_alignment.is_some()
+            || !self.boxes.format_dump_is_quiescent()
+            || !self.active_discretionaries.is_empty()
+            || !self.active_math_choices.is_empty()
+            || !self.active_math_left_boundaries.is_empty()
+            || !self.active_math_shifts.is_empty()
+            || self.main_loop_active
+            || self.set_box_forbidden_depth != 0
+            || self.end_job_ejection_pending
+            || self.operation_observations.is_some()
+            || self.operation_receipt_start.is_some()
+            || self.suspended_operation_observation.is_some()
+            || self.prepared_shipout.is_some()
+            || !self.prepared_dvi_pages.is_empty()
+            || !self.immediate_prints.is_empty()
+            || !self.pending_named_boundaries.is_empty()
+            || self.pending_resource_site.is_some()
+            || self.pending_preflight_command.is_some()
+            || self.pending_alignment_delivery.is_some()
+        {
+            return Err(crate::FormatDumpError::LiveExecutorState);
+        }
+        if self.modes.depth() != 1
+            || self.modes.current_mode() != Mode::Vertical
+            || !self.modes.current_list().is_empty()
+        {
+            return Err(crate::FormatDumpError::LiveModeState);
+        }
+        let image = stores
+            .capture_format_image()
+            .map_err(crate::FormatDumpError::State)?;
+        let receipt = self
+            .dumped_format
+            .take()
+            .expect("successful dump capture retains its receipt");
+        Ok(Some(crate::DetachedFormatDump { image, receipt }))
     }
 
     /// Captures a quiescent named checkpoint for this command processor.

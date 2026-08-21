@@ -227,6 +227,39 @@ pub struct FormatDumpReceipt {
     publication_confirmed: bool,
 }
 
+/// Exact-once handle-free result of a quiescent INITEX dump transition.
+///
+/// Serialization succeeds before the engine receipt is consumed. The host
+/// therefore observes either the complete image plus announcement receipt or
+/// no publication payload at all.
+#[derive(Debug)]
+pub struct DetachedFormatDump {
+    pub image: tex_state::DetachedFormatImage,
+    pub receipt: FormatDumpReceipt,
+}
+
+/// Aggregate owner which prevented a successful format capture.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FormatDumpError {
+    LiveCommandState,
+    LiveExecutorState,
+    LiveModeState,
+    State(tex_state::FormatError),
+}
+
+impl core::fmt::Display for FormatDumpError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::LiveCommandState => formatter.write_str("format dump retains command state"),
+            Self::LiveExecutorState => formatter.write_str("format dump retains executor state"),
+            Self::LiveModeState => formatter.write_str("format dump retains mode material"),
+            Self::State(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for FormatDumpError {}
+
 impl FormatDumpReceipt {
     #[must_use]
     pub fn new(name: String, year: i32, month: i32, day: i32) -> Self {

@@ -79,8 +79,9 @@ pub use host_api::{
     PdfImageResolver, ResolverResourceNeed, ResourceLookup, ResourceResult,
 };
 pub use job::{
-    BANNER, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpReceipt,
-    PdfJobFinalizationReport, PreloadedFormat, TEX82_BANNER, confirm_format_dump_publication,
+    BANNER, DetachedFormatDump, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpError,
+    FormatDumpReceipt, PdfJobFinalizationReport, PreloadedFormat, TEX82_BANNER,
+    confirm_format_dump_publication,
 };
 pub use main_control::{
     AdvanceOutcome, AdvanceReadiness, AdvanceTelemetry, DiagnosticStep, DiagnosticStepResult,

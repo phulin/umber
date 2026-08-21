@@ -563,6 +563,25 @@ impl<G> CommandState<G> {
         self.validate_summary_quiescence().is_ok()
     }
 
+    /// Reports whether no command/input/condition owner can cross a cold
+    /// format boundary.
+    ///
+    /// Named checkpoints may retain live source levels by design. A format
+    /// publication may not: it is a fresh-job image rather than a resumable
+    /// command continuation.
+    #[must_use]
+    pub fn format_dump_is_quiescent(&self) -> bool {
+        self.validate_summary_quiescence().is_ok()
+            && self.input.levels.is_empty()
+            && self.parameters.activations.is_empty()
+            && self.conditions.frames.is_empty()
+            && self.group_payloads.is_empty()
+            && self.afterassignment.is_none()
+            && self.named_token_list_pushes.is_empty()
+            && self.file_framing_events.is_empty()
+            && self.expansion.pending_diagnostics.is_empty()
+    }
+
     fn checkpoint_arenas(
         &self,
         attempt: AttemptMark,

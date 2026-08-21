@@ -11995,6 +11995,19 @@ fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
             admitted!(stores, |context| context.detach_engine_usage_statistics()),
             retained
         );
+
+        let detached = control
+            .take_format_dump(&stores)
+            .expect("quiescent dump capture")
+            .expect("successful INITEX dump");
+        assert_eq!(detached.receipt.format_ident.format_name, "bounded-dump");
+        assert!(!detached.image.as_bytes().is_empty());
+        assert!(
+            control
+                .take_format_dump(&stores)
+                .expect("exact-once follow-up")
+                .is_none()
+        );
     });
 }
 
