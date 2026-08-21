@@ -170,7 +170,6 @@ impl<'a, G> AdmittedState<'a, G> {
     pub(crate) fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
         self.generation.provenance().get(id)
     }
-
 }
 
 /// Unique admitted view used for assignment and commit publication.
