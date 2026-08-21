@@ -572,9 +572,15 @@ fn hlist_and_vlist_visit_each_base_whatsit_once_in_position() {
                 state_box(context, &trace_nodes, vertical)
             });
             let mut write =
-                |_, _, _| Ok(crate::shipout::ExpandedWrite::transactional("w\n".into()));
+                |_: &mut Universe<_>, _: PrintSink, _: &[tex_state::token::TokenWord]| {
+                    Ok(crate::shipout::ExpandedWrite::transactional("w\n".into()))
+                };
             let mut unexpected_replay =
-                |_, _, _| panic!("the typed visit trace does not replay text");
+                |_: &mut Universe<_>,
+                 _: crate::shipout::ReplayTextKind,
+                 _: &[tex_state::token::TokenWord]| {
+                    panic!("the typed visit trace does not replay text")
+                };
             let staged = crate::shipout::direct::stage_shipout(
                 trace_root,
                 crate::shipout::ShipoutOrigin {

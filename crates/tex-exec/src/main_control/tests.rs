@@ -52,6 +52,16 @@ fn allocate_tokens<G>(stores: &mut Universe<G>, tokens: &[Token]) -> tex_state::
         .expect("test token-list allocation")
 }
 
+fn font_by_name<G>(stores: &mut Universe<G>, name: &str) -> FontId {
+    admitted!(stores, |context| {
+        let symbol = context.intern_control_sequence(name);
+        match context.meaning(symbol) {
+            ResolvedMeaning::Static(Meaning::Font(font)) => font,
+            meaning => panic!("{name} has {meaning:?}"),
+        }
+    })
+}
+
 fn register_source<G>(control: &mut MainControl<G>, bytes: &[u8]) {
     let source = control
         .command_mut()
@@ -1310,7 +1320,7 @@ fn tracingrestores_reports_current_font_selector_restoration() {
         register_cmr10_as(&mut initex, &mut initialized, "cmr10.tfm");
         register_source(&mut initex, br"\font\f=cmr10 \font\g=cmr10 at 9pt \f\end");
         run_to_end(&mut initex, &mut initialized);
-        let stores = initialized;
+        let mut stores = initialized;
         let mut control = MainControl::with_profile(CommandProfile::TEX82);
         register_source(
             &mut control,
@@ -1771,7 +1781,7 @@ fn tracingrestores_reports_loaded_mathchar_meanings_in_unsave_order() {
             \catcode`\?=13 \mathchardef?="4567 \end"#,
         );
         run_to_end(&mut initex, &mut initialized);
-        let stores = initialized;
+        let mut stores = initialized;
         let mut control = MainControl::with_profile(CommandProfile::TEX82);
         register_source(
             &mut control,
@@ -1927,8 +1937,8 @@ fn etex_direction_meanings_share_valigns_vertical_mode_paragraph_entry() {
         UnexpandablePrimitive::BeginR,
         UnexpandablePrimitive::EndR,
     ] {
-        assert!(starts_paragraph_in_vertical_mode(
-            Meaning::UnexpandablePrimitive(primitive)
+        assert!(starts_paragraph_in_vertical_mode::<()>(
+            ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(primitive))
         ));
     }
 }
@@ -1948,9 +1958,10 @@ fn etex_everyeof_assignment_is_visible_to_scantokens_during_edef() {
         run_to_end_observed(&mut control, &mut stores, &mut observations);
 
         assert!(
-            stores
-                .tok_param_option(tex_state::env::banks::TokParam::EVERY_EOF)
-                .is_some(),
+            admitted!(stores, |context| context
+                .token_parameter(tex_state::env::banks::TokParam::EVERY_EOF)
+                .expect("everyeof parameter"))
+            .is_some(),
             "the source assignment must remain present"
         );
         assert!(observations.0.iter().any(|event| matches!(
@@ -2366,12 +2377,12 @@ fn hbox_group_type_respects_box_context_and_vertical_mode() {
                 Some(expected)
             );
             assert_eq!(
-                stores
+                admitted!(stores, |context| context
                     .innermost_group_kind()
-                    .map(tex_state::GroupKind::etex_code),
+                    .map(tex_state::GroupKind::etex_code)),
                 Some(if expected == GroupKind::HBox { 2 } else { 3 })
             );
-        });
+        })
     }
 }
 
@@ -3009,7 +3020,7 @@ fn ignorespaces_surfaces_an_alignment_delimiter_before_fin_col() {
                     return column;
                 }
             }
-        });
+        })
     }
 
     let direct = column_at_v_template(br"\setbox0=\vbox{\halign{#&#\cr X&Y\cr}}\end");
@@ -3575,9 +3586,9 @@ fn vsplit_kernel_separates_result_remainder_and_split_marks() {
             Some(Node::VList(_))
         ));
         for mark in [PageMark::SplitFirst, PageMark::SplitBot] {
-            let tokens = stores.page_mark(mark);
+            let tokens = admitted!(stores, |context| context.page_mark(mark));
             assert_eq!(
-                admitted!(stores, |context| context.token_list(tokens).to_vec()),
+                tokens.words(),
                 [
                     Token::Char {
                         ch: 'f',
@@ -3600,6 +3611,7 @@ fn vsplit_kernel_separates_result_remainder_and_split_marks() {
                         cat: Catcode::Letter,
                     }
                 ]
+                .map(tex_state::token::TokenWord::pack)
             );
         }
     });
@@ -3743,9 +3755,7 @@ fn base_whatsits_preserve_scan_timing_normalization_and_payload_ownership() {
             .symbol();
         assert_eq!(
             tokens.words(),
-            [tex_state::token::TokenWord::pack(Token::Cs(
-                payload_symbol.symbol()
-            ))]
+            [tex_state::token::TokenWord::pack(Token::Cs(payload_symbol))]
         );
         assert_eq!(*close_slot, None);
         assert_eq!(class, "dvi");
@@ -4598,7 +4608,9 @@ fn hot_definition_group_and_catcode_apply_is_observation_neutral() {
         \globaldefs=0
         \end";
 
-    with_etex(SOURCE, |mut unobserved| {
+    with_etex(SOURCE, |unobserved| {
+        let unobserved_terminal = terminal_text(&unobserved);
+        let unobserved_log = pending_sink_text(&unobserved, false);
         crate::test_harness::with_plain_universe(|mut observed| {
             tex_command::install_tex82_expandable_primitives(&mut observed);
             tex_command::install_etex_expandable_primitives(&mut observed);
@@ -4609,17 +4621,14 @@ fn hot_definition_group_and_catcode_apply_is_observation_neutral() {
             let mut observations = ObservationRecorder::default();
             run_to_end_observed(&mut control, &mut observed, &mut observations);
 
-            assert_eq!(
-                observed.journal_cursor().expect("state cursor"),
-                unobserved.journal_cursor().expect("state cursor"),
-                "observer demand cannot change direct semantic state or restoration"
-            );
+            assert_eq!(terminal_text(&observed), unobserved_terminal);
+            assert_eq!(pending_sink_text(&observed, false), unobserved_log);
             assert_eq!(observed.catcode('@'), Catcode::Other);
-            assert!(
-                observed
-                    .symbol("local")
-                    .is_none_or(|symbol| { observed.meaning(symbol) == Meaning::Undefined })
-            );
+            assert!(admitted!(observed, |context| {
+                context.symbol("local").is_none_or(|symbol| {
+                    context.meaning(symbol) == ResolvedMeaning::Static(Meaning::Undefined)
+                })
+            }));
             assert_eq!(macro_character_text(observed, "forcedglobal"), "kept");
             assert!(observations.0.iter().any(|observation| matches!(
                 observation,
@@ -4933,7 +4942,7 @@ fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
                 stores.count(2).expect("count register"),
                 terminal_text(&stores),
             )
-        });
+        })
     };
 
     let uninterrupted = run(true);
@@ -4988,7 +4997,7 @@ fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
             }
             run_to_end(&mut control, &mut stores);
             terminal_text(&stores)
-        });
+        })
     };
 
     for (source, expected) in [
@@ -5188,10 +5197,6 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
 
             assert_eq!(retried.0, direct.0);
             assert_eq!(
-                retried_stores.journal_cursor().expect("state cursor"),
-                direct_stores.journal_cursor().expect("state cursor")
-            );
-            assert_eq!(
                 retried_control.advance_telemetry().maximum_live_savepoints,
                 0
             );
@@ -5370,7 +5375,7 @@ fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode
                     stores.count(0).expect("count register"),
                     control.fuel_burned(),
                 )
-            });
+            })
         };
 
         let unobserved = run(false);
@@ -6130,15 +6135,11 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
 
         run_to_end(&mut control, &mut stores);
 
-        let nodes = stores
+        let nodes = admitted!(stores, |context| context
             .current_page_nodes()
-            .into_iter()
-            .chain(
-                admitted!(stores, |context| context.page_contributions().clone())
-                    .iter()
-                    .cloned(),
-            )
-            .collect::<Vec<_>>();
+            .cloned()
+            .chain(context.page_contributions().iter().cloned())
+            .collect::<Vec<_>>());
         assert!(
             nodes
                 .iter()
@@ -6179,8 +6180,13 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
 fn tex82_profile_leaves_numbered_marks_undefined() {
     crate::test_harness::with_plain_universe(|mut stores| {
         let _control = MainControl::tex82_initex(&mut stores);
-        let marks = stores.intern("marks").expect("symbol interning");
-        assert_eq!(stores.meaning(marks), Meaning::Undefined);
+        admitted!(stores, |context| {
+            let marks = context.intern_control_sequence("marks");
+            assert_eq!(
+                context.meaning(marks),
+                ResolvedMeaning::Static(Meaning::Undefined)
+            );
+        });
         assert_eq!(stores.primitive_meaning("marks"), None);
     });
 }
@@ -6213,28 +6219,76 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
             leader_kind: None,
             shift: None,
         });
-        let diagnostic = detached_showgroups(&stores, &None, &boxes, &[], &[], &[], &[]);
-        crate::diagnostics::execute_showgroups(&mut stores, &diagnostic, String::new())
-            .expect("\\showgroups reports no fatal error");
+        let diagnostic = admitted!(stores, |context| detached_showgroups(
+            context,
+            &None,
+            &boxes,
+            &[],
+            &[],
+            &[],
+            &[],
+        ));
+        admitted!(stores, |context| crate::diagnostics::execute_showgroups(
+            context,
+            &diagnostic,
+            String::new(),
+        ))
+        .expect("\\showgroups reports no fatal error");
 
         crate::test_harness::begin_group(stores, GroupKind::MathShift, 7).expect("test group");
         modes.push(Mode::Math).expect("test mode push");
         crate::test_harness::begin_group(stores, GroupKind::Math, 7).expect("test group");
         modes.push(Mode::Math).expect("test mode push");
-        let diagnostic = detached_showgroups(&stores, &None, &boxes, &[], &[], &[], &[]);
-        crate::diagnostics::execute_showgroups(&mut stores, &diagnostic, String::new())
-            .expect("\\showgroups reports no fatal error");
+        let diagnostic = admitted!(stores, |context| detached_showgroups(
+            context,
+            &None,
+            &boxes,
+            &[],
+            &[],
+            &[],
+            &[],
+        ));
+        admitted!(stores, |context| crate::diagnostics::execute_showgroups(
+            context,
+            &diagnostic,
+            String::new(),
+        ))
+        .expect("\\showgroups reports no fatal error");
 
         crate::test_harness::begin_group(stores, GroupKind::Align, 8).expect("test group");
         crate::test_harness::begin_group(stores, GroupKind::Align, 8).expect("test group");
-        let diagnostic = detached_showgroups(&stores, &None, &boxes, &[], &[], &[], &[]);
-        crate::diagnostics::execute_showgroups(&mut stores, &diagnostic, String::new())
-            .expect("\\showgroups reports no fatal error");
+        let diagnostic = admitted!(stores, |context| detached_showgroups(
+            context,
+            &None,
+            &boxes,
+            &[],
+            &[],
+            &[],
+            &[],
+        ));
+        admitted!(stores, |context| crate::diagnostics::execute_showgroups(
+            context,
+            &diagnostic,
+            String::new(),
+        ))
+        .expect("\\showgroups reports no fatal error");
 
         crate::test_harness::begin_group(stores, GroupKind::NoAlign, 8).expect("test group");
-        let diagnostic = detached_showgroups(&stores, &None, &boxes, &[], &[], &[], &[]);
-        crate::diagnostics::execute_showgroups(&mut stores, &diagnostic, String::new())
-            .expect("\\showgroups reports no fatal error");
+        let diagnostic = admitted!(stores, |context| detached_showgroups(
+            context,
+            &None,
+            &boxes,
+            &[],
+            &[],
+            &[],
+            &[],
+        ));
+        admitted!(stores, |context| crate::diagnostics::execute_showgroups(
+            context,
+            &diagnostic,
+            String::new(),
+        ))
+        .expect("\\showgroups reports no fatal error");
 
         let output = terminal_text(&stores);
         for expected in [
@@ -6364,13 +6418,13 @@ fn pdftex_font_actions_route_through_command_expansion_and_font_state() {
         );
 
         run_to_end(&mut control, &mut stores);
-        let base = match stores
-            .meaning(stores.intern("base").expect("base selector"))
-            .symbol()
-        {
-            Meaning::Font(font) => font,
-            meaning => panic!("base is a font, got {meaning:?}"),
-        };
+        let base = admitted!(stores, |context| {
+            let symbol = context.intern_control_sequence("base");
+            match context.meaning(symbol) {
+                ResolvedMeaning::Static(Meaning::Font(font)) => font,
+                meaning => panic!("base is a font, got {meaning:?}"),
+            }
+        });
 
         assert_eq!(
             admitted!(stores, |context| context.font_expansion(base)),
@@ -6695,7 +6749,7 @@ fn test_pdf_image_source() -> tex_state::PdfExternalImageSource {
         }),
         natural_width: Scaled::from_raw(Scaled::UNITY),
         natural_height: Scaled::from_raw(Scaled::UNITY),
-        bytes: Arc::from(&b"image bytes"[..]),
+        bytes: b"image bytes".to_vec(),
     }
 }
 
@@ -6874,7 +6928,7 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
                 assert!(data.is_file());
                 assert_eq!(
                     token_character_text(
-                        &define_stores,
+                        define_stores,
                         data.stream_attr().expect("stream attribute survives retry")
                     ),
                     "/Subtype /XML"
@@ -6957,7 +7011,7 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
             assert!(data.is_file());
             assert_eq!(
                 token_character_text(
-                    &define_stores,
+                    define_stores,
                     data.stream_attr().expect("stream attribute survives retry")
                 ),
                 "/Type /Metadata"
@@ -6977,8 +7031,7 @@ fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
     // failure must therefore preserve the integer and every aggregate owner
     // for transactional retry under the pdfTeX profile.
     crate::test_harness::with_plain_universe(|mut stores| {
-        let object = stores
-            .reserve_pdf_raw_object()
+        let object = admitted!(stores, |context| context.reserve_pdf_raw_object())
             .expect("reserve reference target");
         assert_eq!(object.raw(), 1);
         let mut control = pdftex_object_control(&mut stores);
@@ -7100,20 +7153,19 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
             MainControlStep::Continue
         );
         assert!(create_stores.copy_box_to_page(7).is_none());
-        let form = create_stores
-            .pdf_form(1)
+        let form = admitted!(create_stores, |context| context.pdf_form(1))
             .expect("retried form is allocated");
         assert_eq!(form.width(), Scaled::from_raw(17));
         assert_eq!(
             token_character_text(
-                &create_stores,
+                create_stores,
                 form.attr().expect("form attribute survives retry")
             ),
             "/Subtype /Form"
         );
         assert_eq!(
             token_character_text(
-                &create_stores,
+                create_stores,
                 form.resources().expect("form resources survive retry")
             ),
             "/ProcSet [/PDF]"
@@ -7312,12 +7364,6 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
                 .expect("PDF image integer"))
                 == 0
         );
-        assert_eq!(
-            admitted!(stores, |context| context
-                .internal_integer(tex_state::meaning::InternalInteger::PdfLastXImage)
-                .expect("PDF image integer")),
-            None
-        );
         assert!(control.modes.current_list().nodes().is_empty());
 
         crate::test_harness::assign_int_param(
@@ -7370,7 +7416,9 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
                 .expect("last image integer");
             let id =
                 tex_state::PdfExternalImageId::new(raw as u32).expect("retried image is allocated");
-            context.pdf_external_image(id).expect("image metadata")
+            context
+                .pdf_external_image_record(id)
+                .expect("image metadata")
         });
         assert_eq!(
             image.dimensions().width,
@@ -7506,17 +7554,16 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
 
     crate::test_harness::with_plain_universe(|mut stores| {
         let source = test_pdf_image_source();
-        let image = stores
-            .allocate_pdf_external_image(
-                source,
-                tex_state::PdfExternalImageDimensions {
-                    width: Scaled::from_raw(11),
-                    height: Scaled::from_raw(12),
-                    depth: Scaled::from_raw(13),
-                },
-                0,
-            )
-            .expect("reference target image");
+        let image = admitted!(stores, |context| context.allocate_pdf_external_image(
+            source,
+            tex_state::PdfExternalImageDimensions {
+                width: Scaled::from_raw(11),
+                height: Scaled::from_raw(12),
+                depth: Scaled::from_raw(13),
+            },
+            0,
+        ))
+        .expect("reference target image");
         assert_eq!(image.id().raw(), 1);
         let mut control = pdftex_image_control(&mut stores);
         control.modes.push(Mode::Math).expect("test mode push");
@@ -7875,7 +7922,7 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
             ));
             assert!(matches!(
                 destination.identifier,
-                tex_state::PdfActionIdentifier::Name(_)
+                tex_state::node::NodePdfActionIdentifier::Name(_)
             ));
         });
     }
@@ -8227,7 +8274,6 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
             let Node::Whatsit(Whatsit::PdfSnapY { ref glue }) = nodes[1] else {
                 unreachable!()
             };
-            let glue = stores.glue(glue);
             assert_eq!(glue.width, Scaled::from_raw(4 * 65_536));
             assert_eq!(glue.stretch_order, tex_state::glue::Order::Fil);
         });
@@ -9088,18 +9134,20 @@ fn macro_parameter_errors_have_distinct_tex82_diagnostics_and_commit_scope() {
                 case.source,
                 case.forbidden
             );
-            let symbol = if case.target == "~" {
-                stores
-                    .active_character_symbol('~')
-                    .expect("active target is interned")
-            } else {
-                stores
-                    .symbol(case.target)
-                    .expect("named target is interned")
-            };
+            let committed = admitted!(stores, |context| {
+                let symbol = if case.target == "~" {
+                    context
+                        .active_character_symbol('~')
+                        .expect("active target is interned")
+                } else {
+                    context
+                        .symbol(case.target)
+                        .expect("named target is interned")
+                };
+                matches!(context.meaning(symbol), ResolvedMeaning::Macro { .. })
+            });
             assert_eq!(
-                stores.macro_meaning(symbol).is_some(),
-                case.committed,
+                committed, case.committed,
                 "{:?}: recovered definition scope",
                 case.source
             );
@@ -9140,16 +9188,19 @@ fn macro_tenth_parameter_reports_exact_limit_error() {
             1,
             "the attempted tenth parameter is diagnosed once: {terminal}"
         );
-        let nine = stores
-            .intern("nine")
-            .expect("macro target is interned")
-            .symbol();
-        let meaning = stores
-            .macro_meaning(nine)
-            .expect("the recovered definition is committed");
+        let parameter_text = admitted!(stores, |context| {
+            let nine = context.intern_control_sequence("nine");
+            let ResolvedMeaning::Macro { definition, .. } = context.meaning(nine) else {
+                panic!("the recovered definition is committed")
+            };
+            context.definition(definition).parameter_text().to_vec()
+        });
         assert_eq!(
-            stores.tokens(meaning.parameter_text()).tokens(),
-            &(1..=9).map(Token::Param).collect::<Vec<_>>()
+            parameter_text,
+            (1..=9)
+                .map(Token::Param)
+                .map(tex_state::token::TokenWord::pack)
+                .collect::<Vec<_>>()
         );
         assert!(
             terminal.contains("RESULT:[ai]"),
@@ -9351,12 +9402,23 @@ fn etex_toks_assignment_and_rhs_keep_sparse_register_indices() {
         assert_eq!(mutations.len(), 2);
         assert_eq!(mutations[0].0, Some("toks:2000"));
         assert_eq!(mutations[1].0, Some("toks:2001"));
-        assert_eq!(
-            stores.tokens(stores.toks(2_001)),
-            stores.tokens(stores.toks(2_000))
-        );
-        assert!(!stores.tokens(stores.toks(2_001)).is_empty());
-        assert!(stores.tokens(stores.toks(0)).is_empty());
+        let (copied, source, zero) = admitted!(stores, |context| {
+            let token_register = |index| {
+                context
+                    .token_register(index)
+                    .expect("token register")
+                    .map(|tokens| context.token_list(tokens).to_vec())
+                    .unwrap_or_default()
+            };
+            (
+                token_register(2_001),
+                token_register(2_000),
+                token_register(0),
+            )
+        });
+        assert_eq!(copied, source);
+        assert!(!copied.is_empty());
+        assert!(zero.is_empty());
     });
 }
 
@@ -9429,7 +9491,9 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
             MainControlStep::Continue
         );
         assert_eq!(
-            empty_stores.tok_param_option(TokParam::EVERY_PAR),
+            admitted!(empty_stores, |context| context
+                .token_parameter(TokParam::EVERY_PAR)
+                .expect("everypar parameter")),
             None,
             "a braced empty assignment must store TeX's null pointer"
         );
@@ -9443,15 +9507,16 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
                     .expect("nonempty assignment executes"),
                 MainControlStep::Continue
             );
-            let outer = stores
-                .tok_param_option(TokParam::EVERY_PAR)
-                .expect("nonempty assignment stores a pointer");
+            let outer = admitted!(stores, |context| context
+                .token_parameter(TokParam::EVERY_PAR)
+                .expect("everypar parameter"))
+            .expect("nonempty assignment stores a pointer");
             assert_eq!(
                 admitted!(stores, |context| context.token_list(outer).to_vec()),
-                &[Token::Char {
+                [tex_state::token::TokenWord::pack(Token::Char {
                     ch: 'A',
                     cat: Catcode::Letter,
-                }]
+                })]
             );
             assert_eq!(
                 control.step(&mut stores).expect("group opens"),
@@ -9463,12 +9528,22 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
                     .expect("scoped empty assignment executes"),
                 MainControlStep::Continue
             );
-            assert_eq!(stores.tok_param_option(TokParam::EVERY_PAR), None);
+            assert_eq!(
+                admitted!(stores, |context| context
+                    .token_parameter(TokParam::EVERY_PAR)
+                    .expect("everypar parameter")),
+                None
+            );
             assert_eq!(
                 control.step(&mut stores).expect("group closes"),
                 MainControlStep::Continue
             );
-            assert_eq!(stores.tok_param_option(TokParam::EVERY_PAR), Some(outer));
+            assert_eq!(
+                admitted!(stores, |context| context
+                    .token_parameter(TokParam::EVERY_PAR)
+                    .expect("everypar parameter")),
+                Some(outer)
+            );
         });
     });
 }
@@ -9671,13 +9746,12 @@ fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
             .collect();
         assert_eq!(mutations.len(), 2);
         assert_eq!(
-            stores
-                .glue(
-                    admitted!(stores, |context| context.glue_param(GlueParam::new(14)))
-                        .expect("glue parameter")
-                )
-                .expect("glue value")
-                .width,
+            admitted!(stores, |context| {
+                let glue = context
+                    .glue_param(GlueParam::new(14))
+                    .expect("glue parameter");
+                context.glue(glue).width
+            }),
             Scaled::from_raw(65_536)
         );
     });
@@ -9760,7 +9834,13 @@ fn etex_sparse_skip_reassignment_keeps_sa_def_mutation_boundary() {
             .count();
         assert_eq!(mutations, 2);
         assert_eq!(
-            stores.glue(stores.skip(32_767)).width,
+            admitted!(stores, |context| {
+                let glue = context
+                    .glue_register(32_767)
+                    .expect("skip register")
+                    .expect("assigned sparse skip");
+                context.glue(glue).width
+            }),
             Scaled::from_raw(Scaled::UNITY)
         );
     });
@@ -10804,9 +10884,10 @@ fn display_content_preserves_future_multiple_leading_newlines() {
     // If that contract expands, replay must still pass the content verbatim
     // to §62 rather than broadly deleting payload newlines.
     crate::test_harness::with_plain_universe(|mut stores| {
-        stores.printer().print("closed").print_ln();
-
-        print_display_content(&mut stores, "\n\nfuture");
+        admitted!(stores, |context| {
+            context.printer().print("closed").print_ln();
+            print_display_content(context, "\n\nfuture");
+        });
 
         assert_eq!(pending_sink_text(&stores, true), "closed\n\n\nfuture");
         assert_eq!(pending_sink_text(&stores, false), "closed\n\n\nfuture");
@@ -10976,7 +11057,10 @@ fn show_meaning_prints_all_named_glue_and_register_symbols() {
             let glue_parameters = (0..18)
                 .map(|index| admitted!(stores, |context| context.glue_param(GlueParam::new(index))))
                 .collect::<Vec<_>>();
-            let skip = stores.skip(0);
+            let skip = admitted!(stores, |context| context
+                .glue_register(0)
+                .expect("skip register")
+                .expect("assigned skip"));
             let muskip = admitted!(stores, |context| context.muskip(0));
 
             run_to_end(&mut control, &mut stores);
@@ -11021,7 +11105,14 @@ fn show_meaning_prints_all_named_glue_and_register_symbols() {
                 glue_parameters,
                 "profile extended={extended} changed a parameter bank"
             );
-            assert_eq!(stores.skip(0), skip, "profile extended={extended}");
+            assert_eq!(
+                admitted!(stores, |context| context
+                    .glue_register(0)
+                    .expect("skip register")
+                    .expect("assigned skip")),
+                skip,
+                "profile extended={extended}"
+            );
             assert_eq!(
                 admitted!(stores, |context| context.muskip(0)),
                 muskip,
@@ -11136,7 +11227,8 @@ fn showthe_uses_the_toks_for_each_internal_value_family_and_releases_output() {
     // `print_cs`, whose control-word delimiter precedes the display period.
     crate::test_harness::with_plain_universe(|mut stores| {
         let nullfont = stores.intern("nullfont").expect("symbol interning");
-        stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
+        admitted!(stores, |context| context
+            .set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont,));
         let mut control = MainControl::tex82_initex(&mut stores);
         register_source(
         &mut control,
@@ -11728,19 +11820,21 @@ fn effective_scope_is_shared_by_provisional_and_committed_meaning_mutations() {
 
         for name in ["forcedchar", "forcedregister"] {
             assert_ne!(
-                stores
-                    .meaning(stores.intern(name).expect("symbol was scanned"))
-                    .symbol(),
-                Meaning::Undefined,
+                admitted!(stores, |context| {
+                    let symbol = context.intern_control_sequence(name);
+                    context.meaning(symbol)
+                }),
+                ResolvedMeaning::Static(Meaning::Undefined),
                 "{name} survived its group"
             );
         }
         for name in ["localchar", "localregister"] {
             assert_eq!(
-                stores
-                    .meaning(stores.intern(name).expect("symbol was scanned"))
-                    .symbol(),
-                Meaning::Undefined,
+                admitted!(stores, |context| {
+                    let symbol = context.intern_control_sequence(name);
+                    context.meaning(symbol)
+                }),
+                ResolvedMeaning::Static(Meaning::Undefined),
                 "{name} was restored at group end"
             );
         }
@@ -11776,19 +11870,21 @@ fn openin_supplies_the_default_tex_extension() {
         register_source(&mut control, br"\openin1=child \read1 to \line\end");
         run_to_end(&mut control, &mut stores);
 
-        let line = stores.intern("line").expect("symbol interning");
-        let replacement = stores
-            .macro_meaning(line)
-            .expect("read defined its target")
-            .replacement_text();
-        let text: String = stores
-            .tokens(replacement)
-            .iter()
-            .filter_map(|token| match token {
-                Token::Char { ch, .. } => Some(*ch),
-                _ => None,
-            })
-            .collect();
+        let text = admitted!(stores, |context| {
+            let line = context.intern_control_sequence("line");
+            let ResolvedMeaning::Macro { definition, .. } = context.meaning(line) else {
+                panic!("read defined its target")
+            };
+            context
+                .definition(definition)
+                .replacement_text()
+                .iter()
+                .filter_map(|word| match word.semantic_token() {
+                    Token::Char { ch, .. } => Some(ch),
+                    _ => None,
+                })
+                .collect::<String>()
+        });
         // TeX82 §240's `\endlinechar` is appended to the line, but §348's
         // ⟨Finish line, emit a space⟩ tokenizes it as `cur_cmd:=spacer;
         // cur_chr:=" "` -- the trailing token is a space, never the raw byte.
@@ -11924,21 +12020,18 @@ fn font_definition_size_boundaries_use_exact_replacements() {
     );
         run_to_end(&mut control, &mut stores);
 
-        let size = |stores, name: &str| match stores
-            .meaning(stores.intern(name).expect("font identifier was scanned"))
-            .symbol()
-        {
-            Meaning::Font(font) => stores.font(font).size().raw(),
-            meaning => panic!("{name} has {meaning:?}"),
+        let size = |stores: &mut Universe<_>, name: &str| {
+            let font = font_by_name(stores, name);
+            admitted!(stores, |context| context.font_size(font).raw())
         };
-        assert_eq!(size(&stores, "slo"), 655);
-        assert_eq!(size(&stores, "shi"), 21_474_836);
-        assert_eq!(size(&stores, "szero"), 655_360);
-        assert_eq!(size(&stores, "sover"), 655_360);
-        assert_eq!(size(&stores, "alo"), 1);
-        assert_eq!(size(&stores, "ahi"), 134_217_727);
-        assert_eq!(size(&stores, "azero"), 655_360);
-        assert_eq!(size(&stores, "aover"), 655_360);
+        assert_eq!(size(stores, "slo"), 655);
+        assert_eq!(size(stores, "shi"), 21_474_836);
+        assert_eq!(size(stores, "szero"), 655_360);
+        assert_eq!(size(stores, "sover"), 655_360);
+        assert_eq!(size(stores, "alo"), 1);
+        assert_eq!(size(stores, "ahi"), 134_217_727);
+        assert_eq!(size(stores, "azero"), 655_360);
+        assert_eq!(size(stores, "aover"), 655_360);
         let output = terminal_text(&stores);
         assert_eq!(
             output
@@ -11986,15 +12079,11 @@ fn malformed_tfm_recovers_to_nullfont_with_assignment_scope() {
 
         run_to_end(&mut control, &mut stores);
 
-        let font = |stores, name: &str| match stores
-            .meaning(stores.intern(name).expect("font identifier was scanned"))
-            .symbol()
-        {
-            Meaning::Font(font) => font,
-            meaning => panic!("{name} has {meaning:?}"),
-        };
-        assert_ne!(font(&stores, "local"), tex_state::font::NULL_FONT);
-        assert_eq!(font(&stores, "globalbad"), tex_state::font::NULL_FONT);
+        assert_ne!(font_by_name(stores, "local"), tex_state::font::NULL_FONT);
+        assert_eq!(
+            font_by_name(stores, "globalbad"),
+            tex_state::font::NULL_FONT
+        );
         let output = terminal_text(&stores);
         assert_eq!(
             output
@@ -12038,32 +12127,42 @@ fn opentype_only_math_family_rejection_precedes_state_mutation() {
     let selection = font;
     let size = Scaled::from_raw(10 * Scaled::UNITY);
     crate::test_harness::with_plain_universe(|mut stores| {
-        let unsupported = stores.intern_font(tex_fonts::LoadedFont::new_opentype(
-            "cmu-serif-roman",
-            "cmu-serif-roman",
-            size,
-            size,
-            selection,
+        let unsupported = admitted!(stores, |context| context.intern_font(
+            tex_fonts::LoadedFont::new_opentype(
+                "cmu-serif-roman",
+                "cmu-serif-roman",
+                size,
+                size,
+                selection,
+            ),
         ));
-        let family_before = stores.math_family_font(MathFontSize::Text, 0);
+        let family_before = admitted!(stores, |context| context
+            .math_family_font(MathFontSize::Text, 0));
         let state_before = stores.journal_cursor().expect("state cursor");
 
-        let error = assign_math_family_font(&mut stores, MathFontSize::Text, 0, unsupported, true)
-            .expect_err("OpenType-only font cannot enter a classic math family");
+        let error = admitted!(stores, |context| assign_math_family_font(
+            context,
+            MathFontSize::Text,
+            0,
+            unsupported,
+            true,
+        ))
+        .expect_err("OpenType-only font cannot enter a classic math family");
 
         assert!(matches!(error, ExecError::OpenTypeMathUnsupported));
         assert_eq!(
-            stores.math_family_font(MathFontSize::Text, 0),
+            admitted!(stores, |context| context
+                .math_family_font(MathFontSize::Text, 0)),
             family_before
         );
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
-        assign_math_family_font(
-            &mut stores,
+        admitted!(stores, |context| assign_math_family_font(
+            context,
             MathFontSize::Text,
             0,
             tex_state::font::NULL_FONT,
             true,
-        )
+        ))
         .expect("classic nullfont remains assignable");
     });
 }
@@ -12082,16 +12181,9 @@ fn font_definition_identity_is_case_sensitive_and_tracks_newest_identifier() {
         );
         run_to_end(&mut control, &mut stores);
 
-        let font = |stores, name: &str| match stores
-            .meaning(stores.intern(name).expect("font identifier was scanned"))
-            .symbol()
-        {
-            Meaning::Font(font) => font,
-            meaning => panic!("{name} has {meaning:?}"),
-        };
-        let first = font(&stores, "first");
-        let upper = font(&stores, "upper");
-        let newest = font(&stores, "newest");
+        let first = font_by_name(stores, "first");
+        let upper = font_by_name(stores, "upper");
+        let newest = font_by_name(stores, "newest");
         assert_eq!(
             first, newest,
             "same case-sensitive name and size reuses the font"
@@ -12100,15 +12192,20 @@ fn font_definition_identity_is_case_sensitive_and_tracks_newest_identifier() {
             first, upper,
             "case-distinct names are distinct font identities"
         );
+        let (first_identifier, newest_symbol, upper_identifier, upper_symbol) =
+            admitted!(stores, |context| {
+                (
+                    context.font_identifier_symbol(first),
+                    context.symbol("newest"),
+                    context.font_identifier_symbol(upper),
+                    context.symbol("upper"),
+                )
+            });
         assert_eq!(
-            admitted!(stores, |context| context.font_identifier_symbol(first)),
-            stores.symbol("newest"),
+            first_identifier, newest_symbol,
             "the reused font retains the newest identifier"
         );
-        assert_eq!(
-            admitted!(stores, |context| context.font_identifier_symbol(upper)),
-            stores.symbol("upper")
-        );
+        assert_eq!(upper_identifier, upper_symbol);
     });
 }
 
@@ -12273,10 +12370,13 @@ fn invalid_arithmetic_target_uses_live_escapechar_for_operator() {
     // TeX82 §§63/298/1236: both commands in the diagnostic are printed via
     // `print_cmd_chr`/`print_esc`, so neither spelling hardcodes a backslash.
     crate::test_harness::with_plain_universe(|mut stores| {
-        stores.set_int_param(
+        crate::test_harness::assign_int_param(
+            stores,
             tex_state::env::banks::IntParam::ESCAPE_CHAR,
             i32::from(b'|'),
-        );
+            tex_state::AssignmentScope::Global,
+        )
+        .expect("escape character assignment");
         let mut control = MainControl::tex82_initex(&mut stores);
         register_source(&mut control, br"\advance\prevdepth\end");
         run_to_end(&mut control, &mut stores);
@@ -12631,7 +12731,8 @@ fn nonletter_zero_pattern_uses_the_edge_sentinel() {
 
         let word = "\u{1}\u{1}bbbbc\u{1}c\u{1}";
         assert_eq!(
-            stores.hyphen_positions(word, 2, 3),
+            admitted!(stores, |context| context
+                .hyphen_positions_for_language(0, word, 2, 3)),
             [2, 3, 6],
             "{}",
             terminal_text(&stores)
@@ -12830,15 +12931,15 @@ fn pattern_duplicate_paths_are_partitioned_by_language() {
 fn committed_and_pending_pattern_paths_share_replacement_order() {
     crate::test_harness::with_plain_universe(|mut stores| {
         assert!(
-            !stores
+            !admitted!(stores, |context| context
                 .add_hyphenation_pattern_for_language(
                     0,
                     PatternSpec {
                         letters: vec!['b', 'b'],
                         values: vec![0, 1, 0],
                     },
-                )
-                .expect("pattern fits the default trie capacity")
+                ))
+            .expect("pattern fits the default trie capacity")
         );
         let mut control = MainControl::tex82_initex(&mut stores);
         register_source(
@@ -13261,13 +13362,15 @@ fn long_prefix_on_let_reports_tex_prefix_error() {
         register_source(&mut control, br"\nonstopmode\long\let\a=b");
         run_to_end(&mut control, &mut stores);
         assert!(terminal_text(&stores).contains("You can't use `\\long'"));
-        let a = stores.intern("a").expect("let target exists").symbol();
         assert_eq!(
-            stores.meaning(a),
-            Meaning::CharToken {
+            admitted!(stores, |context| {
+                let a = context.intern_control_sequence("a");
+                context.meaning(a)
+            }),
+            ResolvedMeaning::Static(Meaning::CharToken {
                 ch: 'b',
                 cat: Catcode::Letter
-            }
+            })
         );
     });
 }
@@ -13325,37 +13428,35 @@ fn etex_showgroups_and_showifs_render_live_nested_stacks() {
 fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
     with_etex(
         br"\let\bgroup={\protected\def\two{}\let\three=\two\protected\unexpanded\bgroup\two\protected\three\protected\def\one{\two}}",
-    |mut stores| {
-    let one = stores.intern("one").expect("symbol interning");
-    let Meaning::Macro { definition, flags } = stores.meaning(one) else {
-        panic!("one is defined")
-    };
-    assert!(flags.contains(tex_state::meaning::MeaningFlags::PROTECTED));
-    assert_eq!(
-        stores
-            .tokens(
-                stores
-                    .macro_definition(definition)
-                    .meaning()
-                    .replacement_text(),
-            )
-            .len(),
-        1
+        |mut stores| {
+            admitted!(stores, |context| {
+                let one = context.intern_control_sequence("one");
+                let ResolvedMeaning::Macro { definition, flags } = context.meaning(one) else {
+                    panic!("one is defined")
+                };
+                assert!(flags.contains(tex_state::meaning::MeaningFlags::PROTECTED));
+                assert_eq!(context.definition(definition).replacement_text().len(), 1);
+            });
+            assert!(!terminal_text(&stores).contains("You can't use a prefix"));
+        },
     );
-    assert!(!terminal_text(&stores).contains("You can't use a prefix"));
-    });
 }
 
 #[test]
 fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
     with_etex(
         br"\let\flag\iftrue\def\setfalse{\let\flag\iffalse}\begingroup\global\unexpanded{\setfalse}\endgroup",
-    |mut stores| {
-    let flag = stores.intern("flag").expect("symbol interning");
-    assert_eq!(
-        stores.meaning(flag),
-        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::IfFalse)
+        |mut stores| {
+            assert_eq!(
+                admitted!(stores, |context| {
+                    let flag = context.intern_control_sequence("flag");
+                    context.meaning(flag)
+                }),
+                ResolvedMeaning::Static(Meaning::ExpandablePrimitive(
+                    tex_state::meaning::ExpandablePrimitive::IfFalse,
+                ))
+            );
+            assert!(!terminal_text(&stores).contains("You can't use a prefix"));
+        },
     );
-    assert!(!terminal_text(&stores).contains("You can't use a prefix"));
-    });
 }

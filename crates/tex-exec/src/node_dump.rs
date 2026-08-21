@@ -19,6 +19,7 @@ use tex_state::token::Token;
 use tex_state::token_show::append_tex_print_char;
 use tex_state::token_show::{append_token_show_text, token_text};
 
+#[derive(Clone, Copy)]
 pub(crate) struct DumpConfig {
     pub(crate) breadth: i32,
     pub(crate) depth: i32,
