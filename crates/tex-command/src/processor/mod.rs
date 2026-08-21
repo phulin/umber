@@ -292,6 +292,18 @@ impl<G> CommandProcessor<'_, G> {
     }
 }
 
+impl<'a, G> CommandProcessor<'a, G> {
+    /// Retires this borrow facade and returns its unique admitted state view.
+    ///
+    /// Callers use this linear handoff when one command episode must perform
+    /// a state-only mutation before resuming command delivery under the same
+    /// admission. No state owner or processor-local continuation is cloned.
+    #[must_use]
+    pub fn into_context(self) -> CommandContext<'a, G> {
+        self.state
+    }
+}
+
 enum ProcessorFuel<'a> {
     Owned(CommandFuelLedger),
     Shared(&'a mut CommandFuel),

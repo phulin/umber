@@ -101,7 +101,7 @@ impl<G> PersistentInterpreter<G> {
 
         let processor = CommandProcessor::borrowed(command, state, host, fuel, observer);
         InterpreterProcessor {
-            processor,
+            processor: Some(processor),
             lifecycle,
         }
     }
@@ -133,26 +133,25 @@ impl<G> DerefMut for PersistentInterpreter<G> {
 
 /// One borrow-scoped facade over the persistent canonical interpreter.
 pub(crate) struct InterpreterProcessor<'a, G> {
-    processor: CommandProcessor<'a, G>,
+    processor: Option<CommandProcessor<'a, G>>,
     lifecycle: &'a mut InterpreterLifecycle,
 }
 
-impl<'a, G> Deref for InterpreterProcessor<'a, G> {
-    type Target = CommandProcessor<'a, G>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.processor
+impl<'a, G> InterpreterProcessor<'a, G> {
+    /// Retires the processor while preserving its unique admitted context for
+    /// an immediately following state-only operation.
+    #[must_use]
+    pub(crate) fn into_context(mut self) -> CommandContext<'a, G> {
+        let context = self
+            .processor
+            .take()
+            .expect("live interpreter processor")
+            .into_context();
+        self.complete();
+        context
     }
-}
 
-impl<G> DerefMut for InterpreterProcessor<'_, G> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.processor
-    }
-}
-
-impl<G> Drop for InterpreterProcessor<'_, G> {
-    fn drop(&mut self) {
+    fn complete(&mut self) {
         assert_eq!(
             self.lifecycle.live_processors, 1,
             "canonical interpreter processor lifecycle is unbalanced"
@@ -160,5 +159,27 @@ impl<G> Drop for InterpreterProcessor<'_, G> {
         self.lifecycle.live_processors = 0;
         self.lifecycle.processor_completions =
             self.lifecycle.processor_completions.saturating_add(1);
+    }
+}
+
+impl<'a, G> Deref for InterpreterProcessor<'a, G> {
+    type Target = CommandProcessor<'a, G>;
+
+    fn deref(&self) -> &Self::Target {
+        self.processor.as_ref().expect("live interpreter processor")
+    }
+}
+
+impl<G> DerefMut for InterpreterProcessor<'_, G> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.processor.as_mut().expect("live interpreter processor")
+    }
+}
+
+impl<G> Drop for InterpreterProcessor<'_, G> {
+    fn drop(&mut self) {
+        if self.processor.is_some() {
+            self.complete();
+        }
     }
 }
