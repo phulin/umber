@@ -135,7 +135,9 @@ fn assert_aborted_shipout_diagnostic_is_unpublished<G>(stores: &mut Universe<G>)
 
 #[test]
 fn aborted_shipout_transaction_publishes_no_diagnostic_program() {
-    crate::test_harness::with_plain_universe(assert_aborted_shipout_diagnostic_is_unpublished);
+    crate::test_harness::with_plain_universe(|stores| {
+        assert_aborted_shipout_diagnostic_is_unpublished(stores);
+    });
 }
 
 #[test]
