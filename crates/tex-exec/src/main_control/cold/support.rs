@@ -64,7 +64,7 @@ pub(in crate::main_control) const fn assignment_scope(
 }
 
 pub(in crate::main_control) fn command_diagnostic_context<G>(
-    _command: &CommandMachine<'_, G>,
+    command: &CommandMachine<'_, G>,
     stores: &tex_state::CommandContext<'_, G>,
 ) -> crate::diagnostics::ExecutionDiagnosticContext {
     crate::diagnostics::ExecutionDiagnosticContext::source_free(
