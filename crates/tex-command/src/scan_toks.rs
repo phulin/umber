@@ -134,12 +134,23 @@ struct ScanToksConfig {
 }
 
 /// Exact command-owned continuation of one host-suspended token collector.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PendingScanToks<G> {
     mark: AttemptMark,
     config: ScanToksConfig,
     episode: ScannerEpisode,
     phase: PendingScanToksPhase<G>,
+}
+
+impl<G> Clone for PendingScanToks<G> {
+    fn clone(&self) -> Self {
+        Self {
+            mark: self.mark,
+            config: self.config,
+            episode: self.episode.clone(),
+            phase: self.phase.clone(),
+        }
+    }
 }
 
 impl<G> PendingScanToks<G> {
@@ -167,7 +178,7 @@ impl<G> PendingScanToks<G> {
 // Every pending field is a scalar, a typed attempt coordinate, or an
 // ephemeral current-command value. The arena owner remains on `CommandState`;
 // no continuation borrows its accumulated token buffer.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 enum PendingScanToksPhase<G> {
     Opening,
     Replacement {
@@ -180,12 +191,46 @@ enum PendingScanToksPhase<G> {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl<G> Clone for PendingScanToksPhase<G> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Opening => Self::Opening,
+            Self::Replacement {
+                parameter_text,
+                macro_parameters,
+                hash_brace,
+                primary,
+                malformed_parameter,
+                progress,
+            } => Self::Replacement {
+                parameter_text: *parameter_text,
+                macro_parameters: *macro_parameters,
+                hash_brace: *hash_brace,
+                primary: *primary,
+                malformed_parameter: *malformed_parameter,
+                progress: progress.clone(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
 struct ReplacementProgress<G> {
     output: AttemptTokenBufferId,
     depth: u32,
     pending_parameter: Option<(TracedTokenWord, u8, Option<Symbol>)>,
     pending_expansion: Option<PendingCollectorExpansion<G>>,
+}
+
+impl<G> Clone for ReplacementProgress<G> {
+    fn clone(&self) -> Self {
+        Self {
+            output: self.output,
+            depth: self.depth,
+            pending_parameter: self.pending_parameter,
+            pending_expansion: self.pending_expansion,
+        }
+    }
 }
 
 impl<G> ReplacementProgress<G> {
@@ -199,11 +244,19 @@ impl<G> ReplacementProgress<G> {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 struct PendingCollectorExpansion<G> {
     command: crate::CurrentCommand<G>,
     route: CollectorExpansionRoute,
 }
+
+impl<G> Clone for PendingCollectorExpansion<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for PendingCollectorExpansion<G> {}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum CollectorExpansionRoute {
@@ -1732,6 +1785,7 @@ impl<G> CommandProcessor<'_, G> {
                     .iter()
                     .copied(),
             );
+            let context = self.command.output_open_context(&self.state);
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Recoverable {
@@ -1742,7 +1796,7 @@ impl<G> CommandProcessor<'_, G> {
                     }),
                     message: "File ended within \\read".into(),
                     help: &["This \\read has unbalanced braces."],
-                    context: self.command.output_open_context(&self.state),
+                    context,
                 });
             self.set_runaway_partial(FILE_ENDED_WITHIN_READ_DIAGNOSTIC, &partial);
             self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;

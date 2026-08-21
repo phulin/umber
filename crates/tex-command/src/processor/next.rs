@@ -2291,45 +2291,44 @@ impl<G> CommandProcessor<'_, G> {
                 super::expand::print_esc_text(&self.state, &spelling)
             });
             let context = self.command.output_open_context(&self.state);
+            let heading = match &status {
+                ScannerStatus::Defining(_) => "Runaway definition?",
+                ScannerStatus::Matching(_) => "Runaway argument?",
+                ScannerStatus::Aligning(_) => "Runaway preamble?",
+                ScannerStatus::Absorbing(_) => "Runaway text?",
+                ScannerStatus::Normal | ScannerStatus::Skipping(_) => unreachable!(),
+            };
+            let partial = match &status {
+                ScannerStatus::Aligning(context) => self
+                    .command
+                    .transient
+                    .builders
+                    .iter()
+                    .find(|builder| builder.identity == context.builder.0)
+                    .and_then(|builder| {
+                        self.command
+                            .attempt
+                            .arena()
+                            .token_buffer(builder.tokens)
+                            .ok()
+                    })
+                    .map_or_else(String::new, |tokens| {
+                        tokens.iter().fold(String::new(), |mut text, token| {
+                            super::expand::append_token_list_token_text(
+                                &self.state,
+                                token.semantic_token(),
+                                &mut text,
+                            );
+                            text
+                        })
+                    }),
+                _ => String::new(),
+            };
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Recoverable {
                     identity: RUNAWAY_SCAN_DIAGNOSTIC,
-                    runaway: Some(crate::state::RunawayPrelude {
-                        heading: match &status {
-                            ScannerStatus::Defining(_) => "Runaway definition?",
-                            ScannerStatus::Matching(_) => "Runaway argument?",
-                            ScannerStatus::Aligning(_) => "Runaway preamble?",
-                            ScannerStatus::Absorbing(_) => "Runaway text?",
-                            ScannerStatus::Normal | ScannerStatus::Skipping(_) => unreachable!(),
-                        },
-                        partial: match &status {
-                            ScannerStatus::Aligning(context) => self
-                                .command
-                                .transient
-                                .builders
-                                .iter()
-                                .find(|builder| builder.identity == context.builder.0)
-                                .and_then(|builder| {
-                                    self.command
-                                        .attempt
-                                        .arena()
-                                        .token_buffer(builder.tokens)
-                                        .ok()
-                                })
-                                .map_or_else(String::new, |tokens| {
-                                    tokens.iter().fold(String::new(), |mut text, token| {
-                                        super::expand::append_token_list_token_text(
-                                            &self.state,
-                                            token.semantic_token(),
-                                            &mut text,
-                                        );
-                                        text
-                                    })
-                                }),
-                            _ => String::new(),
-                        },
-                    }),
+                    runaway: Some(crate::state::RunawayPrelude { heading, partial }),
                     message: format!("{opening} while scanning {kind} of {name}"),
                     help: &[
                         "I suspect you have forgotten a `}', causing me",

@@ -2340,11 +2340,9 @@ impl<G> CommandProcessor<'_, G> {
                 // grow. The rejected location is the zero-valued scratch
                 // cell, but the error context belongs at this scanner cursor.
                 if !self.font_dimen_readable(font, number) {
+                    let context = self.error_context();
                     self.command.semantic_diagnostics.push(
-                        crate::CommandSemanticDiagnostic::FontDimenUnavailable {
-                            font,
-                            context: self.error_context(),
-                        },
+                        crate::CommandSemanticDiagnostic::FontDimenUnavailable { font, context },
                     );
                 }
                 let number = u32::try_from(number).unwrap_or(0);

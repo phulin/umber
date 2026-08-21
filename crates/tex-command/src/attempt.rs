@@ -107,6 +107,53 @@ pub(crate) struct AttemptMark {
     provenance: u32,
 }
 
+impl AttemptMark {
+    pub(crate) const fn is_empty(self) -> bool {
+        self.traced_words == 0
+            && self.traced_origins == 0
+            && self.token_scratch == 0
+            && self.origin_scratch == 0
+            && self.token_builders == 0
+            && self.token_lists == 0
+            && self.glue_values == 0
+            && self.definitions == 0
+            && self.argument_words == 0
+            && self.argument_records == 0
+            && self.token_buffers == 0
+            && self.name_bytes == 0
+            && self.names == 0
+            && self.provenance == 0
+    }
+
+    pub(crate) const fn checked_row_count(self) -> Option<u32> {
+        let mut count = self.traced_words;
+        let values = [
+            self.traced_origins,
+            self.token_scratch,
+            self.origin_scratch,
+            self.token_builders,
+            self.token_lists,
+            self.glue_values,
+            self.definitions,
+            self.argument_words,
+            self.argument_records,
+            self.token_buffers,
+            self.name_bytes,
+            self.names,
+            self.provenance,
+        ];
+        let mut index = 0;
+        while index < values.len() {
+            let Some(next) = count.checked_add(values[index]) else {
+                return None;
+            };
+            count = next;
+            index += 1;
+        }
+        Some(count)
+    }
+}
+
 /// Invalid foreign coordinates or bounded-capacity failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AttemptError {
@@ -240,8 +287,7 @@ impl<G> AttemptArena<G> {
         }
     }
 
-    /// Rejects a suffix in constant time per table. No value is inspected.
-    pub(crate) fn truncate(&mut self, mark: AttemptMark) -> Result<(), AttemptError> {
+    pub(crate) fn validate_mark(&self, mark: AttemptMark) -> Result<(), AttemptError> {
         if mark.key != self.key.0 {
             return Err(AttemptError::ForeignAttempt);
         }
@@ -264,6 +310,12 @@ impl<G> AttemptArena<G> {
         if lengths.iter().any(|(mark, live)| mark > live) {
             return Err(AttemptError::InvalidCoordinate);
         }
+        Ok(())
+    }
+
+    /// Rejects a suffix in constant time per table. No value is inspected.
+    pub(crate) fn truncate(&mut self, mark: AttemptMark) -> Result<(), AttemptError> {
+        self.validate_mark(mark)?;
         // Child coordinates disappear before their backing suffixes.
         self.names.truncate(mark.names as usize);
         self.provenance.truncate(mark.provenance as usize);
@@ -916,6 +968,10 @@ impl<G> CommandAttempt<G> {
 
     pub(crate) const fn arena_mut(&mut self) -> &mut AttemptArena<G> {
         &mut self.arena
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.arena.mark().is_empty()
     }
 }
 

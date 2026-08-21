@@ -27,10 +27,23 @@ pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
 /// This is the sole owner of the activation chain. Macro-body input behavior
 /// carries a typed activation identity, while parameter payloads retain shared
 /// ownership of the one contiguous argument allocation.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ParameterState<G> {
     pub(crate) activations: Vec<MacroActivation<G>>,
     pub(crate) next_activation_identity: u64,
+}
+
+impl<G> Clone for ParameterState<G> {
+    fn clone(&self) -> Self {
+        Self {
+            activations: self
+                .activations
+                .iter()
+                .map(MacroActivation::clone)
+                .collect(),
+            next_activation_identity: self.next_activation_identity,
+        }
+    }
 }
 
 impl<G> Default for ParameterState<G> {
@@ -47,7 +60,7 @@ impl<G> Default for ParameterState<G> {
 pub(crate) struct MacroActivationId(pub(crate) u64);
 
 /// One live macro call and the materialized arguments it owns.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MacroActivation<G> {
     pub(crate) identity: MacroActivationId,
     /// TeX82 §389's `warning_index`: the control sequence being expanded.
@@ -57,6 +70,14 @@ pub(crate) struct MacroActivation<G> {
     pub(crate) arguments: MacroArguments,
     pub(crate) invocation: OriginId,
 }
+
+impl<G> Clone for MacroActivation<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for MacroActivation<G> {}
 
 /// One contiguous macro-argument allocation and its at-most-nine ranges.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]

@@ -2,8 +2,8 @@ use core::cell::Cell;
 use std::rc::Rc;
 
 use super::{
-    CommandArenaCursors, CommandSnapshotCursor, CommandStackCursors, CommandStateSnapshot,
-    CommandSummary, CommandSummaryError,
+    CommandArenaCursors, CommandRestoreError, CommandSnapshotCursor, CommandStackCursors,
+    CommandStateSnapshot, CommandSummary, CommandSummaryError,
 };
 
 struct Brand;
@@ -108,4 +108,164 @@ fn summary_rejection_names_suspended_attempts_separately() {
         CommandSummaryError::ResourceSuspension.to_string(),
         "a command resource request is pending"
     );
+}
+
+#[test]
+fn retained_summary_restores_the_pre_mutation_command_root() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let summary = command
+            .publish_summary(universe)
+            .expect("quiescent command state publishes");
+
+        command.begin_file_name().expect("filename guard opens");
+        assert!(command.name_in_progress());
+
+        let restore = command
+            .prepare_summary_restore(&summary, universe)
+            .expect("retained root validates");
+        command
+            .apply_prepared_restore(restore)
+            .expect("prepared restore applies to its destination");
+
+        assert!(!command.name_in_progress());
+    });
+}
+
+#[test]
+fn invalid_summary_cursor_leaves_live_command_state_unchanged() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let mut summary = command
+            .publish_summary(universe)
+            .expect("quiescent command state publishes");
+        let captured = summary.cursor;
+        let stacks = captured.stacks();
+        summary.cursor = CommandSnapshotCursor::new(
+            captured.command_journal(),
+            captured.arenas(),
+            CommandStackCursors::new(
+                stacks.input_depth(),
+                stacks.parameter_depth(),
+                stacks.condition_depth(),
+                stacks.alignment_depth(),
+                stacks.replay_depth(),
+                stacks.diagnostic_count() + 1,
+                stacks.framing_event_count(),
+            ),
+        );
+        command.begin_file_name().expect("filename guard opens");
+
+        assert!(matches!(
+            command.prepare_summary_restore(&summary, universe),
+            Err(CommandRestoreError::InvalidCursor)
+        ));
+        assert!(command.name_in_progress());
+    });
+}
+
+#[test]
+fn foreign_timeline_rejection_leaves_live_command_state_unchanged() {
+    crate::test_harness::with_universe(|universe| {
+        let source = crate::CommandState::default();
+        let summary = source
+            .publish_summary(universe)
+            .expect("quiescent command state publishes");
+        let mut destination = crate::CommandState::default();
+        destination.begin_file_name().expect("filename guard opens");
+
+        assert!(matches!(
+            destination.prepare_summary_restore(&summary, universe),
+            Err(CommandRestoreError::ForeignGeneration)
+        ));
+        assert!(destination.name_in_progress());
+    });
+}
+
+#[test]
+fn prepared_restore_cannot_be_applied_to_a_foreign_command_machine() {
+    crate::test_harness::with_universe(|universe| {
+        let source = crate::CommandState::default();
+        let summary = source
+            .publish_summary(universe)
+            .expect("quiescent command state publishes");
+        let restore = source
+            .prepare_summary_restore(&summary, universe)
+            .expect("source validates its summary");
+        let mut destination = crate::CommandState::default();
+        destination.begin_file_name().expect("filename guard opens");
+
+        assert!(matches!(
+            destination.apply_prepared_restore(restore),
+            Err(CommandRestoreError::ForeignGeneration)
+        ));
+        assert!(destination.name_in_progress());
+    });
+}
+
+#[test]
+fn exact_snapshot_restores_roots_before_discarding_attempt_suffix() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        command
+            .attempt
+            .arena_mut()
+            .begin_token_list()
+            .expect("checkpoint attempt row allocates");
+        let retained_attempt = command.attempt.arena().mark();
+        let snapshot = command
+            .snapshot(universe)
+            .expect("live command snapshot captures bounded cursors");
+
+        command.begin_file_name().expect("filename guard opens");
+        command
+            .attempt
+            .arena_mut()
+            .begin_token_list()
+            .expect("attempt suffix allocates");
+        assert!(!command.attempt.is_empty());
+
+        command
+            .rollback(&snapshot, universe)
+            .expect("snapshot remains restorable");
+        assert!(!command.name_in_progress());
+        assert_eq!(command.attempt.arena().mark(), retained_attempt);
+    });
+}
+
+#[test]
+fn invalid_snapshot_validation_does_not_truncate_attempt_or_replace_roots() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = crate::CommandState::default();
+        let mut snapshot = command
+            .snapshot(universe)
+            .expect("live command snapshot captures bounded cursors");
+        let captured = snapshot.cursor;
+        let arenas = captured.arenas();
+        snapshot.cursor = CommandSnapshotCursor::new(
+            captured.command_journal(),
+            CommandArenaCursors::new(
+                arenas.input_rows(),
+                arenas.input_words(),
+                arenas.parameter_words(),
+                arenas.builder_words(),
+                arenas.attempt_rows() + 1,
+            ),
+            captured.stacks(),
+        );
+        command.begin_file_name().expect("filename guard opens");
+        command
+            .attempt
+            .arena_mut()
+            .begin_token_list()
+            .expect("attempt suffix allocates");
+        let live_attempt = command.attempt.arena().mark();
+
+        assert!(matches!(
+            command.prepare_snapshot_restore(&snapshot, universe),
+            Err(CommandRestoreError::InvalidCursor)
+        ));
+        assert!(command.name_in_progress());
+        assert_eq!(command.attempt.arena().mark(), live_attempt);
+    });
 }

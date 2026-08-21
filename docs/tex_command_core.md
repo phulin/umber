@@ -2983,13 +2983,15 @@ second provenance arena or raw provenance watermark.
 
 The command component of such a retained boundary is generation-generic. A
 `CommandStateSnapshot<G>` and a live `CommandSummary<G>` each retain exactly
-one coarse `GenerationOwner<G>` beside a fixed `CommandSnapshotCursor` of
-command-journal, arena-watermark, stack-length, and ordered-ledger positions.
-Cloning either value retains that one owner and copies the cursor tuple; it does
-not clone input, token, definition, provenance, macro-activation, or attempt
-storage. Restore validates the complete aggregate before acquiring the target
-owner and follows the owner-before-roots-before-truncation ordering in
-`runtime_storage_lifetimes.md`.
+one coarse `CommandGenerationOwner<G>` beside a fixed `CommandSnapshotCursor`
+of command-journal, arena-watermark, stack-length, and ordered-ledger
+positions. The owner binds the admitted state generation to the command-root
+timeline. Cloning either value retains that one owner and copies the cursor
+tuple; it does not clone input, token, definition, provenance,
+macro-activation, or attempt storage. Command roots fork copy-on-write only on
+the first mutation after capture. Restore validates the complete aggregate
+without mutation, then follows the owner-before-roots-before-truncation
+ordering in `runtime_storage_lifetimes.md`.
 
 ### 28.2 Durable summary
 

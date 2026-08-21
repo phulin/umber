@@ -1,6 +1,7 @@
 //! Future-relevant state and discardable scratch allocation ownership.
 
 use std::hash::{Hash, Hasher};
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -54,7 +55,8 @@ fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
 /// engine state, call-local accumulators, and discardable accelerations are
 /// deliberately absent.
 #[derive(Debug)]
-pub struct CommandState<G> {
+#[doc(hidden)]
+pub struct CommandStateRoots<G> {
     /// Canonical compiled implementation executing the format's command
     /// profile. Unlike the profile, this is job configuration and is not part
     /// of portable format identity.
@@ -146,27 +148,74 @@ pub struct CommandState<G> {
     /// carry mechanism duplicating this one.
     ///
     /// Placing it here is safe under rollback for the same reason
-    /// `named_token_list_pushes` above already is:
-    /// [`CommandState::snapshot`](crate::CommandState::snapshot) clones this
-    /// whole struct before a step runs, and
-    /// [`CommandState::rollback`](crate::CommandState::rollback) replaces the
-    /// whole struct wholesale (`*self = snapshot.state`) if that step is
-    /// undone. A queued event from a rolled-back step is therefore restored
-    /// away along with every other command-state mutation that step made --
-    /// nothing prints a paren for an open that never committed -- while a
-    /// committed step's events survive exactly as long as the rest of its
-    /// committed state does, until the executor drains them with
-    /// [`Self::take_file_framing_events`]. No per-field bookkeeping is
-    /// needed because the whole-struct snapshot already covers it.
+    /// `named_token_list_pushes` above already is: a snapshot retains the
+    /// current aggregate root in the command timeline, the first subsequent
+    /// mutation forks that root copy-on-write, and rollback reinstalls the
+    /// retained root before truncating attempt storage. A queued event from a
+    /// rolled-back step therefore disappears with every other command-state
+    /// mutation from that step, while a committed step's events survive until
+    /// the executor drains them with [`Self::take_file_framing_events`].
     pub(crate) file_framing_events: Vec<FileFramingEvent>,
-    /// Runtime-only TeX82 stack accounting. Clones deliberately share this
-    /// tracker, while its equality/hash implementations erase it, so §1334's
-    /// diagnostic high-water marks survive a retried step without becoming
-    /// command semantics, checkpoint identity, or format state.
+}
+
+impl<G> Clone for CommandStateRoots<G> {
+    fn clone(&self) -> Self {
+        Self {
+            engine_semantics: self.engine_semantics,
+            input: self.input.clone(),
+            parameters: self.parameters.clone(),
+            scanner: self.scanner.clone(),
+            conditions: self.conditions.clone(),
+            alignment: self.alignment.clone(),
+            expansion: self.expansion.clone(),
+            transient: self.transient.clone(),
+            replay_completions: self.replay_completions.clone(),
+            pending_replay_completions: self.pending_replay_completions.clone(),
+            semantic_diagnostics: self.semantic_diagnostics.clone(),
+            name_in_progress: self.name_in_progress,
+            pending_input_open: self.pending_input_open.clone(),
+            pending_file_enquiry: self.pending_file_enquiry.clone(),
+            pending_integer_scans: self.pending_integer_scans.clone(),
+            pending_scan_toks: self.pending_scan_toks.clone(),
+            pending_expansions: self.pending_expansions.clone(),
+            pending_expandafters: self.pending_expandafters.clone(),
+            pending_csnames: self.pending_csnames.clone(),
+            named_token_list_pushes: self.named_token_list_pushes.clone(),
+            file_framing_events: self.file_framing_events.clone(),
+        }
+    }
+}
+
+/// Complete future-relevant state owned by the command machine.
+///
+/// Named checkpoints retain one immutable aggregate root in the command
+/// timeline. Ordinary mutation uses copy-on-write only while such a root is
+/// retained, so checkpoint capture itself never clones the live command graph.
+#[derive(Debug)]
+pub struct CommandState<G> {
+    pub(crate) roots: Arc<CommandStateRoots<G>>,
+    pub(crate) timeline: Arc<crate::snapshot::CommandTimeline<G>>,
+    /// Runtime-only TeX82 stack accounting. Snapshot roots deliberately omit
+    /// this tracker so high-water marks survive rollback without becoming
+    /// command semantics or checkpoint identity.
     pub(crate) usage: CommandUsageTracker,
-    /// Storage for every scanner, expansion, and retry coordinate in the
-    /// current command operation.
+    /// Storage for scanner, expansion, and retry coordinates in the current
+    /// operation. Checkpoints retain its bounded mark, never its payload.
     pub(crate) attempt: crate::CommandAttempt<G>,
+}
+
+impl<G> Deref for CommandState<G> {
+    type Target = CommandStateRoots<G>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.roots
+    }
+}
+
+impl<G> DerefMut for CommandState<G> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.roots)
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -176,7 +225,7 @@ pub(crate) struct PendingFileEnquiry {
     pub(crate) length: i32,
 }
 
-impl<G> Default for CommandState<G> {
+impl<G> Default for CommandStateRoots<G> {
     fn default() -> Self {
         Self {
             engine_semantics: CommandEngineSemantics::default(),
@@ -200,6 +249,15 @@ impl<G> Default for CommandState<G> {
             pending_csnames: Vec::new(),
             named_token_list_pushes: Vec::new(),
             file_framing_events: Vec::new(),
+        }
+    }
+}
+
+impl<G> Default for CommandState<G> {
+    fn default() -> Self {
+        Self {
+            roots: Arc::new(CommandStateRoots::default()),
+            timeline: Arc::new(crate::snapshot::CommandTimeline::default()),
             usage: CommandUsageTracker::default(),
             attempt: crate::CommandAttempt::default(),
         }
@@ -570,7 +628,7 @@ impl<G> CommandState<G> {
         (self.input.levels.len(), tail)
     }
 
-    pub(crate) const fn name_in_progress(&self) -> bool {
+    pub(crate) fn name_in_progress(&self) -> bool {
         self.name_in_progress
     }
 
@@ -1605,14 +1663,13 @@ impl<G> CommandState<G> {
     /// identity against this value.
     #[must_use]
     pub fn new(profile: CommandProfile) -> Self {
-        Self {
-            engine_semantics: CommandEngineSemantics::for_profile(profile),
-            expansion: ExpansionState {
-                profile,
-                ..ExpansionState::default()
-            },
-            ..Self::default()
-        }
+        let mut state = Self::default();
+        state.engine_semantics = CommandEngineSemantics::for_profile(profile);
+        state.expansion = ExpansionState {
+            profile,
+            ..ExpansionState::default()
+        };
+        state
     }
 
     /// Selects the canonical compiled implementation executing this job.
@@ -1629,7 +1686,7 @@ impl<G> CommandState<G> {
 
     /// Returns the canonical compiled implementation executing this job.
     #[must_use]
-    pub const fn engine_semantics(&self) -> CommandEngineSemantics {
+    pub fn engine_semantics(&self) -> CommandEngineSemantics {
         self.engine_semantics
     }
 
@@ -2220,11 +2277,12 @@ impl<G> CommandState<G> {
             InputLevel::Source(source) => Some(source.name_class),
             InputLevel::Tokens(_) => None,
         });
+        let usage = self.usage.clone();
         let input = &mut self.input;
         let lines = crate::input::LineBackingRegistry {
             profile,
             next_identity: &mut input.next_source_identity,
-            usage: self.usage.clone(),
+            usage,
             buffer_start,
             name_class,
         };
@@ -2237,7 +2295,7 @@ impl<G> CommandState<G> {
 
     /// Returns the immutable profile selected when this job was created.
     #[must_use]
-    pub const fn profile(&self) -> CommandProfile {
+    pub fn profile(&self) -> CommandProfile {
         self.expansion.profile
     }
 

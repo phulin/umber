@@ -6,12 +6,121 @@
 //! live command timeline is responsible for validating these cursors before it
 //! restores anything.
 
-#![allow(dead_code)] // The .6.4 integration installs capture/restore consumers.
-
 use core::fmt;
 use core::marker::PhantomData;
+use std::sync::{Arc, Mutex};
 
-use tex_state::GenerationOwner;
+use tex_state::{GenerationOwner, Universe};
+
+use crate::attempt::AttemptMark;
+use crate::processor::ScannerStatus;
+use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
+use crate::state::{CommandState, CommandStateRoots};
+
+/// Immutable aggregate roots retained by one command generation.
+///
+/// Rows own copy-on-write command roots, not individual token, input, or
+/// provenance values. A snapshot owns this timeline only through the single
+/// coarse [`CommandGenerationOwner`].
+pub(crate) struct CommandTimeline<G> {
+    rows: Mutex<Vec<CommandTimelineRow<G>>>,
+}
+
+struct CommandTimelineRow<G> {
+    roots: Arc<CommandStateRoots<G>>,
+    attempt: AttemptMark,
+}
+
+impl<G> Default for CommandTimeline<G> {
+    fn default() -> Self {
+        Self {
+            rows: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl<G> fmt::Debug for CommandTimeline<G> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CommandTimeline(..)")
+    }
+}
+
+impl<G> CommandTimeline<G> {
+    pub(crate) fn retain(
+        &self,
+        roots: Arc<CommandStateRoots<G>>,
+        attempt: AttemptMark,
+        arenas: CommandArenaCursors,
+        stacks: CommandStackCursors,
+    ) -> Result<CommandSnapshotCursor, CommandSummaryError> {
+        let mut rows = self.rows.lock().expect("command timeline is not poisoned");
+        let row = u32::try_from(rows.len()).map_err(|_| CommandSummaryError::TimelineCapacity)?;
+        rows.push(CommandTimelineRow { roots, attempt });
+        Ok(CommandSnapshotCursor::new(
+            row.checked_add(1)
+                .ok_or(CommandSummaryError::TimelineCapacity)?,
+            arenas,
+            stacks,
+        ))
+    }
+
+    pub(crate) fn resolve(
+        &self,
+        cursor: CommandSnapshotCursor,
+    ) -> Option<(Arc<CommandStateRoots<G>>, AttemptMark)> {
+        let row = cursor.command_journal().checked_sub(1)? as usize;
+        self.rows
+            .lock()
+            .expect("command timeline is not poisoned")
+            .get(row)
+            .map(|row| (Arc::clone(&row.roots), row.attempt))
+    }
+}
+
+/// Sole coarse owner retained by one command snapshot or summary.
+pub struct CommandGenerationOwner<G> {
+    generation: GenerationOwner<G>,
+    timeline: Arc<CommandTimeline<G>>,
+}
+
+impl<G> Clone for CommandGenerationOwner<G> {
+    fn clone(&self) -> Self {
+        Self {
+            generation: self.generation.clone(),
+            timeline: Arc::clone(&self.timeline),
+        }
+    }
+}
+
+impl<G> fmt::Debug for CommandGenerationOwner<G> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CommandGenerationOwner(..)")
+    }
+}
+
+impl<G> CommandGenerationOwner<G> {
+    pub(crate) fn new(generation: GenerationOwner<G>, timeline: Arc<CommandTimeline<G>>) -> Self {
+        Self {
+            generation,
+            timeline,
+        }
+    }
+
+    pub(crate) fn addresses(
+        &self,
+        generation: &GenerationOwner<G>,
+        timeline: &Arc<CommandTimeline<G>>,
+    ) -> bool {
+        self.generation.same_generation(generation) && Arc::ptr_eq(&self.timeline, timeline)
+    }
+
+    pub(crate) fn resolve(
+        &self,
+        cursor: CommandSnapshotCursor,
+    ) -> Option<(Arc<CommandStateRoots<G>>, AttemptMark)> {
+        self.timeline.resolve(cursor)
+    }
+}
 
 /// Watermarks for command-owned append-only storage.
 ///
@@ -185,10 +294,10 @@ impl CommandSnapshotCursor {
 
 /// Exact in-session command snapshot for one admitted generation.
 ///
-/// The default owner is [`GenerationOwner<G>`]. The owner parameter exists so
-/// the fixed-cursor contract can be tested without constructing a live TeX
-/// session; production construction remains crate-private.
-pub struct CommandStateSnapshot<G, Owner = GenerationOwner<G>> {
+/// The default owner is [`CommandGenerationOwner<G>`]. The owner parameter
+/// exists so the fixed-cursor contract can be tested without constructing a
+/// live TeX session; production construction remains crate-private.
+pub struct CommandStateSnapshot<G, Owner = CommandGenerationOwner<G>> {
     generation: Owner,
     cursor: CommandSnapshotCursor,
     brand: PhantomData<fn(&G) -> &G>,
@@ -244,8 +353,12 @@ impl<G> CommandStateSnapshot<G> {
     /// Whether this snapshot addresses the admitted generation retained by
     /// `generation`.
     #[must_use]
-    pub(crate) fn addresses(&self, generation: &GenerationOwner<G>) -> bool {
-        self.generation.same_generation(generation)
+    pub(crate) fn addresses(
+        &self,
+        generation: &GenerationOwner<G>,
+        timeline: &Arc<CommandTimeline<G>>,
+    ) -> bool {
+        self.generation.addresses(generation, timeline)
     }
 }
 
@@ -255,7 +368,7 @@ impl<G> CommandStateSnapshot<G> {
 /// proof: construction requires quiescent command state and records the
 /// portable profile fingerprint. The live form still contains no copied
 /// command graph; cold detachment turns its selected roots into recipes.
-pub struct CommandSummary<G, Owner = GenerationOwner<G>> {
+pub struct CommandSummary<G, Owner = CommandGenerationOwner<G>> {
     generation: Owner,
     cursor: CommandSnapshotCursor,
     profile_fingerprint: u64,
@@ -352,6 +465,8 @@ pub enum CommandSummaryError {
     PendingSemanticDiagnostic,
     ResourceSuspension,
     AttemptSuspended,
+    TimelineCapacity,
+    GenerationUnavailable,
 }
 
 impl fmt::Display for CommandSummaryError {
@@ -373,11 +488,301 @@ impl fmt::Display for CommandSummaryError {
             }
             Self::ResourceSuspension => "a command resource request is pending",
             Self::AttemptSuspended => "the command attempt is owned by a suspension",
+            Self::TimelineCapacity => "the command checkpoint timeline is full",
+            Self::GenerationUnavailable => "the command generation is unavailable",
         })
     }
 }
 
 impl std::error::Error for CommandSummaryError {}
+
+/// Validation failure for one in-session command-root restore.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandRestoreError {
+    Profile(CommandProfileMismatch),
+    ForeignGeneration,
+    InvalidCursor,
+}
+
+impl fmt::Display for CommandRestoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Profile(error) => error.fmt(formatter),
+            Self::ForeignGeneration => {
+                formatter.write_str("the command checkpoint belongs to another generation")
+            }
+            Self::InvalidCursor => formatter.write_str("the command checkpoint cursor is invalid"),
+        }
+    }
+}
+
+impl std::error::Error for CommandRestoreError {}
+
+/// Fully validated command-root switch. Applying it cannot fail.
+pub struct PreparedCommandRestore<G> {
+    timeline: Arc<CommandTimeline<G>>,
+    roots: Arc<CommandStateRoots<G>>,
+    attempt: AttemptMark,
+}
+
+impl<G> CommandState<G> {
+    fn checkpoint_arenas(
+        &self,
+        attempt: AttemptMark,
+    ) -> Result<CommandArenaCursors, CommandSummaryError> {
+        let attempt_rows = attempt
+            .checked_row_count()
+            .ok_or(CommandSummaryError::TimelineCapacity)?;
+        Ok(CommandArenaCursors::new(0, 0, 0, 0, attempt_rows))
+    }
+
+    fn checkpoint_stacks(&self) -> Result<CommandStackCursors, CommandSummaryError> {
+        Ok(CommandStackCursors::new(
+            u32::try_from(self.input.levels.len())
+                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
+            u32::try_from(self.parameters.activations.len())
+                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
+            u32::try_from(self.conditions.frames.len())
+                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
+            u32::try_from(self.alignment.align_stack.len())
+                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
+            u32::try_from(self.replay_completions.len())
+                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
+            u32::try_from(self.semantic_diagnostics.len())
+                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
+            u32::try_from(self.file_framing_events.len())
+                .map_err(|_| CommandSummaryError::TimelineCapacity)?,
+        ))
+    }
+
+    fn validate_summary_quiescence(&self) -> Result<(), CommandSummaryError> {
+        match self.scanner.status() {
+            ScannerStatus::Normal => {}
+            ScannerStatus::Skipping { .. } => return Err(CommandSummaryError::ConditionalSkip),
+            ScannerStatus::Defining { .. } => return Err(CommandSummaryError::DefinitionScan),
+            ScannerStatus::Matching { .. } => return Err(CommandSummaryError::MacroMatch),
+            ScannerStatus::Aligning { .. } => return Err(CommandSummaryError::AlignmentScan),
+            ScannerStatus::Absorbing { .. } => return Err(CommandSummaryError::AbsorbingScan),
+        }
+        if self.scanner.warning().is_some() {
+            return Err(CommandSummaryError::ScannerWarningContext);
+        }
+        if !self.semantic_diagnostics.is_empty() {
+            return Err(CommandSummaryError::PendingSemanticDiagnostic);
+        }
+        if self.pending_input_open.is_some()
+            || self.pending_file_enquiry.is_some()
+            || !self.pending_integer_scans.is_empty()
+            || !self.pending_scan_toks.is_empty()
+            || !self.pending_expansions.is_empty()
+            || !self.pending_expandafters.is_empty()
+            || !self.pending_csnames.is_empty()
+        {
+            return Err(CommandSummaryError::ResourceSuspension);
+        }
+        if self.transient.active_expansion_depth != 0
+            || !self.replay_completions.is_empty()
+            || !self.pending_replay_completions.is_empty()
+        {
+            return Err(CommandSummaryError::ExpansionActive);
+        }
+        if self.alignment.active_alignment.is_some() || self.alignment.active_cell.is_some() {
+            return Err(CommandSummaryError::AlignmentTemplateActive);
+        }
+        if !self.alignment.suspended.is_empty() || !self.alignment.align_stack.is_empty() {
+            return Err(CommandSummaryError::SuspendedAlignment);
+        }
+        if !self.transient.builders.is_empty() {
+            return Err(CommandSummaryError::LiveTokenBuilder);
+        }
+        if !self.transient.rollback_roots.is_empty() {
+            return Err(CommandSummaryError::LiveRollbackRoot);
+        }
+        if !self.attempt.is_empty() {
+            return Err(CommandSummaryError::AttemptSuspended);
+        }
+        Ok(())
+    }
+
+    fn retain_cursor(
+        &self,
+        attempt: AttemptMark,
+    ) -> Result<CommandSnapshotCursor, CommandSummaryError> {
+        let arenas = self.checkpoint_arenas(attempt)?;
+        let stacks = self.checkpoint_stacks()?;
+        self.timeline
+            .retain(Arc::clone(&self.roots), attempt, arenas, stacks)
+    }
+
+    fn resolve_restore(
+        &self,
+        owner: &CommandGenerationOwner<G>,
+        cursor: CommandSnapshotCursor,
+    ) -> Result<PreparedCommandRestore<G>, CommandRestoreError> {
+        let (roots, attempt) = owner
+            .resolve(cursor)
+            .ok_or(CommandRestoreError::InvalidCursor)?;
+        let attempt_rows = attempt
+            .checked_row_count()
+            .ok_or(CommandRestoreError::InvalidCursor)?;
+        let arenas = cursor.arenas();
+        let stacks = cursor.stacks();
+        let matches = arenas.input_rows() == 0
+            && arenas.input_words() == 0
+            && arenas.parameter_words() == 0
+            && arenas.builder_words() == 0
+            && arenas.attempt_rows() == attempt_rows
+            && stacks.input_depth() as usize == roots.input.levels.len()
+            && stacks.parameter_depth() as usize == roots.parameters.activations.len()
+            && stacks.condition_depth() as usize == roots.conditions.frames.len()
+            && stacks.alignment_depth() as usize == roots.alignment.align_stack.len()
+            && stacks.replay_depth() as usize == roots.replay_completions.len()
+            && stacks.diagnostic_count() as usize == roots.semantic_diagnostics.len()
+            && stacks.framing_event_count() as usize == roots.file_framing_events.len();
+        if !matches {
+            return Err(CommandRestoreError::InvalidCursor);
+        }
+        self.attempt
+            .arena()
+            .validate_mark(attempt)
+            .map_err(|_| CommandRestoreError::InvalidCursor)?;
+        Ok(PreparedCommandRestore {
+            timeline: Arc::clone(&self.timeline),
+            roots,
+            attempt,
+        })
+    }
+
+    /// Captures one exact in-session command root without cloning its live
+    /// graph. The attempt arena stays on the command machine and is addressed
+    /// only by the bounded mark retained in the coarse timeline row.
+    pub fn snapshot(
+        &self,
+        universe: &Universe<G>,
+    ) -> Result<CommandStateSnapshot<G>, CommandSummaryError> {
+        let generation = universe
+            .generation_owner()
+            .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
+        let attempt = self.attempt.arena().mark();
+        let cursor = self.retain_cursor(attempt)?;
+        Ok(CommandStateSnapshot::new(
+            CommandGenerationOwner::new(generation, Arc::clone(&self.timeline)),
+            cursor,
+        ))
+    }
+
+    /// Publishes a bounded named-boundary summary without cloning the live
+    /// command graph.
+    pub fn publish_summary(
+        &self,
+        universe: &Universe<G>,
+    ) -> Result<CommandSummary<G>, CommandSummaryError> {
+        self.validate_summary_quiescence()?;
+        let generation = universe
+            .generation_owner()
+            .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
+        let attempt = self.attempt.arena().mark();
+        let cursor = self.retain_cursor(attempt)?;
+        let root_source_anchor = self.input.levels.iter().find_map(|level| {
+            let crate::input::InputLevel::Source(source) = level else {
+                return None;
+            };
+            Some(source.cursor.next_physical_offset)
+        });
+        Ok(CommandSummary::new(
+            CommandGenerationOwner::new(generation, Arc::clone(&self.timeline)),
+            cursor,
+            self.checkpoint_profile_fingerprint().get(),
+            root_source_anchor,
+        ))
+    }
+
+    /// Validates every command owner, profile, and cursor without mutating
+    /// the destination.
+    pub fn prepare_summary_restore(
+        &self,
+        summary: &CommandSummary<G>,
+        universe: &Universe<G>,
+    ) -> Result<PreparedCommandRestore<G>, CommandRestoreError> {
+        self.profile()
+            .validate_fingerprint(
+                CommandProfileBoundary::Summary,
+                CommandProfileFingerprint::from_u64(summary.profile_fingerprint()),
+            )
+            .map_err(CommandRestoreError::Profile)?;
+        let generation = universe
+            .generation_owner()
+            .map_err(|_| CommandRestoreError::ForeignGeneration)?;
+        if !summary.generation().addresses(&generation, &self.timeline) {
+            return Err(CommandRestoreError::ForeignGeneration);
+        }
+        self.resolve_restore(summary.generation(), summary.cursor())
+    }
+
+    /// Revalidates the destination and attempt suffix, then installs one
+    /// prepared command root before discarding that suffix.
+    pub fn apply_prepared_restore(
+        &mut self,
+        restore: PreparedCommandRestore<G>,
+    ) -> Result<(), CommandRestoreError> {
+        if !Arc::ptr_eq(&restore.timeline, &self.timeline) {
+            return Err(CommandRestoreError::ForeignGeneration);
+        }
+        self.attempt
+            .arena()
+            .validate_mark(restore.attempt)
+            .map_err(|_| CommandRestoreError::InvalidCursor)?;
+        self.roots = restore.roots;
+        self.attempt
+            .arena_mut()
+            .truncate(restore.attempt)
+            .expect("prepared command restore validated its attempt mark");
+        Ok(())
+    }
+
+    /// Validates and restores one named-boundary summary atomically.
+    pub fn restore_summary(
+        &mut self,
+        summary: &CommandSummary<G>,
+        universe: &Universe<G>,
+    ) -> Result<(), CommandRestoreError> {
+        let restore = self.prepare_summary_restore(summary, universe)?;
+        self.apply_prepared_restore(restore)
+    }
+
+    /// Validates an exact operation snapshot without changing live command
+    /// roots or attempt storage.
+    pub fn prepare_snapshot_restore(
+        &self,
+        snapshot: &CommandStateSnapshot<G>,
+        universe: &Universe<G>,
+    ) -> Result<PreparedCommandRestore<G>, CommandRestoreError> {
+        let generation = universe
+            .generation_owner()
+            .map_err(|_| CommandRestoreError::ForeignGeneration)?;
+        if !snapshot.addresses(&generation, &self.timeline) {
+            return Err(CommandRestoreError::ForeignGeneration);
+        }
+        let restore = self.resolve_restore(snapshot.generation(), snapshot.cursor())?;
+        self.profile()
+            .validate_fingerprint(
+                CommandProfileBoundary::Snapshot,
+                restore.roots.expansion.profile.fingerprint(),
+            )
+            .map_err(CommandRestoreError::Profile)?;
+        Ok(restore)
+    }
+
+    /// Restores one exact operation snapshot after complete validation.
+    pub fn rollback(
+        &mut self,
+        snapshot: &CommandStateSnapshot<G>,
+        universe: &Universe<G>,
+    ) -> Result<(), CommandRestoreError> {
+        let restore = self.prepare_snapshot_restore(snapshot, universe)?;
+        self.apply_prepared_restore(restore)
+    }
+}
 
 #[cfg(test)]
 #[path = "snapshot/tests.rs"]

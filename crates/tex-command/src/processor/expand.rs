@@ -39,11 +39,19 @@ use crate::observation::{
 
 /// Operand state held by TeX82 §368 while `\expandafter` expands its second
 /// command across an immutable host suspension.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct PendingExpandAfter<G> {
     first: CurrentCommand<G>,
     second: CurrentCommand<G>,
 }
+
+impl<G> Clone for PendingExpandAfter<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for PendingExpandAfter<G> {}
 
 /// Stable pending-diagnostic identity for TeX.web's `Missing \\endcsname
 /// inserted` recovery. Rendering belongs to the diagnostic milestone.

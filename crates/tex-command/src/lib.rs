@@ -144,7 +144,10 @@ pub use scanners::{
     ScannedScalar, ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedTokenParameterAssignment,
     ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
-pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
+pub use snapshot::{
+    CommandGenerationOwner, CommandRestoreError, CommandStateSnapshot, CommandSummary,
+    CommandSummaryError, PreparedCommandRestore,
+};
 pub use state::{
     CommandReplayDelivery, CommandReplayEpisode, CommandSemanticDiagnostic, CommandStackUsage,
     CommandState, RunawayPrelude, UnknownRegisteredSource,

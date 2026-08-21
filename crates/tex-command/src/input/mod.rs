@@ -50,7 +50,7 @@ pub use tokenizer::{
 /// This state owns only future deliveries and semantic identity allocation.
 /// Conditions, scanner policy, meanings, and host capabilities belong to
 /// other ownership classes.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputState<G> {
     pub(crate) levels: Vec<InputLevel<G>>,
     /// TeX82 §331's bottom terminal buffer after the startup line has been
@@ -67,6 +67,19 @@ pub(crate) struct InputState<G> {
     pub(crate) next_source_identity: u64,
     /// TeX82 §362's process-global `force_eof`.
     pub(crate) force_eof: bool,
+}
+
+impl<G> Clone for InputState<G> {
+    fn clone(&self) -> Self {
+        Self {
+            levels: self.levels.clone(),
+            terminal_context_line: self.terminal_context_line.clone(),
+            pending_sources: self.pending_sources.clone(),
+            next_level_identity: self.next_level_identity,
+            next_source_identity: self.next_source_identity,
+            force_eof: self.force_eof,
+        }
+    }
 }
 
 impl<G> Default for InputState<G> {

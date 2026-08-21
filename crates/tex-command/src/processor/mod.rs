@@ -243,7 +243,7 @@ impl<G> CommandProcessor<'_, G> {
 
     /// Returns the immutable command dialect and character mode for this job.
     #[must_use]
-    pub const fn profile(&self) -> crate::CommandProfile {
+    pub fn profile(&self) -> crate::CommandProfile {
         self.command.profile()
     }
 

@@ -41,8 +41,9 @@ print channel of its own outside the borrowed
   immutable command/character profiles, the distinct canonical compiled-engine
   semantics that survive loading an older format, capabilities, stable
   fingerprints, and focused value/identity tests.
-- `src/state.rs`: persistent command state, cross-processor executor-owned
-  replay-completion fences, and the live operation-scoped `AttemptArena`.
+- `src/state.rs`: copy-on-write aggregate command roots, persistent command
+  state, cross-processor executor-owned replay-completion fences, and the live
+  operation-scoped `AttemptArena`.
   Resource continuations move that complete arena, its coarse
   `GenerationOwner`, typed ids, and integer resume cursors; resumption
   re-borrows dense state and cancellation drops the package wholesale. These
@@ -263,9 +264,11 @@ print channel of its own outside the borrowed
   conversion selectors. Never classify an observed command through a
   profile-free dialect approximation.
 - `src/snapshot.rs` and `src/snapshot/tests.rs`: generation-generic command
-  snapshots and named summaries containing one coarse generation owner plus
-  fixed scalar journal, arena, stack, source-anchor, and profile coordinates;
-  capture never clones a live command graph.
+  snapshots and named summaries backed by the command-root timeline and
+  containing one coarse generation owner plus fixed scalar journal, arena,
+  stack, source-anchor, and profile coordinates; capture never clones a live
+  command graph, validation never mutates the runtime, and restore installs
+  roots before truncating the attempt suffix.
 - `src/continuation.rs` and `src/continuation/`: handle-free command-summary
   and suspended-attempt recipes, dense DTO-local indices, recursive schema
   validation and budgets, cold detachment construction, destination-stamped

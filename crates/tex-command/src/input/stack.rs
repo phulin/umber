@@ -358,6 +358,16 @@ impl<G> CommandState<G> {
             let name_class = source.name_class;
             let source_id = source.cursor.current_backing().id;
             let action = source_retirement_action(source.retirement);
+            let framed = match name_class {
+                SourceNameClass::File => {
+                    source.cursor.backing.name.is_some()
+                        && source.cursor.backing.framing == crate::SourceFramingPolicy::Canonical
+                }
+                SourceNameClass::Scantokens(19) => true,
+                SourceNameClass::Terminal
+                | SourceNameClass::ReadStream(_)
+                | SourceNameClass::Scantokens(_) => false,
+            };
             // TeX82 §362 tests and clears the process-global `force_eof`
             // only in §360's `name>17` (real-file) refill branch. §483's
             // `name<=17` read/terminal pseudo-sources retire without
@@ -380,16 +390,6 @@ impl<G> CommandState<G> {
             if name_class == SourceNameClass::File {
                 self.input.force_eof = false;
             }
-            let framed = match name_class {
-                SourceNameClass::File => {
-                    source.cursor.backing.name.is_some()
-                        && source.cursor.backing.framing == crate::SourceFramingPolicy::Canonical
-                }
-                SourceNameClass::Scantokens(19) => true,
-                SourceNameClass::Terminal
-                | SourceNameClass::ReadStream(_)
-                | SourceNameClass::Scantokens(_) => false,
-            };
             if framed {
                 self.file_framing_events.push(FileFramingEvent::Close);
             }
