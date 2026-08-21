@@ -1,0 +1,83 @@
+use tex_state::AssignmentScope;
+use tex_state::env::banks::IntParam;
+use tex_state::world::{EffectRecord, PrintSink};
+
+use super::ExecutionDiagnosticContext;
+
+fn writes<G>(universe: &tex_state::Universe<G>) -> Vec<(PrintSink, String)> {
+    universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|record| match record {
+            EffectRecord::StreamWrite { sink, text } => Some((*sink, text.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn extended_missing_character_forces_online_routing_inside_admission() {
+    crate::test_harness::with_plain_universe(|universe| {
+        let mut command = universe
+            .command_context()
+            .expect("admitted diagnostic state");
+        command
+            .assign_int_param(IntParam::TRACING_LOST_CHARS, 2, AssignmentScope::Global)
+            .expect("set tracinglostchars");
+        let font = command.current_font();
+        super::report_missing_character_warning(&mut command, font, '?', true);
+        assert_eq!(command.int_param(IntParam::TRACING_LOST_CHARS), 2);
+        drop(command);
+
+        assert!(writes(universe).iter().any(|(sink, text)| {
+            *sink == PrintSink::TerminalAndLog
+                && text.contains("Missing character: There is no ? in font nullfont!")
+        }));
+    });
+}
+
+#[test]
+fn infinite_shrink_report_uses_only_detached_output_context() {
+    crate::test_harness::with_plain_universe(|universe| {
+        let context =
+            ExecutionDiagnosticContext::new(41, 37, true, "\nl.41 detached diagnostic context\n");
+        let mut command = universe
+            .command_context()
+            .expect("admitted diagnostic state");
+        super::report_page_infinite_shrinkage(&mut command, &context)
+            .expect("nonstop mode recovers from the diagnostic");
+        drop(command);
+
+        let text = writes(universe)
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<String>();
+        assert!(text.contains("Infinite glue shrinkage found on current page"));
+        assert!(text.contains("l.41 detached diagnostic context"));
+    });
+}
+
+#[test]
+fn ignored_split_error_preserves_forced_online_text() {
+    crate::test_harness::with_plain_universe(|universe| {
+        let context = ExecutionDiagnosticContext::source_free("unused");
+        let mut command = universe
+            .command_context()
+            .expect("admitted diagnostic state");
+        command
+            .assign_int_param(IntParam::IGNORE_PRIMITIVE_ERROR, 1, AssignmentScope::Global)
+            .expect("set ignore primitive error");
+        super::report_split_infinite_shrinkage(&mut command, &context)
+            .expect("ignored error recovers");
+        drop(command);
+
+        assert_eq!(
+            writes(universe),
+            vec![(
+                PrintSink::TerminalAndLog,
+                "\nignored error: Infinite glue shrinkage found in box being split\n".to_owned()
+            )]
+        );
+    });
+}

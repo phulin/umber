@@ -7,10 +7,56 @@ use tex_state::env::banks::IntParam;
 use tex_state::page::{PageContents, PageDimension, PageInsertion, PageInsertionStatus};
 use tex_state::print::Selector;
 use tex_state::token::{Catcode, Token};
-use tex_state::{PrintSink, Universe};
+use tex_state::{CommandContext, PrintSink, Universe};
 
 use crate::mode::ignored_depth;
 use crate::node_dump::{DumpConfig, dump_node_slice};
+
+#[cfg(test)]
+mod tests;
+
+/// Detached command-owned values needed by execution-time diagnostics.
+///
+/// Execution barriers populate this from command and mode state. Hot kernels
+/// carry the value beside their admitted [`CommandContext`] and never recover
+/// input, source, or mode ownership while reporting.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ExecutionDiagnosticContext {
+    pub(crate) current_line: i32,
+    pub(crate) pack_begin_line: i32,
+    pub(crate) output_routine_active: bool,
+    pub(crate) output_context: String,
+}
+
+impl ExecutionDiagnosticContext {
+    pub(crate) fn new(
+        current_line: i32,
+        pack_begin_line: i32,
+        output_routine_active: bool,
+        output_context: impl Into<String>,
+    ) -> Self {
+        Self {
+            current_line,
+            pack_begin_line,
+            output_routine_active,
+            output_context: output_context.into(),
+        }
+    }
+
+    pub(crate) fn source_free(output_context: impl Into<String>) -> Self {
+        Self {
+            output_context: output_context.into(),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn with_pack_begin_line(&self, pack_begin_line: i32) -> Self {
+        Self {
+            pack_begin_line,
+            ..self.clone()
+        }
+    }
+}
 
 /// Renders TeX82 §§94--95's irrecoverable reports before §93 `succumb`.
 ///
@@ -76,8 +122,11 @@ pub(crate) fn report_bad_interaction_mode_with_context<G>(
     value: i32,
     context: String,
 ) -> Result<(), ExecError> {
+    let mut command = stores
+        .command_context()
+        .expect("interaction-mode diagnostics run inside an admitted command episode");
     crate::error_report::report_error(
-        stores,
+        &mut command,
         &format!("Bad interaction mode ({value})"),
         &[
             "Modes are 0=batch, 1=nonstop, 2=scroll, and",
@@ -91,7 +140,7 @@ pub(crate) fn report_bad_interaction_mode_with_context<G>(
 /// TeX82 §581's missing-character warning, including e-TeX 2.6 change
 /// section 17.516's level-two terminal routing.
 pub(crate) fn report_missing_character_warning<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     font: tex_state::ids::FontId,
     ch: char,
     etex_extended: bool,
@@ -102,11 +151,7 @@ pub(crate) fn report_missing_character_warning<G>(
     // TeX82 §581's `char_warning` prints `font_name[f]` directly.  Unlike
     // `\fontname`, that stored external name never gains an `at <size>pt`
     // suffix when the font was loaded away from its design size.
-    let font_name = stores
-        .command_context()
-        .expect("diagnostics run inside an admitted command episode")
-        .font_external_name(font)
-        .to_owned();
+    let font_name = stores.font_external_name(font).to_owned();
     let force_online =
         etex_extended && stores.int_param(tex_state::env::banks::IntParam::TRACING_LOST_CHARS) > 1;
     let mut diagnostic = if force_online {
@@ -717,13 +762,12 @@ pub(crate) fn report_dimension_diagnostic<G>(
 /// TeX82 §1004's `<Update the current page measurements with respect to the
 /// glue or kern specified by node p>`.
 pub(crate) fn report_page_infinite_shrinkage<G>(
-    stores: &mut Universe<G>,
-    error_context: &str,
+    stores: &mut CommandContext<'_, G>,
+    context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
-    // TeX82 §1004 reaches §82's `error` while the command that contributed
-    // this glue still owns the live input stack. Callers at that boundary
-    // supply its already-rendered display explicitly.
-    let context = error_context.to_owned();
+    // TeX82 §1004 reaches §82's `error` while handling the command that
+    // contributed this glue. The command boundary detaches its already-
+    // rendered display before this hot recovery path runs.
     crate::error_report::report_error(
         stores,
         "Infinite glue shrinkage found on current page",
@@ -733,15 +777,15 @@ pub(crate) fn report_page_infinite_shrinkage<G>(
             "Such glue doesn't belong there; but you can safely proceed,",
             "since the offensive shrinkability has been made finite.",
         ],
-        context,
+        context.output_context.clone(),
     )?;
     Ok(())
 }
 
 /// TeX82 §825's once-per-paragraph infinite-shrink recovery.
 pub(crate) fn report_paragraph_infinite_shrinkage<G>(
-    stores: &mut Universe<G>,
-    context: String,
+    stores: &mut CommandContext<'_, G>,
+    context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     crate::error_report::report_error(
         stores,
@@ -753,7 +797,7 @@ pub(crate) fn report_paragraph_infinite_shrinkage<G>(
             "of any length to fit on one line. But it's safe to proceed,",
             "since the offensive shrinkability has been made finite.",
         ],
-        context,
+        context.output_context.clone(),
     )?;
     Ok(())
 }
@@ -761,20 +805,19 @@ pub(crate) fn report_paragraph_infinite_shrinkage<G>(
 /// TeX82 §976's `<Update the current height and depth measurements with
 /// respect to a glue or kern node p>`.
 pub(crate) fn report_split_infinite_shrinkage<G>(
-    stores: &mut Universe<G>,
-    error_context: &str,
+    stores: &mut CommandContext<'_, G>,
+    context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     if stores.int_param(IntParam::IGNORE_PRIMITIVE_ERROR) & 1 != 0 {
-        write_diagnostic(
-            stores,
-            "\nignored error: Infinite glue shrinkage found in box being split\n",
-        );
+        let mut diagnostic = stores.begin_online_diagnostic();
+        diagnostic
+            .print_rendered("\nignored error: Infinite glue shrinkage found in box being split");
+        diagnostic.end(false);
         return Ok(());
     }
     // TeX82 §976 is shared by command-time `\vsplit` and page-builder
     // insertion splitting. Both callers render the applicable command
     // context before crossing this diagnostic boundary.
-    let context = error_context.to_owned();
     crate::error_report::report_error(
         stores,
         "Infinite glue shrinkage found in box being split",
@@ -784,18 +827,17 @@ pub(crate) fn report_split_infinite_shrinkage<G>(
             "Such glue doesn't belong there; but you can safely proceed,",
             "since the offensive shrinkability has been made finite.",
         ],
-        context,
+        context.output_context.clone(),
     )?;
     Ok(())
 }
 
 /// TeX82 §1009's `<Subtract the natural width of the insertion ...>`.
 pub(crate) fn report_insertion_skip_infinite_shrinkage<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     class: u16,
-    error_context: &str,
+    context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
-    let context = error_context.to_owned();
     crate::error_report::report_error(
         stores,
         &format!("Infinite glue shrinkage inserted from \\skip{class}"),
@@ -804,7 +846,7 @@ pub(crate) fn report_insertion_skip_infinite_shrinkage<G>(
             "must have finite shrinkability. But you may proceed,",
             "since the offensive shrinkability has been made finite.",
         ],
-        context,
+        context.output_context.clone(),
     )?;
     Ok(())
 }

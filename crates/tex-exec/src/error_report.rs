@@ -20,14 +20,16 @@
 //! Every site therefore calls one of the entry points here. Adding a new
 //! error message means adding a `report_*` call, never a `write_text`.
 
-use tex_state::Universe;
+use tex_state::CommandContext;
 
 /// tex.web §73's `print_err`, §79's help lines, and §82's `error`.
 ///
 /// `context` is §82's already-rendered `show_context` display; pass
-/// [`String::new`] only for a site with no input stack to display at all.
-pub(crate) fn report_error(
-    stores: &mut Universe,
+/// [`String::new`] only for a site with no input stack to display at all. The
+/// renderer consumes an already-admitted command context and never resolves
+/// input or source ownership itself.
+pub(crate) fn report_error<G>(
+    stores: &mut CommandContext<'_, G>,
     message: &str,
     help: &[&str],
     context: String,

@@ -70,12 +70,15 @@ Command operands are scanned by `tex-command` into typed request and result valu
   `ShipoutGeometrySink::committed_shipout_geometry`; the DTO contains only
   detached dimensions and counts, and live observer attribution is attached
   by main control after the callback crosses that explicit boundary.
-- `src/diagnostics.rs`, `src/error.rs`, and `src/error_report.rs`: canonical
+- `src/diagnostics.rs`, `src/diagnostics/tests.rs`, `src/error.rs`, and
+  `src/error_report.rs`: canonical
   error identity, provenance, rendering, recovery reporting, and fatal
   propagation. Context needed after a command borrow ends is passed as an
   owned rendered string, never recovered from a retained input/source handle.
   Page-activity diagnostics similarly detach their node, insertion, count, and
   dimension evidence through one short-lived `CommandContext` before rendering.
+  Hot execution reporters accept an admitted `CommandContext` plus the detached
+  `ExecutionDiagnosticContext`; focused tests pin routing and context rendering.
   `ExecError::Fatal` is TeX82 §81's non-local exit and only main control may
   catch it.
 - `src/align/`: source-free alignment completion, packaging, and width resolution.
