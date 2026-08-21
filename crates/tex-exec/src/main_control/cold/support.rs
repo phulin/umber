@@ -1547,10 +1547,7 @@ pub(in crate::main_control) fn issue_error_message<G>(
         .expect("token parameter belongs to admitted state");
     let rendered = err_help.map(|tokens| message_text(stores, tokens));
     let interactive = stores.interaction_mode_value() == 3;
-    let long_help_seen = stores
-        .world_mut()
-        .error_channel_mut()
-        .take_long_help_seen(rendered.is_none() && !interactive);
+    let long_help_seen = stores.take_long_help_seen(rendered.is_none() && !interactive);
     let mut report = stores.print_err("");
     report.print(text);
     match rendered {

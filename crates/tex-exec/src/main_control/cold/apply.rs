@@ -766,10 +766,9 @@ pub(in crate::main_control) fn apply<G>(
             let new = tokens;
             let observed = ObservationValue::Tokens(
                 stores
-                    .tokens(new)
+                    .token_list(new)
                     .iter()
-                    .copied()
-                    .map(|token| observed_macro_token(token, stores))
+                    .map(|word| observed_macro_token(word.token(), stores))
                     .collect(),
             );
             let receipt = AssignmentCommitter::new(stores).toks(index, new, observed, global);
@@ -810,13 +809,12 @@ pub(in crate::main_control) fn apply<G>(
             tokens,
             global,
         } => {
-            let new = tokens.as_ref().map(TracedTokenList::token_list);
+            let new = tokens;
             let observed = ObservationValue::Tokens(
                 stores
-                    .tokens(new.unwrap_or(TokenListId::EMPTY))
+                    .token_list(new.unwrap_or(TokenListId::EMPTY))
                     .iter()
-                    .copied()
-                    .map(|token| observed_macro_token(token, stores))
+                    .map(|word| observed_macro_token(word.token(), stores))
                     .collect(),
             );
             let key = parameter_mutation_key_for_dialect(
@@ -1268,7 +1266,7 @@ pub(in crate::main_control) fn apply<G>(
                         definition.no_ligatures,
                     )?;
                     if zero_em {
-                        stores.world_mut().write_text(
+                        stores.write_text(
                             tex_state::PrintSink::TerminalAndLog,
                             "\npdfTeX warning (\\letterspacefont): font has zero em size (\\fontdimen6)\n",
                         );
@@ -1299,25 +1297,23 @@ pub(in crate::main_control) fn apply<G>(
                     // §1275 closes any stream already open on `n` before it
                     // tries to open the new file, whichever command this is.
                     AssignmentCommitter::new(stores).try_unscoped(None, |stores| {
-                        stores.world_mut().close_in(slot);
+                        stores.close_input_stream(slot);
                         let Some(resource) = resource else {
                             return Ok(());
                         };
-                        stores
-                            .world_mut()
-                            .set_memory_file(&packed_name, resource.bytes().to_vec())?;
+                        stores.set_input_memory_file(&packed_name, resource.bytes().to_vec())?;
                         let content = InputReadState::read_input_file(
                             &mut stores.input_open_context(),
                             std::path::Path::new(&packed_name),
                         )?;
-                        stores.world_mut().open_in_content(slot, &content)?;
+                        stores.open_input_stream_content(slot, &content)?;
                         Ok::<(), ExecError>(())
                     })?;
                 }
                 RootedInputStreamRequest::Close { stream, .. } => {
                     let slot = replay_stream_slot(stream);
                     AssignmentCommitter::new(stores)
-                        .unscoped(None, |stores| stores.world_mut().close_in(slot));
+                        .unscoped(None, |stores| stores.close_input_stream(slot));
                 }
                 // TeX82 §482 has already collected the list inside the
                 // command core, which also reported §1225's missing-`to`
@@ -1420,11 +1416,11 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::PdfSetRandomSeed { seed } => {
-            stores.world_mut().set_pdf_random_seed(seed);
+            stores.set_pdf_random_seed(seed);
             Ok(ReplayStep::Continue)
         }
         ColdOperation::PdfResetTimer => {
-            stores.world_mut().reset_pdf_timer();
+            stores.reset_pdf_timer();
             Ok(ReplayStep::Continue)
         }
         ColdOperation::PdfInterwordSpace(control) => {
@@ -1495,7 +1491,10 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::PdfForm(request) => {
-            apply_pdf_form_request(request, stores, modes, command, false)
+            apply_pdf_form_request(request, stores, modes, command, false).map(|pending| {
+                debug_assert!(pending.is_none());
+                ReplayStep::Continue
+            })
         }
         ColdOperation::PdfDocumentFragment(request) => {
             let dvi_only_error = matches!(request.kind, tex_state::PdfDocumentFragmentKind::Names);
@@ -1512,7 +1511,7 @@ pub(in crate::main_control) fn apply<G>(
                         unreachable!("pdfnames is rejected before the ignored-fragment warning")
                     }
                 };
-                stores.world_mut().write_text(
+                stores.write_text(
                     PrintSink::TerminalAndLog,
                     &format!(
                         "\npdfTeX warning (\\{name}): not allowed in DVI mode (\\pdfoutput <= 0); ignoring it\n"
@@ -1522,6 +1521,7 @@ pub(in crate::main_control) fn apply<G>(
             }
             stores.append_pdf_document_fragment(request.kind, request.text.tokens);
             if let Some(action) = request.open_action {
+                let action = admitted_pdf_action(action);
                 if stores.pdf_catalog_open_action().is_some() {
                     return Err(ExecError::PdfDuplicateOpenAction);
                 }
@@ -1580,7 +1580,7 @@ pub(in crate::main_control) fn apply<G>(
                         GlyphToUnicodeParse::Mapping(mapping) => {
                             stores.set_pdf_glyph_to_unicode(mapping)
                         }
-                        GlyphToUnicodeParse::Warning(message) => stores.world_mut().write_text(
+                        GlyphToUnicodeParse::Warning(message) => stores.write_text(
                             tex_state::PrintSink::TerminalAndLog,
                             &format!("\npdfTeX warning: pdftex: ToUnicode: {message}\n"),
                         ),
@@ -1612,7 +1612,7 @@ pub(in crate::main_control) fn apply<G>(
                             let name = String::from_utf8_lossy(
                                 duplicates.last().expect("new duplicate has a name"),
                             );
-                            stores.world_mut().write_text(
+                            stores.write_text(
                                 tex_state::PrintSink::TerminalAndLog,
                                 &format!("\npdfTeX warning: pdftex: fontmap entry for `{name}' already exists, duplicates ignored\n"),
                             );
@@ -1702,7 +1702,7 @@ pub(in crate::main_control) fn apply<G>(
                 command.fuel,
                 Whatsit::DeferredWrite {
                     sink: replay_write_sink(stream),
-                    tokens: tex_state::node::NodeTokenList::new(stores.tokens(tokens).to_vec()),
+                    tokens: tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec()),
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -1717,7 +1717,7 @@ pub(in crate::main_control) fn apply<G>(
                 command.fuel,
                 Whatsit::DeferredSpecial {
                     class: "dvi".to_owned(),
-                    tokens: tex_state::node::NodeTokenList::new(stores.tokens(tokens).to_vec()),
+                    tokens: tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec()),
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -1727,8 +1727,8 @@ pub(in crate::main_control) fn apply<G>(
             tokens,
         } => {
             let mut text = String::new();
-            for &token in stores.tokens(tokens).iter() {
-                tex_state::token_show::append_token_string_text(stores, token, &mut text);
+            for &word in stores.token_list(tokens) {
+                tex_state::token_show::append_token_string_text(stores, word.token(), &mut text);
             }
             crate::box_runtime::append_whatsit(
                 modes,
@@ -2156,7 +2156,11 @@ pub(in crate::main_control) fn apply<G>(
                     apply_pdf_object_request(request, stores, true)?;
                 }
                 RootedImmediateExtension::PdfForm(request) => {
-                    apply_pdf_form_request(request, stores, modes, command, true)?;
+                    let pending = apply_pdf_form_request(request, stores, modes, command, true)?;
+                    assert!(
+                        pending.is_none(),
+                        "immediate form publication is intercepted before generic cold apply"
+                    );
                 }
                 RootedImmediateExtension::PdfImage(_) => {
                     unreachable!("immediate image requests are normalized before resolution")
@@ -2485,7 +2489,7 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 Node::Mark {
                     class,
-                    tokens: tex_state::node::NodeTokenList::new(stores.tokens(tokens).to_vec()),
+                    tokens: tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec()),
                 },
             );
             Ok(ReplayStep::Continue)

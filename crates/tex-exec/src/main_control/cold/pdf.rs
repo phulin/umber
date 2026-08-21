@@ -94,7 +94,7 @@ fn admitted_pdf_identifier<G>(
     }
 }
 
-fn admitted_pdf_action<G>(
+pub(in crate::main_control) fn admitted_pdf_action<G>(
     action: RootedPdfActionSpec<tex_state::TokenListId<G>>,
 ) -> tex_state::PdfActionSpec<G> {
     fn destination<G>(
@@ -562,13 +562,13 @@ pub(in crate::main_control) fn apply_pdf_object_request<G>(
     Ok(ReplayStep::Continue)
 }
 
-pub(in crate::main_control) fn apply_pdf_form_request(
+pub(in crate::main_control) fn apply_pdf_form_request<G>(
     request: RootedPdfFormRequest<tex_state::TokenListId<G>>,
-    stores: &mut Universe,
+    stores: &mut tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
-    command: &mut CommandMachine<'_>,
+    command: &mut CommandMachine<'_, G>,
     immediate: bool,
-) -> Result<ReplayStep, ExecError> {
+) -> Result<Option<tex_state::PdfFormRecord<G>>, ExecError> {
     if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
         let name = match request {
             RootedPdfFormRequest::Create { .. } => "pdfxform",
@@ -593,6 +593,7 @@ pub(in crate::main_control) fn apply_pdf_form_request(
                     depth: form.depth(),
                 },
             )?;
+            return Ok(None);
         }
         RootedPdfFormRequest::Create {
             attr,
@@ -621,44 +622,61 @@ pub(in crate::main_control) fn apply_pdf_form_request(
                     identity,
                     list,
                     dimensions,
-                    attr.map(|text| text.tokens.token_list()),
-                    resources.map(|text| text.tokens.token_list()),
+                    attr.map(|text| text.tokens),
+                    resources.map(|text| text.tokens),
                     immediate,
                 )
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
-            if immediate {
-                // pdftex.web §1549's `do_extension` applies the immediate
-                // prefix by traversing the captured form at creation time.
-                // Use the same typed form traversal as lazy references so
-                // graphics, saved positions, colors, and nested forms have
-                // one ledger/artifact owner.
-                let command = std::cell::RefCell::new(command);
-                let mut write = |stores: &mut Universe, _: PrintSink, tokens: &[TokenWord]| {
-                    replay_write(&mut command.borrow_mut(), stores, tokens, &mut Vec::new())
-                };
-                let mut replay = |stores: &mut Universe,
-                                  kind: crate::shipout::ReplayTextKind,
-                                  tokens: &[TokenWord]| {
-                    replay_text(
-                        &mut command.borrow_mut(),
-                        stores,
-                        kind,
-                        tokens,
-                        &mut Vec::new(),
-                    )
-                    .map(crate::shipout::ExpandedReplayText)
-                };
-                let artifact = crate::shipout::ShipoutTransaction::new(&mut write, &mut replay)
-                    .stage_form(form.clone(), stores)?;
-                stores.publish_pdf_traversal_positions(
-                    artifact.last_position(),
-                    artifact.snap_reference(),
-                );
-                stores.set_pdf_form_artifact(form.object(), artifact);
-            }
+            return Ok(immediate.then_some(form));
         }
     }
-    Ok(ReplayStep::Continue)
+}
+
+/// Traverses an already-created immediate form after the admitted apply
+/// context has been released. Publication remains an outer Universe barrier;
+/// each replay callback admits and returns one short command context.
+pub(in crate::main_control) fn publish_immediate_pdf_form<G>(
+    form: tex_state::PdfFormRecord<G>,
+    command: &mut CommandMachine<'_, G>,
+    stores: &mut Universe<G>,
+) -> Result<(), ExecError> {
+    let command = std::cell::RefCell::new(command);
+    let mut write = |stores: &mut Universe<G>, _: PrintSink, tokens: &[TokenWord]| {
+        let context = stores
+            .command_context()
+            .map_err(|_| ExecError::MissingToken {
+                context: "immediate form write admission",
+            })?;
+        let mut context = LinearCommandContext::new(context);
+        replay_write(
+            &mut command.borrow_mut(),
+            &mut context,
+            tokens,
+            &mut Vec::new(),
+        )
+    };
+    let mut replay =
+        |stores: &mut Universe<G>, kind: crate::shipout::ReplayTextKind, tokens: &[TokenWord]| {
+            let context = stores
+                .command_context()
+                .map_err(|_| ExecError::MissingToken {
+                    context: "immediate form replay admission",
+                })?;
+            let mut context = LinearCommandContext::new(context);
+            replay_text(
+                &mut command.borrow_mut(),
+                &mut context,
+                kind,
+                tokens,
+                &mut Vec::new(),
+            )
+            .map(crate::shipout::ExpandedReplayText)
+        };
+    let artifact = crate::shipout::ShipoutTransaction::new(&mut write, &mut replay)
+        .stage_form(form.clone(), stores)?;
+    stores.publish_pdf_traversal_positions(artifact.last_position(), artifact.snap_reference());
+    stores.set_pdf_form_artifact(form.object(), artifact);
+    Ok(())
 }
 
 pub(in crate::main_control) fn replay_text<G>(
@@ -949,9 +967,9 @@ pub(in crate::main_control) fn apply_pdf_image_compatibility_policy<G>(
 /// command-owned source scanning but before the immutable host request is
 /// exposed. This keeps `CommandProcessor` independent of `Universe` while
 /// ensuring the host sees the effective page-box identity.
-pub(in crate::main_control) fn pdf_image_page_box<G>(
+pub(in crate::main_control) fn pdf_image_page_box<G, T>(
     stores: &tex_state::CommandContext<'_, G>,
-    request: &RootedPdfImageRequest<tex_state::TokenListId<G>>,
+    request: &RootedPdfImageRequest<T>,
 ) -> tex_command::PdfImagePageBox {
     let page_box = |value| match value {
         1 => tex_command::PdfImagePageBox::Media,
@@ -1063,8 +1081,8 @@ pub(in crate::main_control) fn write_effect_channel(sink: PrintSink) -> String {
 }
 
 pub(in crate::main_control) fn applied_effect_observation<G>(
-    scanned: &ColdOperation<G>,
-    stores: &Universe<G>,
+    scanned: &PreparedColdOperation<G>,
+    stores: &tex_state::CommandContext<'_, G>,
 ) -> Option<EffectRecord> {
     match scanned {
         ColdOperation::Message { tokens, .. } => Some(EffectRecord {
@@ -1075,9 +1093,7 @@ pub(in crate::main_control) fn applied_effect_observation<G>(
             // expansion through `\noexpand` and must retain `print_cs`'s
             // spelling and separator.
             channel: "terminal".into(),
-            value: ObservationValue::Bytes(
-                message_tokens_text(stores, tokens.token_ref().id()).into_bytes(),
-            ),
+            value: ObservationValue::Bytes(message_tokens_text(stores, *tokens).into_bytes()),
             source: None,
         }),
         ColdOperation::ShowTokens { tokens } => Some(EffectRecord {
@@ -1085,10 +1101,9 @@ pub(in crate::main_control) fn applied_effect_observation<G>(
             channel: "showtokens".into(),
             value: ObservationValue::Tokens(
                 stores
-                    .tokens(tokens.token_ref().id())
+                    .token_list(*tokens)
                     .iter()
-                    .copied()
-                    .map(|token| observed_macro_token(token, stores))
+                    .map(|word| observed_macro_token(word.token(), stores))
                     .collect(),
             ),
             source: None,
@@ -1114,10 +1129,9 @@ pub(in crate::main_control) fn applied_effect_observation<G>(
                 channel: format!("stream:{}", stream.normalized_number()),
                 value: ObservationValue::Tokens(
                     stores
-                        .tokens(tokens.token_ref().id())
+                        .token_list(*tokens)
                         .iter()
-                        .copied()
-                        .map(|token| observed_macro_token(token, stores))
+                        .map(|word| observed_macro_token(word.token(), stores))
                         .collect(),
                 ),
                 source: None,
