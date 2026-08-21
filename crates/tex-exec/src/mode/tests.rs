@@ -4,7 +4,6 @@ use super::{
 };
 use std::sync::Arc;
 use tex_command::{ConditionalMode, FatalError};
-use tex_state::Universe;
 use tex_state::ids::FontId;
 use tex_state::math::FractionThickness;
 use tex_state::node::{KernKind, Node};
@@ -71,43 +70,44 @@ fn mode_summary_restores_an_independent_semantic_builder() {
 
 #[test]
 fn episode_boundary_freezes_builder_sidecars_and_mutation_invalidates_them() {
-    let mut stores = Universe::new();
-    let mut nest = ModeNest::new();
-    nest.current_list_mutation().push(kern(11));
-    assert!(nest.levels[0].list.sequence.frozen_sidecars().is_none());
+    crate::test_harness::with_universe(|universe| {
+        let mut nest = ModeNest::new();
+        nest.current_list_mutation().push(kern(11));
+        assert!(nest.levels[0].list.sequence.frozen_sidecars().is_none());
 
-    nest.publish_node_sidecars(&mut stores);
-    let (semantic, physical) = nest.levels[0]
-        .list
-        .sequence
-        .frozen_sidecars()
-        .expect("boundary materializes both projections");
-    let nodes = |root| {
-        stores
-            .page_node_list(root)
-            .expect("mode sidecar belongs to the page arena")
-            .nodes()
-            .to_vec()
-    };
-    assert_eq!(nodes(semantic), vec![kern(11)]);
-    assert_eq!(nodes(physical), vec![kern(11)]);
+        nest.publish_node_sidecars(universe);
+        let (semantic, physical) = nest.levels[0]
+            .list
+            .sequence
+            .frozen_sidecars()
+            .expect("boundary materializes both projections");
+        let nodes = |root| {
+            universe
+                .page_node_list(root)
+                .expect("mode sidecar belongs to the page arena")
+                .nodes()
+                .to_vec()
+        };
+        assert_eq!(nodes(semantic), vec![kern(11)]);
+        assert_eq!(nodes(physical), vec![kern(11)]);
 
-    nest.current_list_mutation().push(kern(13));
-    assert!(nest.levels[0].list.sequence.frozen_sidecars().is_none());
-    nest.publish_node_sidecars(&mut stores);
-    let semantic = nest.levels[0]
-        .list
-        .sequence
-        .frozen_sidecars()
-        .expect("next boundary refreezes the changed builder")
-        .0;
-    assert_eq!(
-        stores
-            .page_node_list(semantic)
-            .expect("mode sidecar belongs to the page arena")
-            .nodes(),
-        [kern(11), kern(13)]
-    );
+        nest.current_list_mutation().push(kern(13));
+        assert!(nest.levels[0].list.sequence.frozen_sidecars().is_none());
+        nest.publish_node_sidecars(universe);
+        let semantic = nest.levels[0]
+            .list
+            .sequence
+            .frozen_sidecars()
+            .expect("next boundary refreezes the changed builder")
+            .0;
+        assert_eq!(
+            universe
+                .page_node_list(semantic)
+                .expect("mode sidecar belongs to the page arena")
+                .nodes(),
+            [kern(11), kern(13)]
+        );
+    });
 }
 
 #[test]
@@ -161,15 +161,11 @@ fn mode_projection_is_canonical_and_content_sensitive() {
     changed.push(Mode::Horizontal).expect("test mode push");
     changed.current_list_mutation().push(kern(12));
 
-    let first_hash = first.summary().semantic_fingerprint(&Universe::new());
-    assert_eq!(
-        equal.summary().semantic_fingerprint(&Universe::new()),
-        first_hash
-    );
-    assert_ne!(
-        changed.summary().semantic_fingerprint(&Universe::new()),
-        first_hash
-    );
+    crate::test_harness::with_universe(|universe| {
+        let first_hash = first.summary().semantic_fingerprint(universe);
+        assert_eq!(equal.summary().semantic_fingerprint(universe), first_hash);
+        assert_ne!(changed.summary().semantic_fingerprint(universe), first_hash);
+    });
 }
 
 #[test]
@@ -378,7 +374,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
         list.begin_pending_hchars(
             FontId::testing_new(2),
             'x',
-            tex_state::provenance::OriginRef::unknown(),
+            tex_state::token::OriginId::UNKNOWN,
         );
         list.set_align_state(align_state());
         list.set_incomplete_fraction(IncompleteFraction {
