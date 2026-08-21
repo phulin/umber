@@ -307,7 +307,7 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
                     .expect("count-register index is admitted"),
                 rhs,
             )?;
-            AssignmentCommitter::new(stores).count(index, value, global)
+            AssignmentCommitter::new(stores, command.diagnostic_effects).count(index, value, global)
         }
         (ArithmeticTarget::IntegerParameter(index), ArithmeticOperand::Integer(rhs)) => {
             let value = arithmetic_integer(primitive, stores.int_param(IntParam::new(index)), rhs)?;
@@ -316,11 +316,13 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
                 ParameterClass::Integer,
                 index,
             );
-            AssignmentCommitter::new(stores).int_parameter(index, value, key, global)
+            AssignmentCommitter::new(stores, command.diagnostic_effects)
+                .int_parameter(index, value, key, global)
         }
         (ArithmeticTarget::DimensionRegister(index), operand) => {
             let value = arithmetic_dimension(primitive, stores.dimen(index), operand)?;
-            AssignmentCommitter::new(stores).dimension(index, value, global)
+            AssignmentCommitter::new(stores, command.diagnostic_effects)
+                .dimension(index, value, global)
         }
         (ArithmeticTarget::DimensionParameter(index), operand) => {
             let value = arithmetic_dimension(
@@ -333,7 +335,8 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
                 ParameterClass::Dimension,
                 index,
             );
-            AssignmentCommitter::new(stores).dimension_parameter(index, value, key, global)
+            AssignmentCommitter::new(stores, command.diagnostic_effects)
+                .dimension_parameter(index, value, key, global)
         }
         (ArithmeticTarget::GlueRegister { index, mu }, operand) => {
             let old = if mu {
@@ -345,7 +348,8 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
             }
             .map_or(GlueSpec::ZERO, |id| stores.glue(id));
             let value = arithmetic_glue(primitive, old, operand)?;
-            AssignmentCommitter::new(stores).skip(index, value, global, mu, false, false)
+            AssignmentCommitter::new(stores, command.diagnostic_effects)
+                .skip(index, value, global, mu, false, false)
         }
         (ArithmeticTarget::GlueParameter { index, .. }, operand) => {
             let old = stores
@@ -354,7 +358,8 @@ pub(in crate::main_control) fn apply_arithmetic<G>(
             let value = arithmetic_glue(primitive, old, operand)?;
             let key =
                 parameter_mutation_key_for_dialect(profile.dialect(), ParameterClass::Glue, index);
-            AssignmentCommitter::new(stores).glue_parameter(index, value, key, global)
+            AssignmentCommitter::new(stores, command.diagnostic_effects)
+                .glue_parameter(index, value, key, global)
         }
         _ => return Err(ExecError::UnsupportedAssignmentTarget),
     };
@@ -589,9 +594,10 @@ pub(in crate::main_control) fn commit_box_normal_paragraph<G>(
             value: ObservationValue::Tokens(Vec::new()),
             global: false,
         });
-    let receipt = AssignmentCommitter::new(stores).unscoped(record, |stores| {
-        crate::paragraph_end::normal_paragraph(modes, stores);
-    });
+    let receipt =
+        AssignmentCommitter::new(stores, command.diagnostic_effects).unscoped(record, |stores| {
+            crate::paragraph_end::normal_paragraph(modes, stores);
+        });
     command.retain_assignment_receipt(receipt);
 }
 
@@ -625,8 +631,13 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::LastBox { error_context } => {
-            let node =
-                crate::box_runtime::take_last_box(modes, stores, command.fuel, error_context)?;
+            let node = crate::box_runtime::take_last_box(
+                modes,
+                stores,
+                command.diagnostic_effects,
+                command.fuel,
+                error_context,
+            )?;
             append_shifted_box(modes, stores, node, shift.delta, command)?;
             Ok(ReplayStep::Continue)
         }
@@ -817,7 +828,7 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
     command: &mut CommandMachine<'_, G>,
 ) {
     let traced_box = boxed.clone();
-    let receipt = AssignmentCommitter::new(stores).box_register(
+    let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).box_register(
         target.index,
         traced_box.as_ref(),
         target.global,
@@ -912,7 +923,12 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
         // finished the current word. Materialize Umber's pending character
         // run before appending the rule so a `\vrule` cannot split a word and
         // move its final character behind the rule node.
-        crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+        crate::box_runtime::flush_pending_hchars_with_fuel(
+            modes,
+            stores,
+            command.diagnostic_effects,
+            command.fuel,
+        )?;
         modes.current_list_mutation().push(node);
         // TeX82 §1056 resets `space_factor` after a rule in either
         // horizontal mode. This matters when a zero-sfcode closer follows
@@ -1001,6 +1017,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
             crate::diagnostics::ExecutionDiagnosticContext::source_free("accent placement");
         let mut boxed = crate::box_runtime::hpack_with_overfull_rule(
             stores,
+            command.diagnostic_effects,
             &diagnostic_context,
             children,
             PackSpec::Natural,
@@ -1172,14 +1189,22 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         .unwrap_or(GlueSpec::ZERO);
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
-    let aftergroup =
-        leave_group_payloads(stores, command.state, GroupKind::Insert).map_err(|_| {
-            ExecError::MissingToken {
-                context: "insert group",
-            }
-        })?;
+    let aftergroup = leave_group_payloads(
+        stores,
+        command.state,
+        command.diagnostic_effects,
+        GroupKind::Insert,
+    )
+    .map_err(|_| ExecError::MissingToken {
+        context: "insert group",
+    })?;
     schedule_aftergroup(command, stores, aftergroup)?;
-    let level = crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
+    let level = crate::box_runtime::commit_current_list(
+        modes,
+        stores,
+        command.diagnostic_effects,
+        command.fuel,
+    )?;
     let content = stores.publish_page_nodes(level.list().nodes().to_vec());
     let params = tex_typeset::VpackParams {
         box_max_depth: Scaled::MAX_DIMEN,
@@ -1187,12 +1212,18 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
     };
     let packed = crate::packing_params::vpack(
         stores,
+        command.diagnostic_effects,
         &diagnostic_context,
         content.clone(),
         PackSpec::Natural,
         params,
     );
-    crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+    crate::box_runtime::flush_pending_hchars_with_fuel(
+        modes,
+        stores,
+        command.diagnostic_effects,
+        command.fuel,
+    )?;
     let node = if class == 255 {
         Node::Adjust(tex_state::node::AdjustNode { content, pre })
     } else {
@@ -1358,6 +1389,7 @@ impl<G> PendingDiagnostic<G> {
 /// Prints each report a completed scan owes, in detection order.
 pub(in crate::main_control) fn report_pending_diagnostics<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostics: Vec<PendingDiagnostic<G>>,
 ) -> Result<(), ExecError> {
     for diagnostic in diagnostics {
@@ -1366,7 +1398,7 @@ pub(in crate::main_control) fn report_pending_diagnostics<G>(
                 text,
                 force_newline,
             }) => {
-                let mut output = stores.begin_diagnostic();
+                let mut output = stores.begin_diagnostic(diagnostic_effects);
                 if force_newline {
                     output.print_ln().print(&text);
                 } else {

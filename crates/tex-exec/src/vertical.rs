@@ -1,4 +1,5 @@
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::GlueSpec;
 use tex_state::node::{GlueKind, Node};
@@ -103,10 +104,15 @@ pub(crate) fn append_vertical_contribution<G>(
 pub(crate) fn build_page_if_outer_vertical_with_error_context<G>(
     nest: &ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     error_context: &str,
 ) -> Result<(), ExecError> {
     if is_outer_vertical(nest) {
-        crate::page_builder::build_page_with_error_context(stores, error_context)?;
+        crate::page_builder::build_page_with_error_context(
+            stores,
+            diagnostic_effects,
+            error_context,
+        )?;
     }
     Ok(())
 }

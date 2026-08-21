@@ -58,6 +58,7 @@ pub(crate) fn display_line_prototype<G>(
 /// the display transparent to the surrounding TeXXeT paragraph direction.
 pub(super) fn package_directed_display_line<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     display_line: BoxNode,
     prototype: Option<BoxNode>,
@@ -175,6 +176,7 @@ pub(super) fn package_directed_display_line<G>(
     let list = stores.publish_page_nodes(children);
     let mut boxed = hpack_nodes(
         stores,
+        diagnostic_effects,
         diagnostic_context,
         list,
         PackSpec::Natural,

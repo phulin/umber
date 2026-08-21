@@ -49,6 +49,7 @@ pub(crate) struct FinishedEqNo {
 
 pub(crate) fn finish_eq_no<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     side: EqNoSide,
     content: tex_state::node_arena::PageListId,
@@ -66,6 +67,7 @@ pub(crate) fn finish_eq_no<G>(
     let list = stores.publish_page_nodes(nodes);
     let mut boxed = hpack_nodes(
         stores,
+        diagnostic_effects,
         diagnostic_context,
         list,
         PackSpec::Natural,
@@ -79,6 +81,7 @@ pub(crate) fn finish_eq_no<G>(
 pub(crate) fn finish_display_math<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     content: tex_state::node_arena::PageListId,
     eq_no: Option<FinishedEqNo>,
@@ -112,6 +115,7 @@ pub(crate) fn finish_display_math<G>(
     let display_list = stores.publish_page_nodes(display_nodes);
     let mut display_box = hpack_nodes(
         stores,
+        diagnostic_effects,
         diagnostic_context,
         display_list.clone(),
         PackSpec::Natural,
@@ -143,6 +147,7 @@ pub(crate) fn finish_display_math<G>(
         if e.raw() != 0 && display_can_shrink_with_eqno(w, q, z, shrink) {
             display_box = hpack_nodes(
                 stores,
+                diagnostic_effects,
                 diagnostic_context,
                 display_list,
                 PackSpec::Exactly(z - q),
@@ -155,6 +160,7 @@ pub(crate) fn finish_display_math<G>(
             if w > z {
                 display_box = hpack_with_overfull_rule(
                     stores,
+                    diagnostic_effects,
                     diagnostic_context,
                     display_list,
                     PackSpec::Exactly(z),
@@ -221,6 +227,7 @@ pub(crate) fn finish_display_math<G>(
         let list = stores.publish_page_nodes(children);
         display_line = hpack_nodes(
             stores,
+            diagnostic_effects,
             diagnostic_context,
             list,
             PackSpec::Natural,
@@ -234,6 +241,7 @@ pub(crate) fn finish_display_math<G>(
     } else {
         display_line = package_directed_display_line(
             stores,
+            diagnostic_effects,
             diagnostic_context,
             display_line,
             prototype,
@@ -382,6 +390,7 @@ const fn tex_half(x: i32) -> i32 {
 pub(crate) fn build_page_after_display_resume<G>(
     nest: &ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
     error_context: &str,
 ) -> Result<(), ExecError> {
     // tex.web §1200's closing `if nest_ptr=1 then build_page`. `nest_ptr` is
@@ -394,11 +403,16 @@ pub(crate) fn build_page_after_display_resume<G>(
     // display penalties and defer a forced break until unrelated later
     // material.
     if nest.depth() == 2 && nest.current_mode() == Mode::Horizontal {
-        crate::page_builder::build_page_with_error_context(stores, error_context)
+        crate::page_builder::build_page_with_error_context(
+            stores,
+            diagnostic_effects,
+            error_context,
+        )
     } else {
         crate::vertical::build_page_if_outer_vertical_with_error_context(
             nest,
             stores,
+            diagnostic_effects,
             error_context,
         )
     }

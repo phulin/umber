@@ -29,6 +29,7 @@ mod tests;
 use std::fmt::Write as _;
 
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::IntParam;
 use tex_state::node::Node;
 use tex_typeset::PackDiagnostic;
@@ -82,6 +83,7 @@ impl PackedDirection {
 /// box itself.
 pub(crate) fn report_pack_diagnostics<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     context: &ExecutionDiagnosticContext,
     direction: PackedDirection,
     diagnostics: &[PackDiagnostic],
@@ -89,7 +91,15 @@ pub(crate) fn report_pack_diagnostics<G>(
     list_layout: DiagnosticListLayout,
 ) {
     for diagnostic in diagnostics {
-        report_one(stores, context, direction, diagnostic, packed, list_layout);
+        report_one(
+            stores,
+            diagnostic_effects,
+            context,
+            direction,
+            diagnostic,
+            packed,
+            list_layout,
+        );
     }
 }
 
@@ -97,6 +107,7 @@ pub(crate) fn report_pack_diagnostics<G>(
 /// horizontal-box diagnostic tail.
 pub(crate) fn report_lr_problems<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     context: &ExecutionDiagnosticContext,
     missing: usize,
     extra: usize,
@@ -118,13 +129,14 @@ pub(crate) fn report_lr_problems<G>(
         std::slice::from_ref(packed),
         DumpConfig::read(stores),
     );
-    let mut scope = stores.begin_diagnostic();
+    let mut scope = stores.begin_diagnostic(diagnostic_effects);
     scope.print_ln().print_rendered(&dump);
     scope.end(true);
 }
 
 fn report_one<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     context: &ExecutionDiagnosticContext,
     direction: PackedDirection,
     diagnostic: &PackDiagnostic,
@@ -191,7 +203,7 @@ fn report_one<G>(
         std::slice::from_ref(packed),
         DumpConfig::read(stores),
     );
-    let mut scope = stores.begin_diagnostic();
+    let mut scope = stores.begin_diagnostic(diagnostic_effects);
     // §182 emits `print_ln` ahead of every node it shows, and §198 closes
     // with one of its own; `end_diagnostic(true)` supplies the last.
     scope.print_ln().print_rendered(&dump);

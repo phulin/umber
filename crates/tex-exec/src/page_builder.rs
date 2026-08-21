@@ -2,7 +2,7 @@
 
 use tex_command::FatalError;
 use tex_state::CommandContext;
-use tex_state::diagnostic::Diagnostic;
+use tex_state::diagnostic::{Diagnostic, DiagnosticEffects};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{GlueKind, Node};
@@ -18,8 +18,10 @@ use crate::{ExecError, diagnostics};
 
 #[cfg(test)]
 pub(crate) fn build_page<G>(stores: &mut CommandContext<'_, G>) -> Result<(), ExecError> {
+    let mut diagnostic_effects = DiagnosticEffects::new();
     build_page_impl(
         stores,
+        &mut diagnostic_effects,
         &diagnostics::ExecutionDiagnosticContext::source_free(""),
     )
 }
@@ -28,30 +30,35 @@ pub(crate) fn build_page<G>(stores: &mut CommandContext<'_, G>) -> Result<(), Ex
 /// whose contribution triggered it.
 pub(crate) fn build_page_with_error_context<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     error_context: &str,
 ) -> Result<(), ExecError> {
     build_page_impl(
         stores,
+        diagnostic_effects,
         &diagnostics::ExecutionDiagnosticContext::source_free(error_context),
     )
 }
 
 pub(crate) fn build_page_with_diagnostic_context<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
-    build_page_impl(stores, diagnostic_context)
+    build_page_impl(stores, diagnostic_effects, diagnostic_context)
 }
 
 fn build_page_impl<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
-    build_page_cold(stores, diagnostic_context)
+    build_page_cold(stores, diagnostic_effects, diagnostic_context)
 }
 
 fn build_page_cold<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     if stores.page_fire_up().is_some() {
@@ -77,7 +84,7 @@ fn build_page_cold<G>(
         match node {
             Node::HList(_) | Node::VList(_) | Node::Rule { .. } => {
                 if !stores.page_contents().has_box() {
-                    initialize_page_with_topskip(stores, &node)?;
+                    initialize_page_with_topskip(stores, diagnostic_effects, &node)?;
                     continue;
                 }
                 prepare_box_or_rule(stores, &node)?;
@@ -87,15 +94,17 @@ fn build_page_cold<G>(
                 if !stores.page_contents().has_box() {
                     discard_front(stores);
                 } else if stores.current_page_tail().is_some_and(precedes_break) {
-                    check_break(stores, 0)?;
+                    check_break(stores, diagnostic_effects, 0)?;
                     if stores.page_fire_up().is_some() {
                         return Ok(());
                     }
-                    let node = update_glue_or_kern(stores, &node, diagnostic_context)?;
+                    let node =
+                        update_glue_or_kern(stores, diagnostic_effects, &node, diagnostic_context)?;
                     contribute_front_as(stores, node)?;
                 } else {
                     let _ = spec;
-                    let node = update_glue_or_kern(stores, &node, diagnostic_context)?;
+                    let node =
+                        update_glue_or_kern(stores, diagnostic_effects, &node, diagnostic_context)?;
                     contribute_front_as(stores, node)?;
                 }
             }
@@ -105,14 +114,16 @@ fn build_page_cold<G>(
                 } else if stores.page_contribution_second().is_none() {
                     return Ok(());
                 } else if matches!(stores.page_contribution_second(), Some(Node::Glue { .. })) {
-                    check_break(stores, 0)?;
+                    check_break(stores, diagnostic_effects, 0)?;
                     if stores.page_fire_up().is_some() {
                         return Ok(());
                     }
-                    let node = update_glue_or_kern(stores, &node, diagnostic_context)?;
+                    let node =
+                        update_glue_or_kern(stores, diagnostic_effects, &node, diagnostic_context)?;
                     contribute_front_as(stores, node)?;
                 } else {
-                    let node = update_glue_or_kern(stores, &node, diagnostic_context)?;
+                    let node =
+                        update_glue_or_kern(stores, diagnostic_effects, &node, diagnostic_context)?;
                     contribute_front_as(stores, node)?;
                 }
             }
@@ -120,7 +131,7 @@ fn build_page_cold<G>(
                 if !stores.page_contents().has_box() {
                     discard_front(stores);
                 } else {
-                    check_break(stores, penalty)?;
+                    check_break(stores, diagnostic_effects, penalty)?;
                     if stores.page_fire_up().is_some() {
                         return Ok(());
                     }
@@ -129,9 +140,11 @@ fn build_page_cold<G>(
             }
             Node::Ins { .. } => {
                 if stores.page_contents() == PageContents::Empty {
-                    freeze_page_specs(stores, PageContents::InsertsOnly);
+                    freeze_page_specs(stores, diagnostic_effects, PageContents::InsertsOnly);
                 }
-                let node = prepare_insertion(stores, &node, diagnostic_context)?.unwrap_or(node);
+                let node =
+                    prepare_insertion(stores, diagnostic_effects, &node, diagnostic_context)?
+                        .unwrap_or(node);
                 contribute_front_as(stores, node)?;
             }
             Node::Whatsit(_)
@@ -151,6 +164,7 @@ fn build_page_cold<G>(
 
 fn prepare_insertion<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     node: &Node,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<Option<Node>, ExecError> {
@@ -168,7 +182,7 @@ fn prepare_insertion<G>(
 
     let mut insertion = match stores.page_insertion(*class) {
         Some(insertion) => insertion,
-        None => create_page_insertion(stores, *class, diagnostic_context)?,
+        None => create_page_insertion(stores, diagnostic_effects, *class, diagnostic_context)?,
     };
     let mut replacement = None;
 
@@ -195,6 +209,7 @@ fn prepare_insertion<G>(
             } else {
                 replacement = split_page_insertion(
                     stores,
+                    diagnostic_effects,
                     &mut insertion,
                     current_index,
                     node,
@@ -212,10 +227,12 @@ fn prepare_insertion<G>(
 
 fn create_page_insertion<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<PageInsertion, ExecError> {
-    let existing_height = insertion_box_size(stores, class, diagnostic_context)?;
+    let existing_height =
+        insertion_box_size(stores, diagnostic_effects, class, diagnostic_context)?;
     let insertion = PageInsertion::new(class, existing_height);
     let scaled_height = scaled_insertion_size(
         existing_height,
@@ -241,10 +258,12 @@ fn create_page_insertion<G>(
 
 fn insertion_box_size<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<Scaled, ExecError> {
-    let Some(list) = ensure_insertion_vbox(stores, class, diagnostic_context)? else {
+    let Some(list) = ensure_insertion_vbox(stores, diagnostic_effects, class, diagnostic_context)?
+    else {
         return Ok(Scaled::from_raw(0));
     };
     let Some(node) = stores
@@ -265,6 +284,7 @@ fn insertion_box_size<G>(
 /// and when §1018 prepares insertion queues during `fire_up`.
 pub(crate) fn ensure_insertion_vbox<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<Option<tex_state::node_arena::PageListId>, ExecError> {
@@ -301,7 +321,7 @@ pub(crate) fn ensure_insertion_vbox<G>(
     // flushing the register. `show_box` starts with §182's structural newline.
     let text =
         crate::node_dump::dump_page_list(stores, list, crate::node_dump::DumpConfig::read(stores));
-    let mut diagnostic = stores.begin_diagnostic();
+    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     diagnostic
         .print_nl("The following box has been deleted:")
         .print_ln()
@@ -325,6 +345,7 @@ fn insertion_delta<G>(stores: &CommandContext<'_, G>) -> Result<Scaled, ExecErro
 
 fn split_page_insertion<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     insertion: &mut PageInsertion,
     current_index: usize,
     node: &Node,
@@ -366,10 +387,18 @@ fn split_page_insertion<G>(
     )
     .map_err(vertical_break_error)?;
     if stores.int_param(IntParam::TRACING_PAGES) > 0 {
-        trace_insertion_split(stores, class, capacity, &split, &content_nodes);
+        trace_insertion_split(
+            stores,
+            diagnostic_effects,
+            class,
+            capacity,
+            &split,
+            &content_nodes,
+        );
     }
     let replacement = normalize_insert_content_shrink(
         stores,
+        diagnostic_effects,
         node,
         &mut content_nodes,
         &split.infinite_shrink_glue,
@@ -398,6 +427,7 @@ fn split_page_insertion<G>(
 /// TeX82 §1012's insertion `vert_break` trace.
 fn trace_insertion_split<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
     capacity: Scaled,
     split: &tex_typeset::VerticalBreak,
@@ -409,7 +439,7 @@ fn trace_insertion_split<G>(
             _ => 0,
         })
     });
-    let mut diagnostic = stores.begin_diagnostic();
+    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     diagnostic.print_nl("% split").print_int(i32::from(class));
     diagnostic.print(" to ").print_scaled(capacity);
     diagnostic
@@ -449,10 +479,11 @@ fn inverse_scaled_insertion_capacity(size: Scaled, count: i32) -> Result<Scaled,
 
 fn initialize_page_with_topskip<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     node: &Node,
 ) -> Result<(), ExecError> {
     if stores.page_contents() == PageContents::Empty {
-        freeze_page_specs(stores, PageContents::BoxThere);
+        freeze_page_specs(stores, diagnostic_effects, PageContents::BoxThere);
     } else {
         stores.set_page_contents(PageContents::BoxThere);
     }
@@ -495,6 +526,7 @@ fn prepare_box_or_rule<G>(
 
 fn update_glue_or_kern<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     node: &Node,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<Node, ExecError> {
@@ -503,7 +535,7 @@ fn update_glue_or_kern<G>(
         Node::Kern { amount, .. } => *amount,
         Node::Glue { spec, kind, leader } => {
             let spec = *spec;
-            let spec = finite_page_shrink(stores, spec, diagnostic_context)?;
+            let spec = finite_page_shrink(stores, diagnostic_effects, spec, diagnostic_context)?;
             replacement = Some(Node::Glue {
                 spec,
                 kind: *kind,
@@ -528,6 +560,7 @@ fn update_glue_or_kern<G>(
 
 fn finite_page_shrink<G>(
     stores: &mut CommandContext<'_, G>,
+    _diagnostic_effects: &mut DiagnosticEffects,
     mut spec: GlueSpec,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<GlueSpec, ExecError> {
@@ -540,6 +573,7 @@ fn finite_page_shrink<G>(
 
 fn normalize_insert_content_shrink<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     insert_node: &Node,
     content_nodes: &mut [Node],
     indices: &[usize],
@@ -558,7 +592,11 @@ fn normalize_insert_content_shrink<G>(
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
-        diagnostics::report_split_infinite_shrinkage(stores, diagnostic_context)?;
+        diagnostics::report_split_infinite_shrinkage(
+            stores,
+            diagnostic_effects,
+            diagnostic_context,
+        )?;
         finite.shrink_order = Order::Normal;
         content_nodes[index] = Node::Glue {
             spec: finite,
@@ -610,14 +648,18 @@ fn add_glue_stretch<G>(
 
 /// tex.web §987's `freeze_page_specs`, including the `\tracingpages` report
 /// its `stat` block prints.
-fn freeze_page_specs<G>(stores: &mut CommandContext<'_, G>, contents: PageContents) {
+fn freeze_page_specs<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    contents: PageContents,
+) {
     let vsize = stores.dimen_param(DimenParam::V_SIZE);
     let max_depth = stores.dimen_param(DimenParam::MAX_DEPTH);
     stores.freeze_page_specs(contents, vsize, max_depth);
     if stores.int_param(IntParam::TRACING_PAGES) > 0 {
         let goal = stores.page_dimension(PageDimension::Goal);
         let max_depth = stores.page_max_depth();
-        let mut diagnostic = stores.begin_diagnostic();
+        let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
         diagnostic.print_nl("%% goal height=");
         diagnostic.print_scaled(goal);
         diagnostic.print(", max depth=");
@@ -632,6 +674,7 @@ fn freeze_page_specs<G>(stores: &mut CommandContext<'_, G>, contents: PageConten
 /// champion the breakpoint is about to become.
 fn trace_page_break_cost<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     badness: i32,
     penalty: i32,
     cost: i32,
@@ -646,7 +689,7 @@ fn trace_page_break_cost<G>(
         stores.page_dimension(PageDimension::Shrink),
     ];
     let goal = stores.page_dimension(PageDimension::Goal);
-    let mut diagnostic = stores.begin_diagnostic();
+    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     diagnostic.print_nl("%");
     diagnostic.print(" t=");
     print_page_totals(&mut diagnostic, totals);
@@ -665,7 +708,7 @@ fn trace_page_break_cost<G>(
 }
 
 /// tex.web §985's `print_totals`.
-fn print_page_totals<G>(diagnostic: &mut Diagnostic<'_, G>, totals: [Scaled; 6]) {
+fn print_page_totals(diagnostic: &mut Diagnostic<'_>, totals: [Scaled; 6]) {
     diagnostic.print_scaled(totals[0]);
     for (stretch, unit) in [
         (totals[1], ""),
@@ -687,7 +730,7 @@ fn print_page_totals<G>(diagnostic: &mut Diagnostic<'_, G>, totals: [Scaled; 6])
 }
 
 /// tex.web §1006 prints `awful_bad` as `*` rather than as its numeric value.
-fn print_cost<G>(diagnostic: &mut Diagnostic<'_, G>, value: i32) {
+fn print_cost(diagnostic: &mut Diagnostic<'_>, value: i32) {
     if value == AWFUL_BAD {
         diagnostic.print_char('*');
     } else {
@@ -695,7 +738,11 @@ fn print_cost<G>(diagnostic: &mut Diagnostic<'_, G>, value: i32) {
     }
 }
 
-fn check_break<G>(stores: &mut CommandContext<'_, G>, penalty: i32) -> Result<(), ExecError> {
+fn check_break<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    penalty: i32,
+) -> Result<(), ExecError> {
     if penalty >= INF_PENALTY {
         return Ok(());
     }
@@ -718,7 +765,7 @@ fn check_break<G>(stores: &mut CommandContext<'_, G>, penalty: i32) -> Result<()
         cost = AWFUL_BAD;
     }
     if stores.int_param(IntParam::TRACING_PAGES) > 0 {
-        trace_page_break_cost(stores, badness, penalty, cost);
+        trace_page_break_cost(stores, diagnostic_effects, badness, penalty, cost);
     }
 
     let break_index = stores.current_page_len();

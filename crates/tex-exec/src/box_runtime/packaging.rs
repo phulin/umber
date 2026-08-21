@@ -1,6 +1,7 @@
 //! Source-free horizontal packing and box-register lookup.
 
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::node::Node;
 use tex_state::node_arena::PageListId;
 use tex_typeset::{PackDiagnostic, PackSpec, plan_hpack_nodes};
@@ -13,10 +14,11 @@ use super::hmode::flush_pending_hchars;
 pub(crate) fn take_last_box<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
     error_context: String,
 ) -> Result<Option<Node>, ExecError> {
-    flush_pending_hchars(nest, stores, fuel)?;
+    flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
     match nest.current_mode() {
         Mode::Math | Mode::DisplayMath => {
             report_cannot_take_last_box(
@@ -101,6 +103,7 @@ fn report_cannot_take_last_box<G>(
 
 pub(crate) fn hpack_with_overfull_rule<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     context: &crate::pack_report::ExecutionDiagnosticContext,
     children: tex_state::node_arena::PageListId,
     spec: PackSpec,
@@ -139,7 +142,7 @@ pub(crate) fn hpack_with_overfull_rule<G>(
     {
         packed.node.diagnostic_children = Some(diagnostic_children);
     }
-    crate::packing_params::report_hpack(stores, context, &packed, lr_problems);
+    crate::packing_params::report_hpack(stores, diagnostic_effects, context, &packed, lr_problems);
     packed.node
 }
 
@@ -186,6 +189,7 @@ fn physical_discretionary_projection<G>(
 
 pub(crate) fn hpack_owned_with_overfull_rule<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     context: &crate::pack_report::ExecutionDiagnosticContext,
     nodes: &mut Vec<Node>,
     mut diagnostic_nodes: Option<&mut Vec<Node>>,
@@ -259,6 +263,7 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
     };
     crate::pack_report::report_pack_diagnostics(
         stores,
+        diagnostic_effects,
         context,
         crate::pack_report::PackedDirection::Horizontal,
         &packed.diagnostics,
@@ -268,6 +273,7 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
     if let Some((missing, extra)) = lr_problems {
         crate::pack_report::report_lr_problems(
             stores,
+            diagnostic_effects,
             context,
             missing,
             extra,

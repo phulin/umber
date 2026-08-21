@@ -29,6 +29,7 @@ use tex_command::{
 };
 use tex_state::GlueId;
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
@@ -1094,6 +1095,7 @@ struct CommandMachine<'a, G> {
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
     assignment_receipts: Option<&'a mut Vec<MutationRecord>>,
+    diagnostic_effects: &'a mut DiagnosticEffects,
     shown_mode: &'a mut Option<Mode>,
     /// tex.web's `init`/`tini` compile-time split, which Umber carries as a
     /// session flag: §1252's `\patterns` and §1335's `\dump` are the two
@@ -2292,13 +2294,17 @@ impl<G> MainControl<G> {
     /// own processor rather than being handed one. A caller that must keep
     /// another of main control's fields borrowed at the same time builds the
     /// bundle from those fields directly instead.
-    fn command_machine(&mut self) -> CommandMachine<'_, G> {
+    fn command_machine(
+        &mut self,
+        diagnostic_effects: &mut DiagnosticEffects,
+    ) -> CommandMachine<'_, G> {
         CommandMachine {
             state: &mut self.command,
             fuel: self.fuel.fuel_mut(),
             capabilities: &mut self.capabilities,
             observations: &mut self.operation_observations,
             assignment_receipts: None,
+            diagnostic_effects,
             shown_mode: &mut self.shown_mode,
             initex: self.initex,
             emit_dvi_override: self.emit_dvi_override,
@@ -2663,34 +2669,43 @@ impl<G> MainControl<G> {
         &mut self,
         scanned: PreparedColdCommand<G>,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> ControlFlow<Result<ReplayStep, ExecError>, PreparedColdCommand<G>> {
         let applied = match scanned {
             ColdOperation::ReplayCompleted(episode) => {
                 self.completed_replay_episode = Some(episode);
                 Ok(ReplayStep::Continue)
             }
-            ColdOperation::Math(request) => self.apply_math_request(request, stores),
-            ColdOperation::DisplayAlignmentRecovery => {
-                self.recover_display_alignment_closer(stores)
+            ColdOperation::Math(request) => {
+                self.apply_math_request(request, stores, diagnostic_effects)
             }
-            ColdOperation::MathDelimiter(boundary) => self.apply_math_delimiter(boundary, stores),
+            ColdOperation::DisplayAlignmentRecovery => {
+                self.recover_display_alignment_closer(stores, diagnostic_effects)
+            }
+            ColdOperation::MathDelimiter(boundary) => {
+                self.apply_math_delimiter(boundary, stores, diagnostic_effects)
+            }
             // TeX82 §1137's `hmode+math_shift: init_math` and §1193's
             // `mmode+math_shift: if cur_group=math_shift_group then
             // after_math else off_save`. §1090 backs a `vmode+math_shift` up
             // and runs `new_graf(true)` first, so vertical mode never reaches
             // this step.
-            ColdOperation::MathShift { pairing } => self.apply_math_shift(pairing, stores),
-            ColdOperation::DiscretionaryOpening(opening) => {
-                self.begin_discretionary(opening, stores)
+            ColdOperation::MathShift { pairing } => {
+                self.apply_math_shift(pairing, stores, diagnostic_effects)
             }
-            ColdOperation::DiscretionaryPartEnd => self.finish_discretionary_part(stores),
+            ColdOperation::DiscretionaryOpening(opening) => {
+                self.begin_discretionary(opening, stores, diagnostic_effects)
+            }
+            ColdOperation::DiscretionaryPartEnd => {
+                self.finish_discretionary_part(stores, diagnostic_effects)
+            }
             ColdOperation::DiscretionaryHyphen { origin } => {
-                self.apply_discretionary_hyphen(origin, stores)
+                self.apply_discretionary_hyphen(origin, stores, diagnostic_effects)
             }
             // TeX82 §1123's `make_accent` runs §1270's `do_assignments`
             // between the accent code and §1124's base character, so it
             // executes whole commands of its own before it can finish.
-            ColdOperation::Accent(accent) => self.apply_accent(accent, stores),
+            ColdOperation::Accent(accent) => self.apply_accent(accent, stores, diagnostic_effects),
             ColdOperation::InputStream { request, resource } => match request {
                 RootedInputStreamRequest::Open {
                     stream, file_name, ..
@@ -2743,7 +2758,7 @@ impl<G> MainControl<G> {
         // back to any driver: the unobserved driver returns directly here,
         // while observed drivers have a later publication-only tail.
         let applied = applied.and_then(|step| {
-            self.fire_pending_page_output(stores)?;
+            self.fire_pending_page_output(stores, diagnostic_effects)?;
             Ok(step)
         });
         self.main_loop_active = false;
@@ -2773,6 +2788,7 @@ impl<G> MainControl<G> {
         _effect_count: usize,
         _prepared_page_count: usize,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         let applied = match applied {
             Ok(applied) => applied,
@@ -2793,7 +2809,7 @@ impl<G> MainControl<G> {
             .is_some();
         let opens_output_batch = !self.page_output_observations.is_empty()
             || (page_fire_up_pending && !self.boxes.output_routine_active);
-        self.fire_pending_page_output(stores)?;
+        self.fire_pending_page_output(stores, diagnostic_effects)?;
         {
             #[cfg(feature = "profiling")]
             tex_state::measurement::record_hot_core_phase(
@@ -2916,6 +2932,7 @@ impl<G> MainControl<G> {
         &mut self,
         _opening: ScannedDiscretionaryOpening,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
             self.modes.current_mode(),
@@ -2929,6 +2946,7 @@ impl<G> MainControl<G> {
             crate::box_runtime::flush_pending_hchars_with_fuel(
                 &mut self.modes,
                 &mut context,
+                diagnostic_effects,
                 self.fuel.fuel_mut(),
             )?;
         }
@@ -2964,12 +2982,14 @@ impl<G> MainControl<G> {
     fn finish_discretionary_part(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         let level = {
             let mut context = stores.command_context().expect("live generation");
             crate::box_runtime::commit_current_list(
                 &mut self.modes,
                 &mut context,
+                diagnostic_effects,
                 self.fuel.fuel_mut(),
             )?
         };
@@ -2995,11 +3015,20 @@ impl<G> MainControl<G> {
             let nodes = stores.publish_page_nodes(level.list().nodes()[..prefix_end].to_vec());
             let deleted = first_forbidden
                 .map(|index| stores.publish_page_nodes(level.list().nodes()[index..].to_vec()));
-            let aftergroup = leave_group_payloads(&mut stores, &mut self.command, GroupKind::Disc)
-                .map_err(|_| ExecError::MissingToken {
-                    context: "discretionary group",
-                })?;
-            schedule_aftergroup(&mut self.command_machine(), &mut stores, aftergroup)?;
+            let aftergroup = leave_group_payloads(
+                &mut stores,
+                &mut self.command,
+                diagnostic_effects,
+                GroupKind::Disc,
+            )
+            .map_err(|_| ExecError::MissingToken {
+                context: "discretionary group",
+            })?;
+            schedule_aftergroup(
+                &mut self.command_machine(diagnostic_effects),
+                &mut stores,
+                aftergroup,
+            )?;
             (nodes, deleted)
         };
 
@@ -3019,7 +3048,7 @@ impl<G> MainControl<G> {
         if let Some(deleted) = deleted {
             let mut stores = stores.command_context().expect("live generation");
             let context = self.command.output_open_context(&stores);
-            report_improper_discretionary(&mut stores, deleted, context)?;
+            report_improper_discretionary(&mut stores, diagnostic_effects, deleted, context)?;
         }
         if replacement_too_long {
             let mut stores = stores.command_context().expect("live generation");
@@ -3054,7 +3083,7 @@ impl<G> MainControl<G> {
             self.capture_first_causal_context(stores, &diagnostics);
             {
                 let mut context = stores.command_context().expect("live generation");
-                report_pending_diagnostics(&mut context, diagnostics)?;
+                report_pending_diagnostics(&mut context, diagnostic_effects, diagnostics)?;
             }
             self.open_discretionary_part(stores)?;
             return Ok(ReplayStep::Continue);
@@ -3113,6 +3142,7 @@ impl<G> MainControl<G> {
         &mut self,
         origin: OriginId,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
             self.modes.current_mode(),
@@ -3126,6 +3156,7 @@ impl<G> MainControl<G> {
             crate::box_runtime::flush_pending_hchars_with_fuel(
                 &mut self.modes,
                 &mut stores,
+                diagnostic_effects,
                 self.fuel.fuel_mut(),
             )?;
             let font = stores.current_font();
@@ -3142,6 +3173,7 @@ impl<G> MainControl<G> {
                     // pre-break list empty.
                     crate::diagnostics::report_missing_character_warning(
                         &mut stores,
+                        diagnostic_effects,
                         font,
                         char::from(hyphen),
                         self.command_profile() == CommandProfile::ETEX26,
@@ -3452,6 +3484,7 @@ impl<G> MainControl<G> {
         operation_mark: DirectOperationMark<G>,
         error: ExecError,
         context: DirectFailureContext,
+        diagnostic_effects: DiagnosticEffects,
     ) -> Result<StepResult, ExecError> {
         let DirectFailureContext {
             operations,
@@ -3491,6 +3524,9 @@ impl<G> MainControl<G> {
             CommandObservation::Diagnostic(fatal.record()),
             CommandObservation::Effect(engine_termination_effect()),
         ]);
+        stores
+            .world_mut()
+            .publish_diagnostic_effects(diagnostic_effects);
         let evidence_error =
             self.admit_observed_receipt(stores, OperationTermination::Fatal(fatal));
         self.commit_direct_operation(stores, operation_mark);
@@ -3564,6 +3600,7 @@ impl<G> MainControl<G> {
             // mark therefore opens before delivery preflight, while semantic
             // owners still remain untouched until prepared apply.
             let mut operation_mark = self.begin_direct_operation(stores);
+            let mut diagnostic_effects = DiagnosticEffects::new();
             let preflight = if let Some(pending) = self.pending_resource_operation.take() {
                 operation_mark.attempt = pending.attempt;
                 PreflightDelivery::<G> {
@@ -3743,7 +3780,11 @@ impl<G> MainControl<G> {
                     | OperationDelivery::<G>::Hot(_)
                     | OperationDelivery::<G>::Prepared(_) => None,
                 };
-                let prepared = match self.prepare_operation(stores, preflight.delivery) {
+                let prepared = match self.prepare_operation(
+                    stores,
+                    preflight.delivery,
+                    &mut diagnostic_effects,
+                ) {
                     Ok(prepared) => prepared,
                     Err(failure) => {
                         if let Some(mark) = tracked_mark {
@@ -3799,7 +3840,7 @@ impl<G> MainControl<G> {
                         return result;
                     }
                 };
-                let applied = self.apply_ready_operation(stores, prepared);
+                let applied = self.apply_ready_operation(stores, prepared, &mut diagnostic_effects);
                 self.record_save_stack_usage(stores);
                 let boundary = self.episode_commit_boundary(
                     stores,
@@ -3827,9 +3868,13 @@ impl<G> MainControl<G> {
                                 initial_boundaries,
                                 initial_effect_pos,
                             },
+                            diagnostic_effects,
                         );
                     }
                 };
+                stores
+                    .world_mut()
+                    .publish_diagnostic_effects(diagnostic_effects);
                 if let Some(error) =
                     self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
                 {
@@ -3922,7 +3967,11 @@ impl<G> MainControl<G> {
                         .admit(transaction.projection())
                         .expect("preflight owns the exact narrow projection");
                 }
-                let prepared = match self.prepare_operation(stores, preflight.delivery) {
+                let prepared = match self.prepare_operation(
+                    stores,
+                    preflight.delivery,
+                    &mut diagnostic_effects,
+                ) {
                     Ok(prepared) => prepared,
                     Err(failure) => {
                         if let Some(mark) = tracked_mark {
@@ -3994,7 +4043,7 @@ impl<G> MainControl<G> {
                 }
                 self.episode_telemetry.record_attempt();
                 self.advance_telemetry.attempts += 1;
-                let applied = self.apply_ready_operation(stores, prepared);
+                let applied = self.apply_ready_operation(stores, prepared, &mut diagnostic_effects);
                 self.record_save_stack_usage(stores);
                 let boundary = self.episode_commit_boundary(
                     stores,
@@ -4052,9 +4101,13 @@ impl<G> MainControl<G> {
                                 initial_boundaries,
                                 initial_effect_pos,
                             },
+                            diagnostic_effects,
                         );
                     }
                 };
+                stores
+                    .world_mut()
+                    .publish_diagnostic_effects(diagnostic_effects);
                 if let Some(error) =
                     self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
                 {
@@ -4146,64 +4199,65 @@ impl<G> MainControl<G> {
                 | OperationDelivery::<G>::Hot(_)
                 | OperationDelivery::<G>::Prepared(_) => None,
             };
-            let prepared = match self.prepare_operation(stores, preflight.delivery) {
-                Ok(prepared) => prepared,
-                Err(failure) => {
-                    if let Some(interaction) = saved_interaction {
-                        stores.set_interaction_mode(interaction);
-                    }
-                    if let Some(mark) = tracked_mark {
-                        let _ = stores.abandon_dependency_region(mark);
-                    }
-                    if let Some(scanned) = failure.unavailable {
-                        self.pending_resource_operation = Some(PendingResourceOperation::<G> {
-                            scanned,
-                            capabilities: preflight.capabilities,
-                            attempt: operation_mark.attempt,
-                        });
-                    }
-                    let result = self.finish_resource_preflight_failure(stores, *failure.error);
-                    if matches!(result, Ok(StepResult::Suspended(_)))
-                        && self.pending_resource_operation.is_none()
-                    {
-                        self.pending_alignment_delivery = alignment_delivery
-                            .zip(failure.cursor)
-                            .map(|(alignment, cursor)| PendingAlignmentDelivery {
-                                alignment,
-                                cursor,
-                            });
-                        let retry_expansion = self.command.pending_expansion_command().cloned();
-                        self.pending_preflight_command = retry_command.map(|retry| {
-                            let retry = retry.with_retry_expansion(retry_expansion);
-                            match failure.cursor {
-                                Some(cursor) => retry.with_cursor(cursor),
-                                None => retry,
-                            }
-                        });
-                    }
-                    if matches!(result, Ok(StepResult::Suspended(_))) {
-                        self.retain_direct_operation_for_retry(stores, operation_mark);
-                    } else {
-                        self.commit_direct_operation(stores, operation_mark);
-                    }
-                    return match result {
-                        Err(error) => {
-                            let error = {
-                                let mut context =
-                                    stores.command_context().expect("diagnostic admission");
-                                error.freeze_diagnostic_origin(
-                                    &mut context,
-                                    self.command.diagnostic_input_context(8),
-                                )
-                            };
-                            Self::publish_pdf_fatal_error(stores, &error)?;
-                            Err(error)
+            let prepared =
+                match self.prepare_operation(stores, preflight.delivery, &mut diagnostic_effects) {
+                    Ok(prepared) => prepared,
+                    Err(failure) => {
+                        if let Some(interaction) = saved_interaction {
+                            stores.set_interaction_mode(interaction);
                         }
-                        result => result,
-                    };
-                }
-            };
-            let applied = self.apply_ready_operation(stores, prepared);
+                        if let Some(mark) = tracked_mark {
+                            let _ = stores.abandon_dependency_region(mark);
+                        }
+                        if let Some(scanned) = failure.unavailable {
+                            self.pending_resource_operation = Some(PendingResourceOperation::<G> {
+                                scanned,
+                                capabilities: preflight.capabilities,
+                                attempt: operation_mark.attempt,
+                            });
+                        }
+                        let result = self.finish_resource_preflight_failure(stores, *failure.error);
+                        if matches!(result, Ok(StepResult::Suspended(_)))
+                            && self.pending_resource_operation.is_none()
+                        {
+                            self.pending_alignment_delivery = alignment_delivery
+                                .zip(failure.cursor)
+                                .map(|(alignment, cursor)| PendingAlignmentDelivery {
+                                    alignment,
+                                    cursor,
+                                });
+                            let retry_expansion = self.command.pending_expansion_command().cloned();
+                            self.pending_preflight_command = retry_command.map(|retry| {
+                                let retry = retry.with_retry_expansion(retry_expansion);
+                                match failure.cursor {
+                                    Some(cursor) => retry.with_cursor(cursor),
+                                    None => retry,
+                                }
+                            });
+                        }
+                        if matches!(result, Ok(StepResult::Suspended(_))) {
+                            self.retain_direct_operation_for_retry(stores, operation_mark);
+                        } else {
+                            self.commit_direct_operation(stores, operation_mark);
+                        }
+                        return match result {
+                            Err(error) => {
+                                let error = {
+                                    let mut context =
+                                        stores.command_context().expect("diagnostic admission");
+                                    error.freeze_diagnostic_origin(
+                                        &mut context,
+                                        self.command.diagnostic_input_context(8),
+                                    )
+                                };
+                                Self::publish_pdf_fatal_error(stores, &error)?;
+                                Err(error)
+                            }
+                            result => result,
+                        };
+                    }
+                };
+            let applied = self.apply_ready_operation(stores, prepared, &mut diagnostic_effects);
             if let Some(interaction) = saved_interaction {
                 stores.set_interaction_mode(interaction);
             }
@@ -4249,9 +4303,13 @@ impl<G> MainControl<G> {
                             initial_boundaries,
                             initial_effect_pos,
                         },
+                        diagnostic_effects,
                     );
                 }
             };
+            stores
+                .world_mut()
+                .publish_diagnostic_effects(diagnostic_effects);
             if let Some(error) =
                 self.admit_observed_receipt(stores, operation_termination(step, self.fatal))
             {
@@ -4300,12 +4358,18 @@ impl<G> MainControl<G> {
             self.suspended_operation_observation = None;
         }
         if matches!(transaction, OperationTransaction::Nested) {
-            let result = self.apply_operation(stores, delivery);
+            let mut diagnostic_effects = DiagnosticEffects::new();
+            let result = self.apply_operation(stores, delivery, &mut diagnostic_effects);
             self.record_save_stack_usage(stores);
             if result.is_ok()
                 && let Some(error) = self.operation_evidence_limit_error()
             {
                 return Err(error);
+            }
+            if result.is_ok() {
+                stores
+                    .world_mut()
+                    .publish_diagnostic_effects(diagnostic_effects);
             }
             return result.map(StepResult::Progress);
         }
@@ -4468,6 +4532,7 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
     ) -> Result<DiagnosticStepResult, ExecError> {
         let mut operation_mark = self.begin_direct_operation(stores);
+        let mut diagnostic_effects = DiagnosticEffects::new();
         let continuation = self.pending_diagnostic_operation.take();
         let assignment = match continuation {
             Some(PendingDiagnosticOperation::<G>::Prepared { scanned, attempt }) => {
@@ -4550,7 +4615,7 @@ impl<G> MainControl<G> {
         };
         let (delivery, retry) = assignment.expect("diagnostic assignment continuation");
         let mode_mark = self.modes.begin_journal();
-        let prepared = match self.prepare_operation(stores, delivery) {
+        let prepared = match self.prepare_operation(stores, delivery, &mut diagnostic_effects) {
             Ok(prepared) => prepared,
             Err(failure) => {
                 if let Some(scanned) = failure.unavailable {
@@ -4592,12 +4657,15 @@ impl<G> MainControl<G> {
                 };
             }
         };
-        match self.apply_ready_operation(stores, prepared) {
+        match self.apply_ready_operation(stores, prepared, &mut diagnostic_effects) {
             Ok(_) => {
                 self.modes
                     .commit_journal(mode_mark)
                     .expect("diagnostic assignment owns the mode mark");
                 self.commit_direct_operation(stores, operation_mark);
+                stores
+                    .world_mut()
+                    .publish_diagnostic_effects(diagnostic_effects);
                 Ok(DiagnosticStepResult::Progress(DiagnosticStep::Assignment))
             }
             Err(error) => {
@@ -4653,6 +4721,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         settled: Option<tex_command::CurrentCommand<G>>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         let delivery = settled.map_or(OperationDelivery::<G>::Replay(None), |command| {
             OperationDelivery::<G>::Settled {
@@ -4660,10 +4729,14 @@ impl<G> MainControl<G> {
                 cursor: None,
             }
         });
-        match self.execute_operation(stores, delivery, OperationTransaction::Nested, 1, None)? {
-            StepResult::Progress(step) => Ok(step),
-            StepResult::Suspended(_) => unreachable!("nested operations do not own rollback"),
+        let result = self.apply_operation(stores, delivery, diagnostic_effects);
+        self.record_save_stack_usage(stores);
+        if result.is_ok()
+            && let Some(error) = self.operation_evidence_limit_error()
+        {
+            return Err(error);
         }
+        result
     }
 
     /// TeX82 §1123's `make_accent`.
@@ -4685,6 +4758,7 @@ impl<G> MainControl<G> {
         &mut self,
         scanned: ScannedAccent,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         if matches!(
             self.modes.current_mode(),
@@ -4697,6 +4771,7 @@ impl<G> MainControl<G> {
         crate::box_runtime::flush_pending_hchars_with_fuel(
             &mut self.modes,
             &mut context,
+            diagnostic_effects,
             self.fuel.fuel_mut(),
         )?;
         let accent = u8::try_from(scanned.accent).map_err(|_| ExecError::InvalidCode {
@@ -4710,6 +4785,7 @@ impl<G> MainControl<G> {
         let Some(accent_metrics) = context.font_char_metrics(accent_font, accent) else {
             crate::diagnostics::report_missing_character_warning(
                 &mut context,
+                diagnostic_effects,
                 accent_font,
                 char::from(accent),
                 self.command_profile() == CommandProfile::ETEX26,
@@ -4717,7 +4793,7 @@ impl<G> MainControl<G> {
             return Ok(ReplayStep::Continue);
         };
         drop(context);
-        let base = self.do_assignments_then_accent_base(stores)?;
+        let base = self.do_assignments_then_accent_base(stores, diagnostic_effects)?;
         let accent_origin = scanned.accent_provenance.primary;
         let etex_extended = self.command_profile() == CommandProfile::ETEX26;
         let mut context = stores.command_context().expect("live generation");
@@ -4746,6 +4822,7 @@ impl<G> MainControl<G> {
     fn do_assignments_then_accent_base(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<Option<(u8, tex_state::token::OriginId)>, ExecError> {
         // None of §1270's assignments is a §1030 `main_loop` entry.
         self.main_loop_active = false;
@@ -4773,7 +4850,8 @@ impl<G> MainControl<G> {
                     // `max_non_prefixed_command` to, so this dispatches the
                     // delivered command in place rather than re-fetching it.
                     self.set_box_forbidden_depth += 1;
-                    let step = self.execute_nested_operation(stores, Some(command));
+                    let step =
+                        self.execute_nested_operation(stores, Some(command), diagnostic_effects);
                     self.set_box_forbidden_depth -= 1;
                     match step? {
                         ReplayStep::Continue => {}
@@ -4794,7 +4872,11 @@ impl<G> MainControl<G> {
     /// instrumentation-only extra.  The `\output` token-list push it performs
     /// is buffered rather than observed directly, so an observed step can
     /// flush it after that step's own mutation and effect records.
-    fn fire_pending_page_output(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
+    fn fire_pending_page_output(
+        &mut self,
+        stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+    ) -> Result<(), ExecError> {
         while !self.boxes.output_routine_active {
             let selected = {
                 let mut context = stores.command_context().expect("live generation");
@@ -4806,6 +4888,7 @@ impl<G> MainControl<G> {
                 );
                 crate::page_output::select_pending_page_output(
                     &mut context,
+                    diagnostic_effects,
                     fire_up,
                     error_context,
                 )?
@@ -4818,6 +4901,7 @@ impl<G> MainControl<G> {
                         capabilities: &mut self.capabilities,
                         observations: &mut self.operation_observations,
                         assignment_receipts: None,
+                        diagnostic_effects,
                         shown_mode: &mut self.shown_mode,
                         initex: self.initex,
                         emit_dvi_override: self.emit_dvi_override,
@@ -4901,6 +4985,7 @@ impl<G> MainControl<G> {
         &mut self,
         kind: GroupKind,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         // The depth sampled before `push_math`, not the innermost group
         // kind, is what identifies this group's own closing brace: a nested
@@ -4931,7 +5016,7 @@ impl<G> MainControl<G> {
             .len()
             > enclosing_depth
         {
-            match self.execute_nested_operation(stores, None)? {
+            match self.execute_nested_operation(stores, None, diagnostic_effects)? {
                 ReplayStep::End | ReplayStep::EndOfInput => {
                     return Err(ExecError::MissingToken {
                         context: "math group closing brace",
@@ -4940,7 +5025,7 @@ impl<G> MainControl<G> {
                 ReplayStep::Continue => {}
             }
         }
-        self.finish_math_level(stores)
+        self.finish_math_level(stores, diagnostic_effects)
     }
 
     /// Closes any `\left` group TeX82 §1192 would have to recover, then pops
@@ -4948,6 +5033,7 @@ impl<G> MainControl<G> {
     fn finish_math_level(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         self.main_loop_active = false;
         while left_group_open(&self.modes, stores) {
@@ -4977,12 +5063,14 @@ impl<G> MainControl<G> {
                     },
                 },
                 stores,
+                diagnostic_effects,
             )?;
         }
         let mut context = stores.command_context().expect("math-list admission");
         let level = crate::box_runtime::commit_current_list(
             &mut self.modes,
             &mut context,
+            diagnostic_effects,
             self.fuel.fuel_mut(),
         )?;
         finish_math_list(
@@ -4998,9 +5086,10 @@ impl<G> MainControl<G> {
     fn execute_math_choice_branch(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         self.command_scan_math_choice_group(stores)?;
-        self.execute_live_math_group(GroupKind::MathChoice, stores)
+        self.execute_live_math_group(GroupKind::MathChoice, stores, diagnostic_effects)
     }
 
     /// Stores one completed TeX82 §1151 field.
@@ -5015,6 +5104,7 @@ impl<G> MainControl<G> {
         &mut self,
         field: tex_command::MathFieldEpisode,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<MathField, ExecError> {
         match field.body {
             MathFieldBody::Missing => Ok(MathField::Empty),
@@ -5027,7 +5117,8 @@ impl<G> MainControl<G> {
                 .1,
             )),
             MathFieldBody::OpenGroup => {
-                let list = self.execute_live_math_group(GroupKind::Math, stores)?;
+                let list =
+                    self.execute_live_math_group(GroupKind::Math, stores, diagnostic_effects)?;
                 let context = stores.command_context().expect("live generation");
                 Ok(collapse_singleton_math_group(&context, list))
             }
@@ -5038,6 +5129,7 @@ impl<G> MainControl<G> {
         &mut self,
         request: MathRequest,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         match request {
             MathRequest::Character(value) => {
@@ -5071,8 +5163,8 @@ impl<G> MainControl<G> {
                         noad_kind_for_text(kind),
                         MathField::Empty,
                     )));
-                let episode = self.command_scan_math_field(stores)?;
-                let field = self.execute_math_field(episode, stores)?;
+                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
+                let field = self.execute_math_field(episode, stores, diagnostic_effects)?;
                 // TeX82 §1186's second brace simplification: when a braced
                 // field contains exactly one accent noad and is the nucleus
                 // of an Ord atom, replace that Ord atom by the accent itself.
@@ -5109,8 +5201,8 @@ impl<G> MainControl<G> {
             MathRequest::Script(script) => {
                 let target =
                     reserve_script_target(self.modes.current_list_mutation(), stores, script.kind)?;
-                let episode = self.command_scan_math_field(stores)?;
-                let field = self.execute_math_field(episode, stores)?;
+                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
+                let field = self.execute_math_field(episode, stores, diagnostic_effects)?;
                 fill_script_target(self.modes.current_list_mutation(), target, field);
             }
             MathRequest::Limits(kind) => {
@@ -5164,22 +5256,23 @@ impl<G> MainControl<G> {
                 // every input level the branch body itself opens.
                 self.active_math_choices.push(0);
                 let branches = (|| {
-                    let display = self.execute_math_choice_branch(stores)?;
+                    let display = self.execute_math_choice_branch(stores, diagnostic_effects)?;
                     *self
                         .active_math_choices
                         .last_mut()
                         .expect("live math choice") = 1;
-                    let text = self.execute_math_choice_branch(stores)?;
+                    let text = self.execute_math_choice_branch(stores, diagnostic_effects)?;
                     *self
                         .active_math_choices
                         .last_mut()
                         .expect("live math choice") = 2;
-                    let script = self.execute_math_choice_branch(stores)?;
+                    let script = self.execute_math_choice_branch(stores, diagnostic_effects)?;
                     *self
                         .active_math_choices
                         .last_mut()
                         .expect("live math choice") = 3;
-                    let script_script = self.execute_math_choice_branch(stores)?;
+                    let script_script =
+                        self.execute_math_choice_branch(stores, diagnostic_effects)?;
                     Ok::<_, ExecError>((display, text, script, script_script))
                 })();
                 self.active_math_choices.pop();
@@ -5194,8 +5287,8 @@ impl<G> MainControl<G> {
                     }));
             }
             MathRequest::Radical(delimiter) => {
-                let episode = self.command_scan_math_field(stores)?;
-                let field = self.execute_math_field(episode, stores)?;
+                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
+                let field = self.execute_math_field(episode, stores, diagnostic_effects)?;
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -5226,8 +5319,8 @@ impl<G> MainControl<G> {
                     report.error().jump_out()?;
                     self.command_scan_math_character(stores)?
                 };
-                let episode = self.command_scan_math_field(stores)?;
-                let field = self.execute_math_field(episode, stores)?;
+                let episode = self.command_scan_math_field(stores, diagnostic_effects)?;
+                let field = self.execute_math_field(episode, stores, diagnostic_effects)?;
                 let accent = math_char(
                     &stores.command_context().expect("live generation"),
                     u32::from(accent.code),
@@ -5313,6 +5406,7 @@ impl<G> MainControl<G> {
     fn recover_display_alignment_closer(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         let Some((nodes, aux_prev_depth)) =
             self.modes.current_list_mutation().take_display_alignment()
@@ -5341,6 +5435,7 @@ impl<G> MainControl<G> {
         )?;
         self.finish_display_alignment(
             stores,
+            diagnostic_effects,
             crate::align::FinishedAlignment {
                 nodes,
                 aux_prev_depth,
@@ -5354,6 +5449,7 @@ impl<G> MainControl<G> {
         &mut self,
         pairing: MathShiftPairing,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         match self.modes.current_mode() {
             Mode::Horizontal | Mode::RestrictedHorizontal => {
@@ -5361,6 +5457,7 @@ impl<G> MainControl<G> {
                 crate::box_runtime::flush_pending_hchars_with_fuel(
                     &mut self.modes,
                     &mut stores.command_context().expect("math-shift admission"),
+                    diagnostic_effects,
                     self.fuel.fuel_mut(),
                 )?;
                 // §1138 already applied its own `mode>0` test while probing:
@@ -5368,9 +5465,9 @@ impl<G> MainControl<G> {
                 // rather than consumed, so `paired` is false there and this
                 // must not retest the mode and disagree with the backup.
                 if pairing == MathShiftPairing::Paired {
-                    self.enter_display(stores)?;
+                    self.enter_display(stores, diagnostic_effects)?;
                 } else {
-                    self.enter_math_level(false, stores)?;
+                    self.enter_math_level(false, stores, diagnostic_effects)?;
                     schedule_everymath(
                         &mut self.command,
                         &mut stores.command_context().expect("everymath admission"),
@@ -5381,18 +5478,25 @@ impl<G> MainControl<G> {
             Mode::Math => {
                 if self.modes.current_list().display_eq_no().is_some() {
                     debug_assert_eq!(pairing, MathShiftPairing::ProbeDisplayEnd);
-                    let content = self.prepare_math_list(stores)?;
-                    let eq = self.finish_equation_number_mlist(stores)?;
-                    let paired = self.scan_display_end(stores)?;
+                    let content = self.prepare_math_list(stores, diagnostic_effects)?;
+                    let eq = self.finish_equation_number_mlist(stores, diagnostic_effects)?;
+                    let paired = self.scan_display_end(stores, diagnostic_effects)?;
                     if !paired {
                         report_unpaired_display_end(&self.command, stores)?;
                     }
                     let (display, finished) =
-                        self.finish_equation_number_group(stores, eq, content)?;
-                    self.finish_display_math_content(stores, display, Some(finished), false, None)?;
+                        self.finish_equation_number_group(stores, diagnostic_effects, eq, content)?;
+                    self.finish_display_math_content(
+                        stores,
+                        diagnostic_effects,
+                        display,
+                        Some(finished),
+                        false,
+                        None,
+                    )?;
                 } else {
                     debug_assert_eq!(pairing, MathShiftPairing::Unpaired);
-                    self.finish_inline_math(stores)?;
+                    self.finish_inline_math(stores, diagnostic_effects)?;
                 }
             }
             Mode::DisplayMath => {
@@ -5400,12 +5504,13 @@ impl<G> MainControl<G> {
                 if let Some((nodes, aux_prev_depth)) =
                     self.modes.current_list_mutation().take_display_alignment()
                 {
-                    let paired = self.scan_display_end(stores)?;
+                    let paired = self.scan_display_end(stores, diagnostic_effects)?;
                     if !paired {
                         report_unpaired_display_end(&self.command, stores)?;
                     }
                     self.finish_display_alignment(
                         stores,
+                        diagnostic_effects,
                         crate::align::FinishedAlignment {
                             nodes,
                             aux_prev_depth,
@@ -5414,12 +5519,20 @@ impl<G> MainControl<G> {
                     )?;
                     return Ok(ReplayStep::Continue);
                 }
-                let (content, display_level) = self.prepare_display_math_list(stores)?;
-                let paired = self.scan_display_end(stores)?;
+                let (content, display_level) =
+                    self.prepare_display_math_list(stores, diagnostic_effects)?;
+                let paired = self.scan_display_end(stores, diagnostic_effects)?;
                 if !paired {
                     report_unpaired_display_end(&self.command, stores)?;
                 }
-                self.finish_display_math_content(stores, content, None, true, Some(display_level))?;
+                self.finish_display_math_content(
+                    stores,
+                    diagnostic_effects,
+                    content,
+                    None,
+                    true,
+                    Some(display_level),
+                )?;
             }
             Mode::Vertical | Mode::InternalVertical => {
                 unreachable!("vertical math shifts retry through ParagraphStart")
@@ -5433,6 +5546,7 @@ impl<G> MainControl<G> {
     fn prepare_math_list(
         &mut self,
         stores: &mut Universe<G>,
+        _diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
         let rejected = {
             let mut context = stores.command_context().expect("math-font admission");
@@ -5452,6 +5566,7 @@ impl<G> MainControl<G> {
     fn prepare_display_math_list(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<
         (
             tex_state::node_arena::PageListId,
@@ -5459,16 +5574,21 @@ impl<G> MainControl<G> {
         ),
         ExecError,
     > {
-        let content = self.prepare_math_list(stores)?;
+        let content = self.prepare_math_list(stores, diagnostic_effects)?;
         let level = crate::box_runtime::commit_current_list(
             &mut self.modes,
             &mut stores.command_context().expect("math-list admission"),
+            diagnostic_effects,
             self.fuel.fuel_mut(),
         )?;
         Ok((content, level))
     }
 
-    fn scan_display_end(&mut self, stores: &mut Universe<G>) -> Result<bool, ExecError> {
+    fn scan_display_end(
+        &mut self,
+        stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+    ) -> Result<bool, ExecError> {
         // TeX82 §§1185/1194's `fin_mlist` has already popped the display
         // level. Publish that live nest before §1197's nested expansion
         // episode: capabilities were last sampled at the start of the outer
@@ -5479,7 +5599,7 @@ impl<G> MainControl<G> {
         let context = stores
             .command_context()
             .expect("display-end scan requires a live generation");
-        let mut machine = self.command_machine();
+        let mut machine = self.command_machine(diagnostic_effects);
         let mut processor = machine.processor(context);
         prepare_command_trace(&mut processor, mode, shown_mode);
         let paired = processor
@@ -5497,6 +5617,7 @@ impl<G> MainControl<G> {
         &mut self,
         display: bool,
         stores: &mut Universe<G>,
+        _diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<(), ExecError> {
         let mut context = stores.command_context().expect("live generation");
         enter_group(&mut context, &mut self.command, GroupKind::MathShift);
@@ -5524,7 +5645,11 @@ impl<G> MainControl<G> {
         Ok(())
     }
 
-    fn enter_display(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
+    fn enter_display(
+        &mut self,
+        stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+    ) -> Result<(), ExecError> {
         let (paragraph, dimensions, pre_display_size, prototype, extended) = {
             let mut context = stores.command_context().expect("live generation");
             let error_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
@@ -5533,6 +5658,7 @@ impl<G> MainControl<G> {
             let paragraph = crate::paragraph_end::interrupt_paragraph_for_display(
                 &mut self.modes,
                 &mut context,
+                diagnostic_effects,
                 self.fuel.fuel_mut(),
                 error_context,
             )?;
@@ -5556,7 +5682,7 @@ impl<G> MainControl<G> {
         // TeX82 §1145 opens `math_shift_group` before these local parameter
         // definitions, so §283 restores all of them when the display ends.
         // `\everydisplay` is scheduled only after the definitions are live.
-        self.enter_math_level(true, stores)?;
+        self.enter_math_level(true, stores, diagnostic_effects)?;
         let mut context = stores.command_context().expect("live generation");
         for (parameter, value) in [
             (DimenParam::PRE_DISPLAY_SIZE, pre_display_size),
@@ -5592,7 +5718,11 @@ impl<G> MainControl<G> {
         Ok(())
     }
 
-    fn finish_inline_math(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
+    fn finish_inline_math(
+        &mut self,
+        stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+    ) -> Result<(), ExecError> {
         let mut content = take_finished_math_list(&mut self.modes, stores)?;
         let mut context =
             LinearCommandContext::new(stores.command_context().expect("inline-math admission"));
@@ -5605,11 +5735,13 @@ impl<G> MainControl<G> {
         let _ = crate::box_runtime::commit_current_list(
             &mut self.modes,
             &mut context,
+            diagnostic_effects,
             self.fuel.fuel_mut(),
         )?;
         let insert_penalties = self.modes.current_mode() == Mode::Horizontal;
         let (nodes, _) = crate::math::finish_inline_math_list_node(
             &mut context,
+            diagnostic_effects,
             tex_state::math::MathListNode {
                 display: false,
                 content,
@@ -5619,24 +5751,33 @@ impl<G> MainControl<G> {
         );
         self.modes.current_list_mutation().append(nodes);
         self.modes.current_list_mutation().set_space_factor(1000);
-        let aftergroup =
-            leave_group_payloads(&mut context, &mut self.command, GroupKind::MathShift).map_err(
-                |_| ExecError::MissingToken {
-                    context: "math shift group",
-                },
-            )?;
+        let aftergroup = leave_group_payloads(
+            &mut context,
+            &mut self.command,
+            diagnostic_effects,
+            GroupKind::MathShift,
+        )
+        .map_err(|_| ExecError::MissingToken {
+            context: "math shift group",
+        })?;
         self.active_math_shifts.pop();
-        schedule_aftergroup(&mut self.command_machine(), &mut context, aftergroup)?;
+        schedule_aftergroup(
+            &mut self.command_machine(diagnostic_effects),
+            &mut context,
+            aftergroup,
+        )?;
         Ok(())
     }
 
     fn finish_equation_number_mlist(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<crate::mode::DisplayEqNo, ExecError> {
         let mut level = crate::box_runtime::commit_current_list(
             &mut self.modes,
             &mut stores.command_context().expect("equation-number admission"),
+            diagnostic_effects,
             self.fuel.fuel_mut(),
         )?;
         let eq = level
@@ -5652,6 +5793,7 @@ impl<G> MainControl<G> {
     fn finish_equation_number_group(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
         eq: crate::mode::DisplayEqNo,
         content: tex_state::node_arena::PageListId,
     ) -> Result<
@@ -5670,33 +5812,43 @@ impl<G> MainControl<G> {
             crate::diagnostics::ExecutionDiagnosticContext::source_free(diagnostic_text);
         let finished = crate::math::display::finish_eq_no(
             &mut context,
+            diagnostic_effects,
             &diagnostic_context,
             eq.side,
             content,
             Some(&conversion_error_context),
         );
-        let aftergroup =
-            leave_group_payloads(&mut context, &mut self.command, GroupKind::MathShift).map_err(
-                |_| ExecError::MissingToken {
-                    context: "equation number group",
-                },
-            )?;
+        let aftergroup = leave_group_payloads(
+            &mut context,
+            &mut self.command,
+            diagnostic_effects,
+            GroupKind::MathShift,
+        )
+        .map_err(|_| ExecError::MissingToken {
+            context: "equation number group",
+        })?;
         self.active_math_shifts.pop();
-        schedule_aftergroup(&mut self.command_machine(), &mut context, aftergroup)?;
+        schedule_aftergroup(
+            &mut self.command_machine(diagnostic_effects),
+            &mut context,
+            aftergroup,
+        )?;
         Ok((eq.display, finished))
     }
 
     fn finish_display_alignment(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
         finished: crate::align::FinishedAlignment,
     ) -> Result<(), ExecError> {
-        self.finish_display_alignment_inner(stores, finished, true)
+        self.finish_display_alignment_inner(stores, diagnostic_effects, finished, true)
     }
 
     fn finish_display_alignment_inner(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
         finished: crate::align::FinishedAlignment,
         scan_optional_space: bool,
     ) -> Result<(), ExecError> {
@@ -5708,6 +5860,7 @@ impl<G> MainControl<G> {
         let mut level = crate::box_runtime::commit_current_list(
             &mut self.modes,
             &mut context,
+            diagnostic_effects,
             self.fuel.fuel_mut(),
         )?;
         let interrupt =
@@ -5718,21 +5871,34 @@ impl<G> MainControl<G> {
                     context: "display alignment interrupt",
                 })?;
         crate::math::display::finish_display_alignment(&mut self.modes, &mut context, finished)?;
-        let aftergroup =
-            leave_group_payloads(&mut context, &mut self.command, GroupKind::MathShift).map_err(
-                |_| ExecError::MissingToken {
-                    context: "display alignment group",
-                },
-            )?;
+        let aftergroup = leave_group_payloads(
+            &mut context,
+            &mut self.command,
+            diagnostic_effects,
+            GroupKind::MathShift,
+        )
+        .map_err(|_| ExecError::MissingToken {
+            context: "display alignment group",
+        })?;
         self.active_math_shifts.pop();
-        schedule_aftergroup(&mut self.command_machine(), &mut context, aftergroup)?;
+        schedule_aftergroup(
+            &mut self.command_machine(diagnostic_effects),
+            &mut context,
+            aftergroup,
+        )?;
         drop(context);
-        self.resume_display_inner(stores, interrupt.active_directions, scan_optional_space)
+        self.resume_display_inner(
+            stores,
+            diagnostic_effects,
+            interrupt.active_directions,
+            scan_optional_space,
+        )
     }
 
     fn finish_display_math_content(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
         mut content: tex_state::node_arena::PageListId,
         eq_no: Option<crate::math::display::FinishedEqNo>,
         fonts_checked: bool,
@@ -5756,6 +5922,7 @@ impl<G> MainControl<G> {
             None => crate::box_runtime::commit_current_list(
                 &mut self.modes,
                 &mut context,
+                diagnostic_effects,
                 self.fuel.fuel_mut(),
             )?,
         };
@@ -5769,35 +5936,45 @@ impl<G> MainControl<G> {
         crate::math::display::finish_display_math(
             &mut self.modes,
             &mut context,
+            diagnostic_effects,
             &diagnostic_context,
             content,
             eq_no,
             interrupt.prototype,
             Some(&conversion_error_context),
         )?;
-        let aftergroup =
-            leave_group_payloads(&mut context, &mut self.command, GroupKind::MathShift).map_err(
-                |_| ExecError::MissingToken {
-                    context: "display math group",
-                },
-            )?;
+        let aftergroup = leave_group_payloads(
+            &mut context,
+            &mut self.command,
+            diagnostic_effects,
+            GroupKind::MathShift,
+        )
+        .map_err(|_| ExecError::MissingToken {
+            context: "display math group",
+        })?;
         self.active_math_shifts.pop();
-        schedule_aftergroup(&mut self.command_machine(), &mut context, aftergroup)?;
+        schedule_aftergroup(
+            &mut self.command_machine(diagnostic_effects),
+            &mut context,
+            aftergroup,
+        )?;
         drop(context);
-        self.resume_display(stores, interrupt.active_directions)
+        self.resume_display(stores, diagnostic_effects, interrupt.active_directions)
     }
 
     fn resume_display(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
         directions: Vec<tex_state::node::Direction>,
     ) -> Result<(), ExecError> {
-        self.resume_display_inner(stores, directions, true)
+        self.resume_display_inner(stores, diagnostic_effects, directions, true)
     }
 
     fn resume_display_inner(
         &mut self,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
         directions: Vec<tex_state::node::Direction>,
         scan_optional_space: bool,
     ) -> Result<(), ExecError> {
@@ -5831,13 +6008,14 @@ impl<G> MainControl<G> {
             .current_list_mutation()
             .append(directions.into_iter().map(Node::Direction));
         if scan_optional_space {
-            self.scan_optional_space(stores)?;
+            self.scan_optional_space(stores, diagnostic_effects)?;
         }
         let mut context = stores.command_context().expect("display-resume admission");
         let error_context = self.command.output_open_context(&context);
         crate::math::display::build_page_after_display_resume(
             &self.modes,
             &mut context,
+            diagnostic_effects,
             &error_context,
         )
     }
@@ -5853,13 +6031,17 @@ impl<G> MainControl<G> {
     /// vertical list gained an empty line box and its interline glue
     /// (`umber2-johp.231`). The scan is a plain `get_x_token`, so a macro
     /// following the display is expanded here exactly as TeX82 expands it.
-    fn scan_optional_space(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
+    fn scan_optional_space(
+        &mut self,
+        stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+    ) -> Result<(), ExecError> {
         let mode = self.modes.current_mode();
         let shown_mode = self.shown_mode;
         let context = stores
             .command_context()
             .expect("optional-space scan requires a live generation");
-        let mut machine = self.command_machine();
+        let mut machine = self.command_machine(diagnostic_effects);
         let mut processor = machine.processor(context);
         let mut diagnostics = Vec::new();
         // TeX82 §§299/1200: resume_after_display has already pushed the new
@@ -5901,13 +6083,14 @@ impl<G> MainControl<G> {
         // build_page has emitted its tracingpages state.
         self.capture_first_causal_context(stores, &diagnostics);
         let mut context = stores.command_context().expect("live generation");
-        report_pending_diagnostics(&mut context, diagnostics)
+        report_pending_diagnostics(&mut context, diagnostic_effects, diagnostics)
     }
 
     fn apply_math_delimiter(
         &mut self,
         boundary: MathDelimiterBoundary,
         stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         match boundary.kind {
             MathDelimiterBoundaryKind::Left => {
@@ -5952,15 +6135,24 @@ impl<G> MainControl<G> {
                     let _ = crate::box_runtime::commit_current_list(
                         &mut self.modes,
                         &mut context,
+                        diagnostic_effects,
                         self.fuel.fuel_mut(),
                     )?;
-                    let aftergroup =
-                        leave_group_payloads(&mut context, &mut self.command, GroupKind::MathLeft)
-                            .map_err(|_| ExecError::MissingToken {
-                                context: "math left group",
-                            })?;
+                    let aftergroup = leave_group_payloads(
+                        &mut context,
+                        &mut self.command,
+                        diagnostic_effects,
+                        GroupKind::MathLeft,
+                    )
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "math left group",
+                    })?;
                     self.active_math_left_boundaries.pop();
-                    schedule_aftergroup(&mut self.command_machine(), &mut context, aftergroup)?;
+                    schedule_aftergroup(
+                        &mut self.command_machine(diagnostic_effects),
+                        &mut context,
+                        aftergroup,
+                    )?;
 
                     enter_group(&mut context, &mut self.command, GroupKind::MathLeft);
                     self.modes.push_at_line(
@@ -6021,15 +6213,24 @@ impl<G> MainControl<G> {
                 let _ = crate::box_runtime::commit_current_list(
                     &mut self.modes,
                     &mut context,
+                    diagnostic_effects,
                     self.fuel.fuel_mut(),
                 )?;
-                let aftergroup =
-                    leave_group_payloads(&mut context, &mut self.command, GroupKind::MathLeft)
-                        .map_err(|_| ExecError::MissingToken {
-                            context: "math left group",
-                        })?;
+                let aftergroup = leave_group_payloads(
+                    &mut context,
+                    &mut self.command,
+                    diagnostic_effects,
+                    GroupKind::MathLeft,
+                )
+                .map_err(|_| ExecError::MissingToken {
+                    context: "math left group",
+                })?;
                 self.active_math_left_boundaries.pop();
-                schedule_aftergroup(&mut self.command_machine(), &mut context, aftergroup)?;
+                schedule_aftergroup(
+                    &mut self.command_machine(diagnostic_effects),
+                    &mut context,
+                    aftergroup,
+                )?;
                 let mut nodes = context
                     .page_node_list(content)
                     .expect("math segment belongs to the live page arena")
@@ -6056,6 +6257,7 @@ impl<G> MainControl<G> {
     fn command_scan_math_field(
         &mut self,
         stores: &mut Universe<G>,
+        _diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_command::MathFieldEpisode, ExecError> {
         let mut processor = command_processor(
             &mut self.command,
@@ -6448,7 +6650,7 @@ impl<G> MainControl<G> {
         self.capture_first_causal_context(stores, &diagnostics);
         {
             let mut context = stores.command_context().expect("live generation");
-            report_pending_diagnostics(&mut context, diagnostics)?;
+            report_pending_diagnostics(&mut context, diagnostic_effects, diagnostics)?;
         }
         self.drain_file_framing_events(stores);
 
@@ -6561,22 +6763,24 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         delivery: OperationDelivery<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         let readiness = self
-            .prepare_operation(stores, delivery)
+            .prepare_operation(stores, delivery, diagnostic_effects)
             .map_err(|failure| *failure.error)?;
-        self.apply_ready_operation(stores, readiness)
+        self.apply_ready_operation(stores, readiness, diagnostic_effects)
     }
 
     fn apply_ready_operation(
         &mut self,
         stores: &mut Universe<G>,
         readiness: OperationReadiness<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         match readiness {
             OperationReadiness::<G>::Applied(result) => result,
             OperationReadiness::<G>::Prepared(prepared) => {
-                self.apply_prepared_operation(stores, prepared)
+                self.apply_prepared_operation(stores, prepared, diagnostic_effects)
             }
         }
     }
@@ -6589,6 +6793,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         delivery: OperationDelivery<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<OperationReadiness<G>, PrepareOperationError<G>> {
         let mode = self.modes.current_mode();
         let mode_fingerprint = self.modes.summary().semantic_fingerprint(stores);
@@ -6911,7 +7116,7 @@ impl<G> MainControl<G> {
         self.capture_first_causal_context(stores, &diagnostics);
         {
             let mut context = stores.command_context().expect("live generation");
-            report_pending_diagnostics(&mut context, diagnostics)?;
+            report_pending_diagnostics(&mut context, diagnostic_effects, diagnostics)?;
         }
         self.drain_file_framing_events(stores);
         let scanned = match scanned {
@@ -7045,6 +7250,7 @@ impl<G> MainControl<G> {
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
                 assignment_receipts: assignment_receipts.as_mut(),
+                diagnostic_effects,
                 shown_mode: &mut self.shown_mode,
                 initex: self.initex,
                 emit_dvi_override: self.emit_dvi_override,
@@ -7053,7 +7259,7 @@ impl<G> MainControl<G> {
             },
         );
         if result.is_ok() {
-            self.fire_pending_page_output(stores)?;
+            self.fire_pending_page_output(stores, diagnostic_effects)?;
         }
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_phase(
@@ -7120,6 +7326,7 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
         prepared: PreparedColdOperation<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
         let PreparedColdOperation::<G> {
             scanned,
@@ -7138,7 +7345,7 @@ impl<G> MainControl<G> {
         let _semantic_allocation_scope = tex_state::measurement::hot_core_allocation_scope(
             tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
         );
-        let scanned = match self.apply_host_owned_step(scanned, stores) {
+        let scanned = match self.apply_host_owned_step(scanned, stores, diagnostic_effects) {
             ControlFlow::Break(applied) => {
                 return self.finish_host_owned_step(
                     applied,
@@ -7147,6 +7354,7 @@ impl<G> MainControl<G> {
                     effect_count,
                     prepared_page_count,
                     stores,
+                    diagnostic_effects,
                 );
             }
             ControlFlow::Continue(scanned) => scanned,
@@ -7318,6 +7526,7 @@ impl<G> MainControl<G> {
             capabilities: &mut self.capabilities,
             observations: &mut self.operation_observations,
             assignment_receipts: assignment_receipts.as_mut(),
+            diagnostic_effects,
             shown_mode: &mut self.shown_mode,
             initex: self.initex,
             emit_dvi_override: self.emit_dvi_override,
@@ -7422,7 +7631,7 @@ impl<G> MainControl<G> {
             self.resume_main_control_parking(parking, stores);
         }
         if result.is_ok() {
-            self.fire_pending_page_output(stores)?;
+            self.fire_pending_page_output(stores, diagnostic_effects)?;
         }
         let extra_tab_recovery = result
             .as_ref()
@@ -7651,6 +7860,7 @@ impl<G> MainControl<G> {
 /// `show_box` even though recovery rejects the enclosing discretionary.
 fn report_improper_discretionary<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     deleted: tex_state::node_arena::PageListId,
     context: String,
 ) -> Result<(), ExecError> {
@@ -7666,7 +7876,7 @@ fn report_improper_discretionary<G>(
         .context(context);
     report.error().jump_out()?;
 
-    let mut diagnostic = stores.begin_diagnostic();
+    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     diagnostic
         .print("The following discretionary sublist has been deleted:")
         .print_ln()

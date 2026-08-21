@@ -1240,6 +1240,7 @@ pub(in crate::main_control) fn engine_termination_effect() -> EffectRecord {
 /// closes it.
 pub(in crate::main_control) fn print_ship_out_marker_open<G>(
     stores: &mut Universe<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     tracing_output: i32,
     counts: &[i32; 10],
     traced_node: Option<&Node>,
@@ -1287,7 +1288,7 @@ pub(in crate::main_control) fn print_ship_out_marker_open<G>(
             let config = crate::node_dump::DumpConfig::read(&context);
             crate::node_dump::dump_page_list(&context, frozen, config)
         };
-        let mut diagnostic = stores.begin_diagnostic();
+        let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
         // TeX82 §§174/198: `show_box` enters `show_node_list`, whose loop
         // executes `print_ln` before it renders the root node. This is an
         // unconditional structural break, not a `max_print_line` wrap and
@@ -1458,8 +1459,13 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     // included -- belongs to this shipout and must not be swept into the
     // page's serialized content.
     let pending_end = stores.world().effect_records().len();
-    let marker_start =
-        print_ship_out_marker_open(stores, tracing_output, &counts, traced_node.as_ref());
+    let marker_start = print_ship_out_marker_open(
+        stores,
+        command.diagnostic_effects,
+        tracing_output,
+        &counts,
+        traced_node.as_ref(),
+    );
     let effect_start = stores.world().effect_records().len();
     let effect_cursor = std::cell::Cell::new(effect_start);
     let replay_diagnostics = std::cell::RefCell::new(Vec::new());
@@ -1529,7 +1535,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                         .map_err(|_| ExecError::MissingToken {
                             context: "deferred write diagnostic admission",
                         })?;
-                report_pending_diagnostics(&mut context, diagnostics)?;
+                report_pending_diagnostics(&mut context, command.diagnostic_effects, diagnostics)?;
             }
             if command_trace_printed {
                 *command.shown_mode = None;
@@ -1667,7 +1673,11 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             .map_err(|_| ExecError::MissingToken {
                 context: "shipout replay diagnostic admission",
             })?;
-        report_pending_diagnostics(&mut context, replay_diagnostics.into_inner())?;
+        report_pending_diagnostics(
+            &mut context,
+            command.diagnostic_effects,
+            replay_diagnostics.into_inner(),
+        )?;
     }
     print_ship_out_marker_close(stores, tracing_output);
     if let Some(publication) = receipt.as_mut() {

@@ -5,6 +5,7 @@
 //! emits `\tracingassigns`, and returns the mutation that became observable.
 
 use tex_command::{MutationRecord, MutationTarget, ObservationValue};
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::AssignmentScope;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;
@@ -72,11 +73,18 @@ impl MutationReceipt {
 /// Borrow-scoped authority for all state written by TeX assignment families.
 pub(crate) struct AssignmentCommitter<'a, 'ctx, G> {
     stores: &'a mut CommandContext<'ctx, G>,
+    diagnostic_effects: &'a mut DiagnosticEffects,
 }
 
 impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
-    pub(crate) fn new(stores: &'a mut CommandContext<'ctx, G>) -> Self {
-        Self { stores }
+    pub(crate) fn new(
+        stores: &'a mut CommandContext<'ctx, G>,
+        diagnostic_effects: &'a mut DiagnosticEffects,
+    ) -> Self {
+        Self {
+            stores,
+            diagnostic_effects,
+        }
     }
 
     fn redundant_word<T: Eq>(&self, current: T, replacement: T) -> bool {
@@ -176,7 +184,14 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
                 .assign_count(index, value, AssignmentScope::Local)
                 .expect("local count assignment targets admitted state");
         }
-        tracing::trace_int_register(self.stores, index, global, old, value);
+        tracing::trace_int_register(
+            self.stores,
+            self.diagnostic_effects,
+            index,
+            global,
+            old,
+            value,
+        );
         if redundant && index <= 255 {
             MutationReceipt::SILENT
         } else {
@@ -204,7 +219,14 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
                 .assign_dimension(index, value, AssignmentScope::Local)
                 .expect("local dimension assignment targets admitted state");
         }
-        tracing::trace_dimen_register(self.stores, index, global, old, value);
+        tracing::trace_dimen_register(
+            self.stores,
+            self.diagnostic_effects,
+            index,
+            global,
+            old,
+            value,
+        );
         if redundant && index <= 255 {
             MutationReceipt::SILENT
         } else {
@@ -265,9 +287,25 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         }
         let changed = !(reassigning || (old_spec == GlueSpec::ZERO && value == GlueSpec::ZERO));
         if mu {
-            tracing::trace_muglue_register(self.stores, index, global, old_spec, value, changed);
+            tracing::trace_muglue_register(
+                self.stores,
+                self.diagnostic_effects,
+                index,
+                global,
+                old_spec,
+                value,
+                changed,
+            );
         } else {
-            tracing::trace_glue_register(self.stores, index, global, old_spec, value, changed);
+            tracing::trace_glue_register(
+                self.stores,
+                self.diagnostic_effects,
+                index,
+                global,
+                old_spec,
+                value,
+                changed,
+            );
         }
         if redundant && index <= 255 {
             MutationReceipt::SILENT
@@ -309,7 +347,14 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
                 .assign_token_register(index, Some(value), AssignmentScope::Local)
                 .expect("local token assignment targets admitted state");
         }
-        tracing::trace_toks_register(self.stores, index, global, old, new);
+        tracing::trace_toks_register(
+            self.stores,
+            self.diagnostic_effects,
+            index,
+            global,
+            old,
+            new,
+        );
         if redundant && index <= 255 {
             MutationReceipt::SILENT
         } else {
@@ -342,7 +387,15 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
                 .assign_int_param(parameter, value, AssignmentScope::Local)
                 .expect("local integer-parameter assignment targets admitted state");
         }
-        tracing::trace_int_param(self.stores, index, tracing_before, global, old, value);
+        tracing::trace_int_param(
+            self.stores,
+            self.diagnostic_effects,
+            index,
+            tracing_before,
+            global,
+            old,
+            value,
+        );
         if redundant {
             MutationReceipt::SILENT
         } else {
@@ -374,7 +427,14 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
                 .assign_dimen_param(parameter, value, AssignmentScope::Local)
                 .expect("local dimension-parameter assignment targets admitted state");
         }
-        tracing::trace_dimen_param(self.stores, index, global, old, value);
+        tracing::trace_dimen_param(
+            self.stores,
+            self.diagnostic_effects,
+            index,
+            global,
+            old,
+            value,
+        );
         if redundant {
             MutationReceipt::SILENT
         } else {
@@ -410,7 +470,14 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
                 .assign_token_parameter(parameter, value, AssignmentScope::Local)
                 .expect("local token-parameter assignment targets admitted state");
         }
-        tracing::trace_tok_param(self.stores, index, global, old, value);
+        tracing::trace_tok_param(
+            self.stores,
+            self.diagnostic_effects,
+            index,
+            global,
+            old,
+            value,
+        );
         if redundant {
             MutationReceipt::SILENT
         } else {
@@ -451,7 +518,15 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
                     .expect("local glue-parameter assignment targets admitted state");
             }
         }
-        tracing::trace_glue_param(self.stores, index, global, old_spec, value, !redundant);
+        tracing::trace_glue_param(
+            self.stores,
+            self.diagnostic_effects,
+            index,
+            global,
+            old_spec,
+            value,
+            !redundant,
+        );
         if redundant {
             MutationReceipt::SILENT
         } else {
@@ -506,11 +581,18 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
                 self.stores.meaning(target),
                 ResolvedMeaning::Static(meaning),
             );
-        tracing::trace_meaning_write(self.stores, token, !redundant, global, |stores| {
-            if global || !redundant {
-                write(stores);
-            }
-        });
+        tracing::trace_meaning_write(
+            self.stores,
+            self.diagnostic_effects,
+            token,
+            !redundant,
+            global,
+            |stores| {
+                if global || !redundant {
+                    write(stores);
+                }
+            },
+        );
         !redundant
     }
 
@@ -524,7 +606,14 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
     where
         F: FnOnce(&mut CommandContext<'_, G>),
     {
-        tracing::trace_box_write(self.stores, index, global, boxed, write);
+        tracing::trace_box_write(
+            self.stores,
+            self.diagnostic_effects,
+            index,
+            global,
+            boxed,
+            write,
+        );
         if index <= 255 {
             MutationReceipt::SILENT
         } else {

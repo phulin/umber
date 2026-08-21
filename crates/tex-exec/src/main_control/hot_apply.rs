@@ -286,15 +286,22 @@ fn apply_macro_definition<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    assignment_tracing::trace_meaning_write(stores, Token::Cs(target), true, global, |stores| {
-        stores
-            .assign_resolved_meaning(
-                target,
-                tex_state::meaning::ResolvedMeaning::Macro { flags, definition },
-                assignment_scope(global),
-            )
-            .expect("macro target belongs to the admitted generation");
-    });
+    assignment_tracing::trace_meaning_write(
+        stores,
+        command.diagnostic_effects,
+        Token::Cs(target),
+        true,
+        global,
+        |stores| {
+            stores
+                .assign_resolved_meaning(
+                    target,
+                    tex_state::meaning::ResolvedMeaning::Macro { flags, definition },
+                    assignment_scope(global),
+                )
+                .expect("macro target belongs to the admitted generation");
+        },
+    );
 
     // TeX82 §1211's trace seam reports the stored body. Walking that body is
     // cold evidence publication, never part of an unobserved definition.
@@ -328,6 +335,7 @@ fn apply_let<G>(
     let committed = global || stores.meaning(target) != meaning;
     assignment_tracing::trace_meaning_write(
         stores,
+        command.diagnostic_effects,
         Token::Cs(target),
         committed,
         global,
@@ -375,31 +383,33 @@ fn apply_catcode<G>(
     }
     let catcode = catcode_from_value(value)?;
     let old = stores.catcode(character);
-    let committed = AssignmentCommitter::new(stores).direct_scoped_word(
-        old,
-        catcode,
-        global,
-        |stores, global| {
-            stores
-                .assign_code(
-                    tex_state::env::CodeTableKind::Catcode,
+    let committed = AssignmentCommitter::new(stores, command.diagnostic_effects)
+        .direct_scoped_word(
+            old,
+            catcode,
+            global,
+            |stores, global| {
+                stores
+                    .assign_code(
+                        tex_state::env::CodeTableKind::Catcode,
+                        character,
+                        i64::from(catcode as u8),
+                        assignment_scope(global),
+                    )
+                    .expect("catcode target belongs to the admitted generation");
+            },
+            |stores, _| {
+                assignment_tracing::trace_code(
+                    stores,
+                    command.diagnostic_effects,
+                    "catcode",
                     character,
-                    i64::from(catcode as u8),
-                    assignment_scope(global),
+                    global,
+                    old as i32,
+                    catcode as i32,
                 )
-                .expect("catcode target belongs to the admitted generation");
-        },
-        |stores, _| {
-            assignment_tracing::trace_code(
-                stores,
-                "catcode",
-                character,
-                global,
-                old as i32,
-                catcode as i32,
-            )
-        },
-    );
+            },
+        );
     if committed && command.observes_mutations() {
         let record = MutationRecord {
             target: MutationTarget::Catcode,
@@ -448,7 +458,12 @@ fn flush_group_boundary<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<(), ExecError> {
-    crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)
+    crate::box_runtime::flush_pending_hchars_with_fuel(
+        modes,
+        stores,
+        command.diagnostic_effects,
+        command.fuel,
+    )
 }
 
 fn leave_group<G>(
@@ -460,7 +475,7 @@ fn leave_group<G>(
 ) -> Result<ReplayStep, ExecError> {
     flush_group_boundary(modes, stores, command)?;
     warn_cross_file_group_close(stores, command);
-    let aftergroup = leave_group_payloads(stores, command.state, kind)
+    let aftergroup = leave_group_payloads(stores, command.state, command.diagnostic_effects, kind)
         .map_err(|_| ExecError::MissingToken { context })?;
     schedule_aftergroup(command, stores, aftergroup)?;
     Ok(ReplayStep::Continue)

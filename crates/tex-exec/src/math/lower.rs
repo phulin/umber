@@ -1,6 +1,7 @@
 use std::cell::Cell;
 
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
@@ -27,28 +28,37 @@ impl MathConversionErrorContext {
 
 pub(crate) fn finish_math_list_node<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     list: MathListNode,
     insert_penalties: bool,
 ) -> Vec<Node> {
-    finish_math_list_node_with_reads(stores, list, insert_penalties, None).0
+    finish_math_list_node_with_reads(stores, diagnostic_effects, list, insert_penalties, None).0
 }
 
 pub(crate) fn finish_inline_math_list_node<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     list: MathListNode,
     insert_penalties: bool,
     error_context: MathConversionErrorContext,
 ) -> (Vec<Node>, u64) {
-    finish_math_list_node_with_reads(stores, list, insert_penalties, Some(&error_context))
+    finish_math_list_node_with_reads(
+        stores,
+        diagnostic_effects,
+        list,
+        insert_penalties,
+        Some(&error_context),
+    )
 }
 
 fn finish_math_list_node_with_reads<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     list: MathListNode,
     insert_penalties: bool,
     error_context: Option<&MathConversionErrorContext>,
 ) -> (Vec<Node>, u64) {
-    let mut sink = LoweredMathSink::new(stores, error_context);
+    let mut sink = LoweredMathSink::new(stores, diagnostic_effects, error_context);
     let params = MathParams::read(&sink);
     let style = if list.display {
         Style::DISPLAY
@@ -79,13 +89,14 @@ fn finish_math_list_node_with_reads<G>(
 
 pub(super) fn convert_math_hlist_with_error_context<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     input: PageListId,
     style: Style,
     penalties: bool,
     params: &MathParams,
     error_context: Option<&MathConversionErrorContext>,
 ) -> Vec<Node> {
-    let mut sink = LoweredMathSink::new(stores, error_context);
+    let mut sink = LoweredMathSink::new(stores, diagnostic_effects, error_context);
     convert_math_hlist_with_sink(&mut sink, input, style, penalties, params)
 }
 
@@ -103,6 +114,7 @@ fn convert_math_hlist_with_sink<G>(
 
 struct LoweredMathSink<'a, 'ctx, G> {
     stores: &'a mut CommandContext<'ctx, G>,
+    diagnostic_effects: &'a mut DiagnosticEffects,
     error_context: Option<&'a MathConversionErrorContext>,
     root_nodes: Vec<Node>,
     glue_cache: Vec<(GlueSpec, GlueSpec)>,
@@ -112,10 +124,12 @@ struct LoweredMathSink<'a, 'ctx, G> {
 impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
     fn new(
         stores: &'a mut CommandContext<'ctx, G>,
+        diagnostic_effects: &'a mut DiagnosticEffects,
         error_context: Option<&'a MathConversionErrorContext>,
     ) -> Self {
         Self {
             stores,
+            diagnostic_effects,
             error_context,
             root_nodes: Vec::new(),
             glue_cache: Vec::with_capacity(8),
@@ -305,7 +319,7 @@ impl<G> LoweredMathSink<'_, '_, G> {
                         // external name, not `\fontname`'s size-qualified
                         // rendering.
                         let font_name = self.stores.font_name(font);
-                        let mut diagnostic = self.stores.begin_diagnostic();
+                        let mut diagnostic = self.stores.begin_diagnostic(self.diagnostic_effects);
                         diagnostic
                             .print_nl("Missing character: There is no ")
                             .print(&character.to_string())
@@ -363,6 +377,7 @@ impl<G> LoweredMathSink<'_, '_, G> {
 
 pub(crate) fn finish_math_lists_owned<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     nodes: Vec<Node>,
     insert_penalties: bool,
 ) -> Vec<Node> {
@@ -373,7 +388,12 @@ pub(crate) fn finish_math_lists_owned<G>(
     for node in nodes {
         match node {
             Node::MathList(list) => {
-                out.extend(finish_math_list_node(stores, list, insert_penalties));
+                out.extend(finish_math_list_node(
+                    stores,
+                    diagnostic_effects,
+                    list,
+                    insert_penalties,
+                ));
             }
             node => out.push(node),
         }

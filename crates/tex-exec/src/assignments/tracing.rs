@@ -23,6 +23,7 @@
 //! group-exit boundary, where ordered old-value records remain available;
 //! this module renders only the four `\tracingassigns` labels.
 
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::GlueSpec;
 use tex_state::interner::{ControlSequenceKind, Symbol};
@@ -46,8 +47,14 @@ fn escaped<G>(stores: &mut CommandContext<'_, G>, name: &str) -> String {
 
 /// Prints `{label name=value}` unconditionally: the caller has already
 /// decided `\tracingassigns` was positive at the moment that mattered.
-fn print_trace<G>(stores: &mut CommandContext<'_, G>, label: &str, name: &str, value: &str) {
-    let mut diagnostic = stores.begin_diagnostic();
+fn print_trace<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    label: &str,
+    name: &str,
+    value: &str,
+) {
+    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     diagnostic
         .print_char('{')
         .print(label)
@@ -118,6 +125,7 @@ fn restoration_control_sequence_text<G>(
 /// and before §282 replays any `\aftergroup` token.
 pub(crate) fn trace_group_restorations<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     receipt: &GroupRestorationReceipt<G>,
 ) {
     for entry in receipt.entries() {
@@ -137,7 +145,7 @@ pub(crate) fn trace_group_restorations<G>(
             GroupRestorationOutcome::Restored => "restoring",
             GroupRestorationOutcome::Retained => "retaining",
         };
-        let mut diagnostic = stores.begin_group_restoration_diagnostic(trace);
+        let mut diagnostic = stores.begin_group_restoration_diagnostic(diagnostic_effects, trace);
         diagnostic
             .print_char('{')
             .print(label)
@@ -272,9 +280,15 @@ fn font_identifier_text<G>(
 /// restore_trace(p, label)`, gated against the *current* (live) state. Used
 /// for the "into"/"reassigning" half of a write, which etex.ch checks after
 /// the mutation has already happened.
-fn emit<G>(stores: &mut CommandContext<'_, G>, label: &str, name: &str, value: &str) {
+fn emit<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    label: &str,
+    name: &str,
+    value: &str,
+) {
     if stores.int_param(IntParam::TRACING_ASSIGNS) > 0 {
-        print_trace(stores, label, name, value);
+        print_trace(stores, diagnostic_effects, label, name, value);
     }
 }
 
@@ -295,6 +309,7 @@ fn emit<G>(stores: &mut CommandContext<'_, G>, label: &str, name: &str, value: &
 /// reverse.
 fn trace_scalar<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     tracing_before: bool,
     global: bool,
     changed: bool,
@@ -304,21 +319,22 @@ fn trace_scalar<G>(
 ) {
     if global {
         if tracing_before {
-            print_trace(stores, "globally changing", name, old);
+            print_trace(stores, diagnostic_effects, "globally changing", name, old);
         }
-        emit(stores, "into", name, new);
+        emit(stores, diagnostic_effects, "into", name, new);
     } else if changed {
         if tracing_before {
-            print_trace(stores, "changing", name, old);
+            print_trace(stores, diagnostic_effects, "changing", name, old);
         }
-        emit(stores, "into", name, new);
+        emit(stores, diagnostic_effects, "into", name, new);
     } else {
-        emit(stores, "reassigning", name, new);
+        emit(stores, diagnostic_effects, "reassigning", name, new);
     }
 }
 
 pub(crate) fn trace_int_param<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     tracing_before: bool,
     global: bool,
@@ -334,6 +350,7 @@ pub(crate) fn trace_int_param<G>(
     let name = escaped(stores, &int_param_name(index));
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         old != new,
@@ -345,6 +362,7 @@ pub(crate) fn trace_int_param<G>(
 
 pub(crate) fn trace_int_register<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     global: bool,
     old: i32,
@@ -359,6 +377,7 @@ pub(crate) fn trace_int_register<G>(
     let name = escaped(stores, &format!("count{index}"));
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         old != new,
@@ -370,6 +389,7 @@ pub(crate) fn trace_int_register<G>(
 
 pub(crate) fn trace_dimen_param<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     global: bool,
     old: Scaled,
@@ -382,6 +402,7 @@ pub(crate) fn trace_dimen_param<G>(
     let name = escaped(stores, &dimen_param_name(index));
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         old != new,
@@ -393,6 +414,7 @@ pub(crate) fn trace_dimen_param<G>(
 
 pub(crate) fn trace_dimen_register<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     global: bool,
     old: Scaled,
@@ -405,6 +427,7 @@ pub(crate) fn trace_dimen_register<G>(
     let name = escaped(stores, &format!("dimen{index}"));
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         old != new,
@@ -426,6 +449,7 @@ fn dimen_text(value: Scaled) -> String {
 /// e-TeX [19.277] took the same-pointer `reassigning` return.
 pub(crate) fn trace_glue_param<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     global: bool,
     old: GlueSpec,
@@ -442,6 +466,7 @@ pub(crate) fn trace_glue_param<G>(
     let new_text = format_glue_with_unit(new, unit);
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         changed,
@@ -454,6 +479,7 @@ pub(crate) fn trace_glue_param<G>(
 /// Register counterpart of [`trace_glue_param`].
 pub(crate) fn trace_glue_register<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     global: bool,
     old: GlueSpec,
@@ -469,6 +495,7 @@ pub(crate) fn trace_glue_register<G>(
     let new_text = format_glue_with_unit(new, "pt");
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         changed,
@@ -481,6 +508,7 @@ pub(crate) fn trace_glue_register<G>(
 /// Mu-glue register counterpart of [`trace_glue_param`].
 pub(crate) fn trace_muglue_register<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     global: bool,
     old: GlueSpec,
@@ -496,6 +524,7 @@ pub(crate) fn trace_muglue_register<G>(
     let new_text = format_glue_with_unit(new, "mu");
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         changed,
@@ -507,6 +536,7 @@ pub(crate) fn trace_muglue_register<G>(
 
 pub(crate) fn trace_tok_param<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     global: bool,
     old: Option<TokenListId<G>>,
@@ -521,6 +551,7 @@ pub(crate) fn trace_tok_param<G>(
     let new_text = tokens_text(stores, new);
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         old != new,
@@ -532,6 +563,7 @@ pub(crate) fn trace_tok_param<G>(
 
 pub(crate) fn trace_toks_register<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     global: bool,
     old: Option<TokenListId<G>>,
@@ -546,6 +578,7 @@ pub(crate) fn trace_toks_register<G>(
     let new_text = tokens_text(stores, new);
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         old != new,
@@ -560,6 +593,7 @@ pub(crate) fn trace_toks_register<G>(
 /// `show_node_list`, exactly as §252's `show_eqtb` does.
 pub(crate) fn trace_box_write<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     global: bool,
     new: Option<&tex_state::node_arena::PageListId>,
@@ -567,11 +601,12 @@ pub(crate) fn trace_box_write<G>(
 ) {
     fn print_box_trace<G>(
         stores: &mut CommandContext<'_, G>,
+        diagnostic_effects: &mut DiagnosticEffects,
         label: &str,
         name: &str,
         value: &str,
     ) {
-        let mut diagnostic = stores.begin_diagnostic();
+        let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
         diagnostic
             .print_char('{')
             .print(label)
@@ -600,20 +635,26 @@ pub(crate) fn trace_box_write<G>(
     let changed = old.as_ref() != new;
     if global {
         if tracing_before {
-            print_box_trace(stores, "globally changing", &name, &old_text);
+            print_box_trace(
+                stores,
+                diagnostic_effects,
+                "globally changing",
+                &name,
+                &old_text,
+            );
         }
         if stores.int_param(IntParam::TRACING_ASSIGNS) > 0 {
-            print_box_trace(stores, "into", &name, &new_text);
+            print_box_trace(stores, diagnostic_effects, "into", &name, &new_text);
         }
     } else if changed {
         if tracing_before {
-            print_box_trace(stores, "changing", &name, &old_text);
+            print_box_trace(stores, diagnostic_effects, "changing", &name, &old_text);
         }
         if stores.int_param(IntParam::TRACING_ASSIGNS) > 0 {
-            print_box_trace(stores, "into", &name, &new_text);
+            print_box_trace(stores, diagnostic_effects, "into", &name, &new_text);
         }
     } else if stores.int_param(IntParam::TRACING_ASSIGNS) > 0 {
-        print_box_trace(stores, "reassigning", &name, &new_text);
+        print_box_trace(stores, diagnostic_effects, "reassigning", &name, &new_text);
     }
 }
 
@@ -640,6 +681,7 @@ fn penalty_array_text<G>(stores: &mut CommandContext<'_, G>, values: &[i32]) -> 
 /// local equivalent and therefore produce `reassigning`.
 pub(crate) fn trace_penalty_array<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     kind: PenaltyArrayKind,
     global: bool,
     old: &[i32],
@@ -660,6 +702,7 @@ pub(crate) fn trace_penalty_array<G>(
     let new_text = penalty_array_text(stores, new);
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         !old.is_empty() || !new.is_empty(),
@@ -701,6 +744,7 @@ fn tokens_text_at<G>(
 /// keyed by the character code rather than a register index.
 pub(crate) fn trace_code<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     primitive_name: &str,
     ch: char,
     global: bool,
@@ -714,6 +758,7 @@ pub(crate) fn trace_code<G>(
     let name = escaped(stores, &format!("{primitive_name}{}", ch as u32));
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         old != new,
@@ -741,6 +786,7 @@ pub(crate) fn trace_code<G>(
 /// `Meaning` equality check, which would accept the `\def` case too.
 pub(crate) fn trace_meaning_write<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     token: Token,
     changed: bool,
     global: bool,
@@ -757,18 +803,24 @@ pub(crate) fn trace_meaning_write<G>(
         let old_text = stores.bounded_meaning_text(token, 32);
         write(stores);
         let new_text = stores.bounded_meaning_text(token, 32);
-        print_trace(stores, "globally changing", &name, &old_text);
-        emit(stores, "into", &name, &new_text);
+        print_trace(
+            stores,
+            diagnostic_effects,
+            "globally changing",
+            &name,
+            &old_text,
+        );
+        emit(stores, diagnostic_effects, "into", &name, &new_text);
     } else if changed {
         let old_text = stores.bounded_meaning_text(token, 32);
         write(stores);
         let new_text = stores.bounded_meaning_text(token, 32);
-        print_trace(stores, "changing", &name, &old_text);
-        emit(stores, "into", &name, &new_text);
+        print_trace(stores, diagnostic_effects, "changing", &name, &old_text);
+        emit(stores, diagnostic_effects, "into", &name, &new_text);
     } else {
         write(stores);
         let text = stores.bounded_meaning_text(token, 32);
-        emit(stores, "reassigning", &name, &text);
+        emit(stores, diagnostic_effects, "reassigning", &name, &text);
     }
 }
 
@@ -783,6 +835,7 @@ pub(crate) fn trace_meaning_write<G>(
 /// this renderer preserve that ownership without replaying the mutation.
 pub(crate) fn trace_completed_provisional_meaning_write<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     token: Token,
     old: ResolvedMeaning<G>,
     new: Meaning,
@@ -799,6 +852,7 @@ pub(crate) fn trace_completed_provisional_meaning_write<G>(
     let new_text = meaning_value_text_at(stores, ResolvedMeaning::Static(new), escape_char);
     trace_scalar(
         stores,
+        diagnostic_effects,
         tracing_before,
         global,
         old != new,

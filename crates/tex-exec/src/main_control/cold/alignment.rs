@@ -46,7 +46,13 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
             .checked_add(1)
             .ok_or(ExecError::ArithmeticOverflow)?;
     } else {
-        capture_replay_alignment_cell(active, modes, stores, command.fuel)?;
+        capture_replay_alignment_cell(
+            active,
+            modes,
+            stores,
+            command.diagnostic_effects,
+            command.fuel,
+        )?;
     }
     let next_column = match delimiter {
         AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span => active
@@ -90,7 +96,13 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
             recovered,
             AlignmentRequestResult::ExtraTabRecovered
         ));
-        finish_replay_alignment_row(active, modes, stores, command.fuel)?;
+        finish_replay_alignment_row(
+            active,
+            modes,
+            stores,
+            command.diagnostic_effects,
+            command.fuel,
+        )?;
         active.column = 0;
         // §792's extra-tab recovery rewrites `extra_info` to `cr_code`, so
         // §791's `fin_col` returns true and §1131's `do_endv` runs `fin_row`
@@ -128,7 +140,13 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
         })?;
     match delimiter {
         AlignmentCellDelimiter::Row => {
-            finish_replay_alignment_row(active, modes, stores, command.fuel)?;
+            finish_replay_alignment_row(
+                active,
+                modes,
+                stores,
+                command.diagnostic_effects,
+                command.fuel,
+            )?;
             // TeX82 §799 `fin_row` closes with
             // `if every_cr<>null then begin_token_list(every_cr,every_cr_text);
             // align_peek`, so the hook is installed before the lookahead that
@@ -181,7 +199,12 @@ pub(in crate::main_control) fn replace_alignment_entry_save_level<G>(
     command: &mut CommandMachine<'_, G>,
     stores: &mut LinearCommandContext<'_, G>,
 ) -> Result<(), ExecError> {
-    let aftergroup = leave_alignment_save_level(command.state, stores, "alignment entry group")?;
+    let aftergroup = leave_alignment_save_level(
+        command.state,
+        command.diagnostic_effects,
+        stores,
+        "alignment entry group",
+    )?;
     enter_group(stores, command.state, GroupKind::Align);
     schedule_aftergroup(command, stores, aftergroup)
 }
@@ -189,10 +212,11 @@ pub(in crate::main_control) fn replace_alignment_entry_save_level<G>(
 /// One of TeX82 §800 `fin_align`'s `unsave`s, or §791's.
 pub(in crate::main_control) fn leave_alignment_save_level<G>(
     command: &mut PersistentInterpreter<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     stores: &mut tex_state::CommandContext<'_, G>,
     context: &'static str,
 ) -> Result<Vec<tex_state::token::TracedTokenWord>, ExecError> {
-    leave_group_payloads(stores, command, GroupKind::Align)
+    leave_group_payloads(stores, command, diagnostic_effects, GroupKind::Align)
         .map_err(|_| ExecError::MissingToken { context })
 }
 
@@ -204,10 +228,11 @@ pub(in crate::main_control) fn leave_alignment_save_level<G>(
 /// the entry level and the whole-alignment level.
 pub(in crate::main_control) fn leave_fin_align_save_level<G>(
     command: &mut PersistentInterpreter<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     stores: &mut tex_state::CommandContext<'_, G>,
     confusion_site: &'static str,
 ) -> Result<Vec<tex_state::token::TracedTokenWord>, ExecError> {
-    leave_group_payloads(stores, command, GroupKind::Align)
+    leave_group_payloads(stores, command, diagnostic_effects, GroupKind::Align)
         .map_err(|_| ExecError::Fatal(FatalError::confusion(confusion_site)))
 }
 
@@ -282,6 +307,7 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
     active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if !active.cell_open {
@@ -299,15 +325,20 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
     {
         stores.close_hyphenation_patterns();
     }
-    let mut cell = crate::box_runtime::commit_current_list(modes, stores, fuel)?;
+    let mut cell =
+        crate::box_runtime::commit_current_list(modes, stores, diagnostic_effects, fuel)?;
     let material = if active.kind == AlignmentKind::HAlign {
         // TeX82 §796 packs an `\halign` column with `adjust_tail:=cur_tail`,
         // so §651/§655 remove its insertions, marks, and `\vadjust` contents
         // from the column and hold them on the row's migration list; §799
         // appends them after the packaged row. A `\valign` column is
         // `vpackage`d with `adjust_tail` null and migrates nothing.
-        let material =
-            crate::math::finish_math_lists_owned(stores, cell.list_mutation().take_nodes(), false);
+        let material = crate::math::finish_math_lists_owned(
+            stores,
+            diagnostic_effects,
+            cell.list_mutation().take_nodes(),
+            false,
+        );
         let (retained, mut pre_migrated, migrated) =
             crate::box_runtime::split_hpack_migrations(stores, material);
         pre_migrated.extend(migrated);
@@ -350,14 +381,15 @@ pub(in crate::main_control) fn finish_replay_alignment_row<G>(
     active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    capture_replay_alignment_cell(active, modes, stores, fuel)?;
+    capture_replay_alignment_cell(active, modes, stores, diagnostic_effects, fuel)?;
     if !active.row_open {
         return Ok(());
     }
 
-    let mut row = crate::box_runtime::commit_current_list(modes, stores, fuel)?;
+    let mut row = crate::box_runtime::commit_current_list(modes, stores, diagnostic_effects, fuel)?;
     let children = stores.publish_page_nodes(row.list_mutation().take_nodes());
     let row = crate::align::packaging::make_unset_node(
         stores,
@@ -418,11 +450,13 @@ pub(in crate::main_control) fn finish_replay_alignment<G>(
     active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {
-    finish_replay_alignment_row(active, modes, stores, fuel)?;
-    let mut alignment = crate::box_runtime::commit_current_list(modes, stores, fuel)?;
+    finish_replay_alignment_row(active, modes, stores, diagnostic_effects, fuel)?;
+    let mut alignment =
+        crate::box_runtime::commit_current_list(modes, stores, diagnostic_effects, fuel)?;
     // TeX82 §800 makes §661's box-diagnostic origin negative for the whole
     // `fin_align` setting pass. The magnitude is the alignment level's
     // `mode_line`, captured by §774's `push_nest`, and §812 restores the

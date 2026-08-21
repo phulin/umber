@@ -3,6 +3,7 @@
 use std::fmt::Write as _;
 
 use tex_command::{DimensionDiagnostic, FatalError};
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::IntParam;
 use tex_state::page::{PageContents, PageDimension, PageInsertion, PageInsertionStatus};
 use tex_state::print::Selector;
@@ -138,6 +139,7 @@ pub(crate) fn report_bad_interaction_mode_with_context<G>(
 /// section 17.516's level-two terminal routing.
 pub(crate) fn report_missing_character_warning<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     font: tex_state::ids::FontId,
     ch: char,
     etex_extended: bool,
@@ -152,9 +154,9 @@ pub(crate) fn report_missing_character_warning<G>(
     let force_online =
         etex_extended && stores.int_param(tex_state::env::banks::IntParam::TRACING_LOST_CHARS) > 1;
     let mut diagnostic = if force_online {
-        stores.begin_online_diagnostic()
+        stores.begin_online_diagnostic(diagnostic_effects)
     } else {
-        stores.begin_diagnostic()
+        stores.begin_diagnostic(diagnostic_effects)
     };
     diagnostic
         .print_nl("Missing character: There is no ")
@@ -340,11 +342,12 @@ pub(crate) fn render_showgroups(diagnostic: &ShowGroupsDiagnostic) -> String {
 /// §245 diagnostic selector, followed by §1293's ordinary show completion.
 pub(crate) fn execute_showgroups<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic: &ShowGroupsDiagnostic,
     context: String,
 ) -> Result<(), ExecError> {
     {
-        let mut output = stores.begin_diagnostic();
+        let mut output = stores.begin_diagnostic(diagnostic_effects);
         output.print_nl("").print_ln();
         for frame in diagnostic.frames.iter().rev() {
             output
@@ -373,6 +376,7 @@ pub(crate) fn group_kind_text(kind: tex_state::GroupKind) -> &'static str {
 
 pub(crate) fn execute_showbox<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
     context: String,
     profile: tex_command::CommandProfile,
@@ -395,7 +399,7 @@ pub(crate) fn execute_showbox<G>(
     } else {
         text.push_str("void\n");
     }
-    let mut diagnostic = stores.begin_diagnostic();
+    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     // A single smart newline, not an unconditional one: `show_box`'s own
     // open is `print_nl("> \box")`, unlike `show_activities`/`show_ifs`'s
     // `print_nl(""); print_ln`.
@@ -469,6 +473,7 @@ pub(crate) fn complete_show<G>(
 
 pub(crate) fn execute_showlists<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     nest: &ModeNest,
     context: String,
     profile: tex_command::CommandProfile,
@@ -586,7 +591,7 @@ pub(crate) fn execute_showlists<G>(
     // single smart `print_nl` `show_box` uses: the forced blank line is why
     // `\showlists`, unlike `\showbox`, always separates its dump from
     // whatever the terminal/log column held before it ran.
-    let mut diagnostic = stores.begin_diagnostic();
+    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     diagnostic.print_nl("").print_ln();
     diagnostic.print_rendered(&text);
     diagnostic.end(true);
@@ -793,10 +798,11 @@ pub(crate) fn report_paragraph_infinite_shrinkage<G>(
 /// respect to a glue or kern node p>`.
 pub(crate) fn report_split_infinite_shrinkage<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     if stores.int_param(IntParam::IGNORE_PRIMITIVE_ERROR) & 1 != 0 {
-        let mut diagnostic = stores.begin_online_diagnostic();
+        let mut diagnostic = stores.begin_online_diagnostic(diagnostic_effects);
         diagnostic
             .print_rendered("\nignored error: Infinite glue shrinkage found in box being split");
         diagnostic.end(false);

@@ -1,5 +1,6 @@
 use tex_fonts::{LigKernChar, LigKernCommand};
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
@@ -15,6 +16,7 @@ use crate::{ExecError, Mode, ModeNest};
 pub(crate) fn append_character_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     ch: char,
     origin: OriginId,
     etex_extended: bool,
@@ -24,7 +26,15 @@ pub(crate) fn append_character_with_fuel<G>(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ));
-    append_hchar_with_fuel(nest, stores, ch, origin, etex_extended, fuel)
+    append_hchar_with_fuel(
+        nest,
+        stores,
+        diagnostic_effects,
+        ch,
+        origin,
+        etex_extended,
+        fuel,
+    )
 }
 
 /// Appends an ordinary space from main control after horizontal
@@ -32,31 +42,41 @@ pub(crate) fn append_character_with_fuel<G>(
 pub(crate) fn append_space_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     debug_assert!(matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ));
-    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
+    flush_pending_hchars_with_fuel(nest, stores, diagnostic_effects, fuel)?;
     append_space_after_flush(nest, stores)
 }
 
 pub(crate) fn flush_pending_hchars<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
-    flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, false, fuel)
+    flush_pending_hchar_run_with_fuel(
+        nest,
+        stores,
+        diagnostic_effects,
+        insert_hyphen_discs,
+        false,
+        fuel,
+    )
 }
 
 pub(crate) fn flush_pending_hchars_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    flush_pending_hchars(nest, stores, fuel)
+    flush_pending_hchars(nest, stores, diagnostic_effects, fuel)
 }
 
 /// Flushes the active TeX82 §1038 character run after its lookahead consumed
@@ -65,10 +85,18 @@ pub(crate) fn flush_pending_hchars_with_fuel<G>(
 pub(crate) fn flush_pending_hchars_without_right_boundary<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
-    flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, true, fuel)
+    flush_pending_hchar_run_with_fuel(
+        nest,
+        stores,
+        diagnostic_effects,
+        insert_hyphen_discs,
+        true,
+        fuel,
+    )
 }
 
 /// Appends a whatsit node where tex.web §1356's `new_whatsit` would put it.
@@ -88,10 +116,11 @@ pub(crate) fn flush_pending_hchars_without_right_boundary<G>(
 pub(crate) fn append_whatsit<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
     whatsit: tex_state::node::Whatsit,
 ) -> Result<(), ExecError> {
-    flush_pending_hchars(nest, stores, fuel)?;
+    flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
     let contributes_directly_in_outer_vertical = matches!(
         whatsit,
         tex_state::node::Whatsit::OpenOut { .. }
@@ -124,15 +153,17 @@ pub(crate) fn append_whatsit<G>(
 pub(crate) fn commit_current_list<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<crate::mode::ModeLevelSummary, ExecError> {
-    flush_pending_hchars(nest, stores, fuel)?;
+    flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
     nest.pop()
 }
 
 pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     insert_hyphen_discs: bool,
     suppress_right_boundary: bool,
     fuel: &mut tex_command::CommandFuel,
@@ -162,6 +193,7 @@ pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
     let no_boundary = nest.current_list().no_boundary();
     let nodes = match run_tfm_ligature_machine(
         stores,
+        diagnostic_effects,
         &pending.source,
         no_boundary,
         suppress_right_boundary,
@@ -268,13 +300,14 @@ pub(crate) fn append_control_space_glue_after_flush<G>(
 pub(crate) fn append_control_space_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     debug_assert!(matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ));
-    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
+    flush_pending_hchars_with_fuel(nest, stores, diagnostic_effects, fuel)?;
     append_control_space_glue_after_flush(nest, stores)
 }
 
@@ -290,13 +323,14 @@ pub(crate) fn control_space_glue_spec<G>(stores: &CommandContext<'_, G>) -> Glue
 pub(crate) fn append_hchar_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     ch: char,
     origin: OriginId,
     etex_extended: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let mode = nest.current_mode();
-    fix_hyphen_language_with_fuel(nest, stores, mode, fuel)?;
+    fix_hyphen_language_with_fuel(nest, stores, diagnostic_effects, mode, fuel)?;
     let font = stores.current_font();
     let character_exists = stores.font_character_exists(font, ch);
     let font_is_ltr_shaping = stores.font_is_left_to_right_shaping(font);
@@ -312,7 +346,14 @@ pub(crate) fn append_hchar_with_fuel<G>(
         });
         if flush_incompatible_run {
             let insert_hyphen_discs = mode == Mode::Horizontal;
-            flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, false, fuel)?;
+            flush_pending_hchar_run_with_fuel(
+                nest,
+                stores,
+                diagnostic_effects,
+                insert_hyphen_discs,
+                false,
+                fuel,
+            )?;
         }
         let mut list = nest.current_list_mutation();
         append_pending_hchar(
@@ -327,8 +368,21 @@ pub(crate) fn append_hchar_with_fuel<G>(
         update_space_factor(&mut list, stores, ch);
         return Ok(());
     }
-    flush_pending_hchar_run_with_fuel(nest, stores, mode == Mode::Horizontal, false, fuel)?;
-    crate::diagnostics::report_missing_character_warning(stores, font, ch, etex_extended);
+    flush_pending_hchar_run_with_fuel(
+        nest,
+        stores,
+        diagnostic_effects,
+        mode == Mode::Horizontal,
+        false,
+        fuel,
+    )?;
+    crate::diagnostics::report_missing_character_warning(
+        stores,
+        diagnostic_effects,
+        font,
+        ch,
+        etex_extended,
+    );
     Ok(())
 }
 
@@ -365,6 +419,7 @@ pub(crate) fn current_hyphen_context<G>(stores: &CommandContext<'_, G>) -> (u8, 
 pub(crate) fn indent_in_hmode<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     indent: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -394,7 +449,7 @@ pub(crate) fn indent_in_hmode<G>(
                 MathField::SubBox(list),
             )));
     } else {
-        flush_pending_hchars(nest, stores, fuel)?;
+        flush_pending_hchars(nest, stores, diagnostic_effects, fuel)?;
         nest.current_list_mutation().set_space_factor(1000);
         let indent_box = make_indent_box(stores);
         nest.current_list_mutation().push(indent_box);
@@ -405,6 +460,7 @@ pub(crate) fn indent_in_hmode<G>(
 pub(crate) fn fix_hyphen_language_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     mode: Mode,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -420,10 +476,11 @@ pub(crate) fn fix_hyphen_language_with_fuel<G>(
     // own flush rather than leaving it to `append_whatsit` because the caller
     // names the mode, so this run hyphenates even when the nest has already
     // moved on; `append_whatsit`'s flush then finds nothing pending.
-    flush_pending_hchar_run_with_fuel(nest, stores, true, false, fuel)?;
+    flush_pending_hchar_run_with_fuel(nest, stores, diagnostic_effects, true, false, fuel)?;
     append_whatsit(
         nest,
         stores,
+        diagnostic_effects,
         fuel,
         tex_state::node::Whatsit::Language {
             language,
@@ -645,6 +702,7 @@ pub(crate) fn reshape_open_type_runs<G>(stores: &CommandContext<'_, G>, nodes: &
 
 pub(crate) fn reconstitute_with_fuel<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     pending: &[crate::mode::PendingHChar],
     no_left_boundary: bool,
     insert_hyphen_discs: bool,
@@ -652,6 +710,7 @@ pub(crate) fn reconstitute_with_fuel<G>(
 ) -> Result<Vec<Node>, tex_command::CommandError> {
     run_tfm_ligature_machine(
         stores,
+        diagnostic_effects,
         pending,
         no_left_boundary,
         false,
@@ -778,6 +837,7 @@ pub(crate) fn replacement_glyph(
 /// retain/delete and pass-over bits move one authoritative cursor.
 pub(crate) fn run_tfm_ligature_machine<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     source: &[crate::mode::PendingHChar],
     no_left_boundary: bool,
     suppress_right_boundary: bool,
@@ -854,7 +914,11 @@ pub(crate) fn run_tfm_ligature_machine<G>(
                 && !stores.font_character_exists(right.font, right.ch)
             {
                 crate::diagnostics::report_missing_character_warning(
-                    stores, right.font, right.ch, false,
+                    stores,
+                    diagnostic_effects,
+                    right.font,
+                    right.ch,
+                    false,
                 );
                 work.remove(right_index);
                 break;
@@ -958,7 +1022,11 @@ pub(crate) fn run_tfm_ligature_machine<G>(
                     && !stores.font_character_exists(glyph.font, glyph.ch)
                 {
                     crate::diagnostics::report_missing_character_warning(
-                        stores, glyph.font, glyph.ch, false,
+                        stores,
+                        diagnostic_effects,
+                        glyph.font,
+                        glyph.ch,
+                        false,
                     );
                     continue;
                 }
@@ -1275,9 +1343,10 @@ pub(crate) fn fixed_infinite_glue(primitive: UnexpandablePrimitive) -> GlueSpec 
 pub(crate) fn append_italic_correction_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
+    flush_pending_hchars_with_fuel(nest, stores, diagnostic_effects, fuel)?;
     let Some((font, ch)) = last_font_char(nest.current_list().nodes()) else {
         return Ok(());
     };

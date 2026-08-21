@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
@@ -34,10 +35,11 @@ pub(crate) enum SelectedPageOutput {
 /// owns replay of `\\output` itself.
 pub(crate) fn select_pending_page_output<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fire_up: PageFireUp,
     diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<SelectedPageOutput, ExecError> {
-    prepare_box255(stores, fire_up, &diagnostic_context)?;
+    prepare_box255(stores, diagnostic_effects, fire_up, &diagnostic_context)?;
     let output_is_empty = stores
         .token_parameter(TokParam::OUTPUT)
         .expect("output token parameter is admitted")
@@ -68,26 +70,42 @@ pub(crate) fn select_pending_page_output<G>(
 /// closed.  `output_nodes` is the internal-vertical list built by the routine.
 pub(crate) fn resume_page_builder_after_output<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     output_nodes: Vec<Node>,
     diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     if let Some(box255) = stores.copy_box_to_page(255) {
         stores.clear_box_preserving_level(255);
-        report_box255_not_emptied(stores, box255, diagnostic_context.output_context.clone())?;
+        report_box255_not_emptied(
+            stores,
+            diagnostic_effects,
+            box255,
+            diagnostic_context.output_context.clone(),
+        )?;
     }
     stores.clear_page_discards();
     prepend_output_heldover(stores, output_nodes, false);
-    crate::page_builder::build_page_with_diagnostic_context(stores, &diagnostic_context)
+    crate::page_builder::build_page_with_diagnostic_context(
+        stores,
+        diagnostic_effects,
+        &diagnostic_context,
+    )
 }
 
 pub(crate) fn prepare_box255<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     fire_up: PageFireUp,
     diagnostic_context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     if let Some(box255) = stores.copy_box_to_page(255) {
         stores.clear_box_preserving_level(255);
-        report_box255_not_void(stores, box255, Some(&diagnostic_context.output_context))?;
+        report_box255_not_void(
+            stores,
+            diagnostic_effects,
+            box255,
+            Some(&diagnostic_context.output_context),
+        )?;
     }
 
     let split_index = fire_up.best_break().index();
@@ -102,12 +120,14 @@ pub(crate) fn prepare_box255<G>(
         )
         .expect("output penalty assignment targets admitted state");
     stores.prepend_page_contributions(after_break);
-    let distributed = distribute_insertions(stores, diagnostic_context, page_nodes)?;
+    let distributed =
+        distribute_insertions(stores, diagnostic_effects, diagnostic_context, page_nodes)?;
     update_page_marks_at_fire_up(stores, &distributed.page_nodes);
 
     let page_list = stores.publish_page_nodes(distributed.page_nodes);
     let packed = vpack(
         stores,
+        diagnostic_effects,
         diagnostic_context,
         page_list,
         PackSpec::Exactly(fire_up.best_size()),
@@ -220,6 +240,7 @@ struct SplitInsertionContext {
 
 fn distribute_insertions<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     diagnostic_context: &ExecutionDiagnosticContext,
     page_nodes: Vec<Node>,
 ) -> Result<DistributedInsertions, ExecError> {
@@ -238,7 +259,12 @@ fn distribute_insertions<G>(
             queues.insert(
                 insertion.class(),
                 InsertionQueue {
-                    nodes: insertion_box_nodes(stores, insertion.class(), diagnostic_context)?,
+                    nodes: insertion_box_nodes(
+                        stores,
+                        diagnostic_effects,
+                        insertion.class(),
+                        diagnostic_context,
+                    )?,
                     best_ins_index,
                     status: insertion.status(),
                     accepting: true,
@@ -321,12 +347,18 @@ fn distribute_insertions<G>(
 
 fn insertion_box_nodes<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
     diagnostic_context: &ExecutionDiagnosticContext,
 ) -> Result<Vec<Node>, ExecError> {
     // TeX82 §1018 calls §993's `ensure_vbox` again here because an output
     // routine or assignment can replace the class register after page setup.
-    let Some(list) = crate::page_builder::ensure_insertion_vbox(stores, class, diagnostic_context)?
+    let Some(list) = crate::page_builder::ensure_insertion_vbox(
+        stores,
+        diagnostic_effects,
+        class,
+        diagnostic_context,
+    )?
     else {
         return Ok(Vec::new());
     };
@@ -484,6 +516,7 @@ pub(crate) fn report_output_loop<G>(
 /// TeX.web §1015's `<Ensure that box 255 is empty before output>`.
 fn report_box255_not_void<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     deleted: PageListId,
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
@@ -498,13 +531,14 @@ fn report_box255_not_void<G>(
         ])
         .context(context);
     report.error().jump_out()?;
-    report_deleted_box(stores, deleted);
+    report_deleted_box(stores, diagnostic_effects, deleted);
     Ok(())
 }
 
 /// TeX.web §1028's `<Ensure that box 255 is empty after output>`.
 pub(crate) fn report_box255_not_emptied<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     deleted: PageListId,
     context: String,
 ) -> Result<(), ExecError> {
@@ -519,18 +553,22 @@ pub(crate) fn report_box255_not_emptied<G>(
         ])
         .context(context);
     report.error().jump_out()?;
-    report_deleted_box(stores, deleted);
+    report_deleted_box(stores, diagnostic_effects, deleted);
     Ok(())
 }
 
 /// TeX82 §199's `box_error` tail after the caller's recoverable error.
-fn report_deleted_box<G>(stores: &mut CommandContext<'_, G>, deleted: PageListId) {
+fn report_deleted_box<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    deleted: PageListId,
+) {
     let dump = crate::node_dump::dump_page_list(
         stores,
         deleted,
         crate::node_dump::DumpConfig::read(stores),
     );
-    let mut diagnostic = stores.begin_diagnostic();
+    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     diagnostic
         .print_nl("The following box has been deleted:")
         .print_ln()
