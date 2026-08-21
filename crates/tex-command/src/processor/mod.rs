@@ -514,7 +514,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
 
     /// Lends a run-owned monotonic ledger to this processor episode.
     #[must_use]
-    pub fn with_fuel(mut self, fuel: &'a mut CommandFuel) -> Self {
+    pub fn with_fuel(mut self, fuel: &'episode mut CommandFuel) -> Self {
         self.fuel = ProcessorFuel::Shared(fuel);
         self
     }
@@ -558,7 +558,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     /// `observe!` macro, which does not evaluate its payload unless the shared
     /// runtime predicate returns true.
     #[must_use]
-    pub fn with_observer(mut self, observer: &'a mut dyn CommandObserver) -> Self {
+    pub fn with_observer(mut self, observer: &'episode mut dyn CommandObserver) -> Self {
         self.observer = Some(observer);
         self
     }
