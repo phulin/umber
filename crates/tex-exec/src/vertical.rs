@@ -33,7 +33,9 @@ pub(crate) fn append_node_to_vertical_list<G>(
     if let Some(prev_depth) = nest.current_list().prev_depth()
         && prev_depth.raw() > ignored_depth(stores).raw()
     {
-        let baseline = stores.glue(stores.glue_param(GlueParam::BASELINE_SKIP));
+        let baseline = stores
+            .glue_param(GlueParam::BASELINE_SKIP)
+            .map_or(GlueSpec::ZERO, |id| stores.glue(id));
         let requested = baseline
             .width
             .checked_sub(prev_depth)
@@ -42,7 +44,9 @@ pub(crate) fn append_node_to_vertical_list<G>(
         let (spec, kind) =
             if requested.raw() < stores.dimen_param(DimenParam::LINE_SKIP_LIMIT).raw() {
                 (
-                    stores.glue(stores.glue_param(GlueParam::LINE_SKIP)),
+                    stores
+                        .glue_param(GlueParam::LINE_SKIP)
+                        .map_or(GlueSpec::ZERO, |id| stores.glue(id)),
                     GlueKind::LineSkip,
                 )
             } else {

@@ -34,7 +34,7 @@ pub(crate) fn split_vbox_register<G>(
         .page_node_list(source)
         .expect("copied box belongs to the live page arena")
         .get(0)
-        .cloned();
+        .map(|node| node.to_owned_with(|id| id));
     let Some(source_node) = source_node else {
         clear_split_marks(stores);
         stores.clear_box_preserving_level(index);

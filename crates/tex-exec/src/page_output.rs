@@ -37,8 +37,11 @@ pub(crate) fn select_pending_page_output<G>(
     error_context: String,
 ) -> Result<SelectedPageOutput, ExecError> {
     prepare_box255(stores, fire_up, Some(&error_context))?;
-    let output = stores.tok_param(TokParam::OUTPUT);
-    if stores.tokens(output).is_empty() {
+    let output_is_empty = stores
+        .token_parameter(TokParam::OUTPUT)
+        .expect("output token parameter is admitted")
+        .is_none_or(|output| stores.token_list(output).is_empty());
+    if output_is_empty {
         prepend_output_heldover(stores, Vec::new(), true);
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
@@ -87,7 +90,13 @@ pub(crate) fn prepare_box255<G>(
     let page_max_depth = stores.page_max_depth();
     let (page_nodes, mut after_break) = stores.take_current_page_prefix(split_index);
     let output_penalty = output_penalty_and_rewrite_break(stores, &mut after_break, fire_up);
-    stores.set_int_param_global(IntParam::OUTPUT_PENALTY, output_penalty);
+    stores
+        .assign_int_param(
+            IntParam::OUTPUT_PENALTY,
+            output_penalty,
+            tex_state::AssignmentScope::Global,
+        )
+        .expect("output penalty assignment targets admitted state");
     stores.prepend_page_contributions(after_break);
     let distributed = distribute_insertions(stores, page_nodes, error_context)?;
     update_page_marks_at_fire_up(stores, &distributed.page_nodes);
@@ -528,7 +537,7 @@ pub(crate) fn take_box255_node<G>(stores: &mut CommandContext<'_, G>) -> Result<
         .page_node_list(owner)
         .expect("box 255 was copied into the live page arena")
         .get(0)
-        .cloned()
+        .map(|node| node.to_owned_with(|id| id))
         .ok_or(ExecError::MissingToken { context: "box" })
 }
 

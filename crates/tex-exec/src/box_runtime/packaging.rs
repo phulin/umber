@@ -1,8 +1,8 @@
 //! Source-free horizontal packing and box-register lookup.
 
+use tex_state::CommandContext;
 use tex_state::node::Node;
 use tex_state::node_arena::PageListId;
-use tex_state::{CommandContext, GeometryObservation};
 use tex_typeset::{PackDiagnostic, PackSpec, plan_hpack_nodes};
 
 use crate::packing_params::{hpack_params, recover_texxet_directions};
@@ -179,7 +179,7 @@ fn physical_discretionary_projection<G>(
             physical.extend(replace);
         }
     }
-    let physical = stores.publish_page_nodes_owned(&mut physical);
+    let physical = stores.publish_page_nodes(physical);
     Some(physical)
 }
 
@@ -231,7 +231,7 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
     } else {
         crate::pack_report::DiagnosticListLayout::FrozenList
     };
-    let children = stores.publish_page_nodes_owned(nodes);
+    let children = stores.publish_page_nodes(std::mem::take(nodes));
     let mut packed = plan.finish(children);
     packed.node.allocator_high_cell_overlap = if diagnostic_nodes.is_some() {
         allocator_high_cell_overlap
@@ -239,15 +239,8 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
         0
     };
     stores.set_last_badness(packed.badness);
-    stores.record_geometry_observation(GeometryObservation::Hpack {
-        width_sp: i64::from(packed.node.width.raw()),
-        height_sp: i64::from(packed.node.height.raw()),
-        depth_sp: i64::from(packed.node.depth.raw()),
-        line: stores.current_input_line().max(0) as u32,
-        source: stores.current_input_source(),
-    });
     let diagnostic_box = if let Some(nodes) = diagnostic_nodes {
-        let diagnostic_children = stores.publish_page_nodes(nodes);
+        let diagnostic_children = stores.publish_page_nodes(std::mem::take(nodes));
         let children = stores.publish_page_nodes(
             short_diagnostic_nodes
                 .as_deref()
@@ -320,6 +313,6 @@ pub(crate) fn first_box_node<G>(
         .page_node_list(owner?)
         .ok()?
         .get(0)
-        .cloned()
+        .map(|node| node.to_owned_with(|id| id))
         .filter(|node| matches!(node, Node::HList(_) | Node::VList(_)))
 }

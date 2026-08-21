@@ -45,7 +45,13 @@ pub(crate) fn take_register_payload<G>(
         stores.take_box_to_page(index)
     };
     owner
-        .and_then(|owner| stores.page_node_list(owner).ok()?.get(0).cloned())
+        .and_then(|owner| {
+            stores
+                .page_node_list(owner)
+                .ok()?
+                .get(0)
+                .map(|node| node.to_owned_with(|id| id))
+        })
         .and_then(payload_from_node)
 }
 

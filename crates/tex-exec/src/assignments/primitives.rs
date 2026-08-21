@@ -1,25 +1,28 @@
 use tex_command::{ParameterBankClass, PrimitiveProfile, primitive_parameter_views};
-use tex_state::CommandContext;
+use tex_state::Universe;
+use tex_state::env::AssignmentScope;
 use tex_state::env::banks::IntParam;
 
 /// Installs TeX82's complete non-expandable catalogue layer.
-pub fn install_unexpandable_primitives<G>(stores: &mut CommandContext<'_, G>) {
+pub fn install_unexpandable_primitives<G>(stores: &mut Universe<G>) {
     tex_command::install_tex82_unexpandable_primitives(stores);
 }
 
 /// Reconstructs TeX82's primitive registry without shadowing format meanings.
-pub fn register_unexpandable_primitives<G>(stores: &mut CommandContext<'_, G>) {
+pub fn register_unexpandable_primitives<G>(stores: &mut Universe<G>) {
     tex_command::register_tex82_unexpandable_primitives(stores);
 }
 
 /// Installs the complete e-TeX non-expandable catalogue layer.
-pub fn install_etex_unexpandable_primitives<G>(stores: &mut CommandContext<'_, G>) {
-    stores.set_int_param_global(IntParam::ETEX_EXTENDED_MODE, 1);
+pub fn install_etex_unexpandable_primitives<G>(stores: &mut Universe<G>) {
+    stores
+        .assign_int_param(IntParam::ETEX_EXTENDED_MODE, 1, AssignmentScope::Global)
+        .expect("e-TeX mode assignment targets admitted state");
     tex_command::install_etex_unexpandable_primitives(stores);
 }
 
 /// Reconstructs the e-TeX registry without shadowing format meanings.
-pub fn register_etex_unexpandable_primitives<G>(stores: &mut CommandContext<'_, G>) {
+pub fn register_etex_unexpandable_primitives<G>(stores: &mut Universe<G>) {
     tex_command::register_etex_unexpandable_primitives(stores);
 }
 

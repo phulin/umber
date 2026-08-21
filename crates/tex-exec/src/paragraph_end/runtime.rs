@@ -159,7 +159,7 @@ pub(crate) fn break_current_paragraph<G>(
             .filter(|node| !matches!(node, Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_)))
             .collect::<Vec<_>>();
         let needs_physical_diagnostic =
-            discretionary_diagnostics_differ(&diagnostic_nodes, &broken.nodes);
+            discretionary_diagnostics_differ(stores, &diagnostic_nodes, &broken.nodes);
         let allocator_high_cell_overlap = if needs_physical_diagnostic {
             tex_state::node_sequence::direct_high_cell_overlap(
                 &broken.high_cell_lineages,
@@ -226,7 +226,11 @@ pub(crate) fn break_current_paragraph<G>(
 /// reconstitution can change pre/post branches while leaving the count
 /// unchanged. Compare the ordered discretionary records explicitly, while
 /// retaining the count-vs-side-list guard for flattened physical topology.
-fn discretionary_diagnostics_differ(physical: &[Node], semantic: &[Node]) -> bool {
+fn discretionary_diagnostics_differ<G>(
+    stores: &CommandContext<'_, G>,
+    physical: &[Node],
+    semantic: &[Node],
+) -> bool {
     let mut semantic = semantic.iter().filter_map(|node| match node {
         Node::Disc {
             kind,
@@ -1127,13 +1131,23 @@ pub(crate) fn normal_paragraph<G>(_nest: &mut ModeNest, stores: &mut CommandCont
     // unwinds them in reverse, so `\parshape` is traced before `\hangafter`,
     // `\hangindent`, and `\looseness`.
     if stores.int_param(IntParam::LOOSENESS) != 0 {
-        stores.set_int_param(IntParam::LOOSENESS, 0);
+        stores
+            .assign_int_param(IntParam::LOOSENESS, 0, tex_state::AssignmentScope::Local)
+            .expect("paragraph reset targets admitted state");
     }
     if stores.dimen_param(DimenParam::HANG_INDENT).raw() != 0 {
-        stores.set_dimen_param(DimenParam::HANG_INDENT, Scaled::from_raw(0));
+        stores
+            .assign_dimen_param(
+                DimenParam::HANG_INDENT,
+                Scaled::from_raw(0),
+                tex_state::AssignmentScope::Local,
+            )
+            .expect("paragraph reset targets admitted state");
     }
     if stores.int_param(IntParam::HANG_AFTER) != 1 {
-        stores.set_int_param(IntParam::HANG_AFTER, 1);
+        stores
+            .assign_int_param(IntParam::HANG_AFTER, 1, tex_state::AssignmentScope::Local)
+            .expect("paragraph reset targets admitted state");
     }
     stores.set_paragraph_shape(&[], false);
 }

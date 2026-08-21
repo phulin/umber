@@ -1,10 +1,10 @@
 //! Execution-side snapshots of packing parameters.
 
+use tex_state::CommandContext;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::{Direction, KernKind, Node};
 use tex_state::node_arena::PageListId;
 use tex_state::scaled::Scaled;
-use tex_state::{CommandContext, GeometryObservation};
 use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
 
 use crate::pack_report::{DiagnosticListLayout, PackedDirection, report_pack_diagnostics};
@@ -70,13 +70,6 @@ pub(crate) fn hpack_unreported<G>(
         params,
     );
     stores.set_last_badness(packed.badness);
-    stores.record_geometry_observation(GeometryObservation::Hpack {
-        width_sp: i64::from(packed.node.width.raw()),
-        height_sp: i64::from(packed.node.height.raw()),
-        depth_sp: i64::from(packed.node.depth.raw()),
-        line: stores.current_input_line().max(0) as u32,
-        source: stores.current_input_source(),
-    });
     (packed, lr_problems)
 }
 
@@ -152,13 +145,6 @@ pub(crate) fn vpack<G>(
         params,
     );
     stores.set_last_badness(packed.badness);
-    stores.record_geometry_observation(GeometryObservation::Vpack {
-        width_sp: i64::from(packed.node.width.raw()),
-        height_sp: i64::from(packed.node.height.raw()),
-        depth_sp: i64::from(packed.node.depth.raw()),
-        line: stores.current_input_line().max(0) as u32,
-        source: stores.current_input_source(),
-    });
     report_pack_diagnostics(
         stores,
         PackedDirection::Vertical,

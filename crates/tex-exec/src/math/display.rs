@@ -97,6 +97,9 @@ pub(crate) fn finish_display_math<G>(
     // leaving zero-dimensional wrappers inside its packed hlist.
     let (display_nodes, pre_migrated, migrated) = split_hpack_migrations(stores, display_nodes);
     let shrink = hlist_shrink(stores, &display_nodes);
+    let display_starts_with_glue = display_nodes
+        .first()
+        .is_some_and(|node| matches!(node, Node::Glue { .. }));
     let display_list = stores.publish_page_nodes(display_nodes);
     let mut display_box = hpack_nodes(
         stores,
@@ -149,10 +152,7 @@ pub(crate) fn finish_display_math<G>(
     let mut d = Scaled::from_raw(tex_half(scaled_sub(z, w).raw()));
     if e.raw() > 0 && d < scaled_mul(2, e) {
         d = Scaled::from_raw(tex_half(scaled_sub(scaled_sub(z, w), e).raw()));
-        if display_nodes
-            .first()
-            .is_some_and(|node| matches!(node, Node::Glue { .. }))
-        {
+        if display_starts_with_glue {
             d = Scaled::from_raw(0);
         }
     }
@@ -399,7 +399,7 @@ fn hlist_shrink<G>(stores: &CommandContext<'_, G>, nodes: &[Node]) -> ShrinkTota
     let mut totals = [Scaled::from_raw(0); 4];
     for node in nodes {
         if let Node::Glue { spec, .. } = node {
-            let glue = *spec;
+            let glue = spec;
             totals[glue.shrink_order as usize] = totals[glue.shrink_order as usize] + glue.shrink;
         }
     }
@@ -461,7 +461,7 @@ fn pre_display_node_width<G>(
         | tex_state::node_arena::NodeRef::MathOn(amount)
         | tex_state::node_arena::NodeRef::MathOff(amount) => (amount, false, false),
         tex_state::node_arena::NodeRef::Glue { spec, .. } => {
-            let glue = *spec;
+            let glue = spec;
             let depends = match line.glue_sign {
                 Sign::Stretching => {
                     line.glue_order == glue.stretch_order && glue.stretch.raw() != 0

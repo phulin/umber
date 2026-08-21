@@ -791,9 +791,9 @@ fn automatic_discretionary_with_count<G>(
     physical_replace_count: u8,
 ) -> Option<Node> {
     (physical_replace_count <= 127).then(|| {
-        let pre = stores.publish_page_nodes(pre);
-        let post = stores.publish_page_nodes(post);
-        let replace = stores.publish_page_nodes(replace);
+        let pre = stores.publish_page_nodes(pre.to_vec());
+        let post = stores.publish_page_nodes(post.to_vec());
+        let replace = stores.publish_page_nodes(replace.to_vec());
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
             pre,

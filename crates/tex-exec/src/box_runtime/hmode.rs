@@ -887,7 +887,7 @@ pub(crate) fn run_tfm_ligature_machine<G>(
             continue;
         }
 
-        let Some(command) = stores.tfm_lig_kern_command(font, left_code, right_code) else {
+        let Some(command) = stores.font_lig_kern_command(font, left_code, right_code) else {
             cursor = Some(right_index);
             continue;
         };
@@ -1191,7 +1191,9 @@ pub(crate) fn interword_glue<G>(
     stores: &CommandContext<'_, G>,
     space_factor: i32,
 ) -> (GlueSpec, GlueKind) {
-    let xspace = stores.glue(stores.glue_param(GlueParam::XSPACE_SKIP));
+    let xspace = stores
+        .glue_param(GlueParam::XSPACE_SKIP)
+        .map_or(GlueSpec::ZERO, |id| stores.glue(id));
     if space_factor >= 2000 && xspace != GlueSpec::ZERO {
         // TeX82 §1042 appends a nonzero `\xspaceskip` verbatim.
         return (xspace, GlueKind::XSpaceSkip);
@@ -1203,7 +1205,9 @@ pub(crate) fn space_skip_or_font_space<G>(
     stores: &CommandContext<'_, G>,
     space_factor: i32,
 ) -> (GlueSpec, GlueKind) {
-    let override_spec = stores.glue(stores.glue_param(GlueParam::SPACE_SKIP));
+    let override_spec = stores
+        .glue_param(GlueParam::SPACE_SKIP)
+        .map_or(GlueSpec::ZERO, |id| stores.glue(id));
     if override_spec != GlueSpec::ZERO {
         // TeX82 §1042 scales nonzero `\spaceskip` through `app_space`.
         let mut spec = override_spec;

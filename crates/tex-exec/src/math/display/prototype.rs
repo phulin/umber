@@ -154,7 +154,7 @@ pub(super) fn package_directed_display_line<G>(
             }
             _ => panic!("e-TeX display prototype right boundary is glue or kern"),
         }
-        let children = stores.publish_page_nodes_owned(&mut children);
+        let children = stores.publish_page_nodes(children);
         prototype.children = children;
         return prototype;
     }
