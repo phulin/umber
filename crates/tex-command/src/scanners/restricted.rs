@@ -23,6 +23,8 @@ use crate::profile::{CharacterMode, CommandProfile};
 use crate::scanners::scalar::ScalarProvenance;
 use crate::{CommandError, processor::CommandProcessor};
 
+const RESTRICTED_INTEGER_DIAGNOSTIC: u64 = 0x7265_7374_0000_0433;
+
 /// One of TeX82's five restricted integer classes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RestrictedIntegerClass {
@@ -63,6 +65,35 @@ impl RestrictedIntegerClass {
             Self::FourBit => "Since I expected to read a number between 0 and 15,",
             Self::FifteenBit => "A mathchar number must be between 0 and 32767.",
             Self::TwentySevenBit => "A numeric delimiter code must be between 0 and 2^{27}-1.",
+        }
+    }
+
+    pub const fn help_lines(self) -> &'static [&'static str] {
+        match self {
+            Self::EightBit => &[
+                "A register number must be between 0 and 255.",
+                "I changed this one to zero.",
+            ],
+            Self::Register => &[
+                "A register number must be between 0 and 32767.",
+                "I changed this one to zero.",
+            ],
+            Self::CharacterCode => &[
+                "A character number must be between 0 and 255.",
+                "I changed this one to zero.",
+            ],
+            Self::FourBit => &[
+                "Since I expected to read a number between 0 and 15,",
+                "I changed this one to zero.",
+            ],
+            Self::FifteenBit => &[
+                "A mathchar number must be between 0 and 32767.",
+                "I changed this one to zero.",
+            ],
+            Self::TwentySevenBit => &[
+                "A numeric delimiter code must be between 0 and 2^{27}-1.",
+                "I changed this one to zero.",
+            ],
         }
     }
 
@@ -118,18 +149,34 @@ impl<G> CommandProcessor<'_, '_, G> {
         let recovered = !accepted;
         if recovered {
             // §433-§437 report from inside the scan, before the command that
-            // asked for the register ever runs. Reporting here rather than
-            // handing the executor a queued recovery is what keeps the report
-            // ahead of everything the rest of the step prints -- §362's `)`
-            // in particular, which a still-open file emits the moment its
-            // last line is consumed, and which tex.web puts *after* this
-            // diagnostic because the file is still open while `scan_int`
-            // reads from it.
+            // asked for the register ever runs. With no earlier detached
+            // output, reporting synchronously keeps this ahead of §362's `)`
+            // when the last input line is consumed. A preceding trace instead
+            // makes the owned report cross admission so the executor can
+            // publish that trace first without exposing World here.
             let context = self.command.output_open_context(&self.state);
+            if self.has_pending_diagnostic_effects()
+                || !self.command.semantic_diagnostics.is_empty()
+                || self.command.expanding_deferred_write()
+            {
+                self.command.semantic_diagnostics.push(
+                    crate::CommandSemanticDiagnostic::Recoverable {
+                        identity: RESTRICTED_INTEGER_DIAGNOSTIC,
+                        runaway: None,
+                        message: class.message().into(),
+                        help: class.help_lines(),
+                        context,
+                    },
+                );
+                return Ok(RestrictedInteger {
+                    value: 0,
+                    scanned: scanned.value,
+                    recovered,
+                    provenance: scanned.provenance,
+                });
+            }
             let mut report = self.state.print_err(class.message());
-            report
-                .help(&[class.help(), "I changed this one to zero."])
-                .context(context);
+            report.help(class.help_lines()).context(context);
             // §81's `jump_out` never returns to the interrupted scan.
             report.int_error(scanned.value).jump_out()?;
         }

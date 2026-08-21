@@ -298,6 +298,10 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         self.state.begin_diagnostic(self.diagnostic_effects)
     }
 
+    pub(crate) fn has_pending_diagnostic_effects(&self) -> bool {
+        !self.diagnostic_effects.is_empty()
+    }
+
     /// Retires this borrow facade and returns its unique admitted state view.
     ///
     /// Callers use this linear handoff when one command episode must perform
