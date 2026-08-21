@@ -20,6 +20,7 @@ use crate::journal::{JournalCursor, JournalEntry, Mutation, MutationKind, SaveJo
 use crate::meaning::{MeaningWord, ResolvedMeaning};
 use crate::node_arena::DurableListId;
 use crate::scaled::Scaled;
+use crate::world::JobClock;
 
 #[cfg(test)]
 #[path = "env/tests.rs"]
@@ -33,6 +34,85 @@ const MATH_FAMILY_FONT_COUNT: usize = 48;
 pub enum AssignmentScope {
     Local,
     Global,
+}
+
+/// One semantic profile layer admitted during fresh engine construction.
+///
+/// Restored formats do not install these layers: their dense parameter banks
+/// are already authoritative.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FreshParameterProfile {
+    Tex82,
+    Etex26,
+    Pdftex14029,
+}
+
+impl FreshParameterProfile {
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Tex82 => 1 << 0,
+            Self::Etex26 => 1 << 1,
+            Self::Pdftex14029 => 1 << 2,
+        }
+    }
+}
+
+/// One physical dense-bank value in a fresh profile batch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FreshParameterDefault {
+    Integer(banks::IntParam, i32),
+    Dimension(banks::DimenParam, Scaled),
+    EmptyGlue(banks::GlueParam),
+    EmptyTokens(banks::TokParam),
+}
+
+impl FreshParameterDefault {
+    const fn cell(self) -> (FreshParameterBank, u16) {
+        match self {
+            Self::Integer(parameter, _) => (FreshParameterBank::Integer, parameter.raw()),
+            Self::Dimension(parameter, _) => (FreshParameterBank::Dimension, parameter.raw()),
+            Self::EmptyGlue(parameter) => (FreshParameterBank::Glue, parameter.raw()),
+            Self::EmptyTokens(parameter) => (FreshParameterBank::Tokens, parameter.raw()),
+        }
+    }
+}
+
+/// Dense parameter bank named by a rejected fresh-profile entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FreshParameterBank {
+    Integer,
+    Dimension,
+    Glue,
+    Tokens,
+}
+
+impl FreshParameterBank {
+    const fn slot(self) -> usize {
+        match self {
+            Self::Integer => 0,
+            Self::Dimension => 1,
+            Self::Glue => 2,
+            Self::Tokens => 3,
+        }
+    }
+}
+
+/// Result of an exact-once fresh profile installation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FreshParameterInstallation {
+    Installed,
+    AlreadyInstalled,
+}
+
+/// A fresh parameter profile batch violated the construction contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FreshParameterInstallError {
+    Retired,
+    MissingTex82Base(FreshParameterProfile),
+    DuplicateCell {
+        bank: FreshParameterBank,
+        index: u16,
+    },
 }
 
 /// The six eqtb code-table families.
@@ -164,6 +244,7 @@ pub(crate) struct DenseState<G> {
     mathcodes: PagedDenseBank<i64>,
     delcodes: PagedDenseBank<i64>,
     font_runtime: FontRuntimeBank,
+    fresh_parameter_profiles: u8,
     journal: SaveJournal<G>,
     groups: Vec<GroupFrame>,
     next_group_lineage: u64,
@@ -196,10 +277,75 @@ impl<G> DenseState<G> {
             mathcodes: PagedDenseBank::new(UNICODE_SCALAR_COUNT, mathcode_default, LEVEL_ONE)?,
             delcodes: PagedDenseBank::new(UNICODE_SCALAR_COUNT, delcode_default, LEVEL_ONE)?,
             font_runtime: FontRuntimeBank::new(),
+            fresh_parameter_profiles: 0,
             journal: SaveJournal::new(),
             groups: Vec::new(),
             next_group_lineage: 1,
         })
+    }
+
+    /// Installs one complete fresh profile layer without creating TeX
+    /// assignment history. All cells are validated before the first write.
+    pub(crate) fn install_fresh_parameter_profile(
+        &mut self,
+        profile: FreshParameterProfile,
+        defaults: &[FreshParameterDefault],
+    ) -> Result<FreshParameterInstallation, FreshParameterInstallError> {
+        let bit = profile.bit();
+        if self.fresh_parameter_profiles & bit != 0 {
+            return Ok(FreshParameterInstallation::AlreadyInstalled);
+        }
+        if profile != FreshParameterProfile::Tex82
+            && self.fresh_parameter_profiles & FreshParameterProfile::Tex82.bit() == 0
+        {
+            return Err(FreshParameterInstallError::MissingTex82Base(profile));
+        }
+
+        let mut seen = [[false; PARAMETER_COUNT]; 4];
+        for &default in defaults {
+            let (bank, index) = default.cell();
+            let seen = &mut seen[bank.slot()][usize::from(index)];
+            if *seen {
+                return Err(FreshParameterInstallError::DuplicateCell { bank, index });
+            }
+            *seen = true;
+        }
+
+        for &default in defaults {
+            match default {
+                FreshParameterDefault::Integer(parameter, value) => self
+                    .integer_parameters
+                    .write(u32::from(parameter.raw()), BankCell::level_one(value))
+                    .expect("typed integer parameter fits the fixed bank"),
+                FreshParameterDefault::Dimension(parameter, value) => self
+                    .dimension_parameters
+                    .write(u32::from(parameter.raw()), BankCell::level_one(value))
+                    .expect("typed dimension parameter fits the fixed bank"),
+                FreshParameterDefault::EmptyGlue(parameter) => self
+                    .glue_parameters
+                    .write(u32::from(parameter.raw()), BankCell::level_one(None))
+                    .expect("typed glue parameter fits the fixed bank"),
+                FreshParameterDefault::EmptyTokens(parameter) => self
+                    .token_parameters
+                    .write(u32::from(parameter.raw()), BankCell::level_one(None))
+                    .expect("typed token parameter fits the fixed bank"),
+            }
+        }
+        self.fresh_parameter_profiles |= bit;
+        Ok(FreshParameterInstallation::Installed)
+    }
+
+    /// Applies tex.web §241's volatile job clock outside TeX assignment
+    /// history. This is valid for both fresh and restored jobs.
+    pub(crate) fn refresh_job_clock(&mut self, clock: JobClock) {
+        crate::world::install_job_clock_params(
+            &mut |parameter, value| {
+                self.integer_parameters
+                    .write(u32::from(parameter.raw()), BankCell::level_one(value))
+                    .expect("job-clock parameter fits the fixed bank");
+            },
+            clock,
+        );
     }
 
     /// Admits a session-validated symbol into the direct meaning bank.

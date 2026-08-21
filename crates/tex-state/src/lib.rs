@@ -149,7 +149,10 @@ pub use durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListI
 pub use effect_journal::EffectJournal;
 pub use engine_state::{EngineMode, EngineStateSnapshot};
 pub use env::group::{GroupFrame, GroupKind, GroupMismatch};
-pub use env::{AssignmentScope, CodeTableKind, StateError};
+pub use env::{
+    AssignmentScope, CodeTableKind, FreshParameterBank, FreshParameterDefault,
+    FreshParameterInstallError, FreshParameterInstallation, FreshParameterProfile, StateError,
+};
 pub use font::PdfFontCode;
 pub use generation::GenerationBrand;
 pub use input::{AlignmentScannerPhase, LiteralSpanPolicy, SourceId, TokenListReplayKind};

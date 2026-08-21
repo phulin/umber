@@ -422,6 +422,33 @@ pub struct Universe<G> {
 }
 
 impl<G> Universe<G> {
+    /// Atomically installs one canonical fresh profile layer in dense state.
+    /// Restored-format construction uses primitive registration instead and
+    /// must not call this method.
+    pub fn install_fresh_parameter_profile(
+        &mut self,
+        profile: crate::FreshParameterProfile,
+        defaults: &[crate::FreshParameterDefault],
+    ) -> Result<crate::FreshParameterInstallation, crate::FreshParameterInstallError> {
+        self.core
+            .as_mut()
+            .ok_or(crate::FreshParameterInstallError::Retired)?
+            .state_mut()
+            .install_fresh_parameter_profile(profile, defaults)
+    }
+
+    /// Refreshes tex.web §241's four volatile clock parameters from the
+    /// current host world without changing any restored format-owned cell.
+    pub fn refresh_job_clock_parameters(&mut self) -> Result<(), UniverseError> {
+        let clock = self.world.job_clock();
+        self.core
+            .as_mut()
+            .ok_or(UniverseError::Retired)?
+            .state_mut()
+            .refresh_job_clock(clock);
+        Ok(())
+    }
+
     #[must_use]
     pub fn with_provenance_config(
         mut self,

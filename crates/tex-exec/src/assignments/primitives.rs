@@ -1,7 +1,5 @@
 use tex_command::{ParameterBankClass, PrimitiveProfile, primitive_parameter_views};
 use tex_state::Universe;
-use tex_state::env::AssignmentScope;
-use tex_state::env::banks::IntParam;
 
 /// Installs TeX82's complete non-expandable catalogue layer.
 pub fn install_unexpandable_primitives<G>(stores: &mut Universe<G>) {
@@ -15,9 +13,6 @@ pub fn register_unexpandable_primitives<G>(stores: &mut Universe<G>) {
 
 /// Installs the complete e-TeX non-expandable catalogue layer.
 pub fn install_etex_unexpandable_primitives<G>(stores: &mut Universe<G>) {
-    stores
-        .assign_int_param(IntParam::ETEX_EXTENDED_MODE, 1, AssignmentScope::Global)
-        .expect("e-TeX mode assignment targets admitted state");
     tex_command::install_etex_unexpandable_primitives(stores);
 }
 

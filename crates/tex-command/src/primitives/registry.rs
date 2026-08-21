@@ -3,8 +3,8 @@ use tex_state::meaning::Meaning;
 use tex_state::meaning::MeaningFlags;
 
 use super::{
-    ExpansionClass, InstallationPolicy, PrimitiveProfile, primitive_parameter_views,
-    primitive_registrations, special_primitive_views,
+    ExpansionClass, InstallationPolicy, PrimitiveProfile, fresh_parameter_defaults,
+    primitive_parameter_views, primitive_registrations, special_primitive_views,
 };
 
 /// Installs TeX82's enum-backed unexpandable primitive meanings.
@@ -93,6 +93,7 @@ pub fn register_pdftex_unexpandable_primitives<G>(universe: &mut Universe<G>) {
 
 /// Installs TeX82's expandable primitive meanings for a fresh INITEX state.
 pub fn install_tex82_expandable_primitives<G>(universe: &mut Universe<G>) {
+    install_parameter_defaults(universe, PrimitiveProfile::Tex82);
     configure_tex82_expandable_primitives(universe, true);
 }
 
@@ -112,13 +113,7 @@ fn configure_tex82_expandable_primitives<G>(universe: &mut Universe<G>, install:
 
 /// Installs e-TeX 2.6's expandable primitive meanings for a fresh INITEX state.
 pub fn install_etex_expandable_primitives<G>(universe: &mut Universe<G>) {
-    universe
-        .assign_int_param(
-            tex_state::env::banks::IntParam::ETEX_EXTENDED_MODE,
-            1,
-            tex_state::AssignmentScope::Global,
-        )
-        .expect("e-TeX mode parameter is admitted");
+    install_parameter_defaults(universe, PrimitiveProfile::Etex26);
     configure_etex_expandable_primitives(universe, true);
 }
 
@@ -159,6 +154,7 @@ fn configure_latex_expandable_primitives<G>(universe: &mut Universe<G>, install:
 
 /// Installs pdfTeX 1.40.29's implemented expandable identity surface.
 pub fn install_pdftex_expandable_primitives<G>(universe: &mut Universe<G>) {
+    install_parameter_defaults(universe, PrimitiveProfile::Pdftex14029);
     configure_pdftex_expandable_primitives(universe, true);
 }
 
@@ -180,9 +176,24 @@ fn configure_pdftex_expandable_primitives<G>(universe: &mut Universe<G>, install
 }
 
 fn configure_parameters<G>(universe: &mut Universe<G>, install: bool, profile: PrimitiveProfile) {
+    if install {
+        install_parameter_defaults(universe, profile);
+    }
     for row in primitive_parameter_views(profile) {
         configure_primitive(universe, install, row.name, row.meaning);
     }
+}
+
+fn install_parameter_defaults<G>(universe: &mut Universe<G>, profile: PrimitiveProfile) {
+    let state_profile = match profile {
+        PrimitiveProfile::Tex82 => tex_state::FreshParameterProfile::Tex82,
+        PrimitiveProfile::Etex26 => tex_state::FreshParameterProfile::Etex26,
+        PrimitiveProfile::Pdftex14029 => tex_state::FreshParameterProfile::Pdftex14029,
+        PrimitiveProfile::LatexCompatibility => return,
+    };
+    universe
+        .install_fresh_parameter_profile(state_profile, &fresh_parameter_defaults(profile))
+        .expect("fresh primitive profiles install after the TeX82 base");
 }
 
 fn configure_specials<G>(

@@ -1,10 +1,13 @@
 //! Pinned pdfTeX 1.40.29 engine-layer inventory and mode registration.
 
 use tex_state::Universe;
+#[cfg(test)]
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
+#[cfg(test)]
 use tex_state::ids::TokenListId;
 #[cfg(test)]
 use tex_state::meaning::{InternalInteger, Meaning, UnexpandablePrimitive};
+#[cfg(test)]
 use tex_state::scaled::Scaled;
 
 pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
@@ -17,26 +20,6 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
 pub(crate) fn register_pdftex_layer(stores: &mut Universe) {
     tex_command::register_pdftex_unexpandable_primitives(stores);
     tex_command::register_pdftex_expandable_primitives(stores);
-}
-
-pub(crate) fn initialize_pdftex_parameter_defaults(stores: &mut Universe) {
-    for row in tex_command::primitive_parameter_views(tex_command::PrimitiveProfile::Pdftex14029) {
-        match row.default {
-            tex_command::ParameterDefault::Integer(value) => {
-                stores.set_int_param_global(IntParam::new(row.cell.index), value);
-            }
-            tex_command::ParameterDefault::Scaled(value) => {
-                stores.set_dimen_param_global(
-                    DimenParam::new(row.cell.index),
-                    Scaled::from_raw(value),
-                );
-            }
-            tex_command::ParameterDefault::EmptyTokens => {
-                stores.set_tok_param_global(TokParam::new(row.cell.index), TokenListId::EMPTY);
-            }
-            default => unreachable!("pdfTeX parameter catalogue default: {default:?}"),
-        }
-    }
 }
 
 #[cfg(test)]

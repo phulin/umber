@@ -981,7 +981,6 @@ pub fn prepare_etex_run_stores(stores: &mut Universe) {
 pub fn prepare_pdftex_run_stores(stores: &mut Universe) {
     prepare_etex_run_stores(stores);
     pdftex::install_pdftex_layer(stores);
-    pdftex::initialize_pdftex_parameter_defaults(stores);
     stores.enable_pdf_output();
 }
 

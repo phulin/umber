@@ -45,10 +45,16 @@ fn tex82_parameters() -> Vec<PrimitiveParameterView> {
         let parameter = IntParam::new(index);
         let name = TEX82_INT_PARAMETER_NAMES[index as usize];
         let default = match parameter {
+            IntParam::TOLERANCE => ParameterDefault::Integer(10_000),
+            IntParam::MAG => ParameterDefault::Integer(1_000),
             IntParam::TIME => ParameterDefault::JobClock(JobClockField::MinutesSinceMidnight),
             IntParam::DAY => ParameterDefault::JobClock(JobClockField::Day),
             IntParam::MONTH => ParameterDefault::JobClock(JobClockField::Month),
             IntParam::YEAR => ParameterDefault::JobClock(JobClockField::Year),
+            IntParam::ESCAPE_CHAR => ParameterDefault::Integer(i32::from(b'\\')),
+            IntParam::END_LINE_CHAR => ParameterDefault::Integer(i32::from(b'\r')),
+            IntParam::MAX_DEAD_CYCLES => ParameterDefault::Integer(25),
+            IntParam::HANG_AFTER => ParameterDefault::Integer(1),
             _ => ParameterDefault::Integer(0),
         };
         rows.push(parameter_view(
@@ -97,6 +103,60 @@ fn tex82_parameters() -> Vec<PrimitiveParameterView> {
         ));
     }
     rows
+}
+
+/// Returns one canonical default per physical dense-bank cell for a fresh
+/// profile layer. Primitive aliases remain catalogue rows but cannot become
+/// duplicate state owners.
+pub(crate) fn fresh_parameter_defaults(
+    profile: PrimitiveProfile,
+) -> Vec<tex_state::FreshParameterDefault> {
+    let mut seen = [[None; tex_state::env::banks::PARAMETER_COUNT]; 4];
+    let mut defaults = Vec::new();
+    for row in primitive_parameter_views(profile) {
+        let bank = match row.cell.class {
+            ParameterBankClass::Integer => 0,
+            ParameterBankClass::Dimension => 1,
+            ParameterBankClass::Glue | ParameterBankClass::MathGlue => 2,
+            ParameterBankClass::Tokens => 3,
+        };
+        let slot = &mut seen[bank][usize::from(row.cell.index)];
+        if let Some(previous) = *slot {
+            assert_eq!(
+                previous, row.default,
+                "conflicting parameter alias defaults"
+            );
+            continue;
+        }
+        *slot = Some(row.default);
+        let default = match row.default {
+            ParameterDefault::Integer(value) => {
+                tex_state::FreshParameterDefault::Integer(IntParam::new(row.cell.index), value)
+            }
+            ParameterDefault::Scaled(value) => tex_state::FreshParameterDefault::Dimension(
+                DimenParam::new(row.cell.index),
+                tex_state::scaled::Scaled::from_raw(value),
+            ),
+            ParameterDefault::Glue(value) => {
+                assert_eq!(value, ZERO_GLUE, "fresh glue default requires allocation");
+                tex_state::FreshParameterDefault::EmptyGlue(tex_state::env::banks::GlueParam::new(
+                    row.cell.index,
+                ))
+            }
+            ParameterDefault::EmptyTokens => {
+                tex_state::FreshParameterDefault::EmptyTokens(TokParam::new(row.cell.index))
+            }
+            ParameterDefault::JobClock(_) => continue,
+        };
+        defaults.push(default);
+    }
+    if profile == PrimitiveProfile::Etex26 {
+        defaults.push(tex_state::FreshParameterDefault::Integer(
+            IntParam::ETEX_EXTENDED_MODE,
+            1,
+        ));
+    }
+    defaults
 }
 
 fn etex_parameters() -> Vec<PrimitiveParameterView> {

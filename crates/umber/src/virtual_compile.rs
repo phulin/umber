@@ -417,7 +417,6 @@ impl EngineMode {
                 tex_command::install_etex_expandable_primitives(stores);
                 tex_exec::install_etex_unexpandable_primitives(stores);
                 crate::pdftex::install_pdftex_layer(stores);
-                crate::pdftex::initialize_pdftex_parameter_defaults(stores);
                 stores.enable_pdf_output();
             }
             Self::Latex => {
@@ -429,7 +428,6 @@ impl EngineMode {
                 tex_command::install_etex_expandable_primitives(stores);
                 tex_exec::install_etex_unexpandable_primitives(stores);
                 crate::pdftex::install_pdftex_layer(stores);
-                crate::pdftex::initialize_pdftex_parameter_defaults(stores);
                 stores.enable_pdf_output();
                 crate::install_latex_compatibility_layer(stores);
             }

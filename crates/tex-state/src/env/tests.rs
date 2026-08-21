@@ -1,4 +1,8 @@
-use super::{AssignmentScope, CodeTableKind, DenseState};
+use super::{
+    AssignmentScope, CodeTableKind, DenseState, FreshParameterDefault, FreshParameterInstallError,
+    FreshParameterInstallation, FreshParameterProfile,
+};
+use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::group::GroupKind;
 use crate::font::PdfFontCode;
 use crate::ids::FontId;
@@ -198,6 +202,102 @@ fn code_tables_use_initex_defaults_and_the_same_save_journal() {
     assert_eq!(state.code(CodeTableKind::Catcode, 'A').expect("cat"), 12);
     state.end_group(GroupKind::Simple).expect("end");
     assert_eq!(state.code(CodeTableKind::Catcode, 'A').expect("cat"), 11);
+}
+
+#[test]
+fn fresh_profile_batch_installs_mixed_dense_cells_without_journal_history() {
+    let mut state = state();
+    let before = state.journal_len();
+    assert_eq!(
+        state.install_fresh_parameter_profile(
+            FreshParameterProfile::Tex82,
+            &[
+                FreshParameterDefault::Integer(IntParam::MAG, 1_000),
+                FreshParameterDefault::Dimension(DimenParam::H_OFFSET, Scaled::from_raw(17)),
+                FreshParameterDefault::EmptyGlue(GlueParam::LEFT_SKIP),
+                FreshParameterDefault::EmptyTokens(TokParam::EVERY_JOB),
+            ],
+        ),
+        Ok(FreshParameterInstallation::Installed)
+    );
+    assert_eq!(state.integer_parameter(IntParam::MAG).expect("mag"), 1_000);
+    assert_eq!(
+        state
+            .dimension_parameter(DimenParam::H_OFFSET)
+            .expect("hoffset"),
+        Scaled::from_raw(17)
+    );
+    assert_eq!(
+        state.glue_parameter(GlueParam::LEFT_SKIP).expect("glue"),
+        None
+    );
+    assert_eq!(
+        state.token_parameter(TokParam::EVERY_JOB).expect("tokens"),
+        None
+    );
+    assert_eq!(state.journal_len(), before);
+}
+
+#[test]
+fn repeated_fresh_profile_installation_preserves_later_assignments() {
+    let mut state = state();
+    let defaults = [FreshParameterDefault::Integer(IntParam::MAG, 1_000)];
+    assert_eq!(
+        state.install_fresh_parameter_profile(FreshParameterProfile::Tex82, &defaults),
+        Ok(FreshParameterInstallation::Installed)
+    );
+    state
+        .assign_integer_parameter(IntParam::MAG, 1_200, AssignmentScope::Global)
+        .expect("later format assignment");
+    assert_eq!(
+        state.install_fresh_parameter_profile(FreshParameterProfile::Tex82, &defaults),
+        Ok(FreshParameterInstallation::AlreadyInstalled)
+    );
+    assert_eq!(state.integer_parameter(IntParam::MAG).expect("mag"), 1_200);
+}
+
+#[test]
+fn invalid_fresh_profile_batches_are_mutation_free() {
+    let mut state = state();
+    let duplicate = [
+        FreshParameterDefault::Integer(IntParam::MAG, 1_000),
+        FreshParameterDefault::Integer(IntParam::MAG, 1_200),
+    ];
+    assert_eq!(
+        state.install_fresh_parameter_profile(FreshParameterProfile::Tex82, &duplicate),
+        Err(FreshParameterInstallError::DuplicateCell {
+            bank: super::FreshParameterBank::Integer,
+            index: IntParam::MAG.raw(),
+        })
+    );
+    assert_eq!(state.integer_parameter(IntParam::MAG).expect("mag"), 0);
+    assert_eq!(
+        state.install_fresh_parameter_profile(FreshParameterProfile::Pdftex14029, &[]),
+        Err(FreshParameterInstallError::MissingTex82Base(
+            FreshParameterProfile::Pdftex14029
+        ))
+    );
+    assert_eq!(state.journal_len(), 0);
+}
+
+#[test]
+fn job_clock_refresh_changes_only_the_four_volatile_cells() {
+    let mut state = state();
+    state
+        .assign_integer_parameter(IntParam::MAG, 1_234, AssignmentScope::Global)
+        .expect("format mag");
+    state.refresh_job_clock(crate::JobClock {
+        time: 817,
+        second: 9,
+        day: 21,
+        month: 8,
+        year: 2026,
+    });
+    assert_eq!(state.integer_parameter(IntParam::TIME).expect("time"), 817);
+    assert_eq!(state.integer_parameter(IntParam::DAY).expect("day"), 21);
+    assert_eq!(state.integer_parameter(IntParam::MONTH).expect("month"), 8);
+    assert_eq!(state.integer_parameter(IntParam::YEAR).expect("year"), 2026);
+    assert_eq!(state.integer_parameter(IntParam::MAG).expect("mag"), 1_234);
 }
 
 #[test]

@@ -143,6 +143,34 @@ frequency is not semantic: every exact rollback point is a journal cursor.
 The packed image contains current cell words, not a clone of the immutable
 objects those words name.
 
+### Fresh parameter profiles
+
+Dense state construction is profile-neutral: its fixed parameter banks begin
+with zero scalars and empty generation coordinates. Fresh engine construction
+then installs exactly one default batch per selected profile layer, without
+creating TeX assignment-journal history. The TeX82 layer is the required base;
+e-TeX and pdfTeX are optional overlays. Primitive aliases may name the same
+physical parameter cell, but the catalogue reduces them to one batch entry so
+that every dense cell has one initialization owner.
+
+The TeX82 values follow tex.web §240: all integer parameters start at zero
+before `\mag=1000`, `\tolerance=10000`, `\hangafter=1`,
+`\maxdeadcycles=25`, `\escapechar=92`, and `\endlinechar=13` are installed.
+In particular, fresh `\newlinechar` remains zero. pdfTeX's overlay follows
+pdftex.web §§672 and 1064, including its nonzero compression, version,
+gamma, origin, pixel-dimension, and ignored-line sentinel values. All other
+catalogued scalar cells retain their specified zero value and token/glue
+parameters are empty.
+
+A repeated fresh-profile installation is a no-op and cannot overwrite later
+Plain or format-source assignments. A restored format never installs a fresh
+profile batch: format decoding owns every semantic parameter value and
+primitive registration only reconstructs immutable lookup metadata. The sole
+post-restore parameter overlay is tex.web §241's job clock. Main control copies
+the host-owned `\time`, `\day`, `\month`, and `\year` into the dense bank once
+before the first input line and startup banner. Process-selected diagnostic
+widths remain operational state outside the format and dense banks.
+
 ## Immutable definitions
 
 Every incremental revision generation owns an append-only
