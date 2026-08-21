@@ -74,13 +74,13 @@ impl<G> PersistentInterpreter<G> {
     /// Rust prevents overlapping mutable borrows. The explicit lifecycle
     /// assertion additionally makes that invariant measurable and ensures
     /// every facade is retired before a semantic, rollback, or host barrier.
-    pub(crate) fn processor<'a>(
-        &'a mut self,
-        state: CommandContext<'a, G>,
-        host: CommandHostContext<'a>,
-        fuel: &'a mut CommandFuel,
-        observer: Option<&'a mut dyn CommandObserver>,
-    ) -> InterpreterProcessor<'a, G> {
+    pub(crate) fn processor<'episode, 'admission>(
+        &'episode mut self,
+        state: CommandContext<'admission, G>,
+        host: CommandHostContext<'episode>,
+        fuel: &'episode mut CommandFuel,
+        observer: Option<&'episode mut dyn CommandObserver>,
+    ) -> InterpreterProcessor<'episode, 'admission, G> {
         #[cfg(feature = "profiling")]
         tex_state::measurement::record_hot_core_interpreter_operation_entry();
         #[cfg(feature = "profiling")]
@@ -132,16 +132,16 @@ impl<G> DerefMut for PersistentInterpreter<G> {
 }
 
 /// One borrow-scoped facade over the persistent canonical interpreter.
-pub(crate) struct InterpreterProcessor<'a, G> {
-    processor: Option<CommandProcessor<'a, G>>,
-    lifecycle: &'a mut InterpreterLifecycle,
+pub(crate) struct InterpreterProcessor<'episode, 'admission, G> {
+    processor: Option<CommandProcessor<'episode, 'admission, G>>,
+    lifecycle: &'episode mut InterpreterLifecycle,
 }
 
-impl<'a, G> InterpreterProcessor<'a, G> {
+impl<'episode, 'admission, G> InterpreterProcessor<'episode, 'admission, G> {
     /// Retires the processor while preserving its unique admitted context for
     /// an immediately following state-only operation.
     #[must_use]
-    pub(crate) fn into_context(mut self) -> CommandContext<'a, G> {
+    pub(crate) fn into_context(mut self) -> CommandContext<'admission, G> {
         let context = self
             .processor
             .take()
@@ -162,24 +162,67 @@ impl<'a, G> InterpreterProcessor<'a, G> {
     }
 }
 
-impl<'a, G> Deref for InterpreterProcessor<'a, G> {
-    type Target = CommandProcessor<'a, G>;
+impl<'episode, 'admission, G> Deref for InterpreterProcessor<'episode, 'admission, G> {
+    type Target = CommandProcessor<'episode, 'admission, G>;
 
     fn deref(&self) -> &Self::Target {
         self.processor.as_ref().expect("live interpreter processor")
     }
 }
 
-impl<G> DerefMut for InterpreterProcessor<'_, G> {
+impl<G> DerefMut for InterpreterProcessor<'_, '_, G> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.processor.as_mut().expect("live interpreter processor")
     }
 }
 
-impl<G> Drop for InterpreterProcessor<'_, G> {
+impl<G> Drop for InterpreterProcessor<'_, '_, G> {
     fn drop(&mut self) {
         if self.processor.is_some() {
             self.complete();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tex_command::{CommandFuelLedger, CommandHostCapabilities};
+
+    fn round_trip_context<'admission, G>(
+        interpreter: &mut PersistentInterpreter<G>,
+        context: CommandContext<'admission, G>,
+    ) -> CommandContext<'admission, G> {
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut fuel = CommandFuelLedger::default();
+        interpreter
+            .processor(
+                context,
+                CommandHostContext::new(&mut capabilities),
+                fuel.fuel_mut(),
+                None,
+            )
+            .into_context()
+    }
+
+    #[test]
+    fn admission_survives_the_shorter_processor_episode() {
+        crate::test_harness::with_universe(|universe| {
+            let mut interpreter = PersistentInterpreter::default();
+            let context = universe.command_context().expect("command admission");
+            let context = round_trip_context(&mut interpreter, context);
+
+            assert_eq!(context.current_input_line(), 0);
+            drop(context);
+            assert_eq!(
+                interpreter.lifecycle_stats(),
+                InterpreterLifecycleStats {
+                    processor_entries: 1,
+                    processor_completions: 1,
+                    live_processors: 0,
+                    maximum_live_processors: 1,
+                }
+            );
+        });
     }
 }

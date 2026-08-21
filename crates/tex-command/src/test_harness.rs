@@ -40,7 +40,7 @@ pub(crate) fn processor<'a, G>(
     command: &'a mut CommandState<G>,
     universe: &'a mut Universe<G>,
     capabilities: &'a mut CommandHostCapabilities,
-) -> CommandProcessor<'a, G> {
+) -> CommandProcessor<'a, 'a, G> {
     CommandProcessor::new(
         command,
         universe

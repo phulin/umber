@@ -9,7 +9,7 @@ use tex_state::meaning::{Meaning, ResolvedMeaning, UnexpandablePrimitive};
 use crate::scanners::MathFamilySize;
 use crate::{CommandError, CommandProcessor};
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Scans TeX82 §577's `scan_font_ident` through canonical expanded
     /// delivery.
     ///

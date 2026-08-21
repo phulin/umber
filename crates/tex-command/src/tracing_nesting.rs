@@ -10,7 +10,7 @@ use crate::conditionals::{ConditionFrame, IfLimit};
 use crate::input::SourceOpenDepths;
 use crate::processor::CommandProcessor;
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Completes e-TeX 2.6 [23.328]'s nesting-warning context tail.
     fn finish_nesting_warning(&mut self, tracing_nesting: i32) {
         if tracing_nesting > 1 {

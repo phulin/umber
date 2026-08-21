@@ -62,7 +62,7 @@ use crate::observation::{
     InputTransition, RecoveryKind, RecoveryRecord, observed_token,
 };
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Reports TeX82 §1096's `hmode+par_end` recovery predicate.
     ///
     /// `align_state` belongs to raw command delivery, so the stomach asks

@@ -404,7 +404,7 @@ impl ConditionStack {
     }
 }
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Detaches the active stack from innermost to outermost for `\showifs`.
     #[must_use]
     pub fn active_conditions(&self) -> Vec<ActiveCondition> {
@@ -489,7 +489,7 @@ impl IfRelation {
     }
 }
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// TeX.web part 28's `conditional`, entered after delivery of an `if`
     /// primitive.  The frame is installed before any operand scan because
     /// those scans may recursively expand another conditional.

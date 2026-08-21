@@ -359,7 +359,7 @@ struct ScannedUnits {
     attach_sign: bool,
 }
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Consumes TeX82 §405's other-category optional equals sign, after spaces.
     pub fn scan_optional_equals(&mut self) -> Result<ScannedScalar<bool>, CommandError> {
         let mut provenance = OriginId::UNKNOWN;

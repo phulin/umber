@@ -8,7 +8,7 @@ use super::operation::*;
 use super::support::*;
 
 fn material_origin<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: &tex_command::CurrentCommand<G>,
 ) -> tex_state::token::OriginId {
     processor
@@ -18,7 +18,7 @@ fn material_origin<G>(
 
 #[allow(clippy::too_many_arguments)] // mirrors the typed main-control context
 pub(in crate::main_control) fn scan<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     global: bool,
     mode: Mode,
@@ -1799,7 +1799,7 @@ pub(in crate::main_control) fn scan<G>(
 /// current. Context one covers vertical boxes; context two adds insertion,
 /// output, alignment-item, and no-align boundaries.
 pub(in crate::main_control) fn partoken_context_replays<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     mode: Mode,
     threshold: i32,
 ) -> bool {
@@ -1848,7 +1848,7 @@ pub(in crate::main_control) fn report_incomplete_conditions<G>(
 /// execute phase (`apply_cold_operation`) only prints the matching text once
 /// the returned `ColdOperation<G>` is applied.
 pub(in crate::main_control) fn scan_off_save<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     innermost_group: Option<GroupKind>,
 ) -> Result<ColdOperation<G>, ExecError> {
@@ -1957,7 +1957,7 @@ pub(in crate::main_control) fn scan_off_save<G>(
 ///   mode") instead, via their own dedicated `ColdOperation::IllegalEqNo` arm
 ///   below (umber2-johp.88).
 fn scan_unclassified_primitive<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     primitive: UnexpandablePrimitive,
     mode: Mode,
@@ -2347,7 +2347,7 @@ fn scan_unclassified_primitive<G>(
 ///   none of them; it only makes each one fail loudly, tracked as
 ///   umber2-johp.111.
 fn scan_unclassified_meaning<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     meaning: Meaning,
     mode: Mode,
@@ -2467,7 +2467,7 @@ fn scan_unclassified_meaning<G>(
 ///
 /// See [`scan_unclassified_meaning`] for the bucket definitions.
 fn scan_unclassified_char_token<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     ch: char,
     cat: Catcode,
@@ -2534,7 +2534,7 @@ fn scan_unclassified_char_token<G>(
 /// from the command-owned `align_state`; main control only records whether the
 /// inserted brace opens a recovery simple group for §1131's `off_save`.
 fn scan_align_error<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
 ) -> Result<ColdOperation<G>, ExecError> {
     let token = command.spelling().semantic_token();
@@ -2577,7 +2577,7 @@ fn unimplemented_meaning<G>(
 /// application only sees this completed typed description after the processor
 /// borrow ends.
 fn scan_arithmetic_assignment<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     primitive: UnexpandablePrimitive,
     global: bool,
 ) -> Result<ColdOperation<G>, ExecError> {

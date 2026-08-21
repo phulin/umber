@@ -176,7 +176,7 @@ pub(super) fn prepare<G>(
 /// Scans a ranked common command after §1211's prefix loop and all contextual
 /// mode/group cases have selected the ordinary assignment arm.
 pub(super) fn scan<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: &tex_command::CurrentCommand<G>,
     global: bool,
     flags: MeaningFlags,

@@ -83,7 +83,7 @@ impl<G> CommandState<G> {
     }
 }
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Enters one processor-owned scanner episode.
     ///
     /// The returned value retains both the installed semantic status and the

@@ -207,7 +207,7 @@ enum ScannedFactor<G> {
     OpenParenthesis,
 }
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// e-TeX 2.6 `scan_expr`, from the already-delivered expression primitive
     /// through its committed typed result (etex.ch [53a.4945--5360]).
     pub(super) fn scan_expression_primitive(

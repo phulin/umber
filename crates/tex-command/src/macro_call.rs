@@ -270,7 +270,7 @@ impl MacroArguments {
     }
 }
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §323's diagnostic for a named token-list parameter installed by
     /// `begin_token_list`. Unlike ordinary macro calls, these lists trace only
     /// when `\tracingmacros>1`.

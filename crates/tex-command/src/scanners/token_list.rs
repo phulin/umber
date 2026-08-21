@@ -40,7 +40,7 @@ struct ScannedTokenListRightHandSide {
     pointer_present: bool,
 }
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Scans the operand sequence of TeX82's `\toks` assignment.
     ///
     /// This follows TeX82 §§403/470's register scan, optional equals, and

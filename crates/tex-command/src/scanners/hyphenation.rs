@@ -65,7 +65,7 @@ pub struct ScannedHyphenationData {
     pub patterns: Vec<PatternSpec>,
 }
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Reports whether TeX82 §960 may still add patterns to the uninitialized
     /// hyphenation trie.
     #[must_use]

@@ -8,7 +8,7 @@ fn assert_current_command_is_not_serializable<G>() {
 }
 
 fn assert_processor_is_not_serializable<G: 'static>() {
-    assert_owned_snapshot::<CommandProcessor<'static, G>>();
+    assert_owned_snapshot::<CommandProcessor<'static, 'static, G>>();
 }
 
 fn main() {}

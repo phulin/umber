@@ -1060,10 +1060,10 @@ struct CommandMachine<'a, G> {
 }
 
 impl<G> CommandMachine<'_, G> {
-    fn processor<'a>(
-        &'a mut self,
-        context: tex_state::CommandContext<'a, G>,
-    ) -> InterpreterProcessor<'a, G> {
+    fn processor<'episode, 'admission>(
+        &'episode mut self,
+        context: tex_state::CommandContext<'admission, G>,
+    ) -> InterpreterProcessor<'episode, 'admission, G> {
         let observer = self
             .observations
             .as_mut()
@@ -1112,13 +1112,13 @@ impl<G> CommandMachine<'_, G> {
     }
 }
 
-fn command_processor<'a, G>(
-    command: &'a mut PersistentInterpreter<G>,
-    fuel: &'a mut tex_command::CommandFuel,
-    capabilities: &'a mut CommandHostCapabilities,
-    observations: &'a mut ObservationSlot,
-    stores: &'a mut Universe<G>,
-) -> InterpreterProcessor<'a, G> {
+fn command_processor<'episode, 'admission, G>(
+    command: &'episode mut PersistentInterpreter<G>,
+    fuel: &'episode mut tex_command::CommandFuel,
+    capabilities: &'episode mut CommandHostCapabilities,
+    observations: &'episode mut ObservationSlot,
+    stores: &'admission mut Universe<G>,
+) -> InterpreterProcessor<'episode, 'admission, G> {
     let observer = observations
         .as_mut()
         .map(|buffer| buffer as &mut dyn CommandObserver);
@@ -7651,7 +7651,7 @@ impl ForgottenGroupOpener {
 /// the second replay reaches TeX82's live preamble scanner.
 #[allow(clippy::too_many_arguments)] // owns the replay-only command/input seam
 fn scan_replay_step<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
     alignment_preamble: Option<(AlignmentIdentity, AlignmentPreamblePhase)>,
@@ -7797,7 +7797,7 @@ fn alignment_preamble<G>(
 /// `init_col`: `\\noalign` consumes its opening brace directly, whereas an
 /// ordinary next-cell command is backed up for template installation.
 fn scan_alignment_peek<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     alignment: AlignmentIdentity,
     _after_noalign: bool,
 ) -> Result<ColdOperation<G>, ExecError> {
@@ -7850,7 +7850,7 @@ fn scan_alignment_peek<G>(
 
 #[allow(clippy::too_many_arguments)] // carries command-owned noalign replay facts
 fn scan_noalign_body<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     alignment: AlignmentIdentity,
     boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
@@ -7902,7 +7902,7 @@ fn scan_noalign_body<G>(
 /// delimiter ready for the next main-control step.
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
 fn scan_alignment_delivery_step<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     alignment: AlignmentIdentity,
     boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
@@ -8039,7 +8039,7 @@ fn scan_alignment_delivery_step<G>(
 /// that nested fetch, so the split executor must receive the same typed event
 /// instead of dispatching the resulting frozen `\endv` as ordinary content.
 fn scan_alignment_delivery_event<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     alignment: AlignmentIdentity,
     event: tex_command::AlignmentDeliveryEvent<G>,
 ) -> Result<ColdOperation<G>, ExecError> {
@@ -8064,7 +8064,7 @@ fn scan_alignment_delivery_event<G>(
 
 #[allow(clippy::too_many_arguments)]
 fn settle_preflight_step<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     main_loop: bool,
     mode: Mode,
@@ -8132,7 +8132,7 @@ fn settle_preflight_step<G>(
 
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
 fn scan_step<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
@@ -8267,7 +8267,7 @@ fn direct_hot_candidate<G>(
 /// so an actual immutable-resource suspension can move it into the exact retry
 /// continuation without a speculative clone.
 fn scan_direct_hot_command<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: &tex_command::CurrentCommand<G>,
     innermost_group: Option<GroupKind>,
 ) -> Result<hot_apply::HotOperation<G>, ExecError> {
@@ -8343,7 +8343,7 @@ fn scan_direct_hot_command<G>(
 ///   token>; goto reswitch; end`.
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
 fn dispatch_main_control_command<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     mut command: tex_command::CurrentCommand<G>,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
@@ -8432,7 +8432,7 @@ fn hot_core_command_family<G>(
 
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
 fn dispatch_main_control_command_inner<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     mut command: tex_command::CurrentCommand<G>,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
@@ -8669,7 +8669,7 @@ fn dispatch_main_control_command_inner<G>(
 /// fetch a replacement command. §1211's prefix loop does not return to that
 /// label, so its internal fetches remain untraced.
 fn report_command_trace<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     mode: Mode,
     command: &tex_command::CurrentCommand<G>,
     shown_mode: &mut Option<Mode>,
@@ -8700,7 +8700,7 @@ fn report_command_trace<G>(
 /// `\vbox`, or `\vtop` never returns to §1030's `reswitch`. Split replay
 /// retains `pending_shipout` across that internal fetch.
 fn report_main_control_command_trace<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     mode: Mode,
     command: &tex_command::CurrentCommand<G>,
     boxes: &ReplayBoxes<G>,
@@ -8734,7 +8734,7 @@ fn report_main_control_command_trace<G>(
 }
 
 fn prepare_command_trace<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     mode: Mode,
     shown_mode: Option<Mode>,
 ) {
@@ -8751,7 +8751,7 @@ fn prepare_command_trace<G>(
 }
 
 fn scan_leaders_step<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     primitive: UnexpandablePrimitive,
     mode: Mode,
 ) -> Result<ColdOperation<G>, ExecError> {
@@ -8806,7 +8806,7 @@ fn scan_leaders_step<G>(
 }
 
 fn scan_leader_glue_command<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     mode: Mode,
 ) -> Result<Option<GlueSpec>, ExecError> {
@@ -8946,7 +8946,7 @@ fn starts_paragraph_in_vertical_mode<G>(meaning: ResolvedMeaning<G>) -> bool {
 
 #[allow(clippy::too_many_arguments)] // mirrors TeX main-control dispatch inputs
 fn scan_command<G>(
-    processor: &mut CommandProcessor<'_, G>,
+    processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     global: bool,
     flags: MeaningFlags,

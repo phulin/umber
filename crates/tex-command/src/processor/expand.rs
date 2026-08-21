@@ -272,7 +272,7 @@ const fn is_ranked_fused_expansion<G>(meaning: ResolvedMeaning<G>) -> bool {
     )
 }
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Settles one raw command already delivered by the same processor
     /// episode. This is the capability-preflight seam: macro/expandable
     /// nesting, undefined-command recovery, and ordered raw/expanded

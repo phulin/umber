@@ -28,7 +28,7 @@ fn install<G>(
     Token::Cs(symbol.symbol())
 }
 
-fn next_character<G>(processor: &mut CommandProcessor<'_, G>) -> char {
+fn next_character<G>(processor: &mut CommandProcessor<'_, '_, G>) -> char {
     match processor
         .get_x_token()
         .expect("conditional delivery")

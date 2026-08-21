@@ -132,12 +132,12 @@ pub(crate) use status::{ScannerState, ScannerStatus};
 /// scanners, conditionals, and primitives operate through this single
 /// aggregate facade.
 #[allow(dead_code)] // later canonical command operations consume every capability
-pub struct CommandProcessor<'a, G> {
-    pub(crate) command: &'a mut CommandState<G>,
-    pub(crate) state: CommandContext<'a, G>,
-    pub(crate) host: CommandHostContext<'a>,
-    observer: Option<&'a mut dyn CommandObserver>,
-    fuel: ProcessorFuel<'a>,
+pub struct CommandProcessor<'episode, 'admission, G> {
+    pub(crate) command: &'episode mut CommandState<G>,
+    pub(crate) state: CommandContext<'admission, G>,
+    pub(crate) host: CommandHostContext<'episode>,
+    observer: Option<&'episode mut dyn CommandObserver>,
+    fuel: ProcessorFuel<'episode>,
     /// The §53 write scanner registers its replay level here solely to name
     /// that level in detached observation. This is processor-local observer
     /// metadata: raw delivery neither reads replay provenance nor lets this
@@ -197,7 +197,7 @@ pub struct CommandProcessor<'a, G> {
 #[derive(Clone, Copy, Debug)]
 pub struct CommandDeliveryCursor(u64);
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Captures the next observation delivery sequence for a typed retry.
     #[must_use]
     pub const fn delivery_cursor(&self) -> CommandDeliveryCursor {
@@ -292,14 +292,14 @@ impl<G> CommandProcessor<'_, G> {
     }
 }
 
-impl<'a, G> CommandProcessor<'a, G> {
+impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     /// Retires this borrow facade and returns its unique admitted state view.
     ///
     /// Callers use this linear handoff when one command episode must perform
     /// a state-only mutation before resuming command delivery under the same
     /// admission. No state owner or processor-local continuation is cloned.
     #[must_use]
-    pub fn into_context(self) -> CommandContext<'a, G> {
+    pub fn into_context(self) -> CommandContext<'admission, G> {
         self.state
     }
 }
@@ -325,7 +325,7 @@ impl ProcessorFuel<'_> {
     }
 }
 
-impl<'a, G> CommandProcessor<'a, G> {
+impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     pub(crate) fn copy_durable_token_list_into_attempt(
         &mut self,
         tokens: Option<tex_state::TokenListId<G>>,
@@ -441,9 +441,9 @@ impl<'a, G> CommandProcessor<'a, G> {
     /// Borrows every ownership domain needed by one command operation.
     #[must_use]
     pub fn new(
-        command: &'a mut CommandState<G>,
-        state: CommandContext<'a, G>,
-        host: CommandHostContext<'a>,
+        command: &'episode mut CommandState<G>,
+        state: CommandContext<'admission, G>,
+        host: CommandHostContext<'episode>,
     ) -> Self {
         Self::from_parts(
             command,
@@ -462,21 +462,21 @@ impl<'a, G> CommandProcessor<'a, G> {
     /// observer all remain owned by the persistent engine session.
     #[must_use]
     pub fn borrowed(
-        command: &'a mut CommandState<G>,
-        state: CommandContext<'a, G>,
-        host: CommandHostContext<'a>,
-        fuel: &'a mut CommandFuel,
-        observer: Option<&'a mut dyn CommandObserver>,
+        command: &'episode mut CommandState<G>,
+        state: CommandContext<'admission, G>,
+        host: CommandHostContext<'episode>,
+        fuel: &'episode mut CommandFuel,
+        observer: Option<&'episode mut dyn CommandObserver>,
     ) -> Self {
         Self::from_parts(command, state, host, ProcessorFuel::Shared(fuel), observer)
     }
 
     fn from_parts(
-        command: &'a mut CommandState<G>,
-        mut state: CommandContext<'a, G>,
-        host: CommandHostContext<'a>,
-        fuel: ProcessorFuel<'a>,
-        observer: Option<&'a mut dyn CommandObserver>,
+        command: &'episode mut CommandState<G>,
+        mut state: CommandContext<'admission, G>,
+        host: CommandHostContext<'episode>,
+        fuel: ProcessorFuel<'episode>,
+        observer: Option<&'episode mut dyn CommandObserver>,
     ) -> Self {
         command.observe_tracked_dependencies(&mut state);
         Self {

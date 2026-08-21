@@ -451,7 +451,7 @@ const NONCONSECUTIVE_PARAMETER_DIAGNOSTIC: u64 = 0x6465_6600_0000_0476;
 const ILLEGAL_REPLACEMENT_PARAMETER_DIAGNOSTIC: u64 = 0x6465_6600_0000_0479;
 const FILE_ENDED_WITHIN_READ_DIAGNOSTIC: u64 = 0x7265_6164_0000_0486;
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     fn allocate_attempt_token_list(
         &mut self,
         words: impl IntoIterator<Item = TracedTokenWord>,
@@ -1622,7 +1622,7 @@ fn is_end_group(token: Token) -> bool {
 /// _lines_ rather than a brace-balanced group, disables alignment delimiters
 /// for its whole duration, and continues across a brace imbalance instead of
 /// ending at a closing brace. It shares only the frozen-list result.
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Collects TeX82 §482's `read_toks` list.
     ///
     /// `begin scanner_status:=defining; warning_index:=r; def_ref:=get_avail;

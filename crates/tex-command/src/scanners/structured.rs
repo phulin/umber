@@ -1068,7 +1068,7 @@ pub enum AlignmentCellOpening {
     Omit,
 }
 
-impl<G> CommandProcessor<'_, G> {
+impl<G> CommandProcessor<'_, '_, G> {
     /// Expands a frozen whatsit payload at output traversal time.
     ///
     /// The caller decides how the resulting token spellings are rendered;
