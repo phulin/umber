@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+mod support;
+
 use tex_command::{RegisteredSourceKind, SourceRegistration};
 use tex_exec::{MainControl, MainControlStep, RootCompletionPolicy};
-use tex_state::{EffectRecord, InteractionMode, PrintSink, Universe};
+use tex_state::{EffectRecord, PrintSink, Universe};
 
 const MAX_MAIN_CONTROL_STEPS: usize = 2_048;
 const MAX_COMMAND_FUEL: u64 = 200_000;
@@ -92,12 +94,8 @@ fn tex82_reference_observation_fixtures_match_canonical_execution() {
         let reference = test_support::read_fixture("tex_exec", name, "ref");
         let expected = ReferenceObservation::parse(&reference)
             .unwrap_or_else(|error| panic!("parse tex_exec/{name}/expected.ref: {error}"));
-        let stores =
+        let actual =
             execute(&source).unwrap_or_else(|error| panic!("execute tex_exec/{name}: {error}"));
-        let actual = ActualObservation {
-            terminal: channel_text(&stores, PrintSink::Terminal),
-            log: channel_text(&stores, PrintSink::Log),
-        };
 
         for (channel, reference, actual) in [
             ("terminal", expected.terminal, actual.terminal.as_str()),
@@ -166,7 +164,7 @@ struct ActualObservation {
     log: String,
 }
 
-fn execute(source: &[u8]) -> Result<Universe, String> {
+fn execute(source: &[u8]) -> Result<ActualObservation, String> {
     execute_with_limits(source, MAX_MAIN_CONTROL_STEPS, MAX_COMMAND_FUEL)
 }
 
@@ -174,7 +172,7 @@ fn execute_with_limits(
     source: &[u8],
     step_limit: usize,
     fuel_limit: u64,
-) -> Result<Universe, String> {
+) -> Result<ActualObservation, String> {
     execute_with_policy_and_limits(
         source,
         RootCompletionPolicy::RequireTeXEnd,
@@ -188,57 +186,60 @@ fn execute_with_policy_and_limits(
     completion: RootCompletionPolicy,
     step_limit: usize,
     fuel_limit: u64,
-) -> Result<Universe, String> {
-    let mut stores = Universe::new_with_plain_catcodes();
-    stores.set_interaction_mode(InteractionMode::Nonstop);
-    let mut control = MainControl::tex82_initex(&mut stores);
-    control.set_root_completion_policy(completion);
-    control
-        .set_fuel_limit(fuel_limit)
-        .map_err(|error| format!("invalid command-fuel limit {fuel_limit}: {error:?}"))?;
-    control
-        .register_root_source(SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(source),
-        ))
-        .map_err(|error| format!("fixture source registration failed: {error:?}"))?;
+) -> Result<ActualObservation, String> {
+    support::with_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        control.set_root_completion_policy(completion);
+        control
+            .set_fuel_limit(fuel_limit)
+            .map_err(|error| format!("invalid command-fuel limit {fuel_limit}: {error:?}"))?;
+        control
+            .register_root_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(source),
+            ))
+            .map_err(|error| format!("fixture source registration failed: {error:?}"))?;
 
-    for step in 1..=step_limit {
-        match control.step(&mut stores) {
-            Ok(MainControlStep::Continue) => {}
-            Ok(MainControlStep::End) => {
-                if let Some(fatal) = control.fatal_error() {
+        for step in 1..=step_limit {
+            match control.step(stores) {
+                Ok(MainControlStep::Continue) => {}
+                Ok(MainControlStep::End) => {
+                    if let Some(fatal) = control.fatal_error() {
+                        return Err(format!(
+                            "fatal main-control termination after {step} steps and {}/{} fuel: {fatal:?}",
+                            control.fuel_burned(),
+                            control.fuel_limit()
+                        ));
+                    }
+                    return Ok(ActualObservation {
+                        terminal: channel_text(stores, PrintSink::Terminal),
+                        log: channel_text(stores, PrintSink::Log),
+                    });
+                }
+                Ok(MainControlStep::EndOfInput) => {
                     return Err(format!(
-                        "fatal main-control termination after {step} steps and {}/{} fuel: {fatal:?}",
+                        "physical input exhaustion after {step} steps (fatal={:?}, fuel={}/{})",
+                        control.fatal_error(),
                         control.fuel_burned(),
                         control.fuel_limit()
                     ));
                 }
-                return Ok(stores);
-            }
-            Ok(MainControlStep::EndOfInput) => {
-                return Err(format!(
-                    "physical input exhaustion after {step} steps (fatal={:?}, fuel={}/{})",
-                    control.fatal_error(),
-                    control.fuel_burned(),
-                    control.fuel_limit()
-                ));
-            }
-            Err(error) => {
-                return Err(format!(
-                    "main-control step {step} failed after {}/{} fuel: {error:?}",
-                    control.fuel_burned(),
-                    control.fuel_limit()
-                ));
+                Err(error) => {
+                    return Err(format!(
+                        "main-control step {step} failed after {}/{} fuel: {error:?}",
+                        control.fuel_burned(),
+                        control.fuel_limit()
+                    ));
+                }
             }
         }
-    }
 
-    Err(format!(
-        "exceeded {step_limit} main-control steps after {}/{} fuel",
-        control.fuel_burned(),
-        control.fuel_limit()
-    ))
+        Err(format!(
+            "exceeded {step_limit} main-control steps after {}/{} fuel",
+            control.fuel_burned(),
+            control.fuel_limit()
+        ))
+    })
 }
 
 #[test]
@@ -307,7 +308,7 @@ fn fixture_runner_enforces_step_and_fuel_limits() {
     );
 }
 
-fn channel_text(stores: &Universe, channel: PrintSink) -> String {
+fn channel_text<G>(stores: &Universe<G>, channel: PrintSink) -> String {
     let committed = match channel {
         PrintSink::Terminal => stores.world().memory_terminal_output(),
         PrintSink::Log => stores.world().memory_log_output(),
@@ -317,7 +318,7 @@ fn channel_text(stores: &Universe, channel: PrintSink) -> String {
     let mut bytes = committed.to_vec();
     for effect in stores.world().effect_records() {
         if let EffectRecord::StreamWrite { sink, text } = effect
-            && (*sink == channel || *sink == PrintSink::TerminalAndLog)
+            && (sink == channel || sink == PrintSink::TerminalAndLog)
         {
             bytes.extend_from_slice(text.as_bytes());
         }
