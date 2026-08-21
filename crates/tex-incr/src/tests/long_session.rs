@@ -6,7 +6,7 @@ fn accepted_and_rejected_revisions_remain_cold_equivalent_over_a_long_session() 
     let mut incremental = session(RevisionId::new(1), &source);
     incremental.cold().expect("initial revision");
 
-    for revision in 2..=64 {
+    for revision in 2_u64..=64 {
         let rejected = Edit {
             base_revision: RevisionId::new(revision.saturating_sub(2)),
             expected_hash: incremental.content_hash(),
