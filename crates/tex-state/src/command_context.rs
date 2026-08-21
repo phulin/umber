@@ -1023,6 +1023,18 @@ impl<'a, G> CommandContext<'a, G> {
         self.dependencies.record(key, value);
     }
 
+    /// Advances and records an executor-owned semantic projection in the
+    /// active dependency episode.
+    pub fn observe_changed_command_projection(
+        &mut self,
+        key: DependencyKey,
+        value: DependencyValue,
+    ) {
+        self.dependencies.mark_changed(key);
+        self.dependencies.track(key);
+        self.dependencies.record(key, value);
+    }
+
     #[must_use]
     pub fn tracked_region_is_active(&self) -> bool {
         self.dependencies.is_recording()

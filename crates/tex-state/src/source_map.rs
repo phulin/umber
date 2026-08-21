@@ -671,6 +671,13 @@ impl SourceMap {
         }
     }
 
+    pub(crate) fn validates(&self, mark: SourceMapMark) -> bool {
+        mark.regions <= self.regions.len()
+            && mark.generated <= self.generated.len()
+            && (mark.next_pos <= self.next_pos || !self.forced_next_pos)
+            && self.identities.validate_rollback(mark.identities).is_ok()
+    }
+
     pub(crate) fn truncate_to(&mut self, mark: SourceMapMark) {
         self.truncate_to_inner(mark);
     }

@@ -157,6 +157,61 @@ fn malformed_aggregate_restore_does_not_touch_dense_state() {
 }
 
 #[test]
+fn runtime_checkpoint_validates_before_mutation() {
+    with_universe(budget(), |universe| {
+        let page_prefix = universe.page_node_cursor();
+        let _ = universe.publish_page_nodes(&[Node::Penalty(7)]);
+        let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
+        universe
+            .assign_count(0, 41, AssignmentScope::Global)
+            .expect("candidate count");
+        universe
+            .truncate_page_nodes(page_prefix)
+            .expect("invalidate checkpoint page cursor");
+
+        assert!(
+            universe
+                .restore_runtime_checkpoint_with_roots(&checkpoint, || {
+                    panic!("external roots must not transfer after failed validation")
+                })
+                .is_err()
+        );
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("context")
+                .count(0)
+                .expect("count"),
+            41,
+            "runtime validation failure must leave dense state unchanged"
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn runtime_checkpoint_transfers_external_roots_before_suffix_truncation() {
+    with_universe(budget(), |universe| {
+        let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
+        let suffix = universe.publish_page_nodes(&[Node::Penalty(99)]);
+        let transferred = std::cell::Cell::new(false);
+        universe
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {
+                transferred.set(true);
+            })
+            .expect("restore runtime checkpoint");
+        assert!(transferred.get(), "external roots transferred");
+        assert_eq!(
+            universe
+                .page_node_list(suffix)
+                .expect_err("runtime suffix was truncated"),
+            NodeArenaError::InvalidList
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn admitted_paragraph_shape_is_detached_and_group_restorable() {
     with_universe(budget(), |universe| {
         let mut context = universe.command_context().expect("context");

@@ -3,11 +3,14 @@
 use crate::checkpoint::{BoundedStateMark, GenerationCheckpoint, RestoreTarget, prepare_restore};
 use crate::command_context::CommandContext;
 use crate::definition_arena::{DefinitionAllocationError, DefinitionId};
-use crate::dependency::DependencyRuntime;
+use crate::dependency::{
+    DependencyRegionError, DependencyRegionToken, DependencyRuntime, ObservedDependency,
+    TrackedRegionBarrier,
+};
 use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
 use crate::env::group::{GroupFrame, GroupKind};
 use crate::env::{AssignmentScope, CodeTableKind, StateError};
-use crate::font::FontStore;
+use crate::font::{FontStore, FontStoreMark};
 use crate::generation::{GenerationBrand, GenerationOwner, with_generation};
 use crate::glue::GlueSpec;
 use crate::hyphenation::HyphenationTable;
@@ -27,7 +30,7 @@ use crate::pdf::PdfState;
 use crate::print::ErrorContextWidths;
 use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
-use crate::source_map::SourceMap;
+use crate::source_map::{SourceMap, SourceMapMark};
 use crate::stores::{StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
 use crate::world::World;
@@ -170,6 +173,45 @@ struct ShipoutRollback<G> {
     page: PageBuilderState,
     pdf: crate::pdf::PdfStateSnapshot<G>,
     world: crate::world::WorldSnapshot,
+}
+
+/// Coarse generation owner plus every runtime root needed by an aggregate
+/// executor checkpoint.
+///
+/// The value is opaque outside `tex-state`: consumers can retain and clone it
+/// but cannot extract arena marks or individual store owners.
+pub struct RuntimeCheckpoint<G> {
+    state: StateCheckpoint<G>,
+    page: PageBuilderState,
+    pdf: crate::pdf::PdfStateSnapshot<G>,
+    world: crate::world::WorldSnapshot,
+    fonts: FontStoreMark,
+    sources: SourceMapMark,
+    hyphenation: HyphenationTable,
+    dependencies: crate::dependency::DependencyTrackerSnapshot,
+    interaction_mode: InteractionMode,
+}
+
+impl<G> Clone for RuntimeCheckpoint<G> {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            page: self.page.clone(),
+            pdf: self.pdf.clone(),
+            world: self.world.clone(),
+            fonts: self.fonts,
+            sources: self.sources,
+            hyphenation: self.hyphenation.clone(),
+            dependencies: self.dependencies.clone(),
+            interaction_mode: self.interaction_mode,
+        }
+    }
+}
+
+impl<G> std::fmt::Debug for RuntimeCheckpoint<G> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("RuntimeCheckpoint(..)")
+    }
 }
 
 /// Exclusive aggregate transaction for one staged shipout.
@@ -370,6 +412,35 @@ pub struct Universe<G> {
 }
 
 impl<G> Universe<G> {
+    /// Opens the outer transaction barrier for one dependency-observed
+    /// command episode. Hot reads are recorded through `CommandContext`.
+    pub fn begin_dependency_region(
+        &mut self,
+    ) -> Result<DependencyRegionToken, DependencyRegionError> {
+        self.dependencies.begin_region()
+    }
+
+    /// Publishes detached dependency evidence after a command episode.
+    pub fn finish_dependency_region(
+        &mut self,
+        token: DependencyRegionToken,
+    ) -> Result<Vec<ObservedDependency>, DependencyRegionError> {
+        self.dependencies.finish_region(token)
+    }
+
+    /// Discards an incomplete dependency episode without publishing it.
+    pub fn abandon_dependency_region(
+        &mut self,
+        token: DependencyRegionToken,
+    ) -> Result<(), DependencyRegionError> {
+        self.dependencies.abandon_region(token)
+    }
+
+    /// Records why the active dependency episode cannot be memoized.
+    pub fn poison_dependency_region(&mut self, barrier: TrackedRegionBarrier) {
+        self.dependencies.poison(barrier);
+    }
+
     fn new(interner: Interner, core: StateCore<G>) -> Self {
         Self {
             interner,
@@ -1408,6 +1479,72 @@ impl<G> Universe<G> {
                 (),
             ),
         ))
+    }
+
+    /// Captures the complete state-facing portion of an executor checkpoint.
+    /// Runtime ids remain reachable only through the single retained state
+    /// generation and opaque subsystem roots.
+    pub fn runtime_checkpoint(&self) -> Result<RuntimeCheckpoint<G>, UniverseError> {
+        Ok(RuntimeCheckpoint {
+            state: self.state_checkpoint()?,
+            page: self.page.clone(),
+            pdf: self.pdf.snapshot(),
+            world: self.world.snapshot(),
+            fonts: self.fonts.watermark(),
+            sources: self.sources.watermark(),
+            hyphenation: self.hyphenation.clone(),
+            dependencies: self.dependencies.snapshot_tracker(),
+            interaction_mode: self.interaction_mode,
+        })
+    }
+
+    /// Validates and restores a complete runtime checkpoint while allowing
+    /// the executor to transfer command and mode roots before any state,
+    /// source, or font arena suffix is truncated.
+    pub fn restore_runtime_checkpoint_with_roots(
+        &mut self,
+        checkpoint: &RuntimeCheckpoint<G>,
+        transfer_external_roots: impl FnOnce(),
+    ) -> Result<(), UniverseError> {
+        let owner = checkpoint.state.owner();
+        let mark = checkpoint.state.mark();
+        <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::validate_restore(
+            self, owner, mark,
+        )?;
+        if !self.world.snapshot_is_retained(&checkpoint.world)
+            || !self.pdf.snapshot_is_retained(&checkpoint.pdf)
+            || !self.fonts.validates(checkpoint.fonts)
+            || !self.sources.validates(checkpoint.sources)
+        {
+            return Err(UniverseError::State(StateError::InvalidCursor));
+        }
+
+        <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::acquire_target_owner(
+            self,
+            owner.clone(),
+        );
+        <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::restore_dense_state(
+            self, mark,
+        );
+        self.page = checkpoint.page.clone();
+        self.pdf.rollback(checkpoint.pdf.clone());
+        self.world.rollback(&checkpoint.world);
+        self.hyphenation = checkpoint.hyphenation.clone();
+        self.dependencies.restore_tracker(&checkpoint.dependencies);
+        self.interaction_mode = checkpoint.interaction_mode;
+        transfer_external_roots();
+        <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::transfer_roots(
+            self, mark,
+        );
+        self.fonts.truncate_to(checkpoint.fonts);
+        self.sources.truncate_to(checkpoint.sources);
+        <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::truncate_suffixes(
+            self, mark,
+        );
+        <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::release_replaced_owners(
+            self,
+        );
+        Ok(())
     }
 
     /// Begins one exclusive, rollback-capable artifact publication.

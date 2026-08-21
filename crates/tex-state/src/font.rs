@@ -595,6 +595,15 @@ impl FontStore {
         }
     }
 
+    pub(crate) fn validates(&self, mark: FontStoreMark) -> bool {
+        mark.len as usize <= self.fonts.len()
+            && mark.len as usize <= self.identifiers.len()
+            && mark.len as usize <= self.expansion_specs.len()
+            && mark.identifier_writes_len as usize <= self.identifier_writes.len()
+            && mark.expansion_writes_len as usize <= self.expansion_writes.len()
+            && self.identities.validate_rollback(mark.identities).is_ok()
+    }
+
     pub(crate) fn truncate_to(&mut self, mark: FontStoreMark) {
         self.identities
             .rollback(mark.identities)

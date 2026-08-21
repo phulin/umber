@@ -2734,6 +2734,14 @@ impl<G> PdfState<G> {
         }
     }
 
+    pub(crate) fn snapshot_is_retained(&self, snapshot: &PdfStateSnapshot<G>) -> bool {
+        let cursor = snapshot.cursor;
+        cursor.page_count <= self.pages.len()
+            && cursor.font_operation_count <= self.font_operations.len()
+            && cursor.font_resource_count <= self.font_resources.len()
+            && cursor.space_font_name_count <= self.space_font_names.len()
+    }
+
     pub(crate) fn rollback(&mut self, snapshot: PdfStateSnapshot<G>) {
         let cursor = snapshot.cursor;
         assert!(
