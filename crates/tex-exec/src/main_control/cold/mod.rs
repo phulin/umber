@@ -12,7 +12,7 @@ mod scan;
 mod support;
 
 pub(super) use alignment::*;
-pub(super) use apply::{apply as apply_cold_operation, enter_group};
+pub(super) use apply::{apply as apply_cold_operation, enter_group, leave_group_payloads};
 pub(super) use operation::*;
 pub(super) use pdf::*;
 pub(super) use scan::scan as scan_cold_operation;

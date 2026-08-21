@@ -10,12 +10,30 @@ use super::operation::*;
 use super::pdf::*;
 use super::support::*;
 
-pub(in crate::main_control) fn enter_group(
-    stores: &mut Universe,
-    command: &CommandState,
+pub(in crate::main_control) fn enter_group<G>(
+    stores: &mut Universe<G>,
+    command: &mut PersistentInterpreter<G>,
     kind: GroupKind,
 ) {
-    stores.enter_group_with_kind_at_line(kind, command.current_file_line_number());
+    let entered_line = command.current_file_line_number();
+    let mut state = stores
+        .command_context()
+        .expect("group entry requires an admitted live generation");
+    command
+        .state_mut()
+        .begin_group(&mut state, kind, entered_line)
+        .expect("executor and command group stacks remain synchronized");
+}
+
+pub(in crate::main_control) fn leave_group_payloads<G>(
+    stores: &mut Universe<G>,
+    command: &mut PersistentInterpreter<G>,
+    kind: GroupKind,
+) -> Result<Vec<tex_state::token::TracedTokenWord>, tex_command::CommandGroupError> {
+    let mut state = stores
+        .command_context()
+        .expect("group exit requires an admitted live generation");
+    command.state_mut().end_group(&mut state, kind)
 }
 
 #[allow(clippy::too_many_arguments)] // applies the complete canonical replay state atomically
@@ -1953,11 +1971,25 @@ pub(in crate::main_control) fn apply(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AfterGroup(token) => {
-            stores.push_aftergroup_traced(token);
+            let state = stores
+                .command_context()
+                .expect("aftergroup requires an admitted live generation");
+            command
+                .state
+                .state_mut()
+                .save_aftergroup(&state, token)
+                .expect("aftergroup is admitted only for the synchronized open group");
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AfterAssignment(token) => {
-            stores.set_afterassignment(token);
+            let state = stores
+                .command_context()
+                .expect("afterassignment requires an admitted live generation");
+            command
+                .state
+                .state_mut()
+                .set_afterassignment(&state, token)
+                .expect("afterassignment uses the synchronized command generation");
             Ok(ReplayStep::Continue)
         }
         ColdOperation::Rule {
@@ -2497,11 +2529,11 @@ pub(in crate::main_control) fn apply(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::EndSimpleGroup => {
-            stores
-                .leave_group_with_kind(GroupKind::Simple)
+            let aftergroup = leave_group_payloads(stores, command.state, GroupKind::Simple)
                 .map_err(|_| ExecError::MissingToken {
                     context: "simple recovery group",
                 })?;
+            schedule_aftergroup(command, stores, aftergroup)?;
             boxes.recovery_simple_group_open = false;
             Ok(ReplayStep::Continue)
         }
@@ -2560,8 +2592,7 @@ pub(in crate::main_control) fn apply(
             )?;
             let output_level =
                 crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
-            let aftergroup = stores
-                .leave_group_with_kind(GroupKind::Output)
+            let aftergroup = leave_group_payloads(stores, command.state, GroupKind::Output)
                 .map_err(|_| ExecError::MissingToken {
                     context: "output routine group",
                 })?;
@@ -2694,12 +2725,11 @@ pub(in crate::main_control) fn apply(
             // and storing the result in the field or branch -- belongs to the
             // scanner that opened the group, so `execute_live_math_group`
             // performs it once its level is gone.
-            let aftergroup =
-                stores
-                    .leave_group_with_kind(kind)
-                    .map_err(|_| ExecError::MissingToken {
-                        context: "math group",
-                    })?;
+            let aftergroup = leave_group_payloads(stores, command.state, kind).map_err(|_| {
+                ExecError::MissingToken {
+                    context: "math group",
+                }
+            })?;
             schedule_aftergroup(command, stores, aftergroup)?;
             Ok(ReplayStep::Continue)
         }
@@ -2783,8 +2813,7 @@ pub(in crate::main_control) fn apply(
             // Keeping the hook here preserves save-stack order when one
             // nested source closes both a box group and a conditional.
             warn_cross_file_group_close(stores, command);
-            let aftergroup = stores
-                .leave_group_with_kind(box_state.group_kind)
+            let aftergroup = leave_group_payloads(stores, command.state, box_state.group_kind)
                 .map_err(|_| ExecError::MissingToken {
                     context: "box group",
                 })?;
@@ -3191,11 +3220,11 @@ pub(in crate::main_control) fn apply(
                 command.state,
                 command.fuel,
             )?;
-            stores
-                .leave_group_with_kind(GroupKind::NoAlign)
-                .map_err(|_| ExecError::MissingToken {
+            leave_group_payloads(stores, command.state, GroupKind::NoAlign).map_err(|_| {
+                ExecError::MissingToken {
                     context: "noalign group",
-                })?;
+                }
+            })?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AlignmentCellOpening { alignment, opening } => {
@@ -3254,8 +3283,8 @@ pub(in crate::main_control) fn apply(
             // |align_group| was for individual entries", then "that
             // |align_group| was for the whole alignment" -- before it
             // determines the column widths and packages the prototype box.
-            let entry_aftergroup = leave_fin_align_save_level(stores, "align1")?;
-            let alignment_aftergroup = leave_fin_align_save_level(stores, "align0")?;
+            let entry_aftergroup = leave_fin_align_save_level(command.state, stores, "align1")?;
+            let alignment_aftergroup = leave_fin_align_save_level(command.state, stores, "align0")?;
             let active = active_alignment
                 .as_mut()
                 .expect("active replay alignment was checked");

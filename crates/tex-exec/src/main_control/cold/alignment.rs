@@ -184,22 +184,22 @@ pub(in crate::main_control) fn report_extra_alignment_tab(
 /// -- must not survive the `&` or `\cr` that ends it. §1063's `unsave` also
 /// releases the level's `\aftergroup` tokens, so they are backed up here just
 /// as every other canonical group exit does.
-pub(in crate::main_control) fn replace_alignment_entry_save_level(
-    command: &mut CommandMachine<'_>,
-    stores: &mut Universe,
+pub(in crate::main_control) fn replace_alignment_entry_save_level<G>(
+    command: &mut CommandMachine<'_, G>,
+    stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
-    let aftergroup = leave_alignment_save_level(stores, "alignment entry group")?;
+    let aftergroup = leave_alignment_save_level(command.state, stores, "alignment entry group")?;
     enter_group(stores, command.state, GroupKind::Align);
     schedule_aftergroup(command, stores, aftergroup)
 }
 
 /// One of TeX82 §800 `fin_align`'s `unsave`s, or §791's.
-pub(in crate::main_control) fn leave_alignment_save_level(
-    stores: &mut Universe,
+pub(in crate::main_control) fn leave_alignment_save_level<G>(
+    command: &mut PersistentInterpreter<G>,
+    stores: &mut Universe<G>,
     context: &'static str,
-) -> Result<Vec<tex_state::token::RootedTracedTokenWord>, ExecError> {
-    stores
-        .leave_group_with_kind(GroupKind::Align)
+) -> Result<Vec<tex_state::token::TracedTokenWord>, ExecError> {
+    leave_group_payloads(stores, command, GroupKind::Align)
         .map_err(|_| ExecError::MissingToken { context })
 }
 
@@ -209,12 +209,12 @@ pub(in crate::main_control) fn leave_alignment_save_level(
 /// the expected `align_group` means the engine's own alignment state is
 /// inconsistent. TeX therefore calls `confusion`, with a distinct site for
 /// the entry level and the whole-alignment level.
-pub(in crate::main_control) fn leave_fin_align_save_level(
-    stores: &mut Universe,
+pub(in crate::main_control) fn leave_fin_align_save_level<G>(
+    command: &mut PersistentInterpreter<G>,
+    stores: &mut Universe<G>,
     confusion_site: &'static str,
-) -> Result<Vec<tex_state::token::RootedTracedTokenWord>, ExecError> {
-    stores
-        .leave_group_with_kind(GroupKind::Align)
+) -> Result<Vec<tex_state::token::TracedTokenWord>, ExecError> {
+    leave_group_payloads(stores, command, GroupKind::Align)
         .map_err(|_| ExecError::Fatal(FatalError::confusion(confusion_site)))
 }
 

@@ -509,7 +509,7 @@ pub(in crate::main_control) enum ColdOperation<G> {
         global: bool,
     },
     AfterGroup(tex_state::token::TracedTokenWord),
-    AfterAssignment(Token),
+    AfterAssignment(tex_state::token::TracedTokenWord),
     Rule {
         width: Option<Scaled>,
         height: Option<Scaled>,

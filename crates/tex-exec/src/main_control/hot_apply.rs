@@ -388,17 +388,16 @@ fn flush_group_boundary(
     crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)
 }
 
-fn leave_group(
+fn leave_group<G>(
     kind: GroupKind,
     context: &'static str,
     modes: &mut ModeNest,
-    stores: &mut Universe,
-    command: &mut CommandMachine<'_>,
+    stores: &mut Universe<G>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
     flush_group_boundary(modes, stores, command)?;
     warn_cross_file_group_close(stores, command);
-    let aftergroup = stores
-        .leave_group_with_kind(kind)
+    let aftergroup = leave_group_payloads(stores, command.state, kind)
         .map_err(|_| ExecError::MissingToken { context })?;
     schedule_aftergroup(command, stores, aftergroup)?;
     Ok(ReplayStep::Continue)

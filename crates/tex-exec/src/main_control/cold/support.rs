@@ -62,45 +62,35 @@ pub(in crate::main_control) fn print_display_content(stores: &mut Universe, cont
 ///
 /// Because §282 clears the level from the top down while `\aftergroup` saved
 /// from the bottom up, the last-saved token is backed up first and ends up
-/// deepest, so rereading restores save order. `Universe` hands the payload
+/// deepest, so rereading restores save order. `CommandState` hands the payload
 /// over in save order, so backing it up in reverse reproduces both the input
 /// structure and the order `unsave` observes it in.
-pub(in crate::main_control) fn schedule_aftergroup(
-    command: &mut CommandMachine<'_>,
-    stores: &mut Universe,
-    tokens: Vec<tex_state::token::RootedTracedTokenWord>,
+pub(in crate::main_control) fn schedule_aftergroup<G>(
+    command: &mut CommandMachine<'_, G>,
+    stores: &mut Universe<G>,
+    tokens: Vec<tex_state::token::TracedTokenWord>,
 ) -> Result<(), ExecError> {
     if tokens.is_empty() {
         return Ok(());
     }
-    let traced: Vec<_> = tokens
-        .into_iter()
-        .map(|spelling| {
-            let (spelling, parent) = spelling.into_parts();
-            let token = spelling.semantic_token();
-            let origin = stores.inserted_origin(
-                tex_state::provenance::InsertedOriginKind::AfterGroup,
-                token,
-                parent.id(),
-            );
-            tex_state::token::RootedTracedTokenWord::new(
-                token,
-                tex_state::provenance::OriginRef::direct(origin),
-            )
-        })
-        .collect::<Vec<_>>();
     command
         .processor(stores)
-        .back_input_aftergroup_tokens(traced)
+        .back_input_aftergroup_tokens(tokens)
         .map_err(command_error)
 }
 
-pub(in crate::main_control) fn warn_cross_file_group_close(
-    stores: &mut Universe,
-    command: &mut CommandMachine<'_>,
+pub(in crate::main_control) fn warn_cross_file_group_close<G>(
+    stores: &mut Universe<G>,
+    command: &mut CommandMachine<'_, G>,
 ) {
-    let level = stores.group_depth() as usize;
-    let Some(frame) = stores.group_frames().next_back() else {
+    let (level, frame) = {
+        let state = stores
+            .command_context()
+            .expect("group tracing requires an admitted live generation");
+        let frames = state.group_frames();
+        (frames.len(), frames.last().copied())
+    };
+    let Some(frame) = frame else {
         return;
     };
     command.processor(stores).warn_cross_file_group_close(
@@ -113,23 +103,27 @@ pub(in crate::main_control) fn warn_cross_file_group_close(
 /// Releases the single pending after-assignment token only after the typed
 /// assignment has committed. TeX82 §1269 assigns it to `cur_tok` and invokes
 /// §325 `back_input`, so it must use the ordinary canonical backup level.
-pub(in crate::main_control) fn schedule_afterassignment(
-    command: &mut PersistentInterpreter,
+pub(in crate::main_control) fn schedule_afterassignment<G>(
+    command: &mut PersistentInterpreter<G>,
     fuel: &mut tex_command::CommandFuel,
     capabilities: &mut CommandHostCapabilities,
     observations: &mut ObservationSlot,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
-    let Some(token) = stores.take_afterassignment() else {
+    let token = {
+        let state = stores
+            .command_context()
+            .expect("afterassignment requires an admitted live generation");
+        command
+            .state_mut()
+            .take_afterassignment(&state)
+            .expect("afterassignment uses the synchronized command generation")
+    };
+    let Some(token) = token else {
         return Ok(());
     };
-    let origin = stores.inserted_origin(
-        tex_state::provenance::InsertedOriginKind::AfterAssignment,
-        token,
-        tex_state::token::OriginId::UNKNOWN,
-    );
     let mut processor = command_processor(command, fuel, capabilities, observations, stores);
-    let result = processor.back_input_token(tex_state::token::TracedTokenWord::pack(token, origin));
+    let result = processor.back_input_token(token);
     result.map_err(command_error)
 }
 
@@ -1058,10 +1052,11 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group(
     let split_top_skip = *stores.glue(stores.glue_param(GlueParam::SPLIT_TOP_SKIP));
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
-    let aftergroup = stores
-        .leave_group_with_kind(GroupKind::Insert)
-        .map_err(|_| ExecError::MissingToken {
-            context: "insert group",
+    let aftergroup =
+        leave_group_payloads(stores, command.state, GroupKind::Insert).map_err(|_| {
+            ExecError::MissingToken {
+                context: "insert group",
+            }
         })?;
     schedule_aftergroup(command, stores, aftergroup)?;
     let level = crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;

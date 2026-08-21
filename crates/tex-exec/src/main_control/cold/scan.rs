@@ -1155,8 +1155,7 @@ pub(in crate::main_control) fn scan<G>(
                     .ok_or(ExecError::MissingToken {
                         context: "\\afterassignment",
                     })?
-                    .spelling()
-                    .semantic_token(),
+                    .spelling(),
             ))
         }
         Meaning::UnexpandablePrimitive(
