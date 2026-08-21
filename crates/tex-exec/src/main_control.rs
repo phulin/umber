@@ -9756,68 +9756,79 @@ fn execution_error_is_fuel(error: &ExecError) -> bool {
 #[cfg(test)]
 mod discretionary_hyphen_tests {
     use super::*;
+    use tex_state::AssignmentScope;
 
     #[test]
     fn disabled_hyphen_char_leaves_pre_break_empty() {
         // TeX82 §1113 inserts the current font's hyphen character only in
         // 0..256. In particular, -1 disables the visible pre-break.
-        let mut stores = Universe::<G>::new_with_plain_catcodes();
-        stores.set_font_hyphen_char(stores.current_font(), -1);
-        let mut control = MainControl::tex82_initex(&mut stores);
-        control
-            .register_root_source(tex_command::SourceRegistration::new(
-                tex_command::RegisteredSourceKind::Generated,
-                br"\noindent\-\end".to_vec(),
-            ))
-            .expect("register canonical source");
+        crate::test_harness::with_plain_universe(|stores| {
+            crate::test_harness::with_admitted(stores, |context| {
+                context.set_font_hyphen_char(context.current_font(), -1);
+            });
+            let mut control = MainControl::tex82_initex(stores);
+            control
+                .register_root_source(tex_command::SourceRegistration::new(
+                    tex_command::RegisteredSourceKind::Generated,
+                    br"\noindent\-\end".to_vec(),
+                ))
+                .expect("register canonical source");
 
-        assert_eq!(
-            control.step(&mut stores).expect("paragraph start"),
-            MainControlStep::Continue
-        );
-        assert_eq!(
-            control.step(&mut stores).expect("explicit hyphen"),
-            MainControlStep::Continue
-        );
-        let Some(Node::Disc {
-            kind: DiscKind::ExplicitHyphen,
-            pre,
-            ..
-        }) = control.modes.current_list().nodes().last()
-        else {
-            panic!("canonical replay appended an explicit discretionary hyphen");
-        };
-        assert!(pre.is_empty());
+            assert_eq!(
+                control.step(stores).expect("paragraph start"),
+                MainControlStep::Continue
+            );
+            assert_eq!(
+                control.step(stores).expect("explicit hyphen"),
+                MainControlStep::Continue
+            );
+            let Some(Node::Disc {
+                kind: DiscKind::ExplicitHyphen,
+                pre,
+                ..
+            }) = control.modes.current_list().nodes().last()
+            else {
+                panic!("canonical replay appended an explicit discretionary hyphen");
+            };
+            assert!(pre.is_empty());
+        });
     }
 
     #[test]
     fn missing_hyphen_glyph_leaves_pre_break_empty() {
         // TeX82 §§581/1113: an in-range hyphen character is constructed via
         // `new_character`, which warns and returns null for an absent glyph.
-        let mut stores = Universe::<G>::new_with_plain_catcodes();
-        let mut control = MainControl::tex82_initex(&mut stores);
-        stores.set_int_param(IntParam::TRACING_LOST_CHARS, 1);
-        stores.set_int_param(IntParam::TRACING_ONLINE, 1);
-        stores.set_font_hyphen_char(stores.current_font(), i32::from(b'?'));
-        control
-            .register_root_source(tex_command::SourceRegistration::new(
-                tex_command::RegisteredSourceKind::Generated,
-                br"\noindent\-\end".to_vec(),
-            ))
-            .expect("register canonical source");
+        crate::test_harness::with_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            crate::test_harness::with_admitted(stores, |context| {
+                context
+                    .assign_int_param(IntParam::TRACING_LOST_CHARS, 1, AssignmentScope::Local)
+                    .expect("tracing lost characters assignment");
+                context
+                    .assign_int_param(IntParam::TRACING_ONLINE, 1, AssignmentScope::Local)
+                    .expect("tracing online assignment");
+                context.set_font_hyphen_char(context.current_font(), i32::from(b'?'));
+            });
+            control
+                .register_root_source(tex_command::SourceRegistration::new(
+                    tex_command::RegisteredSourceKind::Generated,
+                    br"\noindent\-\end".to_vec(),
+                ))
+                .expect("register canonical source");
 
-        assert_eq!(
-            control.step(&mut stores).expect("paragraph start"),
-            MainControlStep::Continue
-        );
-        assert_eq!(
-            control.step(&mut stores).expect("explicit hyphen"),
-            MainControlStep::Continue
-        );
-        let Some(Node::Disc { pre, .. }) = control.modes.current_list().nodes().last() else {
-            panic!("canonical replay appended an explicit discretionary hyphen");
-        };
-        assert!(pre.is_empty());
+            assert_eq!(
+                control.step(stores).expect("paragraph start"),
+                MainControlStep::Continue
+            );
+            assert_eq!(
+                control.step(stores).expect("explicit hyphen"),
+                MainControlStep::Continue
+            );
+            let Some(Node::Disc { pre, .. }) = control.modes.current_list().nodes().last() else {
+                panic!("canonical replay appended an explicit discretionary hyphen");
+            };
+            assert!(pre.is_empty());
+        });
     }
 
     #[test]
@@ -9825,33 +9836,34 @@ mod discretionary_hyphen_tests {
         // TeX82 §§1369--1372: `write_out` traces the write-text token list
         // and expands its condition before testing the frozen `\endwrite`
         // stopper. Atomic shipout staging must retain that live-call order.
-        let mut stores =
-            Universe::<G>::with_world(tex_state::World::memory()).with_plain_catcodes();
-        let mut control = MainControl::tex82_initex(&mut stores);
-        control
+        crate::test_harness::with_plain_universe(|stores| {
+            *stores.world_mut() = tex_state::World::memory();
+            let mut control = MainControl::tex82_initex(stores);
+            control
             .register_root_source(tex_command::SourceRegistration::new(
                 tex_command::RegisteredSourceKind::Generated,
                 br"\nonstopmode\tracingmacros=2\shipout\hbox{\write16{\if01{\else unbal}\fi}}\end"
                     .to_vec(),
             ))
             .expect("register canonical source");
-        while let MainControlStep::Continue =
-            control.step(&mut stores).expect("write source executes")
-        {}
-        let log = String::from_utf8_lossy(
-            stores
-                .world()
-                .memory_log_output()
-                .expect("memory world retains committed log output"),
-        );
-        let trace = log
-            .find("write->")
-            .filter(|&start| log[start..].contains("unbal"))
-            .unwrap_or_else(|| panic!("write trace is visible: {log:?}"));
-        let report = log
-            .find("Unbalanced write command")
-            .unwrap_or_else(|| panic!("write report is visible: {log:?}"));
-        assert!(trace < report, "{log:?}");
+            while let MainControlStep::Continue =
+                control.step(stores).expect("write source executes")
+            {}
+            let log = String::from_utf8_lossy(
+                stores
+                    .world()
+                    .memory_log_output()
+                    .expect("memory world retains committed log output"),
+            );
+            let trace = log
+                .find("write->")
+                .filter(|&start| log[start..].contains("unbal"))
+                .unwrap_or_else(|| panic!("write trace is visible: {log:?}"));
+            let report = log
+                .find("Unbalanced write command")
+                .unwrap_or_else(|| panic!("write report is visible: {log:?}"));
+            assert!(trace < report, "{log:?}");
+        });
     }
 }
 
