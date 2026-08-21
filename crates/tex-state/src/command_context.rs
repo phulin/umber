@@ -51,6 +51,26 @@ pub enum PenaltyArrayKind {
     DisplayWidow,
 }
 
+/// A font identifier supplied either as a qualified retained spelling or as
+/// an admitted command symbol.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FontIdentifier {
+    Symbol(Symbol),
+    Qualified(SymbolId),
+}
+
+impl From<Symbol> for FontIdentifier {
+    fn from(value: Symbol) -> Self {
+        Self::Symbol(value)
+    }
+}
+
+impl From<SymbolId> for FontIdentifier {
+    fn from(value: SymbolId) -> Self {
+        Self::Qualified(value)
+    }
+}
+
 impl PenaltyArrayKind {
     const fn storage(self) -> crate::env::banks::TokParam {
         match self {
@@ -970,7 +990,18 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("validated font exceeds the live font store capacity")
     }
 
-    pub fn set_font_identifier_symbol(&mut self, font: crate::ids::FontId, symbol: SymbolId) {
+    pub fn set_font_identifier_symbol(
+        &mut self,
+        font: crate::ids::FontId,
+        identifier: impl Into<FontIdentifier>,
+    ) {
+        let symbol = match identifier.into() {
+            FontIdentifier::Symbol(symbol) => self
+                .interner
+                .qualify_local(symbol)
+                .expect("font identifier belongs to the admitted session"),
+            FontIdentifier::Qualified(symbol) => symbol,
+        };
         let kind = self
             .interner
             .kind_id(symbol)
@@ -990,7 +1021,7 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn try_intern_font_with_identifier(
         &mut self,
         font: tex_fonts::LoadedFont,
-        identifier: SymbolId,
+        identifier: impl Into<FontIdentifier>,
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
         let id = self.fonts.intern(font)?;
         self.set_font_identifier_symbol(id, identifier);
@@ -1000,7 +1031,7 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn try_copy_font_with_identifier(
         &mut self,
         source: crate::ids::FontId,
-        identifier: SymbolId,
+        identifier: impl Into<FontIdentifier>,
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
         let parameters = self.fonts.get(source).parameters().to_vec();
         let font = self.fonts.get(source).copied(parameters);
@@ -1010,7 +1041,7 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn try_letterspace_font_with_identifier(
         &mut self,
         source: crate::ids::FontId,
-        identifier: SymbolId,
+        identifier: impl Into<FontIdentifier>,
         amount: i16,
         no_ligatures: bool,
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
