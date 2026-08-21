@@ -117,7 +117,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `tests/fixture_parity.rs`: active TeX82 reference-observation corpus runner;
   executes every retained source and compares its explicit ordered terminal
   and log projection with the pinned reference.
-- `tests/support.rs`: generation-scoped HRTB fresh and Plain fixtures shared by
+- `tests/support/mod.rs`: generation-scoped HRTB fresh and Plain fixtures shared by
   public-boundary integration tests; branded engine ids never escape callbacks.
 
 ## Validation
