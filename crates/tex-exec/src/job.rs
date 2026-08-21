@@ -33,7 +33,9 @@ use tex_command::{CommandHostCapabilities, CommandProfile};
 use tex_state::env::banks::IntParam;
 use tex_state::print::{ErrorHistory, Printer, Selector};
 use tex_state::world::PrintSink;
-use tex_state::{CommandContext, EngineUsageStatistics, RetainedStringAllocation, Universe};
+use tex_state::{
+    CommandContext, EngineUsageStatistics, PdfNavigationWarning, RetainedStringAllocation, Universe,
+};
 
 /// pdftex.web §2's `banner`: the production reference engine's start-up string.
 ///
@@ -173,14 +175,6 @@ pub struct PdfJobFinalizationReport {
     pub named_destinations: u32,
     pub extra_memory_words: u32,
     reported: bool,
-}
-
-/// Handle-free navigation warning selected before job framing renders it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum PdfNavigationWarning {
-    Destination(tex_state::PdfDestinationIdentity),
-    StructureDestination(tex_state::PdfDestinationIdentity),
-    Thread(tex_state::PdfDestinationIdentity),
 }
 
 impl PdfJobFinalizationReport {

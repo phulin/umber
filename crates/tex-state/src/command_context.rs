@@ -1719,6 +1719,18 @@ impl<'a, G> CommandContext<'a, G> {
             .map(crate::PdfPageRecord::page_object)
     }
 
+    #[must_use]
+    pub fn pdf_page_count(&self) -> usize {
+        self.pdf.pages().len()
+    }
+
+    /// Detaches pdfTeX's unresolved navigation diagnostics before the
+    /// admission is released for terminal publication.
+    #[must_use]
+    pub fn detach_pdf_navigation_warnings(&self) -> Vec<crate::PdfNavigationWarning> {
+        self.pdf.unresolved_navigation_warnings()
+    }
+
     pub fn set_pdf_match_state(
         &mut self,
         haystack: Vec<u8>,

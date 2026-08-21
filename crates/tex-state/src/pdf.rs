@@ -26,6 +26,14 @@ pub use object::{
 pub use outline::PdfOutlineRecord;
 pub use thread::{PdfThreadBeadRecord, PdfThreadRecord};
 
+/// Handle-free unresolved PDF navigation selected before terminal rendering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdfNavigationWarning {
+    Destination(PdfDestinationIdentity),
+    StructureDestination(PdfDestinationIdentity),
+    Thread(PdfDestinationIdentity),
+}
+
 use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
@@ -1900,6 +1908,30 @@ impl<G> PdfState<G> {
 
     pub(crate) fn threads(&self) -> &[PdfThreadRecord] {
         &self.threads
+    }
+
+    /// Detaches unresolved navigation identities in pdfTeX's finalization
+    /// order without exposing the checkpointed destination/thread ledgers.
+    pub(crate) fn unresolved_navigation_warnings(&self) -> Vec<PdfNavigationWarning> {
+        self.destinations
+            .iter()
+            .filter(|record| !record.defined())
+            .map(|record| PdfNavigationWarning::Destination(record.identity().clone()))
+            .chain(
+                self.structure_destinations
+                    .iter()
+                    .filter(|record| !record.defined())
+                    .map(|record| {
+                        PdfNavigationWarning::StructureDestination(record.identity().clone())
+                    }),
+            )
+            .chain(
+                self.threads
+                    .iter()
+                    .filter(|record| record.beads().is_empty())
+                    .map(|record| PdfNavigationWarning::Thread(record.identity().clone())),
+            )
+            .collect()
     }
 
     pub(crate) fn create_outline(

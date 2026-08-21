@@ -54,6 +54,7 @@ use tex_typeset::PackSpec;
 
 use crate::assignments::committer::AssignmentCommitter;
 use crate::assignments::tracing as assignment_tracing;
+use crate::error::DiagnosticSite;
 use crate::execution_receipt::{
     ConsumedExecutionReceipt, ExecutionReceipt, MAX_EXECUTION_RECEIPT_RECORDS, OperationTermination,
 };
@@ -288,7 +289,7 @@ pub struct MainControl<G> {
     /// seam. Diagnostic session drivers surface this exact location to their
     /// caller; complete-job drivers retain TeX's terminal completion semantics.
     captured_fatal_origin: Option<(
-        OriginId,
+        DiagnosticSite,
         Option<crate::FrozenDiagnosticOrigin>,
         Option<crate::FrozenDiagnosticContext>,
     )>,
@@ -1756,17 +1757,24 @@ impl<G> MainControl<G> {
         if std::mem::replace(&mut self.pdf_navigation_finalized, true) {
             return;
         }
-        if !self.command_profile().capabilities().supports_pdftex()
-            || stores.int_param(IntParam::PDF_OUTPUT) <= 0
-            || stores.int_param(IntParam::PDF_DRAFT_MODE) != 0
-            || stores.pdf_pages().is_empty()
-        {
+        let missing = {
+            let context = stores.command_context().expect("live generation");
+            if !self.command_profile().capabilities().supports_pdftex()
+                || context.int_param(IntParam::PDF_OUTPUT) <= 0
+                || context.int_param(IntParam::PDF_DRAFT_MODE) != 0
+                || context.pdf_page_count() == 0
+            {
+                return;
+            }
+            context.detach_pdf_navigation_warnings()
+        };
+        if missing.is_empty() {
             return;
         }
         stores.world_mut().begin_terminal_publication(
             tex_state::TerminalPublicationPhase::PdfFinalizationNotices,
         );
-        let reported = crate::job::report_pdf_navigation_warnings(stores);
+        let reported = crate::job::report_pdf_navigation_warnings(stores, &missing);
         stores.world_mut().commit_terminal_publication();
         if reported {
             // Retained root-body runs return their selected effect slice
@@ -1946,11 +1954,15 @@ impl<G> MainControl<G> {
         let previous_line_was_empty = self
             .terminal_line_was_empty
             .unwrap_or(self.startup_terminal_line.is_empty());
-        match crate::job::prompt_for_more_input(
-            stores,
-            &self.startup_terminal_line,
-            previous_line_was_empty,
-        ) {
+        let action = {
+            let mut context = stores.command_context().expect("live generation");
+            crate::job::prompt_for_more_input(
+                &mut context,
+                &self.startup_terminal_line,
+                previous_line_was_empty,
+            )
+        };
+        match action {
             crate::job::EndOfInputAction::Line(line) => {
                 self.terminal_line_was_empty = Some(line.is_empty());
                 self.command.set_terminal_context_line(&line);
@@ -2120,7 +2132,9 @@ impl<G> MainControl<G> {
             ) {
                 Some(tail) => Self::classify_last_node(&context, tail.node()),
                 None => match context.page_last_node_type() {
-                    11 => Some(tex_command::LastNodeItem::Glue(context.page_last_skip())),
+                    11 => context
+                        .page_last_skip()
+                        .map(tex_command::LastNodeItem::Glue),
                     12 => Some(tex_command::LastNodeItem::Kern(context.page_last_kern())),
                     13 => Some(tex_command::LastNodeItem::Penalty(
                         context.page_last_penalty(),
@@ -2272,7 +2286,7 @@ impl<G> MainControl<G> {
     ) -> Result<(), ExecError> {
         if error.is_pdftex_navigation_fatal() {
             crate::job::report_pdf_fatal_error(stores, &error.to_string());
-            stores.commit_effects(stores.world().effect_pos())?;
+            stores.publish_effect_prefix(stores.world().effect_pos())?;
         }
         Ok(())
     }
@@ -2294,7 +2308,7 @@ impl<G> MainControl<G> {
             self.captured_fatal_origin = match &error {
                 ExecError::Captured { site, frozen, .. } if fatal != FatalError::TooManyErrors => {
                     Some((
-                        site.clone(),
+                        *site,
                         frozen
                             .as_deref()
                             .and_then(|evidence| evidence.origin.clone()),
@@ -2326,14 +2340,14 @@ impl<G> MainControl<G> {
                     name,
                     original_name,
                 } => {
-                    self.pending_resource_site = Some(site);
+                    self.pending_resource_site = site.primary_origin();
                     Ok(self.observed_suspension(ResourceNeed::Input {
                         name,
                         original_name,
                     }))
                 }
                 ExecError::MissingInputProbe { request } => {
-                    self.pending_resource_site = Some(site);
+                    self.pending_resource_site = site.primary_origin();
                     Ok(self.observed_suspension(ResourceNeed::InputProbe { request }))
                 }
                 error => Err(ExecError::Captured {
@@ -2408,7 +2422,11 @@ impl<G> MainControl<G> {
         if self.pending_shipout_boundary
             && !self.boxes.output_routine_active
             && self.modes.depth() == 1
-            && stores.execution_group_depth() == 0
+            && stores
+                .command_context()
+                .expect("live generation")
+                .execution_group_depth()
+                == 0
         {
             self.completed_boundaries
                 .push(crate::EngineBoundary::ShipoutComplete);
@@ -2499,14 +2517,11 @@ impl<G> MainControl<G> {
     fn enter_main_control(&mut self, stores: &mut Universe<G>) -> bool {
         // Seeds `line` before the first command is delivered; every step
         // republishes it after delivery (see `apply_operation`).
-        stores.set_current_input_position(
-            i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
-            self.command.current_file_source_id(),
-        );
         if std::mem::replace(&mut self.main_control_entered, true) {
             return false;
         }
-        schedule_everyjob(&mut self.command, stores);
+        let mut context = stores.command_context().expect("live generation");
+        schedule_everyjob(&mut self.command, &mut context);
         true
     }
 
@@ -3207,8 +3222,10 @@ impl<G> MainControl<G> {
             initial_boundaries,
             initial_effect_pos,
         } = context;
-        let error =
-            error.freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8));
+        let error = {
+            let mut stores = stores.command_context().expect("live generation");
+            error.freeze_diagnostic_origin(&mut stores, self.command.diagnostic_input_context(8))
+        };
         let Some(fatal) = error.as_fatal() else {
             self.discard_direct_operation(stores, operation_mark);
             return Err(error);
@@ -4289,8 +4306,11 @@ impl<G> MainControl<G> {
                     .rollback_journal(mode_mark)
                     .expect("diagnostic assignment owns the mode mark");
                 self.discard_direct_operation(stores, operation_mark);
-                Err(error
-                    .freeze_diagnostic_origin(stores, self.command.diagnostic_input_context(8)))
+                let mut stores = stores.command_context().expect("live generation");
+                Err(error.freeze_diagnostic_origin(
+                    &mut stores,
+                    self.command.diagnostic_input_context(8),
+                ))
             }
         }
     }
@@ -5822,7 +5842,7 @@ impl<G> MainControl<G> {
         let (site, frozen, context) = self.captured_fatal_origin.as_ref()?;
         Some(ExecError::Captured {
             error: Box::new(ExecError::Fatal(fatal)),
-            site: site.clone(),
+            site: *site,
             frozen: Some(Box::new(crate::FrozenDiagnosticEvidence {
                 origin: frozen.clone(),
                 context: context.clone(),

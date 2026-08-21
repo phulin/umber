@@ -1570,6 +1570,16 @@ impl<G> Universe<G> {
         }
     }
 
+    /// Publishes the already-committed effect prefix after command admission
+    /// has been released. This remains an aggregate outer barrier because a
+    /// partial host publication cannot be rolled back as a state mutation.
+    pub fn publish_effect_prefix(
+        &mut self,
+        effect_pos: crate::EffectPos,
+    ) -> Result<(), crate::WorldError> {
+        self.world.commit_effects(effect_pos)
+    }
+
     /// Publishes already-verified replay bytes through the ordinary shipout
     /// barrier. Memo replay is disabled whenever rendered-source provenance is
     /// demanded, so the legacy compact provenance input is intentionally not

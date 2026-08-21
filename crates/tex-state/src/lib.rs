@@ -112,11 +112,11 @@ pub use pdf::{
     PdfExternalImageMetadata, PdfExternalImageRecord, PdfExternalImageRegistrationError,
     PdfExternalImageSource, PdfFontConfiguration, PdfFontMapOperation, PdfFontResourceRecord,
     PdfFormArtifact, PdfFormColorRollback, PdfFormRecord, PdfGlyphToUnicode, PdfLinkRecord,
-    PdfObjectCapacityError, PdfOpenLink, PdfOutlineRecord, PdfOutputParameters, PdfPageBox,
-    PdfPageGroupInclusion, PdfPageGroupSelector, PdfPageGroupWarning, PdfPageRecord,
-    PdfPageRotation, PdfRasterColorSpace, PdfRasterFormat, PdfRasterImageMetadata,
-    PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
-    PdfThreadBeadRecord, PdfThreadRecord,
+    PdfNavigationWarning, PdfObjectCapacityError, PdfOpenLink, PdfOutlineRecord,
+    PdfOutputParameters, PdfPageBox, PdfPageGroupInclusion, PdfPageGroupSelector,
+    PdfPageGroupWarning, PdfPageRecord, PdfPageRotation, PdfRasterColorSpace, PdfRasterFormat,
+    PdfRasterImageMetadata, PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError,
+    PdfRawObjectRecord, PdfThreadBeadRecord, PdfThreadRecord,
 };
 pub mod world;
 
