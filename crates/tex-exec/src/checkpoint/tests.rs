@@ -145,8 +145,8 @@ fn retained_checkpoint_rejects_a_fresh_command_timeline_before_mutation() {
             .assign_count(0, 20, AssignmentScope::Global)
             .expect("candidate count");
         let mut command = CommandState::default();
-        command.begin_file_name().expect("filename guard opens");
         let mut modes = ModeNest::new();
+        let mode_hash_before = modes.summary().semantic_fingerprint(universe);
 
         assert!(matches!(
             checkpoint.restore_state(&mut command, &mut modes, universe),
@@ -154,7 +154,11 @@ fn retained_checkpoint_rejects_a_fresh_command_timeline_before_mutation() {
                 CommandRestoreError::ForeignGeneration
             ))
         ));
-        assert!(command.name_in_progress());
+        assert_eq!(
+            modes.summary().semantic_fingerprint(universe),
+            mode_hash_before,
+            "foreign-timeline validation must precede mode mutation"
+        );
         assert_eq!(
             universe
                 .command_context()
