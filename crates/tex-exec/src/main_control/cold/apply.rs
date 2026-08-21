@@ -1274,33 +1274,13 @@ pub(in crate::main_control) fn apply<G>(
             command.retain_assignment_receipt(receipt);
             Ok(ReplayStep::Continue)
         }
-        ColdOperation::InputStream { request, resource } => {
+        ColdOperation::InputStream {
+            request,
+            resource: _,
+        } => {
             match request {
-                RootedInputStreamRequest::Open {
-                    stream, file_name, ..
-                } => {
-                    let slot = replay_stream_slot(stream);
-                    let packed_name = file_name.packed();
-                    // §1275 closes any stream already open on `n` before it
-                    // tries to open the new file, whichever command this is.
-                    AssignmentCommitter::new(stores).try_unscoped(None, |stores| {
-                        stores.close_input_stream(slot);
-                        let Some(resource) = resource else {
-                            return Ok(());
-                        };
-                        stores.set_input_memory_file(&packed_name, resource.bytes().to_vec())?;
-                        let content = InputReadState::read_input_file(
-                            &mut stores.input_open_context(),
-                            std::path::Path::new(&packed_name),
-                        )?;
-                        stores.open_input_stream_content(slot, &content)?;
-                        Ok::<(), ExecError>(())
-                    })?;
-                }
-                RootedInputStreamRequest::Close { stream, .. } => {
-                    let slot = replay_stream_slot(stream);
-                    AssignmentCommitter::new(stores)
-                        .unscoped(None, |stores| stores.close_input_stream(slot));
+                RootedInputStreamRequest::Open { .. } | RootedInputStreamRequest::Close { .. } => {
+                    unreachable!("input open/close executes at the MainControl outer barrier")
                 }
                 // TeX82 §482 has already collected the list inside the
                 // command core, which also reported §1225's missing-`to`
@@ -1402,13 +1382,8 @@ pub(in crate::main_control) fn apply<G>(
             )?;
             Ok(ReplayStep::Continue)
         }
-        ColdOperation::PdfSetRandomSeed { seed } => {
-            stores.set_pdf_random_seed(seed);
-            Ok(ReplayStep::Continue)
-        }
-        ColdOperation::PdfResetTimer => {
-            stores.reset_pdf_timer();
-            Ok(ReplayStep::Continue)
+        ColdOperation::PdfSetRandomSeed { .. } | ColdOperation::PdfResetTimer => {
+            unreachable!("PDF clock and random operations execute at the MainControl outer barrier")
         }
         ColdOperation::PdfInterwordSpace(control) => {
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -1451,7 +1426,8 @@ pub(in crate::main_control) fn apply<G>(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfspacefont"));
             }
-            stores.set_pdf_space_font_name(pdf_graphics_text(tokens, stores));
+            let name = pdf_graphics_text(tokens, stores);
+            stores.set_pdf_space_font_name(name);
             Ok(ReplayStep::Continue)
         }
         ColdOperation::PdfGraphics(request) => {
@@ -1677,13 +1653,14 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::DeferredWrite { stream, tokens } => {
+            let tokens = tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec());
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
                 Whatsit::DeferredWrite {
                     sink: replay_write_sink(stream),
-                    tokens: tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec()),
+                    tokens,
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -1692,13 +1669,14 @@ pub(in crate::main_control) fn apply<G>(
             deferred: true,
             tokens,
         } => {
+            let tokens = tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec());
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
                 Whatsit::DeferredSpecial {
                     class: "dvi".to_owned(),
-                    tokens: tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec()),
+                    tokens,
                 },
             )?;
             Ok(ReplayStep::Continue)
@@ -2132,13 +2110,13 @@ pub(in crate::main_control) fn apply<G>(
                             stream,
                             &target,
                         );
-                        write_immediate_text(stores, sink, &text);
+                        write_immediate_text(stores, command, sink, &text);
                     }
                 }
                 RootedImmediateExtension::Write { stream, tokens } => {
                     let text = write_text(tokens, stores);
                     if let Some(sink) = immediate_write_sink(stream, stores) {
-                        write_immediate_text(stores, sink, &text);
+                        write_immediate_text(stores, command, sink, &text);
                     }
                 }
                 RootedImmediateExtension::CloseOut { stream } => {
@@ -2485,13 +2463,11 @@ pub(in crate::main_control) fn apply<G>(
             // TeX82 §1101 and e-TeX 2.6 [26.424]'s `make_mark` append the
             // node in every mode and leave page building to a later trigger.
             crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            let tokens = tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec());
             crate::vertical::append_vertical_contribution(
                 modes,
                 stores,
-                Node::Mark {
-                    class,
-                    tokens: tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec()),
-                },
+                Node::Mark { class, tokens },
             );
             Ok(ReplayStep::Continue)
         }
@@ -2884,7 +2860,6 @@ pub(in crate::main_control) fn apply<G>(
                     ),
                 })
             };
-            let boxed = stores.publish_page_nodes(vec![node]);
             // TeX82 §1168's `vcenter_group` case of `handle_right_brace`:
             //
             //     vcenter_group: begin end_graf; unsave; save_ptr:=save_ptr-2;
@@ -2900,6 +2875,7 @@ pub(in crate::main_control) fn apply<G>(
             // payload, nor a `\raise`/`\lower` operand, and the whole box
             // context every other branch below classifies is inapplicable.
             if box_state.kind == ReplayBoxKind::VCenter {
+                let boxed = stores.publish_page_nodes(vec![node]);
                 modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -2916,12 +2892,10 @@ pub(in crate::main_control) fn apply<G>(
                 boxes.pending_leader = Some((kind, payload));
             } else if ships_out {
                 debug_assert!(box_state.ships_out);
-                if let Some(receipt) = shipout_replay_box(node, stores, command)?
-                    .and_then(|publication| publication.dvi)
-                {
-                    push_prepared_dvi_page(prepared_dvi_pages, receipt);
-                }
+                debug_assert!(command.prepared_shipout.is_none());
+                *command.prepared_shipout = Some(PreparedShipout { node });
             } else if let Some(target) = box_state.target {
+                let boxed = stores.publish_page_nodes(vec![node]);
                 commit_set_box_target(target, Some(boxed), stores, command);
             } else {
                 // TeX82 §1076's `box_end` branch for an ordinary
@@ -3084,66 +3058,16 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AlignmentPreambleStart { alignment } => {
-            let preamble = command
-                .state
-                .take_completed_alignment_preamble(alignment)
-                .map_err(|_| ExecError::MissingToken {
-                    context: "completed alignment preamble",
-                })?;
-            if preamble.columns.is_empty() {
-                return Err(ExecError::MissingToken {
-                    context: "first alignment preamble column",
-                });
-            }
-            let mut attempt_templates = Vec::with_capacity(preamble.columns.len() * 2);
-            for templates in &preamble.columns {
-                attempt_templates.extend(templates.u_template);
-                attempt_templates.push(templates.v_template);
-            }
-            let promoted = command
-                .state
-                .promote_attempt_roots(
-                    stores,
-                    tex_command::AttemptPromotionRoots::new(&attempt_templates, &[], &[], &[]),
-                )
-                .map_err(|_| ExecError::MissingToken {
-                    context: "alignment preamble template promotion",
-                })?;
-            let mut promoted_templates = promoted.token_lists.into_iter();
-            let prepared_columns = preamble
-                .columns
-                .iter()
-                .map(|templates| PreparedAlignmentCellTemplates {
-                    u_template: templates
-                        .u_template
-                        .map(|_| promoted_templates.next().expect("promoted u-template")),
-                    v_template: promoted_templates.next().expect("promoted v-template"),
-                })
-                .collect();
-            debug_assert!(promoted_templates.next().is_none());
             // `init_row` reaches `align_peek` before `init_col` selects the
             // first cell. Keep the first pair validated here, but defer
             // `BeginCell` until that lookahead has classified the next token.
             // In particular, a recovered preamble may be followed directly
             // by `}`, which `align_peek` passes to `fin_align`.
-            if let Some(active) = active_alignment.as_mut()
-                && active.identity == alignment
-            {
-                active.columns = prepared_columns;
-                active.tabskips = preamble.tabskips;
-                active.default_tabskip = preamble.default_tabskip;
-                active.repeat_start = preamble.repeat_start;
-                active.column = 0;
-                active.preamble_start_pending = false;
-                // TeX82 §777 enters `align_peek` after `init_row`, before
-                // `init_col` gets a cell opener.  This distinction matters
-                // when §23 recovered a runaway preamble with frozen `\\cr`:
-                // the following right brace belongs to `fin_align`, not to a
-                // u-template lookahead that must be backed up.  Keep this
-                // post-preamble probe command-owned so ordinary first-cell
-                // input still reaches the existing typed init-col path.
-                active.align_peek_pending = true;
-            }
+            debug_assert!(
+                active_alignment.as_ref().is_some_and(
+                    |active| active.identity == alignment && !active.columns.is_empty()
+                )
+            );
             // TeX82 §774 closes `init_align` with a second
             // `new_save_level(align_group)`, the level that brackets one
             // alignment *entry*. §791's `fin_col` replaces it at every `&`,

@@ -1271,6 +1271,7 @@ pub(in crate::main_control) type PreparedColdCommand<G> =
 #[derive(Debug)]
 pub(in crate::main_control) enum ColdPreparationError {
     Promotion(tex_command::AttemptError),
+    Allocation,
     ReceiptUnderflow,
     ReceiptRemainder { remaining: usize },
     Definition(tex_state::UniverseError),
@@ -1589,11 +1590,17 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
     operation: ColdOperation<G>,
     command: &tex_command::CommandState<G>,
     stores: &mut Universe<G>,
-) -> Result<PreparedColdCommand<G>, ColdPreparationError> {
+    additional_token_roots: &[tex_command::AttemptTokenListId],
+) -> Result<(PreparedColdCommand<G>, Vec<tex_state::TokenListId<G>>), ColdPreparationError> {
     let mut roots = Vec::new();
     operation.attempt_token_roots(&mut roots);
+    roots.extend_from_slice(additional_token_roots);
     let mut definitions = Vec::new();
     operation.attempt_definition_roots(&mut definitions);
+    let mut additional_tokens = Vec::new();
+    additional_tokens
+        .try_reserve_exact(additional_token_roots.len())
+        .map_err(|_| ColdPreparationError::Allocation)?;
     let receipt = command.promote_attempt_roots(
         stores,
         tex_command::AttemptPromotionRoots::new(&roots, &[], &definitions, &[]),
@@ -2184,9 +2191,12 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
             ColdOperation::DiscretionaryHyphen { origin }
         }
     };
+    for _ in additional_token_roots {
+        additional_tokens.push(cursor.token()?);
+    }
     cursor.finish()?;
     definition_cursor.finish()?;
-    Ok(prepared)
+    Ok((prepared, additional_tokens))
 }
 
 impl<G> ColdOperation<G> {

@@ -1351,6 +1351,71 @@ pub(in crate::main_control) fn print_shipout_memory_usage<G>(
         .print_ln();
 }
 
+#[derive(Default)]
+struct DetachedArtifactSourceResolver {
+    recipes: std::collections::HashMap<
+        tex_state::token::OriginId,
+        tex_state::world::ArtifactSourceRecipe,
+    >,
+}
+
+impl crate::output_provenance::ArtifactSourceResolver for DetachedArtifactSourceResolver {
+    fn detach_artifact_source(
+        &self,
+        origin: tex_state::token::OriginId,
+    ) -> Option<tex_state::world::ArtifactSourceRecipe> {
+        self.recipes.get(&origin).cloned()
+    }
+}
+
+impl DetachedArtifactSourceResolver {
+    fn capture<G>(node: &Node, stores: &tex_state::CommandContext<'_, G>) -> Self {
+        fn visit<G>(
+            node: &Node,
+            stores: &tex_state::CommandContext<'_, G>,
+            recipes: &mut std::collections::HashMap<
+                tex_state::token::OriginId,
+                tex_state::world::ArtifactSourceRecipe,
+            >,
+        ) {
+            let origins: &[tex_state::token::OriginId] = match node {
+                Node::Char { origin, .. } => std::slice::from_ref(origin),
+                Node::Lig { origins, .. } => origins,
+                _ => &[],
+            };
+            for &origin in origins {
+                if !recipes.contains_key(&origin)
+                    && let Some(recipe) = stores.detach_artifact_source_recipe(origin)
+                {
+                    recipes.insert(origin, recipe);
+                }
+            }
+            let mut children = Vec::new();
+            node.visit_semantic_node_lists(|list| children.push(*list));
+            for child in children {
+                if let Ok(list) = stores.page_node_list(child) {
+                    for node in list.nodes() {
+                        visit(node, stores, recipes);
+                    }
+                }
+            }
+        }
+
+        let mut recipes = std::collections::HashMap::new();
+        visit(node, stores, &mut recipes);
+        Self { recipes }
+    }
+}
+
+#[derive(Default)]
+struct DetachedShipoutGeometry(Option<crate::shipout::ShipoutGeometry>);
+
+impl crate::shipout::ShipoutGeometrySink for DetachedShipoutGeometry {
+    fn committed_shipout_geometry(&mut self, geometry: crate::shipout::ShipoutGeometry) {
+        self.0 = Some(geometry);
+    }
+}
+
 pub(in crate::main_control) fn shipout_replay_box<G>(
     node: Node,
     stores: &mut Universe<G>,
@@ -1359,24 +1424,35 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     // §638's `[` marker reports the page's `\count0`..`\count9` and, under
     // `\tracingoutput`, dumps the shipped box. Both are read before the page
     // is replayed, because replaying it is what changes them.
-    let tracing_output = stores.int_param(IntParam::TRACING_OUTPUT);
-    let tracing_stats = stores.int_param(IntParam::TRACING_STATS);
-    let memory_before = (tracing_stats > 1).then(|| stores.shipout_memory_usage(Some(&node)));
-    let counts: [i32; 10] = std::array::from_fn(|index| {
-        stores
-            .count(u16::try_from(index).expect("0..=9 fits u16"))
-            .expect("shipout count register is admitted")
-    });
-    let traced_node = (tracing_output > 0).then(|| node.clone());
-    let input_summary = stores.input_summary().clone();
-    let output_open_context = {
+    let provenance_demand = stores.provenance_demand();
+    let provenance_budget_bytes = stores.provenance_budgets().detached_artifact_recipe_bytes;
+    let (tracing_output, counts, memory_before, source_resolver, output_open_context) = {
         let context = stores
             .command_context()
             .map_err(|_| ExecError::MissingToken {
-                context: "shipout diagnostic admission",
+                context: "shipout state admission",
             })?;
-        command.state.output_open_context(&context)
+        let tracing_output = context.int_param(IntParam::TRACING_OUTPUT);
+        let tracing_stats = context.int_param(IntParam::TRACING_STATS);
+        let counts = std::array::from_fn(|index| {
+            context
+                .count(u16::try_from(index).expect("0..=9 fits u16"))
+                .expect("shipout count register is admitted")
+        });
+        let usage = context.detach_engine_usage_statistics();
+        let memory_before =
+            (tracing_stats > 1).then_some((usage.memory_words, usage.font_info_words));
+        let source_resolver = DetachedArtifactSourceResolver::capture(&node, &context);
+        let output_open_context = command.state.output_open_context(&context);
+        (
+            tracing_output,
+            counts,
+            memory_before,
+            source_resolver,
+            output_open_context,
+        )
     };
+    let traced_node = (tracing_output > 0).then(|| node.clone());
     // Effects live at this point are genuine whatsit output carried forward
     // from before the page; everything after it -- §638's own marker
     // included -- belongs to this shipout and must not be swept into the
@@ -1544,22 +1620,35 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         replay_diagnostics.borrow_mut().extend(diagnostics);
         result
     };
-    let mut receipt =
-        crate::shipout::ShipoutTransaction::new(&mut expand_write, &mut expand_replay).stage_page(
-            node,
-            input_summary,
-            crate::shipout::ShipoutOrigin {
-                output_open_context: Some(output_open_context),
-                pending_end,
-                // Web2C's `[53.1374]` notice belongs to the compiled engine,
-                // not to the loaded format's command family. A pdfTeX binary
-                // therefore retains it while executing a TeX82 profile.
-                announce_openout: uses_pdftex_semantics,
-            },
-            stores,
-            emit_dvi,
-        )?;
+    let mut geometry = DetachedShipoutGeometry::default();
+    let mut receipt = crate::shipout::ShipoutTransaction::new(
+        &mut expand_write,
+        &mut expand_replay,
+        &source_resolver,
+        provenance_demand,
+        provenance_budget_bytes,
+        &mut geometry,
+    )
+    .stage_page(
+        node,
+        crate::shipout::ShipoutOrigin {
+            output_open_context,
+            // Web2C's `[53.1374]` notice belongs to the compiled engine,
+            // not to the loaded format's command family. A pdfTeX binary
+            // therefore retains it while executing a TeX82 profile.
+            announce_openout: uses_pdftex_semantics,
+        },
+        pending_end,
+        stores,
+        emit_dvi,
+    )?;
     let command = command_cell.into_inner();
+    if let Some(geometry) = geometry.0 {
+        crate::shipout::ShipoutGeometrySink::committed_shipout_geometry(
+            &mut command.shipout_geometry_sink(),
+            geometry,
+        );
+    }
     if let Some(receipt) = receipt
         .as_mut()
         .and_then(|publication| publication.dvi.as_mut())
@@ -1596,7 +1685,13 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             .claim_effect_publication(publication.effects.clone(), publication.artifact.effect());
     }
     if let Some(before) = memory_before {
-        let after = stores.shipout_memory_usage(None);
+        let usage = stores
+            .command_context()
+            .map_err(|_| ExecError::MissingToken {
+                context: "shipout statistics admission",
+            })?
+            .detach_engine_usage_statistics();
+        let after = (usage.memory_words, usage.font_info_words);
         print_shipout_memory_usage(stores, command.state.profile(), before, after);
     }
     // The closing bracket prints after `shipout_node_with_input_summary`'s

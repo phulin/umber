@@ -3,7 +3,6 @@
 use super::super::*;
 use super::apply::enter_group;
 use super::operation::*;
-use super::pdf::*;
 
 /// Move slot for the one admitted command context owned by semantic apply.
 ///
@@ -65,7 +64,7 @@ pub(in crate::main_control) const fn assignment_scope(
 }
 
 pub(in crate::main_control) fn command_diagnostic_context<G>(
-    command: &CommandMachine<'_, G>,
+    _command: &CommandMachine<'_, G>,
     stores: &tex_state::CommandContext<'_, G>,
 ) -> crate::diagnostics::ExecutionDiagnosticContext {
     crate::diagnostics::ExecutionDiagnosticContext::source_free(
@@ -114,24 +113,32 @@ pub(in crate::main_control) fn assign_box_dimension<G>(
 /// that leading break.
 pub(in crate::main_control) fn write_immediate_text<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, G>,
     sink: PrintSink,
     text: &str,
 ) {
-    let selector = match sink {
-        PrintSink::Terminal => tex_state::print::Selector::TermOnly,
-        PrintSink::Log => tex_state::print::Selector::LogOnly,
-        PrintSink::TerminalAndLog => tex_state::print::Selector::TermAndLog,
-        PrintSink::Stream(_) => {
-            stores.write_text(sink, text);
-            return;
+    let line_is_open = match sink {
+        PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog => {
+            let printer = stores.printer();
+            match sink {
+                PrintSink::Terminal => printer.terminal_offset() > 0,
+                PrintSink::Log => printer.log_offset() > 0,
+                PrintSink::TerminalAndLog => {
+                    printer.terminal_offset() > 0 || printer.log_offset() > 0
+                }
+                PrintSink::Stream(_) => unreachable!(),
+            }
         }
+        PrintSink::Stream(_) => false,
     };
-    let mut printer = tex_state::print::Printer::new(stores, selector);
-    let line_is_open = printer.terminal_offset() > 0 || printer.log_offset() > 0;
-    if line_is_open {
-        printer.print_ln();
-    }
-    printer.print_rendered(text);
+    command.immediate_prints.push(ImmediatePrint {
+        sink,
+        text: if line_is_open {
+            format!("\n{text}")
+        } else {
+            text.to_owned()
+        },
+    });
 }
 
 pub(in crate::main_control) fn print_display_content<G>(
@@ -773,7 +780,7 @@ pub(in crate::main_control) fn box_end<G>(
     node: Option<Node>,
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
-    prepared_dvi_pages: &mut PreparedDviPages,
+    _prepared_dvi_pages: &mut PreparedDviPages,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<(), ExecError> {
     match context {
@@ -787,11 +794,9 @@ pub(in crate::main_control) fn box_end<G>(
         }
         // §1075 guards `ship_out` with `cur_box<>null`.
         BoxContext::ShipOut => {
-            if let Some(node) = node
-                && let Some(receipt) = shipout_replay_box(node, stores, command)?
-                    .and_then(|publication| publication.dvi)
-            {
-                push_prepared_dvi_page(prepared_dvi_pages, receipt);
+            if let Some(node) = node {
+                debug_assert!(command.prepared_shipout.is_none());
+                *command.prepared_shipout = Some(PreparedShipout { node });
             }
             Ok(())
         }
@@ -1262,15 +1267,14 @@ pub(in crate::main_control) fn schedule_everycr<G>(
 ///
 /// `\everyjob` is read once, before `big_switch` fetches anything, so the hook
 /// is owned by the entry into `main_control` rather than by any command.
-/// `Universe::take_pending_every_job` is the one-shot that distinguishes a job
-/// started from a format image (where the parameter the format dumped is live
-/// at entry) from the INITEX job that built it and from a resumed timeline
-/// that already passed this point.
+/// `MainControl::enter_main_control` is the one-shot. The token parameter
+/// remains ordinary checkpointed TeX state and is read only after that outer
+/// entry boundary has selected this episode.
 pub(in crate::main_control) fn schedule_everyjob<G>(
     command: &mut CommandState<G>,
     stores: &mut tex_state::CommandContext<'_, G>,
 ) {
-    let tokens = stores.take_pending_every_job();
+    let tokens = stores.token_parameter(TokParam::EVERY_JOB).ok().flatten();
     let Some(tokens) = tokens else {
         return;
     };
