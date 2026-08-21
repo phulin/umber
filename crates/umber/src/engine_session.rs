@@ -1188,7 +1188,7 @@ mod tests {
                                     natural_height: tex_state::scaled::Scaled::from_raw(
                                         tex_state::scaled::Scaled::UNITY,
                                     ),
-                                    bytes: content.shared_bytes(),
+                                    bytes: content.bytes().to_vec(),
                                 },
                             )),
                         })

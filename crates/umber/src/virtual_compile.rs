@@ -496,6 +496,8 @@ pub struct CompileSourceLocation {
     pub byte_end: u64,
     pub line: u32,
     pub column: u32,
+    /// Owned physical line text detached before the engine generation retires.
+    pub excerpt: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -588,7 +590,8 @@ pub struct PdfRawObjectFileReceiptEntry {
     pub source: PdfRawObjectFileSource,
     pub virtual_path: String,
     pub content_id: FileContentId,
-    pub bytes: Arc<[u8]>,
+    /// Exact accepted payload, owned independently of the VFS snapshot.
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -905,6 +908,7 @@ impl RetainedExecution {
             byte_end: resolved.end,
             line: resolved.line,
             column: resolved.column,
+            excerpt: resolved.excerpt,
         })
     }
 
@@ -926,6 +930,7 @@ impl RetainedExecution {
             byte_end: resolved.end,
             line: resolved.line,
             column: resolved.column,
+            excerpt: resolved.excerpt,
         })
     }
 }
@@ -3151,7 +3156,7 @@ fn lookup_pdf_raw_object_file(
                 source: PdfRawObjectFileSource::User(path),
                 virtual_path: file.path().as_str().to_owned(),
                 content_id: file.content_id(),
-                bytes: file.shared_bytes(),
+                bytes: file.bytes().to_vec(),
             }
         }
         RequestedFile::Remote { user_path, key } => {
@@ -3164,7 +3169,7 @@ fn lookup_pdf_raw_object_file(
                         source: PdfRawObjectFileSource::User(path),
                         virtual_path: file.path().as_str().to_owned(),
                         content_id: file.content_id(),
-                        bytes: file.shared_bytes(),
+                        bytes: file.bytes().to_vec(),
                     },
                 ));
             }
@@ -3174,7 +3179,7 @@ fn lookup_pdf_raw_object_file(
                     source: PdfRawObjectFileSource::Resolved(key),
                     virtual_path: file.path().as_str().to_owned(),
                     content_id: file.content_id(),
-                    bytes: file.shared_bytes(),
+                    bytes: file.bytes().to_vec(),
                 }
             } else if workspace.is_unavailable(&key) {
                 return Ok(PdfRawObjectFileLookup::Unavailable);

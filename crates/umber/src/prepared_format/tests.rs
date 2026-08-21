@@ -384,7 +384,7 @@ fn loaded_job_applies_explicit_provenance_demand_after_format_restore() {
     assert!(
         (0..rendered_artifact.render_node_count()).any(|node| matches!(
             rendered_artifact.render_origin(node, 0),
-            tex_state::ArtifactOrigin::Rooted(_) | tex_state::ArtifactOrigin::Stable(_)
+            tex_state::ArtifactOrigin::Detached(_)
         )),
         "rendered material owns an exact cold provenance sidecar"
     );

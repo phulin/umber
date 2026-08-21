@@ -303,7 +303,7 @@ pub(super) fn pdf_finalization_input_with_page_records(
                         .ok()
                         .filter(|object| *object != 0),
                     mask_object: image.mask_object(),
-                    bytes: image.shared_bytes(),
+                    bytes: Arc::from(image.bytes()),
                 },
             )
         })
@@ -327,7 +327,7 @@ pub(super) fn pdf_finalization_input_with_page_records(
                             record.id().raw(),
                         ));
                     }
-                    Arc::clone(&entry.bytes)
+                    Arc::from(entry.bytes.as_slice())
                 } else {
                     Arc::from(source)
                 };

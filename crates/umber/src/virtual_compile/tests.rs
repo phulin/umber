@@ -312,6 +312,7 @@ fn engine_diagnostic_preserves_atomic_root_utf8_location() {
         byte_end: 11,
         line: 2,
         column: 3,
+        excerpt: "  \\input absent".into(),
     });
     let diagnostic = compile_diagnostic(&mut session);
     assert_eq!(diagnostic.location, expected);
@@ -337,6 +338,7 @@ fn engine_diagnostic_preserves_included_file_location() {
         byte_end: 7,
         line: 1,
         column: 2,
+        excerpt: "x\\input absent".into(),
     });
     let diagnostic = compile_diagnostic(&mut session);
     assert_eq!(diagnostic.location, expected);

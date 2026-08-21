@@ -762,11 +762,21 @@ impl PlannedFinalization {
         };
         let failed_path = failed.path().to_string_lossy();
         let replacement_text = replacement.to_string_lossy();
+        let failed_ordinal = failed
+            .position()
+            .raw()
+            .checked_sub(1)
+            .and_then(|index| u32::try_from(index).ok())
+            .ok_or_else(|| {
+                FinalizationError::PreparedArtifact(
+                    "the failed stream-open position has no detached ordinal".to_owned(),
+                )
+            })?;
         pages
             .effects()
             .iter()
             .position(|(position, effect)| {
-                *position == failed.position()
+                position.index() == failed_ordinal
                     && matches!(
                         effect,
                         tex_state::EffectRecord::StreamOpen { slot, target }
@@ -785,7 +795,7 @@ impl PlannedFinalization {
                     .open_out_occurrences()
                     .iter()
                     .find_map(|(page_index, position)| {
-                        (*position == failed.position()).then_some(*page_index)
+                        (position.index() == failed_ordinal).then_some(*page_index)
                     });
             let Some(page_index) = target_page_index else {
                 continue;

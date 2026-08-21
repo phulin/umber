@@ -334,7 +334,7 @@ pub(crate) fn parse_image(
         metadata: PdfExternalImageMetadata::Raster(metadata),
         natural_width: pixels_to_scaled(metadata.width, request.resolution),
         natural_height: pixels_to_scaled(metadata.height, request.resolution),
-        bytes: content.shared_bytes(),
+        bytes: content.bytes().to_vec(),
     })
 }
 
@@ -374,7 +374,7 @@ fn parse_pdf_image(
         },
         natural_width,
         natural_height,
-        bytes: content.shared_bytes(),
+        bytes: content.bytes().to_vec(),
     })
 }
 

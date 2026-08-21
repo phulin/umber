@@ -1299,6 +1299,7 @@ mod tests {
                 byte_end: 43,
                 line: 7,
                 column: 11,
+                excerpt: "private source text".to_owned(),
             }),
             context: Some(Box::new(tex_exec::FrozenDiagnosticContext {
                 cause_kind: "command-recoverable",

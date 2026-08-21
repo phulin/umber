@@ -60,6 +60,7 @@ fn project_compile_error_preserves_native_tex_location() {
             byte_end: 8,
             line: 1,
             column: 3,
+            excerpt: "  \\input absent".into(),
         })
     );
 }
