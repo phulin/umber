@@ -212,6 +212,47 @@ fn runtime_checkpoint_transfers_external_roots_before_suffix_truncation() {
 }
 
 #[test]
+fn runtime_checkpoint_restores_mutable_font_state() {
+    with_universe(budget(), |universe| {
+        let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
+        {
+            let mut context = universe.command_context().expect("context");
+            context.set_font_hyphen_char(crate::font::NULL_FONT, 99);
+            context
+                .set_font_dimen(crate::font::NULL_FONT, 1, Scaled::from_raw(123))
+                .expect("fontdimen");
+        }
+        universe
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("restore runtime checkpoint");
+        let context = universe.command_context().expect("context");
+        assert_eq!(
+            context.font_hyphen_char(crate::font::NULL_FONT),
+            i32::from(b'-')
+        );
+        assert_eq!(
+            context.font_dimen(crate::font::NULL_FONT, 1),
+            Scaled::from_raw(0)
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
+fn boundary_hash_includes_mutable_font_runtime() {
+    with_universe(budget(), |universe| {
+        let before = universe.engine_boundary_hash(23, |hash| hash.font(crate::font::NULL_FONT));
+        {
+            let mut context = universe.command_context().expect("context");
+            context.set_font_skew_char(crate::font::NULL_FONT, 17);
+        }
+        let after = universe.engine_boundary_hash(23, |hash| hash.font(crate::font::NULL_FONT));
+        assert_ne!(before, after);
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn admitted_paragraph_shape_is_detached_and_group_restorable() {
     with_universe(budget(), |universe| {
         let mut context = universe.command_context().expect("context");
