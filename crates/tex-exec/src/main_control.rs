@@ -1117,15 +1117,13 @@ fn command_processor<'episode, 'admission, G>(
     fuel: &'episode mut tex_command::CommandFuel,
     capabilities: &'episode mut CommandHostCapabilities,
     observations: &'episode mut ObservationSlot,
-    stores: &'admission mut Universe<G>,
+    stores: CommandContext<'admission, G>,
 ) -> InterpreterProcessor<'episode, 'admission, G> {
     let observer = observations
         .as_mut()
         .map(|buffer| buffer as &mut dyn CommandObserver);
     command.processor(
-        stores
-            .command_context()
-            .expect("command processing requires an admitted live generation"),
+        stores,
         CommandHostContext::new(capabilities),
         fuel,
         observer,
@@ -1265,16 +1263,17 @@ impl<G> MainControl<G> {
         // cursor untouched when the dialog returns.
         stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
         self.refresh_host_capabilities(stores);
-        let context = command_processor(
+        let processor = command_processor(
             &mut self.command,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
-            stores,
-        )
-        .error_context();
+            stores.command_context().expect("live generation"),
+        );
+        let context = processor.error_context();
+        let mut command_context = processor.into_context();
         crate::error_report::report_error(
-            &mut stores.command_context().expect("live generation"),
+            &mut command_context,
             "Interruption",
             &[
                 "You rang?",
@@ -2805,7 +2804,7 @@ impl<G> MainControl<G> {
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
-                    stores,
+                    stores.command_context().expect("live generation"),
                 );
                 let _ = processor
                     .scan_discretionary_opening()
@@ -2838,11 +2837,10 @@ impl<G> MainControl<G> {
         {
             // TeX82 §1120 diagnoses and deletes only a nonempty third part
             // in math mode; the discretionary and its first two parts survive.
-            let context = self
-                .command
-                .output_open_context(&stores.command_context().expect("live generation"));
+            let mut command_context = stores.command_context().expect("live generation");
+            let context = self.command.output_open_context(&command_context);
             report_escaped_error(
-                stores,
+                &mut command_context,
                 "Illegal math ",
                 "discretionary",
                 "",
@@ -4170,7 +4168,7 @@ impl<G> MainControl<G> {
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
                         &mut self.operation_observations,
-                        stores,
+                        stores.command_context().expect("live generation"),
                     );
                     let command = processor
                         .get_x_token_preserving_undefined()
@@ -4409,7 +4407,7 @@ impl<G> MainControl<G> {
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
-                    stores,
+                    stores.command_context().expect("live generation"),
                 );
                 let outcome = processor.scan_accent_base();
                 outcome.map_err(command_error)?
@@ -4494,7 +4492,7 @@ impl<G> MainControl<G> {
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
                         &mut self.operation_observations,
-                        stores,
+                        stores.command_context().expect("live generation"),
                     );
                     processor
                         .retire_completed_right_brace_backup()
@@ -4592,11 +4590,10 @@ impl<G> MainControl<G> {
         while left_group_open(&self.modes, stores) {
             // The `\right.` applied below is exactly the closer §1065 selects
             // for `math_left_group`, so the report is §1064's `off_save`.
-            let context = self
-                .command
-                .output_open_context(&stores.command_context().expect("live generation"));
+            let mut command_context = stores.command_context().expect("live generation");
+            let context = self.command.output_open_context(&command_context);
             report_escaped_error(
-                stores,
+                &mut command_context,
                 "Missing ",
                 "right.",
                 " inserted",
@@ -4654,7 +4651,12 @@ impl<G> MainControl<G> {
         match field.body {
             MathFieldBody::Missing => Ok(MathField::Empty),
             MathFieldBody::Character(code) => Ok(MathField::MathChar(
-                math_char(stores, u32::from(code), field.provenance.primary)?.1,
+                math_char(
+                    &stores.command_context().expect("live generation"),
+                    u32::from(code),
+                    field.provenance.primary,
+                )?
+                .1,
             )),
             MathFieldBody::OpenGroup => {
                 let list = self.execute_live_math_group(GroupKind::Math, stores)?;
@@ -4672,7 +4674,7 @@ impl<G> MainControl<G> {
             MathRequest::Character(value) => {
                 append_math_char(
                     self.modes.current_list_mutation(),
-                    stores,
+                    &stores.command_context().expect("live generation"),
                     u32::from(value.code),
                     value.provenance.primary,
                 )?;
@@ -4680,7 +4682,7 @@ impl<G> MainControl<G> {
             MathRequest::Delimiter(value) => {
                 append_math_char(
                     self.modes.current_list_mutation(),
-                    stores,
+                    &stores.command_context().expect("live generation"),
                     value.code >> 12,
                     value.provenance.primary,
                 )?;
@@ -4857,8 +4859,12 @@ impl<G> MainControl<G> {
                 };
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
-                let accent =
-                    math_char(stores, u32::from(accent.code), accent.provenance.primary)?.1;
+                let accent = math_char(
+                    &stores.command_context().expect("live generation"),
+                    u32::from(accent.code),
+                    accent.provenance.primary,
+                )?
+                .1;
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -5535,11 +5541,10 @@ impl<G> MainControl<G> {
                         ))]));
                 } else {
                     // etex.ch [48.1192] splits §1192's report by noad type.
-                    let context = self
-                        .command
-                        .output_open_context(&stores.command_context().expect("live generation"));
+                    let mut command_context = stores.command_context().expect("live generation");
+                    let context = self.command.output_open_context(&command_context);
                     report_escaped_error(
-                        stores,
+                        &mut command_context,
                         "Extra ",
                         "middle",
                         "",
@@ -5552,11 +5557,10 @@ impl<G> MainControl<G> {
                 if !left_group_open(&self.modes, stores) {
                     // TeX82 §1192's `<Try to recover from mismatched \right>`
                     // in its `math_shift_group` arm.
-                    let context = self
-                        .command
-                        .output_open_context(&stores.command_context().expect("live generation"));
+                    let mut command_context = stores.command_context().expect("live generation");
+                    let context = self.command.output_open_context(&command_context);
                     report_escaped_error(
-                        stores,
+                        &mut command_context,
                         "Extra ",
                         "right",
                         "",
@@ -5611,7 +5615,7 @@ impl<G> MainControl<G> {
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
-            stores,
+            stores.command_context().expect("live generation"),
         );
         let scanned = processor.scan_math_field_episode();
         scanned.map_err(command_error)
@@ -5628,7 +5632,7 @@ impl<G> MainControl<G> {
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
-            stores,
+            stores.command_context().expect("live generation"),
         );
         processor.scan_math_character().map_err(command_error)
     }
@@ -5645,7 +5649,7 @@ impl<G> MainControl<G> {
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
-            stores,
+            stores.command_context().expect("live generation"),
         );
         let scanned = processor.scan_math_choice_group();
         scanned.map_err(command_error)
@@ -5844,7 +5848,7 @@ impl<G> MainControl<G> {
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
-                stores,
+                stores.command_context().expect("live generation"),
             );
             processor
                 .apply_error_stop_recovery()
@@ -6041,7 +6045,7 @@ impl<G> MainControl<G> {
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
-                stores,
+                stores.command_context().expect("live generation"),
             );
             prepare_command_trace(&mut processor, mode, self.shown_mode);
             report_main_control_command_trace(
@@ -6209,7 +6213,7 @@ impl<G> MainControl<G> {
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
-                stores,
+                stores.command_context().expect("live generation"),
             );
             let display_alignment_tail = matches!(&delivery, OperationDelivery::<G>::Replay(None))
                 && mode == Mode::DisplayMath
@@ -6963,7 +6967,7 @@ impl<G> MainControl<G> {
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
-                    stores,
+                    stores.command_context().expect("live generation"),
                 );
                 let first = processor.get_x_token().map_err(command_error)?.ok_or(
                     ExecError::MissingToken {
@@ -7005,7 +7009,7 @@ impl<G> MainControl<G> {
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
-            stores,
+            stores.command_context().expect("live generation"),
         );
         let exhausted = processor.get_x_token();
         let exhausted = exhausted.map_err(command_error);
@@ -7079,7 +7083,7 @@ pub enum RootCompletionPolicy {
 type ReplayStep = MainControlStep;
 
 fn math_char<G>(
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     code: u32,
     origin: tex_state::token::OriginId,
 ) -> Result<(NoadClass, MathChar), ExecError> {
@@ -7118,7 +7122,7 @@ fn math_char<G>(
 
 fn append_math_char<G>(
     mut list: crate::mode::ModeListMutation<'_>,
-    stores: &Universe<G>,
+    stores: &CommandContext<'_, G>,
     code: u32,
     origin: tex_state::token::OriginId,
 ) -> Result<(), ExecError> {
@@ -7156,34 +7160,25 @@ fn append_math_char<G>(
 fn set_math_char<G>(
     ch: char,
     origin: tex_state::token::OriginId,
-    stores: &mut Universe<G>,
+    mut stores: CommandContext<'_, G>,
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<(), ExecError> {
-    let code = {
-        let mut context = stores
-            .command_context()
-            .expect("main control operates on one live admitted generation");
-        let code = context.mathcode(ch);
-        context.observe_command_projection(
-            tex_state::DependencyKey::Code {
-                table: tex_state::DependencyCodeTable::Mathcode,
-                scalar: ch.into(),
-            },
-            DependencyValue::Integer(i64::from(code)),
-        );
-        code
-    };
+    let code = stores.mathcode(ch);
+    stores.observe_command_projection(
+        tex_state::DependencyKey::Code {
+            table: tex_state::DependencyCodeTable::Mathcode,
+            scalar: ch.into(),
+        },
+        DependencyValue::Integer(i64::from(code)),
+    );
     if code >= 0x8000 {
-        let context = stores
-            .command_context()
-            .expect("active math character requires a live generation");
-        let mut processor = command.processor(context);
+        let mut processor = command.processor(stores);
         let treated = processor.treat_as_active_character(ch, origin);
         treated.map_err(command_error)?;
         return Ok(());
     }
-    append_math_char(modes.current_list_mutation(), stores, code, origin)
+    append_math_char(modes.current_list_mutation(), &stores, code, origin)
 }
 
 fn noad_kind_for_text(kind: MathTextFieldKind) -> NoadKind {
@@ -7462,7 +7457,7 @@ const OFF_SAVE_HELP: [&str; 5] = [
 /// Spelling the control sequence with `print_esc` rather than a literal
 /// backslash is what keeps the report honest under a changed `\escapechar`.
 fn report_escaped_error<G>(
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
     prefix: &str,
     escaped: &str,
     suffix: &str,
@@ -7483,9 +7478,9 @@ fn report_escaped_error<G>(
 /// left.
 fn report_missing_box<G>(
     command: &CommandState<G>,
-    stores: &mut Universe<G>,
+    stores: &mut CommandContext<'_, G>,
 ) -> Result<(), ExecError> {
-    let context = command.output_open_context(&stores.command_context().expect("live generation"));
+    let context = command.output_open_context(stores);
     crate::error_report::report_error(
         stores,
         "A <box> was supposed to be here",
@@ -7500,7 +7495,10 @@ fn report_missing_box<G>(
 }
 
 /// TeX82 §1084's `box_context < box_flag` recovery for `\setbox`.
-fn report_improper_setbox<G>(context: String, stores: &mut Universe<G>) -> Result<(), ExecError> {
+fn report_improper_setbox<G>(
+    context: String,
+    stores: &mut CommandContext<'_, G>,
+) -> Result<(), ExecError> {
     report_escaped_error(
         stores,
         "Improper ",
@@ -7515,7 +7513,10 @@ fn report_improper_setbox<G>(context: String, stores: &mut Universe<G>) -> Resul
 }
 
 /// TeX82 §1082's `scan_keyword("to")` recovery in `\vsplit`.
-fn report_missing_vsplit_to<G>(context: &str, stores: &mut Universe<G>) -> Result<(), ExecError> {
+fn report_missing_vsplit_to<G>(
+    context: &str,
+    stores: &mut CommandContext<'_, G>,
+) -> Result<(), ExecError> {
     crate::error_report::report_error(
         stores,
         "Missing `to' inserted",
