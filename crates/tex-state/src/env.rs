@@ -2,6 +2,7 @@
 
 #[path = "env/banks.rs"]
 pub mod banks;
+mod font_runtime;
 #[path = "env/group.rs"]
 pub(crate) mod group;
 
@@ -9,6 +10,7 @@ use banks::{
     BankCell, BankError, DenseBank, IntParam, LEVEL_ONE, PARAMETER_COUNT, PagedDenseBank,
     RegisterBank,
 };
+use font_runtime::{BankCellValue, FontRuntimeBank, FontRuntimeCell, PreparedFontRuntime};
 use group::{GroupFrame, GroupKind, GroupMismatch};
 
 use crate::durable_arena::{GlueId, TokenListId};
@@ -61,6 +63,7 @@ pub(crate) enum StateCell {
     CurrentFont,
     MathFamilyFont(u8),
     Code(CodeTableKind, u32),
+    FontRuntime(FontRuntimeCell),
 }
 
 /// One packed scalar or typed generation coordinate stored by a bank/journal.
@@ -160,6 +163,7 @@ pub(crate) struct DenseState<G> {
     sfcodes: PagedDenseBank<i64>,
     mathcodes: PagedDenseBank<i64>,
     delcodes: PagedDenseBank<i64>,
+    font_runtime: FontRuntimeBank,
     journal: SaveJournal<G>,
     groups: Vec<GroupFrame>,
     next_group_lineage: u64,
@@ -191,6 +195,7 @@ impl<G> DenseState<G> {
             sfcodes: PagedDenseBank::new(UNICODE_SCALAR_COUNT, sfcode_default, LEVEL_ONE)?,
             mathcodes: PagedDenseBank::new(UNICODE_SCALAR_COUNT, mathcode_default, LEVEL_ONE)?,
             delcodes: PagedDenseBank::new(UNICODE_SCALAR_COUNT, delcode_default, LEVEL_ONE)?,
+            font_runtime: FontRuntimeBank::new(),
             journal: SaveJournal::new(),
             groups: Vec::new(),
             next_group_lineage: 1,
@@ -402,6 +407,204 @@ impl<G> DenseState<G> {
         )
     }
 
+    pub(crate) fn prepare_font_runtime(
+        &mut self,
+        parameters: &[Scaled],
+        hyphen_char: i32,
+        skew_char: i32,
+    ) -> Result<PreparedFontRuntime, StateError> {
+        Ok(self
+            .font_runtime
+            .prepare(parameters, hyphen_char, skew_char)?)
+    }
+
+    pub(crate) fn install_font_runtime(
+        &mut self,
+        font: FontId,
+        prepared: PreparedFontRuntime,
+    ) -> Result<(), StateError> {
+        self.font_runtime.install(font.raw(), prepared)?;
+        Ok(())
+    }
+
+    pub(crate) fn prepare_derived_font_runtime(
+        &mut self,
+        source: FontId,
+        parameters: &[Scaled],
+        preserve_character_settings: bool,
+        preserve_pdf_settings: bool,
+        disable_ligatures: bool,
+        default_hyphen_char: i32,
+        default_skew_char: i32,
+    ) -> Result<PreparedFontRuntime, StateError> {
+        Ok(self.font_runtime.prepare_derived(
+            source.raw(),
+            parameters,
+            preserve_character_settings,
+            preserve_pdf_settings,
+            disable_ligatures,
+            default_hyphen_char,
+            default_skew_char,
+        )?)
+    }
+
+    pub(crate) fn font_parameter_count(&self, font: FontId) -> Result<u32, StateError> {
+        Ok(self.font_runtime.parameter_count(font.raw())?)
+    }
+
+    pub(crate) fn font_parameter_words(&self) -> usize {
+        self.font_runtime.parameter_words()
+    }
+
+    pub(crate) fn truncate_font_runtime(&mut self, len: u32) -> Result<(), StateError> {
+        self.font_runtime.truncate(len)?;
+        Ok(())
+    }
+
+    pub(crate) fn hash_font_runtime(
+        &self,
+        font: FontId,
+        loaded: &tex_fonts::LoadedFont,
+        hasher: &mut crate::state_hash::StateHasher,
+    ) -> Result<(), StateError> {
+        self.font_runtime
+            .hash_semantic(font.raw(), loaded, hasher)?;
+        Ok(())
+    }
+
+    pub(crate) fn font_dimen(&self, font: FontId, number: u32) -> Result<Scaled, StateError> {
+        let StateWord::Dimension(value) =
+            self.read_cell(StateCell::FontRuntime(FontRuntimeCell::Dimen {
+                font: font.raw(),
+                number,
+            }))?
+        else {
+            return Err(StateError::CellKindMismatch);
+        };
+        Ok(value)
+    }
+
+    pub(crate) fn assign_font_dimen(
+        &mut self,
+        font: FontId,
+        number: u32,
+        value: Scaled,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        let previous_count = self.font_runtime.parameter_count(font.raw())?;
+        self.font_runtime.prepare_dimen_growth(font.raw(), number)?;
+        if number > previous_count {
+            self.assign(
+                StateCell::FontRuntime(FontRuntimeCell::ParameterCount(font.raw())),
+                StateWord::Integer(
+                    i32::try_from(number).map_err(|_| StateError::CellKindMismatch)?,
+                ),
+                scope,
+            )?;
+        }
+        self.assign(
+            StateCell::FontRuntime(FontRuntimeCell::Dimen {
+                font: font.raw(),
+                number,
+            }),
+            StateWord::Dimension(value),
+            scope,
+        )
+    }
+
+    pub(crate) fn font_hyphen_char(&self, font: FontId) -> Result<i32, StateError> {
+        self.font_runtime_integer(FontRuntimeCell::HyphenChar(font.raw()))
+    }
+
+    pub(crate) fn assign_font_hyphen_char(
+        &mut self,
+        font: FontId,
+        value: i32,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(
+            StateCell::FontRuntime(FontRuntimeCell::HyphenChar(font.raw())),
+            StateWord::Integer(value),
+            scope,
+        )
+    }
+
+    pub(crate) fn font_skew_char(&self, font: FontId) -> Result<i32, StateError> {
+        self.font_runtime_integer(FontRuntimeCell::SkewChar(font.raw()))
+    }
+
+    pub(crate) fn assign_font_skew_char(
+        &mut self,
+        font: FontId,
+        value: i32,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(
+            StateCell::FontRuntime(FontRuntimeCell::SkewChar(font.raw())),
+            StateWord::Integer(value),
+            scope,
+        )
+    }
+
+    pub(crate) fn prepare_pdf_font_code_table(
+        &mut self,
+        font: FontId,
+        table: crate::font::PdfFontCode,
+        defaults: [i32; 256],
+    ) -> Result<(), StateError> {
+        self.font_runtime
+            .ensure_pdf_table(font.raw(), table, defaults)?;
+        Ok(())
+    }
+
+    pub(crate) fn pdf_font_code(
+        &self,
+        font: FontId,
+        table: crate::font::PdfFontCode,
+        code: u8,
+    ) -> Result<i32, StateError> {
+        self.font_runtime_integer(font_runtime::table_cell(table, font.raw(), code))
+    }
+
+    pub(crate) fn assign_pdf_font_code(
+        &mut self,
+        font: FontId,
+        table: crate::font::PdfFontCode,
+        code: u8,
+        value: i32,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(
+            StateCell::FontRuntime(font_runtime::table_cell(table, font.raw(), code)),
+            StateWord::Integer(value),
+            scope,
+        )
+    }
+
+    pub(crate) fn pdf_font_ligatures_disabled(&self, font: FontId) -> Result<bool, StateError> {
+        Ok(self.font_runtime_integer(FontRuntimeCell::LigaturesDisabled(font.raw()))? != 0)
+    }
+
+    pub(crate) fn assign_pdf_font_ligatures_disabled(
+        &mut self,
+        font: FontId,
+        disabled: bool,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.assign(
+            StateCell::FontRuntime(FontRuntimeCell::LigaturesDisabled(font.raw())),
+            StateWord::Integer(i32::from(disabled)),
+            scope,
+        )
+    }
+
+    fn font_runtime_integer(&self, cell: FontRuntimeCell) -> Result<i32, StateError> {
+        let StateWord::Integer(value) = self.read_cell(StateCell::FontRuntime(cell))? else {
+            return Err(StateError::CellKindMismatch);
+        };
+        Ok(value)
+    }
+
     #[inline(always)]
     pub(crate) fn glue_register(&self, index: u16) -> Result<Option<GlueId<G>>, StateError> {
         Ok(self.glue_registers.get(index)?.value)
@@ -611,6 +814,7 @@ impl<G> DenseState<G> {
             + self.glue_registers.allocated_overflow_pages()
             + self.box_registers.allocated_overflow_pages()
             + self.mu_glue_registers.allocated_overflow_pages()
+            + self.font_runtime.allocated_pages()
     }
 
     fn assign(
@@ -692,6 +896,10 @@ impl<G> DenseState<G> {
                 .get(u32::from(index))?
                 .map(StateWord::Font),
             StateCell::Code(kind, index) => self.code_bank(kind).get(index)?.map(StateWord::Code),
+            StateCell::FontRuntime(cell) => match self.font_runtime.read(cell)? {
+                BankCellValue::Integer(value) => value.map(StateWord::Integer),
+                BankCellValue::Dimension(value) => value.map(StateWord::Dimension),
+            },
         };
         Ok(value)
     }
@@ -744,6 +952,12 @@ impl<G> DenseState<G> {
             (StateCell::Code(kind, index), StateWord::Code(word)) => self
                 .code_bank_mut(kind)
                 .write(index, value.map_value(word))?,
+            (StateCell::FontRuntime(cell), StateWord::Integer(word)) => self
+                .font_runtime
+                .write(cell, BankCellValue::Integer(value.map_value(word)))?,
+            (StateCell::FontRuntime(cell), StateWord::Dimension(word)) => self
+                .font_runtime
+                .write(cell, BankCellValue::Dimension(value.map_value(word)))?,
             _ => return Err(StateError::CellKindMismatch),
         }
         Ok(())
@@ -835,6 +1049,8 @@ fn word_matches<G>(cell: StateCell, word: StateWord<G>) -> bool {
             | (StateCell::CurrentFont, StateWord::Font(_))
             | (StateCell::MathFamilyFont(_), StateWord::Font(_))
             | (StateCell::Code(_, _), StateWord::Code(_))
+            | (StateCell::FontRuntime(_), StateWord::Integer(_))
+            | (StateCell::FontRuntime(_), StateWord::Dimension(_))
     )
 }
 

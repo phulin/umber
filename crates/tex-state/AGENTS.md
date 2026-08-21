@@ -42,6 +42,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
   glue, and provenance arenas with direct row resolution.
 - `src/env.rs`: Generation-branded eqtb-equivalent current state, exact TeX
   local/global save semantics, group boundaries, and journal-cursor restore.
+- `src/env/font_runtime.rs`: Direct-index generation-owned mutable per-font
+  dimensions, character settings, PDF code tables, and ligature state.
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
 - `src/expansion_diagnostic.rs`: Detached recoverable expansion diagnostic
   values shared by command expansion and execution-side presentation.

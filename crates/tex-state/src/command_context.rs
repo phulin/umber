@@ -214,7 +214,7 @@ impl<'a, G> CommandContext<'a, G> {
     /// Detaches the state-owned portion of TeX82's terminal usage report.
     #[must_use]
     pub fn detach_engine_usage_statistics(&self) -> EngineUsageStatistics {
-        let fonts = self.fonts.watermark().len as usize;
+        let fonts = self.fonts.len();
         let hyphenation = self.hyphenation.exception_usage();
         EngineUsageStatistics {
             strings: self.engine_usage.retained_strings,
@@ -224,7 +224,7 @@ impl<'a, G> CommandContext<'a, G> {
             memory_words: 0,
             memory_word_capacity: 250_000,
             control_sequences: self.interner.multiletter_len(),
-            font_info_words: 0,
+            font_info_words: self.admitted.state_ref().font_parameter_words(),
             fonts: fonts.saturating_sub(1),
             hyphenation_exceptions: hyphenation.occupied,
             hyphenation_exception_capacity: hyphenation.capacity,
@@ -972,7 +972,10 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn font_parameter_count(&self, id: crate::ids::FontId) -> usize {
-        self.fonts.get(id).parameters().len()
+        self.admitted
+            .state_ref()
+            .font_parameter_count(id)
+            .expect("live font has runtime parameter state") as usize
     }
 
     /// Resolves a generated font's semantic source inside this admitted
@@ -994,9 +997,26 @@ impl<'a, G> CommandContext<'a, G> {
     /// operation. Runtime resource loading should map capacity failure before
     /// entering the mutation episode.
     pub fn intern_font(&mut self, font: tex_fonts::LoadedFont) -> crate::ids::FontId {
-        self.fonts
+        let allocates = self.fonts.would_allocate(&font);
+        let default_hyphen_char = self.int_param(IntParam::DEFAULT_HYPHEN_CHAR);
+        let default_skew_char = self.int_param(IntParam::DEFAULT_SKEW_CHAR);
+        let prepared = allocates.then(|| {
+            self.admitted
+                .state()
+                .prepare_font_runtime(font.parameters(), default_hyphen_char, default_skew_char)
+                .expect("validated font runtime state exceeds memory")
+        });
+        let id = self
+            .fonts
             .intern(font)
-            .expect("validated font exceeds the live font store capacity")
+            .expect("validated font exceeds the live font store capacity");
+        if let Some(prepared) = prepared {
+            self.admitted
+                .state()
+                .install_font_runtime(id, prepared)
+                .expect("fresh font runtime row follows the font store");
+        }
+        id
     }
 
     pub fn set_font_identifier_symbol(
@@ -1032,7 +1052,26 @@ impl<'a, G> CommandContext<'a, G> {
         font: tex_fonts::LoadedFont,
         identifier: impl Into<FontIdentifier>,
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
+        let allocates = self.fonts.would_allocate(&font);
+        let default_hyphen_char = self.int_param(IntParam::DEFAULT_HYPHEN_CHAR);
+        let default_skew_char = self.int_param(IntParam::DEFAULT_SKEW_CHAR);
+        let prepared = allocates
+            .then(|| {
+                self.admitted.state().prepare_font_runtime(
+                    font.parameters(),
+                    default_hyphen_char,
+                    default_skew_char,
+                )
+            })
+            .transpose()
+            .map_err(|_| crate::font::FontStoreCapacityError)?;
         let id = self.fonts.intern(font)?;
+        if let Some(prepared) = prepared {
+            self.admitted
+                .state()
+                .install_font_runtime(id, prepared)
+                .map_err(|_| crate::font::FontStoreCapacityError)?;
+        }
         self.set_font_identifier_symbol(id, identifier);
         Ok(id)
     }
@@ -1042,9 +1081,13 @@ impl<'a, G> CommandContext<'a, G> {
         source: crate::ids::FontId,
         identifier: impl Into<FontIdentifier>,
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
-        let parameters = self.fonts.get(source).parameters().to_vec();
+        let parameters = (1..=self.font_parameter_count(source))
+            .map(|number| self.font_dimen(source, number as u32))
+            .collect();
         let font = self.fonts.get(source).copied(parameters);
-        self.try_intern_font_with_identifier(font, identifier)
+        let id = self.try_intern_derived_font(font, source, true, false, false)?;
+        self.set_font_identifier_symbol(id, identifier);
+        Ok(id)
     }
 
     pub fn try_letterspace_font_with_identifier(
@@ -1060,7 +1103,9 @@ impl<'a, G> CommandContext<'a, G> {
             .get(source)
             .letterspaced(current_quad, amount, no_ligatures)
             .expect("bounded live TeX font widths support letterspacing");
-        self.try_intern_font_with_identifier(font, identifier)
+        let id = self.try_intern_derived_font(font, source, false, false, no_ligatures)?;
+        self.set_font_identifier_symbol(id, identifier);
+        Ok(id)
     }
 
     pub fn configure_font_expansion(
@@ -1083,7 +1128,42 @@ impl<'a, G> CommandContext<'a, G> {
         if let Some(existing) = self.fonts.by_source_identity(generated.source_identity()) {
             return Ok(existing);
         }
-        self.fonts.intern(generated)
+        self.try_intern_derived_font(generated, source, true, true, false)
+    }
+
+    fn try_intern_derived_font(
+        &mut self,
+        font: tex_fonts::LoadedFont,
+        source: crate::ids::FontId,
+        preserve_character_settings: bool,
+        preserve_pdf_settings: bool,
+        disable_ligatures: bool,
+    ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
+        let allocates = self.fonts.would_allocate(&font);
+        let default_hyphen_char = self.int_param(IntParam::DEFAULT_HYPHEN_CHAR);
+        let default_skew_char = self.int_param(IntParam::DEFAULT_SKEW_CHAR);
+        let prepared = allocates
+            .then(|| {
+                self.admitted.state().prepare_derived_font_runtime(
+                    source,
+                    font.parameters(),
+                    preserve_character_settings,
+                    preserve_pdf_settings,
+                    disable_ligatures,
+                    default_hyphen_char,
+                    default_skew_char,
+                )
+            })
+            .transpose()
+            .map_err(|_| crate::font::FontStoreCapacityError)?;
+        let id = self.fonts.intern(font)?;
+        if let Some(prepared) = prepared {
+            self.admitted
+                .state()
+                .install_font_runtime(id, prepared)
+                .map_err(|_| crate::font::FontStoreCapacityError)?;
+        }
+        Ok(id)
     }
 
     #[must_use]
@@ -1189,7 +1269,7 @@ impl<'a, G> CommandContext<'a, G> {
         self.fonts
             .get(id)
             .classic_math_parameter_count_override()
-            .unwrap_or_else(|| self.fonts.get(id).parameters().len())
+            .unwrap_or_else(|| self.font_parameter_count(id))
     }
 
     #[must_use]
@@ -1203,7 +1283,9 @@ impl<'a, G> CommandContext<'a, G> {
         id: crate::ids::FontId,
         code: u8,
     ) -> Option<crate::font::ExtensibleRecipe> {
-        self.fonts.get(id).metrics().extensible_recipe(code)
+        (self.pdf_font_code(crate::PdfFontCode::Tag, id, code) & 4 != 0)
+            .then(|| self.fonts.get(id).metrics().extensible_recipe(code))
+            .flatten()
     }
 
     #[must_use]
@@ -1213,7 +1295,17 @@ impl<'a, G> CommandContext<'a, G> {
         left: crate::font::LigKernChar,
         right: crate::font::LigKernChar,
     ) -> Option<crate::font::LigKernCommand> {
-        self.fonts.get(id).metrics().lig_kern_command(left, right)
+        if let crate::font::LigKernChar::Char(code) = left
+            && self.pdf_font_code(crate::PdfFontCode::Tag, id, code) & 1 == 0
+        {
+            return None;
+        }
+        let command = self.fonts.get(id).metrics().lig_kern_command(left, right);
+        if self.pdf_font_ligatures_disabled(id) {
+            return command
+                .filter(|command| matches!(command, crate::font::LigKernCommand::Kern(_)));
+        }
+        command
     }
 
     #[must_use]
@@ -1231,31 +1323,164 @@ impl<'a, G> CommandContext<'a, G> {
 
     #[must_use]
     pub fn font_dimen(&self, id: crate::ids::FontId, number: u32) -> Scaled {
-        number
-            .checked_sub(1)
-            .and_then(|index| self.fonts.get(id).parameters().get(index as usize))
-            .copied()
-            .unwrap_or_else(|| Scaled::from_raw(0))
+        self.admitted
+            .state_ref()
+            .font_dimen(id, number)
+            .unwrap_or_else(|_| Scaled::from_raw(0))
     }
 
     #[must_use]
     pub fn font_dimen_readable(&self, id: crate::ids::FontId, number: u32) -> bool {
-        number != 0 && (number as usize) <= self.fonts.get(id).parameters().len()
+        number != 0 && (number as usize) <= self.font_parameter_count(id)
     }
 
     #[must_use]
     pub fn font_dimen_writable(&self, id: crate::ids::FontId, number: u32) -> bool {
         self.font_dimen_readable(id, number)
+            || (number != 0
+                && usize::try_from(id.raw())
+                    .ok()
+                    .and_then(|raw| raw.checked_add(1))
+                    == Some(self.fonts.len())
+                && usize::try_from(number).ok().is_some_and(|number| {
+                    let current = self.font_parameter_count(id);
+                    let growth = number.saturating_sub(current);
+                    growth
+                        <= crate::font::FONT_INFO_CAPACITY
+                            .saturating_sub(self.admitted.state_ref().font_parameter_words())
+                }))
     }
 
     #[must_use]
-    pub fn font_hyphen_char(&self, _id: crate::ids::FontId) -> i32 {
-        self.int_param(IntParam::DEFAULT_HYPHEN_CHAR)
+    pub fn font_hyphen_char(&self, id: crate::ids::FontId) -> i32 {
+        self.admitted
+            .state_ref()
+            .font_hyphen_char(id)
+            .expect("live font has runtime hyphen state")
     }
 
     #[must_use]
-    pub fn font_skew_char(&self, _id: crate::ids::FontId) -> i32 {
-        self.int_param(IntParam::DEFAULT_SKEW_CHAR)
+    pub fn font_skew_char(&self, id: crate::ids::FontId) -> i32 {
+        self.admitted
+            .state_ref()
+            .font_skew_char(id)
+            .expect("live font has runtime skew state")
+    }
+
+    pub fn set_font_dimen(
+        &mut self,
+        id: crate::ids::FontId,
+        number: u32,
+        value: Scaled,
+    ) -> Result<(), usize> {
+        if !self.font_dimen_writable(id, number) {
+            return Err(crate::font::FONT_INFO_CAPACITY);
+        }
+        self.admitted
+            .state()
+            .assign_font_dimen(id, number, value, AssignmentScope::Global)
+            .map_err(|_| crate::font::FONT_INFO_CAPACITY)
+    }
+
+    pub fn set_font_hyphen_char(&mut self, id: crate::ids::FontId, value: i32) {
+        self.admitted
+            .state()
+            .assign_font_hyphen_char(id, value, AssignmentScope::Global)
+            .expect("live font has runtime hyphen state");
+    }
+
+    pub fn set_font_skew_char(&mut self, id: crate::ids::FontId, value: i32) {
+        self.admitted
+            .state()
+            .assign_font_skew_char(id, value, AssignmentScope::Global)
+            .expect("live font has runtime skew state");
+    }
+
+    #[must_use]
+    pub fn pdf_font_code(
+        &self,
+        table: crate::PdfFontCode,
+        font: crate::ids::FontId,
+        code: u8,
+    ) -> i32 {
+        self.admitted
+            .state_ref()
+            .pdf_font_code(font, table, code)
+            .unwrap_or_else(|_| self.default_pdf_font_code(table, font, code))
+    }
+
+    pub fn set_pdf_font_code(
+        &mut self,
+        table: crate::PdfFontCode,
+        font: crate::ids::FontId,
+        code: u8,
+        value: i32,
+    ) {
+        let defaults =
+            core::array::from_fn(|code| self.default_pdf_font_code(table, font, code as u8));
+        self.admitted
+            .state()
+            .prepare_pdf_font_code_table(font, table, defaults)
+            .expect("live font admits its PDF code table");
+        let value = match table {
+            crate::PdfFontCode::Lp
+            | crate::PdfFontCode::Rp
+            | crate::PdfFontCode::Knbs
+            | crate::PdfFontCode::Stbs
+            | crate::PdfFontCode::Shbs
+            | crate::PdfFontCode::Knbc
+            | crate::PdfFontCode::Knac => value.clamp(-1000, 1000),
+            crate::PdfFontCode::Ef => value.clamp(0, 1000),
+            crate::PdfFontCode::Tag => {
+                let current = self.pdf_font_code(table, font, code);
+                if value >= 0 {
+                    current
+                } else {
+                    current & !(-value).min(7)
+                }
+            }
+        };
+        self.admitted
+            .state()
+            .assign_pdf_font_code(font, table, code, value, AssignmentScope::Global)
+            .expect("prepared PDF font code cell is admitted");
+    }
+
+    pub fn disable_pdf_font_ligatures(&mut self, font: crate::ids::FontId) {
+        self.admitted
+            .state()
+            .assign_pdf_font_ligatures_disabled(font, true, AssignmentScope::Global)
+            .expect("live font has runtime ligature state");
+    }
+
+    #[must_use]
+    pub fn pdf_font_ligatures_disabled(&self, font: crate::ids::FontId) -> bool {
+        self.admitted
+            .state_ref()
+            .pdf_font_ligatures_disabled(font)
+            .expect("live font has runtime ligature state")
+    }
+
+    fn default_pdf_font_code(
+        &self,
+        table: crate::PdfFontCode,
+        font: crate::ids::FontId,
+        code: u8,
+    ) -> i32 {
+        match table {
+            crate::PdfFontCode::Ef => 1000,
+            crate::PdfFontCode::Tag => self
+                .fonts
+                .get(font)
+                .character_metrics(char::from(code))
+                .map_or(0, |metrics| match metrics.tag {
+                    crate::font::CharTag::None => 0,
+                    crate::font::CharTag::LigKern { .. } => 1,
+                    crate::font::CharTag::NextLarger(_) => 2,
+                    crate::font::CharTag::Extensible(_) => 4,
+                }),
+            _ => 0,
+        }
     }
 
     #[must_use]
@@ -1631,10 +1856,131 @@ impl<'a, G> CommandContext<'a, G> {
         self.pdf.external_image_record(id)
     }
 
+    pub fn allocate_pdf_external_image(
+        &mut self,
+        source: crate::PdfExternalImageSource,
+        dimensions: crate::PdfExternalImageDimensions,
+        color_space_object: i32,
+    ) -> Result<crate::PdfExternalImageRecord, crate::PdfObjectCapacityError> {
+        self.pdf
+            .allocate_external_image(source, dimensions, color_space_object)
+    }
+
+    pub fn reserve_pdf_annotation(
+        &mut self,
+    ) -> Result<crate::PdfAnnotationRecord<G>, crate::PdfObjectCapacityError> {
+        self.pdf.reserve_annotation()
+    }
+
+    pub fn initialize_pdf_annotation(
+        &mut self,
+        object: u32,
+        data: crate::PdfAnnotationData<G>,
+    ) -> Result<crate::PdfAnnotationRecord<G>, crate::PdfAnnotationInitializeError> {
+        let semantic_id = self.token_semantic_id(data.entries);
+        self.pdf.initialize_annotation(object, data, semantic_id)
+    }
+
+    pub fn create_pdf_annotation(
+        &mut self,
+        data: crate::PdfAnnotationData<G>,
+    ) -> Result<crate::PdfAnnotationRecord<G>, crate::PdfObjectCapacityError> {
+        let object = self.pdf.reserve_annotation()?.object();
+        self.initialize_pdf_annotation(object, data)
+            .map_err(|_| crate::PdfObjectCapacityError)
+    }
+
+    pub fn create_pdf_link(
+        &mut self,
+        dimensions: crate::PdfAnnotationDimensions,
+        attributes: TokenListId<G>,
+        action: crate::PdfActionSpec<G>,
+        nesting_depth: usize,
+    ) -> Result<crate::PdfLinkRecord<G>, crate::PdfObjectCapacityError> {
+        let attributes_semantic_id = self.token_semantic_id(attributes);
+        let action_semantic_id = action.fingerprint(|tokens| self.token_semantic_id(tokens));
+        self.pdf.create_link(
+            dimensions,
+            attributes,
+            action,
+            attributes_semantic_id,
+            action_semantic_id,
+            u32::try_from(nesting_depth).unwrap_or(u32::MAX),
+        )
+    }
+
+    pub fn end_pdf_link(&mut self) -> Option<crate::PdfOpenLink<G>> {
+        self.pdf.end_link()
+    }
+
+    pub fn create_pdf_outline(
+        &mut self,
+        attributes: TokenListId<G>,
+        action: crate::PdfActionSpec<G>,
+        count: i32,
+        title: TokenListId<G>,
+    ) -> Result<crate::PdfOutlineRecord<G>, crate::PdfObjectCapacityError> {
+        let semantic_ids = [
+            self.token_semantic_id(attributes),
+            action.fingerprint(|tokens| self.token_semantic_id(tokens)),
+            self.token_semantic_id(title),
+        ];
+        self.pdf
+            .create_outline(attributes, action, count, title, semantic_ids)
+    }
+
+    #[must_use]
+    pub fn pdf_destination(
+        &self,
+        identity: &crate::PdfDestinationIdentity,
+        structure: bool,
+    ) -> Option<crate::PdfDestinationRecord> {
+        self.pdf.destination(identity, structure).cloned()
+    }
+
+    pub fn reserve_pdf_destination(
+        &mut self,
+        identity: crate::PdfDestinationIdentity,
+        structure: bool,
+    ) -> Result<crate::PdfDestinationRecord, crate::PdfObjectCapacityError> {
+        self.pdf.reserve_destination(identity, structure)
+    }
+
+    pub fn reserve_pdf_thread(
+        &mut self,
+        identity: crate::PdfDestinationIdentity,
+    ) -> Result<crate::PdfThreadRecord, crate::PdfObjectCapacityError> {
+        self.pdf.reserve_thread(identity)
+    }
+
     #[must_use]
     pub fn pdf_raw_object(&self, object: u32) -> Option<crate::PdfRawObjectRecord<G>> {
         self.pdf
             .raw_object(crate::PdfRawObjectId::from_allocated(object))
+    }
+
+    pub fn reserve_pdf_raw_object(
+        &mut self,
+    ) -> Result<crate::PdfRawObjectId, crate::PdfObjectCapacityError> {
+        self.pdf.reserve_raw_object()
+    }
+
+    pub fn initialize_pdf_raw_object(
+        &mut self,
+        id: crate::PdfRawObjectId,
+        stream: bool,
+        stream_attr: Option<TokenListId<G>>,
+        file: bool,
+        data: TokenListId<G>,
+        immediate: bool,
+    ) -> Result<(), crate::PdfRawObjectInitializeError> {
+        let stream_attr = stream_attr.map(|tokens| self.pdf_token_parameter(tokens));
+        let data = self.pdf_token_parameter(data);
+        self.pdf.initialize_raw_object(
+            id,
+            crate::PdfRawObjectData::new(stream, stream_attr, file, data),
+            immediate,
+        )
     }
 
     pub fn set_pdf_space_font_name(&mut self, name: Vec<u8>) {
@@ -1703,6 +2049,84 @@ impl<'a, G> CommandContext<'a, G> {
     #[must_use]
     pub fn pdf_form(&self, object: u32) -> Option<crate::PdfFormRecord<G>> {
         self.pdf.form(object)
+    }
+
+    pub fn reserve_pdf_form(&mut self) -> Result<(u32, u32), crate::PdfObjectCapacityError> {
+        self.pdf.reserve_form()
+    }
+
+    pub fn initialize_pdf_form(
+        &mut self,
+        identity: (u32, u32),
+        box_list: PageListId,
+        dimensions: (Scaled, Scaled, Scaled),
+        attr: Option<TokenListId<G>>,
+        resources: Option<TokenListId<G>>,
+        immediate: bool,
+    ) -> Result<crate::PdfFormRecord<G>, crate::PdfObjectCapacityError> {
+        let semantic_id = page_list_semantic_id(
+            self.page_nodes,
+            self.fonts,
+            self.admitted.state_ref(),
+            box_list,
+        );
+        let box_list = self
+            .admitted
+            .promote_page_nodes(self.page_nodes, &[box_list])
+            .map_err(|_| crate::PdfObjectCapacityError)?[0];
+        let attr = attr.map(|tokens| self.pdf_token_parameter(tokens));
+        let resources = resources.map(|tokens| self.pdf_token_parameter(tokens));
+        self.pdf.initialize_form(
+            identity,
+            box_list,
+            semantic_id,
+            dimensions,
+            (attr, resources),
+            immediate,
+        )
+    }
+
+    pub fn append_pdf_document_fragment(
+        &mut self,
+        kind: crate::PdfDocumentFragmentKind,
+        tokens: TokenListId<G>,
+    ) {
+        let parameter = self.pdf_token_parameter(tokens);
+        self.pdf.append_document_fragment(kind, parameter);
+    }
+
+    #[must_use]
+    pub fn pdf_catalog_open_action(&self) -> Option<crate::PdfActionRecord<G>> {
+        self.pdf.catalog_open_action()
+    }
+
+    pub fn set_pdf_catalog_open_action_with_targets(
+        &mut self,
+        action: crate::PdfActionSpec<G>,
+        destination: Option<crate::PdfDestinationIdentity>,
+        structure: Option<crate::PdfDestinationIdentity>,
+        thread: Option<crate::PdfDestinationIdentity>,
+    ) -> Result<crate::PdfActionRecord<G>, crate::PdfObjectCapacityError> {
+        let fingerprint = action.fingerprint(|tokens| self.token_semantic_id(tokens));
+        self.pdf
+            .set_catalog_open_action(action, fingerprint, destination, structure, thread)
+    }
+
+    fn token_semantic_id(&self, tokens: TokenListId<G>) -> crate::state_hash::StateHashFragment {
+        let words = self.token_list(tokens);
+        crate::state_hash::StateHashFragment::from_exact_builder(0x7064_665f_746f_6b70, |hasher| {
+            hasher.usize(words.len());
+            for word in words {
+                hasher.u32(word.raw());
+            }
+        })
+    }
+
+    fn pdf_token_parameter(&self, tokens: TokenListId<G>) -> crate::pdf::PdfTokenParameter<G> {
+        crate::pdf::PdfTokenParameter {
+            tokens,
+            semantic_id: self.token_semantic_id(tokens),
+        }
     }
 
     pub fn define_pdf_destination(
@@ -2600,6 +3024,96 @@ impl<'a, G> CommandContext<'a, G> {
             )
             .expect("provisional meaning targets admitted state");
     }
+}
+
+fn page_list_semantic_id<G>(
+    page_nodes: &PageNodeArena,
+    fonts: &FontStore,
+    state: &DenseState<G>,
+    root: PageListId,
+) -> crate::state_hash::StateHashFragment {
+    struct PageSemanticHasher<'a, G> {
+        page_nodes: &'a PageNodeArena,
+        fonts: &'a FontStore,
+        state: &'a DenseState<G>,
+        hasher: crate::state_hash::StateHasher,
+    }
+
+    impl<G> PageSemanticHasher<'_, G> {
+        fn list(&mut self, root: PageListId) {
+            let list = self
+                .page_nodes
+                .get(root)
+                .expect("PDF form root belongs to the live page arena");
+            self.hasher.usize(list.nodes().len());
+            for node in list.nodes() {
+                self.node(node);
+            }
+        }
+
+        fn font(&mut self, font: crate::ids::FontId) {
+            let recipe = self.fonts.artifact_recipe(font);
+            self.hasher.str(&format!("{recipe:?}"));
+            self.state
+                .hash_font_runtime(font, self.fonts.get(font), &mut self.hasher)
+                .expect("live PDF form font has runtime state");
+        }
+
+        fn node(&mut self, node: &crate::node::Node) {
+            node.visit_semantic_node_lists(|child| {
+                self.hasher.tag(0xf0);
+                self.list(*child);
+            });
+            let mut value = node.clone();
+            value.visit_node_lists_mut(|child| *child = PageListId::empty());
+            match &mut value {
+                crate::node::Node::Char { font, origin, .. } => {
+                    self.font(*font);
+                    *font = crate::font::NULL_FONT;
+                    *origin = crate::token::OriginId::UNKNOWN;
+                }
+                crate::node::Node::Lig { font, origins, .. } => {
+                    self.font(*font);
+                    *font = crate::font::NULL_FONT;
+                    origins.clear();
+                }
+                crate::node::Node::MarginKern { font, .. } => {
+                    self.font(*font);
+                    *font = crate::font::NULL_FONT;
+                }
+                crate::node::Node::HList(box_node) | crate::node::Node::VList(box_node) => {
+                    box_node.diagnostic_children = None;
+                    box_node.allocator_high_cell_overlap = 0;
+                }
+                crate::node::Node::Glue {
+                    leader:
+                        Some(
+                            crate::node::LeaderPayload::HList(box_node)
+                            | crate::node::LeaderPayload::VList(box_node),
+                        ),
+                    ..
+                } => {
+                    box_node.diagnostic_children = None;
+                    box_node.allocator_high_cell_overlap = 0;
+                }
+                crate::node::Node::Disc {
+                    physical_replace_count,
+                    ..
+                } => *physical_replace_count = 0,
+                _ => {}
+            }
+            self.hasher.str(&format!("{value:?}"));
+        }
+    }
+
+    let mut projection = PageSemanticHasher {
+        page_nodes,
+        fonts,
+        state,
+        hasher: crate::state_hash::StateHasher::new_exact(0x7064_665f_666f_726d),
+    };
+    projection.list(root);
+    projection.hasher.finish_fragment()
 }
 
 impl<G> crate::token_show::TokenDisplayState for CommandContext<'_, G> {

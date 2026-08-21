@@ -1,5 +1,7 @@
 use super::{AssignmentScope, CodeTableKind, DenseState};
 use crate::env::group::GroupKind;
+use crate::font::PdfFontCode;
+use crate::ids::FontId;
 use crate::interner::{Interner, InternerBudget};
 use crate::journal::{JournalEntry, MutationKind};
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
@@ -13,6 +15,17 @@ fn state() -> DenseState<TestGeneration> {
 
 fn interner() -> Interner {
     Interner::new(InternerBudget::new(64, 64, 1024).expect("budget"))
+}
+
+fn state_with_font(parameters: &[Scaled]) -> DenseState<TestGeneration> {
+    let mut state = state();
+    let prepared = state
+        .prepare_font_runtime(parameters, 45, 7)
+        .expect("prepare font runtime");
+    state
+        .install_font_runtime(FontId::new(0), prepared)
+        .expect("install font runtime");
+    state
 }
 
 #[test]
@@ -185,4 +198,89 @@ fn code_tables_use_initex_defaults_and_the_same_save_journal() {
     assert_eq!(state.code(CodeTableKind::Catcode, 'A').expect("cat"), 12);
     state.end_group(GroupKind::Simple).expect("end");
     assert_eq!(state.code(CodeTableKind::Catcode, 'A').expect("cat"), 11);
+}
+
+#[test]
+fn font_runtime_values_follow_nested_local_and_global_restore() {
+    let font = FontId::new(0);
+    let mut state = state_with_font(&[Scaled::from_raw(10), Scaled::from_raw(20)]);
+    state.begin_group(GroupKind::Simple, 1).expect("outer");
+    state
+        .assign_font_dimen(font, 1, Scaled::from_raw(11), AssignmentScope::Local)
+        .expect("local fontdimen");
+    state
+        .assign_font_hyphen_char(font, 46, AssignmentScope::Local)
+        .expect("local hyphen char");
+    state.begin_group(GroupKind::SemiSimple, 2).expect("inner");
+    state
+        .assign_font_dimen(font, 1, Scaled::from_raw(12), AssignmentScope::Global)
+        .expect("global fontdimen");
+    state
+        .assign_font_skew_char(font, 8, AssignmentScope::Local)
+        .expect("local skew char");
+    state.end_group(GroupKind::SemiSimple).expect("inner end");
+    assert_eq!(
+        state.font_dimen(font, 1).expect("fontdimen"),
+        Scaled::from_raw(12)
+    );
+    assert_eq!(state.font_skew_char(font).expect("skew char"), 7);
+    state.end_group(GroupKind::Simple).expect("outer end");
+    assert_eq!(
+        state.font_dimen(font, 1).expect("fontdimen"),
+        Scaled::from_raw(12)
+    );
+    assert_eq!(state.font_hyphen_char(font).expect("hyphen char"), 45);
+}
+
+#[test]
+fn font_runtime_growth_pdf_codes_and_ligatures_rollback_exactly() {
+    let font = FontId::new(0);
+    let mut state = state_with_font(&[Scaled::from_raw(10)]);
+    state
+        .prepare_pdf_font_code_table(font, PdfFontCode::Ef, [1000; 256])
+        .expect("prepare PDF code table");
+    let before = state.journal_cursor();
+    state.begin_group(GroupKind::Simple, 1).expect("group");
+    state
+        .assign_font_dimen(font, 3, Scaled::from_raw(30), AssignmentScope::Local)
+        .expect("grow fontdimen");
+    state
+        .assign_pdf_font_code(font, PdfFontCode::Ef, b'A', 750, AssignmentScope::Local)
+        .expect("local expansion factor");
+    state
+        .assign_pdf_font_ligatures_disabled(font, true, AssignmentScope::Local)
+        .expect("disable ligatures");
+    assert_eq!(state.font_parameter_count(font).expect("count"), 3);
+    assert_eq!(
+        state
+            .pdf_font_code(font, PdfFontCode::Ef, b'A')
+            .expect("code"),
+        750
+    );
+    assert!(state.pdf_font_ligatures_disabled(font).expect("ligatures"));
+
+    state.restore(before).expect("restore checkpoint");
+    assert_eq!(state.font_parameter_count(font).expect("count"), 1);
+    assert_eq!(
+        state
+            .pdf_font_code(font, PdfFontCode::Ef, b'A')
+            .expect("code"),
+        1000
+    );
+    assert!(!state.pdf_font_ligatures_disabled(font).expect("ligatures"));
+}
+
+#[test]
+fn foreign_checkpoint_rejection_does_not_mutate_font_runtime() {
+    let font = FontId::new(0);
+    let foreign = state().journal_cursor();
+    let mut state = state_with_font(&[Scaled::from_raw(10)]);
+    state
+        .assign_font_hyphen_char(font, 99, AssignmentScope::Global)
+        .expect("set hyphen char");
+    let journal_len = state.journal_len();
+
+    assert!(state.restore(foreign).is_err());
+    assert_eq!(state.font_hyphen_char(font).expect("hyphen char"), 99);
+    assert_eq!(state.journal_len(), journal_len);
 }

@@ -99,6 +99,13 @@ impl<G> EngineBoundaryHasher<'_, G> {
         // is explicitly an in-process convergence aid rather than a durable
         // content identity.
         self.hasher.str(&format!("{recipe:?}"));
+        self.universe
+            .core
+            .as_ref()
+            .expect("live boundary generation")
+            .state()
+            .hash_font_runtime(id, self.universe.fonts.get(id), &mut self.hasher)
+            .expect("live font has runtime state");
     }
 
     pub fn nodes(&mut self, nodes: &[Node]) {
@@ -442,12 +449,23 @@ impl<G> Universe<G> {
         self.dependencies.poison(barrier);
     }
 
-    fn new(interner: Interner, core: StateCore<G>) -> Self {
+    fn new(interner: Interner, mut core: StateCore<G>) -> Self {
+        let fonts = FontStore::new();
+        let null_font = fonts.get(crate::font::NULL_FONT);
+        let prepared = core
+            .state_mut()
+            .prepare_font_runtime(null_font.parameters(), i32::from(b'-'), -1)
+            .expect("null-font runtime row fits state storage");
+        core.admit_mut()
+            .expect("fresh generation admits null-font runtime state")
+            .state()
+            .install_font_runtime(crate::font::NULL_FONT, prepared)
+            .expect("null-font runtime row is first");
         Self {
             interner,
             core: Some(core),
             page_nodes: PageNodeArena::new(),
-            fonts: FontStore::new(),
+            fonts,
             page: PageBuilderState::default(),
             pdf: PdfState::default(),
             sources: SourceMap::default(),
@@ -1538,6 +1556,12 @@ impl<G> Universe<G> {
         <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::transfer_roots(
             self, mark,
         );
+        self.core
+            .as_mut()
+            .expect("restore plan validated a live state core")
+            .state_mut()
+            .truncate_font_runtime(checkpoint.fonts.len)
+            .expect("font runtime prefix follows the validated font-store mark");
         self.fonts.truncate_to(checkpoint.fonts);
         self.sources.truncate_to(checkpoint.sources);
         <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::truncate_suffixes(

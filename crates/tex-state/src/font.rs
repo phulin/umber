@@ -571,6 +571,11 @@ impl FontStore {
     }
 
     #[must_use]
+    pub(crate) fn len(&self) -> usize {
+        self.fonts.len()
+    }
+
+    #[must_use]
     pub(crate) fn resolve_stored(&self, id: FontId) -> Option<FontId> {
         if self.contains(id) {
             return Some(id);
