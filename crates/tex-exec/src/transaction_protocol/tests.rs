@@ -1,3 +1,4 @@
+use tex_state::ResolvedMeaning;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 
 use super::*;
@@ -9,8 +10,9 @@ fn every_primitive_opcode_has_a_capability_classification() {
         let Some(primitive) = UnexpandablePrimitive::from_operand(operand) else {
             continue;
         };
-        let capabilities =
-            canonical_command_capabilities(Meaning::UnexpandablePrimitive(primitive));
+        let capabilities = canonical_command_capabilities::<()>(ResolvedMeaning::Static(
+            Meaning::UnexpandablePrimitive(primitive),
+        ));
         assert_eq!(capabilities.preflight(), capabilities.preflight());
         classified += 1;
     }
@@ -24,8 +26,9 @@ fn deferred_effects_stay_on_the_transaction_free_path() {
         UnexpandablePrimitive::CloseOut,
         UnexpandablePrimitive::Write,
     ] {
-        let capabilities =
-            canonical_command_capabilities(Meaning::UnexpandablePrimitive(primitive));
+        let capabilities = canonical_command_capabilities::<()>(ResolvedMeaning::Static(
+            Meaning::UnexpandablePrimitive(primitive),
+        ));
         assert!(
             capabilities
                 .effects()
