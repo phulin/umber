@@ -7,10 +7,13 @@ use super::super::*;
 use super::operation::*;
 use super::support::*;
 
-pub(in crate::main_control) fn write_text(tokens: TokenListId, stores: &Universe) -> String {
+pub(in crate::main_control) fn write_text<G>(
+    tokens: tex_state::TokenListId<G>,
+    stores: &tex_state::CommandContext<'_, G>,
+) -> String {
     let mut text = String::new();
-    for &token in stores.tokens(tokens).iter() {
-        tex_state::token_show::append_token_string_text(stores, token, &mut text);
+    for &word in stores.token_list(tokens) {
+        tex_state::token_show::append_token_string_text(stores, word.token(), &mut text);
     }
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
     text.push('\n');
@@ -1405,13 +1408,13 @@ pub(in crate::main_control) fn shipout_replay_box(
 /// It must never fall back to a spelling (the source control sequence of a
 /// `\let`) or to a Rust `Debug` rendering: both name where the meaning came
 /// from rather than what it is (`umber2-johp.141`).
-pub(in crate::main_control) fn meaning_mutation_value(
-    meaning: Meaning,
-    stores: &Universe,
+pub(in crate::main_control) fn meaning_mutation_value<G>(
+    meaning: tex_state::meaning::ResolvedMeaning<G>,
+    stores: &tex_state::CommandContext<'_, G>,
 ) -> ObservationValue {
     match meaning {
-        Meaning::Macro { definition, flags } => {
-            let macro_meaning = stores.macro_definition(definition).meaning();
+        tex_state::meaning::ResolvedMeaning::Macro { definition, flags } => {
+            let macro_meaning = stores.definition(definition);
             ObservationValue::Tokens(observed_stored_macro_body(
                 flags,
                 macro_meaning.parameter_text(),
@@ -1419,20 +1422,24 @@ pub(in crate::main_control) fn meaning_mutation_value(
                 stores,
             ))
         }
-        Meaning::CharGiven(character) => ObservationValue::Character(u32::from(character)),
-        Meaning::MathCharGiven(code) => ObservationValue::Integer(i64::from(code)),
-        meaning => {
+        tex_state::meaning::ResolvedMeaning::Static(Meaning::CharGiven(character)) => {
+            ObservationValue::Character(u32::from(character))
+        }
+        tex_state::meaning::ResolvedMeaning::Static(Meaning::MathCharGiven(code)) => {
+            ObservationValue::Integer(i64::from(code))
+        }
+        tex_state::meaning::ResolvedMeaning::Static(meaning) => {
             ObservationValue::Name(tex_command::canonical_names::meaning_command_name(meaning))
         }
     }
 }
 
 /// The macro body as stored by TeX82 §294 and e-TeX change section [49].
-pub(in crate::main_control) fn observed_stored_macro_body(
+pub(in crate::main_control) fn observed_stored_macro_body<G>(
     flags: MeaningFlags,
-    parameter_text: TokenListId,
-    replacement_text: TokenListId,
-    stores: &Universe,
+    parameter_text: &[tex_state::token::TokenWord],
+    replacement_text: &[tex_state::token::TokenWord],
+    stores: &tex_state::CommandContext<'_, G>,
 ) -> Vec<ObservedToken> {
     let mut tokens = observed_macro_body(parameter_text, replacement_text, stores);
     if flags.contains(MeaningFlags::PROTECTED) {
@@ -1451,50 +1458,45 @@ pub(in crate::main_control) fn observed_stored_macro_body(
 
 /// §294's stored macro body: parameter text, the separating `end_match`, then
 /// replacement text, as one token sequence.
-pub(in crate::main_control) fn observed_macro_body(
-    parameter_text: TokenListId,
-    replacement_text: TokenListId,
-    stores: &Universe,
+pub(in crate::main_control) fn observed_macro_body<G>(
+    parameter_text: &[tex_state::token::TokenWord],
+    replacement_text: &[tex_state::token::TokenWord],
+    stores: &tex_state::CommandContext<'_, G>,
 ) -> Vec<ObservedToken> {
-    let mut tokens = stores
-        .tokens(parameter_text)
+    let mut tokens = parameter_text
         .iter()
-        .copied()
-        .map(|token| match token {
+        .map(|word| match word.token() {
             Token::Param(_) => ObservedToken::MacroMatch,
             token => observed_macro_token(token, stores),
         })
         .collect::<Vec<_>>();
     tokens.push(ObservedToken::MacroEndMatch);
     tokens.extend(
-        stores
-            .tokens(replacement_text)
+        replacement_text
             .iter()
-            .copied()
-            .map(|token| observed_macro_token(token, stores)),
+            .map(|word| observed_macro_token(word.token(), stores)),
     );
     tokens
 }
 
 /// §482 constructs a parameterless macro body for §1225's `define`.
-pub(in crate::main_control) fn observed_read_body(
-    replacement_text: TokenListId,
-    stores: &Universe,
+pub(in crate::main_control) fn observed_read_body<G>(
+    replacement_text: tex_state::TokenListId<G>,
+    stores: &tex_state::CommandContext<'_, G>,
 ) -> Vec<ObservedToken> {
     let mut tokens = vec![ObservedToken::MacroEndMatch];
     tokens.extend(
         stores
-            .tokens(replacement_text)
+            .token_list(replacement_text)
             .iter()
-            .copied()
-            .map(|token| observed_macro_token(token, stores)),
+            .map(|word| observed_macro_token(word.token(), stores)),
     );
     tokens
 }
 
-pub(in crate::main_control) fn observed_macro_token(
+pub(in crate::main_control) fn observed_macro_token<G>(
     token: Token,
-    stores: &Universe,
+    stores: &tex_state::CommandContext<'_, G>,
 ) -> ObservedToken {
     match token {
         // §353 gives an active character the control sequence

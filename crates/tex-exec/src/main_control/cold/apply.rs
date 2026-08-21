@@ -1,8 +1,8 @@
 //! Semantic application of typed cold operations.
 //!
-//! The handler mutates the same [`Universe`], [`ModeNest`], and
-//! [`PersistentInterpreter`] used by fused hot dispatch. It owns no fallback
-//! executor and performs no input delivery.
+//! The handler mutates one admitted [`tex_state::CommandContext`], the
+//! [`ModeNest`], and the [`PersistentInterpreter`] used by fused hot dispatch.
+//! It owns no fallback executor and performs no input delivery.
 
 use super::super::*;
 use super::alignment::*;
@@ -85,7 +85,7 @@ pub(in crate::main_control) fn apply<G>(
                 // etex.ch's `eTeX_enabled`: one report for every optional
                 // feature, so the help names the disabled feature generally
                 // rather than the primitive the message already named.
-                let context = command.state.output_open_context(&stores.command_context());
+                let context = command.state.output_open_context(&**stores);
                 report_escaped_error(
                     stores,
                     "Improper ",
@@ -112,7 +112,7 @@ pub(in crate::main_control) fn apply<G>(
             // TeX82 §1047's `insert_dollar_sign` diagnostic; the matching
             // input recovery (backing up the offending command behind an
             // inserted `$`) already ran in `recover_missing_math_shift`.
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
                 "Missing $ inserted",
@@ -129,7 +129,7 @@ pub(in crate::main_control) fn apply<G>(
             // backed up the brace and frozen `\cr` has been inserted. The
             // open context therefore labels the repair `<inserted text>` and
             // leaves the original brace below it as `<to be read again>`.
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
                 "Missing \\cr inserted",
@@ -330,7 +330,7 @@ pub(in crate::main_control) fn apply<G>(
             // §1057) always followed by a page-builder call in that case.
             crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             crate::vertical::append_vertical_contribution(modes, stores, Node::Penalty(amount));
-            let error_context = command.state.output_open_context(&stores.command_context());
+            let error_context = command.state.output_open_context(&**stores);
             crate::vertical::build_page_if_outer_vertical_with_error_context(
                 modes,
                 stores,
@@ -419,7 +419,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::IllegalItalicCorrection { token } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 token,
@@ -429,7 +429,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::IllegalMacroParameter { token } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 token,
@@ -440,7 +440,7 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::ExtraEndCsName => {
             // TeX82 §1135's `cs_error`.
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             report_escaped_error(
                 stores,
                 "Extra ",
@@ -552,7 +552,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::IllegalPrevDepth { token } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 token,
@@ -578,7 +578,7 @@ pub(in crate::main_control) fn apply<G>(
                 // §91's `int_error` appends ` (value)` to the message before
                 // §82 completes the report, so the value is not part of the
                 // `print_err` text.
-                let context = command.state.output_open_context(&stores.command_context());
+                let context = command.state.output_open_context(&**stores);
                 let mut report = stores.print_err("Bad space factor");
                 report
                     .help(&["I allow only values in the range 1..32767 here."])
@@ -588,7 +588,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::IllegalSpaceFactor { token } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 token,
@@ -603,7 +603,7 @@ pub(in crate::main_control) fn apply<G>(
             // rather than checking the current mode), unlike `\spacefactor`/
             // `\prevdepth`'s §1243 `report_illegal_case`.
             if value < 0 {
-                let context = command.state.output_open_context(&stores.command_context());
+                let context = command.state.output_open_context(&**stores);
                 let mut report = stores.print_err("Bad ");
                 report
                     .print_esc("prevgraf")
@@ -892,7 +892,7 @@ pub(in crate::main_control) fn apply<G>(
             let valid = (0..=maximum).contains(&value)
                 || (primitive == UnexpandablePrimitive::DelCode && value == -1);
             if !valid {
-                let context = command.state.output_open_context(&stores.command_context());
+                let context = command.state.output_open_context(&**stores);
                 let mut report = stores.print_err("Invalid code (");
                 report
                     .print_int(value)
@@ -920,11 +920,14 @@ pub(in crate::main_control) fn apply<G>(
                         global,
                         record,
                         |stores, global| {
-                            if global {
-                                stores.set_lccode_global(character, value)
-                            } else {
-                                stores.set_lccode(character, value)
-                            }
+                            stores
+                                .assign_code(
+                                    tex_state::env::CodeTableKind::LcCode,
+                                    character,
+                                    i64::from(value),
+                                    assignment_scope(global),
+                                )
+                                .expect("lccode target belongs to admitted state")
                         },
                         |stores, _| {
                             assignment_tracing::trace_code(
@@ -949,11 +952,14 @@ pub(in crate::main_control) fn apply<G>(
                         global,
                         record,
                         |stores, global| {
-                            if global {
-                                stores.set_uccode_global(character, value)
-                            } else {
-                                stores.set_uccode(character, value)
-                            }
+                            stores
+                                .assign_code(
+                                    tex_state::env::CodeTableKind::UcCode,
+                                    character,
+                                    i64::from(value),
+                                    assignment_scope(global),
+                                )
+                                .expect("uccode target belongs to admitted state")
                         },
                         |stores, _| {
                             assignment_tracing::trace_code(
@@ -984,11 +990,14 @@ pub(in crate::main_control) fn apply<G>(
                         global,
                         record,
                         |stores, global| {
-                            if global {
-                                stores.set_sfcode_global(character, value)
-                            } else {
-                                stores.set_sfcode(character, value)
-                            }
+                            stores
+                                .assign_code(
+                                    tex_state::env::CodeTableKind::SfCode,
+                                    character,
+                                    i64::from(value),
+                                    assignment_scope(global),
+                                )
+                                .expect("sfcode target belongs to admitted state")
                         },
                         |stores, _| {
                             assignment_tracing::trace_code(
@@ -1019,11 +1028,14 @@ pub(in crate::main_control) fn apply<G>(
                         global,
                         record,
                         |stores, global| {
-                            if global {
-                                stores.set_mathcode_global(character, value)
-                            } else {
-                                stores.set_mathcode(character, value)
-                            }
+                            stores
+                                .assign_code(
+                                    tex_state::env::CodeTableKind::MathCode,
+                                    character,
+                                    i64::from(value),
+                                    assignment_scope(global),
+                                )
+                                .expect("mathcode target belongs to admitted state")
                         },
                         |stores, _| {
                             assignment_tracing::trace_code(
@@ -1055,11 +1067,14 @@ pub(in crate::main_control) fn apply<G>(
                         global,
                         record,
                         |stores, global| {
-                            if global {
-                                stores.set_delcode_global(character, value)
-                            } else {
-                                stores.set_delcode(character, value)
-                            }
+                            stores
+                                .assign_code(
+                                    tex_state::env::CodeTableKind::DelCode,
+                                    character,
+                                    i64::from(value),
+                                    assignment_scope(global),
+                                )
+                                .expect("delcode target belongs to admitted state")
                         },
                         |stores, _| {
                             assignment_tracing::trace_code(
@@ -1759,7 +1774,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::IllegalSetLanguage { token } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 token,
@@ -1788,7 +1803,7 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
             ) {
                 Err(ExecError::ArithmeticOverflow) => {
-                    let context = command.state.output_open_context(&stores.command_context());
+                    let context = command.state.output_open_context(&**stores);
                     let mut report = stores.print_err("Arithmetic overflow");
                     report.help(&[
                         "I can't carry out that multiplication or division,",
@@ -1808,12 +1823,12 @@ pub(in crate::main_control) fn apply<G>(
             // TeX82 §1236 prints this error and returns from
             // `do_register_command`; §1269's common `done` path still gets
             // to replay a pending `\afterassignment` token.
-            let target = tex_command::print_cmd_chr_text(&stores.command_context(), target);
+            let target = tex_command::print_cmd_chr_text(&**stores, target);
             let primitive = stores
                 .primitive_name(Meaning::UnexpandablePrimitive(primitive))
                 .expect("installed arithmetic primitive has a canonical name")
                 .to_owned();
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             let mut report = stores.print_err("You can't use `");
             report
                 .print(&target)
@@ -1967,24 +1982,18 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AfterGroup(token) => {
-            let state = stores
-                .command_context()
-                .expect("aftergroup requires an admitted live generation");
             command
                 .state
                 .state_mut()
-                .save_aftergroup(&state, token)
+                .save_aftergroup(&**stores, token)
                 .expect("aftergroup is admitted only for the synchronized open group");
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AfterAssignment(token) => {
-            let state = stores
-                .command_context()
-                .expect("afterassignment requires an admitted live generation");
             command
                 .state
                 .state_mut()
-                .set_afterassignment(&state, token)
+                .set_afterassignment(&**stores, token)
                 .expect("afterassignment uses the synchronized command generation");
             Ok(ReplayStep::Continue)
         }
@@ -1995,7 +2004,7 @@ pub(in crate::main_control) fn apply<G>(
             horizontal,
         } => apply_scanned_rule(command, modes, stores, width, height, depth, horizontal),
         ColdOperation::HRuleHereExceptLeaders => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             report_escaped_error(
                 stores,
                 "You can't use `",
@@ -2015,7 +2024,7 @@ pub(in crate::main_control) fn apply<G>(
             // §1283; neither branch formats or routes its own output.
             let text = message_tokens_text(stores, tokens.token_ref().id());
             if error {
-                let context = command.state.output_open_context(&stores.command_context());
+                let context = command.state.output_open_context(&**stores);
                 issue_error_message(stores, &text, context)?;
             } else {
                 issue_terminal_message(stores, &text);
@@ -2029,13 +2038,13 @@ pub(in crate::main_control) fn apply<G>(
             // The scanned value carries exactly that line's content; replay
             // owns the selector-sensitive transition and decodes no textual
             // envelope.
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             print_display_content(stores, &diagnostic.content);
             crate::diagnostics::complete_show(stores, false, Some(context))?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::ShowBox { index } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::execute_showbox(stores, index, context, command.state.profile())?;
             Ok(ReplayStep::Continue)
         }
@@ -2044,7 +2053,7 @@ pub(in crate::main_control) fn apply<G>(
             // main_control. Materialize Umber's batched character tail before
             // traversing its diagnostic physical projection.
             crate::box_runtime::flush_pending_hchars(modes, stores, command.fuel)?;
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::execute_showlists(stores, modes, context, command.state.profile())?;
             Ok(ReplayStep::Continue)
         }
@@ -2052,7 +2061,7 @@ pub(in crate::main_control) fn apply<G>(
             // e-TeX's odd xray modifier reaches `the_toks`, then TeX82
             // §1297 prints `token_show(temp_head)` and takes the common
             // `\show` completion path.
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             let text = show_tokens_tokens_text(stores, tokens.token_ref().id());
             // §1297 opens with §62's `print_nl(">␣")`, whose break is
             // conditional on a selected sink already having an open column.
@@ -2068,7 +2077,7 @@ pub(in crate::main_control) fn apply<G>(
             // print: see `tex-exec::diagnostics`'s module doc for why the
             // dump must be routed through §245's redirection rather than
             // written straight to both channels.
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             let mut diagnostic = stores.begin_diagnostic();
             diagnostic.print_nl("").print_ln();
             diagnostic.print_rendered(&render_showifs(&conditions));
@@ -2079,7 +2088,7 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::ShowGroups {
             diagnostic: Some(diagnostic),
         } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::execute_showgroups(stores, &diagnostic, context)?;
             Ok(ReplayStep::Continue)
         }
@@ -2093,7 +2102,7 @@ pub(in crate::main_control) fn apply<G>(
                 active_math_left_boundaries,
                 active_math_shifts,
             );
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::execute_showgroups(stores, &diagnostic, context)?;
             Ok(ReplayStep::Continue)
         }
@@ -2160,7 +2169,7 @@ pub(in crate::main_control) fn apply<G>(
                 ScannedSetBoxPath::Payload(payload) => match payload {
                     ScannedBoxShiftPayload::Missing => {
                         let _ = boxes.take_box_context(false);
-                        let context = command.state.output_open_context(&stores.command_context());
+                        let context = command.state.output_open_context(&**stores);
                         report_improper_setbox(context, stores)?;
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
@@ -2267,7 +2276,7 @@ pub(in crate::main_control) fn apply<G>(
             glue,
         } => {
             boxes.pending_leader = None;
-            let error_context = command.state.output_open_context(&stores.command_context());
+            let error_context = command.state.output_open_context(&**stores);
             crate::box_runtime::append_leader_contribution(
                 modes,
                 stores,
@@ -2289,7 +2298,7 @@ pub(in crate::main_control) fn apply<G>(
                 stores.observe_box_copy_ref(&root, command.state.transient_dynamic_words());
             }
             if let Some(payload) = crate::box_runtime::take_register_payload(stores, index, copy) {
-                let error_context = command.state.output_open_context(&stores.command_context());
+                let error_context = command.state.output_open_context(&**stores);
                 crate::box_runtime::append_leader_contribution(
                     modes,
                     stores,
@@ -2313,7 +2322,7 @@ pub(in crate::main_control) fn apply<G>(
             boxes.pending_leader = None;
             // TeX82 §1078's `back_error`; `scan_leader_glue_command` has
             // already put the command that was not glue back.
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
                 "Leaders not followed by proper glue",
@@ -2387,7 +2396,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::IllegalInsertOrAdjust { token } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 token,
@@ -2397,7 +2406,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::IllegalEqNo { token } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 token,
@@ -2407,7 +2416,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::IllegalHAlign { token } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 token,
@@ -2430,7 +2439,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::MisplacedAlignmentCommand { omit } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             let (name, help) = if omit {
                 (
                     "omit",
@@ -2509,7 +2518,7 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::BoxShift(shift) => apply_box_shift(shift, command, modes, stores, boxes),
         ColdOperation::IllegalBoxShift { token } => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 token,
@@ -2544,7 +2553,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::EndOutputRoutine => {
-            let output_context = command.state.output_open_context(&stores.command_context());
+            let output_context = command.state.output_open_context(&**stores);
             let unbalanced = {
                 let mut processor = command_processor(
                     command.state,
@@ -2571,9 +2580,7 @@ pub(in crate::main_control) fn apply<G>(
             // TeX82 §1026 has now semantically ended the output token list.
             // Section 1028's subsequent error therefore sees the source
             // level below every retained depleted `<output>` replay.
-            let context = command
-                .state
-                .output_close_context(&stores.command_context());
+            let context = command.state.output_close_context(&**stores);
             // TeX82 §1026 retires the output token list, then runs §1096's
             // `end_graf` before it unsaves the output group. A non-null
             // paragraph left open by \output must be line-broken into this
@@ -2634,7 +2641,7 @@ pub(in crate::main_control) fn apply<G>(
                 crate::page_output::append_end_job_contributions(stores);
                 *end_job_ejection_pending = true;
             }
-            let error_context = command.state.output_open_context(&stores.command_context());
+            let error_context = command.state.output_open_context(&**stores);
             crate::page_builder::build_page_with_error_context(stores, &error_context)?;
             if stores.page_contributions().is_empty() {
                 *end_job_ejection_pending = false;
@@ -2645,7 +2652,7 @@ pub(in crate::main_control) fn apply<G>(
             // TeX82 §1051's `privileged`: `\end`/`\dump` below outer
             // vertical mode reports and is discarded, exactly like the other
             // Forbidden cases.
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
                 token,
@@ -2656,7 +2663,7 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::ExtraRightBrace { forgotten: None } => {
             // TeX82 §1068's `bottom_level` arm of `handle_right_brace`.
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
                 "Too many }'s",
@@ -2673,7 +2680,7 @@ pub(in crate::main_control) fn apply<G>(
         } => {
             // TeX82 §1069's `extra_right_brace` reports and discards the
             // mismatched brace. It does not `unsave` the group it names.
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             let mut report = stores.print_err("Extra }, or forgotten ");
             forgotten.print(&mut report);
             report.help(&[
@@ -2691,7 +2698,7 @@ pub(in crate::main_control) fn apply<G>(
             // `scan_off_save` already ran the input recovery (backing up the
             // command behind its chosen closer); this only prints TeX82
             // §1064's report naming what §1065 inserted.
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             let mut report = stores.print_err("Missing ");
             closer.print(&mut report);
             report
@@ -2705,8 +2712,8 @@ pub(in crate::main_control) fn apply<G>(
             // TeX82 §1066: "print_err("Extra "); print_cmd_chr(cur_cmd,
             // cur_chr)". `scan_off_save` already dropped the command itself
             // (no backup, nothing to replay); this only names it.
-            let name = tex_command::command_token_text(&mut stores.command_context(), token);
-            let context = command.state.output_open_context(&stores.command_context());
+            let name = tex_command::command_token_text(&mut **stores, token);
+            let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
                 &format!("Extra {name}"),
@@ -2739,7 +2746,7 @@ pub(in crate::main_control) fn apply<G>(
                     });
                 }
             };
-            let context = command.state.output_open_context(&stores.command_context());
+            let context = command.state.output_open_context(&**stores);
             crate::error_report::report_error(
                 stores,
                 message,
@@ -2915,7 +2922,7 @@ pub(in crate::main_control) fn apply<G>(
                     node,
                     command.fuel,
                 )?;
-                let error_context = command.state.output_open_context(&stores.command_context());
+                let error_context = command.state.output_open_context(&**stores);
                 crate::vertical::build_page_if_outer_vertical_with_error_context(
                     modes,
                     stores,
@@ -2935,7 +2942,7 @@ pub(in crate::main_control) fn apply<G>(
                     || modes.current_list().incomplete_fraction().is_some();
                 if has_formula {
                     let primitive = if vertical { "\\valign" } else { "\\halign" };
-                    let context = command.state.output_open_context(&stores.command_context());
+                    let context = command.state.output_open_context(&**stores);
                     let mut report = stores.print_err(&format!("Improper {primitive} inside $$'s"));
                     report.help(&[
                         "Displays can use special alignments (like \\eqalignno)",
@@ -2952,10 +2959,7 @@ pub(in crate::main_control) fn apply<G>(
             if let Some(outer) = active_alignment.take() {
                 command
                     .state
-                    .apply_alignment_request(
-                        &stores.command_context(),
-                        AlignmentRequest::Suspend(outer.identity),
-                    )
+                    .apply_alignment_request(&**stores, AlignmentRequest::Suspend(outer.identity))
                     .map_err(|_| ExecError::MissingToken {
                         context: "nested alignment suspension",
                     })?;
@@ -2965,10 +2969,7 @@ pub(in crate::main_control) fn apply<G>(
             *next_alignment_identity = next_alignment_identity.wrapping_add(1);
             command
                 .state
-                .apply_alignment_request(
-                    &stores.command_context(),
-                    AlignmentRequest::Begin(identity),
-                )
+                .apply_alignment_request(&**stores, AlignmentRequest::Begin(identity))
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment lifecycle",
                 })?;
@@ -3028,10 +3029,7 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::AlignmentPreambleOpening { alignment, packing } => {
             command
                 .state
-                .apply_alignment_request(
-                    &stores.command_context(),
-                    AlignmentRequest::Preamble(alignment),
-                )
+                .apply_alignment_request(&**stores, AlignmentRequest::Preamble(alignment))
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment preamble lifecycle",
                 })?;
@@ -3173,7 +3171,7 @@ pub(in crate::main_control) fn apply<G>(
                 command
                     .state
                     .apply_alignment_request(
-                        &stores.command_context(),
+                        &**stores,
                         AlignmentRequest::PrepareCellLookahead(alignment),
                     )
                     .map_err(|_| ExecError::MissingToken {
@@ -3182,7 +3180,7 @@ pub(in crate::main_control) fn apply<G>(
                 command
                     .state
                     .apply_alignment_request(
-                        &stores.command_context(),
+                        &**stores,
                         AlignmentRequest::InstallOmitCellTemplate(alignment),
                     )
                     .map_err(|_| ExecError::MissingToken {
@@ -3196,7 +3194,7 @@ pub(in crate::main_control) fn apply<G>(
                 command
                     .state
                     .apply_alignment_request(
-                        &stores.command_context(),
+                        &**stores,
                         AlignmentRequest::InstallCellTemplate(alignment),
                     )
                     .map_err(|_| ExecError::MissingToken {
@@ -3247,7 +3245,7 @@ pub(in crate::main_control) fn apply<G>(
             command
                 .state
                 .apply_alignment_request(
-                    &stores.command_context(),
+                    &**stores,
                     match opening {
                         AlignmentCellOpening::Template => {
                             AlignmentRequest::InstallCellTemplate(alignment)
@@ -3306,16 +3304,13 @@ pub(in crate::main_control) fn apply<G>(
             let active = active_alignment
                 .as_mut()
                 .expect("active replay alignment was checked");
-            let error_context = command.state.output_open_context(&stores.command_context());
+            let error_context = command.state.output_open_context(&**stores);
             finish_replay_alignment(active, modes, stores, command.fuel, &error_context)?;
             schedule_aftergroup(command, stores, entry_aftergroup)?;
             schedule_aftergroup(command, stores, alignment_aftergroup)?;
             command
                 .state
-                .apply_alignment_request(
-                    &stores.command_context(),
-                    AlignmentRequest::Finish(alignment),
-                )
+                .apply_alignment_request(&**stores, AlignmentRequest::Finish(alignment))
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment finish lifecycle",
                 })?;
@@ -3323,10 +3318,7 @@ pub(in crate::main_control) fn apply<G>(
             if let Some(outer) = boxes.suspended_alignments.pop() {
                 command
                     .state
-                    .apply_alignment_request(
-                        &stores.command_context(),
-                        AlignmentRequest::Resume(outer.identity),
-                    )
+                    .apply_alignment_request(&**stores, AlignmentRequest::Resume(outer.identity))
                     .map_err(|_| ExecError::MissingToken {
                         context: "nested alignment resumption",
                     })?;
@@ -3340,7 +3332,7 @@ pub(in crate::main_control) fn apply<G>(
                 Mode::Vertical | Mode::InternalVertical
             ) {
                 crate::paragraph_end::normal_paragraph(modes, stores);
-                let error_context = command.state.output_open_context(&stores.command_context());
+                let error_context = command.state.output_open_context(&**stores);
                 crate::vertical::build_page_if_outer_vertical_with_error_context(
                     modes,
                     stores,
