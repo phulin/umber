@@ -135,12 +135,23 @@ pub(super) fn prepare<G>(
             definition,
             flags,
             global,
-        } => PreparedHotOperation::MacroDefinition {
-            target: definition.target,
-            definition: command.promote_attempt_definition(stores, definition.definition)?,
-            flags,
-            global,
-        },
+        } => {
+            let promoted = command.promote_attempt_roots(
+                stores,
+                tex_command::AttemptPromotionRoots::new(
+                    &[],
+                    &[],
+                    core::slice::from_ref(&definition.definition),
+                    &[],
+                ),
+            )?;
+            PreparedHotOperation::MacroDefinition {
+                target: definition.target,
+                definition: promoted.definitions[0],
+                flags,
+                global,
+            }
+        }
         HotOperation::Let { assignment, global } => PreparedHotOperation::Let {
             target: assignment.target,
             meaning: assignment.meaning,

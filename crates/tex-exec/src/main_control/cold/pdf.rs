@@ -616,9 +616,9 @@ pub(in crate::main_control) fn apply_pdf_form_request(
     Ok(ReplayStep::Continue)
 }
 
-pub(in crate::main_control) fn replay_text(
-    command: &mut CommandMachine<'_>,
-    stores: &mut Universe,
+pub(in crate::main_control) fn replay_text<G>(
+    command: &mut CommandMachine<'_, G>,
+    stores: &mut LinearCommandContext<'_, G>,
     kind: crate::shipout::ReplayTextKind,
     tokens: &[TokenWord],
     diagnostics: &mut Vec<PendingDiagnostic>,
@@ -629,16 +629,13 @@ pub(in crate::main_control) fn replay_text(
     // cursor. This also gives a failing nested form replay an exact command
     // rollback boundary independent of the artifact/resource transaction.
     let input_snapshot = command.state.snapshot();
-    let traced = tokens
-        .iter()
-        .copied()
-        .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
-        .collect::<Vec<_>>();
-    let traced = stores.finish_traced_token_list(&traced);
+    let durable = stores
+        .allocate_token_list(tokens)
+        .expect("output replay fits admitted durable storage");
     let expanded = {
-        let mut processor = command.processor(stores);
+        let mut processor = command.processor(stores.take());
         let result = processor
-            .expand_output_replay(traced)
+            .expand_output_replay(durable)
             .map_err(command_error);
         diagnostics.extend(
             processor
@@ -646,6 +643,7 @@ pub(in crate::main_control) fn replay_text(
                 .into_iter()
                 .map(PendingDiagnostic::Command),
         );
+        stores.restore(processor.into_context());
         result
     };
     command
@@ -654,7 +652,15 @@ pub(in crate::main_control) fn replay_text(
         .expect("shipout replay preserves the command profile");
     let expanded = expanded?;
     let mut text = String::new();
-    for &token in stores.tokens(expanded.token_ref().id()).iter() {
+    let expanded = command
+        .state
+        .state()
+        .attempt_token_words(expanded)
+        .map_err(|_| ExecError::MissingToken {
+            context: "expanded output replay",
+        })?;
+    for word in expanded {
+        let token = word.token();
         match kind {
             crate::shipout::ReplayTextKind::Special => {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
@@ -679,28 +685,28 @@ pub(in crate::main_control) fn replay_text(
     Ok(bytes)
 }
 
-pub(in crate::main_control) fn replay_write(
-    command: &mut CommandMachine<'_>,
-    stores: &mut Universe,
+pub(in crate::main_control) fn replay_write<G>(
+    command: &mut CommandMachine<'_, G>,
+    stores: &mut LinearCommandContext<'_, G>,
     tokens: &[TokenWord],
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<crate::shipout::ExpandedWrite, ExecError> {
     let input_snapshot = command.state.snapshot();
-    let traced = tokens
-        .iter()
-        .copied()
-        .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
-        .collect::<Vec<_>>();
-    let traced = stores.finish_traced_token_list(&traced);
+    let durable = stores
+        .allocate_token_list(tokens)
+        .expect("write replay fits admitted durable storage");
     let expanded = {
-        let mut processor = command.processor(stores);
-        let result = processor.expand_write_text(traced).map_err(command_error);
+        let mut processor = command.processor(stores.take());
+        let result = processor
+            .expand_durable_write_text(durable)
+            .map_err(command_error);
         diagnostics.extend(
             processor
                 .take_semantic_diagnostics()
                 .into_iter()
                 .map(PendingDiagnostic::Command),
         );
+        stores.restore(processor.into_context());
         result
     };
     command
@@ -722,10 +728,17 @@ pub(in crate::main_control) fn replay_write(
         )?;
     }
     let mut text = String::new();
-    for &token in stores.tokens(expanded.tokens.token_ref().id()).iter() {
-        tex_state::token_show::append_token_string_text(stores, token, &mut text);
+    let words = command
+        .state
+        .state()
+        .attempt_token_words(expanded.tokens)
+        .map_err(|_| ExecError::MissingToken {
+            context: "expanded write replay",
+        })?;
+    for word in words {
+        tex_state::token_show::append_token_string_text(&**stores, word.token(), &mut text);
     }
-    let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
+    let mut text = crate::diagnostics::print_text_with_newlinechar(&**stores, &text);
     text.push('\n');
     Ok(crate::shipout::ExpandedWrite::transactional(text))
 }
@@ -753,11 +766,17 @@ pub(in crate::main_control) fn replay_write_sink(
 /// An open numbered stream keeps its file selector. A closed numbered stream
 /// and stream 16 keep the current interaction-mode selector; stream 17 only
 /// redirects `term_and_log` to `log_only`.
-pub(in crate::main_control) fn immediate_write_sink(
+pub(in crate::main_control) fn immediate_write_sink<G>(
     value: tex_command::WriteStreamSelector,
-    stores: &Universe,
+    stores: &tex_state::CommandContext<'_, G>,
 ) -> Option<PrintSink> {
-    let selector = tex_state::print::Selector::for_interaction(stores.interaction_mode());
+    let interaction = match stores.interaction_mode_value() {
+        0 => tex_state::InteractionMode::Batch,
+        1 => tex_state::InteractionMode::Nonstop,
+        2 => tex_state::InteractionMode::Scroll,
+        _ => tex_state::InteractionMode::ErrorStop,
+    };
+    let selector = tex_state::print::Selector::for_interaction(interaction);
     match value {
         tex_command::WriteStreamSelector::Stream(slot) => {
             let slot = StreamSlot::new(slot);

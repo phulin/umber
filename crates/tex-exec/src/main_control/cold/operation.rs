@@ -766,6 +766,52 @@ pub(in crate::main_control) enum MathShiftPairing {
 }
 
 impl<G> ColdOperation<G> {
+    /// Collects every attempt-local token root in deterministic field order.
+    /// The outer preparation barrier passes this exact sequence to
+    /// `CommandState::promote_attempt_roots`; reconstruction consumes the
+    /// receipt in the same order.
+    pub(in crate::main_control) fn attempt_token_roots(
+        &self,
+        roots: &mut Vec<tex_command::AttemptTokenListId>,
+    ) {
+        match self {
+            Self::Toks { tokens, .. }
+            | Self::PdfSpaceFont(tokens)
+            | Self::DeferredWrite { tokens, .. }
+            | Self::DeferredSpecial { tokens, .. }
+            | Self::Message { tokens, .. }
+            | Self::ShowTokens { tokens }
+            | Self::Mark { tokens, .. } => roots.push(*tokens),
+            Self::TokParam {
+                tokens: Some(tokens),
+                ..
+            } => roots.push(*tokens),
+            Self::PdfFontAction { first, second, .. } => {
+                roots.extend(first);
+                roots.extend(second);
+            }
+            Self::InputStream {
+                request: InputStreamRequest::Read { tokens, .. },
+                ..
+            } => roots.push(*tokens),
+            Self::PdfXImage { request, .. } => {
+                roots.extend(request.attr);
+            }
+            Self::PdfGraphics(request) => pdf_graphics_attempt_roots(request, roots),
+            Self::PdfObject(request) => pdf_object_attempt_roots(request, roots),
+            Self::PdfForm(request) => pdf_form_attempt_roots(request, roots),
+            Self::PdfDocumentFragment(request) => {
+                roots.push(request.text.tokens);
+                if let Some(action) = &request.open_action {
+                    pdf_action_attempt_roots(action, roots);
+                }
+            }
+            Self::PdfNavigation(request) => pdf_navigation_attempt_roots(request, roots),
+            Self::ImmediateExtension(request) => immediate_extension_attempt_roots(request, roots),
+            _ => {}
+        }
+    }
+
     pub(in crate::main_control) const fn fires_afterassignment(&self) -> bool {
         matches!(
             self,
@@ -816,6 +862,147 @@ impl<G> ColdOperation<G> {
             Self::CharacterCode { value, .. } => u32::try_from(value).ok().and_then(char::from_u32),
             _ => None,
         }
+    }
+}
+
+fn balanced_attempt_root(
+    text: &tex_command::ScannedBalancedText,
+    roots: &mut Vec<tex_command::AttemptTokenListId>,
+) {
+    roots.push(text.tokens);
+}
+
+fn pdf_identifier_attempt_roots(
+    identifier: &tex_command::PdfActionIdentifier,
+    roots: &mut Vec<tex_command::AttemptTokenListId>,
+) {
+    match identifier {
+        tex_command::PdfActionIdentifier::Name(tokens)
+        | tex_command::PdfActionIdentifier::Raw(tokens) => roots.push(*tokens),
+        tex_command::PdfActionIdentifier::Number(_) => {}
+    }
+}
+
+fn pdf_action_attempt_roots(
+    action: &tex_command::PdfActionSpec,
+    roots: &mut Vec<tex_command::AttemptTokenListId>,
+) {
+    match action {
+        tex_command::PdfActionSpec::User(tokens) => roots.push(*tokens),
+        tex_command::PdfActionSpec::GoTo(destination)
+        | tex_command::PdfActionSpec::Thread(destination) => {
+            roots.extend(destination.file);
+            if let Some(identifier) = &destination.structure {
+                pdf_identifier_attempt_roots(identifier, roots);
+            }
+            match &destination.target {
+                tex_command::PdfActionTarget::Page { view, .. } => roots.push(*view),
+                tex_command::PdfActionTarget::Destination(identifier) => {
+                    pdf_identifier_attempt_roots(identifier, roots);
+                }
+            }
+        }
+    }
+}
+
+fn pdf_graphics_attempt_roots(
+    request: &PdfGraphicsRequest,
+    roots: &mut Vec<tex_command::AttemptTokenListId>,
+) {
+    match request {
+        PdfGraphicsRequest::Literal { text, .. } | PdfGraphicsRequest::SetMatrix { text } => {
+            balanced_attempt_root(text, roots);
+        }
+        PdfGraphicsRequest::ColorStack {
+            action:
+                Some(PdfColorStackActionRequest::Set(text) | PdfColorStackActionRequest::Push(text)),
+            ..
+        } => balanced_attempt_root(text, roots),
+        _ => {}
+    }
+}
+
+fn pdf_object_attempt_roots(
+    request: &PdfObjectRequest,
+    roots: &mut Vec<tex_command::AttemptTokenListId>,
+) {
+    if let PdfObjectRequest::Define {
+        stream_attr, data, ..
+    } = request
+    {
+        if let Some(text) = stream_attr {
+            balanced_attempt_root(text, roots);
+        }
+        balanced_attempt_root(data, roots);
+    }
+}
+
+fn pdf_form_attempt_roots(
+    request: &PdfFormRequest,
+    roots: &mut Vec<tex_command::AttemptTokenListId>,
+) {
+    if let PdfFormRequest::Create {
+        attr, resources, ..
+    } = request
+    {
+        if let Some(text) = attr {
+            balanced_attempt_root(text, roots);
+        }
+        if let Some(text) = resources {
+            balanced_attempt_root(text, roots);
+        }
+    }
+}
+
+fn pdf_navigation_attempt_roots(
+    request: &PdfNavigationRequest,
+    roots: &mut Vec<tex_command::AttemptTokenListId>,
+) {
+    match request {
+        PdfNavigationRequest::Annotation(PdfAnnotationRequest::Define { entries, .. }) => {
+            balanced_attempt_root(entries, roots);
+        }
+        PdfNavigationRequest::StartLink(request) => {
+            if let Some(text) = &request.attributes {
+                balanced_attempt_root(text, roots);
+            }
+            pdf_action_attempt_roots(&request.action, roots);
+        }
+        PdfNavigationRequest::Outline(request) => {
+            if let Some(text) = &request.attributes {
+                balanced_attempt_root(text, roots);
+            }
+            pdf_action_attempt_roots(&request.action, roots);
+            balanced_attempt_root(&request.title, roots);
+        }
+        PdfNavigationRequest::Destination(request) => {
+            pdf_identifier_attempt_roots(&request.identifier, roots);
+        }
+        PdfNavigationRequest::Thread(request) => {
+            if let Some(text) = &request.attributes {
+                balanced_attempt_root(text, roots);
+            }
+            pdf_identifier_attempt_roots(&request.identifier, roots);
+        }
+        PdfNavigationRequest::Annotation(PdfAnnotationRequest::Reserve)
+        | PdfNavigationRequest::EndLink
+        | PdfNavigationRequest::EndThread => {}
+    }
+}
+
+fn immediate_extension_attempt_roots(
+    request: &ImmediateExtension,
+    roots: &mut Vec<tex_command::AttemptTokenListId>,
+) {
+    match request {
+        ImmediateExtension::Write { tokens, .. } => roots.push(*tokens),
+        ImmediateExtension::PdfObject(request) => pdf_object_attempt_roots(request, roots),
+        ImmediateExtension::PdfForm(request) => pdf_form_attempt_roots(request, roots),
+        ImmediateExtension::PdfImage(request) => roots.extend(request.attr),
+        ImmediateExtension::Continue
+        | ImmediateExtension::PdfExtensionInDviMode(_)
+        | ImmediateExtension::OpenOut { .. }
+        | ImmediateExtension::CloseOut { .. } => {}
     }
 }
 
