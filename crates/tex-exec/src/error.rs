@@ -1,15 +1,14 @@
 use std::fmt;
 
 use tex_command::{CommandError, FatalError};
-use tex_state::CommandContext;
 use tex_state::FontParameterError;
-use tex_state::ProvenanceResolver;
 use tex_state::WorldError;
 use tex_state::meaning::ExpandablePrimitive;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::provenance::DiagnosticSite;
 use tex_state::provenance::OriginRef;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
+use tex_state::{ColdProvenanceDemand, CommandContext, DiagnosticOriginRequest};
 
 use crate::Mode;
 
@@ -865,7 +864,7 @@ impl ExecError {
     /// provenance arena entries past rollback.
     pub(crate) fn freeze_diagnostic_origin<G>(
         mut self,
-        stores: &CommandContext<'_, G>,
+        stores: &mut CommandContext<'_, G>,
         input_context: (usize, Vec<&'static str>),
     ) -> Self {
         if let Self::Captured { site, frozen, .. } = &mut self
@@ -924,11 +923,20 @@ impl ExecError {
 
     /// Renders this error with lazy provenance context from the live universe.
     #[must_use]
-    pub fn format_with_provenance<G>(&self, stores: &CommandContext<'_, G>) -> String {
-        ProvenanceResolver::new(stores).render_diagnostic_site(
-            &self.message_with_token_names(stores),
-            &self.diagnostic_site(),
-        )
+    pub fn format_with_provenance<G>(&self, stores: &mut CommandContext<'_, G>) -> String {
+        let message = self.message_with_token_names(stores);
+        let Some(origin) = self.diagnostic_site().primary_origin() else {
+            return message;
+        };
+        stores
+            .detach_diagnostic_origin(
+                origin,
+                DiagnosticOriginRequest {
+                    demand: ColdProvenanceDemand::Diagnostic,
+                    message: &message,
+                },
+            )
+            .map_or(message, |diagnostic| diagnostic.rendered_site)
     }
 
     fn message_with_token_names<G>(&self, stores: &CommandContext<'_, G>) -> String {
@@ -949,20 +957,23 @@ impl ExecError {
 }
 
 fn freeze_diagnostic_origin<G>(
-    stores: &CommandContext<'_, G>,
+    stores: &mut CommandContext<'_, G>,
     origin: OriginId,
 ) -> Option<FrozenDiagnosticOrigin> {
-    let resolver = ProvenanceResolver::new(stores);
-    stores
-        .root_span_for_origin(origin)
-        .map(FrozenDiagnosticOrigin::Root)
-        .or_else(|| {
-            let fallback = resolver.resolve_origin(origin)?;
-            Some(match resolver.detach_generated_origin(origin) {
-                Some(span) => FrozenDiagnosticOrigin::Generated { span, fallback },
-                None => FrozenDiagnosticOrigin::Resolved(fallback),
-            })
-        })
+    let detached = stores
+        .detach_diagnostic_origin(
+            origin,
+            DiagnosticOriginRequest {
+                demand: ColdProvenanceDemand::Diagnostic,
+                message: "",
+            },
+        )
+        .ok()?;
+    match (detached.generated_origin, detached.resolved_source) {
+        (Some(span), Some(fallback)) => Some(FrozenDiagnosticOrigin::Generated { span, fallback }),
+        (_, Some(location)) => Some(FrozenDiagnosticOrigin::Resolved(location)),
+        _ => None,
+    }
 }
 
 fn freeze_diagnostic_context<G>(
