@@ -72,7 +72,7 @@ fn duplicate_or_missing_destination_rows_are_rejected() {
     put_u32(&mut malformed, entries_offset + ENTRY_LEN + 8, 0);
 
     assert_eq!(
-        decode(&malformed, 3).unwrap_err(),
+        decode(&malformed, 3).expect_err("invalid test fixture is rejected"),
         "duplicate frozen lookup target"
     );
 }

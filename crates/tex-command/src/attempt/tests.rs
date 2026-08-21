@@ -36,15 +36,28 @@ fn budget() -> InternerBudget {
 fn mark_truncates_every_suffix_without_inspecting_values() {
     tex_state::with_universe(budget(), |universe| {
         let mut attempt = AttemptArena::default();
-        let retained = attempt.allocate_token_list([word('a')]).unwrap();
+        let retained = attempt
+            .allocate_token_list([word('a')])
+            .expect("test fixture is valid");
         let mark = attempt.mark();
-        let rejected = attempt.allocate_token_list([word('b'), word('c')]).unwrap();
-        let rejected_glue = attempt.allocate_glue(glue(17)).unwrap();
-        let rejected_name = attempt.allocate_name("discarded").unwrap();
+        let rejected = attempt
+            .allocate_token_list([word('b'), word('c')])
+            .expect("test fixture is valid");
+        let rejected_glue = attempt
+            .allocate_glue(glue(17))
+            .expect("test fixture is valid");
+        let rejected_name = attempt
+            .allocate_name("discarded")
+            .expect("test fixture is valid");
 
-        attempt.truncate(mark).unwrap();
+        attempt.truncate(mark).expect("test fixture is valid");
 
-        assert_eq!(attempt.token_words(retained).unwrap(), &[word('a')]);
+        assert_eq!(
+            attempt
+                .token_words(retained)
+                .expect("test fixture is valid"),
+            &[word('a')]
+        );
         assert_eq!(
             attempt.token_words(rejected),
             Err(AttemptError::InvalidCoordinate)
@@ -65,16 +78,16 @@ fn mark_truncates_every_suffix_without_inspecting_values() {
                     ..AttemptEscapeRoots::default()
                 },
             )
-            .unwrap();
+            .expect("test fixture is valid");
         assert_eq!(
             universe
                 .command_context()
-                .unwrap()
+                .expect("test fixture is valid")
                 .token_list(promoted.token_lists[0]),
             &[word('a').token_word()]
         );
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -85,19 +98,31 @@ fn foreign_marks_and_offsets_are_rejected() {
         let mut second = AttemptArena::<()>::default();
         assert_eq!(second.truncate(mark), Err(AttemptError::ForeignAttempt));
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
 fn promotion_follows_only_declared_roots_and_definition_children() {
     tex_state::with_universe(budget(), |universe| {
         let mut attempt = AttemptArena::default();
-        let parameter = attempt.allocate_token_list([word('#')]).unwrap();
-        let replacement = attempt.allocate_token_list([word('x')]).unwrap();
-        let unrelated = attempt.allocate_token_list([word('z')]).unwrap();
-        let definition = attempt.allocate_definition(parameter, replacement).unwrap();
-        let promoted_glue = attempt.allocate_glue(glue(42)).unwrap();
-        let unrelated_glue = attempt.allocate_glue(glue(99)).unwrap();
+        let parameter = attempt
+            .allocate_token_list([word('#')])
+            .expect("test fixture is valid");
+        let replacement = attempt
+            .allocate_token_list([word('x')])
+            .expect("test fixture is valid");
+        let unrelated = attempt
+            .allocate_token_list([word('z')])
+            .expect("test fixture is valid");
+        let definition = attempt
+            .allocate_definition(parameter, replacement)
+            .expect("test fixture is valid");
+        let promoted_glue = attempt
+            .allocate_glue(glue(42))
+            .expect("test fixture is valid");
+        let unrelated_glue = attempt
+            .allocate_glue(glue(99))
+            .expect("test fixture is valid");
 
         let promoted = attempt
             .promote(
@@ -109,31 +134,37 @@ fn promotion_follows_only_declared_roots_and_definition_children() {
                     ..AttemptEscapeRoots::default()
                 },
             )
-            .unwrap();
+            .expect("test fixture is valid");
 
         assert_eq!(promoted.token_lists.len(), 1);
         assert_eq!(promoted.glue.len(), 1);
         assert_eq!(promoted.definitions.len(), 1);
         assert_eq!(
-            universe.command_context().unwrap().glue(promoted.glue[0]),
+            universe
+                .command_context()
+                .expect("test fixture is valid")
+                .glue(promoted.glue[0]),
             glue(42)
         );
         assert_eq!(
             universe
                 .command_context()
-                .unwrap()
+                .expect("test fixture is valid")
                 .definition(promoted.definitions[0])
                 .replacement_text(),
             &[word('x').token_word()]
         );
         assert_eq!(
-            universe.retire().unwrap().token_list_rows(),
+            universe
+                .retire()
+                .expect("test fixture is valid")
+                .token_list_rows(),
             1,
             "the unrelated list and definition children were not independently promoted"
         );
         let _ = (unrelated, unrelated_glue);
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -142,10 +173,10 @@ fn promotion_copies_only_declared_provenance_roots() {
         let mut attempt = AttemptArena::default();
         let retained = attempt
             .allocate_provenance(tex_state::provenance::OriginRecord::UnknownBootstrap)
-            .unwrap();
+            .expect("test fixture is valid");
         let discarded = attempt
             .allocate_provenance(tex_state::provenance::OriginRecord::UnknownBootstrap)
-            .unwrap();
+            .expect("test fixture is valid");
 
         let promoted = attempt
             .promote(
@@ -155,37 +186,53 @@ fn promotion_copies_only_declared_provenance_roots() {
                     ..AttemptEscapeRoots::default()
                 },
             )
-            .unwrap();
+            .expect("test fixture is valid");
 
         assert_eq!(promoted.provenance.len(), 1);
         assert_eq!(
             universe
                 .command_context()
-                .unwrap()
+                .expect("test fixture is valid")
                 .provenance(promoted.provenance[0]),
             tex_state::provenance::OriginRecord::UnknownBootstrap
         );
         let _ = discarded;
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
 fn nested_builders_keep_outer_and_inner_scratch_disjoint() {
     tex_state::with_universe(budget(), |_universe| {
         let mut attempt = AttemptArena::<()>::default();
-        let outer = attempt.begin_token_list().unwrap();
-        attempt.push_token(outer, word('a')).unwrap();
-        let inner = attempt.begin_token_list().unwrap();
-        attempt.push_token(inner, word('x')).unwrap();
-        let inner = attempt.finish_token_list(inner).unwrap();
-        attempt.push_token(outer, word('b')).unwrap();
-        let outer = attempt.finish_token_list(outer).unwrap();
+        let outer = attempt.begin_token_list().expect("test fixture is valid");
+        attempt
+            .push_token(outer, word('a'))
+            .expect("test fixture is valid");
+        let inner = attempt.begin_token_list().expect("test fixture is valid");
+        attempt
+            .push_token(inner, word('x'))
+            .expect("test fixture is valid");
+        let inner = attempt
+            .finish_token_list(inner)
+            .expect("test fixture is valid");
+        attempt
+            .push_token(outer, word('b'))
+            .expect("test fixture is valid");
+        let outer = attempt
+            .finish_token_list(outer)
+            .expect("test fixture is valid");
 
-        assert_eq!(attempt.token_words(inner).unwrap(), &[word('x')]);
-        assert_eq!(attempt.token_words(outer).unwrap(), &[word('a'), word('b')]);
+        assert_eq!(
+            attempt.token_words(inner).expect("test fixture is valid"),
+            &[word('x')]
+        );
+        assert_eq!(
+            attempt.token_words(outer).expect("test fixture is valid"),
+            &[word('a'), word('b')]
+        );
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -193,20 +240,28 @@ fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
     tex_state::with_universe(budget(), |_universe| {
         let mut attempt = AttemptArena::<()>::default();
         let mark = attempt.mark();
-        let buffer = attempt.allocate_token_buffer().unwrap();
-        attempt.push_buffer_token(buffer, word('a')).unwrap();
-        attempt.push_buffer_token(buffer, word('b')).unwrap();
+        let buffer = attempt
+            .allocate_token_buffer()
+            .expect("test fixture is valid");
+        attempt
+            .push_buffer_token(buffer, word('a'))
+            .expect("test fixture is valid");
+        attempt
+            .push_buffer_token(buffer, word('b'))
+            .expect("test fixture is valid");
         assert_eq!(
-            attempt.token_buffer(buffer).unwrap(),
+            attempt.token_buffer(buffer).expect("test fixture is valid"),
             &[word('a'), word('b')]
         );
-        let frozen = attempt.finish_token_buffer(buffer).unwrap();
+        let frozen = attempt
+            .finish_token_buffer(buffer)
+            .expect("test fixture is valid");
         assert_eq!(
-            attempt.token_words(frozen).unwrap(),
+            attempt.token_words(frozen).expect("test fixture is valid"),
             &[word('a'), word('b')]
         );
 
-        attempt.truncate(mark).unwrap();
+        attempt.truncate(mark).expect("test fixture is valid");
         assert_eq!(
             attempt.token_buffer(buffer),
             Err(AttemptError::InvalidCoordinate)
@@ -216,20 +271,22 @@ fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
             Err(AttemptError::InvalidCoordinate)
         );
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
 fn argument_records_reject_more_than_texs_nine_slots() {
     tex_state::with_universe(budget(), |_universe| {
         let mut attempt = AttemptArena::<()>::default();
-        let empty = attempt.allocate_token_list([]).unwrap();
+        let empty = attempt
+            .allocate_token_list([])
+            .expect("test fixture is valid");
         assert_eq!(
             attempt.allocate_arguments(&[empty; 10]),
             Err(AttemptError::InvalidCoordinate)
         );
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -238,26 +295,36 @@ fn attempt_local_provenance_stays_aligned_through_nested_builders() {
         let mut attempt = AttemptArena::<()>::default();
         let origin = attempt
             .allocate_provenance(tex_state::provenance::OriginRecord::UnknownBootstrap)
-            .unwrap();
-        let outer = attempt.begin_token_list().unwrap();
+            .expect("test fixture is valid");
+        let outer = attempt.begin_token_list().expect("test fixture is valid");
         attempt
             .push_token_with_local_origin(outer, word('a').token_word(), origin)
-            .unwrap();
-        let inner = attempt.begin_token_list().unwrap();
-        attempt.push_token(inner, word('x')).unwrap();
-        let inner = attempt.finish_token_list(inner).unwrap();
-        let outer = attempt.finish_token_list(outer).unwrap();
+            .expect("test fixture is valid");
+        let inner = attempt.begin_token_list().expect("test fixture is valid");
+        attempt
+            .push_token(inner, word('x'))
+            .expect("test fixture is valid");
+        let inner = attempt
+            .finish_token_list(inner)
+            .expect("test fixture is valid");
+        let outer = attempt
+            .finish_token_list(outer)
+            .expect("test fixture is valid");
 
         assert_eq!(
-            attempt.token_origin(outer, 0).unwrap(),
+            attempt
+                .token_origin(outer, 0)
+                .expect("test fixture is valid"),
             super::AttemptOrigin::Local(origin)
         );
         assert_eq!(
-            attempt.token_origin(inner, 0).unwrap(),
+            attempt
+                .token_origin(inner, 0)
+                .expect("test fixture is valid"),
             super::AttemptOrigin::Admitted(OriginId::UNKNOWN)
         );
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -265,43 +332,64 @@ fn truncated_row_cannot_alias_a_reallocated_coordinate() {
     tex_state::with_universe(budget(), |_universe| {
         let mut attempt = AttemptArena::<()>::default();
         let mark = attempt.mark();
-        let stale = attempt.allocate_token_list([word('a')]).unwrap();
-        attempt.truncate(mark).unwrap();
-        let replacement = attempt.allocate_token_list([word('b')]).unwrap();
+        let stale = attempt
+            .allocate_token_list([word('a')])
+            .expect("test fixture is valid");
+        attempt.truncate(mark).expect("test fixture is valid");
+        let replacement = attempt
+            .allocate_token_list([word('b')])
+            .expect("test fixture is valid");
 
         assert_eq!(
             attempt.token_words(stale),
             Err(AttemptError::InvalidCoordinate)
         );
-        assert_eq!(attempt.token_words(replacement).unwrap(), &[word('b')]);
+        assert_eq!(
+            attempt
+                .token_words(replacement)
+                .expect("test fixture is valid"),
+            &[word('b')]
+        );
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
 fn macro_arguments_are_attempt_local_ranges_and_rollback_with_their_mark() {
     tex_state::with_universe(budget(), |_universe| {
         let mut attempt = AttemptArena::<()>::default();
-        let first = attempt.allocate_token_list([word('a')]).unwrap();
-        let second = attempt.allocate_token_list([word('b')]).unwrap();
+        let first = attempt
+            .allocate_token_list([word('a')])
+            .expect("test fixture is valid");
+        let second = attempt
+            .allocate_token_list([word('b')])
+            .expect("test fixture is valid");
         let mark = attempt.mark();
-        let arguments = attempt.allocate_arguments(&[first, second]).unwrap();
-        assert_eq!(attempt.arguments(arguments).unwrap(), &[first, second]);
+        let arguments = attempt
+            .allocate_arguments(&[first, second])
+            .expect("test fixture is valid");
+        assert_eq!(
+            attempt.arguments(arguments).expect("test fixture is valid"),
+            &[first, second]
+        );
 
-        attempt.truncate(mark).unwrap();
+        attempt.truncate(mark).expect("test fixture is valid");
         assert_eq!(
             attempt.arguments(arguments),
             Err(AttemptError::InvalidCoordinate)
         );
-        assert_eq!(attempt.token_words(first).unwrap(), &[word('a')]);
+        assert_eq!(
+            attempt.token_words(first).expect("test fixture is valid"),
+            &[word('a')]
+        );
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
 fn pending_attempt_owns_generation_and_resumes_without_a_borrow() {
     tex_state::with_universe(budget(), |universe| {
-        let generation = universe.generation_owner().unwrap();
+        let generation = universe.generation_owner().expect("test fixture is valid");
         let pending = PendingCommandAttempt::new(
             CommandAttempt::default(),
             generation,
@@ -330,19 +418,24 @@ fn pending_attempt_owns_generation_and_resumes_without_a_borrow() {
             ))
         );
 
-        let (attempt, resume, request) = pending.resume(universe).ok().unwrap();
+        let (attempt, resume, request) = pending
+            .resume(universe)
+            .ok()
+            .expect("test fixture is valid");
         assert_eq!(resume.command, 7);
         assert_eq!(request, "font request");
         assert!(attempt.arena().mark().traced_words == 0);
-        universe.allocate_token_list(&[]).unwrap();
+        universe
+            .allocate_token_list(&[])
+            .expect("test fixture is valid");
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
 fn pending_owner_rejects_retirement_without_partially_retiring_universe() {
     tex_state::with_universe(budget(), |universe| {
-        let owner = universe.generation_owner().unwrap();
+        let owner = universe.generation_owner().expect("test fixture is valid");
         assert_eq!(
             universe.retire(),
             Err(tex_state::UniverseError::State(
@@ -350,9 +443,11 @@ fn pending_owner_rejects_retirement_without_partially_retiring_universe() {
             ))
         );
         assert!(!universe.is_retired());
-        universe.intern("still-live").unwrap();
+        universe
+            .intern("still-live")
+            .expect("test fixture is valid");
         drop(owner);
-        universe.retire().unwrap();
+        universe.retire().expect("test fixture is valid");
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }

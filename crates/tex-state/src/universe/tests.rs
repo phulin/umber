@@ -99,9 +99,18 @@ fn retained_state_checkpoint_restores_dense_roots_before_arena_suffixes() {
             .restore_state_checkpoint(&checkpoint)
             .expect("restore checkpoint");
 
-        assert_eq!(universe.command_context().unwrap().count(0).unwrap(), 10);
         assert_eq!(
-            universe.page_node_list(rejected).unwrap_err(),
+            universe
+                .command_context()
+                .expect("test fixture is valid")
+                .count(0)
+                .expect("test fixture is valid"),
+            10
+        );
+        assert_eq!(
+            universe
+                .page_node_list(rejected)
+                .expect_err("invalid test fixture is rejected"),
             NodeArenaError::InvalidList
         );
         assert_eq!(
@@ -132,7 +141,11 @@ fn malformed_aggregate_restore_does_not_touch_dense_state() {
             Err(UniverseError::NodeArena(NodeArenaError::CursorBeyondEnd))
         );
         assert_eq!(
-            universe.command_context().unwrap().count(0).unwrap(),
+            universe
+                .command_context()
+                .expect("test fixture is valid")
+                .count(0)
+                .expect("test fixture is valid"),
             41,
             "page-cursor rejection must precede dense-state mutation"
         );

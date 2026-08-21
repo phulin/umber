@@ -15,15 +15,17 @@ fn source(path: &str, start: u64, end: u64) -> ArtifactSourceRecipe {
 #[test]
 fn deferred_write_journal_owns_a_handle_free_memo_value() {
     let detached = with_universe(
-        InternerBudget::new(64, 128, 4 * 1024).unwrap(),
+        InternerBudget::new(64, 128, 4 * 1024).expect("test fixture is valid"),
         |universe| {
             let id = universe
                 .allocate_token_list(&[TokenWord::pack(Token::param(5))])
-                .unwrap();
-            universe.detach_token_list(id).unwrap()
+                .expect("test fixture is valid");
+            universe
+                .detach_token_list(id)
+                .expect("test fixture is valid")
         },
     )
-    .unwrap();
+    .expect("test fixture is valid");
     let expected = detached.clone();
     let mut world = World::memory();
     world.record_deferred_write(StreamSlot::new(3), detached);
@@ -61,7 +63,7 @@ fn cold_render_builder_records_only_detached_sources_or_unknowns() {
     let mut builder = RenderProvenanceBuilder::for_demand(
         crate::ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
     )
-    .unwrap();
+    .expect("test fixture is valid");
     builder.push_source(recipe.clone());
     builder.push_unknown();
     let artifact =
@@ -98,14 +100,20 @@ fn cloned_world_preserves_seeded_input_without_aliasing_artifact_dtos() {
     let mut world = World::memory();
     world
         .set_memory_file("gentle.tex", vec![b'x'; 1024])
-        .unwrap();
+        .expect("test fixture is valid");
     let mut cloned = world.clone();
     assert_eq!(
-        world.read_file("gentle.tex").unwrap().bytes(),
+        world
+            .read_file("gentle.tex")
+            .expect("test fixture is valid")
+            .bytes(),
         &[b'x'; 1024]
     );
     assert_eq!(
-        cloned.read_file("gentle.tex").unwrap().bytes(),
+        cloned
+            .read_file("gentle.tex")
+            .expect("test fixture is valid")
+            .bytes(),
         &[b'x'; 1024]
     );
 }

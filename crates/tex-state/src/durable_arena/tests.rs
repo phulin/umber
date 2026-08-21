@@ -7,13 +7,31 @@ use crate::token::{Token, TokenWord};
 fn typed_arenas_publish_and_resolve_distinct_rows() {
     with_generation(|mut generation| {
         let words = [TokenWord::pack(Token::frozen_relax())];
-        let first_tokens = generation.token_lists_mut().allocate(&words).unwrap();
-        let second_tokens = generation.token_lists_mut().allocate(&words).unwrap();
-        let first_glue = generation.glue_mut().allocate(GlueSpec::ZERO).unwrap();
-        let second_glue = generation.glue_mut().allocate(GlueSpec::ZERO).unwrap();
+        let first_tokens = generation
+            .token_lists_mut()
+            .allocate(&words)
+            .expect("test fixture is valid");
+        let second_tokens = generation
+            .token_lists_mut()
+            .allocate(&words)
+            .expect("test fixture is valid");
+        let first_glue = generation
+            .glue_mut()
+            .allocate(GlueSpec::ZERO)
+            .expect("test fixture is valid");
+        let second_glue = generation
+            .glue_mut()
+            .allocate(GlueSpec::ZERO)
+            .expect("test fixture is valid");
         let provenance = OriginRecord::Synthetic(SyntheticOrigin::new(SyntheticOriginKind::Test));
-        let first_origin = generation.provenance_mut().allocate(provenance).unwrap();
-        let second_origin = generation.provenance_mut().allocate(provenance).unwrap();
+        let first_origin = generation
+            .provenance_mut()
+            .allocate(provenance)
+            .expect("test fixture is valid");
+        let second_origin = generation
+            .provenance_mut()
+            .allocate(provenance)
+            .expect("test fixture is valid");
 
         assert_ne!(first_tokens, second_tokens);
         assert_ne!(first_glue, second_glue);
@@ -28,8 +46,14 @@ fn typed_arenas_publish_and_resolve_distinct_rows() {
 fn definition_words_and_durable_lists_have_separate_storage() {
     with_generation(|mut generation| {
         let word = TokenWord::pack(Token::frozen_relax());
-        let definition = generation.definitions_mut().allocate(&[], &[word]).unwrap();
-        let list = generation.token_lists_mut().allocate(&[word]).unwrap();
+        let definition = generation
+            .definitions_mut()
+            .allocate(&[], &[word])
+            .expect("test fixture is valid");
+        let list = generation
+            .token_lists_mut()
+            .allocate(&[word])
+            .expect("test fixture is valid");
 
         assert_eq!(
             generation.definitions().get(definition).replacement_text(),

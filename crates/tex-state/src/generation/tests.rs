@@ -13,8 +13,14 @@ fn a_fresh_generation_starts_with_one_empty_arena_per_namespace() {
 #[test]
 fn retirement_consumes_the_complete_generation_owner() {
     with_generation(|mut generation| {
-        generation.definitions_mut().allocate(&[], &[]).unwrap();
-        generation.token_lists_mut().allocate(&[]).unwrap();
+        generation
+            .definitions_mut()
+            .allocate(&[], &[])
+            .expect("test fixture is valid");
+        generation
+            .token_lists_mut()
+            .allocate(&[])
+            .expect("test fixture is valid");
         let retired = generation.retire();
         assert_eq!(retired.definitions, 1);
         assert_eq!(retired.token_lists, 1);

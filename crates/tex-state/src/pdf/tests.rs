@@ -4,7 +4,7 @@ use crate::token::{Token, TokenWord};
 use crate::universe::with_universe;
 
 fn budget() -> InternerBudget {
-    InternerBudget::new(64, 128, 4 * 1024).unwrap()
+    InternerBudget::new(64, 128, 4 * 1024).expect("test fixture is valid")
 }
 
 fn semantic_id(tag: u64) -> StateHashFragment {
@@ -35,7 +35,7 @@ fn page_coordinates_are_generation_typed_and_checkpointed() {
     with_universe(budget(), |universe| {
         let id = universe
             .allocate_token_list(&[TokenWord::pack(Token::frozen_relax())])
-            .unwrap();
+            .expect("test fixture is valid");
         let token = PdfTokenParameter {
             tokens: id,
             semantic_id: semantic_id(1),
@@ -61,7 +61,7 @@ fn page_coordinates_are_generation_typed_and_checkpointed() {
         state.rollback(checkpoint_copy);
         assert!(state.pages().is_empty());
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -69,14 +69,14 @@ fn action_annotation_outline_and_raw_object_copy_without_brand_traits() {
     with_universe(budget(), |universe| {
         let id = universe
             .allocate_token_list(&[TokenWord::pack(Token::param(1))])
-            .unwrap();
+            .expect("test fixture is valid");
         let parameter = PdfTokenParameter {
             tokens: id,
             semantic_id: semantic_id(2),
         };
         let action = PdfActionSpec::User(id);
         let mut state = PdfState::default();
-        let annotation = state.reserve_annotation().unwrap();
+        let annotation = state.reserve_annotation().expect("test fixture is valid");
         state
             .initialize_annotation(
                 annotation.object(),
@@ -86,23 +86,37 @@ fn action_annotation_outline_and_raw_object_copy_without_brand_traits() {
                 },
                 semantic_id(3),
             )
-            .unwrap();
+            .expect("test fixture is valid");
         state
             .create_outline(id, action, 0, id, [semantic_id(4); 3])
-            .unwrap();
-        let raw = state.reserve_raw_object().unwrap();
+            .expect("test fixture is valid");
+        let raw = state.reserve_raw_object().expect("test fixture is valid");
         state
             .initialize_raw_object(
                 raw,
                 PdfRawObjectData::new(false, None, false, parameter),
                 true,
             )
-            .unwrap();
-        assert_eq!(state.annotations()[0].data().unwrap().entries, id);
+            .expect("test fixture is valid");
+        assert_eq!(
+            state.annotations()[0]
+                .data()
+                .expect("test fixture is valid")
+                .entries,
+            id
+        );
         assert_eq!(state.outlines()[0].title(), id);
-        assert_eq!(state.raw_object(raw).unwrap().data().unwrap().data(), id);
+        assert_eq!(
+            state
+                .raw_object(raw)
+                .expect("test fixture is valid")
+                .data()
+                .expect("test fixture is valid")
+                .data(),
+            id
+        );
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -110,7 +124,7 @@ fn snapshots_own_pdf_collections_and_rollback_them_atomically() {
     with_universe(budget(), |universe| {
         let id = universe
             .allocate_token_list(&[TokenWord::pack(Token::frozen_relax())])
-            .unwrap();
+            .expect("test fixture is valid");
         let mut state = PdfState::default();
         let checkpoint = state.snapshot();
         state.append_document_fragment(
@@ -129,7 +143,7 @@ fn snapshots_own_pdf_collections_and_rollback_them_atomically() {
                 semantic_id(7),
                 0,
             )
-            .unwrap();
+            .expect("test fixture is valid");
         assert_eq!(
             state
                 .document_fragments(PdfDocumentFragmentKind::Catalog)
@@ -147,7 +161,7 @@ fn snapshots_own_pdf_collections_and_rollback_them_atomically() {
         assert!(state.links().is_empty());
         assert!(state.open_links().is_empty());
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -177,7 +191,7 @@ fn external_image_payload_is_owned_not_shared() {
             },
             0,
         )
-        .unwrap();
+        .expect("test fixture is valid");
     assert_eq!(record.bytes(), &[1, 2, 3]);
 }
 
@@ -186,21 +200,21 @@ fn format_pdf_ledger_detaches_and_materializes_before_publication() {
     with_universe(budget(), |universe| {
         let tokens = universe
             .allocate_token_list(&[TokenWord::pack(Token::param(4))])
-            .unwrap();
+            .expect("test fixture is valid");
         let parameter = PdfTokenParameter {
             tokens,
             semantic_id: semantic_id(8),
         };
         let mut source = PdfState::default();
         source.enable();
-        let object = source.reserve_raw_object().unwrap();
+        let object = source.reserve_raw_object().expect("test fixture is valid");
         source
             .initialize_raw_object(
                 object,
                 PdfRawObjectData::new(false, None, false, parameter),
                 true,
             )
-            .unwrap();
+            .expect("test fixture is valid");
 
         let bytes = source
             .capture_format_bytes(
@@ -210,7 +224,7 @@ fn format_pdf_ledger_detaches_and_materializes_before_publication() {
                 },
                 |_| Err("unexpected node recipe".to_owned()),
             )
-            .unwrap()
+            .expect("test fixture is valid")
             .expect("format-compatible PDF state detaches");
         let restored = PdfState::restore_format_bytes(
             &bytes,
@@ -223,7 +237,12 @@ fn format_pdf_ledger_detaches_and_materializes_before_publication() {
         .expect("detached PDF state materializes");
         assert!(restored.enabled());
         assert_eq!(
-            restored.raw_object(object).unwrap().data().unwrap().data(),
+            restored
+                .raw_object(object)
+                .expect("test fixture is valid")
+                .data()
+                .expect("test fixture is valid")
+                .data(),
             tokens
         );
 
@@ -236,5 +255,5 @@ fn format_pdf_ledger_detaches_and_materializes_before_publication() {
             .is_err()
         );
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }

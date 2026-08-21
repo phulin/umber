@@ -19,7 +19,7 @@ fn complete_rows_resolve_by_direct_id() {
         let id = generation
             .definitions_mut()
             .allocate(&parameter, &replacement)
-            .unwrap();
+            .expect("test fixture is valid");
 
         let view = generation.definitions().get(id);
         assert_eq!(view.parameter_text(), parameter);
@@ -33,8 +33,14 @@ fn complete_rows_resolve_by_direct_id() {
 fn equal_definitions_receive_distinct_ids() {
     with_generation(|mut generation| {
         let text = [TokenWord::pack(Token::frozen_relax())];
-        let first = generation.definitions_mut().allocate(&[], &text).unwrap();
-        let second = generation.definitions_mut().allocate(&[], &text).unwrap();
+        let first = generation
+            .definitions_mut()
+            .allocate(&[], &text)
+            .expect("test fixture is valid");
+        let second = generation
+            .definitions_mut()
+            .allocate(&[], &text)
+            .expect("test fixture is valid");
 
         assert_ne!(first, second);
         assert_eq!(generation.definitions().len(), 2);
@@ -57,7 +63,10 @@ fn invalid_parameter_program_does_not_publish_a_partial_row() {
         assert!(result.is_err());
         assert!(generation.definitions().is_empty());
 
-        let valid = generation.definitions_mut().allocate(&[], &[]).unwrap();
+        let valid = generation
+            .definitions_mut()
+            .allocate(&[], &[])
+            .expect("test fixture is valid");
         assert!(
             generation
                 .definitions()

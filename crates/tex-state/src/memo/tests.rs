@@ -4,13 +4,13 @@ use crate::scaled::Scaled;
 use crate::universe::with_universe;
 
 fn budget() -> InternerBudget {
-    InternerBudget::new(256, 512, 8 * 1024).unwrap()
+    InternerBudget::new(256, 512, 8 * 1024).expect("test fixture is valid")
 }
 
 #[test]
 fn token_lists_cross_generation_only_as_spellings_and_values() {
     let detached = with_universe(budget(), |source| {
-        let control = source.intern("answer").unwrap();
+        let control = source.intern("answer").expect("test fixture is valid");
         let words = [
             TokenWord::pack(Token::Cs(control.symbol())),
             TokenWord::pack(Token::Char {
@@ -19,16 +19,20 @@ fn token_lists_cross_generation_only_as_spellings_and_values() {
             }),
             TokenWord::pack(Token::param(2)),
         ];
-        let id = source.allocate_token_list(&words).unwrap();
-        source.detach_token_list(id).unwrap()
+        let id = source
+            .allocate_token_list(&words)
+            .expect("test fixture is valid");
+        source.detach_token_list(id).expect("test fixture is valid")
     })
-    .unwrap();
+    .expect("test fixture is valid");
 
     with_universe(budget(), |destination| {
         let id = destination
             .import_memo_token_list(&detached, MemoValueLimits::default())
-            .unwrap();
-        let context = destination.command_context().unwrap();
+            .expect("test fixture is valid");
+        let context = destination
+            .command_context()
+            .expect("test fixture is valid");
         let tokens = context
             .token_list(id)
             .iter()
@@ -47,33 +51,40 @@ fn token_lists_cross_generation_only_as_spellings_and_values() {
         };
         assert_eq!(context.resolve(symbol), "answer");
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
 fn macro_materialization_stages_then_publishes_one_definition() {
     let detached = with_universe(budget(), |source| {
-        let name = source.intern("x").unwrap();
+        let name = source.intern("x").expect("test fixture is valid");
         let parameters = [TokenWord::pack(Token::param(1))];
         let replacement = [TokenWord::pack(Token::Cs(name.symbol()))];
         let id = source
             .allocate_definition(&parameters, &replacement)
-            .unwrap();
+            .expect("test fixture is valid");
         source
             .detach_macro_meaning(MeaningFlags::LONG | MeaningFlags::PROTECTED, id)
-            .unwrap()
+            .expect("test fixture is valid")
     })
-    .unwrap();
-    let staged = detached.stage_macro(MemoValueLimits::default()).unwrap();
+    .expect("test fixture is valid");
+    let staged = detached
+        .stage_macro(MemoValueLimits::default())
+        .expect("test fixture is valid");
 
     with_universe(budget(), |destination| {
-        let meaning = destination.publish_memo_macro(staged).unwrap().resolve();
+        let meaning = destination
+            .publish_memo_macro(staged)
+            .expect("test fixture is valid")
+            .resolve();
         let crate::meaning::ResolvedMeaning::Macro { flags, definition } = meaning else {
             panic!("macro meaning")
         };
         assert!(flags.contains(MeaningFlags::LONG));
         assert!(flags.contains(MeaningFlags::PROTECTED));
-        let context = destination.command_context().unwrap();
+        let context = destination
+            .command_context()
+            .expect("test fixture is valid");
         let definition = context.definition(definition);
         assert_eq!(
             definition.parameter_text()[0].semantic_token(),
@@ -84,7 +95,7 @@ fn macro_materialization_stages_then_publishes_one_definition() {
         };
         assert_eq!(context.resolve(symbol), "x");
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -97,16 +108,29 @@ fn glue_round_trip_is_handle_free_and_semantic() {
         shrink_order: Order::Fil,
     };
     let detached = with_universe(budget(), |source| {
-        let id = source.allocate_glue(value).unwrap();
-        source.detach_glue(id).unwrap()
+        let id = source.allocate_glue(value).expect("test fixture is valid");
+        source.detach_glue(id).expect("test fixture is valid")
     })
-    .unwrap();
-    assert!(!detached.payload(MemoValueKind::Glue).unwrap().is_empty());
+    .expect("test fixture is valid");
+    assert!(
+        !detached
+            .payload(MemoValueKind::Glue)
+            .expect("test fixture is valid")
+            .is_empty()
+    );
     with_universe(budget(), |destination| {
-        let id = destination.import_memo_glue(&detached).unwrap();
-        assert_eq!(destination.command_context().unwrap().glue(id), value);
+        let id = destination
+            .import_memo_glue(&detached)
+            .expect("test fixture is valid");
+        assert_eq!(
+            destination
+                .command_context()
+                .expect("test fixture is valid")
+                .glue(id),
+            value
+        );
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -115,10 +139,11 @@ fn envelope_rejects_corruption_stale_schema_and_wrong_kind() {
         artifact_schema: 7,
         payload: vec![1, 2, 3],
     })
-    .unwrap();
-    let bytes = value.to_bytes().unwrap();
+    .expect("test fixture is valid");
+    let bytes = value.to_bytes().expect("test fixture is valid");
     assert_eq!(
-        DetachedMemoValue::from_bytes(&bytes, MemoValueLimits::default()).unwrap(),
+        DetachedMemoValue::from_bytes(&bytes, MemoValueLimits::default())
+            .expect("test fixture is valid"),
         value
     );
     assert!(matches!(
@@ -126,15 +151,15 @@ fn envelope_rejects_corruption_stale_schema_and_wrong_kind() {
         Err(MemoValueError::Kind { .. })
     ));
 
-    let mut wire: WireEnvelope = bincode::deserialize(&bytes).unwrap();
+    let mut wire: WireEnvelope = bincode::deserialize(&bytes).expect("test fixture is valid");
     wire.payload.push(9);
-    let corrupt = bincode::serialize(&wire).unwrap();
+    let corrupt = bincode::serialize(&wire).expect("test fixture is valid");
     assert_eq!(
         DetachedMemoValue::from_bytes(&corrupt, MemoValueLimits::default()),
         Err(MemoValueError::Integrity)
     );
     wire.schema = MEMO_VALUE_SCHEMA_VERSION - 1;
-    let stale = bincode::serialize(&wire).unwrap();
+    let stale = bincode::serialize(&wire).expect("test fixture is valid");
     assert_eq!(
         DetachedMemoValue::from_bytes(&stale, MemoValueLimits::default()),
         Err(MemoValueError::StaleSchema {
@@ -146,7 +171,8 @@ fn envelope_rejects_corruption_stale_schema_and_wrong_kind() {
 #[test]
 fn malformed_values_fail_during_staging_before_publication() {
     let tokens = [DetachedToken::Param(0)];
-    let malformed = DetachedMemoValue::encode(MemoValueKind::Tokens, &tokens[..]).unwrap();
+    let malformed = DetachedMemoValue::encode(MemoValueKind::Tokens, &tokens[..])
+        .expect("test fixture is valid");
     assert!(matches!(
         malformed.stage_token_list(MemoValueLimits::default()),
         Err(MemoValueError::Invalid("invalid parameter slot"))
@@ -160,9 +186,11 @@ fn generic_detached_payload_families_remain_bounded() {
         message: "message".into(),
         input_ordinal: Some(4),
     }];
-    let value = DetachedMemoValue::from_diagnostics(&diagnostics).unwrap();
+    let value = DetachedMemoValue::from_diagnostics(&diagnostics).expect("test fixture is valid");
     assert_eq!(
-        value.diagnostics(MemoValueLimits::default()).unwrap(),
+        value
+            .diagnostics(MemoValueLimits::default())
+            .expect("test fixture is valid"),
         diagnostics
     );
     let limits = MemoValueLimits {

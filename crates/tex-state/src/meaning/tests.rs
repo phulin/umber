@@ -101,7 +101,10 @@ fn meaning_variants_round_trip() {
 #[test]
 fn macro_meanings_carry_only_generation_typed_definition_ids() {
     with_generation(|mut generation| {
-        let definition = generation.definitions_mut().allocate(&[], &[]).unwrap();
+        let definition = generation
+            .definitions_mut()
+            .allocate(&[], &[])
+            .expect("test fixture is valid");
         let flags = MeaningFlags::LONG
             | MeaningFlags::OUTER
             | MeaningFlags::PROTECTED

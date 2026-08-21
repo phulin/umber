@@ -5,7 +5,7 @@ use crate::provenance::{RelatedLocationRole, SourceOrigin, SyntheticOrigin};
 use crate::universe::with_universe;
 
 fn budget() -> InternerBudget {
-    InternerBudget::new(128, 256, 4096).unwrap()
+    InternerBudget::new(128, 256, 4096).expect("test fixture is valid")
 }
 
 #[test]
@@ -14,22 +14,27 @@ fn source_presentation_is_built_only_after_explicit_cold_demand() {
         universe
             .world_mut()
             .set_memory_file("utf8.tex", "α\r\nbéta".as_bytes().to_vec())
-            .unwrap();
-        let content = universe.world_mut().read_file("utf8.tex").unwrap();
+            .expect("test fixture is valid");
+        let content = universe
+            .world_mut()
+            .read_file("utf8.tex")
+            .expect("test fixture is valid");
         let source =
             SourceOrigin::new(SourceId::new(7), 5, 99, 99).with_input_record(content.record());
         let coordinate = universe
             .allocate_provenance(OriginRecord::Source(source))
-            .unwrap();
+            .expect("test fixture is valid");
 
         let resolver = ProvenanceResolver::new(universe, ColdProvenanceDemand::Diagnostic);
         assert_eq!(resolver.demand(), ColdProvenanceDemand::Diagnostic);
-        let location = resolver.resolve_coordinate(coordinate).unwrap();
+        let location = resolver
+            .resolve_coordinate(coordinate)
+            .expect("test fixture is valid");
         assert_eq!(location.path, "utf8.tex");
         assert_eq!((location.line, location.column), (2, 2));
         assert_eq!(location.excerpt, "béta");
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -38,18 +43,21 @@ fn detached_presentation_survives_without_live_coordinates() {
         universe
             .world_mut()
             .set_memory_file("main.tex", b"first\nsecond".to_vec())
-            .unwrap();
-        let content = universe.world_mut().read_file("main.tex").unwrap();
+            .expect("test fixture is valid");
+        let content = universe
+            .world_mut()
+            .read_file("main.tex")
+            .expect("test fixture is valid");
         let primary = universe
             .allocate_provenance(OriginRecord::Source(
                 SourceOrigin::new(SourceId::new(1), 6, 0, 0).with_input_record(content.record()),
             ))
-            .unwrap();
+            .expect("test fixture is valid");
         let related_id = universe
             .allocate_provenance(OriginRecord::Synthetic(SyntheticOrigin::new(
                 SyntheticOriginKind::Engine,
             )))
-            .unwrap();
+            .expect("test fixture is valid");
         let related = [DiagnosticProvenanceCoordinate {
             role: Some(RelatedLocationRole::RecoveryFrontier),
             coordinate: related_id,
@@ -62,9 +70,16 @@ fn detached_presentation_survives_without_live_coordinates() {
         ProvenanceResolver::new(universe, ColdProvenanceDemand::Diagnostic)
             .detach_diagnostic(&request)
     })
-    .unwrap();
+    .expect("test fixture is valid");
 
-    assert_eq!(detached.primary.as_ref().unwrap().excerpt, "second");
+    assert_eq!(
+        detached
+            .primary
+            .as_ref()
+            .expect("test fixture is valid")
+            .excerpt,
+        "second"
+    );
     assert_eq!(detached.related[0].summary, "engine origin");
     let rendered = render_detached_diagnostic("boom", &detached);
     assert!(rendered.contains("main.tex:2:1"));
@@ -82,11 +97,11 @@ fn generated_source_recipes_are_handle_free_owned_values() {
         };
         let location = ProvenanceResolver::new(universe, ColdProvenanceDemand::RenderedSource)
             .resolve_generated(&recipe)
-            .unwrap();
+            .expect("test fixture is valid");
         assert_eq!(location.path, "editor/root.tex");
         assert_eq!(location.column, 9);
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -96,12 +111,12 @@ fn expansion_rows_are_bounded_by_the_explicit_resolver_budget() {
             .allocate_provenance(OriginRecord::Synthetic(SyntheticOrigin::new(
                 SyntheticOriginKind::Primitive,
             )))
-            .unwrap();
+            .expect("test fixture is valid");
         let two = universe
             .allocate_provenance(OriginRecord::Synthetic(SyntheticOrigin::new(
                 SyntheticOriginKind::Format,
             )))
-            .unwrap();
+            .expect("test fixture is valid");
         let expansion = [one, two];
         let request = DiagnosticProvenanceRequest {
             primary: None,
@@ -113,7 +128,7 @@ fn expansion_rows_are_bounded_by_the_explicit_resolver_budget() {
                 .detach_diagnostic(&request);
         assert_eq!(detached.expansion, ["primitive origin"]);
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
 
 #[test]
@@ -131,5 +146,5 @@ fn invalid_generated_ranges_degrade_to_unknown_without_live_lookup() {
                 .is_none()
         );
     })
-    .unwrap();
+    .expect("test fixture is valid");
 }
