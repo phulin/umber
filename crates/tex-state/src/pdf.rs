@@ -2,6 +2,7 @@
 
 mod action;
 mod annotation;
+pub(crate) mod completion;
 mod destination;
 mod document;
 mod object;
@@ -15,6 +16,14 @@ pub use action::{
 pub use annotation::{
     PdfAnnotationData, PdfAnnotationDimensions, PdfAnnotationInitializeError, PdfAnnotationRecord,
     PdfLinkRecord, PdfOpenLink,
+};
+pub use completion::{
+    DetachedPdfAction, DetachedPdfActionDestination, DetachedPdfActionIdentifier,
+    DetachedPdfActionRecord, DetachedPdfActionTarget, DetachedPdfAnnotation, DetachedPdfCompletion,
+    DetachedPdfDocumentFragments, DetachedPdfDocumentState, DetachedPdfFontOperation,
+    DetachedPdfFontResource, DetachedPdfForm, DetachedPdfLink, DetachedPdfOutline, DetachedPdfPage,
+    DetachedPdfRawObject, DetachedPdfRawObjectFileNeed, DetachedPdfRawObjectPayload,
+    PdfCompletionError,
 };
 pub use destination::{PdfDestinationDefinition, PdfDestinationIdentity, PdfDestinationRecord};
 use document::PdfDocumentFragments;

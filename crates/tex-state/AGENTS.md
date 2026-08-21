@@ -142,6 +142,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   durable form-list coordinates, owned checkpoint collections, owned external
   resource bytes, suffix transfer, committed-page ledger, and handle-free PDF
   format wire capture/materialization hooks.
+- `src/pdf/completion.rs`: handle-free terminal projection of the checkpointed
+  PDF ledger, including artifacts, resources, raw objects, actions, and final
+  document state.
 - `src/pdf/tests.rs`: Generation-typed page/action/object coordinates, owned
   image payloads, atomic PDF checkpoint rollback, and handle-free format-ledger
   round-trip/rejection tests.

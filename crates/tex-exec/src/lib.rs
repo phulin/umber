@@ -13,6 +13,7 @@ mod checkpoint;
 mod diagnostics;
 mod dispatch;
 mod effective_tail;
+mod engine_completion;
 mod episode;
 mod error;
 mod error_report;
@@ -61,6 +62,12 @@ pub use checkpoint::{
 pub use dispatch::{
     ArtifactLedger, DispatchAction, ExecutionStats, PreparedDviPage, RevisionOutputPatch,
     RevisionOutputPatchError,
+};
+pub use engine_completion::{
+    CommittedEnginePublication, CompletionEffectOrdinal, CompletionPublication,
+    CompletionPublicationFailure, DetachedEngineCompletion, DetachedPreparedPage,
+    EngineCompletionDemand, EngineCompletionError, EnginePublicationError,
+    PreparedEnginePublication, PublishedEnginePage,
 };
 pub use episode::{EpisodeCommit, EpisodeCommitBoundary, EpisodeTelemetry, SemanticEpisodeBarrier};
 pub use error::{

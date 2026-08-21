@@ -95,14 +95,34 @@ impl OutputLedger {
     pub fn close_revision<G>(
         &mut self,
         control: &mut MainControl<G>,
-        universe: &Universe<G>,
-    ) -> Result<crate::RevisionOutputPatch, crate::RevisionOutputPatchError> {
-        let effects = universe.world().effect_journal();
-        let artifacts = crate::ArtifactLedger::new(
-            universe.world().committed_artifacts().to_vec(),
-            universe.world().artifact_publications().to_vec(),
+        universe: &mut Universe<G>,
+        demand: crate::EngineCompletionDemand,
+    ) -> Result<crate::DetachedEngineCompletion, crate::EngineCompletionError> {
+        let pdf = demand
+            .pdf()
+            .then(|| {
+                universe
+                    .command_context()
+                    .map_err(crate::EngineCompletionError::Admission)?
+                    .detach_pdf_completion()
+                    .map_err(crate::EngineCompletionError::Pdf)
+            })
+            .transpose()?;
+        let world = universe.world();
+        if world.effect_pos().raw()
+            != u64::try_from(world.effect_records().len()).unwrap_or(u64::MAX)
+        {
+            return Err(crate::EngineCompletionError::MaterializedEffectBase);
+        }
+        let completion = crate::DetachedEngineCompletion::capture(
+            world.effect_journal().materialized_records(),
+            world.committed_artifacts().to_vec(),
+            world.artifact_publications(),
+            control.prepared_dvi_pages().to_vec(),
+            pdf,
         )?;
-        crate::RevisionOutputPatch::close(effects, artifacts, control.take_prepared_dvi_pages())
+        let _ = control.take_prepared_dvi_pages();
+        Ok(completion)
     }
 
     pub fn commit_job_start<G>(

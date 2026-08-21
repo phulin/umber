@@ -2510,6 +2510,10 @@ impl<G> MainControl<G> {
         take_prepared_dvi_pages(&mut self.prepared_dvi_pages)
     }
 
+    pub(crate) fn prepared_dvi_pages(&self) -> &[crate::dispatch::PreparedDviPage] {
+        &self.prepared_dvi_pages
+    }
+
     /// Drains named boundaries that became safe during committed direct
     /// operations. This is deliberately an event receipt, not a request for
     /// the host to inspect modes or dispatch source tokens.

@@ -17,6 +17,7 @@ tex-state = { path = "../tex-state" }
 tex-typeset = { path = "../tex-typeset" }
 
 [dev-dependencies]
+tempfile.workspace = true
 tex-command = { path = "../tex-command" }
 tex-state = { path = "../tex-state", features = ["testing"] }
 

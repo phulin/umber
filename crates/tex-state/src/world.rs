@@ -1015,6 +1015,31 @@ pub enum EffectRecord {
     ShellEscape(ShellEscapeRecord),
 }
 
+impl EffectRecord {
+    /// Retargets one exact detached `StreamOpen` without exposing the
+    /// `WriteTarget` constructor outside the World boundary.
+    #[doc(hidden)]
+    pub fn retarget_detached_stream_open(
+        &mut self,
+        slot: StreamSlot,
+        failed: &Path,
+        replacement: PathBuf,
+    ) -> bool {
+        let Self::StreamOpen {
+            slot: candidate,
+            target,
+        } = self
+        else {
+            return false;
+        };
+        if *candidate != slot || target.path != failed {
+            return false;
+        }
+        target.path = replacement;
+        true
+    }
+}
+
 /// Value identity of one immutable effect prefix.
 ///
 /// The stamp neither owns nor upgrades a runtime root.
@@ -1316,6 +1341,52 @@ pub struct StreamOpenFailure {
     slot: StreamSlot,
     path: PathBuf,
     context: String,
+}
+
+/// Handle-free failure returned by detached terminal-effect publication.
+///
+/// The runtime `EffectPos` used by the destination World is translated to a
+/// one-based ordinal in the supplied detached suffix before this value crosses
+/// the publication boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DetachedEffectPublicationError {
+    committed: usize,
+    failed_ordinal: Option<u32>,
+    slot: Option<StreamSlot>,
+    path: Option<PathBuf>,
+    error: WorldError,
+}
+
+impl DetachedEffectPublicationError {
+    #[must_use]
+    pub const fn committed(&self) -> usize {
+        self.committed
+    }
+
+    #[must_use]
+    pub const fn failed_ordinal(&self) -> Option<u32> {
+        self.failed_ordinal
+    }
+
+    #[must_use]
+    pub const fn slot(&self) -> Option<StreamSlot> {
+        self.slot
+    }
+
+    #[must_use]
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    #[must_use]
+    pub const fn retry_safety(&self) -> EffectRetrySafety {
+        self.error.retry_safety()
+    }
+
+    #[must_use]
+    pub const fn world_error(&self) -> &WorldError {
+        &self.error
+    }
 }
 
 impl StreamOpenFailure {
@@ -3420,6 +3491,133 @@ impl World {
         Arc::make_mut(&mut self.artifact_commits).push(artifact.hash);
         Arc::make_mut(&mut self.committed_artifacts).push(artifact);
         Arc::make_mut(&mut self.artifact_publications).push(publication);
+    }
+
+    /// Mutation-free validation for a detached terminal publication.
+    #[doc(hidden)]
+    pub fn preflight_detached_publication(&self) -> Result<(), WorldError> {
+        if self.effect_pos() != EffectPos::default()
+            || !self.effect_records().is_empty()
+            || !self.committed_artifacts().is_empty()
+        {
+            return Err(WorldError::new(
+                "publish detached completion",
+                None,
+                "destination already contains an unpublished effect or page artifact",
+            ));
+        }
+        if let Some(error) = &self.effect_commit_poison {
+            return Err(error.clone());
+        }
+        if self.commit_mode == WorldCommitMode::Exported {
+            return Err(WorldError::new(
+                "publish detached completion",
+                None,
+                "destination retained session was already exported",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validates that a retry destination still contains exactly the prefix
+    /// committed by the preceding detached-publication attempt.
+    #[doc(hidden)]
+    pub fn preflight_detached_retry(&self, committed_prefix: usize) -> Result<(), WorldError> {
+        let expected = u64::try_from(committed_prefix).unwrap_or(u64::MAX);
+        if self.commit_mode == WorldCommitMode::Retained
+            || !self.effect_records().is_empty()
+            || !self.committed_artifacts().is_empty()
+            || self.effect_pos().raw() != expected
+        {
+            return Err(WorldError::new(
+                "retry detached completion",
+                None,
+                "destination no longer contains the exact committed effect prefix",
+            ));
+        }
+        if let Some(error) = &self.effect_commit_poison {
+            return Err(error.clone());
+        }
+        Ok(())
+    }
+
+    /// Publishes one detached suffix without exposing destination positions.
+    /// A safe failure removes the uncommitted tail; the successful prefix stays
+    /// committed and is reported as a count relative to this call.
+    #[doc(hidden)]
+    pub fn publish_detached_effect_records(
+        &mut self,
+        records: &[EffectRecord],
+    ) -> Result<(), DetachedEffectPublicationError> {
+        let start = self.effect_pos();
+        for record in records {
+            self.append_effect(record.clone());
+        }
+        if self.commit_mode == WorldCommitMode::Retained {
+            return Ok(());
+        }
+        let end = self.effect_pos();
+        if let Err(error) = self.commit_effects(end) {
+            let committed = error
+                .committed_effects_through()
+                .and_then(|through| through.raw().checked_sub(start.raw()))
+                .and_then(|count| usize::try_from(count).ok())
+                .unwrap_or(0);
+            let (failed_ordinal, slot, path) = error
+                .stream_open_unavailable()
+                .and_then(|failure| {
+                    failure
+                        .position()
+                        .raw()
+                        .checked_sub(start.raw())
+                        .and_then(|ordinal| u32::try_from(ordinal).ok())
+                        .map(|ordinal| {
+                            (
+                                Some(ordinal),
+                                Some(failure.slot()),
+                                Some(failure.path().to_owned()),
+                            )
+                        })
+                })
+                .unwrap_or((None, None, None));
+            let pending = self.effects.len();
+            self.effects_mut().truncate(0);
+            Arc::make_mut(&mut self.effect_sequences).truncate(0);
+            Arc::make_mut(&mut self.effect_publications).truncate(0);
+            Arc::make_mut(&mut self.effect_publication_record_ordinals).truncate(0);
+            Arc::make_mut(&mut self.effect_domains).truncate(0);
+            Arc::make_mut(&mut self.effect_semantic_record_ordinals).truncate(0);
+            Arc::make_mut(&mut self.effect_placement_intra_orders).truncate(0);
+            debug_assert_eq!(pending, records.len().saturating_sub(committed));
+            return Err(DetachedEffectPublicationError {
+                committed,
+                failed_ordinal,
+                slot,
+                path,
+                error,
+            });
+        }
+        Ok(())
+    }
+
+    /// Stores and publishes a completely validated detached page set. Runtime
+    /// publication identities are allocated only inside the destination.
+    #[doc(hidden)]
+    pub fn publish_detached_artifacts(
+        &mut self,
+        artifacts: Vec<CommittedArtifact>,
+    ) -> Result<(), WorldError> {
+        for artifact in &artifacts {
+            verify_artifact_identity(artifact.hash(), artifact.bytes(), None)?;
+        }
+        for artifact in &artifacts {
+            self.store_prepared_artifact(artifact)?;
+        }
+        for artifact in artifacts {
+            let reservation = self.reserve_artifact_publication_at(0);
+            self.record_prepared_artifact(artifact, reservation.record);
+        }
+        Ok(())
     }
 
     pub fn open_out(&mut self, slot: StreamSlot, path: impl Into<PathBuf>) {

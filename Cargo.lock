@@ -1289,6 +1289,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "smallvec",
+ "tempfile",
  "test-support",
  "tex-arith",
  "tex-command",

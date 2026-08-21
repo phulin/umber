@@ -2266,6 +2266,53 @@ impl<'a, G> CommandContext<'a, G> {
         self.pdf.pages().len()
     }
 
+    /// Resolves the complete terminal PDF ledger while this generation is
+    /// admitted. The result owns every token spelling, resource payload, and
+    /// font identity needed after the generation is retired.
+    pub fn detach_pdf_completion(
+        &self,
+    ) -> Result<crate::DetachedPdfCompletion, crate::PdfCompletionError> {
+        let pages_entries = self
+            .token_parameter(crate::env::banks::TokParam::PDF_PAGES_ATTR)
+            .ok()
+            .flatten()
+            .map(|tokens| self.pdf_completion_token_bytes(tokens))
+            .unwrap_or_default();
+        let scalars = crate::pdf::completion::PdfCompletionScalars {
+            font_configuration: self.pdf_font_configuration(),
+            pages_entries,
+            include_info_dictionary: self.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0,
+            include_dates: self.int_param(IntParam::PDF_INFO_OMIT_DATE) == 0,
+            suppress_ptex_info: self.int_param(IntParam::PDF_SUPPRESS_PTEX_INFO),
+            ptex_use_underscore: self.int_param(IntParam::PDF_PTEX_USE_UNDERSCORE) > 0,
+            form_omit_procset: self.int_param(IntParam::PDF_OMIT_PROCSET),
+            suppress_page_group_warning: self.int_param(IntParam::PDF_SUPPRESS_WARNING_PAGE_GROUP)
+                != 0,
+            clock: self.world.job_clock(),
+        };
+        crate::pdf::completion::detach(
+            self.pdf,
+            scalars,
+            |tokens| Ok(self.pdf_completion_token_bytes(tokens)),
+            |font| self.fonts.artifact_recipe(font),
+            |font, code| self.fonts.get(font).metrics().character(code),
+            |font, number| self.font_parameter(font, number),
+            |hash| {
+                self.world
+                    .read_artifact(hash)
+                    .map_err(|error| error.to_string())
+            },
+        )
+    }
+
+    fn pdf_completion_token_bytes(&self, tokens: TokenListId<G>) -> Vec<u8> {
+        let mut text = String::new();
+        for word in self.token_list(tokens) {
+            self.append_token_string_text(word.semantic_token(), &mut text);
+        }
+        text.into_bytes()
+    }
+
     /// Detaches pdfTeX's unresolved navigation diagnostics before the
     /// admission is released for terminal publication.
     #[must_use]

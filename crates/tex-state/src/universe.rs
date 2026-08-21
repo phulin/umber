@@ -738,6 +738,24 @@ impl<G> Universe<G> {
         self.interaction_mode = mode;
     }
 
+    /// Opens a rollback-capable execution timeline whose effects are detached
+    /// at an outer completion barrier instead of touching the host eagerly.
+    pub fn begin_retained_session(&mut self) -> Result<(), crate::WorldError> {
+        self.world.begin_retained_session()
+    }
+
+    /// Materializes a retained destination after its detached completion has
+    /// been accepted. The effect cursor remains solely World-owned.
+    pub fn export_retained_effects(&mut self) -> Result<(), crate::WorldError> {
+        self.world.export_retained_effects()
+    }
+
+    /// Enables the pdfTeX document ledger for a PDF-producing engine binary.
+    /// Output mode remains controlled by the ordinary `\pdfoutput` parameter.
+    pub fn enable_pdf_output(&mut self) {
+        self.pdf.enable();
+    }
+
     /// Requests a bounded execution-owned pure-query cache.
     pub const fn enable_pure_memo(&mut self, config: crate::PureMemoConfig) {
         self.pure_memo_config = Some(config);
@@ -1701,6 +1719,9 @@ impl<G> Universe<G> {
         &mut self,
         effect_pos: crate::EffectPos,
     ) -> Result<(), crate::WorldError> {
+        if self.world.commit_mode() == crate::WorldCommitMode::Retained {
+            return Ok(());
+        }
         self.world.commit_effects(effect_pos)
     }
 

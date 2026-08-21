@@ -103,20 +103,25 @@ pub mod token_show;
 mod universe;
 
 pub use pdf::{
+    DetachedPdfAction, DetachedPdfActionDestination, DetachedPdfActionIdentifier,
+    DetachedPdfActionRecord, DetachedPdfActionTarget, DetachedPdfAnnotation, DetachedPdfCompletion,
+    DetachedPdfDocumentFragments, DetachedPdfDocumentState, DetachedPdfFontOperation,
+    DetachedPdfFontResource, DetachedPdfForm, DetachedPdfLink, DetachedPdfOutline, DetachedPdfPage,
+    DetachedPdfRawObject, DetachedPdfRawObjectFileNeed, DetachedPdfRawObjectPayload,
     PdfActionDestination, PdfActionIdentifier, PdfActionRecord, PdfActionSpec, PdfActionTarget,
     PdfActionWindow, PdfAnnotationData, PdfAnnotationDimensions, PdfAnnotationInitializeError,
     PdfAnnotationRecord, PdfColorStackAction, PdfColorStackApplyError, PdfColorStackCapacityError,
-    PdfColorStackEmission, PdfColorStackMode, PdfColorStackTarget, PdfDestinationDefinition,
-    PdfDestinationIdentity, PdfDestinationRecord, PdfDocumentFragmentKind, PdfDocumentObjectIds,
-    PdfExternalImageDimensions, PdfExternalImageId, PdfExternalImageIdError,
-    PdfExternalImageMetadata, PdfExternalImageRecord, PdfExternalImageRegistrationError,
-    PdfExternalImageSource, PdfFontConfiguration, PdfFontMapOperation, PdfFontResourceRecord,
-    PdfFormArtifact, PdfFormColorRollback, PdfFormRecord, PdfGlyphToUnicode, PdfLinkRecord,
-    PdfNavigationWarning, PdfObjectCapacityError, PdfOpenLink, PdfOutlineRecord,
-    PdfOutputParameters, PdfPageBox, PdfPageGroupInclusion, PdfPageGroupSelector,
-    PdfPageGroupWarning, PdfPageRecord, PdfPageRotation, PdfRasterColorSpace, PdfRasterFormat,
-    PdfRasterImageMetadata, PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError,
-    PdfRawObjectRecord, PdfThreadBeadRecord, PdfThreadRecord,
+    PdfColorStackEmission, PdfColorStackMode, PdfColorStackTarget, PdfCompletionError,
+    PdfDestinationDefinition, PdfDestinationIdentity, PdfDestinationRecord,
+    PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageDimensions, PdfExternalImageId,
+    PdfExternalImageIdError, PdfExternalImageMetadata, PdfExternalImageRecord,
+    PdfExternalImageRegistrationError, PdfExternalImageSource, PdfFontConfiguration,
+    PdfFontMapOperation, PdfFontResourceRecord, PdfFormArtifact, PdfFormColorRollback,
+    PdfFormRecord, PdfGlyphToUnicode, PdfLinkRecord, PdfNavigationWarning, PdfObjectCapacityError,
+    PdfOpenLink, PdfOutlineRecord, PdfOutputParameters, PdfPageBox, PdfPageGroupInclusion,
+    PdfPageGroupSelector, PdfPageGroupWarning, PdfPageRecord, PdfPageRotation, PdfRasterColorSpace,
+    PdfRasterFormat, PdfRasterImageMetadata, PdfRawObjectData, PdfRawObjectId,
+    PdfRawObjectInitializeError, PdfRawObjectRecord, PdfThreadBeadRecord, PdfThreadRecord,
 };
 pub mod world;
 
@@ -195,8 +200,8 @@ pub use world::ProfilingTimer;
 pub use world::{
     ArtifactOrigin, ArtifactPublicationId, ArtifactPublicationRecord,
     ArtifactPublicationReservation, CommittedArtifact, ContentDomain, ContentHash, ContentIdentity,
-    EffectDomain, EffectOutputAttemptId, EffectPlacementIntraOrder, EffectPos,
-    EffectPublicationCandidate, EffectPublicationDisposition, EffectPublicationId,
+    DetachedEffectPublicationError, EffectDomain, EffectOutputAttemptId, EffectPlacementIntraOrder,
+    EffectPos, EffectPublicationCandidate, EffectPublicationDisposition, EffectPublicationId,
     EffectPublicationRecordOrdinal, EffectRecord, EffectRetrySafety, EffectRootIdentity,
     EffectSemanticRecordOrdinal, EffectSequence, ExecutionTraceEvent, FileContent,
     FileModificationDate, InputDependency, InputDependencyAccess, InputDependencyOutcome,

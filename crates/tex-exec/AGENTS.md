@@ -40,6 +40,9 @@ Command operands are scanned by `tex-command` into typed request and result valu
   semantic dispatch; `alignment.rs`, `pdf.rs`, and `support.rs` isolate the
   corresponding complex families without introducing another executor.
 - `src/canonical_step.rs`: shared bounded-step result protocol and output ledger for checkpoint publication, resource fulfillment, suspension accounting, and cancellation.
+- `src/engine_completion.rs`: handle-free terminal engine capture, aligned
+  page/PDF projection, and non-clone effects-before-artifacts publication with
+  exact suffix retry.
 - `src/transaction_protocol.rs` and `src/transaction_protocol/tests.rs`:
   exhaustive canonical-command capability classification and mutation-free
   preflight. Compatibility assertions over exact owner/mark projections,
