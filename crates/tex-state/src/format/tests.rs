@@ -1,3 +1,4 @@
+use super::schema::{FormatCell, FormatNodeList, VersionedRows};
 use super::{
     DetachedFormatImage, FormatError, FormatPublicationError, with_format_destination,
     with_materialized_format,
@@ -37,6 +38,36 @@ fn test_font() -> LoadedFont {
     )
 }
 
+fn replace_section(image: &DetachedFormatImage, kind: u32, bytes: Vec<u8>) -> Vec<u8> {
+    let container = crate::format_container::decode(image.as_bytes()).expect("source container");
+    let owned = container
+        .sections
+        .iter()
+        .map(|section| {
+            (
+                section.kind,
+                section.alignment,
+                if section.kind == kind {
+                    bytes.clone()
+                } else {
+                    section.bytes.clone()
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let sections = owned
+        .iter()
+        .map(
+            |(kind, alignment, bytes)| crate::format_container::SectionInput {
+                kind: *kind,
+                alignment: *alignment,
+                bytes,
+            },
+        )
+        .collect::<Vec<_>>();
+    crate::format_container::encode(&sections).expect("mutated container")
+}
+
 #[test]
 fn detached_image_roundtrips_bytes_and_rejects_corruption() {
     let image = image();
@@ -62,6 +93,60 @@ fn detached_image_roundtrips_bytes_and_rejects_corruption() {
         DetachedFormatImage::try_from_bytes(bad_checksum).unwrap_err(),
         FormatError::Checksum
     );
+}
+
+#[test]
+fn malformed_sections_cross_references_graphs_and_pdf_reject_before_staging() {
+    let image = image();
+    let container = crate::format_container::decode(image.as_bytes()).expect("source container");
+    let owned = container
+        .sections
+        .iter()
+        .filter(|section| section.kind != 336)
+        .map(|section| (section.kind, section.alignment, section.bytes.clone()))
+        .collect::<Vec<_>>();
+    let sections = owned
+        .iter()
+        .map(
+            |(kind, alignment, bytes)| crate::format_container::SectionInput {
+                kind: *kind,
+                alignment: *alignment,
+                bytes,
+            },
+        )
+        .collect::<Vec<_>>();
+    let missing = crate::format_container::encode(&sections).expect("missing-kind container");
+    assert!(DetachedFormatImage::try_from_bytes(missing).is_err());
+
+    let bad_cells = bincode::serialize(&VersionedRows {
+        version: 1,
+        rows: vec![FormatCell::TokenRegister(7, u32::MAX)],
+    })
+    .expect("bad cell section");
+    assert!(DetachedFormatImage::try_from_bytes(replace_section(&image, 528, bad_cells)).is_err());
+
+    let recursive: crate::node::Node<u32, u32, u32> = crate::node::Node::Disc {
+        kind: crate::node::DiscKind::Discretionary,
+        pre: 1,
+        post: 0,
+        replace: 0,
+        physical_replace_count: 0,
+    };
+    let bad_nodes = bincode::serialize(&VersionedRows {
+        version: 1,
+        rows: vec![FormatNodeList {
+            nodes: vec![bincode::serialize(&recursive).expect("recursive node")],
+        }],
+    })
+    .expect("bad node section");
+    assert!(DetachedFormatImage::try_from_bytes(replace_section(&image, 512, bad_nodes)).is_err());
+
+    let mut metadata: super::FormatMetadata =
+        bincode::deserialize(&container.section(1).expect("metadata section").bytes)
+            .expect("metadata");
+    metadata.pdf = b"not a PDF format envelope".to_vec();
+    let bad_pdf = bincode::serialize(&metadata).expect("bad PDF metadata");
+    assert!(DetachedFormatImage::try_from_bytes(replace_section(&image, 1, bad_pdf)).is_err());
 }
 
 #[test]
