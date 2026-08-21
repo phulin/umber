@@ -380,9 +380,9 @@ pub(crate) fn trace_box_write<G>(
     }
     let old = stores.copy_box_to_page(index);
     let name = escaped(stores, &format!("box{index}"));
-    let old_text = stores.box_assignment_trace_text(old.as_ref());
+    let old_text = stores.box_assignment_trace_text(old.clone());
     write(stores);
-    let new_text = stores.box_assignment_trace_text(new);
+    let new_text = stores.box_assignment_trace_text(new.cloned());
     let changed = old.as_ref() != new;
     if global {
         if tracing_before {
@@ -524,20 +524,20 @@ pub(crate) fn trace_meaning_write<G>(
     let mut name = String::new();
     crate::diagnostics::append_token_show_text(stores, token, &mut name);
     if global {
-        let old_text = tex_state::token_show::bounded_meaning_text(stores, token, 32);
+        let old_text = stores.bounded_meaning_text(token, 32);
         write(stores);
-        let new_text = tex_state::token_show::bounded_meaning_text(stores, token, 32);
+        let new_text = stores.bounded_meaning_text(token, 32);
         print_trace(stores, "globally changing", &name, &old_text);
         emit(stores, "into", &name, &new_text);
     } else if changed {
-        let old_text = tex_state::token_show::bounded_meaning_text(stores, token, 32);
+        let old_text = stores.bounded_meaning_text(token, 32);
         write(stores);
-        let new_text = tex_state::token_show::bounded_meaning_text(stores, token, 32);
+        let new_text = stores.bounded_meaning_text(token, 32);
         print_trace(stores, "changing", &name, &old_text);
         emit(stores, "into", &name, &new_text);
     } else {
         write(stores);
-        let text = tex_state::token_show::bounded_meaning_text(stores, token, 32);
+        let text = stores.bounded_meaning_text(token, 32);
         emit(stores, "reassigning", &name, &text);
     }
 }
