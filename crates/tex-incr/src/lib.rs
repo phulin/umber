@@ -625,6 +625,7 @@ fn execute_plan<G>(
     cancellation: &Cancellation,
 ) -> Result<PlanExecution, SessionError> {
     *universe.world_mut() = tex_state::World::memory();
+    universe.begin_retained_session()?;
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     install_plain_catcodes(universe)?;
     for (path, bytes) in &candidate.registered_inputs {

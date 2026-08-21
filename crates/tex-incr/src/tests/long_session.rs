@@ -27,9 +27,7 @@ fn accepted_and_rejected_revisions_remain_cold_equivalent_over_a_long_session() 
             .expect("accepted revision");
         let mut cold = session(RevisionId::new(revision), &next);
         let expected = cold.cold().expect("cold comparison");
-        assert_eq!(accepted.effects, expected.effects);
-        assert_eq!(accepted.artifacts, expected.artifacts);
-        assert_eq!(accepted.dvi_pages, expected.dvi_pages);
+        assert_detached_output_eq(&accepted, &expected);
         source = next;
     }
 }
