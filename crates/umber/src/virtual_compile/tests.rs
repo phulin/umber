@@ -392,7 +392,7 @@ fn accepted_finalization_transfers_uncommitted_engine_state() {
         destination.memory_terminal_output(),
         Some(output.terminal.as_slice())
     );
-    assert!(!finalization.dumped_format);
+    assert!(finalization.format_dump.is_none());
 }
 
 #[test]
@@ -2455,7 +2455,8 @@ fn unavailable_probe_retries_through_dump_instead_of_accepting_end_of_input() {
         session
             .into_accepted_finalization()
             .expect("accepted format finalization")
-            .dumped_format
+            .format_dump
+            .is_some()
     );
 }
 
@@ -2491,7 +2492,8 @@ fn positive_probe_can_promote_to_required_input_before_dump() {
         session
             .into_accepted_finalization()
             .expect("accepted format finalization")
-            .dumped_format
+            .format_dump
+            .is_some()
     );
 }
 
@@ -2555,7 +2557,8 @@ fn resolved_nested_probe_retries_through_endinput_to_root_dump() {
         session
             .into_accepted_finalization()
             .expect("accepted format finalization")
-            .dumped_format
+            .format_dump
+            .is_some()
     );
 }
 
@@ -2591,7 +2594,8 @@ fn unavailable_nested_probe_retries_through_endinput_to_root_dump() {
         session
             .into_accepted_finalization()
             .expect("accepted format finalization")
-            .dumped_format
+            .format_dump
+            .is_some()
     );
 }
 
@@ -4245,7 +4249,8 @@ fn unavailable_file_size_enquiry_is_a_probe_and_reaches_dump() {
         session
             .into_accepted_finalization()
             .expect("accepted format finalization")
-            .dumped_format
+            .format_dump
+            .is_some()
     );
 }
 

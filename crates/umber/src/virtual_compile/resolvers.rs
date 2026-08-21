@@ -937,7 +937,8 @@ mod tests {
             session
                 .into_accepted_finalization()
                 .expect("accepted format finalization")
-                .dumped_format
+                .format_dump
+                .is_some()
         );
     }
 

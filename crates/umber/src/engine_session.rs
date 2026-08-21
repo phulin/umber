@@ -1047,7 +1047,6 @@ impl<'a, G> EngineSession<'a, G> {
             dvi_pages,
             committed_artifacts,
             effects,
-            dumped_format: format_dump.is_some(),
             format_dump,
         }))
     }
@@ -2092,7 +2091,7 @@ mod tests {
             .run(&mut WorldHost, &mut Vec::new())
             .expect("INITEX dump completes");
 
-        assert!(run.dumped_format);
+        assert!(run.format_dump.is_some());
         session
             .stores()
             .dump_format()

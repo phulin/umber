@@ -535,7 +535,6 @@ pub struct RunResult {
     /// execution, in receipt order. Earlier commit boundaries may already have
     /// drained a prefix into the World's backing outputs.
     pub effects: Vec<EffectRecord>,
-    pub dumped_format: bool,
     /// Exact handle-free INITEX result, captured only after aggregate quiescence.
     pub format_dump: Option<tex_exec::DetachedFormatDump>,
 }
@@ -2161,7 +2160,7 @@ mod tests {
                 .run(&mut host, &mut Vec::new())
                 .expect("typed retries complete");
 
-            assert!(!run.dumped_format);
+            assert!(run.format_dump.is_none());
             assert!(session.stores().pdf_last_external_image().is_some());
             let records = session.stores().world().input_records();
             assert_eq!(records.len(), 3);

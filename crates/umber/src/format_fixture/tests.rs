@@ -426,7 +426,7 @@ fn representative_command_semantic_case_runs_loaded() {
 
     assert_eq!(run.universe.count(0), 12);
     assert!(!observations.0.is_empty());
-    assert!(!run.result.dumped_format);
+    assert!(run.result.format_dump.is_none());
 }
 
 #[test]
@@ -454,7 +454,7 @@ fn loaded_driver_configuration_is_job_local() {
         run.universe.interaction_mode(),
         tex_state::InteractionMode::Nonstop
     );
-    assert!(!run.result.dumped_format);
+    assert!(run.result.format_dump.is_none());
 }
 
 #[test]
@@ -567,6 +567,6 @@ fn run_explicit_fresh_compatibility(
             &mut recorder,
         )
         .expect("fresh compatibility run");
-    assert!(!result.dumped_format);
+    assert!(result.format_dump.is_none());
     (universe, recorder.0)
 }
