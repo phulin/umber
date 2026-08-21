@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) struct PendingPageEffects {
     pub(super) effects: Vec<PageEffect>,
-    pub(super) open_out_occurrences: Vec<(usize, tex_state::EffectPos)>,
+    pub(super) open_out_occurrences: Vec<(usize, tex_state::ArtifactEffectOrdinal)>,
 }
 
 /// Lowers the effects a page must carry forward: the whatsit output produced
@@ -32,12 +32,9 @@ pub(super) fn pending_page_effects(
         };
         let page_index = effects.len();
         if matches!(effect, PageEffect::OpenOut { .. }) {
-            open_out_occurrences.push((
-                page_index,
-                world
-                    .page_effect_position(world_index)
-                    .expect("enumerated page-visible effect has a position"),
-            ));
+            let ordinal = u32::try_from(world_index + 1)
+                .expect("page-visible effect ordinal exceeds detached artifact schema");
+            open_out_occurrences.push((page_index, tex_state::ArtifactEffectOrdinal::new(ordinal)));
         }
         effects.push(effect);
     }

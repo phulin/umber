@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 pub(super) struct PageOverlay {
     pub(super) pending_effect_count: usize,
     pub(super) effects: Vec<PageEffect>,
-    pub(super) open_out_occurrences: Vec<(usize, tex_state::EffectPos)>,
+    pub(super) open_out_occurrences: Vec<(usize, tex_state::ArtifactEffectOrdinal)>,
     pub(super) math: Vec<MathSubstitution>,
     pub(super) directions: Vec<DirectionPermutation>,
     pub(super) omitted_whatsits: Vec<(tex_state::node_arena::PageListId, usize)>,
@@ -395,7 +395,21 @@ fn append_whatsit_effect(
             stores
                 .world_mut()
                 .set_last_stream_open_context(output_open_context);
-            open_out_occurrences.push((effects.len(), stores.world().effect_pos()));
+            let effect_ordinal = stores
+                .world()
+                .page_effect_prefix()
+                .len()
+                .checked_add(stores.world().effect_records().len())
+                .and_then(|ordinal| u32::try_from(ordinal).ok())
+                .ok_or_else(|| {
+                    ExecError::InvalidShipoutArtifact(
+                        "detached artifact effect ordinal overflow".to_owned(),
+                    )
+                })?;
+            open_out_occurrences.push((
+                effects.len(),
+                tex_state::ArtifactEffectOrdinal::new(effect_ordinal),
+            ));
             // web2c's `[53.1374]` log notice, which follows `write_open[j]:=
             // true`. It has to come after the context attach above, which
             // requires the `StreamOpen` record to still be the last effect.

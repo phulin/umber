@@ -63,6 +63,8 @@ Command operands are scanned by `tex-command` into typed request and result valu
   demand-selected render-origin column controls. Successful page detachment
   releases the exact page-arena closure; failed staging truncates only its
   speculative suffix so aggregate rollback can restore the original roots.
+  Artifact effect sidecars use DTO-local `ArtifactEffectOrdinal` values;
+  runtime `EffectPos` cursors remain inside the live World transaction.
 - `src/diagnostics.rs`, `src/error.rs`, and `src/error_report.rs`: canonical error identity, provenance, rendering, recovery reporting, and fatal propagation. `ExecError::Fatal` is TeX82 §81's non-local exit and only main control may catch it.
 - `src/align/`: source-free alignment completion, packaging, and width resolution.
 - `src/math/`: source-free math validation, mlist lowering, and display packaging.
