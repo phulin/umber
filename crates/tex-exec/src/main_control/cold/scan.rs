@@ -1,16 +1,16 @@
 //! Operand collection for uncommon and structurally large commands.
 //!
 //! Every scanner borrows the session's canonical command processor and
-//! returns one [`ColdOperation`]; it never creates another input machine.
+//! returns one [`ColdOperation<G>`]; it never creates another input machine.
 
 use super::super::*;
 use super::operation::*;
 use super::support::*;
 
 #[allow(clippy::too_many_arguments)] // mirrors the typed main-control context
-pub(in crate::main_control) fn scan(
-    processor: &mut CommandProcessor<'_>,
-    command: tex_command::CurrentCommand,
+pub(in crate::main_control) fn scan<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: tex_command::CurrentCommand<G>,
     global: bool,
     mode: Mode,
     boxes: &ReplayBoxes,
@@ -19,8 +19,11 @@ pub(in crate::main_control) fn scan(
     display_eq_no: bool,
     set_box_allowed: bool,
     shown_mode: &mut Option<Mode>,
-) -> Result<ColdOperation, ExecError> {
-    match command.meaning() {
+) -> Result<ColdOperation<G>, ExecError> {
+    let ResolvedMeaning::Static(meaning) = command.meaning() else {
+        unreachable!("expanded macro reached cold stomach dispatch")
+    };
+    match meaning {
         Meaning::CharToken {
             cat: Catcode::BeginGroup,
             ..
@@ -115,7 +118,7 @@ pub(in crate::main_control) fn scan(
                 let incomplete_conditions = processor.final_cleanup();
                 return Ok(ColdOperation::End {
                     dump: matches!(
-                        command.meaning(),
+                        meaning,
                         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dump)
                     ),
                     incomplete_conditions,
@@ -1141,7 +1144,7 @@ pub(in crate::main_control) fn scan(
                     .ok_or(ExecError::MissingToken {
                         context: "\\aftergroup",
                     })?
-                    .rooted_spelling(),
+                    .spelling(),
             ))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::AfterAssignment) => {
@@ -1655,7 +1658,7 @@ pub(in crate::main_control) fn scan(
         // TeX82 §1105's `any_mode(remove_item): delete_last`. No operand of
         // its own; `\unpenalty`/`\unkern`/`\unskip` differ only in which node
         // type is a removal target, decided at apply time against the live
-        // mode nest and `Universe`.
+        // mode nest and `Universe<G>`.
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::UnPenalty
             | UnexpandablePrimitive::UnKern
@@ -1776,8 +1779,8 @@ pub(in crate::main_control) fn scan(
 /// an inserted `\par` replay only while unrestricted horizontal mode is
 /// current. Context one covers vertical boxes; context two adds insertion,
 /// output, alignment-item, and no-align boundaries.
-pub(in crate::main_control) fn partoken_context_replays(
-    processor: &mut CommandProcessor<'_>,
+pub(in crate::main_control) fn partoken_context_replays<G>(
+    processor: &mut CommandProcessor<'_, G>,
     mode: Mode,
     threshold: i32,
 ) -> bool {
@@ -1785,8 +1788,8 @@ pub(in crate::main_control) fn partoken_context_replays(
 }
 
 /// TeX82 §1335 reports and frees unfinished conditionals innermost-first.
-pub(in crate::main_control) fn report_incomplete_conditions(
-    stores: &mut Universe,
+pub(in crate::main_control) fn report_incomplete_conditions<G>(
+    stores: &mut Universe<G>,
     incomplete: impl IntoIterator<Item = tex_command::IncompleteCondition>,
 ) {
     let mut printer = stores.printer();
@@ -1824,12 +1827,12 @@ pub(in crate::main_control) fn report_incomplete_conditions(
 /// inserting the closer is command-owned
 /// (`CommandProcessor::recover_off_save`/`report_off_save_bottom_drop`); the
 /// execute phase (`apply_cold_operation`) only prints the matching text once
-/// the returned `ColdOperation` is applied.
-pub(in crate::main_control) fn scan_off_save(
-    processor: &mut CommandProcessor<'_>,
-    command: tex_command::CurrentCommand,
+/// the returned `ColdOperation<G>` is applied.
+pub(in crate::main_control) fn scan_off_save<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: tex_command::CurrentCommand<G>,
     innermost_group: Option<GroupKind>,
-) -> Result<ColdOperation, ExecError> {
+) -> Result<ColdOperation<G>, ExecError> {
     let Some(kind) = innermost_group else {
         let token = command.spelling().semantic_token();
         processor.report_off_save_bottom_drop(&command);
@@ -1934,12 +1937,12 @@ pub(in crate::main_control) fn scan_off_save(
 ///   them through `report_illegal_case` ("You can't use `\eqno' in ...
 ///   mode") instead, via their own dedicated `ColdOperation::IllegalEqNo` arm
 ///   below (umber2-johp.88).
-fn scan_unclassified_primitive(
-    processor: &mut CommandProcessor<'_>,
-    command: tex_command::CurrentCommand,
+fn scan_unclassified_primitive<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: tex_command::CurrentCommand<G>,
     primitive: UnexpandablePrimitive,
     mode: Mode,
-) -> Result<ColdOperation, ExecError> {
+) -> Result<ColdOperation<G>, ExecError> {
     use UnexpandablePrimitive as P;
     match primitive {
         P::Accent
@@ -2324,13 +2327,13 @@ fn scan_unclassified_primitive(
 ///   invariant exactly. Per umber2-johp.108's scope this function implements
 ///   none of them; it only makes each one fail loudly, tracked as
 ///   umber2-johp.111.
-fn scan_unclassified_meaning(
-    processor: &mut CommandProcessor<'_>,
-    command: tex_command::CurrentCommand,
+fn scan_unclassified_meaning<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: tex_command::CurrentCommand<G>,
     meaning: Meaning,
     mode: Mode,
     innermost_group: Option<GroupKind>,
-) -> Result<ColdOperation, ExecError> {
+) -> Result<ColdOperation<G>, ExecError> {
     match meaning {
         // TeX82 §1045's `any_mode(relax): do_nothing`. `\relax` -- and the
         // frozen relax `\noexpand` substitutes for its operand (§358) -- is
@@ -2344,7 +2347,7 @@ fn scan_unclassified_meaning(
         // `\inputlineno`, e-TeX's `\currentgrouplevel` family, pdfTeX's
         // `\pdflastxpos` family, ...). Like those three -- which
         // `scan_unclassified_primitive` already routes to the same
-        // `ColdOperation` -- these are legal only as an internal-value operand
+        // `ColdOperation<G>` -- these are legal only as an internal-value operand
         // inside a scan, never as a delivered main-control command.
         Meaning::InternalInteger(_) => Ok(ColdOperation::IllegalLastItem {
             token: command.spelling().semantic_token(),
@@ -2385,7 +2388,7 @@ fn scan_unclassified_meaning(
         // appends a math-char noad. tex.web keeps the two interchangeable
         // right down to §1038's ligature lookahead, which accepts
         // `char_given` and `char_num` at the same label, so this reuses
-        // `\char`'s own already-dispatched `ColdOperation`; the only
+        // `\char`'s own already-dispatched `ColdOperation<G>`; the only
         // difference is that the character code is already known and needs
         // no `scan_char_num`.
         Meaning::CharGiven(ch) => Ok(ColdOperation::CharacterCode {
@@ -2418,9 +2421,7 @@ fn scan_unclassified_meaning(
         Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndCsName) => {
             Ok(ColdOperation::ExtraEndCsName)
         }
-        Meaning::Macro { .. } | Meaning::ExpandablePrimitive(_) => {
-            Err(unimplemented_meaning(&command, meaning, mode))
-        }
+        Meaning::ExpandablePrimitive(_) => Err(unimplemented_meaning(&command, meaning, mode)),
         // TeX82 §1130's `vmode+endv,hmode+endv: do_endv` (§1131) and §1046's
         // `mmode+endv: insert_dollar_sign`. `scan_alignment_delivery_step`
         // implements the in-alignment half of §1131 before it ever calls
@@ -2446,13 +2447,13 @@ fn scan_unclassified_meaning(
 /// match does not name, exhaustively over [`Catcode`].
 ///
 /// See [`scan_unclassified_meaning`] for the bucket definitions.
-fn scan_unclassified_char_token(
-    processor: &mut CommandProcessor<'_>,
-    command: tex_command::CurrentCommand,
+fn scan_unclassified_char_token<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: tex_command::CurrentCommand<G>,
     ch: char,
     cat: Catcode,
     mode: Mode,
-) -> Result<ColdOperation, ExecError> {
+) -> Result<ColdOperation<G>, ExecError> {
     match cat {
         // TeX82 §1046's `non_math(sup_mark)`/`non_math(sub_mark)`:
         // §1047's `insert_dollar_sign` backs the command up behind a
@@ -2513,10 +2514,10 @@ fn scan_unclassified_char_token(
 /// `abs(align_state)>2`) and backing it up behind an inserted brace, entirely
 /// from the command-owned `align_state`; main control only records whether the
 /// inserted brace opens a recovery simple group for §1131's `off_save`.
-fn scan_align_error(
-    processor: &mut CommandProcessor<'_>,
-    command: tex_command::CurrentCommand,
-) -> Result<ColdOperation, ExecError> {
+fn scan_align_error<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: tex_command::CurrentCommand<G>,
+) -> Result<ColdOperation<G>, ExecError> {
     let token = command.spelling().semantic_token();
     match processor
         .recover_align_error(command)
@@ -2540,8 +2541,8 @@ fn scan_align_error(
     }
 }
 
-fn unimplemented_meaning(
-    command: &tex_command::CurrentCommand,
+fn unimplemented_meaning<G>(
+    command: &tex_command::CurrentCommand<G>,
     meaning: Meaning,
     mode: Mode,
 ) -> ExecError {
@@ -2556,60 +2557,68 @@ fn unimplemented_meaning(
 /// through the command processor.  The target's meaning is classified here;
 /// application only sees this completed typed description after the processor
 /// borrow ends.
-fn scan_arithmetic_assignment(
-    processor: &mut CommandProcessor<'_>,
+fn scan_arithmetic_assignment<G>(
+    processor: &mut CommandProcessor<'_, G>,
     primitive: UnexpandablePrimitive,
     global: bool,
-) -> Result<ColdOperation, ExecError> {
+) -> Result<ColdOperation<G>, ExecError> {
     let target_command = processor
         .get_x_token()
         .map_err(command_error)?
         .ok_or(ExecError::UnsupportedAssignmentTarget)?;
     let target = match target_command.meaning() {
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
-            ArithmeticTarget::IntegerRegister(
-                processor
-                    .scan_profile_register_index()
-                    .map_err(command_error)?,
-            )
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-            ArithmeticTarget::DimensionRegister(
-                processor
-                    .scan_profile_register_index()
-                    .map_err(command_error)?,
-            )
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
-            ArithmeticTarget::GlueRegister {
-                index: processor
-                    .scan_profile_register_index()
-                    .map_err(command_error)?,
-                mu: false,
-            }
-        }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
-            ArithmeticTarget::GlueRegister {
-                index: processor
-                    .scan_profile_register_index()
-                    .map_err(command_error)?,
-                mu: true,
-            }
-        }
-        Meaning::CountRegister(index) => ArithmeticTarget::IntegerRegister(index),
-        Meaning::DimenRegister(index) => ArithmeticTarget::DimensionRegister(index),
-        Meaning::SkipRegister(index) => ArithmeticTarget::GlueRegister { index, mu: false },
-        Meaning::MuskipRegister(index) => ArithmeticTarget::GlueRegister { index, mu: true },
-        Meaning::IntParam(index) => ArithmeticTarget::IntegerParameter(index),
-        Meaning::DimenParam(index) => ArithmeticTarget::DimensionParameter(index),
-        Meaning::GlueParam(index) => ArithmeticTarget::GlueParameter { index, mu: false },
-        Meaning::MuGlueParam(index) => ArithmeticTarget::GlueParameter { index, mu: true },
-        _ => {
+        ResolvedMeaning::Macro { .. } => {
             return Ok(ColdOperation::InvalidArithmeticTarget {
                 primitive,
                 target: tex_command::PrintCommand::from_current(&target_command),
             });
         }
+        ResolvedMeaning::Static(meaning) => match meaning {
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
+                ArithmeticTarget::IntegerRegister(
+                    processor
+                        .scan_profile_register_index()
+                        .map_err(command_error)?,
+                )
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
+                ArithmeticTarget::DimensionRegister(
+                    processor
+                        .scan_profile_register_index()
+                        .map_err(command_error)?,
+                )
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
+                ArithmeticTarget::GlueRegister {
+                    index: processor
+                        .scan_profile_register_index()
+                        .map_err(command_error)?,
+                    mu: false,
+                }
+            }
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
+                ArithmeticTarget::GlueRegister {
+                    index: processor
+                        .scan_profile_register_index()
+                        .map_err(command_error)?,
+                    mu: true,
+                }
+            }
+            Meaning::CountRegister(index) => ArithmeticTarget::IntegerRegister(index),
+            Meaning::DimenRegister(index) => ArithmeticTarget::DimensionRegister(index),
+            Meaning::SkipRegister(index) => ArithmeticTarget::GlueRegister { index, mu: false },
+            Meaning::MuskipRegister(index) => ArithmeticTarget::GlueRegister { index, mu: true },
+            Meaning::IntParam(index) => ArithmeticTarget::IntegerParameter(index),
+            Meaning::DimenParam(index) => ArithmeticTarget::DimensionParameter(index),
+            Meaning::GlueParam(index) => ArithmeticTarget::GlueParameter { index, mu: false },
+            Meaning::MuGlueParam(index) => ArithmeticTarget::GlueParameter { index, mu: true },
+            _ => {
+                return Ok(ColdOperation::InvalidArithmeticTarget {
+                    primitive,
+                    target: tex_command::PrintCommand::from_current(&target_command),
+                });
+            }
+        },
     };
     let _ = processor.scan_keyword("by").map_err(command_error)?;
     let operand = match target {
