@@ -2044,6 +2044,10 @@ impl<G> MainControl<G> {
             )
             .then(|| self.modes.current_list().space_factor()),
         );
+        let ignored_depth = {
+            let stores = stores.command_context().expect("live generation");
+            crate::mode::ignored_depth(&stores)
+        };
         // tex.web §418's `set_aux` twin of `space_factor`: `\prevdepth` is
         // readable only in vertical mode, where an unset `prev_depth` is
         // §215's `ignore_depth` initial value.
@@ -2056,7 +2060,7 @@ impl<G> MainControl<G> {
                 self.modes
                     .current_list()
                     .prev_depth()
-                    .unwrap_or_else(|| crate::mode::ignored_depth(stores))
+                    .unwrap_or(ignored_depth)
             }),
         );
         // tex.web §422's `set_prev_graf` walks up to the nearest enclosing
@@ -4895,13 +4899,16 @@ impl<G> MainControl<G> {
                         tex_command::EquationNumberSide::Left => "leqno",
                         tex_command::EquationNumberSide::Right => "eqno",
                     };
-                    let token = Token::Cs(stores.intern(primitive).symbol());
                     let mode = self.modes.current_mode();
-                    let context = self
-                        .command
-                        .output_open_context(&stores.command_context().expect("live generation"));
+                    let mut command_context = stores.command_context().expect("live generation");
+                    let token = Token::Cs(
+                        command_context
+                            .known_control_sequence(primitive)
+                            .expect("equation-number primitives are installed"),
+                    );
+                    let context = self.command.output_open_context(&command_context);
                     crate::diagnostics::report_illegal_case_with_context(
-                        stores,
+                        &mut command_context,
                         token,
                         mode,
                         Some(context),
