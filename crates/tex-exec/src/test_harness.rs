@@ -30,6 +30,22 @@ pub(crate) fn with_universe<R>(
     .expect("test universe allocation")
 }
 
+/// Runs one test with the production TeX82 INITEX profile installed.
+///
+/// This follows the same public primitive-installation path as
+/// [`crate::MainControl::tex82_initex`]. The underlying [`with_universe`]
+/// fixture deliberately remains neutral for state tests that exercise
+/// pre-profile invariants.
+pub(crate) fn with_tex82_universe<R>(
+    test: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
+) -> R {
+    with_universe(|universe| {
+        tex_command::install_tex82_expandable_primitives(universe);
+        crate::install_unexpandable_primitives(universe);
+        test(universe)
+    })
+}
+
 /// Runs one test with a caller-supplied host world inside the fresh brand.
 pub(crate) fn with_world_universe<R>(
     world: World,
@@ -107,7 +123,7 @@ pub(crate) fn begin_group<G>(
 pub(crate) fn with_plain_universe<R>(
     test: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
 ) -> R {
-    with_universe(|universe| {
+    with_tex82_universe(|universe| {
         with_admitted(universe, |context| {
             for (character, catcode) in [
                 ('{', Catcode::BeginGroup),
@@ -148,6 +164,20 @@ mod tests {
     #[test]
     fn shared_vocabulary_preserves_the_generation_brand() {
         with_universe(|_| assert_typed_vocabulary::<GenerationBrand<'_>>(None, None, None, None));
+    }
+
+    #[test]
+    fn tex82_fixture_installs_the_profile_while_the_base_fixture_stays_neutral() {
+        with_universe(|universe| {
+            with_admitted(universe, |context| {
+                assert_eq!(context.int_param(IntParam::ESCAPE_CHAR), 0);
+            });
+        });
+        with_tex82_universe(|universe| {
+            with_admitted(universe, |context| {
+                assert_eq!(context.int_param(IntParam::ESCAPE_CHAR), i32::from(b'\\'));
+            });
+        });
     }
 
     #[test]

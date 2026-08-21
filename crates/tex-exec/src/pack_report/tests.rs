@@ -582,7 +582,7 @@ fn output_active_vbox_dump_supplies_the_headline_newline() {
     // `print_ln`; `show_box` supplies exactly one newline before the node.
     // Outside `\output`, §675's explicit newline remains in addition.
     for (output_active, separator) in [(true, "\n"), (false, "\n\n")] {
-        crate::test_harness::with_universe(|universe| {
+        crate::test_harness::with_tex82_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let context = ExecutionDiagnosticContext::new(0, 0, output_active, "");
             let packed = empty_hbox(&mut stores);
@@ -634,7 +634,7 @@ fn pack_diagnostic_origin_contexts() {
 
     for (pack_begin_line, output_active, origin) in origins {
         for (mode, headline_on_terminal) in modes {
-            crate::test_harness::with_universe(|universe| {
+            crate::test_harness::with_tex82_universe(|universe| {
                 universe.set_interaction_mode(mode);
                 let mut stores = universe.command_context().expect("test state is admitted");
                 let context =

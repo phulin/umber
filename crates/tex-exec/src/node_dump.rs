@@ -1365,9 +1365,7 @@ mod unset_diagnostic_tests {
     fn with_context<R>(
         test: impl for<'id> FnOnce(&mut CommandContext<'_, tex_state::GenerationBrand<'id>>) -> R,
     ) -> R {
-        crate::test_harness::with_universe(|universe| {
-            tex_command::install_tex82_expandable_primitives(universe);
-            crate::install_unexpandable_primitives(universe);
+        crate::test_harness::with_tex82_universe(|universe| {
             crate::test_harness::with_admitted(universe, test)
         })
     }

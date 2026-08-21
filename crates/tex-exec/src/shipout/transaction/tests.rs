@@ -69,7 +69,7 @@ fn completed_page_release_drops_exact_closure_and_scratch() {
 
 #[test]
 fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
-    tex_state::with_universe(budget(), |untraced| {
+    crate::test_harness::with_tex82_universe(|untraced| {
         let root = untraced.publish_page_nodes(&[empty_vbox()]);
         report_huge_page_deleted_box(untraced, root, 0);
         let text = pending_text(untraced);
@@ -77,10 +77,9 @@ fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
             text.contains("The following box has been deleted:\n\\vbox(16383.99998+0.0)x0.0"),
             "{text:?}"
         );
-    })
-    .expect("fresh universe");
+    });
 
-    tex_state::with_universe(budget(), |traced| {
+    crate::test_harness::with_tex82_universe(|traced| {
         traced
             .assign_int_param(IntParam::TRACING_OUTPUT, 1, AssignmentScope::Global)
             .expect("assign tracingoutput");
@@ -88,8 +87,7 @@ fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
         let tracing_output = traced.int_param(IntParam::TRACING_OUTPUT);
         report_huge_page_deleted_box(traced, root, tracing_output);
         assert_eq!(pending_text(traced), "");
-    })
-    .expect("fresh universe");
+    });
 }
 
 #[test]
