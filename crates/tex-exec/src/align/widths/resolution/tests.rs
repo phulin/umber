@@ -9,7 +9,7 @@ fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw * Scaled::UNITY)
 }
 
-fn glue(_stores: &mut Universe, width: i32) -> GlueSpec {
+fn glue<G>(_stores: &mut Universe<G>, width: i32) -> GlueSpec {
     GlueSpec {
         width: sp(width),
         stretch: Scaled::from_raw(0),
@@ -34,7 +34,7 @@ fn cell(empty: PageListId, width: i32, span_count: u16) -> Node {
     }))
 }
 
-fn row(stores: &mut Universe, cells: &[Node]) -> Node {
+fn row<G>(stores: &mut Universe<G>, cells: &[Node]) -> Node {
     let children = stores.publish_page_nodes(cells);
     Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::HBox,

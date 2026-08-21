@@ -6,17 +6,17 @@ use tex_state::ids::FontId;
 use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, Node, Sign};
-use tex_state::provenance::OriginRef;
 use tex_state::scaled::{GlueSetRatio, Scaled};
+use tex_state::token::OriginId;
 
 use crate::mode::{PendingHChar, PendingHRunChar};
 use crate::{ExecError, Mode, ModeNest};
 
-pub(crate) fn append_character_with_fuel(
+pub(crate) fn append_character_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     ch: char,
-    origin: OriginRef,
+    origin: OriginId,
     etex_extended: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -29,9 +29,9 @@ pub(crate) fn append_character_with_fuel(
 
 /// Appends an ordinary space from main control after horizontal
 /// mode has been selected by TeX82 §1095.
-pub(crate) fn append_space_with_fuel(
+pub(crate) fn append_space_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     debug_assert!(matches!(
@@ -42,18 +42,18 @@ pub(crate) fn append_space_with_fuel(
     append_space_after_flush(nest, stores)
 }
 
-pub(crate) fn flush_pending_hchars(
+pub(crate) fn flush_pending_hchars<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
     flush_pending_hchar_run_with_fuel(nest, stores, insert_hyphen_discs, false, fuel)
 }
 
-pub(crate) fn flush_pending_hchars_with_fuel(
+pub(crate) fn flush_pending_hchars_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores, fuel)
@@ -62,9 +62,9 @@ pub(crate) fn flush_pending_hchars_with_fuel(
 /// Flushes the active TeX82 §1038 character run after its lookahead consumed
 /// `\noboundary`. This suppresses only the right boundary; a separate flag on
 /// the list records §1030's left-boundary cancellation before a new run.
-pub(crate) fn flush_pending_hchars_without_right_boundary(
+pub(crate) fn flush_pending_hchars_without_right_boundary<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let insert_hyphen_discs = nest.current_mode() == Mode::Horizontal;
@@ -85,9 +85,9 @@ pub(crate) fn flush_pending_hchars_without_right_boundary(
 /// Flushing here is also what keeps §1034's ligature and kerning boundaries
 /// right: a whatsit ends the word, so the characters on either side of it
 /// belong to two runs and must not ligature across it.
-pub(crate) fn append_whatsit(
+pub(crate) fn append_whatsit<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
     whatsit: tex_state::node::Whatsit,
 ) -> Result<(), ExecError> {
@@ -121,18 +121,18 @@ pub(crate) fn append_whatsit(
 /// frozen, or otherwise detached list. Non-commit barriers can still call
 /// [`flush_pending_hchars`] directly when TeX needs the run materialized but
 /// must keep the mode level open.
-pub(crate) fn commit_current_list(
+pub(crate) fn commit_current_list<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<crate::mode::ModeLevelSummary, ExecError> {
     flush_pending_hchars(nest, stores, fuel)?;
     nest.pop()
 }
 
-pub(crate) fn flush_pending_hchar_run_with_fuel(
+pub(crate) fn flush_pending_hchar_run_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     insert_hyphen_discs: bool,
     suppress_right_boundary: bool,
     fuel: &mut tex_command::CommandFuel,
@@ -180,8 +180,8 @@ pub(crate) fn flush_pending_hchar_run_with_fuel(
     Ok(())
 }
 
-fn candidate_positions_for_chars(
-    stores: &Universe,
+fn candidate_positions_for_chars<G>(
+    stores: &Universe<G>,
     language: u8,
     chars: &[PendingHChar],
     left: usize,
@@ -217,9 +217,9 @@ fn candidate_positions_for_chars(
     stores.hyphen_positions_for_language(language, &normalized, left, right)
 }
 
-pub(crate) fn append_space_after_flush(
+pub(crate) fn append_space_after_flush<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
     let configuration = stores.pdf_font_configuration();
     let sf = if configuration.adjusts_interword_glue() {
@@ -246,9 +246,9 @@ pub(crate) fn append_space_after_flush(
 /// `space_factor=1000` and otherwise scales the glue through `app_space`
 /// (§1042). Scanner fronts and main control share this typed
 /// mode-switch-then-append operation.
-pub(crate) fn append_control_space_glue_after_flush(
+pub(crate) fn append_control_space_glue_after_flush<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
     let (mut spec, kind) = space_skip_or_font_space(stores, 1000);
     if stores.pdf_font_configuration().adjusts_interword_glue() {
@@ -265,9 +265,9 @@ pub(crate) fn append_control_space_glue_after_flush(
 /// Appends the explicit `\ ` control-space glue from main control
 /// after TeX82 §1090's vertical-mode paragraph start (if any) has already run.
 /// Mirrors `append_canonical_space`'s split from `append_space` above.
-pub(crate) fn append_control_space_with_fuel(
+pub(crate) fn append_control_space_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     debug_assert!(matches!(
@@ -283,15 +283,15 @@ pub(crate) fn append_control_space_with_fuel(
 /// ligature run or pdfTeX interword-glue adjustment to consider -- those are
 /// exclusively horizontal-list concerns. Callers push the returned spec
 /// directly onto the current (math) list.
-pub(crate) fn control_space_glue_spec(stores: &Universe) -> GlueSpec {
+pub(crate) fn control_space_glue_spec<G>(stores: &Universe<G>) -> GlueSpec {
     space_skip_or_font_space(stores, 1000).0
 }
 
-pub(crate) fn append_hchar_with_fuel(
+pub(crate) fn append_hchar_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     ch: char,
-    origin: OriginRef,
+    origin: OriginId,
     etex_extended: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -361,7 +361,7 @@ pub(crate) const fn norm_min(value: i32) -> u8 {
 ///
 /// The hyphen minima travel with `clang` in Umber's typed mode-list state so
 /// the first §1376 `fix_language` node can retain the complete prior context.
-pub(crate) fn current_hyphen_context(stores: &Universe) -> (u8, u8, u8) {
+pub(crate) fn current_hyphen_context<G>(stores: &Universe<G>) -> (u8, u8, u8) {
     (
         u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0),
         norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN)),
@@ -369,16 +369,16 @@ pub(crate) fn current_hyphen_context(stores: &Universe) -> (u8, u8, u8) {
     )
 }
 
-pub(crate) fn indent_in_hmode(
+pub(crate) fn indent_in_hmode<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     indent: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if !indent {
         return Ok(());
     }
-    fn make_indent_box(stores: &mut Universe) -> Node {
+    fn make_indent_box<G>(stores: &mut Universe<G>) -> Node {
         stores.observe_semantic_dependency(tex_state::DependencyKey::Cell(
             tex_state::cell::CellId::new(
                 tex_state::cell::BankTag::DimenParam,
@@ -415,9 +415,9 @@ pub(crate) fn indent_in_hmode(
     Ok(())
 }
 
-pub(crate) fn fix_hyphen_language_with_fuel(
+pub(crate) fn fix_hyphen_language_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     mode: Mode,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -449,14 +449,14 @@ pub(crate) fn fix_hyphen_language_with_fuel(
     Ok(())
 }
 
-pub(crate) fn append_pending_hchar(
+pub(crate) fn append_pending_hchar<G>(
     list: &mut crate::mode::ModeListMutation<'_>,
-    _stores: &mut Universe,
+    _stores: &mut Universe<G>,
     _mode: Mode,
     font: FontId,
     font_is_ltr_shaping: bool,
     ch: char,
-    origin: OriginRef,
+    origin: OriginId,
 ) {
     let Some(mut pending) = list.take_pending_hchars() else {
         list.begin_pending_hchars(font, ch, origin);
@@ -515,14 +515,14 @@ pub(crate) fn is_supported_script(script: tex_fonts::Script) -> bool {
     )
 }
 
-pub(crate) fn is_ltr_shaping_font(stores: &Universe, font: FontId) -> bool {
+pub(crate) fn is_ltr_shaping_font<G>(stores: &Universe<G>, font: FontId) -> bool {
     let font = stores.font(font);
     font.opentype()
         .is_some_and(|font| font.direction == tex_fonts::WritingDirection::LeftToRight)
 }
 
-pub(crate) fn shape_open_type_chars(
-    stores: &Universe,
+pub(crate) fn shape_open_type_chars<G>(
+    stores: &Universe<G>,
     chars: &[crate::mode::PendingHChar],
     break_positions: &[usize],
 ) -> Vec<Node> {
@@ -601,7 +601,7 @@ pub(crate) fn shape_open_type_chars(
 /// Every call shapes caller-delimited runs independently. Paragraph code uses
 /// this after break selection, which restores ligatures on each unsplit side
 /// while preventing a glyph cluster from crossing the chosen line boundary.
-pub(crate) fn reshape_open_type_runs(stores: &Universe, nodes: &mut Vec<Node>) {
+pub(crate) fn reshape_open_type_runs<G>(stores: &Universe<G>, nodes: &mut Vec<Node>) {
     let mut index = 0;
     while index < nodes.len() {
         let Node::Char { font, ch, origin } = &nodes[index] else {
@@ -656,8 +656,8 @@ pub(crate) fn reshape_open_type_runs(stores: &Universe, nodes: &mut Vec<Node>) {
     }
 }
 
-pub(crate) fn reconstitute_with_fuel(
-    stores: &mut Universe,
+pub(crate) fn reconstitute_with_fuel<G>(
+    stores: &mut Universe<G>,
     pending: &[crate::mode::PendingHChar],
     no_left_boundary: bool,
     insert_hyphen_discs: bool,
@@ -789,8 +789,8 @@ pub(crate) fn replacement_glyph(
 /// Source glyphs, generated pseudo-ligatures, and both boundaries share one
 /// work list. Thus every replacement pair re-enters the TFM program, and the
 /// retain/delete and pass-over bits move one authoritative cursor.
-pub(crate) fn run_tfm_ligature_machine(
-    stores: &mut Universe,
+pub(crate) fn run_tfm_ligature_machine<G>(
+    stores: &mut Universe<G>,
     source: &[crate::mode::PendingHChar],
     no_left_boundary: bool,
     suppress_right_boundary: bool,
@@ -993,8 +993,8 @@ fn work_glyph(item: &LigatureWorkItem) -> Option<PendingHRunChar> {
     }
 }
 
-pub(crate) fn auto_kern_between(
-    stores: &Universe,
+pub(crate) fn auto_kern_between<G>(
+    stores: &Universe<G>,
     left: &PendingHRunChar,
     right: &PendingHRunChar,
 ) -> Option<Node> {
@@ -1007,8 +1007,8 @@ pub(crate) fn auto_kern_between(
     auto_kern_codes(stores, left.font, Some(left.ch), None)
 }
 
-pub(crate) fn auto_kern(
-    stores: &Universe,
+pub(crate) fn auto_kern<G>(
+    stores: &Universe<G>,
     glyph: &PendingHRunChar,
     leading: Option<bool>,
 ) -> Option<Node> {
@@ -1018,8 +1018,8 @@ pub(crate) fn auto_kern(
     }
 }
 
-pub(crate) fn auto_kern_codes(
-    stores: &Universe,
+pub(crate) fn auto_kern_codes<G>(
+    stores: &Universe<G>,
     font: FontId,
     left: Option<char>,
     right: Option<char>,
@@ -1061,7 +1061,7 @@ pub(crate) fn add_scaled(left: Scaled, right: Scaled) -> Scaled {
         .expect("pdfTeX inter-character kern adjustment fits Scaled")
 }
 
-pub(crate) fn adjust_interword_glue(stores: &Universe, nodes: &[Node], spec: &mut GlueSpec) {
+pub(crate) fn adjust_interword_glue<G>(stores: &Universe<G>, nodes: &[Node], spec: &mut GlueSpec) {
     let mut glyph = None;
     for node in nodes.iter().rev() {
         match node {
@@ -1108,7 +1108,7 @@ pub(crate) fn adjust_interword_glue(stores: &Universe, nodes: &[Node], spec: &mu
         .expect("pdfTeX interword shrink adjustment fits Scaled");
 }
 
-pub(crate) fn scaled_font_code(stores: &Universe, font: FontId, code: i32) -> Scaled {
+pub(crate) fn scaled_font_code<G>(stores: &Universe<G>, font: FontId, code: i32) -> Scaled {
     let product = i64::from(stores.font_parameter(font, 6).raw()) * i64::from(code);
     let rounded = if product >= 0 {
         (product + 500) / 1000
@@ -1140,13 +1140,13 @@ pub(crate) fn rechar_node(current: PendingHRunChar) -> Node {
                 .origins
                 .first()
                 .cloned()
-                .unwrap_or_else(OriginRef::unknown),
+                .unwrap_or_else(OriginId::unknown),
         }
     }
 }
 
-pub(crate) fn literal_hyphen_disc(
-    stores: &mut Universe,
+pub(crate) fn literal_hyphen_disc<G>(
+    stores: &mut Universe<G>,
     current: &PendingHRunChar,
     enabled: bool,
 ) -> Option<Node> {
@@ -1166,15 +1166,15 @@ pub(crate) fn literal_hyphen_disc(
     })
 }
 
-pub(crate) fn update_space_factor(
+pub(crate) fn update_space_factor<G>(
     list: &mut crate::mode::ModeListMutation<'_>,
-    stores: &Universe,
+    stores: &Universe<G>,
     ch: char,
 ) {
     list.set_space_factor(next_space_factor(list.space_factor(), stores, ch));
 }
 
-pub(crate) fn next_space_factor(current: i32, stores: &Universe, ch: char) -> i32 {
+pub(crate) fn next_space_factor<G>(current: i32, stores: &Universe<G>, ch: char) -> i32 {
     let sf = i32::from(stores.sfcode(ch));
     if sf == 0 {
         return current;
@@ -1186,7 +1186,7 @@ pub(crate) fn next_space_factor(current: i32, stores: &Universe, ch: char) -> i3
     }
 }
 
-pub(crate) fn interword_glue(stores: &Universe, space_factor: i32) -> (GlueSpec, GlueKind) {
+pub(crate) fn interword_glue<G>(stores: &Universe<G>, space_factor: i32) -> (GlueSpec, GlueKind) {
     let xspace = stores.glue(stores.glue_param(GlueParam::XSPACE_SKIP));
     if space_factor >= 2000 && xspace != GlueSpec::ZERO {
         // TeX82 §1042 appends a nonzero `\xspaceskip` verbatim.
@@ -1195,8 +1195,8 @@ pub(crate) fn interword_glue(stores: &Universe, space_factor: i32) -> (GlueSpec,
     space_skip_or_font_space(stores, space_factor)
 }
 
-pub(crate) fn space_skip_or_font_space(
-    stores: &Universe,
+pub(crate) fn space_skip_or_font_space<G>(
+    stores: &Universe<G>,
     space_factor: i32,
 ) -> (GlueSpec, GlueKind) {
     let override_spec = stores.glue(stores.glue_param(GlueParam::SPACE_SKIP));
@@ -1270,9 +1270,9 @@ pub(crate) fn fixed_infinite_glue(primitive: UnexpandablePrimitive) -> GlueSpec 
     }
 }
 
-pub(crate) fn append_italic_correction_with_fuel(
+pub(crate) fn append_italic_correction_with_fuel<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     flush_pending_hchars_with_fuel(nest, stores, fuel)?;

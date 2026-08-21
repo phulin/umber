@@ -1,14 +1,13 @@
 use std::cell::Cell;
 
+use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
-use tex_state::ids::GlueId;
 use tex_state::math::MathListNode;
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node};
 use tex_state::node_arena::PageListId;
 use tex_state::scaled::Scaled;
-use tex_state::{GeometryObservation, Universe};
 use tex_typeset::TypesetState;
 use tex_typeset::math::{
     FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathNode, MathParamState,
@@ -26,16 +25,16 @@ impl MathConversionErrorContext {
     }
 }
 
-pub(crate) fn finish_math_list_node(
-    stores: &mut Universe,
+pub(crate) fn finish_math_list_node<G>(
+    stores: &mut Universe<G>,
     list: MathListNode,
     insert_penalties: bool,
 ) -> Vec<Node> {
     finish_math_list_node_with_reads(stores, list, insert_penalties, None).0
 }
 
-pub(crate) fn finish_inline_math_list_node(
-    stores: &mut Universe,
+pub(crate) fn finish_inline_math_list_node<G>(
+    stores: &mut Universe<G>,
     list: MathListNode,
     insert_penalties: bool,
     error_context: MathConversionErrorContext,
@@ -43,8 +42,8 @@ pub(crate) fn finish_inline_math_list_node(
     finish_math_list_node_with_reads(stores, list, insert_penalties, Some(&error_context))
 }
 
-fn finish_math_list_node_with_reads(
-    stores: &mut Universe,
+fn finish_math_list_node_with_reads<G>(
+    stores: &mut Universe<G>,
     list: MathListNode,
     insert_penalties: bool,
     error_context: Option<&MathConversionErrorContext>,
@@ -94,8 +93,8 @@ fn finish_math_list_node_with_reads(
     (nodes, family_mask)
 }
 
-pub(super) fn convert_math_hlist_with_error_context(
-    stores: &mut Universe,
+pub(super) fn convert_math_hlist_with_error_context<G>(
+    stores: &mut Universe<G>,
     input: PageListId,
     style: Style,
     penalties: bool,
@@ -106,8 +105,8 @@ pub(super) fn convert_math_hlist_with_error_context(
     convert_math_hlist_with_sink(&mut sink, input, style, penalties, params)
 }
 
-fn convert_math_hlist_with_sink(
-    sink: &mut LoweredMathSink<'_>,
+fn convert_math_hlist_with_sink<G>(
+    sink: &mut LoweredMathSink<'_, G>,
     input: PageListId,
     style: Style,
     penalties: bool,
@@ -118,17 +117,17 @@ fn convert_math_hlist_with_sink(
     sink.take_root_nodes()
 }
 
-struct LoweredMathSink<'a> {
-    stores: &'a mut Universe,
+struct LoweredMathSink<'a, G> {
+    stores: &'a mut Universe<G>,
     error_context: Option<&'a MathConversionErrorContext>,
     root_nodes: Vec<Node>,
     glue_cache: Vec<(GlueSpec, GlueSpec)>,
     family_mask: Cell<u64>,
 }
 
-impl<'a> LoweredMathSink<'a> {
+impl<'a, G> LoweredMathSink<'a, G> {
     fn new(
-        stores: &'a mut Universe,
+        stores: &'a mut Universe<G>,
         error_context: Option<&'a MathConversionErrorContext>,
     ) -> Self {
         Self {
@@ -232,9 +231,12 @@ impl<'a> LoweredMathSink<'a> {
     }
 }
 
-impl TypesetState for LoweredMathSink<'_> {
-    fn glue(&self, id: GlueId) -> GlueSpec {
-        self.stores.glue(id)
+impl<G> TypesetState for LoweredMathSink<'_, G> {
+    fn page_nodes(&self, list: PageListId) -> &[Node] {
+        self.stores
+            .page_node_list(list)
+            .expect("math list belongs to the admitted page arena")
+            .nodes()
     }
 
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {
@@ -250,7 +252,7 @@ impl TypesetState for LoweredMathSink<'_> {
     }
 }
 
-impl MathTypesetState for LoweredMathSink<'_> {
+impl<G> MathTypesetState for LoweredMathSink<'_, G> {
     fn math_family_font(&self, size: tex_state::math::MathFontSize, family: u8) -> FontId {
         let index = u32::from(size.index()) * 16 + u32::from(family);
         self.family_mask
@@ -292,7 +294,7 @@ impl MathTypesetState for LoweredMathSink<'_> {
     }
 }
 
-impl MathParamState for LoweredMathSink<'_> {
+impl<G> MathParamState for LoweredMathSink<'_, G> {
     fn int_param(&self, param: IntParam) -> i32 {
         self.stores.int_param(param)
     }
@@ -301,12 +303,12 @@ impl MathParamState for LoweredMathSink<'_> {
         self.stores.dimen_param(param)
     }
 
-    fn glue_param(&self, param: GlueParam) -> GlueId {
+    fn glue_param(&self, param: GlueParam) -> GlueSpec {
         self.stores.glue_param(param)
     }
 }
 
-impl LoweredMathSink<'_> {
+impl<G> LoweredMathSink<'_, G> {
     fn commit_math_transaction(&mut self, layout: &MathLayout) {
         let list = layout.root();
         for event in layout.conversion_events() {
@@ -391,8 +393,8 @@ impl LoweredMathSink<'_> {
     }
 }
 
-pub(crate) fn finish_math_lists_owned(
-    stores: &mut Universe,
+pub(crate) fn finish_math_lists_owned<G>(
+    stores: &mut Universe<G>,
     nodes: Vec<Node>,
     insert_penalties: bool,
 ) -> Vec<Node> {

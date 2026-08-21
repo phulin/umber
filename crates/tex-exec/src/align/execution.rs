@@ -12,9 +12,9 @@ pub(crate) struct FinishedAlignment {
     pub(crate) aux_space_factor: Option<i32>,
 }
 
-pub(crate) fn append_finished_alignment(
+pub(crate) fn append_finished_alignment<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     finished: FinishedAlignment,
 ) {
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical)

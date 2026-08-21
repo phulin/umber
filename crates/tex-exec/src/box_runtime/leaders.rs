@@ -34,8 +34,8 @@ pub(crate) fn leader_glue_kind(primitive: UnexpandablePrimitive) -> GlueKind {
     }
 }
 
-pub(crate) fn take_register_payload(
-    stores: &mut Universe,
+pub(crate) fn take_register_payload<G>(
+    stores: &mut Universe<G>,
     index: u16,
     copy: bool,
 ) -> Option<LeaderPayload> {
@@ -49,9 +49,9 @@ pub(crate) fn take_register_payload(
         .and_then(payload_from_node)
 }
 
-pub(crate) fn append_leader_contribution(
+pub(crate) fn append_leader_contribution<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     kind: GlueKind,
     payload: LeaderPayload,
     spec: GlueSpec,

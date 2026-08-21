@@ -1,8 +1,8 @@
+use tex_state::Universe;
 use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::{TakeUnboxResult, UnboxKind, Universe};
 
 use crate::vertical::{append_vertical_contribution, is_outer_vertical};
 
@@ -12,22 +12,22 @@ use crate::{ExecError, Mode, ModeNest};
 use crate::box_runtime::first_box_node;
 use crate::box_runtime::hmode::flush_pending_hchars;
 
-pub(crate) fn execute_scanned_unbox_with_error_context(
+pub(crate) fn execute_scanned_unbox_with_error_context<G>(
     primitive: UnexpandablePrimitive,
     index: u16,
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {
     execute_scanned_unbox_impl(primitive, index, nest, stores, fuel, error_context)
 }
 
-fn execute_scanned_unbox_impl(
+fn execute_scanned_unbox_impl<G>(
     primitive: UnexpandablePrimitive,
     index: u16,
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {
@@ -35,14 +35,6 @@ fn execute_scanned_unbox_impl(
         primitive,
         UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
     );
-    let expected = if matches!(
-        primitive,
-        UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnHCopy
-    ) {
-        UnboxKind::Horizontal
-    } else {
-        UnboxKind::Vertical
-    };
     let Some(register) = stores.copy_box_to_page(index) else {
         return Ok(());
     };
@@ -53,31 +45,26 @@ fn execute_scanned_unbox_impl(
         report_incompatible_unbox(stores, error_context)?;
         return Ok(());
     }
-    let source = if destructive {
-        match stores.take_unbox_children_same_level(index, expected) {
-            TakeUnboxResult::Void => unreachable!("register presence was checked above"),
-            TakeUnboxResult::Incompatible => {
-                report_incompatible_unbox(stores, error_context)?;
-                return Ok(());
-            }
-            TakeUnboxResult::Children(children) => Some(children),
-        }
-    } else {
-        let Some(node) = first_box_node(stores, Some(register)) else {
-            report_incompatible_unbox(stores, error_context)?;
-            return Ok(());
-        };
-        if !unbox_kind_matches(primitive, &node) {
-            report_incompatible_unbox(stores, error_context)?;
-            return Ok(());
-        }
-        let children = match node {
-            Node::HList(node) | Node::VList(node) => node.children.clone(),
-            _ => unreachable!(),
-        };
-        Some(children)
+    let Some(node) = first_box_node(stores, Some(register)) else {
+        report_incompatible_unbox(stores, error_context)?;
+        return Ok(());
     };
-    append_unboxed(nest, stores, source, fuel)
+    if !unbox_kind_matches(primitive, &node) {
+        report_incompatible_unbox(stores, error_context)?;
+        return Ok(());
+    }
+    let children = match node {
+        Node::HList(node) | Node::VList(node) => node.children,
+        _ => unreachable!(),
+    };
+    if destructive {
+        // The durable register closure was copied into page-lifetime storage
+        // above. Clearing the dense register cell now changes only its TeX
+        // equivalent at the existing level; the copied children remain owned
+        // by the current page arena while they are spliced into the mode list.
+        stores.clear_box_preserving_level(index);
+    }
+    append_unboxed(nest, stores, Some(children), fuel)
 }
 
 /// Splices one of e-TeX 2.6 `etex.ch` [45.999]'s saved vertical-discard
@@ -86,10 +73,10 @@ fn execute_scanned_unbox_impl(
 /// The primitive shares TeX82's `un_vbox` command code, but its modifier is
 /// above `copy_code`, so `unpackage` takes this operand-free branch before
 /// scanning a register and clears the saved-list pointer as it detaches it.
-pub(crate) fn execute_scanned_saved_vertical_discards(
+pub(crate) fn execute_scanned_saved_vertical_discards<G>(
     primitive: UnexpandablePrimitive,
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let nodes = match primitive {
@@ -108,11 +95,11 @@ pub(crate) fn execute_scanned_saved_vertical_discards(
     Ok(())
 }
 
-pub(crate) fn execute_delete_last(
+pub(crate) fn execute_delete_last<G>(
     primitive: UnexpandablePrimitive,
     error_context: String,
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores, fuel)?;
@@ -137,10 +124,10 @@ pub(crate) fn execute_delete_last(
     Ok(())
 }
 
-fn execute_delete_last_outer_vertical(
+fn execute_delete_last_outer_vertical<G>(
     primitive: UnexpandablePrimitive,
     error_context: &str,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
     let Some(tail) = crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
     else {
@@ -178,10 +165,10 @@ fn execute_delete_last_outer_vertical(
 /// This must not escape as an `ExecError`: tex.web calls `error` and resumes
 /// main control with the following token. The final help line is selected by
 /// the requested node type.
-fn report_cannot_delete_from_page(
+fn report_cannot_delete_from_page<G>(
     primitive: UnexpandablePrimitive,
     error_context: &str,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<(), ExecError> {
     let command = match primitive {
         UnexpandablePrimitive::UnSkip => "unskip",
@@ -234,9 +221,9 @@ fn report_cannot_delete_from_page(
 /// delimiter target from exactly those `max_h`/`max_d`, so an unwrapped box
 /// silently shrank the target and §706's `var_delimiter` returned the
 /// smallest variant instead of the size the box calls for.
-pub(crate) fn append_box_node_to_current_list(
+pub(crate) fn append_box_node_to_current_list<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     mut node: Node,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -271,7 +258,7 @@ pub(crate) fn append_box_node_to_current_list(
     Ok(())
 }
 
-fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> (Vec<Node>, Vec<Node>) {
+fn extract_box_migrations<G>(stores: &mut Universe<G>, node: &mut Node) -> (Vec<Node>, Vec<Node>) {
     let Node::HList(boxed) = node else {
         return (Vec::new(), Vec::new());
     };
@@ -297,8 +284,8 @@ fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> (Vec<Node>,
 /// caller that packs a horizontal list with `adjust_tail` non-null -- §1076's
 /// `\hbox` contribution to a vertical list, §796's alignment column -- performs
 /// exactly this split, and differs only in where the migrated material lands.
-pub(crate) fn split_hpack_migrations(
-    stores: &Universe,
+pub(crate) fn split_hpack_migrations<G>(
+    stores: &Universe<G>,
     nodes: Vec<Node>,
 ) -> (Vec<Node>, Vec<Node>, Vec<Node>) {
     let mut retained = Vec::with_capacity(nodes.len());
@@ -328,9 +315,9 @@ pub(crate) fn split_hpack_migrations(
     (retained, pre_migrated, migrated)
 }
 
-fn append_unboxed(
+fn append_unboxed<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     source: Option<tex_state::node_arena::PageListId>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -385,7 +372,10 @@ fn unbox_kind_matches(primitive: UnexpandablePrimitive, node: &Node) -> bool {
 /// TeX.web §1110's `unpackage` refusal, which leaves the register alone.
 ///
 /// The completed register scan owns the live §82 context for this command.
-fn report_incompatible_unbox(stores: &mut Universe, error_context: &str) -> Result<(), ExecError> {
+fn report_incompatible_unbox<G>(
+    stores: &mut Universe<G>,
+    error_context: &str,
+) -> Result<(), ExecError> {
     crate::error_report::report_error(
         stores,
         "Incompatible list can't be unboxed",

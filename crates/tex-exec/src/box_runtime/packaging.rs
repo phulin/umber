@@ -10,9 +10,9 @@ use crate::{ExecError, Mode, ModeNest};
 
 use super::hmode::flush_pending_hchars;
 
-pub(crate) fn take_last_box(
+pub(crate) fn take_last_box<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     fuel: &mut tex_command::CommandFuel,
     error_context: String,
 ) -> Result<Option<Node>, ExecError> {
@@ -82,8 +82,8 @@ fn reset_removed_box_shift(removed: &mut [Node]) -> Option<Node> {
     Some(node.clone())
 }
 
-fn report_cannot_take_last_box(
-    stores: &mut Universe,
+fn report_cannot_take_last_box<G>(
+    stores: &mut Universe<G>,
     mode: &str,
     help: &[&str],
     context: String,
@@ -99,8 +99,8 @@ fn report_cannot_take_last_box(
     Ok(())
 }
 
-pub(crate) fn hpack_with_overfull_rule(
-    stores: &mut Universe,
+pub(crate) fn hpack_with_overfull_rule<G>(
+    stores: &mut Universe<G>,
     children: tex_state::node_arena::PageListId,
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
@@ -142,8 +142,8 @@ pub(crate) fn hpack_with_overfull_rule(
     packed.node
 }
 
-fn physical_discretionary_projection(
-    stores: &mut Universe,
+fn physical_discretionary_projection<G>(
+    stores: &mut Universe<G>,
     children: tex_state::node_arena::PageListId,
 ) -> Option<tex_state::node_arena::PageListId> {
     let nodes = stores
@@ -183,8 +183,8 @@ fn physical_discretionary_projection(
     Some(physical)
 }
 
-pub(crate) fn hpack_owned_with_overfull_rule(
-    stores: &mut Universe,
+pub(crate) fn hpack_owned_with_overfull_rule<G>(
+    stores: &mut Universe<G>,
     nodes: &mut Vec<Node>,
     mut diagnostic_nodes: Option<&mut Vec<Node>>,
     allocator_high_cell_overlap: u32,
@@ -306,7 +306,7 @@ pub(crate) fn project_short_diagnostic_discs(physical: &[Node], semantic: &[Node
         .collect()
 }
 
-pub(crate) fn first_box_node(stores: &Universe, owner: Option<PageListId>) -> Option<Node> {
+pub(crate) fn first_box_node<G>(stores: &Universe<G>, owner: Option<PageListId>) -> Option<Node> {
     stores
         .page_node_list(owner?)
         .ok()?

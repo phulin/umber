@@ -8,11 +8,11 @@ use tex_command::{MutationRecord, MutationTarget, ObservationValue};
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;
-use tex_state::ids::{GlueId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::Meaning;
 use tex_state::scaled::Scaled;
 use tex_state::token::Token;
+use tex_state::{GlueId, TokenListId};
 
 use super::tracing;
 
@@ -70,12 +70,12 @@ impl MutationReceipt {
 }
 
 /// Borrow-scoped authority for all state written by TeX assignment families.
-pub(crate) struct AssignmentCommitter<'a> {
-    stores: &'a mut Universe,
+pub(crate) struct AssignmentCommitter<'a, G> {
+    stores: &'a mut Universe<G>,
 }
 
-impl<'a> AssignmentCommitter<'a> {
-    pub(crate) fn new(stores: &'a mut Universe) -> Self {
+impl<'a, G> AssignmentCommitter<'a, G> {
+    pub(crate) fn new(stores: &'a mut Universe<G>) -> Self {
         Self { stores }
     }
 
@@ -83,7 +83,7 @@ impl<'a> AssignmentCommitter<'a> {
         self.stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 && current == replacement
     }
 
-    fn redundant_zero_glue(&self, current: GlueId, replacement: &GlueSpec) -> bool {
+    fn redundant_zero_glue(&self, current: GlueId<G>, replacement: &GlueSpec) -> bool {
         self.stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
             && current == GlueId::ZERO
             && *replacement == GlueSpec::ZERO
@@ -100,8 +100,8 @@ impl<'a> AssignmentCommitter<'a> {
     ) -> MutationReceipt
     where
         T: Eq + Copy,
-        Write: FnOnce(&mut Universe, bool),
-        Trace: FnOnce(&mut Universe, bool),
+        Write: FnOnce(&mut Universe<G>, bool),
+        Trace: FnOnce(&mut Universe<G>, bool),
     {
         if self.direct_scoped_word(current, replacement, global, write, trace) {
             MutationReceipt::observed(record)
@@ -126,8 +126,8 @@ impl<'a> AssignmentCommitter<'a> {
     ) -> bool
     where
         T: Eq + Copy,
-        Write: FnOnce(&mut Universe, bool),
-        Trace: FnOnce(&mut Universe, bool),
+        Write: FnOnce(&mut Universe<G>, bool),
+        Trace: FnOnce(&mut Universe<G>, bool),
     {
         let redundant = !global && self.redundant_word(current, replacement);
         if global || !redundant {
@@ -143,7 +143,7 @@ impl<'a> AssignmentCommitter<'a> {
         write: Write,
     ) -> MutationReceipt
     where
-        Write: FnOnce(&mut Universe),
+        Write: FnOnce(&mut Universe<G>),
     {
         write(self.stores);
         record.map_or(MutationReceipt::SILENT, MutationReceipt::observed)
@@ -155,7 +155,7 @@ impl<'a> AssignmentCommitter<'a> {
         write: Write,
     ) -> Result<MutationReceipt, E>
     where
-        Write: FnOnce(&mut Universe) -> Result<(), E>,
+        Write: FnOnce(&mut Universe<G>) -> Result<(), E>,
     {
         write(self.stores)?;
         Ok(record.map_or(MutationReceipt::SILENT, MutationReceipt::observed))
@@ -255,22 +255,27 @@ impl<'a> AssignmentCommitter<'a> {
     pub(crate) fn toks(
         &mut self,
         index: u16,
-        value: TokenListId,
+        value: TokenListId<G>,
         observed: ObservationValue,
         global: bool,
     ) -> MutationReceipt {
         // e-TeX 2.6 [19.277--279] observes the old eqtb token pointer before
         // `eq_destroy` can release it. Keep both operation-local values rooted
         // across Umber's combined write-and-trace boundary.
-        let old = self.stores.token_list_ref(self.stores.toks(index));
-        let new = self.stores.token_list_ref(value);
-        let redundant = !global && self.redundant_word(old.id(), new.id());
+        let old = self
+            .stores
+            .command_context()
+            .expect("token assignment uses a live admitted generation")
+            .token_register(index)
+            .expect("token-register index is admitted");
+        let new = Some(value);
+        let redundant = !global && self.redundant_word(old, new);
         if global {
-            self.stores.set_toks_global(index, new.id());
+            self.stores.set_toks_global(index, value);
         } else if !redundant {
-            self.stores.set_toks(index, new.id());
+            self.stores.set_toks(index, value);
         }
-        tracing::trace_toks_register(self.stores, index, global, &old, &new);
+        tracing::trace_toks_register(self.stores, index, global, old, new);
         if redundant && index <= 255 {
             MutationReceipt::SILENT
         } else {
@@ -343,26 +348,25 @@ impl<'a> AssignmentCommitter<'a> {
     pub(crate) fn token_parameter(
         &mut self,
         index: u16,
-        value: Option<TokenListId>,
+        value: Option<TokenListId<G>>,
         observed: ObservationValue,
         key: String,
         global: bool,
     ) -> MutationReceipt {
         let parameter = TokParam::new(index);
-        let old = self.stores.tok_param_option(parameter);
+        let old = self
+            .stores
+            .command_context()
+            .expect("token assignment uses a live admitted generation")
+            .token_parameter(parameter)
+            .expect("token-parameter index is admitted");
         let redundant = !global && self.redundant_word(old, value);
-        let old_root = self
-            .stores
-            .token_list_ref(old.unwrap_or(TokenListId::EMPTY));
-        let new_root = self
-            .stores
-            .token_list_ref(value.unwrap_or(TokenListId::EMPTY));
         if global {
             self.stores.set_tok_param_option_global(parameter, value);
         } else if !redundant {
             self.stores.set_tok_param_option(parameter, value);
         }
-        tracing::trace_tok_param(self.stores, index, global, &old_root, &new_root);
+        tracing::trace_tok_param(self.stores, index, global, old, value);
         if redundant {
             MutationReceipt::SILENT
         } else {
@@ -419,7 +423,7 @@ impl<'a> AssignmentCommitter<'a> {
         write: F,
     ) -> MutationReceipt
     where
-        F: FnOnce(&mut Universe),
+        F: FnOnce(&mut Universe<G>),
     {
         if self.direct_meaning(target, token, meaning, global, write) {
             MutationReceipt::observed(MutationRecord {
@@ -444,7 +448,7 @@ impl<'a> AssignmentCommitter<'a> {
         write: F,
     ) -> bool
     where
-        F: FnOnce(&mut Universe),
+        F: FnOnce(&mut Universe<G>),
     {
         let redundant = !global && self.redundant_word(self.stores.meaning(target), meaning);
         tracing::trace_meaning_write(self.stores, token, !redundant, global, |stores| {
@@ -463,7 +467,7 @@ impl<'a> AssignmentCommitter<'a> {
         write: F,
     ) -> MutationReceipt
     where
-        F: FnOnce(&mut Universe),
+        F: FnOnce(&mut Universe<G>),
     {
         tracing::trace_box_write(self.stores, index, global, boxed, write);
         if index <= 255 {

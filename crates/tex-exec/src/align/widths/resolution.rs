@@ -12,10 +12,10 @@ use crate::mode::{AlignState, AlignmentKind};
 
 use super::{ResolvedWidths, unset_axis_size};
 
-pub(super) fn resolve_widths(
+pub(super) fn resolve_widths<G>(
     state: &AlignState,
     rows: &[Node],
-    stores: &Universe,
+    stores: &Universe<G>,
 ) -> Result<ResolvedWidths, ExecError> {
     let requirements = collect_width_requirements(state.kind(), rows, stores)?;
     let column_count = requirements
@@ -44,10 +44,10 @@ fn initial_tabskips(state: &AlignState, columns: usize) -> Vec<tex_state::glue::
         .collect()
 }
 
-fn collect_width_requirements(
+fn collect_width_requirements<G>(
     kind: AlignmentKind,
     rows: &[Node],
-    stores: &Universe,
+    stores: &Universe<G>,
 ) -> Result<Vec<AlignmentWidthRequirement>, ExecError> {
     let mut requirements = Vec::new();
     for node in rows {

@@ -21,7 +21,7 @@ use tex_state::Universe;
 /// `\hangafter`, and `\parshape` back at their defaults. Transcribing only the
 /// `prev_depth` half let a nondefault `\looseness`/`\hangafter`/`\hangindent`
 /// survive into an entry (`umber2-hq8l`).
-pub(crate) fn init_span_aux(nest: &mut ModeNest, stores: &mut Universe) {
+pub(crate) fn init_span_aux<G>(nest: &mut ModeNest, stores: &mut Universe<G>) {
     if matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal

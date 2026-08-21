@@ -78,8 +78,8 @@ impl PackedDirection {
 ///
 /// `packed` is the finished box: §663 abbreviates its list and §198 shows the
 /// box itself.
-pub(crate) fn report_pack_diagnostics(
-    stores: &mut Universe,
+pub(crate) fn report_pack_diagnostics<G>(
+    stores: &mut Universe<G>,
     direction: PackedDirection,
     diagnostics: &[PackDiagnostic],
     packed: &Node,
@@ -92,8 +92,8 @@ pub(crate) fn report_pack_diagnostics(
 
 /// e-TeX [33.649]'s LR anomaly report followed by TeX82 §663's common
 /// horizontal-box diagnostic tail.
-pub(crate) fn report_lr_problems(
-    stores: &mut Universe,
+pub(crate) fn report_lr_problems<G>(
+    stores: &mut Universe<G>,
     missing: usize,
     extra: usize,
     packed: &Node,
@@ -119,8 +119,8 @@ pub(crate) fn report_lr_problems(
     scope.end(true);
 }
 
-fn report_one(
-    stores: &mut Universe,
+fn report_one<G>(
+    stores: &mut Universe<G>,
     direction: PackedDirection,
     diagnostic: &PackDiagnostic,
     packed: &Node,
@@ -194,7 +194,7 @@ fn report_one(
 }
 
 /// §663's and §675's shared `<Finish issuing a diagnostic message...>`.
-fn origin_text(stores: &Universe) -> String {
+fn origin_text<G>(stores: &Universe<G>) -> String {
     if stores.output_routine_is_active() {
         return ") has occurred while \\output is active".to_owned();
     }
@@ -225,8 +225,8 @@ fn origin_text(stores: &Universe) -> String {
 /// a discretionary's own pre-break and post-break text followed by skipping
 /// its replacement count. e-TeX 2.6's §175 change prints its L/R direction
 /// subtypes as `[]` instead of ordinary math `$` markers.
-fn short_display(
-    stores: &Universe,
+fn short_display<G>(
+    stores: &Universe<G>,
     list: tex_state::node_arena::PageListId,
     list_layout: DiagnosticListLayout,
 ) -> String {
@@ -255,7 +255,7 @@ impl ShortDisplayRenderer {
         self.font = None;
     }
 
-    pub(crate) fn render_nodes(&mut self, stores: &Universe, nodes: &[Node]) -> String {
+    pub(crate) fn render_nodes<G>(&mut self, stores: &Universe<G>, nodes: &[Node]) -> String {
         let mut out = String::new();
         append_short_display_nodes(
             stores,
@@ -267,26 +267,26 @@ impl ShortDisplayRenderer {
         out
     }
 
-    pub(crate) fn render_line_break_trace_suffix(
+    pub(crate) fn render_line_break_trace_suffix<G>(
         &mut self,
-        stores: &Universe,
+        stores: &Universe<G>,
         list: tex_state::node_arena::PageListId,
     ) -> String {
         self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
     }
 
     #[cfg(test)]
-    fn render_list(
+    fn render_list<G>(
         &mut self,
-        stores: &Universe,
+        stores: &Universe<G>,
         list: tex_state::node_arena::PageListId,
     ) -> String {
         self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
     }
 
-    fn render_list_with_layout(
+    fn render_list_with_layout<G>(
         &mut self,
-        stores: &Universe,
+        stores: &Universe<G>,
         list: tex_state::node_arena::PageListId,
         list_layout: DiagnosticListLayout,
     ) -> String {
@@ -296,8 +296,8 @@ impl ShortDisplayRenderer {
     }
 }
 
-fn append_short_display(
-    stores: &Universe,
+fn append_short_display<G>(
+    stores: &Universe<G>,
     list: tex_state::node_arena::PageListId,
     list_layout: DiagnosticListLayout,
     font_in_short_display: &mut Option<u32>,
@@ -330,8 +330,8 @@ enum DiscReplacementLayout {
     FrozenList,
 }
 
-fn append_short_display_nodes(
-    stores: &Universe,
+fn append_short_display_nodes<G>(
+    stores: &Universe<G>,
     nodes: &[Node],
     disc_layout: DiscReplacementLayout,
     font_in_short_display: &mut Option<u32>,
@@ -409,8 +409,8 @@ fn append_short_display_nodes(
     }
 }
 
-fn append_short_char(
-    stores: &Universe,
+fn append_short_char<G>(
+    stores: &Universe<G>,
     font: tex_state::ids::FontId,
     ch: char,
     font_in_short_display: &mut Option<u32>,

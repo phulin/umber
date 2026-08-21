@@ -41,8 +41,8 @@ pub(crate) struct FinishedEqNo {
     pub boxed: BoxNode,
 }
 
-pub(crate) fn finish_eq_no(
-    stores: &mut Universe,
+pub(crate) fn finish_eq_no<G>(
+    stores: &mut Universe<G>,
     side: EqNoSide,
     content: tex_state::node_arena::PageListId,
     error_context: Option<&MathConversionErrorContext>,
@@ -62,9 +62,9 @@ pub(crate) fn finish_eq_no(
     FinishedEqNo { side, boxed }
 }
 
-pub(crate) fn finish_display_math(
+pub(crate) fn finish_display_math<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     content: tex_state::node_arena::PageListId,
     eq_no: Option<FinishedEqNo>,
     prototype: Option<BoxNode>,
@@ -259,9 +259,9 @@ pub(crate) fn finish_display_math(
     Ok(())
 }
 
-pub(crate) fn finish_display_alignment(
+pub(crate) fn finish_display_alignment<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     finished: crate::align::FinishedAlignment,
 ) -> Result<(), ExecError> {
     append_vertical_contribution(
@@ -349,9 +349,9 @@ const fn tex_half(x: i32) -> i32 {
     }
 }
 
-pub(crate) fn build_page_after_display_resume(
+pub(crate) fn build_page_after_display_resume<G>(
     nest: &ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     error_context: &str,
 ) -> Result<(), ExecError> {
     // tex.web §1200's closing `if nest_ptr=1 then build_page`. `nest_ptr` is
@@ -389,7 +389,7 @@ struct ShrinkTotals {
     filll: Scaled,
 }
 
-fn hlist_shrink(stores: &Universe, nodes: &[Node]) -> ShrinkTotals {
+fn hlist_shrink<G>(stores: &Universe<G>, nodes: &[Node]) -> ShrinkTotals {
     let mut totals = [Scaled::from_raw(0); 4];
     for node in nodes {
         if let Node::Glue { spec, .. } = node {
@@ -405,7 +405,7 @@ fn hlist_shrink(stores: &Universe, nodes: &[Node]) -> ShrinkTotals {
     }
 }
 
-pub(crate) fn pre_display_size(stores: &Universe, line: &BoxNode) -> Scaled {
+pub(crate) fn pre_display_size<G>(stores: &Universe<G>, line: &BoxNode) -> Scaled {
     let quad = stores.font_parameter(stores.current_font(), 6);
     let mut v = line.shift + quad + quad;
     let mut w = Scaled::from_raw(-Scaled::MAX_DIMEN.raw());
@@ -432,8 +432,8 @@ pub(crate) fn pre_display_size(stores: &Universe, line: &BoxNode) -> Scaled {
     w
 }
 
-fn pre_display_node_width(
-    stores: &Universe,
+fn pre_display_node_width<G>(
+    stores: &Universe<G>,
     line: &BoxNode,
     node: tex_state::node_arena::NodeRef<'_>,
 ) -> (Scaled, bool, bool) {

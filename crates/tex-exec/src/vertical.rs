@@ -8,9 +8,9 @@ use tex_state::scaled::Scaled;
 use crate::mode::ignored_depth;
 use crate::{ExecError, Mode, ModeNest};
 
-pub(crate) fn append_node_to_current_list(
+pub(crate) fn append_node_to_current_list<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     node: Node,
 ) -> Result<(), ExecError> {
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
@@ -21,9 +21,9 @@ pub(crate) fn append_node_to_current_list(
     }
 }
 
-pub(crate) fn append_node_to_vertical_list(
+pub(crate) fn append_node_to_vertical_list<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     node: Node,
 ) -> Result<(), ExecError> {
     let Some((height, depth)) = vertical_baseline_dimensions(&node) else {
@@ -72,11 +72,19 @@ pub(crate) fn append_node_to_vertical_list(
     Ok(())
 }
 
-pub(crate) fn append_migrated_contribution(nest: &mut ModeNest, stores: &mut Universe, node: Node) {
+pub(crate) fn append_migrated_contribution<G>(
+    nest: &mut ModeNest,
+    stores: &mut Universe<G>,
+    node: Node,
+) {
     append_vertical_contribution(nest, stores, node);
 }
 
-pub(crate) fn append_vertical_contribution(nest: &mut ModeNest, stores: &mut Universe, node: Node) {
+pub(crate) fn append_vertical_contribution<G>(
+    nest: &mut ModeNest,
+    stores: &mut Universe<G>,
+    node: Node,
+) {
     if is_outer_vertical(nest) {
         stores.append_page_contribution(node);
     } else {
@@ -84,9 +92,9 @@ pub(crate) fn append_vertical_contribution(nest: &mut ModeNest, stores: &mut Uni
     }
 }
 
-pub(crate) fn build_page_if_outer_vertical_with_error_context(
+pub(crate) fn build_page_if_outer_vertical_with_error_context<G>(
     nest: &ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     error_context: &str,
 ) -> Result<(), ExecError> {
     if is_outer_vertical(nest) {

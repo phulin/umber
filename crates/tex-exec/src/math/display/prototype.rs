@@ -12,8 +12,8 @@ use crate::packing_params::{hpack as hpack_nodes, hpack_params};
 /// a nonempty paragraph. Only the two skip boundaries and the finalized last
 /// line's box setting survive until `app_display`; the paragraph material
 /// itself remains owned by the vertical list.
-pub(crate) fn display_line_prototype(stores: &mut Universe, last_line: BoxNode) -> BoxNode {
-    let boundary = |stores: &Universe, parameter, kind| {
+pub(crate) fn display_line_prototype<G>(stores: &mut Universe<G>, last_line: BoxNode) -> BoxNode {
+    let boundary = |stores: &Universe<G>, parameter, kind| {
         let spec = stores.glue_param(parameter);
         if stores.glue(spec) == GlueSpec::ZERO {
             Node::Kern {
@@ -51,8 +51,8 @@ pub(crate) fn display_line_prototype(stores: &mut Universe, last_line: BoxNode) 
 /// The inner `dlist` identity belongs to the formula box. The line appended
 /// to the vertical list is a normal hbox whose math-direction boundaries make
 /// the display transparent to the surrounding TeXXeT paragraph direction.
-pub(super) fn package_directed_display_line(
-    stores: &mut Universe,
+pub(super) fn package_directed_display_line<G>(
+    stores: &mut Universe<G>,
     display_line: BoxNode,
     prototype: Option<BoxNode>,
     mut displacement: Scaled,
@@ -172,8 +172,8 @@ pub(super) fn package_directed_display_line(
     boxed
 }
 
-fn cancel_display_skip(
-    stores: &mut Universe,
+fn cancel_display_skip<G>(
+    stores: &mut Universe<G>,
     original: &tex_state::glue::GlueSpec,
     kind: GlueKind,
     displacement: Scaled,

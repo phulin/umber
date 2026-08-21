@@ -12,7 +12,7 @@ impl ParagraphBreakResult {
     }
 }
 
-pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> LineDimensions {
+pub(crate) fn display_line_dimensions<G>(nest: &ModeNest, stores: &Universe<G>) -> LineDimensions {
     let params = ParagraphParams {
         left_skip: *stores.glue(stores.glue_param(GlueParam::LEFT_SKIP)),
         right_skip: *stores.glue(stores.glue_param(GlueParam::RIGHT_SKIP)),
@@ -46,9 +46,9 @@ pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> Lin
     line_shape(&params).dimensions(2)
 }
 
-pub(crate) fn break_current_paragraph(
+pub(crate) fn break_current_paragraph<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
     reset_paragraph: bool,
     error_context: String,
@@ -262,8 +262,8 @@ fn discretionary_diagnostics_differ(physical: &[Node], semantic: &[Node]) -> boo
     semantic.next().is_some()
 }
 
-fn materialize_pdf_line(
-    stores: &mut Universe,
+fn materialize_pdf_line<G>(
+    stores: &mut Universe<G>,
     nodes: &mut Vec<Node>,
     target: Scaled,
     adjusts_spacing: bool,
@@ -281,8 +281,8 @@ fn materialize_pdf_line(
 /// TeX82 §825: paragraph glue may shrink only at normal order. Each
 /// offending specification is copied and normalized, while recovery is
 /// reported at most once for the whole paragraph.
-fn normalize_paragraph_infinite_shrink(
-    stores: &mut Universe,
+fn normalize_paragraph_infinite_shrink<G>(
+    stores: &mut Universe<G>,
     params: &mut ParagraphParams,
     nodes: &mut [Node],
     tracing: bool,
@@ -325,8 +325,8 @@ fn normalize_paragraph_infinite_shrink(
     Ok(())
 }
 
-pub(crate) fn apply_line_expansion(
-    stores: &mut Universe,
+pub(crate) fn apply_line_expansion<G>(
+    stores: &mut Universe<G>,
     nodes: &mut [Node],
     target: Scaled,
 ) -> Result<(), ExecError> {
@@ -425,7 +425,7 @@ impl PdfLineDimensions {
     }
 }
 
-fn pdf_line_dimensions(stores: &mut Universe) -> PdfLineDimensions {
+fn pdf_line_dimensions<G>(stores: &mut Universe<G>) -> PdfLineDimensions {
     for param in [
         DimenParam::PDF_IGNORED_DIMEN,
         DimenParam::PDF_FIRST_LINE_HEIGHT,
@@ -468,8 +468,8 @@ fn active_text_directions(nodes: &[Node]) -> Vec<Direction> {
     active
 }
 
-fn break_hlist_with_trace(
-    stores: &mut Universe,
+fn break_hlist_with_trace<G>(
+    stores: &mut Universe<G>,
     hlist: Vec<Node>,
     line_params: LineBreakParams,
     fuel: &mut tex_command::CommandFuel,
@@ -535,8 +535,8 @@ fn break_hlist_with_trace(
     }
 }
 
-fn report_line_break_trace(
-    stores: &mut Universe,
+fn report_line_break_trace<G>(
+    stores: &mut Universe<G>,
     nodes: &[Node],
     trace: &[LineBreakTrace],
     missing_hyphens: &[super::hyphenation::MissingHyphenDiagnostic],
@@ -691,8 +691,8 @@ fn report_line_break_trace(
 ///
 /// Callers retain ownership of the node list. The cache value contains only
 /// stable positions, scalar demerits, and detached glue content.
-pub fn cached_pretolerance_plan(
-    stores: &mut Universe,
+pub fn cached_pretolerance_plan<G>(
+    stores: &mut Universe<G>,
     hlist: &[Node],
     line_params: &LineBreakParams,
 ) -> Option<tex_typeset::linebreak::BreakPlan> {
@@ -737,8 +737,8 @@ const PRETOLERANCE_HASH_DOMAINS: [u64; 4] = [
     0x6c62_7072_6574_0004,
 ];
 
-fn compute_and_cache_pretolerance(
-    stores: &mut Universe,
+fn compute_and_cache_pretolerance<G>(
+    stores: &mut Universe<G>,
     key: PureMemoKey,
     hlist: &[Node],
     params: &LineBreakParams,
@@ -748,8 +748,8 @@ fn compute_and_cache_pretolerance(
     plan
 }
 
-fn pretolerance_memo_key(
-    stores: &Universe,
+fn pretolerance_memo_key<G>(
+    stores: &Universe<G>,
     hlist: &[Node],
     params: &LineBreakParams,
 ) -> PureMemoKey {
@@ -822,8 +822,8 @@ fn encode_glue_spec(spec: tex_state::glue::GlueSpec, out: &mut Vec<u8>) {
     out.push(spec.shrink_order as u8);
 }
 
-fn extract_migrating_material(
-    stores: &Universe,
+fn extract_migrating_material<G>(
+    stores: &Universe<G>,
     nodes: &mut Vec<Node>,
     pre_migrated: &mut Vec<Node>,
     migrated: &mut Vec<Node>,
@@ -861,7 +861,7 @@ fn extract_migrating_material(
     }
 }
 
-fn observe_paragraph_material_dependencies(stores: &mut Universe, nodes: &[Node]) {
+fn observe_paragraph_material_dependencies<G>(stores: &mut Universe<G>, nodes: &[Node]) {
     let mut fonts = std::collections::BTreeSet::new();
     let mut characters = std::collections::BTreeSet::new();
     for node in nodes {
@@ -895,7 +895,7 @@ fn observe_paragraph_material_dependencies(stores: &mut Universe, nodes: &[Node]
     }
 }
 
-fn snapshot_paragraph_params(nest: &ModeNest, stores: &mut Universe) -> ParagraphParams {
+fn snapshot_paragraph_params<G>(nest: &ModeNest, stores: &mut Universe<G>) -> ParagraphParams {
     use tex_state::cell::{BankTag, CellId};
     use tex_state::{DependencyEngineField, DependencyKey};
     for param in [
@@ -975,7 +975,7 @@ fn snapshot_paragraph_params(nest: &ModeNest, stores: &mut Universe) -> Paragrap
     }
 }
 
-fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakParams {
+fn line_break_params<G>(stores: &Universe<G>, params: &ParagraphParams) -> LineBreakParams {
     LineBreakParams {
         pretolerance: params.pretolerance,
         tolerance: params.tolerance,
@@ -1047,7 +1047,7 @@ fn line_shape(params: &ParagraphParams) -> LineShape {
     }
 }
 
-pub(crate) fn normal_paragraph(_nest: &mut ModeNest, stores: &mut Universe) {
+pub(crate) fn normal_paragraph<G>(_nest: &mut ModeNest, stores: &mut Universe<G>) {
     // e-TeX [47.1070] resets a non-null interline array through `eq_define`,
     // so [19.277]'s generic assignment hook traces the local write. The club
     // and widow arrays retain their scoped assignments (manual §3.4).
@@ -1077,9 +1077,9 @@ pub(crate) fn normal_paragraph(_nest: &mut ModeNest, stores: &mut Universe) {
     stores.set_paragraph_shape(&[], false);
 }
 
-pub(crate) fn start_paragraph(
+pub(crate) fn start_paragraph<G>(
     nest: &mut ModeNest,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
     indent: bool,
     error_context: &str,
 ) -> Result<(), ExecError> {
@@ -1123,7 +1123,7 @@ pub(crate) fn start_paragraph(
     }
 }
 
-fn reset_after_par(nest: &mut ModeNest, stores: &mut Universe) {
+fn reset_after_par<G>(nest: &mut ModeNest, stores: &mut Universe<G>) {
     normal_paragraph(nest, stores);
 }
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};

@@ -9,16 +9,16 @@ use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use crate::ExecError;
 
-pub(crate) fn prune_page_top(
-    stores: &mut Universe,
+pub(crate) fn prune_page_top<G>(
+    stores: &mut Universe<G>,
     nodes: Vec<Node>,
     split_top_skip: GlueSpec,
 ) -> Vec<Node> {
     prune_page_top_with_discards(stores, nodes, split_top_skip).0
 }
 
-pub(crate) fn prune_page_top_with_discards(
-    stores: &mut Universe,
+pub(crate) fn prune_page_top_with_discards<G>(
+    stores: &mut Universe<G>,
     nodes: Vec<Node>,
     split_top_skip: GlueSpec,
 ) -> (Vec<Node>, Vec<Node>) {
@@ -69,8 +69,8 @@ pub(crate) fn is_page_top_discardable(node: &Node) -> bool {
     )
 }
 
-pub(crate) fn natural_vlist_size(
-    stores: &mut Universe,
+pub(crate) fn natural_vlist_size<G>(
+    stores: &mut Universe<G>,
     content: PageListId,
 ) -> Result<Scaled, ExecError> {
     let packed = vpack_natural(stores, content);
@@ -80,7 +80,7 @@ pub(crate) fn natural_vlist_size(
         .ok_or(ExecError::ArithmeticOverflow)
 }
 
-pub(crate) fn vpack_natural(stores: &mut Universe, content: PageListId) -> BoxNode {
+pub(crate) fn vpack_natural<G>(stores: &mut Universe<G>, content: PageListId) -> BoxNode {
     crate::packing_params::vpack(
         stores,
         content,

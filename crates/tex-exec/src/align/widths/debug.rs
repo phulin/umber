@@ -4,17 +4,17 @@ use tex_state::math::MathField;
 use tex_state::node::Node;
 
 #[cfg(debug_assertions)]
-pub(super) fn debug_assert_no_unset_nodes(stores: &Universe, nodes: &[Node]) {
+pub(super) fn debug_assert_no_unset_nodes<G>(stores: &Universe<G>, nodes: &[Node]) {
     for node in nodes {
         debug_assert_no_unset_node(stores, node);
     }
 }
 
 #[cfg(not(debug_assertions))]
-pub(super) fn debug_assert_no_unset_nodes(_stores: &Universe, _nodes: &[Node]) {}
+pub(super) fn debug_assert_no_unset_nodes<G>(_stores: &Universe<G>, _nodes: &[Node]) {}
 
 #[cfg(debug_assertions)]
-fn debug_assert_no_unset_node(stores: &Universe, node: &Node) {
+fn debug_assert_no_unset_node<G>(stores: &Universe<G>, node: &Node) {
     match node {
         Node::Unset(_) => panic!("unset node escaped fin_align"),
         Node::HList(box_node) | Node::VList(box_node) => {
@@ -63,7 +63,10 @@ fn debug_assert_no_unset_node(stores: &Universe, node: &Node) {
 }
 
 #[cfg(debug_assertions)]
-fn debug_assert_no_unset_nodes_in(stores: &Universe, list: tex_state::node_arena::PageListId) {
+fn debug_assert_no_unset_nodes_in<G>(
+    stores: &Universe<G>,
+    list: tex_state::node_arena::PageListId,
+) {
     for node in stores
         .page_node_list(list)
         .expect("alignment child belongs to the live page arena")
@@ -74,7 +77,7 @@ fn debug_assert_no_unset_nodes_in(stores: &Universe, list: tex_state::node_arena
 }
 
 #[cfg(debug_assertions)]
-fn debug_assert_math_field(stores: &Universe, field: &MathField) {
+fn debug_assert_math_field<G>(stores: &Universe<G>, field: &MathField) {
     match field {
         MathField::SubBox(list) | MathField::SubMlist(list) => {
             debug_assert_no_unset_nodes_in(stores, *list)

@@ -26,14 +26,14 @@ struct SetConfig<'a> {
     offset: Scaled,
 }
 
-pub(super) fn set_alignment_nodes(
+pub(super) fn set_alignment_nodes<G>(
     kind: AlignmentKind,
     rows: &[Node],
     resolved: &ResolvedWidths,
     prototype: &Prototype,
     empty: PageListId,
     offset: Scaled,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<Vec<Node>, ExecError> {
     let config = SetConfig {
         kind,
@@ -66,7 +66,7 @@ pub(super) fn set_alignment_nodes(
 /// indent one by wrapping it in a box. §807 shifts rows by the same `o`, and
 /// leaving the rule unwrapped left it starting at the margin while every row
 /// beside it was indented (`umber2-jnfg`).
-fn set_running_rule(config: &SetConfig<'_>, node: &Node, stores: &mut Universe) -> Node {
+fn set_running_rule<G>(config: &SetConfig<'_>, node: &Node, stores: &mut Universe<G>) -> Node {
     let prototype = &config.prototype.box_node;
     let Node::Rule {
         width,
@@ -99,10 +99,10 @@ fn set_running_rule(config: &SetConfig<'_>, node: &Node, stores: &mut Universe) 
     Node::HList(packed)
 }
 
-fn set_row(
+fn set_row<G>(
     config: &SetConfig<'_>,
     row: &UnsetNode,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<Node, ExecError> {
     let children = set_row_children(config, row, stores)?;
     let children = stores.publish_page_nodes(&children);
@@ -136,10 +136,10 @@ fn set_row(
     })
 }
 
-fn set_row_children(
+fn set_row_children<G>(
     config: &SetConfig<'_>,
     row: &UnsetNode,
-    stores: &Universe,
+    stores: &Universe<G>,
 ) -> Result<Vec<Node>, ExecError> {
     let mut out = Vec::new();
     let mut column = 0usize;
@@ -169,13 +169,13 @@ fn set_row_children(
     Ok(out)
 }
 
-fn set_cell(
+fn set_cell<G>(
     config: &SetConfig<'_>,
     row: &UnsetNode,
     cell: &UnsetNode<PageListId>,
     column: usize,
     span: usize,
-    stores: &Universe,
+    stores: &Universe<G>,
 ) -> Result<Node, ExecError> {
     let width = config.resolved.columns[column];
     let target = spanned_target(column, span, config.resolved, config.prototype, stores)?;
@@ -210,12 +210,12 @@ fn set_cell(
     })
 }
 
-fn spanned_target(
+fn spanned_target<G>(
     column: usize,
     span: usize,
     resolved: &ResolvedWidths,
     prototype: &Prototype,
-    stores: &Universe,
+    stores: &Universe<G>,
 ) -> Result<Scaled, ExecError> {
     let mut target = resolved.columns[column];
     for offset in 1..span {

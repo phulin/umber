@@ -31,8 +31,8 @@ pub(crate) enum SelectedPageOutput {
 /// Selects and packages one pending page without accessing input. Main control
 /// main control owns the subsequent mode/group transition; command control
 /// owns replay of `\\output` itself.
-pub(crate) fn select_pending_page_output(
-    stores: &mut Universe,
+pub(crate) fn select_pending_page_output<G>(
+    stores: &mut Universe<G>,
     fire_up: PageFireUp,
     error_context: String,
 ) -> Result<SelectedPageOutput, ExecError> {
@@ -59,8 +59,8 @@ pub(crate) fn select_pending_page_output(
 
 /// TeX82 §1026's input-free tail after the command-owned output list has
 /// closed.  `output_nodes` is the internal-vertical list built by the routine.
-pub(crate) fn resume_page_builder_after_output(
-    stores: &mut Universe,
+pub(crate) fn resume_page_builder_after_output<G>(
+    stores: &mut Universe<G>,
     output_nodes: Vec<Node>,
     error_context: String,
 ) -> Result<(), ExecError> {
@@ -73,8 +73,8 @@ pub(crate) fn resume_page_builder_after_output(
     crate::page_builder::build_page_with_error_context(stores, &error_context)
 }
 
-pub(crate) fn prepare_box255(
-    stores: &mut Universe,
+pub(crate) fn prepare_box255<G>(
+    stores: &mut Universe<G>,
     fire_up: PageFireUp,
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
@@ -116,7 +116,7 @@ pub(crate) fn prepare_box255(
     Ok(())
 }
 
-fn update_page_marks_at_fire_up(stores: &mut Universe, page_nodes: &[Node]) {
+fn update_page_marks_at_fire_up<G>(stores: &mut Universe<G>, page_nodes: &[Node]) {
     let mut classes = stores.page_mark_classes().collect::<BTreeSet<_>>();
     classes.insert(0);
     for node in page_nodes {
@@ -204,8 +204,8 @@ struct SplitInsertionContext {
     floating_penalty: i32,
 }
 
-fn distribute_insertions(
-    stores: &mut Universe,
+fn distribute_insertions<G>(
+    stores: &mut Universe<G>,
     page_nodes: Vec<Node>,
     error_context: Option<&str>,
 ) -> Result<DistributedInsertions, ExecError> {
@@ -304,8 +304,8 @@ fn distribute_insertions(
     })
 }
 
-fn insertion_box_nodes(
-    stores: &mut Universe,
+fn insertion_box_nodes<G>(
+    stores: &mut Universe<G>,
     class: u16,
     error_context: Option<&str>,
 ) -> Result<Vec<Node>, ExecError> {
@@ -334,8 +334,8 @@ fn insertion_box_nodes(
     }
 }
 
-fn split_insertion_remainder(
-    stores: &mut Universe,
+fn split_insertion_remainder<G>(
+    stores: &mut Universe<G>,
     queue: &mut InsertionQueue,
     context: SplitInsertionContext,
 ) -> Result<Option<Node>, ExecError> {
@@ -372,15 +372,15 @@ fn split_insertion_remainder(
     }))
 }
 
-fn package_insertion_box(stores: &mut Universe, class: u16, nodes: Vec<Node>) {
+fn package_insertion_box<G>(stores: &mut Universe<G>, class: u16, nodes: Vec<Node>) {
     let list = stores.publish_page_nodes(&nodes);
     let packed = vpack_natural(stores, list);
     let boxed = stores.publish_page_nodes(&[Node::VList(packed)]);
     stores.assign_page_box_global(class, boxed);
 }
 
-pub(crate) fn prepend_output_heldover(
-    stores: &mut Universe,
+pub(crate) fn prepend_output_heldover<G>(
+    stores: &mut Universe<G>,
     output_nodes: Vec<Node>,
     discard_rewritten_break: bool,
 ) {
@@ -413,8 +413,8 @@ pub(crate) fn prepend_output_heldover(
     stores.prepend_page_contributions(heldover);
 }
 
-fn output_penalty_and_rewrite_break(
-    stores: &mut Universe,
+fn output_penalty_and_rewrite_break<G>(
+    stores: &mut Universe<G>,
     after_break: &mut Vec<Node>,
     fire_up: PageFireUp,
 ) -> i32 {
@@ -441,8 +441,8 @@ fn output_penalty_and_rewrite_break(
 /// supplies §82's context. Main control renders its live command
 /// stack; only the explicit source-free test seam renders the last published
 /// input summary.
-pub(crate) fn report_output_loop(
-    stores: &mut Universe,
+pub(crate) fn report_output_loop<G>(
+    stores: &mut Universe<G>,
     dead_cycles: i32,
     context: String,
 ) -> Result<(), ExecError> {
@@ -461,8 +461,8 @@ pub(crate) fn report_output_loop(
 }
 
 /// TeX.web §1015's `<Ensure that box 255 is empty before output>`.
-fn report_box255_not_void(
-    stores: &mut Universe,
+fn report_box255_not_void<G>(
+    stores: &mut Universe<G>,
     deleted: PageListId,
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
@@ -485,8 +485,8 @@ fn report_box255_not_void(
 }
 
 /// TeX.web §1028's `<Ensure that box 255 is empty after output>`.
-pub(crate) fn report_box255_not_emptied(
-    stores: &mut Universe,
+pub(crate) fn report_box255_not_emptied<G>(
+    stores: &mut Universe<G>,
     deleted: PageListId,
     context: String,
 ) -> Result<(), ExecError> {
@@ -506,7 +506,7 @@ pub(crate) fn report_box255_not_emptied(
 }
 
 /// TeX82 §199's `box_error` tail after the caller's recoverable error.
-fn report_deleted_box(stores: &mut Universe, deleted: PageListId) {
+fn report_deleted_box<G>(stores: &mut Universe<G>, deleted: PageListId) {
     let dump = crate::node_dump::dump_page_list(
         stores,
         deleted,
@@ -520,7 +520,7 @@ fn report_deleted_box(stores: &mut Universe, deleted: PageListId) {
     diagnostic.end(true);
 }
 
-pub(crate) fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError> {
+pub(crate) fn take_box255_node<G>(stores: &mut Universe<G>) -> Result<Node, ExecError> {
     let owner = stores
         .take_box_to_page(255)
         .ok_or(ExecError::MissingToken { context: "box" })?;
@@ -538,7 +538,7 @@ pub(crate) fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError>
 ///
 /// `tail_append` is a plain list append, so none of §679's `append_to_vlist`
 /// baselineskip interposition applies and `prev_depth` is left alone.
-pub(crate) fn append_end_job_contributions(stores: &mut Universe) {
+pub(crate) fn append_end_job_contributions<G>(stores: &mut Universe<G>) {
     let empty = tex_state::node_arena::PageListId::empty();
     stores.append_page_contribution(Node::HList(BoxNode::new(BoxNodeFields {
         width: stores.dimen_param(DimenParam::H_SIZE),
@@ -572,7 +572,7 @@ pub(crate) fn append_end_job_contributions(stores: &mut Universe) {
 /// §1051's `privileged` has already restricted this to outer vertical mode,
 /// where `head`/`tail` *is* the contribution list, so `head=tail` is exactly
 /// "no contributions are waiting for `build_page`".
-pub(crate) fn job_is_all_over(stores: &Universe) -> bool {
+pub(crate) fn job_is_all_over<G>(stores: &Universe<G>) -> bool {
     stores.current_page_len() == 0
         && stores.page_contributions().is_empty()
         && stores.page_integer(PageInteger::DeadCycles) == 0

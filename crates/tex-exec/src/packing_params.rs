@@ -13,7 +13,7 @@ use crate::pack_report::{DiagnosticListLayout, PackedDirection, report_pack_diag
 mod tests;
 
 #[must_use]
-pub(crate) fn hpack_params(stores: &Universe) -> HpackParams {
+pub(crate) fn hpack_params<G>(stores: &Universe<G>) -> HpackParams {
     HpackParams {
         hbadness: stores.int_param(IntParam::HBADNESS),
         hfuzz: stores.dimen_param(DimenParam::HFUZZ),
@@ -22,7 +22,7 @@ pub(crate) fn hpack_params(stores: &Universe) -> HpackParams {
 }
 
 #[must_use]
-pub(crate) fn vpack_params(stores: &Universe) -> VpackParams {
+pub(crate) fn vpack_params<G>(stores: &Universe<G>) -> VpackParams {
     VpackParams {
         vbadness: stores.int_param(IntParam::VBADNESS),
         vfuzz: stores.dimen_param(DimenParam::VFUZZ),
@@ -30,8 +30,8 @@ pub(crate) fn vpack_params(stores: &Universe) -> VpackParams {
     }
 }
 
-pub(crate) fn hpack(
-    stores: &mut Universe,
+pub(crate) fn hpack<G>(
+    stores: &mut Universe<G>,
     list: PageListId,
     spec: PackSpec,
     params: HpackParams,
@@ -46,8 +46,8 @@ pub(crate) fn hpack(
 /// TeX's overfull-rule branch mutates the packed list before §663 displays
 /// it, so callers that own that branch must finish decoration before calling
 /// [`report_hpack`]. Ordinary callers use [`hpack`], which reports once.
-pub(crate) fn hpack_unreported(
-    stores: &mut Universe,
+pub(crate) fn hpack_unreported<G>(
+    stores: &mut Universe<G>,
     list: PageListId,
     spec: PackSpec,
     params: HpackParams,
@@ -75,8 +75,8 @@ pub(crate) fn hpack_unreported(
     (packed, lr_problems)
 }
 
-pub(crate) fn report_hpack(
-    stores: &mut Universe,
+pub(crate) fn report_hpack<G>(
+    stores: &mut Universe<G>,
     packed: &PackedBox,
     lr_problems: Option<(usize, usize)>,
 ) {
@@ -98,8 +98,8 @@ pub(crate) fn report_hpack(
     }
 }
 
-pub(crate) fn recover_texxet_directions(
-    stores: &Universe,
+pub(crate) fn recover_texxet_directions<G>(
+    stores: &Universe<G>,
     nodes: &mut Vec<Node>,
 ) -> Option<(usize, usize)> {
     if stores.int_param(IntParam::TEX_XET_STATE) <= 0 {
@@ -134,8 +134,8 @@ pub(crate) fn recover_texxet_directions(
     (missing != 0 || extra != 0).then_some((missing, extra))
 }
 
-pub(crate) fn vpack(
-    stores: &mut Universe,
+pub(crate) fn vpack<G>(
+    stores: &mut Universe<G>,
     list: PageListId,
     spec: PackSpec,
     params: VpackParams,
@@ -159,8 +159,8 @@ pub(crate) fn vpack(
     packed
 }
 
-pub(crate) fn vtop(
-    stores: &mut Universe,
+pub(crate) fn vtop<G>(
+    stores: &mut Universe<G>,
     list: PageListId,
     spec: PackSpec,
     params: VpackParams,

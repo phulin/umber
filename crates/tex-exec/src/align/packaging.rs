@@ -33,8 +33,8 @@ pub(crate) enum UnsetPackContext {
 /// place any alignment row or column commits a span count to the quarterword
 /// field, so the guard belongs here rather than at each individual caller --
 /// every present and future §796 packaging site inherits it.
-pub(crate) fn make_unset_node(
-    stores: &mut Universe,
+pub(crate) fn make_unset_node<G>(
+    stores: &mut Universe<G>,
     children: tex_state::node_arena::PageListId,
     kind: UnsetKind,
     span_count: u16,

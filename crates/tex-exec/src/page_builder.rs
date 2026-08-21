@@ -24,14 +24,14 @@ const PAGE_EPISODE_SCHEMA: u32 = 1;
 const PAGE_ENV_HASH_DOMAIN: u64 = 0x7061_6765_656e_7601;
 
 #[cfg(test)]
-pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
+pub(crate) fn build_page<G>(stores: &mut Universe<G>) -> Result<(), ExecError> {
     build_page_impl(stores, None)
 }
 
 /// Runs TeX82's page builder with the live §82 input display of the command
 /// whose contribution triggered it.
-pub(crate) fn build_page_with_error_context(
-    stores: &mut Universe,
+pub(crate) fn build_page_with_error_context<G>(
+    stores: &mut Universe<G>,
     error_context: &str,
 ) -> Result<(), ExecError> {
     build_page_impl(stores, Some(error_context))
@@ -40,7 +40,10 @@ pub(crate) fn build_page_with_error_context(
 /// The shared implementation. `None` is reserved for input-free continuations
 /// that have no borrowed command cursor and therefore use the last published
 /// Universe summary.
-fn build_page_impl(stores: &mut Universe, error_context: Option<&str>) -> Result<(), ExecError> {
+fn build_page_impl<G>(
+    stores: &mut Universe<G>,
+    error_context: Option<&str>,
+) -> Result<(), ExecError> {
     if stores.page_fire_up().is_some() {
         return Ok(());
     }
@@ -84,7 +87,7 @@ fn build_page_impl(stores: &mut Universe, error_context: Option<&str>) -> Result
                         .ok()
                         .and_then(|ordinal| input_origins.get(ordinal))
                         .cloned()
-                        .unwrap_or_else(tex_state::provenance::OriginRef::unknown)
+                        .unwrap_or_else(tex_state::token::OriginId::UNKNOWN)
                 })
                 .collect::<Vec<_>>()
         });
@@ -142,7 +145,7 @@ fn build_page_impl(stores: &mut Universe, error_context: Option<&str>) -> Result
     Ok(())
 }
 
-fn page_episode_key(stores: &Universe) -> PureMemoKey {
+fn page_episode_key<G>(stores: &Universe<G>) -> PureMemoKey {
     let page = stores.page_memo_fingerprint();
     let mut classes: Vec<u16> = stores
         .page_contributions()
@@ -190,7 +193,10 @@ fn page_episode_key(stores: &Universe) -> PureMemoKey {
     )
 }
 
-fn build_page_cold(stores: &mut Universe, error_context: Option<&str>) -> Result<(), ExecError> {
+fn build_page_cold<G>(
+    stores: &mut Universe<G>,
+    error_context: Option<&str>,
+) -> Result<(), ExecError> {
     if stores.page_fire_up().is_some() {
         return Ok(());
     }
@@ -286,8 +292,8 @@ fn build_page_cold(stores: &mut Universe, error_context: Option<&str>) -> Result
     Ok(())
 }
 
-fn prepare_insertion(
-    stores: &mut Universe,
+fn prepare_insertion<G>(
+    stores: &mut Universe<G>,
     node: &Node,
     error_context: Option<&str>,
 ) -> Result<Option<Node>, ExecError> {
@@ -342,8 +348,8 @@ fn prepare_insertion(
     Ok(replacement)
 }
 
-fn create_page_insertion(
-    stores: &mut Universe,
+fn create_page_insertion<G>(
+    stores: &mut Universe<G>,
     class: u16,
     error_context: Option<&str>,
 ) -> Result<PageInsertion, ExecError> {
@@ -363,8 +369,8 @@ fn create_page_insertion(
     Ok(insertion)
 }
 
-fn insertion_box_size(
-    stores: &mut Universe,
+fn insertion_box_size<G>(
+    stores: &mut Universe<G>,
     class: u16,
     error_context: Option<&str>,
 ) -> Result<Scaled, ExecError> {
@@ -387,8 +393,8 @@ fn insertion_box_size(
 
 /// TeX82 §993's `ensure_vbox`, used both when a class first reaches the page
 /// and when §1018 prepares insertion queues during `fire_up`.
-pub(crate) fn ensure_insertion_vbox(
-    stores: &mut Universe,
+pub(crate) fn ensure_insertion_vbox<G>(
+    stores: &mut Universe<G>,
     class: u16,
     error_context: Option<&str>,
 ) -> Result<Option<tex_state::node_arena::PageListId>, ExecError> {
@@ -441,7 +447,7 @@ pub(crate) fn ensure_insertion_vbox(
     Ok(None)
 }
 
-fn insertion_delta(stores: &Universe) -> Result<Scaled, ExecError> {
+fn insertion_delta<G>(stores: &Universe<G>) -> Result<Scaled, ExecError> {
     let delta = sub(
         stores.page_dimension(PageDimension::Goal),
         stores.page_dimension(PageDimension::Total),
@@ -450,8 +456,8 @@ fn insertion_delta(stores: &Universe) -> Result<Scaled, ExecError> {
     add(delta, stores.page_dimension(PageDimension::Shrink))
 }
 
-fn split_page_insertion(
-    stores: &mut Universe,
+fn split_page_insertion<G>(
+    stores: &mut Universe<G>,
     insertion: &mut PageInsertion,
     current_index: usize,
     node: &Node,
@@ -516,8 +522,8 @@ fn split_page_insertion(
 }
 
 /// TeX82 §1012's insertion `vert_break` trace.
-fn trace_insertion_split(
-    stores: &mut Universe,
+fn trace_insertion_split<G>(
+    stores: &mut Universe<G>,
     class: u16,
     capacity: Scaled,
     split: &tex_typeset::VerticalBreak,
@@ -539,7 +545,7 @@ fn trace_insertion_split(
     diagnostic.end(false);
 }
 
-fn add_insert_penalty(stores: &mut Universe, penalty: i32) {
+fn add_insert_penalty<G>(stores: &mut Universe<G>, penalty: i32) {
     let value = stores
         .insert_penalties()
         .checked_add(penalty)
@@ -567,7 +573,7 @@ fn inverse_scaled_insertion_capacity(size: Scaled, count: i32) -> Result<Scaled,
     nx_plus_y(1000, quotient, Scaled::from_raw(0)).map_err(|_| ExecError::ArithmeticOverflow)
 }
 
-fn initialize_page_with_topskip(stores: &mut Universe, node: &Node) -> Result<(), ExecError> {
+fn initialize_page_with_topskip<G>(stores: &mut Universe<G>, node: &Node) -> Result<(), ExecError> {
     if stores.page_contents() == PageContents::Empty {
         freeze_page_specs(stores, PageContents::BoxThere);
     } else {
@@ -594,7 +600,7 @@ fn initialize_page_with_topskip(stores: &mut Universe, node: &Node) -> Result<()
     Ok(())
 }
 
-fn prepare_box_or_rule(stores: &mut Universe, node: &Node) -> Result<(), ExecError> {
+fn prepare_box_or_rule<G>(stores: &mut Universe<G>, node: &Node) -> Result<(), ExecError> {
     let total = add(
         stores.page_dimension(PageDimension::Total),
         stores.page_dimension(PageDimension::Depth),
@@ -605,8 +611,8 @@ fn prepare_box_or_rule(stores: &mut Universe, node: &Node) -> Result<(), ExecErr
     Ok(())
 }
 
-fn update_glue_or_kern(
-    stores: &mut Universe,
+fn update_glue_or_kern<G>(
+    stores: &mut Universe<G>,
     node: &Node,
     error_context: Option<&str>,
 ) -> Result<Node, ExecError> {
@@ -638,8 +644,8 @@ fn update_glue_or_kern(
     Ok(replacement.unwrap_or_else(|| node.clone()))
 }
 
-fn finite_page_shrink(
-    stores: &mut Universe,
+fn finite_page_shrink<G>(
+    stores: &mut Universe<G>,
     mut spec: GlueSpec,
     error_context: Option<&str>,
 ) -> Result<GlueSpec, ExecError> {
@@ -650,8 +656,8 @@ fn finite_page_shrink(
     Ok(spec)
 }
 
-fn normalize_insert_content_shrink(
-    stores: &mut Universe,
+fn normalize_insert_content_shrink<G>(
+    stores: &mut Universe<G>,
     insert_node: &Node,
     content_nodes: &mut [Node],
     indices: &[usize],
@@ -705,7 +711,7 @@ fn normalize_insert_content_shrink(
     }))
 }
 
-fn add_glue_stretch(stores: &mut Universe, spec: GlueSpec) -> Result<(), ExecError> {
+fn add_glue_stretch<G>(stores: &mut Universe<G>, spec: GlueSpec) -> Result<(), ExecError> {
     let dimension = match spec.stretch_order {
         Order::Normal => PageDimension::Stretch,
         Order::Fil => PageDimension::FilStretch,
@@ -719,7 +725,7 @@ fn add_glue_stretch(stores: &mut Universe, spec: GlueSpec) -> Result<(), ExecErr
 
 /// tex.web §987's `freeze_page_specs`, including the `\tracingpages` report
 /// its `stat` block prints.
-fn freeze_page_specs(stores: &mut Universe, contents: PageContents) {
+fn freeze_page_specs<G>(stores: &mut Universe<G>, contents: PageContents) {
     stores.freeze_page_specs(contents);
     if stores.int_param(IntParam::TRACING_PAGES) > 0 {
         let mut diagnostic = stores.begin_diagnostic();
@@ -737,7 +743,7 @@ fn freeze_page_specs(stores: &mut Universe, contents: PageContents) {
 /// badness `b`, penalty `pi`, and cost `c` of a candidate breakpoint are known
 /// and before `least_page_cost` is updated, so the trailing `#` marks the
 /// champion the breakpoint is about to become.
-fn trace_page_break_cost(stores: &mut Universe, badness: i32, penalty: i32, cost: i32) {
+fn trace_page_break_cost<G>(stores: &mut Universe<G>, badness: i32, penalty: i32, cost: i32) {
     let least_page_cost = stores.least_page_cost();
     let mut diagnostic = stores.begin_diagnostic();
     diagnostic.print_nl("%");
@@ -791,7 +797,7 @@ fn print_cost(diagnostic: &mut Diagnostic<'_>, value: i32) {
     }
 }
 
-fn check_break(stores: &mut Universe, penalty: i32) -> Result<(), ExecError> {
+fn check_break<G>(stores: &mut Universe<G>, penalty: i32) -> Result<(), ExecError> {
     if penalty >= INF_PENALTY {
         return Ok(());
     }
@@ -831,7 +837,7 @@ fn check_break(stores: &mut Universe, penalty: i32) -> Result<(), ExecError> {
     Ok(())
 }
 
-fn page_badness(stores: &Universe) -> Result<i32, ExecError> {
+fn page_badness<G>(stores: &Universe<G>) -> Result<i32, ExecError> {
     let total = stores.page_dimension(PageDimension::Total);
     let goal = stores.page_dimension(PageDimension::Goal);
     if total < goal {
@@ -859,7 +865,7 @@ fn page_badness(stores: &Universe) -> Result<i32, ExecError> {
     }
 }
 
-fn contribute_front(stores: &mut Universe) -> Result<(), ExecError> {
+fn contribute_front<G>(stores: &mut Universe<G>) -> Result<(), ExecError> {
     ensure_max_depth(stores)?;
     if let Some(node) = stores.pop_page_contribution_front() {
         stores.push_current_page_node(node);
@@ -867,7 +873,7 @@ fn contribute_front(stores: &mut Universe) -> Result<(), ExecError> {
     Ok(())
 }
 
-fn contribute_front_as(stores: &mut Universe, node: Node) -> Result<(), ExecError> {
+fn contribute_front_as<G>(stores: &mut Universe<G>, node: Node) -> Result<(), ExecError> {
     ensure_max_depth(stores)?;
     if stores.pop_page_contribution_front().is_some() {
         stores.update_page_last_from_node(&node);
@@ -876,7 +882,7 @@ fn contribute_front_as(stores: &mut Universe, node: Node) -> Result<(), ExecErro
     Ok(())
 }
 
-fn discard_front(stores: &mut Universe) {
+fn discard_front<G>(stores: &mut Universe<G>) {
     if let Some(node) = stores.pop_page_contribution_front()
         && stores.int_param(tex_state::env::banks::IntParam::SAVING_V_DISCARDS) > 0
     {
@@ -884,7 +890,7 @@ fn discard_front(stores: &mut Universe) {
     }
 }
 
-fn ensure_max_depth(stores: &mut Universe) -> Result<(), ExecError> {
+fn ensure_max_depth<G>(stores: &mut Universe<G>) -> Result<(), ExecError> {
     let depth = stores.page_dimension(PageDimension::Depth);
     let max_depth = stores.page_max_depth();
     if depth > max_depth {

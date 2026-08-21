@@ -15,8 +15,8 @@ use crate::diagnostics;
 use crate::packing_params::{vpack, vpack_params};
 use crate::splitting::{prune_page_top_with_discards, vpack_natural};
 
-pub(crate) fn split_vbox_register(
-    stores: &mut Universe,
+pub(crate) fn split_vbox_register<G>(
+    stores: &mut Universe<G>,
     index: u16,
     height: Scaled,
     error_context: &str,
@@ -83,8 +83,8 @@ pub(crate) fn split_vbox_register(
     )))
 }
 
-fn normalize_split_infinite_shrink(
-    stores: &mut Universe,
+fn normalize_split_infinite_shrink<G>(
+    stores: &mut Universe<G>,
     nodes: &mut [Node],
     indices: &[usize],
     error_context: &str,
@@ -108,8 +108,8 @@ fn normalize_split_infinite_shrink(
     Ok(())
 }
 
-fn replace_split_source(
-    stores: &mut Universe,
+fn replace_split_source<G>(
+    stores: &mut Universe<G>,
     index: u16,
     remainder: Vec<Node>,
     split_top_skip: tex_state::glue::GlueSpec,
@@ -129,7 +129,7 @@ fn replace_split_source(
     stores.replace_page_box(index, boxed);
 }
 
-fn update_split_marks(stores: &mut Universe, nodes: &[Node]) {
+fn update_split_marks<G>(stores: &mut Universe<G>, nodes: &[Node]) {
     clear_split_marks(stores);
     let mut classes = BTreeMap::new();
     for node in nodes {
@@ -147,7 +147,7 @@ fn update_split_marks(stores: &mut Universe, nodes: &[Node]) {
     }
 }
 
-fn clear_split_marks(stores: &mut Universe) {
+fn clear_split_marks<G>(stores: &mut Universe<G>) {
     stores.clear_page_mark(PageMark::SplitFirst);
     stores.clear_page_mark(PageMark::SplitBot);
     let classes = stores.page_mark_classes().collect::<Vec<_>>();

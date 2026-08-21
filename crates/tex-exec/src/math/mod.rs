@@ -40,7 +40,7 @@ impl MathFontFailure {
     }
 }
 
-pub(super) fn math_font_failure(stores: &mut Universe) -> Option<MathFontFailure> {
+pub(super) fn math_font_failure<G>(stores: &mut Universe<G>) -> Option<MathFontFailure> {
     const SIZES: [MathFontSize; 3] = [
         MathFontSize::Text,
         MathFontSize::Script,
@@ -81,8 +81,8 @@ pub(super) fn math_font_failure(stores: &mut Universe) -> Option<MathFontFailure
     None
 }
 
-pub(crate) fn reject_invalid_math_fonts(
-    stores: &mut Universe,
+pub(crate) fn reject_invalid_math_fonts<G>(
+    stores: &mut Universe<G>,
     context: String,
 ) -> Result<bool, crate::ExecError> {
     let Some(failure) = math_font_failure(stores) else {

@@ -19,8 +19,8 @@ struct HyphenationContext {
 
 /// Installs patterns whose §963 duplicate diagnostics were already reported
 /// by the canonical live scanner.
-pub(crate) fn apply_scanned_patterns(
-    stores: &mut Universe,
+pub(crate) fn apply_scanned_patterns<G>(
+    stores: &mut Universe<G>,
     patterns: Vec<PatternSpec>,
 ) -> Result<(), ExecError> {
     let language = current_language(stores);
@@ -53,7 +53,10 @@ pub(crate) fn pattern_capacity_error(
 /// Installs exception words the canonical live scanner already normalized, so
 /// §935's `Not a letter` was reported where §82 could still show the offending
 /// character (`tex_command::ScannedHyphenationData`).
-pub(crate) fn apply_scanned_hyphenation_exceptions(stores: &mut Universe, words: Vec<Vec<char>>) {
+pub(crate) fn apply_scanned_hyphenation_exceptions<G>(
+    stores: &mut Universe<G>,
+    words: Vec<Vec<char>>,
+) {
     let language = current_language(stores);
     for word in words {
         let (exception, not_letters) = parse_exception_word(stores, language, &word, false);
@@ -64,8 +67,8 @@ pub(crate) fn apply_scanned_hyphenation_exceptions(stores: &mut Universe, words:
     }
 }
 
-fn hyphenated_hlist_with_projections(
-    stores: &mut Universe,
+fn hyphenated_hlist_with_projections<G>(
+    stores: &mut Universe<G>,
     nodes: Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
     projection: &mut HyphenationProjection<'_>,
@@ -123,8 +126,8 @@ fn hyphenated_hlist_with_projections(
 /// semantic pre-break list used by line breaking, while TeX's linked-list
 /// representation exposes the preceding reconstituted character span in the
 /// discretionary's diagnostic pre-break branch.
-pub(crate) fn hyphenated_hlist_sequence_with_fuel(
-    stores: &mut Universe,
+pub(crate) fn hyphenated_hlist_sequence_with_fuel<G>(
+    stores: &mut Universe<G>,
     nodes: Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<
@@ -154,8 +157,8 @@ pub(crate) fn hyphenated_hlist_sequence_with_fuel(
     ))
 }
 
-fn project_physical_pre_break_spans(
-    stores: &mut Universe,
+fn project_physical_pre_break_spans<G>(
+    stores: &mut Universe<G>,
     nodes: &mut [Node],
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
@@ -197,7 +200,7 @@ fn project_physical_pre_break_spans(
         let Some(hyphen) = usable_hyphen_char(stores, font) else {
             continue;
         };
-        let last_origin = origins.last().cloned().unwrap_or_else(OriginRef::unknown);
+        let last_origin = origins.last().cloned().unwrap_or_else(OriginId::unknown);
         let mut pending = chars
             .into_iter()
             .zip(origins)
@@ -236,8 +239,8 @@ fn update_hyphenation_context(node: &Node, language: &mut u8, left: &mut usize, 
     }
 }
 
-fn hyphenate_after_glue(
-    stores: &mut Universe,
+fn hyphenate_after_glue<G>(
+    stores: &mut Universe<G>,
     nodes: &[Node],
     start: usize,
     context: (u8, usize, usize),
@@ -322,8 +325,8 @@ struct HyphenationCandidate {
 
 /// Implements TeX82 §§891--895's bounded scan from the glue after which a
 /// potentially hyphenatable part begins through the same-font letter span.
-fn find_hyphenation_candidate(
-    stores: &Universe,
+fn find_hyphenation_candidate<G>(
+    stores: &Universe<G>,
     nodes: &[Node],
     start: usize,
     context: (u8, usize, usize),
@@ -431,8 +434,8 @@ fn find_hyphenation_candidate(
     })
 }
 
-fn first_word_char(
-    stores: &Universe,
+fn first_word_char<G>(
+    stores: &Universe<G>,
     language: u8,
     node: &Node,
 ) -> Option<(tex_state::ids::FontId, char, char)> {
@@ -491,8 +494,8 @@ fn permitted_word_terminator(nodes: &[Node], mut index: usize) -> bool {
     true
 }
 
-fn parse_exception_word(
-    stores: &Universe,
+fn parse_exception_word<G>(
+    stores: &Universe<G>,
     language: u8,
     word: &[char],
     normalize: bool,
@@ -537,22 +540,22 @@ fn parse_exception_word(
     )
 }
 
-fn normalized_lccode(stores: &Universe, ch: char) -> Option<char> {
+fn normalized_lccode<G>(stores: &Universe<G>, ch: char) -> Option<char> {
     char::from_u32(stores.lccode(ch)).filter(|&mapped| mapped != '\0')
 }
 
-fn normalized_hyphen_code(stores: &Universe, language: u8, ch: char) -> Option<char> {
+fn normalized_hyphen_code<G>(stores: &Universe<G>, language: u8, ch: char) -> Option<char> {
     stores
         .saved_hyphenation_code(language, ch)
         .unwrap_or_else(|| normalized_lccode(stores, ch))
 }
 
-fn current_language(stores: &Universe) -> u8 {
+fn current_language<G>(stores: &Universe<G>) -> u8 {
     u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0)
 }
 
-fn append_hyphenated_word(
-    stores: &mut Universe,
+fn append_hyphenated_word<G>(
+    stores: &mut Universe<G>,
     word: &[WordChar],
     positions: &[usize],
     no_left_boundary: bool,
@@ -642,8 +645,8 @@ fn append_hyphenated_word(
     Ok(())
 }
 
-fn discretionary_through_node(
-    stores: &mut Universe,
+fn discretionary_through_node<G>(
+    stores: &mut Universe<G>,
     word: &[WordChar],
     location: ((usize, usize, usize), usize),
     replacement: Node,
@@ -699,8 +702,8 @@ fn discretionary_through_node(
 /// character boundary represented by both reconstitutions.  Projecting that
 /// boundary here retains TeX's exact replacement count and post-break list
 /// without flattening the semantic ligature used by packing and shipout.
-fn physical_discretionary_projection(
-    stores: &mut Universe,
+fn physical_discretionary_projection<G>(
+    stores: &mut Universe<G>,
     word: &[WordChar],
     span: (usize, usize, usize),
     replacement: &Node,
@@ -776,8 +779,8 @@ fn synchronized_physical_branch_lengths(
     )
 }
 
-fn automatic_discretionary_with_count(
-    stores: &mut Universe,
+fn automatic_discretionary_with_count<G>(
+    stores: &mut Universe<G>,
     pre: &[Node],
     post: &[Node],
     replace: &[Node],
@@ -824,8 +827,8 @@ fn node_original_len(node: &Node) -> usize {
     }
 }
 
-fn discretionary_hyphen(
-    stores: &mut Universe,
+fn discretionary_hyphen<G>(
+    stores: &mut Universe<G>,
     font: tex_state::ids::FontId,
     replacement: Option<Node>,
     node_index: usize,
@@ -838,7 +841,7 @@ fn discretionary_hyphen(
             stores.publish_page_nodes(&[Node::Char {
                 font,
                 ch,
-                origin: OriginRef::unknown(),
+                origin: OriginId::UNKNOWN,
             }])
         },
     );
@@ -858,7 +861,7 @@ fn discretionary_hyphen(
     }
 }
 
-fn usable_hyphen_char(stores: &Universe, font: tex_state::ids::FontId) -> Option<char> {
+fn usable_hyphen_char<G>(stores: &Universe<G>, font: tex_state::ids::FontId) -> Option<char> {
     let code = u8::try_from(stores.font_hyphen_char(font)).ok()?;
     stores
         .font_char_exists(font, code)
@@ -868,8 +871,8 @@ fn usable_hyphen_char(stores: &Universe, font: tex_state::ids::FontId) -> Option
 /// TeX82 §929's `new_character(hf, hyf_char)` at automatic-discretionary
 /// construction. An out-of-range hyphen character disables the attempt in
 /// §923, while an in-range missing glyph warns under §581 and yields no node.
-fn automatic_hyphen_char(
-    stores: &Universe,
+fn automatic_hyphen_char<G>(
+    stores: &Universe<G>,
     font: tex_state::ids::FontId,
     node_index: usize,
     missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
@@ -891,7 +894,7 @@ struct WordChar {
     font: tex_state::ids::FontId,
     ch: char,
     lower: char,
-    origin: OriginRef,
+    origin: OriginId,
 }
 
 impl WordChar {
@@ -907,7 +910,7 @@ use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
 use tex_state::node::{DiscKind, KernKind, Node};
-use tex_state::provenance::OriginRef;
+use tex_state::token::OriginId;
 
 use crate::ExecError;
 use crate::mode::PendingHChar;
@@ -920,15 +923,15 @@ mod tests {
         Node::Char {
             font,
             ch,
-            origin: OriginRef::unknown(),
+            origin: OriginId::UNKNOWN,
         }
     }
 
-    fn candidate(stores: &Universe, nodes: &[Node]) -> Option<HyphenationCandidate> {
+    fn candidate<G>(stores: &Universe<G>, nodes: &[Node]) -> Option<HyphenationCandidate> {
         find_hyphenation_candidate(stores, nodes, 0, (0, 1, 1))
     }
 
-    fn second_font(stores: &mut Universe) -> tex_state::ids::FontId {
+    fn second_font<G>(stores: &mut Universe<G>) -> tex_state::ids::FontId {
         stores.intern_font(tex_state::font::LoadedFont::new(
             "second",
             "second.tfm",
@@ -941,7 +944,7 @@ mod tests {
         ))
     }
 
-    fn diagnostic_text(stores: &Universe) -> String {
+    fn diagnostic_text<G>(stores: &Universe<G>) -> String {
         stores
             .world()
             .effect_records()

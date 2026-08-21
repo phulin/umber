@@ -24,11 +24,11 @@ use crate::packing_params::{hpack, hpack_params as read_hpack_params, vpack, vpa
 /// o:=display_indent else o:=0`. It is the shift §807 gives every row and
 /// §806 gives every running rule, so it must be decided once, from the mode
 /// enclosing the alignment level, and applied to both.
-pub(crate) fn finish_alignment(
+pub(crate) fn finish_alignment<G>(
     state: &AlignState,
     rows: &[Node],
     offset: Scaled,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Result<Vec<Node>, ExecError> {
     let resolved = resolution::resolve_widths(state, rows, stores)?;
     let empty = PageListId::empty();
@@ -57,11 +57,11 @@ struct Prototype {
     box_node: BoxNode,
 }
 
-fn pack_prototype(
+fn pack_prototype<G>(
     state: &AlignState,
     resolved: &ResolvedWidths,
     empty: &PageListId,
-    stores: &mut Universe,
+    stores: &mut Universe<G>,
 ) -> Prototype {
     let nodes = prototype_nodes(state.kind(), resolved, empty);
     let list = stores.publish_page_nodes(&nodes);
@@ -93,7 +93,7 @@ fn prototype_nodes(
     nodes
 }
 
-fn hpack_params(stores: &Universe) -> HpackParams {
+fn hpack_params<G>(stores: &Universe<G>) -> HpackParams {
     let mut params = read_hpack_params(stores);
     params.overfull_rule = Scaled::from_raw(0);
     params
