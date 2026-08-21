@@ -140,7 +140,12 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         assert_eq!(
-            insertion_box_nodes(&mut stores, 2, None).expect("void box is valid"),
+            insertion_box_nodes(
+                &mut stores,
+                2,
+                &crate::diagnostics::ExecutionDiagnosticContext::default(),
+            )
+            .expect("void box is valid"),
             []
         );
         assert!(stores.copy_box_to_page(2).is_none());
@@ -163,7 +168,12 @@ fn fire_up_preserves_void_and_vbox_insertion_queues() {
             .expect("box assignment");
 
         assert_eq!(
-            insertion_box_nodes(&mut stores, 2, None).expect("vbox is valid"),
+            insertion_box_nodes(
+                &mut stores,
+                2,
+                &crate::diagnostics::ExecutionDiagnosticContext::default(),
+            )
+            .expect("vbox is valid"),
             [rule(17), Node::Penalty(23)]
         );
         let retained = stores

@@ -213,7 +213,12 @@ fn page_state_freezes_specs_and_tracks_sorted_insertion_records() {
         for class in [9, 3] {
             ins_class(&mut stores, class, 1_000, 100, 0, 0);
             let node = ins(&mut stores, class, 0, 0, &[]);
-            prepare_insertion(&mut stores, &node, None).expect("white-box operation succeeds");
+            prepare_insertion(
+                &mut stores,
+                &node,
+                &crate::diagnostics::ExecutionDiagnosticContext::default(),
+            )
+            .expect("white-box operation succeeds");
         }
         assert_eq!(
             stores
@@ -365,7 +370,12 @@ fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
     crate::test_harness::with_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         assert_eq!(
-            insertion_box_size(&mut stores, 4, None).expect("white-box operation succeeds"),
+            insertion_box_size(
+                &mut stores,
+                4,
+                &crate::diagnostics::ExecutionDiagnosticContext::default(),
+            )
+            .expect("white-box operation succeeds"),
             s(0)
         );
         let node = boxed(&mut stores, 11, 3, true);
@@ -374,7 +384,12 @@ fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
             .assign_page_box(4, Some(list), tex_state::AssignmentScope::Local)
             .expect("box");
         assert_eq!(
-            insertion_box_size(&mut stores, 4, None).expect("white-box operation succeeds"),
+            insertion_box_size(
+                &mut stores,
+                4,
+                &crate::diagnostics::ExecutionDiagnosticContext::default(),
+            )
+            .expect("white-box operation succeeds"),
             s(14)
         );
         assert!(stores.copy_box_to_page(4).is_some());
@@ -384,7 +399,12 @@ fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
             .assign_page_box(5, Some(list), tex_state::AssignmentScope::Local)
             .expect("box");
         assert_eq!(
-            insertion_box_size(&mut stores, 5, None).expect("white-box operation succeeds"),
+            insertion_box_size(
+                &mut stores,
+                5,
+                &crate::diagnostics::ExecutionDiagnosticContext::default(),
+            )
+            .expect("white-box operation succeeds"),
             s(0)
         );
         assert!(stores.copy_box_to_page(5).is_none());
@@ -431,8 +451,12 @@ fn box_error_voids_the_register_without_creating_local_assignment_history() {
             .begin_group(tex_state::GroupKind::Simple, 0)
             .expect("group");
         assert_eq!(
-            insertion_box_size(&mut stores, register, None)
-                .expect("section 993 recovery is nonfatal"),
+            insertion_box_size(
+                &mut stores,
+                register,
+                &crate::diagnostics::ExecutionDiagnosticContext::default(),
+            )
+            .expect("section 993 recovery is nonfatal"),
             s(0)
         );
         install_box(&mut stores, register, true);
@@ -854,9 +878,19 @@ fn page_insertion_class_order_scaling_skip_and_fit_match_tex82() {
         ins_class(&mut stores, 9, 500, 100_000, 10, 3);
         ins_class(&mut stores, 3, 1_000, 100_000, 4, 3);
         let nine = ins(&mut stores, 9, 20_000, 0, &[]);
-        prepare_insertion(&mut stores, &nine, None).expect("white-box operation succeeds");
+        prepare_insertion(
+            &mut stores,
+            &nine,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("white-box operation succeeds");
         let three = ins(&mut stores, 3, 8_000, 0, &[]);
-        prepare_insertion(&mut stores, &three, None).expect("white-box operation succeeds");
+        prepare_insertion(
+            &mut stores,
+            &three,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("white-box operation succeeds");
         let records = stores.page_insertions();
         assert_eq!(
             records.iter().map(PageInsertion::class).collect::<Vec<_>>(),
@@ -879,7 +913,12 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
         freeze_page_specs(&mut stores, PageContents::InsertsOnly);
         ins_class(&mut stores, 7, 1_000, 5, 0, 0);
         let split = ins(&mut stores, 7, 10, 17, &[rule(10, 0), Node::Penalty(51)]);
-        prepare_insertion(&mut stores, &split, None).expect("white-box operation succeeds");
+        prepare_insertion(
+            &mut stores,
+            &split,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("white-box operation succeeds");
         assert!(matches!(
             stores
                 .page_insertion(7)
@@ -888,7 +927,12 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
             PageInsertionStatus::SplitUp { .. }
         ));
         let before = stores.insert_penalties();
-        prepare_insertion(&mut stores, &split, None).expect("white-box operation succeeds");
+        prepare_insertion(
+            &mut stores,
+            &split,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("white-box operation succeeds");
         assert_eq!(stores.insert_penalties(), before + 17);
         ins_class(&mut stores, 8, 1_000, 100, 0, 0);
         let hbox = boxed(&mut stores, 4, 2, false);
@@ -897,7 +941,12 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
             .assign_page_box(8, Some(list), tex_state::AssignmentScope::Local)
             .expect("box");
         let invalid = ins(&mut stores, 8, 0, 0, &[]);
-        prepare_insertion(&mut stores, &invalid, None).expect("white-box operation succeeds");
+        prepare_insertion(
+            &mut stores,
+            &invalid,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("white-box operation succeeds");
         assert!(stores.copy_box_to_page(8).is_none());
         drop(stores);
         assert!(effects(universe).contains("Insertions can only be added to a vbox"));
@@ -920,7 +969,12 @@ fn page_insertion_split_tracing_reports_class_height_and_penalty() {
         ins_class(&mut stores, 7, 1_000, 20, 0, 0);
         let split = ins(&mut stores, 7, 10, 0, &[rule(10, 0), Node::Penalty(51)]);
 
-        prepare_insertion(&mut stores, &split, None).expect("traced insertion split succeeds");
+        prepare_insertion(
+            &mut stores,
+            &split,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("traced insertion split succeeds");
 
         drop(stores);
         let trace = effects(universe);
@@ -941,9 +995,19 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
         freeze_page_specs(&mut repeated, PageContents::InsertsOnly);
         ins_class(&mut repeated, 2, 500, 40_000, 7_000, 3_000);
         let first = ins(&mut repeated, 2, 10_000, 0, &[]);
-        prepare_insertion(&mut repeated, &first, None).expect("first insertion fits");
+        prepare_insertion(
+            &mut repeated,
+            &first,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("first insertion fits");
         let second = ins(&mut repeated, 2, 20_000, 0, &[]);
-        prepare_insertion(&mut repeated, &second, None).expect("repeated insertion fits");
+        prepare_insertion(
+            &mut repeated,
+            &second,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("repeated insertion fits");
         let record = repeated.page_insertion(2).expect("class record is present");
         assert_eq!(record.height(), s(30_000));
         assert_eq!(record.last_ins_index(), Some(0));
@@ -957,7 +1021,12 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
         freeze_page_specs(&mut exact, PageContents::InsertsOnly);
         ins_class(&mut exact, 3, 1_000, 10, 0, 0);
         let at_capacity = ins(&mut exact, 3, 10, 0, &[]);
-        prepare_insertion(&mut exact, &at_capacity, None).expect("capacity equality fits");
+        prepare_insertion(
+            &mut exact,
+            &at_capacity,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("capacity equality fits");
         assert_eq!(exact.page_dimension(PageDimension::Goal), s(0));
         assert_eq!(
             exact.page_insertion(3).map(|record| record.height()),
@@ -975,7 +1044,12 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
         freeze_page_specs(&mut null_split, PageContents::InsertsOnly);
         ins_class(&mut null_split, 5, 1_000, 20, 0, 0);
         let unsplittable = ins(&mut null_split, 5, 9, 37, &[rule(9, 0)]);
-        prepare_insertion(&mut null_split, &unsplittable, None).expect("null split is recorded");
+        prepare_insertion(
+            &mut null_split,
+            &unsplittable,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("null split is recorded");
         assert_eq!(
             null_split.page_insertion(5).map(|record| record.height()),
             Some(s(9))
@@ -989,8 +1063,12 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
             }
         ));
 
-        prepare_insertion(&mut null_split, &unsplittable, None)
-            .expect("later insertion in split class is held over");
+        prepare_insertion(
+            &mut null_split,
+            &unsplittable,
+            &crate::diagnostics::ExecutionDiagnosticContext::default(),
+        )
+        .expect("later insertion in split class is held over");
         assert_eq!(null_split.insert_penalties(), EJECT_PENALTY + 37);
     });
 }

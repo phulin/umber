@@ -77,7 +77,7 @@ pub(crate) fn resume_page_builder_after_output<G>(
     }
     stores.clear_page_discards();
     prepend_output_heldover(stores, output_nodes, false);
-    crate::page_builder::build_page_with_error_context(stores, &diagnostic_context.output_context)
+    crate::page_builder::build_page_with_diagnostic_context(stores, &diagnostic_context)
 }
 
 pub(crate) fn prepare_box255<G>(
@@ -238,11 +238,7 @@ fn distribute_insertions<G>(
             queues.insert(
                 insertion.class(),
                 InsertionQueue {
-                    nodes: insertion_box_nodes(
-                        stores,
-                        insertion.class(),
-                        Some(&diagnostic_context.output_context),
-                    )?,
+                    nodes: insertion_box_nodes(stores, insertion.class(), diagnostic_context)?,
                     best_ins_index,
                     status: insertion.status(),
                     accepting: true,
@@ -326,11 +322,11 @@ fn distribute_insertions<G>(
 fn insertion_box_nodes<G>(
     stores: &mut CommandContext<'_, G>,
     class: u16,
-    error_context: Option<&str>,
+    diagnostic_context: &ExecutionDiagnosticContext,
 ) -> Result<Vec<Node>, ExecError> {
     // TeX82 §1018 calls §993's `ensure_vbox` again here because an output
     // routine or assignment can replace the class register after page setup.
-    let Some(list) = crate::page_builder::ensure_insertion_vbox(stores, class, error_context)?
+    let Some(list) = crate::page_builder::ensure_insertion_vbox(stores, class, diagnostic_context)?
     else {
         return Ok(Vec::new());
     };

@@ -73,7 +73,7 @@ pub(crate) fn split_vbox_register<G>(
         stores,
         &mut split_nodes,
         &split.infinite_shrink_glue,
-        error_context,
+        diagnostic_context,
     )?;
     let remainder = match split.break_index {
         Some(index) => split_nodes.split_off(index),
@@ -102,7 +102,7 @@ fn normalize_split_infinite_shrink<G>(
     stores: &mut CommandContext<'_, G>,
     nodes: &mut [Node],
     indices: &[usize],
-    error_context: &str,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     for &index in indices {
         let Some(Node::Glue { spec, kind, leader }) = nodes.get(index) else {
@@ -112,7 +112,7 @@ fn normalize_split_infinite_shrink<G>(
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
-        diagnostics::report_split_infinite_shrinkage(stores, error_context)?;
+        diagnostics::report_split_infinite_shrinkage(stores, diagnostic_context)?;
         finite.shrink_order = Order::Normal;
         nodes[index] = Node::Glue {
             spec: finite,

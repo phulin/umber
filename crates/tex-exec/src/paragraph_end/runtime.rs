@@ -82,7 +82,7 @@ pub(crate) fn break_current_paragraph<G>(
         &mut params,
         &mut hlist,
         tracing,
-        Some(diagnostic_context.output_context.clone()),
+        &diagnostic_context,
     )?;
     let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {
@@ -303,7 +303,7 @@ fn normalize_paragraph_infinite_shrink<G>(
     params: &mut ParagraphParams,
     nodes: &mut [Node],
     tracing: bool,
-    mut error_context: Option<String>,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     let mut reported = false;
     let mut normalize = |spec: &mut tex_state::glue::GlueSpec| -> Result<(), ExecError> {
@@ -319,12 +319,7 @@ fn normalize_paragraph_infinite_shrink<G>(
                 // this print-channel boundary at the recovery point.
                 stores.begin_diagnostic().end(true);
             }
-            crate::diagnostics::report_paragraph_infinite_shrinkage(
-                stores,
-                error_context
-                    .take()
-                    .expect("paragraph completion owns its live error context"),
-            )?;
+            crate::diagnostics::report_paragraph_infinite_shrinkage(stores, diagnostic_context)?;
             reported = true;
         }
         glue.shrink_order = Order::Normal;

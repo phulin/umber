@@ -18,7 +18,10 @@ use crate::{ExecError, diagnostics};
 
 #[cfg(test)]
 pub(crate) fn build_page<G>(stores: &mut CommandContext<'_, G>) -> Result<(), ExecError> {
-    build_page_impl(stores, None)
+    build_page_impl(
+        stores,
+        &diagnostics::ExecutionDiagnosticContext::source_free(""),
+    )
 }
 
 /// Runs TeX82's page builder with the live §82 input display of the command
@@ -27,19 +30,29 @@ pub(crate) fn build_page_with_error_context<G>(
     stores: &mut CommandContext<'_, G>,
     error_context: &str,
 ) -> Result<(), ExecError> {
-    build_page_impl(stores, Some(error_context))
+    build_page_impl(
+        stores,
+        &diagnostics::ExecutionDiagnosticContext::source_free(error_context),
+    )
+}
+
+pub(crate) fn build_page_with_diagnostic_context<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
+) -> Result<(), ExecError> {
+    build_page_impl(stores, diagnostic_context)
 }
 
 fn build_page_impl<G>(
     stores: &mut CommandContext<'_, G>,
-    error_context: Option<&str>,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
-    build_page_cold(stores, error_context)
+    build_page_cold(stores, diagnostic_context)
 }
 
 fn build_page_cold<G>(
     stores: &mut CommandContext<'_, G>,
-    error_context: Option<&str>,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     if stores.page_fire_up().is_some() {
         return Ok(());
@@ -78,11 +91,11 @@ fn build_page_cold<G>(
                     if stores.page_fire_up().is_some() {
                         return Ok(());
                     }
-                    let node = update_glue_or_kern(stores, &node, error_context)?;
+                    let node = update_glue_or_kern(stores, &node, diagnostic_context)?;
                     contribute_front_as(stores, node)?;
                 } else {
                     let _ = spec;
-                    let node = update_glue_or_kern(stores, &node, error_context)?;
+                    let node = update_glue_or_kern(stores, &node, diagnostic_context)?;
                     contribute_front_as(stores, node)?;
                 }
             }
@@ -96,10 +109,10 @@ fn build_page_cold<G>(
                     if stores.page_fire_up().is_some() {
                         return Ok(());
                     }
-                    let node = update_glue_or_kern(stores, &node, error_context)?;
+                    let node = update_glue_or_kern(stores, &node, diagnostic_context)?;
                     contribute_front_as(stores, node)?;
                 } else {
-                    let node = update_glue_or_kern(stores, &node, error_context)?;
+                    let node = update_glue_or_kern(stores, &node, diagnostic_context)?;
                     contribute_front_as(stores, node)?;
                 }
             }
@@ -118,7 +131,7 @@ fn build_page_cold<G>(
                 if stores.page_contents() == PageContents::Empty {
                     freeze_page_specs(stores, PageContents::InsertsOnly);
                 }
-                let node = prepare_insertion(stores, &node, error_context)?.unwrap_or(node);
+                let node = prepare_insertion(stores, &node, diagnostic_context)?.unwrap_or(node);
                 contribute_front_as(stores, node)?;
             }
             Node::Whatsit(_)
@@ -139,7 +152,7 @@ fn build_page_cold<G>(
 fn prepare_insertion<G>(
     stores: &mut CommandContext<'_, G>,
     node: &Node,
-    error_context: Option<&str>,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<Option<Node>, ExecError> {
     let Node::Ins {
         class,
@@ -155,7 +168,7 @@ fn prepare_insertion<G>(
 
     let mut insertion = match stores.page_insertion(*class) {
         Some(insertion) => insertion,
-        None => create_page_insertion(stores, *class, error_context)?,
+        None => create_page_insertion(stores, *class, diagnostic_context)?,
     };
     let mut replacement = None;
 
@@ -187,7 +200,7 @@ fn prepare_insertion<G>(
                     node,
                     content.clone(),
                     *split_max_depth,
-                    error_context,
+                    diagnostic_context,
                 )?;
             }
         }
@@ -200,9 +213,9 @@ fn prepare_insertion<G>(
 fn create_page_insertion<G>(
     stores: &mut CommandContext<'_, G>,
     class: u16,
-    error_context: Option<&str>,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<PageInsertion, ExecError> {
-    let existing_height = insertion_box_size(stores, class, error_context)?;
+    let existing_height = insertion_box_size(stores, class, diagnostic_context)?;
     let insertion = PageInsertion::new(class, existing_height);
     let scaled_height = scaled_insertion_size(
         existing_height,
@@ -221,11 +234,7 @@ fn create_page_insertion<G>(
     let shrink = add(stores.page_dimension(PageDimension::Shrink), skip.shrink)?;
     stores.set_page_dimension(PageDimension::Shrink, shrink);
     if skip.shrink_order != Order::Normal && skip.shrink.raw() != 0 {
-        diagnostics::report_insertion_skip_infinite_shrinkage(
-            stores,
-            class,
-            error_context.unwrap_or_default(),
-        )?;
+        diagnostics::report_insertion_skip_infinite_shrinkage(stores, class, diagnostic_context)?;
     }
     Ok(insertion)
 }
@@ -233,9 +242,9 @@ fn create_page_insertion<G>(
 fn insertion_box_size<G>(
     stores: &mut CommandContext<'_, G>,
     class: u16,
-    error_context: Option<&str>,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<Scaled, ExecError> {
-    let Some(list) = ensure_insertion_vbox(stores, class, error_context)? else {
+    let Some(list) = ensure_insertion_vbox(stores, class, diagnostic_context)? else {
         return Ok(Scaled::from_raw(0));
     };
     let Some(node) = stores
@@ -257,7 +266,7 @@ fn insertion_box_size<G>(
 pub(crate) fn ensure_insertion_vbox<G>(
     stores: &mut CommandContext<'_, G>,
     class: u16,
-    error_context: Option<&str>,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<Option<tex_state::node_arena::PageListId>, ExecError> {
     let Some(list) = stores.copy_box_to_page(class) else {
         return Ok(None);
@@ -276,7 +285,7 @@ pub(crate) fn ensure_insertion_vbox<G>(
     // Production page building is synchronous with the contributing command,
     // whose dispatcher supplies §82's live display. Only the explicit
     // source-free test seam falls back to the published summary.
-    let context = error_context.unwrap_or_default().to_owned();
+    let context = diagnostic_context.output_context.clone();
     crate::error_report::report_error(
         stores,
         "Insertions can only be added to a vbox",
@@ -321,7 +330,7 @@ fn split_page_insertion<G>(
     node: &Node,
     content: tex_state::node_arena::PageListId,
     split_max_depth: Scaled,
-    error_context: Option<&str>,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<Option<Node>, ExecError> {
     let class = insertion.class();
     let count = stores
@@ -364,7 +373,7 @@ fn split_page_insertion<G>(
         node,
         &mut content_nodes,
         &split.infinite_shrink_glue,
-        error_context,
+        diagnostic_context,
     )?;
     insertion.set_height(add(insertion.height(), split.best_height_plus_depth)?);
     let scaled_best = scaled_insertion_size(split.best_height_plus_depth, count)?;
@@ -487,14 +496,14 @@ fn prepare_box_or_rule<G>(
 fn update_glue_or_kern<G>(
     stores: &mut CommandContext<'_, G>,
     node: &Node,
-    error_context: Option<&str>,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<Node, ExecError> {
     let mut replacement = None;
     let width = match node {
         Node::Kern { amount, .. } => *amount,
         Node::Glue { spec, kind, leader } => {
             let spec = *spec;
-            let spec = finite_page_shrink(stores, spec, error_context)?;
+            let spec = finite_page_shrink(stores, spec, diagnostic_context)?;
             replacement = Some(Node::Glue {
                 spec,
                 kind: *kind,
@@ -520,10 +529,10 @@ fn update_glue_or_kern<G>(
 fn finite_page_shrink<G>(
     stores: &mut CommandContext<'_, G>,
     mut spec: GlueSpec,
-    error_context: Option<&str>,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<GlueSpec, ExecError> {
     if spec.shrink_order != Order::Normal && spec.shrink.raw() != 0 {
-        diagnostics::report_page_infinite_shrinkage(stores, error_context.unwrap_or_default())?;
+        diagnostics::report_page_infinite_shrinkage(stores, diagnostic_context)?;
         spec.shrink_order = Order::Normal;
     }
     Ok(spec)
@@ -534,7 +543,7 @@ fn normalize_insert_content_shrink<G>(
     insert_node: &Node,
     content_nodes: &mut [Node],
     indices: &[usize],
-    error_context: Option<&str>,
+    diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<Option<Node>, ExecError> {
     if indices.is_empty() {
         return Ok(None);
@@ -549,7 +558,7 @@ fn normalize_insert_content_shrink<G>(
         if finite.shrink_order == Order::Normal || finite.shrink.raw() == 0 {
             continue;
         }
-        diagnostics::report_split_infinite_shrinkage(stores, error_context.unwrap_or_default())?;
+        diagnostics::report_split_infinite_shrinkage(stores, diagnostic_context)?;
         finite.shrink_order = Order::Normal;
         content_nodes[index] = Node::Glue {
             spec: finite,

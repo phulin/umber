@@ -35,47 +35,7 @@ use tex_typeset::PackDiagnostic;
 
 use crate::node_dump::{DumpConfig, dump_node_slice};
 
-/// Detached command-owned values needed to label TeX82 pack diagnostics.
-///
-/// Execution barriers populate this from `CommandState` and the live mode
-/// level. Hot packing kernels never reach back into command or input state.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ExecutionDiagnosticContext {
-    pub(crate) current_line: i32,
-    pub(crate) pack_begin_line: i32,
-    pub(crate) output_routine_active: bool,
-    pub(crate) output_context: String,
-}
-
-impl ExecutionDiagnosticContext {
-    pub(crate) fn new(
-        current_line: i32,
-        pack_begin_line: i32,
-        output_routine_active: bool,
-        output_context: impl Into<String>,
-    ) -> Self {
-        Self {
-            current_line,
-            pack_begin_line,
-            output_routine_active,
-            output_context: output_context.into(),
-        }
-    }
-
-    pub(crate) fn source_free(output_context: impl Into<String>) -> Self {
-        Self {
-            output_context: output_context.into(),
-            ..Self::default()
-        }
-    }
-
-    pub(crate) fn with_pack_begin_line(&self, pack_begin_line: i32) -> Self {
-        Self {
-            pack_begin_line,
-            ..self.clone()
-        }
-    }
-}
+pub(crate) use crate::diagnostics::ExecutionDiagnosticContext;
 
 /// Which of §660's and §674's two reporting sites is speaking.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
