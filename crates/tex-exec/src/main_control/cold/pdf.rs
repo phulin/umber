@@ -1369,7 +1369,14 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         std::array::from_fn(|index| stores.count(u16::try_from(index).expect("0..=9 fits u16")));
     let traced_node = (tracing_output > 0).then(|| node.clone());
     let input_summary = stores.input_summary().clone();
-    let output_open_context = command.state.output_open_context(&stores.command_context());
+    let output_open_context = {
+        let context = stores
+            .command_context()
+            .map_err(|_| ExecError::MissingToken {
+                context: "shipout diagnostic admission",
+            })?;
+        command.state.output_open_context(&context)
+    };
     // Effects live at this point are genuine whatsit output carried forward
     // from before the page; everything after it -- §638's own marker
     // included -- belongs to this shipout and must not be swept into the
@@ -1388,7 +1395,13 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     let command_cell = std::cell::RefCell::new(command);
     let mut expand_write = |stores: &mut Universe<G>, sink: PrintSink, tokens: &[TokenWord]| {
         let mut command = command_cell.borrow_mut();
-        let input_snapshot = command.state.snapshot();
+        let input_snapshot =
+            command
+                .state
+                .snapshot(stores)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "deferred write snapshot",
+                })?;
         // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
         // before moving to the next whatsit. A following write expands only
         // after those effects have happened, so publish the committed prefix
@@ -1402,28 +1415,32 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             );
         }
         effect_cursor.set(stores.world().effect_records().len());
-        let traced = tokens
-            .iter()
-            .copied()
-            .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
-            .collect::<Vec<_>>();
-        let traced = stores.finish_traced_token_list(&traced);
         let expanded = {
             // TeX82 §1370 temporarily sets `mode:=0` while deferred
             // write text expands. §299 names that value "no mode", and
             // §367 updates `shown_mode` if it traces an expandable
             // command during the scan.
             let mode_prefix = command.shown_mode.is_some().then(|| "no mode".to_owned());
-            let mut processor = command.processor(stores);
+            let mut context = stores
+                .command_context()
+                .map_err(|_| ExecError::MissingToken {
+                    context: "deferred write admission",
+                })?;
+            let durable = context
+                .allocate_token_list(tokens)
+                .expect("deferred write fits admitted durable storage");
+            let mut processor = command.processor(context);
             processor.set_command_trace_mode_prefix(mode_prefix);
-            let result = processor.expand_write_text(traced).map_err(command_error);
+            let result = processor
+                .expand_durable_write_text(durable)
+                .map_err(command_error);
             let command_trace_printed = processor.command_trace_printed();
             let diagnostics = processor
                 .take_semantic_diagnostics()
                 .into_iter()
                 .map(PendingDiagnostic::Command)
                 .collect();
-            drop(processor);
+            drop(processor.into_context());
             // TeX82 §1370 performs expansion and then writes the
             // resulting token list on one live `write_out` call stack.
             // Publish §367 traces and scanner diagnostics into the
@@ -1437,8 +1454,10 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         };
         command
             .state
-            .rollback_nested_input_preserving_conditions(input_snapshot)
-            .expect("shipout write replay preserves the command profile");
+            .rollback_nested_input_preserving_conditions(&input_snapshot, stores)
+            .map_err(|_| ExecError::MissingToken {
+                context: "deferred write rollback",
+            })?;
         let expanded = expanded?;
         if let Some(observations) = command.observations.as_mut() {
             observations.committed(CommandObservation::Effect(EffectRecord {

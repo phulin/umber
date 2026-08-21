@@ -64,6 +64,36 @@ pub(in crate::main_control) const fn assignment_scope(
     }
 }
 
+/// Applies TeX82 §1055's unscoped box-register dimension mutation through
+/// the admitted durable/page-node bridge.
+pub(in crate::main_control) fn assign_box_dimension<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
+    index: u16,
+    dimension: tex_state::BoxDimension,
+    value: Scaled,
+) {
+    let Some(root) = stores.copy_box_to_page(index) else {
+        return;
+    };
+    let mut nodes = stores
+        .page_node_list(root)
+        .expect("copied box belongs to the admitted page arena")
+        .nodes()
+        .to_vec();
+    let Some(Node::HList(node) | Node::VList(node)) = nodes.first_mut() else {
+        return;
+    };
+    match dimension {
+        tex_state::BoxDimension::Width => node.width = value,
+        tex_state::BoxDimension::Height => node.height = value,
+        tex_state::BoxDimension::Depth => node.depth = value,
+    }
+    let replacement = stores.publish_page_nodes(nodes);
+    stores
+        .replace_page_box(index, replacement)
+        .expect("mutated box closure fits durable storage");
+}
+
 /// TeX82 §1370's printable-sink framing for an immediate `\write`.
 ///
 /// A closed numbered stream (including stream 16) temporarily becomes a
@@ -513,7 +543,7 @@ pub(in crate::main_control) fn begin_replay_box<G>(
         } else {
             Mode::InternalVertical
         },
-        stores.current_input_line(),
+        i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
     )?;
     if !kind.horizontal() {
         commit_box_normal_paragraph(modes, stores, command);
@@ -634,7 +664,7 @@ pub(in crate::main_control) fn apply_box_shift<G>(
                 } else {
                     Mode::InternalVertical
                 },
-                stores.current_input_line(),
+                i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
             )?;
             if !kind.horizontal() {
                 commit_box_normal_paragraph(modes, stores, command);
@@ -697,7 +727,6 @@ pub(in crate::main_control) fn read_box_register<G>(
         return stores.take_box_to_page(index);
     }
     let root = stores.copy_box_to_page(index)?;
-    stores.observe_box_copy_ref(&root, command.state.transient_dynamic_words());
     Some(root)
 }
 
@@ -741,7 +770,7 @@ pub(in crate::main_control) fn box_end<G>(
         // §1077 defines the register unconditionally: a void `cur_box` makes
         // the destination void, it does not leave the old value in place.
         BoxContext::SetBox(target) => {
-            let boxed = node.map(|node| stores.publish_page_nodes(std::slice::from_ref(&node)));
+            let boxed = node.map(|node| stores.publish_page_nodes(vec![node]));
             commit_set_box_target(target, boxed, stores, command);
             Ok(())
         }
@@ -945,7 +974,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
     if base_metrics.height == accent_x_height {
         modes.current_list_mutation().push(accent_node);
     } else {
-        let children = stores.publish_page_nodes(&[accent_node]);
+        let children = stores.publish_page_nodes(vec![accent_node]);
         let mut boxed =
             crate::box_runtime::hpack_with_overfull_rule(stores, children, PackSpec::Natural);
         boxed.shift = accent_x_height
@@ -978,10 +1007,12 @@ pub(in crate::main_control) fn assign_math_family_font<G>(
     // MATH metrics. Keep this check before the environment mutation so a
     // captured error can restore/retry the command without changing its
     // checkpoint identity.
-    if !stores.font(font).supports_math() {
+    if !stores.font_supports_math(font) {
         return Err(ExecError::OpenTypeMathUnsupported);
     }
-    stores.set_math_family_font(size, family, font, global);
+    stores
+        .assign_math_family_font(size, family, font, assignment_scope(global))
+        .expect("math-family font belongs to admitted state");
     Ok(())
 }
 
@@ -1101,7 +1132,10 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
     // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
     let page_error_context = command.state.output_open_context(stores);
     crate::paragraph_end::end_paragraph_with_fuel(modes, stores, command.state, command.fuel)?;
-    let split_top_skip = *stores.glue(stores.glue_param(GlueParam::SPLIT_TOP_SKIP));
+    let split_top_skip = stores
+        .glue_param(GlueParam::SPLIT_TOP_SKIP)
+        .map(|id| stores.glue(id))
+        .unwrap_or(GlueSpec::ZERO);
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
     let aftergroup =
@@ -1112,7 +1146,7 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         })?;
     schedule_aftergroup(command, stores, aftergroup)?;
     let level = crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
-    let content = stores.publish_page_nodes(level.list().nodes());
+    let content = stores.publish_page_nodes(level.list().nodes().to_vec());
     let params = tex_typeset::VpackParams {
         box_max_depth: Scaled::MAX_DIMEN,
         ..crate::packing_params::vpack_params(stores)
@@ -1589,7 +1623,7 @@ pub(in crate::main_control) fn report_font_parameter_recovery<G>(
         || stores.font_name(font),
         |symbol| stores.resolve(symbol).to_owned(),
     );
-    let count = i32::try_from(stores.classic_math_parameter_count(font)).unwrap_or(i32::MAX);
+    let count = i32::try_from(stores.font_parameter_count(font)).unwrap_or(i32::MAX);
     let mut report = stores.print_err("Font ");
     report
         .print_esc(&name)
@@ -1621,9 +1655,13 @@ pub(in crate::main_control) fn font_identifier_for_definition<G>(
         // TeX82 §1252 constructs a fresh `FONT<char>`/`FONT` string for each
         // active or null target; semantic-name interning must not deduplicate
         // that physical pool allocation.
-        stores.intern_retained_pool_string(&text)
+        stores
+            .intern_retained_pool_string(&text)
+            .expect("retained font identifier fits the session interner")
     } else {
-        stores.intern(&text)
+        stores
+            .intern(&text)
+            .expect("font identifier fits the session interner")
     }
 }
 

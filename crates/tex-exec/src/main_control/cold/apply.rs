@@ -238,12 +238,9 @@ pub(in crate::main_control) fn apply<G>(
             // §1055's `alter_box_dimen` mutates the visible box node
             // directly rather than through the save stack, so the assignment
             // prefix does not change which binding level is affected.
+            let _ = global;
             AssignmentCommitter::new(stores).unscoped(None, |stores| {
-                if global {
-                    stores.set_box_dimension_global(index, dimension, value)
-                } else {
-                    stores.set_box_dimension(index, dimension, value)
-                }
+                assign_box_dimension(stores, index, dimension, value)
             });
             Ok(ReplayStep::Continue)
         }
@@ -488,7 +485,7 @@ pub(in crate::main_control) fn apply<G>(
                 // `mmode+letter`/`mmode+other_char`/`mmode+char_given` cases:
                 // it appends a math-char noad and never begins or continues
                 // a horizontal list from math mode.
-                set_math_char(ch, origin.id(), stores, modes, command)?;
+                set_math_char(ch, origin, stores.take(), modes, command)?;
                 return Ok(ReplayStep::Continue);
             }
             if matches!(
@@ -1096,21 +1093,13 @@ pub(in crate::main_control) fn apply<G>(
         }
         ColdOperation::FontSelect {
             font,
-            selector,
+            selector: _,
             global,
         } => {
             AssignmentCommitter::new(stores).unscoped(None, |stores| {
-                if global {
-                    if let Some(selector) = selector {
-                        stores.set_current_font_selector_global(selector, font)
-                    } else {
-                        stores.set_current_font_global(font)
-                    }
-                } else if let Some(selector) = selector {
-                    stores.set_current_font_selector(selector, font)
-                } else {
-                    stores.set_current_font(font)
-                }
+                stores
+                    .assign_current_font(font, assignment_scope(global))
+                    .expect("current font belongs to admitted state")
             });
             Ok(ReplayStep::Continue)
         }
@@ -1241,12 +1230,12 @@ pub(in crate::main_control) fn apply<G>(
         ColdOperation::GeneratedFontDefinition { definition, global } => {
             if definition.kind == GeneratedFontKind::Copy
                 && matches!(
-                    stores.font(definition.source).construction(),
+                    stores.font_construction(definition.source),
                     tex_fonts::FontConstruction::Letterspaced { .. }
                         | tex_fonts::FontConstruction::Expanded { .. }
                 )
             {
-                let reason = match stores.font(definition.source).construction() {
+                let reason = match stores.font_construction(definition.source) {
                     tex_fonts::FontConstruction::Expanded { .. } => "cannot copy an expanded font",
                     _ => "cannot copy a letterspaced font",
                 };
@@ -2130,12 +2119,24 @@ pub(in crate::main_control) fn apply<G>(
                 }
                 RootedImmediateExtension::OpenOut { stream, file_name } => {
                     let target = replay_openout_target(file_name.packed());
-                    stores.open_output_stream(StreamSlot::new(stream), target.clone());
+                    stores.open_output_stream(StreamSlot::new(stream), target.clone().into());
                     command
                         .capabilities
                         .invalidate_input_unavailability_for_output(&target);
                     if command.state.engine_semantics().supports_pdftex() {
-                        crate::diagnostics::report_openout(stores, stream, &target);
+                        let tracing_online = stores.int_param(IntParam::TRACING_ONLINE);
+                        let (terminal_line_is_open, log_line_is_open) = {
+                            let printer = stores.printer();
+                            (printer.terminal_offset() > 0, printer.log_offset() > 0)
+                        };
+                        let (sink, text) = crate::diagnostics::report_openout(
+                            tracing_online,
+                            terminal_line_is_open,
+                            log_line_is_open,
+                            stream,
+                            &target,
+                        );
+                        write_immediate_text(stores, sink, &text);
                     }
                 }
                 RootedImmediateExtension::Write { stream, tokens } => {
@@ -2308,9 +2309,6 @@ pub(in crate::main_control) fn apply<G>(
             copy,
             glue,
         } => {
-            if copy && let Some(root) = stores.copy_box_to_page(index) {
-                stores.observe_box_copy_ref(&root, command.state.transient_dynamic_words());
-            }
             if let Some(payload) = crate::box_runtime::take_register_payload(stores, index, copy) {
                 let error_context = command.state.output_open_context(&**stores);
                 crate::box_runtime::append_leader_contribution(
@@ -2391,7 +2389,10 @@ pub(in crate::main_control) fn apply<G>(
             }
             let class = class as u16;
             enter_group(stores, command.state, GroupKind::Insert);
-            modes.push_at_line(Mode::InternalVertical, stores.current_input_line())?;
+            modes.push_at_line(
+                Mode::InternalVertical,
+                i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
+            )?;
             // §1099: `normal_paragraph` resets \parshape/\looseness/\hangindent/
             // \hangafter local to the just-opened insert group, exactly like
             // `begin_box` does for `\vbox`/`\vtop` (§1051-2).
@@ -2511,7 +2512,7 @@ pub(in crate::main_control) fn apply<G>(
                 } else {
                     Mode::InternalVertical
                 },
-                stores.current_input_line(),
+                i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
             )?;
             if !kind.horizontal() {
                 commit_box_normal_paragraph(modes, stores, command);
@@ -2572,11 +2573,13 @@ pub(in crate::main_control) fn apply<G>(
                     command.fuel,
                     command.capabilities,
                     command.observations,
-                    stores,
+                    stores.take(),
                 );
-                processor
+                let result = processor
                     .finish_selected_output_routine()
-                    .map_err(command_error)?
+                    .map_err(command_error);
+                stores.restore(processor.into_context());
+                result?
             };
             if unbalanced {
                 crate::error_report::report_error(
@@ -2615,7 +2618,6 @@ pub(in crate::main_control) fn apply<G>(
             // before resuming `build_page`. `unsave` backs every saved
             // `insert_token` into input, including `\aftergroup` material.
             schedule_aftergroup(command, stores, aftergroup)?;
-            stores.set_output_routine_active(false);
             boxes.output_routine_active = false;
             crate::page_output::resume_page_builder_after_output(
                 stores,
@@ -2817,7 +2819,7 @@ pub(in crate::main_control) fn apply<G>(
             // becoming node.
 
             let level = crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
-            let children = stores.publish_page_nodes(level.list().nodes());
+            let children = stores.publish_page_nodes(level.list().nodes().to_vec());
             // TeX82 §1086 snapshots `d:=box_max_depth` before `unsave`.
             // The box body may assign a local, signed `\boxmaxdepth`; that
             // value governs this package operation even though the assignment
@@ -2864,7 +2866,7 @@ pub(in crate::main_control) fn apply<G>(
                     ),
                 })
             };
-            let boxed = stores.publish_page_nodes(std::slice::from_ref(&node));
+            let boxed = stores.publish_page_nodes(vec![node]);
             // TeX82 §1168's `vcenter_group` case of `handle_right_brace`:
             //
             //     vcenter_group: begin end_graf; unsave; save_ptr:=save_ptr-2;
@@ -2985,6 +2987,10 @@ pub(in crate::main_control) fn apply<G>(
                 .map_err(|_| ExecError::MissingToken {
                     context: "alignment lifecycle",
                 })?;
+            let default_tabskip = stores
+                .glue_param(GlueParam::TAB_SKIP)
+                .map(|id| stores.glue(id))
+                .unwrap_or(GlueSpec::ZERO);
             *active_alignment = Some(ActiveReplayAlignment {
                 identity,
                 kind: if vertical {
@@ -3005,8 +3011,8 @@ pub(in crate::main_control) fn apply<G>(
                 align_peek_after_noalign: false,
                 noalign_open: false,
                 captured_rows: Vec::new(),
-                tabskips: vec![*stores.glue(stores.glue_param(GlueParam::TAB_SKIP))],
-                default_tabskip: *stores.glue(stores.glue_param(GlueParam::TAB_SKIP)),
+                tabskips: vec![default_tabskip],
+                default_tabskip,
                 row_migrations: Vec::new(),
                 cell_span: 1,
                 row_open: false,
@@ -3031,7 +3037,7 @@ pub(in crate::main_control) fn apply<G>(
                 } else {
                     AlignmentKind::HAlign
                 }),
-                stores.current_input_line(),
+                i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
             )?;
             if let Some(prev_depth) = enclosing_prev_depth {
                 modes.current_list_mutation().set_prev_depth(prev_depth);
@@ -3381,7 +3387,7 @@ pub(in crate::main_control) fn apply<G>(
                 if !matches!(cat, Catcode::Space) {
                     // TeX82 §1154's `mmode+letter,mmode+other_char:
                     // set_math_char(ho(math_code(cur_chr)))`.
-                    set_math_char(ch, origin.id(), stores, modes, command)?;
+                    set_math_char(ch, origin, stores.take(), modes, command)?;
                 }
                 return Ok(ReplayStep::Continue);
             }
