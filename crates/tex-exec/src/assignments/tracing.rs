@@ -95,18 +95,23 @@ fn escaped_at(escape_char: i32, name: &str) -> String {
     text
 }
 
-fn restoration_token_text<G>(
+fn restoration_control_sequence_text<G>(
     stores: &CommandContext<'_, G>,
     escape_char: i32,
-    token: Token,
+    symbol: Symbol,
 ) -> String {
-    let display = RestorationTokenDisplay {
-        stores,
-        escape_char,
-    };
-    let mut text = String::new();
-    tex_state::token_show::append_token_show_text(&display, token, &mut text);
-    text
+    let name = stores.resolve(symbol);
+    match stores.control_sequence_kind(symbol) {
+        ControlSequenceKind::ActiveCharacter => name.to_owned(),
+        ControlSequenceKind::Null => {
+            let mut text = escaped_at(escape_char, "csname");
+            text.push_str(&escaped_at(escape_char, "endcsname"));
+            text
+        }
+        ControlSequenceKind::SingleCharacter
+        | ControlSequenceKind::Named
+        | ControlSequenceKind::Internal => escaped_at(escape_char, name),
+    }
 }
 
 /// Renders e-TeX [19.282--283]'s `restore_trace` values after state mutation
@@ -158,7 +163,7 @@ fn restoration_text<G>(
     let escaped = |name: &str| escaped_at(escape_char, name);
     let (name, value, box_value) = match (cell, value) {
         (GroupRestorationCell::Meaning(symbol), GroupRestorationValue::Meaning(value)) => (
-            restoration_token_text(stores, escape_char, Token::Cs(symbol)),
+            restoration_control_sequence_text(stores, escape_char, symbol),
             meaning_value_text_at(stores, value, escape_char),
             false,
         ),
@@ -259,7 +264,7 @@ fn font_identifier_text<G>(
 ) -> String {
     stores.font_identifier_symbol(font).map_or_else(
         || escaped_at(escape_char, "nullfont"),
-        |symbol| restoration_token_text(stores, escape_char, Token::Cs(symbol)),
+        |symbol| restoration_control_sequence_text(stores, escape_char, symbol),
     )
 }
 
