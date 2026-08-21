@@ -250,6 +250,50 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.provenance_mut().allocate(value)
     }
 
+    pub(crate) fn copy_nodes_into_page(
+        &self,
+        roots: &[DurableListId<G>],
+        destination: &mut PageNodeArena,
+    ) -> Result<Vec<PageListId>, NodeArenaError> {
+        self.nodes.promote_into_with(
+            roots,
+            destination,
+            |id| self.glue(id),
+            |id| NodeTokenList::new(self.token_list(id)),
+        )
+    }
+
+    pub(crate) fn promote_page_nodes(
+        &mut self,
+        source: &PageNodeArena,
+        roots: &[PageListId],
+    ) -> Result<Vec<DurableListId<G>>, crate::universe::NodePromotionError> {
+        source.reserve_promotion(roots, self.nodes_mut())?;
+        let (glue, tokens) = source.escaping_payloads(roots)?;
+        let token_promotions = tokens
+            .iter()
+            .map(|tokens| crate::universe::TokenListPromotion {
+                words: tokens.words(),
+            })
+            .collect::<Vec<_>>();
+        let receipt = self.promote_values(&[], &token_promotions, &glue, &[])?;
+        let mut glue_ids = receipt.glue.into_iter();
+        let mut token_ids = receipt.token_lists.into_iter();
+        let promoted = source.promote_into_with(
+            roots,
+            self.nodes_mut(),
+            |_| glue_ids.next().expect("one durable id per page glue root"),
+            |_| {
+                token_ids
+                    .next()
+                    .expect("one durable id per page token root")
+            },
+        )?;
+        debug_assert!(glue_ids.next().is_none());
+        debug_assert!(token_ids.next().is_none());
+        Ok(promoted)
+    }
+
     /// Promotes one already-validated batch while this unique admitted borrow
     /// prevents any consumer from observing partial destination state.
     pub(crate) fn promote_values(

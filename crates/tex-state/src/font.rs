@@ -143,7 +143,7 @@ const IMMUTABLE_FONT_HASH_DOMAIN: u64 = 0x666f_6e74_5f69_6d6d;
 const COMPLETE_FONT_HASH_DOMAIN: u64 = 0x666f_6e74_5f63_6d70;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct FontStoreCapacityError;
+pub struct FontStoreCapacityError;
 
 /// A missing-character event for consumers to report according to policy.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

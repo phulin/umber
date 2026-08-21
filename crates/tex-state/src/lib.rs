@@ -122,7 +122,10 @@ pub mod world;
 
 pub use expansion_diagnostic::RecoverableExpansionDiagnostic;
 pub use expansion_recovery::ExpansionRecovery;
-pub use font::{FontArtifactConstructionRecipe, FontArtifactRecipe, OpenTypeArtifactRecipe};
+pub use font::{
+    FontArtifactConstructionRecipe, FontArtifactRecipe, FontStoreCapacityError,
+    OpenTypeArtifactRecipe,
+};
 pub use generation::GenerationOwner;
 pub use read_observation::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};
 pub use resource::{
@@ -175,9 +178,9 @@ pub use source_fragments::{
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
 pub use universe::{
-    DefinitionPromotion, InteractionMode, PromotionError, PromotionReceipt, StateCheckpoint,
-    StateCheckpointMark, TokenListPromotion, Universe, UniverseError, UniverseRetirement,
-    with_universe,
+    DefinitionPromotion, InteractionMode, NodePromotionError, PromotionError, PromotionReceipt,
+    StateCheckpoint, StateCheckpointMark, TokenListPromotion, Universe, UniverseError,
+    UniverseRetirement, with_universe,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

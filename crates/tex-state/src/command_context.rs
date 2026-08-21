@@ -8,7 +8,7 @@ use crate::env::banks::IntParam;
 use crate::env::{AssignmentScope, CodeTableKind, DenseState, StateError};
 use crate::font::FontStore;
 use crate::glue::GlueSpec;
-use crate::hyphenation::HyphenationTable;
+use crate::hyphenation::{ExceptionSpec, HyphenationTable};
 use crate::interner::{ControlSequenceKind, Interner, InternerAccessError, Symbol, SymbolId};
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
 use crate::node_arena::{
@@ -68,12 +68,12 @@ pub struct CommandContext<'a, G> {
     primitive_meanings: &'a [MeaningWord<G>],
     world: &'a mut World,
     dependencies: &'a mut DependencyRuntime,
-    fonts: &'a FontStore,
+    fonts: &'a mut FontStore,
     page_nodes: &'a mut PageNodeArena,
     page: &'a mut PageBuilderState,
     pdf: &'a mut PdfState<G>,
     sources: &'a mut SourceMap,
-    hyphenation: &'a HyphenationTable,
+    hyphenation: &'a mut HyphenationTable,
     interaction_mode: &'a mut InteractionMode,
     error_context_widths: crate::print::ErrorContextWidths,
 }
@@ -86,12 +86,12 @@ impl<'a, G> CommandContext<'a, G> {
         primitive_meanings: &'a [MeaningWord<G>],
         world: &'a mut World,
         dependencies: &'a mut DependencyRuntime,
-        fonts: &'a FontStore,
+        fonts: &'a mut FontStore,
         page_nodes: &'a mut PageNodeArena,
         page: &'a mut PageBuilderState,
         pdf: &'a mut PdfState<G>,
         sources: &'a mut SourceMap,
-        hyphenation: &'a HyphenationTable,
+        hyphenation: &'a mut HyphenationTable,
         interaction_mode: &'a mut InteractionMode,
         error_context_widths: crate::print::ErrorContextWidths,
     ) -> Self {
@@ -213,6 +213,13 @@ impl<'a, G> CommandContext<'a, G> {
 
     pub fn allocate_glue(&mut self, value: GlueSpec) -> Result<GlueId<G>, DurableAllocationError> {
         self.admitted.allocate_glue(value)
+    }
+
+    pub fn allocate_token_list(
+        &mut self,
+        words: &[TokenWord],
+    ) -> Result<TokenListId<G>, DurableAllocationError> {
+        self.admitted.allocate_token_list(words)
     }
 
     #[inline(always)]
@@ -356,6 +363,74 @@ impl<'a, G> CommandContext<'a, G> {
             .assign_box_register(index, value, scope)
     }
 
+    pub fn assign_page_box(
+        &mut self,
+        index: u16,
+        value: Option<PageListId>,
+        scope: AssignmentScope,
+    ) -> Result<(), crate::NodePromotionError> {
+        let durable = value
+            .map(|root| {
+                self.admitted
+                    .promote_page_nodes(self.page_nodes, &[root])
+                    .map(|roots| roots[0])
+            })
+            .transpose()?;
+        self.admitted
+            .state()
+            .assign_box_register(index, durable, scope)
+            .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
+    }
+
+    pub fn assign_page_box_global(
+        &mut self,
+        index: u16,
+        value: PageListId,
+    ) -> Result<(), crate::NodePromotionError> {
+        self.assign_page_box(index, Some(value), AssignmentScope::Global)
+    }
+
+    pub fn replace_page_box(
+        &mut self,
+        index: u16,
+        value: PageListId,
+    ) -> Result<(), crate::NodePromotionError> {
+        let durable = self
+            .admitted
+            .promote_page_nodes(self.page_nodes, &[value])?[0];
+        self.admitted
+            .state()
+            .replace_box_register(index, Some(durable))
+            .map_err(|_| crate::NodePromotionError::Values(crate::PromotionError::AllocationFailed))
+    }
+
+    pub fn copy_box_to_page(&mut self, index: u16) -> Option<PageListId> {
+        let root = self.box_register(index).ok().flatten()?;
+        Some(
+            self.admitted
+                .copy_nodes_into_page(&[root], self.page_nodes)
+                .expect("durable box closure belongs to the admitted generation")[0],
+        )
+    }
+
+    pub fn take_box_to_page(&mut self, index: u16) -> Option<PageListId> {
+        let copied = self.copy_box_to_page(index);
+        if copied.is_some() {
+            self.admitted
+                .state()
+                .replace_box_register(index, None)
+                .expect("box register index is admitted");
+        }
+        copied
+    }
+
+    pub fn clear_box_preserving_level(&mut self, index: u16) {
+        self.admitted
+            .state()
+            .replace_box_register(index, None)
+            .expect("box register index is admitted");
+    }
+
     #[inline(always)]
     pub fn node_list(
         &self,
@@ -473,6 +548,18 @@ impl<'a, G> CommandContext<'a, G> {
         (level, kind)
     }
 
+    pub fn begin_group(
+        &mut self,
+        kind: crate::GroupKind,
+        entered_line: u32,
+    ) -> Result<crate::GroupFrame, StateError> {
+        self.admitted.state().begin_group(kind, entered_line)
+    }
+
+    pub fn end_group(&mut self, kind: crate::GroupKind) -> Result<crate::GroupFrame, StateError> {
+        self.admitted.state().end_group(kind)
+    }
+
     #[must_use]
     pub fn box_kind(&self, index: u16) -> Option<CommandBoxKind> {
         let id = self.box_register(index).ok().flatten()?;
@@ -545,6 +632,30 @@ impl<'a, G> CommandContext<'a, G> {
     #[must_use]
     pub fn font_false_boundary_char(&self, id: crate::ids::FontId) -> Option<u8> {
         self.fonts.get(id).metrics().false_boundary_char()
+    }
+
+    /// Interns one already-validated in-memory font for an admitted executor
+    /// operation. Runtime resource loading should map capacity failure before
+    /// entering the mutation episode.
+    pub fn intern_font(&mut self, font: tex_fonts::LoadedFont) -> crate::ids::FontId {
+        self.fonts
+            .intern(font)
+            .expect("validated font exceeds the live font store capacity")
+    }
+
+    pub fn try_expanded_font(
+        &mut self,
+        source: crate::ids::FontId,
+        ratio: i16,
+    ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
+        if ratio == 0 {
+            return Ok(source);
+        }
+        let generated = self.fonts.get(source).expanded(ratio);
+        if let Some(existing) = self.fonts.by_source_identity(generated.source_identity()) {
+            return Ok(existing);
+        }
+        self.fonts.intern(generated)
     }
 
     #[must_use]
@@ -827,6 +938,26 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[must_use]
+    pub fn pdf_font_configuration(&self) -> crate::PdfFontConfiguration {
+        crate::PdfFontConfiguration {
+            adjust_spacing: self.int_param(IntParam::PDF_ADJUST_SPACING),
+            protrude_chars: self.int_param(IntParam::PDF_PROTRUDE_CHARS),
+            tracing_fonts: self.int_param(IntParam::PDF_TRACING_FONTS),
+            adjust_interword_glue: self.int_param(IntParam::PDF_ADJUST_INTERWORD_GLUE),
+            prepend_kern: self.int_param(IntParam::PDF_PREPEND_KERN),
+            append_kern: self.int_param(IntParam::PDF_APPEND_KERN),
+            generate_to_unicode: self.int_param(IntParam::PDF_GEN_TO_UNICODE),
+            pk_resolution: self.int_param(IntParam::PDF_PK_RESOLUTION),
+            omit_charset: self.int_param(IntParam::PDF_OMIT_CHARSET),
+        }
+    }
+
+    pub fn set_last_badness(&mut self, value: i32) {
+        self.assign_int_param(IntParam::LAST_BADNESS, value, AssignmentScope::Global)
+            .expect("last-badness parameter is admitted");
+    }
+
+    #[must_use]
     pub(crate) const fn state(&self) -> &DenseState<G> {
         self.admitted.state_ref()
     }
@@ -981,6 +1112,39 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> bool {
         self.hyphenation
             .contains_pattern_for_language(language, letters)
+    }
+
+    pub fn close_hyphenation_patterns(&mut self) {
+        self.hyphenation.close_patterns();
+    }
+
+    pub fn add_hyphenation_exception_for_language(
+        &mut self,
+        language: u8,
+        exception: ExceptionSpec,
+    ) {
+        self.hyphenation
+            .add_exception_for_language(language, exception);
+    }
+
+    pub fn save_hyphenation_codes(
+        &mut self,
+        language: u8,
+        codes: impl IntoIterator<Item = (char, char)>,
+    ) {
+        self.hyphenation.save_hyphen_codes(language, codes);
+    }
+
+    #[must_use]
+    pub fn hyphen_positions_for_language(
+        &self,
+        language: u8,
+        word: &str,
+        left_min: usize,
+        right_min: usize,
+    ) -> Vec<usize> {
+        self.hyphenation
+            .hyphen_positions_for_language(language, word, left_min, right_min)
     }
 
     pub fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
@@ -1270,6 +1434,67 @@ impl<'a, G> CommandContext<'a, G> {
         class: u16,
     ) -> Option<&crate::node::NodeTokenList> {
         self.page.mark_class_value(mark, class)
+    }
+
+    pub fn set_page_mark(
+        &mut self,
+        mark: crate::page::PageMark,
+        value: crate::node::NodeTokenList,
+    ) {
+        self.page.set_mark(mark, value);
+        self.dependencies
+            .mark_changed(DependencyKey::PageMark(mark.index()));
+        self.dependencies
+            .mark_changed(DependencyKey::PageMarkClass {
+                mark: mark.index(),
+                class: 0,
+            });
+    }
+
+    pub fn clear_page_mark(&mut self, mark: crate::page::PageMark) {
+        self.page.clear_mark(mark);
+        self.dependencies
+            .mark_changed(DependencyKey::PageMark(mark.index()));
+        self.dependencies
+            .mark_changed(DependencyKey::PageMarkClass {
+                mark: mark.index(),
+                class: 0,
+            });
+    }
+
+    pub fn set_page_mark_class(
+        &mut self,
+        mark: crate::page::PageMark,
+        class: u16,
+        value: crate::node::NodeTokenList,
+    ) {
+        self.page.set_mark_class(mark, class, value);
+        self.dependencies
+            .mark_changed(DependencyKey::PageMarkClass {
+                mark: mark.index(),
+                class,
+            });
+        if class == 0 {
+            self.dependencies
+                .mark_changed(DependencyKey::PageMark(mark.index()));
+        }
+    }
+
+    pub fn clear_page_mark_class(&mut self, mark: crate::page::PageMark, class: u16) {
+        self.page.clear_mark_class(mark, class);
+        self.dependencies
+            .mark_changed(DependencyKey::PageMarkClass {
+                mark: mark.index(),
+                class,
+            });
+        if class == 0 {
+            self.dependencies
+                .mark_changed(DependencyKey::PageMark(mark.index()));
+        }
+    }
+
+    pub fn page_mark_classes(&self) -> impl Iterator<Item = u16> + '_ {
+        self.page.mark_class_ids()
     }
 
     #[must_use]
