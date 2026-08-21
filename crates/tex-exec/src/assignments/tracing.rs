@@ -25,10 +25,15 @@
 
 use tex_state::env::banks::IntParam;
 use tex_state::glue::GlueSpec;
+use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::scaled::Scaled;
-use tex_state::token::Token;
-use tex_state::{CommandContext, PenaltyArrayKind, TokenListId};
+use tex_state::token::{Catcode, Token};
+use tex_state::token_show::TokenDisplayState;
+use tex_state::{
+    CommandContext, GroupRestorationCell, GroupRestorationOutcome, GroupRestorationReceipt,
+    GroupRestorationValue, PenaltyArrayKind, TokenListId,
+};
 
 use super::primitives::{dimen_param_name, glue_param_name, int_param_name, tok_param_name};
 use crate::node_dump::{format_glue_with_unit, format_scaled_for_diagnostics};
@@ -52,6 +57,210 @@ fn print_trace<G>(stores: &mut CommandContext<'_, G>, label: &str, name: &str, v
         .print(value)
         .print_char('}');
     diagnostic.end(false);
+}
+
+struct RestorationTokenDisplay<'a, 'state, G> {
+    stores: &'a CommandContext<'state, G>,
+    escape_char: i32,
+}
+
+impl<G> TokenDisplayState for RestorationTokenDisplay<'_, '_, G> {
+    fn display_resolve(&self, symbol: Symbol) -> Option<&str> {
+        Some(self.stores.resolve(symbol))
+    }
+
+    fn display_control_sequence_kind(&self, symbol: Symbol) -> Option<ControlSequenceKind> {
+        Some(self.stores.control_sequence_kind(symbol))
+    }
+
+    fn display_catcode(&self, ch: char) -> Catcode {
+        self.stores.catcode(ch)
+    }
+
+    fn display_frozen_primitive_name(&self, token: Token) -> Option<&str> {
+        self.stores.frozen_primitive_name(token)
+    }
+
+    fn display_escape_char(&self) -> i32 {
+        self.escape_char
+    }
+}
+
+fn escaped_at(escape_char: i32, name: &str) -> String {
+    let mut text = String::with_capacity(name.len() + 1);
+    if let Ok(escape) = u8::try_from(escape_char) {
+        text.push(char::from(escape));
+    }
+    text.push_str(name);
+    text
+}
+
+fn restoration_token_text<G>(
+    stores: &CommandContext<'_, G>,
+    escape_char: i32,
+    token: Token,
+) -> String {
+    let display = RestorationTokenDisplay {
+        stores,
+        escape_char,
+    };
+    let mut text = String::new();
+    tex_state::token_show::append_token_show_text(&display, token, &mut text);
+    text
+}
+
+/// Renders e-TeX [19.282--283]'s `restore_trace` values after state mutation
+/// and before §282 replays any `\aftergroup` token.
+pub(crate) fn trace_group_restorations<G>(
+    stores: &mut CommandContext<'_, G>,
+    receipt: &GroupRestorationReceipt<G>,
+) {
+    for entry in receipt.entries() {
+        let trace = entry.trace_state();
+        if trace.tracing_restores() <= 0 {
+            continue;
+        }
+        let Some((name, value, box_value)) = restoration_text(
+            stores,
+            entry.cell(),
+            entry.live_value(),
+            trace.escape_char(),
+        ) else {
+            continue;
+        };
+        let label = match entry.outcome() {
+            GroupRestorationOutcome::Restored => "restoring",
+            GroupRestorationOutcome::Retained => "retaining",
+        };
+        let mut diagnostic = stores.begin_group_restoration_diagnostic(trace);
+        diagnostic
+            .print_char('{')
+            .print(label)
+            .print_char(' ')
+            .print(&name)
+            .print_char('=');
+        if box_value && value != "void" {
+            diagnostic.print_ln().print_rendered(&value);
+        } else {
+            diagnostic.print_rendered(&value);
+        }
+        diagnostic.print_char('}');
+        diagnostic.end(false);
+    }
+}
+
+fn restoration_text<G>(
+    stores: &mut CommandContext<'_, G>,
+    cell: GroupRestorationCell,
+    value: GroupRestorationValue<G>,
+    escape_char: i32,
+) -> Option<(String, String, bool)> {
+    let escaped = |name: &str| escaped_at(escape_char, name);
+    let (name, value, box_value) = match (cell, value) {
+        (GroupRestorationCell::Meaning(symbol), GroupRestorationValue::Meaning(value)) => (
+            restoration_token_text(stores, escape_char, Token::Cs(symbol)),
+            meaning_value_text_at(stores, value, escape_char),
+            false,
+        ),
+        (GroupRestorationCell::Count(index), GroupRestorationValue::Integer(value)) => {
+            (escaped(&format!("count{index}")), value.to_string(), false)
+        }
+        (GroupRestorationCell::Dimension(index), GroupRestorationValue::Dimension(value)) => {
+            (escaped(&format!("dimen{index}")), dimen_text(value), false)
+        }
+        (GroupRestorationCell::TokenRegister(index), GroupRestorationValue::TokenList(value)) => (
+            escaped(&format!("toks{index}")),
+            tokens_text_at(stores, value, escape_char),
+            false,
+        ),
+        (GroupRestorationCell::GlueRegister(index), GroupRestorationValue::Glue(value)) => (
+            escaped(&format!("skip{index}")),
+            format_glue_with_unit(value.map_or(GlueSpec::ZERO, |id| stores.glue(id)), "pt"),
+            false,
+        ),
+        (GroupRestorationCell::MuGlueRegister(index), GroupRestorationValue::Glue(value)) => (
+            escaped(&format!("muskip{index}")),
+            format_glue_with_unit(value.map_or(GlueSpec::ZERO, |id| stores.glue(id)), "mu"),
+            false,
+        ),
+        (GroupRestorationCell::BoxRegister(index), GroupRestorationValue::NodeList(value)) => {
+            debug_assert_eq!(stores.box_register(index).ok().flatten(), value);
+            let page = stores.copy_box_to_page(index);
+            (
+                escaped(&format!("box{index}")),
+                stores.box_assignment_trace_text(page),
+                true,
+            )
+        }
+        (GroupRestorationCell::IntegerParameter(index), GroupRestorationValue::Integer(value)) => {
+            (escaped(&int_param_name(index)), value.to_string(), false)
+        }
+        (
+            GroupRestorationCell::DimensionParameter(index),
+            GroupRestorationValue::Dimension(value),
+        ) => (escaped(&dimen_param_name(index)), dimen_text(value), false),
+        (GroupRestorationCell::TokenParameter(index), GroupRestorationValue::TokenList(value)) => (
+            escaped(&tok_param_name(index)),
+            tokens_text_at(stores, value, escape_char),
+            false,
+        ),
+        (GroupRestorationCell::GlueParameter(index), GroupRestorationValue::Glue(value)) => {
+            let (raw_name, unit) = glue_param_name(index);
+            (
+                escaped(&raw_name),
+                format_glue_with_unit(value.map_or(GlueSpec::ZERO, |id| stores.glue(id)), unit),
+                false,
+            )
+        }
+        (GroupRestorationCell::CurrentFont, GroupRestorationValue::Font(font)) => (
+            "current font".to_owned(),
+            font_identifier_text(stores, font, escape_char),
+            false,
+        ),
+        (GroupRestorationCell::MathFamilyFont(index), GroupRestorationValue::Font(font)) => {
+            let (prefix, family) = match index {
+                0..=15 => ("textfont", index),
+                16..=31 => ("scriptfont", index - 16),
+                _ => ("scriptscriptfont", index - 32),
+            };
+            (
+                escaped(&format!("{prefix}{family}")),
+                font_identifier_text(stores, font, escape_char),
+                false,
+            )
+        }
+        (GroupRestorationCell::Code(kind, index), GroupRestorationValue::Code(value)) => {
+            let primitive = match kind {
+                tex_state::CodeTableKind::Catcode => "catcode",
+                tex_state::CodeTableKind::Lccode => "lccode",
+                tex_state::CodeTableKind::Uccode => "uccode",
+                tex_state::CodeTableKind::Sfcode => "sfcode",
+                tex_state::CodeTableKind::Mathcode => "mathcode",
+                tex_state::CodeTableKind::Delcode => "delcode",
+            };
+            (
+                escaped(&format!("{primitive}{index}")),
+                value.to_string(),
+                false,
+            )
+        }
+        // Per-font runtime cells are not eqtb locations and therefore are not
+        // operands of e-TeX's `restore_trace(p, ...)` hook.
+        (GroupRestorationCell::FontRuntime(_), _) => return None,
+        _ => unreachable!("state restoration receipt preserves cell/value kinds"),
+    };
+    Some((name, value, box_value))
+}
+
+fn font_identifier_text<G>(
+    stores: &CommandContext<'_, G>,
+    font: tex_state::ids::FontId,
+    escape_char: i32,
+) -> String {
+    stores.font_identifier_symbol(font).map_or_else(
+        || escaped_at(escape_char, "nullfont"),
+        |symbol| restoration_token_text(stores, escape_char, Token::Cs(symbol)),
+    )
 }
 
 /// e-TeX 2.6 [19.277]'s `assign_trace(p, label) == if tracing_assigns>0 then
@@ -456,10 +665,26 @@ pub(crate) fn trace_penalty_array<G>(
 }
 
 fn tokens_text<G>(stores: &mut CommandContext<'_, G>, tokens: Option<TokenListId<G>>) -> String {
+    tokens_text_at(
+        stores,
+        tokens,
+        stores.untracked_int_param(IntParam::ESCAPE_CHAR),
+    )
+}
+
+fn tokens_text_at<G>(
+    stores: &CommandContext<'_, G>,
+    tokens: Option<TokenListId<G>>,
+    escape_char: i32,
+) -> String {
+    let display = RestorationTokenDisplay {
+        stores,
+        escape_char,
+    };
     let mut text = String::new();
     let words = tokens.map_or_else(Vec::new, |id| stores.token_list(id).to_vec());
     for token in words {
-        stores.append_token_show_text(token.semantic_token(), &mut text);
+        tex_state::token_show::append_token_show_text(&display, token.semantic_token(), &mut text);
     }
     text
 }
@@ -564,8 +789,9 @@ pub(crate) fn trace_completed_provisional_meaning_write<G>(
     }
     let mut name = String::new();
     stores.append_token_show_text(token, &mut name);
-    let old_text = meaning_value_text(stores, old);
-    let new_text = meaning_value_text(stores, ResolvedMeaning::Static(new));
+    let escape_char = stores.untracked_int_param(IntParam::ESCAPE_CHAR);
+    let old_text = meaning_value_text_at(stores, old, escape_char);
+    let new_text = meaning_value_text_at(stores, ResolvedMeaning::Static(new), escape_char);
     trace_scalar(
         stores,
         tracing_before,
@@ -578,14 +804,20 @@ pub(crate) fn trace_completed_provisional_meaning_write<G>(
 }
 
 /// TeX82 §252's bounded `show_eqtb` value for a detached meaning pre-image.
-fn meaning_value_text<G>(
-    stores: &mut CommandContext<'_, G>,
+fn meaning_value_text_at<G>(
+    stores: &CommandContext<'_, G>,
     meaning: ResolvedMeaning<G>,
+    escape_char: i32,
 ) -> String {
+    let escaped = |name: &str| escaped_at(escape_char, name);
+    let display = RestorationTokenDisplay {
+        stores,
+        escape_char,
+    };
     match meaning {
         ResolvedMeaning::Static(Meaning::Undefined) => "undefined".to_owned(),
-        ResolvedMeaning::Static(Meaning::Relax) => escaped(stores, "relax"),
-        ResolvedMeaning::Static(Meaning::EndV) => escaped(stores, "endtemplate"),
+        ResolvedMeaning::Static(Meaning::Relax) => escaped("relax"),
+        ResolvedMeaning::Static(Meaning::EndV) => escaped("endtemplate"),
         ResolvedMeaning::Static(Meaning::CharGiven(ch)) => format!("the character {ch}"),
         ResolvedMeaning::Static(Meaning::CharToken {
             ch,
@@ -595,23 +827,15 @@ fn meaning_value_text<G>(
             format!("the character {ch}")
         }
         ResolvedMeaning::Static(Meaning::MathCharGiven(value)) => {
-            escaped(stores, &format!("mathchar\"{value:X}"))
+            escaped(&format!("mathchar\"{value:X}"))
         }
-        ResolvedMeaning::Static(Meaning::CountRegister(index)) => {
-            escaped(stores, &format!("count{index}"))
-        }
-        ResolvedMeaning::Static(Meaning::DimenRegister(index)) => {
-            escaped(stores, &format!("dimen{index}"))
-        }
-        ResolvedMeaning::Static(Meaning::SkipRegister(index)) => {
-            escaped(stores, &format!("skip{index}"))
-        }
+        ResolvedMeaning::Static(Meaning::CountRegister(index)) => escaped(&format!("count{index}")),
+        ResolvedMeaning::Static(Meaning::DimenRegister(index)) => escaped(&format!("dimen{index}")),
+        ResolvedMeaning::Static(Meaning::SkipRegister(index)) => escaped(&format!("skip{index}")),
         ResolvedMeaning::Static(Meaning::MuskipRegister(index)) => {
-            escaped(stores, &format!("muskip{index}"))
+            escaped(&format!("muskip{index}"))
         }
-        ResolvedMeaning::Static(Meaning::ToksRegister(index)) => {
-            escaped(stores, &format!("toks{index}"))
-        }
+        ResolvedMeaning::Static(Meaning::ToksRegister(index)) => escaped(&format!("toks{index}")),
         ResolvedMeaning::Macro { flags, definition } => {
             let definition = stores.definition(definition);
             let parameter_text = definition.parameter_text().to_vec();
@@ -623,7 +847,7 @@ fn meaning_value_text<G>(
                 (MeaningFlags::OUTER, "outer"),
             ] {
                 if flags.contains(flag) {
-                    text.push_str(&escaped(stores, name));
+                    text.push_str(&escaped(name));
                 }
             }
             if !text.is_empty() {
@@ -638,7 +862,11 @@ fn meaning_value_text<G>(
                     break;
                 }
                 let before = text.chars().count();
-                stores.append_token_show_text(token.semantic_token(), &mut text);
+                tex_state::token_show::append_token_show_text(
+                    &display,
+                    token.semantic_token(),
+                    &mut text,
+                );
                 shown += text.chars().count() - before;
             }
             if !remaining && shown < 32 {
@@ -650,14 +878,18 @@ fn meaning_value_text<G>(
                         break;
                     }
                     let before = text.chars().count();
-                    stores.append_token_show_text(token.semantic_token(), &mut text);
+                    tex_state::token_show::append_token_show_text(
+                        &display,
+                        token.semantic_token(),
+                        &mut text,
+                    );
                     shown += text.chars().count() - before;
                 }
             } else {
                 remaining = true;
             }
             if remaining {
-                text.push_str(&escaped(stores, "ETC."));
+                text.push_str(&escaped("ETC."));
             }
             text
         }
@@ -669,7 +901,7 @@ fn meaning_value_text<G>(
             meaning @ (Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_)),
         ) => {
             let name = stores.primitive_name(meaning).map(str::to_owned);
-            name.map_or_else(|| "unknown".to_owned(), |name| escaped(stores, &name))
+            name.map_or_else(|| "unknown".to_owned(), |name| escaped(&name))
         }
         ResolvedMeaning::Static(
             meaning @ (Meaning::IntParam(_)
@@ -682,7 +914,7 @@ fn meaning_value_text<G>(
             | Meaning::PageInteger(_)),
         ) => {
             let name = stores.primitive_name(meaning).map(str::to_owned);
-            name.map_or_else(|| "unknown".to_owned(), |name| escaped(stores, &name))
+            name.map_or_else(|| "unknown".to_owned(), |name| escaped(&name))
         }
         ResolvedMeaning::Static(Meaning::Unknown(_)) => "unknown".to_owned(),
     }

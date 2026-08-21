@@ -1402,6 +1402,56 @@ fn tracingrestores_reports_exact_restoration_through_the_live_selector() {
 }
 
 #[test]
+fn tracingrestores_uses_the_restored_gate_for_its_own_save_entry() {
+    // TeX82 §283 restores the word before consulting `tracing_restores`.
+    // The count entry is still suppressed while the local zero is live, then
+    // restoring `\tracingrestores` to one makes that entry report itself.
+    crate::test_harness::with_plain_universe(|mut stores| {
+        let mut control = MainControl::tex82_initex(&mut stores);
+        register_source(
+            &mut control,
+            br"\tracingrestores=1\tracingonline=1{\tracingrestores=0\count0=7}\end",
+        );
+
+        run_to_end(&mut control, &mut stores);
+
+        let expected = "{restoring \\tracingrestores=1}\n";
+        assert_eq!(pending_sink_text(&stores, true), expected);
+        assert_eq!(pending_sink_text(&stores, false), expected);
+    });
+}
+
+#[test]
+fn tracingrestores_preserves_nested_reverse_save_order_and_retained_values() {
+    crate::test_harness::with_plain_universe(|mut stores| {
+        let mut control = MainControl::tex82_initex(&mut stores);
+        register_source(
+            &mut control,
+            br"\tracingrestores=1\tracingonline=1
+\count0=1
+{\count0=2\skip0=1pt\toks0={outer}\def\foo{outer}
+ {\count0=3\global\count0=4\skip0=2pt\toks0={inner}\def\foo{inner}}}
+\end",
+        );
+
+        run_to_end(&mut control, &mut stores);
+
+        let expected = concat!(
+            "{restoring \\foo=macro:->outer}\n",
+            "{restoring \\toks0=outer}\n",
+            "{restoring \\skip0=1.0pt}\n",
+            "{retaining \\count0=4}\n",
+            "{restoring \\foo=undefined}\n",
+            "{restoring \\toks0=}\n",
+            "{restoring \\skip0=0.0pt}\n",
+            "{retaining \\count0=4}\n",
+        );
+        assert_eq!(pending_sink_text(&stores, true), expected);
+        assert_eq!(pending_sink_text(&stores, false), expected);
+    });
+}
+
+#[test]
 fn tracingrestores_reports_dimension_register_restoration() {
     crate::test_harness::with_plain_universe(|mut stores| {
         let mut control = MainControl::tex82_initex(&mut stores);

@@ -27,7 +27,11 @@ pub(in crate::main_control) fn leave_group_payloads<G>(
     command: &mut PersistentInterpreter<G>,
     kind: GroupKind,
 ) -> Result<Vec<tex_state::token::TracedTokenWord>, tex_command::CommandGroupError> {
-    command.state_mut().end_group(stores, kind)
+    let closed = command.state_mut().end_group(stores, kind)?;
+    // e-TeX [19.282--283]: each trace observes the already restored/retained
+    // live word, and all of them precede §282's `\aftergroup` backups.
+    crate::assignments::tracing::trace_group_restorations(stores, closed.restorations());
+    Ok(closed.into_aftergroup())
 }
 
 #[allow(clippy::too_many_arguments)] // applies the complete canonical replay state atomically
