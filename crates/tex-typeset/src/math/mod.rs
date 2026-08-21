@@ -16,9 +16,11 @@ mod variants;
 
 use tex_fonts::metrics::ExtensibleRecipe as MetricExtensibleRecipe;
 use tex_fonts::{CharMetrics, LigKernChar, LigKernCommand, MathMetricsSource};
+#[cfg(test)]
 use tex_state::Universe;
-use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
-use tex_state::ids::{FontId, GlueId};
+#[cfg(test)]
+use tex_state::env::banks::DimenParam;
+use tex_state::ids::FontId;
 use tex_state::math::MathFontSize;
 #[cfg(test)]
 use tex_state::node::{KernKind, Node};
@@ -62,59 +64,6 @@ pub trait MathTypesetState: TypesetState {
     }
     fn math_metrics_source(&self, _font: FontId) -> MathMetricsSource<'_> {
         MathMetricsSource::ClassicTfmExact
-    }
-}
-
-impl MathTypesetState for Universe {
-    fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
-        Universe::math_family_font(self, size, family)
-    }
-
-    fn font_parameter(&self, font: FontId, number: u16) -> Scaled {
-        Universe::classic_math_parameter(self, font, number)
-    }
-
-    fn font_next_larger(&self, font: FontId, code: u8) -> Option<u8> {
-        Universe::font_next_larger(self, font, code)
-    }
-
-    fn font_extensible_recipe(&self, font: FontId, code: u8) -> Option<MetricExtensibleRecipe> {
-        Universe::extensible_recipe(self, font, code)
-    }
-
-    fn lig_kern_command(
-        &self,
-        font: FontId,
-        left: LigKernChar,
-        right: LigKernChar,
-    ) -> Option<LigKernCommand> {
-        Universe::lig_kern_command(self, font, left, right)
-    }
-
-    fn font_skew_char(&self, font: FontId) -> i32 {
-        Universe::font_skew_char(self, font)
-    }
-
-    fn classic_math_char_metrics(&self, font: FontId, code: u8) -> Option<CharMetrics> {
-        Universe::font(self, font).metrics().character(code)
-    }
-
-    fn math_metrics_source(&self, font: FontId) -> MathMetricsSource<'_> {
-        Universe::font(self, font).math_metrics_source()
-    }
-}
-
-impl MathParamState for Universe {
-    fn int_param(&self, param: IntParam) -> i32 {
-        Universe::int_param(self, param)
-    }
-
-    fn dimen_param(&self, param: DimenParam) -> Scaled {
-        Universe::dimen_param(self, param)
-    }
-
-    fn glue_param(&self, param: GlueParam) -> GlueId {
-        Universe::glue_param(self, param)
     }
 }
 

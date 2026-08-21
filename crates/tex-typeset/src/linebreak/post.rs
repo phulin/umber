@@ -1,6 +1,5 @@
 use tex_state::glue::GlueSpec;
 use tex_state::node::{Direction, GlueKind, KernKind, Node};
-use tex_state::node_arena::NodeRef;
 use tex_state::node_sequence::{DirectHighCellLineage, FrozenListRole};
 
 use crate::TypesetState;

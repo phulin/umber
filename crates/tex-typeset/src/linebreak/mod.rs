@@ -1,6 +1,5 @@
 use tex_arith::WideScaled;
 use tex_state::glue::GlueSpec;
-use tex_state::glue::GlueSpec;
 use tex_state::node::{KernKind, Node};
 use tex_state::node_arena::PageListId;
 use tex_state::node_sequence::NodeSequence;
@@ -232,12 +231,12 @@ impl ParagraphTape {
         let break_sites = analyzer
             .by_ref()
             .map(|site| {
-                let display_end = trace_display_end(nodes, site);
+                let display_end = trace_display_end(state, nodes, site);
                 BreakSite {
                     breakpoint: site,
                     trace: TraceSpan {
                         display_end,
-                        next_start: trace_display_next_start(nodes, site, display_end),
+                        next_start: trace_display_next_start(state, nodes, site, display_end),
                         display_suffix: trace_display_suffix(nodes, site),
                         breakpoint: trace_breakpoint(nodes, site),
                     },
@@ -1018,7 +1017,7 @@ fn trace_display_suffix(nodes: &[Node], bp: Breakpoint) -> Option<PageListId> {
     Some(replace.clone())
 }
 
-fn trace_display_end(nodes: &[Node], bp: Breakpoint) -> usize {
+fn trace_display_end(state: &impl TypesetState, nodes: &[Node], bp: Breakpoint) -> usize {
     let Some(Node::Disc { replace, .. }) = bp
         .position
         .checked_sub(1)
@@ -1039,7 +1038,10 @@ fn trace_display_end(nodes: &[Node], bp: Breakpoint) -> usize {
         // displaced replacement after the discretionary. The trace slice
         // consumes the kern; `trace_display_next_start` advances over the
         // replacement after its detached suffix has been rendered.
-        return bp.position.saturating_add(replace.len()).min(nodes.len());
+        return bp
+            .position
+            .saturating_add(state.page_nodes(*replace).len())
+            .min(nodes.len());
     }
     if !matches!(
         bp.position
@@ -1050,13 +1052,13 @@ fn trace_display_end(nodes: &[Node], bp: Breakpoint) -> usize {
     {
         return bp.position;
     }
-    let mut replacement_count = replace.len();
+    let mut replacement_count = state.page_nodes(*replace).len();
     let mut index = bp.position - 1;
     while let Some(previous) = index.checked_sub(1) {
         let Node::Disc { replace, .. } = &nodes[previous] else {
             break;
         };
-        replacement_count = replacement_count.saturating_add(replace.len());
+        replacement_count = replacement_count.saturating_add(state.page_nodes(*replace).len());
         index = previous;
     }
     bp.position
@@ -1064,14 +1066,19 @@ fn trace_display_end(nodes: &[Node], bp: Breakpoint) -> usize {
         .min(nodes.len())
 }
 
-fn trace_display_next_start(nodes: &[Node], bp: Breakpoint, display_end: usize) -> usize {
+fn trace_display_next_start(
+    state: &impl TypesetState,
+    nodes: &[Node],
+    bp: Breakpoint,
+    display_end: usize,
+) -> usize {
     if trace_display_suffix(nodes, bp).is_some() {
         display_end.saturating_add(1).min(nodes.len())
     } else if let Some(Node::Disc { replace, .. }) = bp
         .position
         .checked_sub(1)
         .and_then(|index| nodes.get(index))
-        && display_end.saturating_sub(bp.position) == replace.len()
+        && display_end.saturating_sub(bp.position) == state.page_nodes(*replace).len()
     {
         // §851's temporary link surgery may make the current structural slice
         // include nodes used to model `replace_count`; §855 skips them only
@@ -1575,7 +1582,7 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
                 self.state,
                 post,
                 0,
-                post.len(),
+                self.state.page_nodes(*post).len(),
                 self.include_font_expansion,
             ));
         }
@@ -1638,7 +1645,13 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
                     i,
                     discretionary_penalty(pre.is_empty(), self.params),
                     true,
-                    line_widths_view(self.state, pre, 0, pre.len(), self.include_font_expansion),
+                    line_widths_view(
+                        self.state,
+                        pre,
+                        0,
+                        self.state.page_nodes(*pre).len(),
+                        self.include_font_expansion,
+                    ),
                     before,
                 )),
                 Node::MathOff(_) if matches!(self.nodes.get(i + 1), Some(Node::Glue { .. })) => {

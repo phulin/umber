@@ -13,9 +13,7 @@ mod packing;
 pub mod protrusion;
 mod vertical_break;
 
-use tex_state::Universe;
 use tex_state::font::PdfFontCode;
-use tex_state::glue::GlueSpec;
 use tex_state::ids::FontId;
 use tex_state::scaled::Scaled;
 
@@ -34,7 +32,6 @@ pub const OVERFULL_BADNESS: i32 = 1_000_000;
 /// Immutable state access needed by the packing kernels.
 pub trait TypesetState {
     fn page_nodes(&self, list: tex_state::node_arena::PageListId) -> &[tex_state::node::Node];
-    fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec;
     fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics>;
     fn font_character_metrics(&self, font: FontId, ch: char) -> Option<tex_fonts::CharMetrics> {
         self.font_char_metrics(font, u8::try_from(ch as u32).ok()?)
@@ -55,71 +52,6 @@ pub trait TypesetState {
     }
     fn font_expansion_spec(&self, _font: FontId) -> Option<expansion::FontExpansionSpec> {
         None
-    }
-}
-
-impl TypesetState for Universe {
-    fn page_nodes(&self, list: tex_state::node_arena::PageListId) -> &[tex_state::node::Node] {
-        self.page_node_list(list)
-            .expect("typesetting list belongs to the live page arena")
-            .nodes()
-    }
-
-    fn glue(&self, id: tex_state::ids::GlueId) -> GlueSpec {
-        Universe::glue(self, id)
-    }
-
-    fn font_char_metrics(&self, font: FontId, code: u8) -> Option<tex_fonts::CharMetrics> {
-        Universe::font_char_metrics(self, font, code)
-    }
-
-    fn font_character_metrics(&self, font: FontId, ch: char) -> Option<tex_fonts::CharMetrics> {
-        Universe::font_character_metrics(self, font, ch)
-    }
-
-    fn font_uses_tfm_metrics(&self, font: FontId) -> bool {
-        Universe::font_uses_tfm_metrics(self, font)
-    }
-
-    fn font_widths(&self, font: FontId) -> &[Scaled; 256] {
-        Universe::font_widths(self, font)
-    }
-
-    fn font_characters(&self, font: FontId) -> &[Option<tex_fonts::CharMetrics>] {
-        Universe::font_characters(self, font)
-    }
-
-    fn font_parameter_value(&self, font: FontId, number: u32) -> Scaled {
-        Universe::font_parameter(self, font, number)
-    }
-
-    fn pdf_font_code(&self, table: PdfFontCode, font: FontId, code: u8) -> i32 {
-        Universe::pdf_font_code(self, table, font, code)
-    }
-
-    fn font_kern(&self, font: FontId, left: u8, right: u8) -> Option<Scaled> {
-        match Universe::lig_kern_command(
-            self,
-            font,
-            tex_fonts::LigKernChar::Char(left),
-            tex_fonts::LigKernChar::Char(right),
-        ) {
-            Some(tex_fonts::LigKernCommand::Kern(amount)) => Some(amount),
-            _ => None,
-        }
-    }
-
-    fn font_expansion_spec(&self, font: FontId) -> Option<expansion::FontExpansionSpec> {
-        let configured = Universe::font_expansion(self, font)?;
-        Some(
-            expansion::FontExpansionSpec::new(
-                i32::from(configured.stretch),
-                i32::from(configured.shrink),
-                i32::from(configured.step),
-                configured.auto_expand,
-            )
-            .expect("live font expansion settings are validated"),
-        )
     }
 }
 

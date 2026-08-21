@@ -251,13 +251,7 @@ pub(super) fn make_math_accent(
     let mut accent_box = selected_variant
         .as_ref()
         .map(|(boxed, _)| boxed.clone())
-        .unwrap_or_else(|| {
-            char_box(
-                ctx,
-                accent_fetched,
-                tex_state::provenance::OriginRef::direct(accent.origin),
-            )
-        });
+        .unwrap_or_else(|| char_box(ctx, accent_fetched, accent.origin));
     accent_box.shift = match (selected_variant, base_attachment, accent_attachment) {
         (None, Some(base), Some(accent)) => sub(base, accent),
         _ => add(

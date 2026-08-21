@@ -179,7 +179,7 @@ impl std::ops::DerefMut for VerticalBreakAccum {
 }
 
 fn update_spacing_node(
-    state: &impl TypesetState,
+    _state: &impl TypesetState,
     node: Option<&Node>,
     acc: &mut VerticalBreakAccum,
     index: usize,

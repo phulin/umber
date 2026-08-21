@@ -1,7 +1,6 @@
 use tex_fonts::{MathConstant, MathMetricsSource};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::GlueSpec;
-use tex_state::ids::GlueId;
 use tex_state::math::MathFontSize;
 use tex_state::scaled::Scaled;
 
@@ -11,7 +10,7 @@ use super::MathTypesetState;
 pub trait MathParamState: MathTypesetState {
     fn int_param(&self, param: IntParam) -> i32;
     fn dimen_param(&self, param: DimenParam) -> Scaled;
-    fn glue_param(&self, param: GlueParam) -> GlueId;
+    fn glue_param(&self, param: GlueParam) -> GlueSpec;
 }
 
 /// Math-symbol font parameters for one TeX math size.
@@ -96,9 +95,9 @@ impl MathParams {
             // AppG rule 18.
             script_space: state.dimen_param(DimenParam::new(12)),
             // AppG rule 20.
-            thin_mu_skip: state.glue(state.glue_param(GlueParam::new(15))),
-            med_mu_skip: state.glue(state.glue_param(GlueParam::new(16))),
-            thick_mu_skip: state.glue(state.glue_param(GlueParam::new(17))),
+            thin_mu_skip: state.glue_param(GlueParam::new(15)),
+            med_mu_skip: state.glue_param(GlueParam::new(16)),
+            thick_mu_skip: state.glue_param(GlueParam::new(17)),
             // AppG rule 21.
             bin_op_penalty: state.int_param(IntParam::BIN_OP_PENALTY),
             rel_penalty: state.int_param(IntParam::REL_PENALTY),

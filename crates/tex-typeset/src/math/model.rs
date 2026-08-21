@@ -158,8 +158,8 @@ impl FrozenHList {
 ///
 /// Ordinary leaves use the canonical [`Node`] vocabulary.  Only selected
 /// OpenType glyphs (which retain a glyph id and selected metrics until output
-/// grows a glyph-aware native node) and direct glue (which has no live
-/// [`tex_state::ids::GlueId`] yet) remain math-specific drafts.
+/// grows a glyph-aware native node) and direct glue (which remains a copied
+/// value) are math-specific drafts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MathNode {
     Char {
@@ -168,7 +168,7 @@ pub enum MathNode {
         /// Exact glyph selected by OpenType MATH, including `ssty`.
         glyph_id: Option<u16>,
         metrics: CharMetrics,
-        origin: tex_state::provenance::OriginRef,
+        origin: tex_state::token::OriginId,
     },
     Kern {
         amount: Scaled,

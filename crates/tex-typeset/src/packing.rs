@@ -3,7 +3,9 @@ use tex_state::node::Node;
 use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Sign, UnsetKind};
 #[cfg(test)]
 use tex_state::node_arena::NodeList;
-use tex_state::node_arena::{NodeCursor, NodeRef, PackedNode, PageListId};
+#[cfg(test)]
+use tex_state::node_arena::NodeRef;
+use tex_state::node_arena::{NodeCursor, PackedNode, PageListId};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 #[cfg(test)]
@@ -477,7 +479,7 @@ fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement
     measure_hlist(state, NodeCursor::owned(nodes))
 }
 
-fn measure_vlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
+fn measure_vlist(_state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
     let indexes = MetricsCursor::new(0..nodes.len());
     for index in indexes {
