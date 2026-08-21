@@ -1534,6 +1534,9 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
+        if self.has_external_attempt_owner() {
+            return Err(tex_command::CommandSummaryError::AttemptSuspended);
+        }
         crate::EngineCheckpoint::capture_checkpoint(
             boundary,
             &mut self.command,
@@ -1552,6 +1555,9 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint<G>, tex_command::CommandSummaryError> {
+        if self.has_external_attempt_owner() {
+            return Err(tex_command::CommandSummaryError::AttemptSuspended);
+        }
         crate::EngineCheckpoint::capture_checkpoint(
             boundary,
             &mut self.command,
@@ -1570,6 +1576,9 @@ impl<G> MainControl<G> {
         checkpoint: &crate::EngineCheckpoint<G>,
         stores: &mut Universe<G>,
     ) -> Result<(), crate::CheckpointRestoreError> {
+        if self.has_external_attempt_owner() {
+            return Err(crate::CheckpointRestoreError::AttemptSuspended);
+        }
         checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
@@ -1577,6 +1586,18 @@ impl<G> MainControl<G> {
         self.fatal = None;
         self.captured_fatal_origin = None;
         Ok(())
+    }
+
+    /// Reports attempt-arena roots retained by executor continuations rather
+    /// than by [`CommandState`]. These owners must be rejected before a named
+    /// checkpoint asks command state to census and reclaim its own roots.
+    ///
+    /// Pending preflight commands and alignment deliveries are deliberately
+    /// absent: their live attempt coordinates remain in `CommandState`. The
+    /// two scanned-operation continuations below each carry the exact opening
+    /// [`tex_command::CommandAttemptMark`] outside command state.
+    fn has_external_attempt_owner(&self) -> bool {
+        self.pending_resource_operation.is_some() || self.pending_diagnostic_operation.is_some()
     }
 
     /// Borrows executor-installed host capabilities for the next operation.

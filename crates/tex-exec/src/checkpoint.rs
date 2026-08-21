@@ -223,6 +223,7 @@ impl<G> CheckpointSink<G> for Vec<EngineCheckpoint<G>> {
 /// Failure to restore an aggregate command checkpoint.
 #[derive(Debug)]
 pub enum CheckpointRestoreError {
+    AttemptSuspended,
     Command(CommandRestoreError),
     Mode(ExecError),
     Runtime(UniverseError),
@@ -231,6 +232,9 @@ pub enum CheckpointRestoreError {
 impl fmt::Display for CheckpointRestoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::AttemptSuspended => {
+                formatter.write_str("the command attempt is owned by a suspension")
+            }
             Self::Command(error) => write!(formatter, "could not restore command roots: {error}"),
             Self::Mode(error) => write!(formatter, "could not restore mode roots: {error}"),
             Self::Runtime(error) => {

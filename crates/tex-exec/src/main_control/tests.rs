@@ -5394,6 +5394,13 @@ fn committed_token_scanner_attempt_is_discarded_before_named_checkpoint() {
 fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
     crate::test_harness::with_plain_universe(|mut stores| {
         let mut control = MainControl::tex82_initex(&mut stores);
+        let checkpoint = control
+            .capture_checkpoint(
+                crate::EngineBoundary::JobStart,
+                &mut stores,
+                crate::ExecutionBudgetCounters::default(),
+            )
+            .expect("quiescent diagnostic control captures a checkpoint");
         register_source(&mut control, br"\font\body=cmr10 X");
 
         assert!(matches!(
@@ -5402,6 +5409,24 @@ fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
                 .expect("font request suspends"),
             DiagnosticStepResult::Suspended(ResourceNeed::Font { .. })
         ));
+        let state_before = stores.journal_cursor().expect("state cursor");
+        assert!(matches!(
+            control.capture_checkpoint(
+                crate::EngineBoundary::OuterParagraphEnd,
+                &mut stores,
+                crate::ExecutionBudgetCounters::default(),
+            ),
+            Err(tex_command::CommandSummaryError::AttemptSuspended)
+        ));
+        assert!(matches!(
+            control.restore_checkpoint(&checkpoint, &mut stores),
+            Err(crate::CheckpointRestoreError::AttemptSuspended)
+        ));
+        assert_eq!(
+            stores.journal_cursor().expect("state cursor"),
+            state_before,
+            "checkpoint rejection must not mutate the suspended operation"
+        );
         register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
         assert_eq!(
             control
