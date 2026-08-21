@@ -892,25 +892,30 @@ fn write_diagnostic<G>(stores: &mut Universe<G>, text: &str) {
 /// `texmf.cnf` knob whose distributed value is `t`, which is the setting the
 /// pinned oracle logs were captured under.
 ///
-/// The whole notice is written as one record rather than one per `print`
-/// call: it is a fixed announcement with no interleaving, and the stream
-/// tests that assert on `World::effect_records` are about stream
-/// transitions, not about how many `print` calls compose a fixed line.
-pub(crate) fn report_openout<G>(stores: &mut Universe<G>, stream: u8, path: &str) {
-    let terminal = stores.int_param(tex_state::env::banks::IntParam::TRACING_ONLINE) > 0;
+/// The whole notice is returned as one owned write rather than one fragment
+/// per `print` call. The caller captures the three live print-state scalars
+/// under admission, releases that context, and publishes this fixed record at
+/// the outer effect boundary without exposing `World` to this helper.
+#[must_use]
+pub(crate) fn report_openout(
+    tracing_online: i32,
+    terminal_line_is_open: bool,
+    log_line_is_open: bool,
+    stream: u8,
+    path: &str,
+) -> (PrintSink, String) {
+    let terminal = tracing_online > 0;
     let sink = if terminal {
-        tex_state::PrintSink::TerminalAndLog
+        PrintSink::TerminalAndLog
     } else {
-        tex_state::PrintSink::Log
+        PrintSink::Log
     };
-    let bufs = stores.world().stream_bufs();
     // §62's `print_nl` guard for the selector this notice installs.
-    let line_is_open = !bufs.log_partial_line().is_empty()
-        || (terminal && !bufs.terminal_partial_line().is_empty());
+    let line_is_open = log_line_is_open || (terminal && terminal_line_is_open);
     let mut text = String::new();
     if line_is_open {
         text.push('\n');
     }
     let _ = write!(text, "\\openout{stream} = `{path}'.\n\n");
-    stores.world_mut().write_text(sink, &text);
+    (sink, text)
 }
