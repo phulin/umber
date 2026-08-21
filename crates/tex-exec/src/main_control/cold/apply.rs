@@ -32,7 +32,7 @@ pub(in crate::main_control) fn leave_group_payloads<G>(
 
 #[allow(clippy::too_many_arguments)] // applies the complete canonical replay state atomically
 pub(in crate::main_control) fn apply<G>(
-    scanned: PreparedColdOperation<G>,
+    scanned: PreparedColdCommand<G>,
     stores: tex_state::CommandContext<'_, G>,
     modes: &mut ModeNest,
     next_alignment_identity: &mut u64,
@@ -768,7 +768,7 @@ pub(in crate::main_control) fn apply<G>(
                 stores
                     .token_list(new)
                     .iter()
-                    .map(|word| observed_macro_token(word.token(), stores))
+                    .map(|word| observed_macro_token(word.semantic_token(), stores))
                     .collect(),
             );
             let receipt = AssignmentCommitter::new(stores).toks(index, new, observed, global);
@@ -811,11 +811,14 @@ pub(in crate::main_control) fn apply<G>(
         } => {
             let new = tokens;
             let observed = ObservationValue::Tokens(
-                stores
-                    .token_list(new.unwrap_or(TokenListId::EMPTY))
-                    .iter()
-                    .map(|word| observed_macro_token(word.token(), stores))
-                    .collect(),
+                new.map(|tokens| {
+                    stores
+                        .token_list(tokens)
+                        .iter()
+                        .map(|word| observed_macro_token(word.semantic_token(), stores))
+                        .collect()
+                })
+                .unwrap_or_default(),
             );
             let key = parameter_mutation_key_for_dialect(
                 command.state.profile().dialect(),
@@ -1202,10 +1205,7 @@ pub(in crate::main_control) fn apply<G>(
             };
             let id = match stores.try_intern_font_with_identifier(loaded, identifier) {
                 Ok(id) => id,
-                Err(
-                    tex_state::FontParameterError::TooManyFonts { .. }
-                    | tex_state::FontParameterError::FontInfoCapacity { .. },
-                ) => {
+                Err(_) => {
                     let selector = stores.resolve(request.target).to_owned();
                     let selector_kind = stores.control_sequence_kind(request.target);
                     report_font_capacity(
@@ -1220,7 +1220,6 @@ pub(in crate::main_control) fn apply<G>(
                     command.retain_assignment_receipt(receipt);
                     return Ok(ReplayStep::Continue);
                 }
-                Err(error) => return Err(error.into()),
             };
             // Web2C tex.ch [49.1260] removes TeX82 §1254's `flush_string`:
             // [29.517]'s `slow_make_string` may have returned an older pool
@@ -1648,14 +1647,11 @@ pub(in crate::main_control) fn apply<G>(
                         .try_unscoped(None, |stores| stores.set_font_dimen(font, number, value))
                     {
                         Ok(_) => {}
-                        Err(tex_state::FontParameterError::FontInfoCapacity { capacity }) => {
+                        Err(capacity) => {
                             return Err(ExecError::Fatal(tex_command::FatalError::overflow(
                                 "font memory",
                                 i32::try_from(capacity).expect("font capacity fits TeX integer"),
                             )));
-                        }
-                        Err(_) => {
-                            unreachable!("§578 accepted this parameter number during the scan")
                         }
                     }
                 }
@@ -1728,7 +1724,11 @@ pub(in crate::main_control) fn apply<G>(
         } => {
             let mut text = String::new();
             for &word in stores.token_list(tokens) {
-                tex_state::token_show::append_token_string_text(stores, word.token(), &mut text);
+                tex_state::token_show::append_token_string_text(
+                    stores,
+                    word.semantic_token(),
+                    &mut text,
+                );
             }
             crate::box_runtime::append_whatsit(
                 modes,

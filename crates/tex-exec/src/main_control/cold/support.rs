@@ -882,9 +882,9 @@ pub(in crate::main_control) struct AccentPlacement {
     pub(in crate::main_control) accent: u8,
     pub(in crate::main_control) accent_font: tex_state::ids::FontId,
     pub(in crate::main_control) accent_metrics: tex_state::font::CharMetrics,
-    pub(in crate::main_control) accent_origin: tex_state::provenance::OriginRef,
+    pub(in crate::main_control) accent_origin: tex_state::token::OriginId,
     /// §1124's `q`: the base character and its origin, or `null`.
-    pub(in crate::main_control) base: Option<(u8, tex_state::provenance::OriginRef)>,
+    pub(in crate::main_control) base: Option<(u8, tex_state::token::OriginId)>,
 }
 
 /// Appends §1123's `link(tail):=p; tail:=p; space_factor:=1000`, preceded by
@@ -1237,7 +1237,7 @@ pub(in crate::main_control) fn schedule_everymath<G>(
 /// report lands after everything the rest of the step emits, including
 /// §362's `)`.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::main_control) enum PendingDiagnostic {
+pub(in crate::main_control) enum PendingDiagnostic<G> {
     /// A command-owned diagnostic whose semantic transition completed before
     /// the World-facing executor could render it.
     Command(tex_command::CommandSemanticDiagnostic),
@@ -1245,16 +1245,16 @@ pub(in crate::main_control) enum PendingDiagnostic {
     ///
     /// The `bool` is `eTeX_ex`: etex.ch rewrites `help_line[0]` to name
     /// `\protected` alongside `\long`, `\outer`, and `\global`.
-    PrefixOnNonPrefixedCommand(tex_command::PrintCommand, String, bool),
+    PrefixOnNonPrefixedCommand(tex_command::PrintCommand<G>, String, bool),
     /// tex.web §1213's `<Discard the prefixes \long and \outer if they are
     /// irrelevant>`.
     ///
     /// The `bool` is `eTeX_ex`, which here rewrites the *message* as well as
     /// the help: etex.ch prints `' or `\protected'` before `' with `'.
-    IrrelevantLongOuterPrefix(tex_command::PrintCommand, String, bool),
+    IrrelevantLongOuterPrefix(tex_command::PrintCommand<G>, String, bool),
 }
 
-impl PendingDiagnostic {
+impl<G> PendingDiagnostic<G> {
     pub(in crate::main_control) fn causal_kind(&self) -> Option<&'static str> {
         match self {
             Self::Command(tex_command::CommandSemanticDiagnostic::Trace { .. })
@@ -1285,7 +1285,7 @@ impl PendingDiagnostic {
 /// Prints each report a completed scan owes, in detection order.
 pub(in crate::main_control) fn report_pending_diagnostics<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
-    diagnostics: Vec<PendingDiagnostic>,
+    diagnostics: Vec<PendingDiagnostic<G>>,
 ) -> Result<(), ExecError> {
     for diagnostic in diagnostics {
         match diagnostic {
@@ -1450,7 +1450,7 @@ pub(in crate::main_control) fn message_tokens_text<G>(
 ) -> String {
     let mut text = String::new();
     for &token in stores.token_list(tokens) {
-        tex_state::token_show::append_token_string_text(stores, token.token(), &mut text);
+        tex_state::token_show::append_token_string_text(stores, token.semantic_token(), &mut text);
     }
     text
 }
@@ -1476,7 +1476,7 @@ pub(in crate::main_control) fn show_tokens_tokens_text<G>(
     for &token in stores.token_list(tokens) {
         tex_state::token_show::append_token_selector_text(
             stores,
-            token.token(),
+            token.semantic_token(),
             newlinechar,
             &mut text,
         );

@@ -20,7 +20,7 @@ pub(in crate::main_control) fn scan<G>(
     set_box_allowed: bool,
     shown_mode: &mut Option<Mode>,
 ) -> Result<ColdOperation<G>, ExecError> {
-    let ResolvedMeaning::Static(meaning) = command.meaning() else {
+    let tex_state::meaning::ResolvedMeaning::Static(meaning) = command.meaning() else {
         unreachable!("expanded macro reached cold stomach dispatch")
     };
     match meaning {
@@ -2577,13 +2577,13 @@ fn scan_arithmetic_assignment<G>(
         .map_err(command_error)?
         .ok_or(ExecError::UnsupportedAssignmentTarget)?;
     let target = match target_command.meaning() {
-        ResolvedMeaning::Macro { .. } => {
+        tex_state::meaning::ResolvedMeaning::Macro { .. } => {
             return Ok(ColdOperation::InvalidArithmeticTarget {
                 primitive,
                 target: tex_command::PrintCommand::from_current(&target_command),
             });
         }
-        ResolvedMeaning::Static(meaning) => match meaning {
+        tex_state::meaning::ResolvedMeaning::Static(meaning) => match meaning {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
                 ArithmeticTarget::IntegerRegister(
                     processor

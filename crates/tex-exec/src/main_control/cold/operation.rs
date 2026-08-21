@@ -1260,7 +1260,7 @@ pub(in crate::main_control) enum MathShiftPairing {
 
 /// A cold operation after its complete attempt-root set has crossed the one
 /// outer promotion boundary. The type contains no attempt-local coordinate.
-pub(in crate::main_control) type PreparedColdOperation<G> =
+pub(in crate::main_control) type PreparedColdCommand<G> =
     ColdOperation<G, tex_state::TokenListId<G>, tex_state::DefinitionId<G>>;
 
 #[derive(Debug)]
@@ -1584,7 +1584,7 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
     operation: ColdOperation<G>,
     command: &tex_command::CommandState<G>,
     stores: &mut Universe<G>,
-) -> Result<PreparedColdOperation<G>, ColdPreparationError> {
+) -> Result<PreparedColdCommand<G>, ColdPreparationError> {
     let mut roots = Vec::new();
     operation.attempt_token_roots(&mut roots);
     let receipt = command.promote_attempt_roots(
