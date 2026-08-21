@@ -549,8 +549,7 @@ pub enum CompileAttemptResult {
 /// Accepted one-shot engine state handed from the resource session to a
 /// client-owned downstream finalizer. Effects remain uncommitted.
 pub struct AcceptedFinalization {
-    pub stores: Universe,
-    pub prepared_pages: Option<tex_state::PreparedPageSuffix>,
+    pub completion: tex_exec::DetachedEngineCompletion,
     pub dumped_format: bool,
     pub format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
     pub expansion_stats: tex_incr::ExpansionStats,
@@ -797,6 +796,7 @@ pub struct VirtualCompileSession {
     outputs: OutputCapabilitySet,
     html_asset_mode: tex_out::html::AssetMode,
     incremental: Option<Box<tex_incr::Session>>,
+    accepted_engine_output: Option<Box<tex_incr::AcceptedOutput>>,
     accepted_output: Option<MemoryRunOutput>,
     accepted_render_document: Option<RenderDocument>,
     pending_render_update: Option<RenderUpdate>,
@@ -947,11 +947,15 @@ impl PreparedExecution {
         }
     }
 
-    fn artifacts(&self) -> &[tex_state::CommittedArtifact] {
+    fn completion(&self) -> &tex_exec::DetachedEngineCompletion {
         match self {
-            Self::Initial { accepted, .. } => &accepted.artifacts,
-            Self::Transaction(transaction) => transaction.artifacts(),
+            Self::Initial { accepted, .. } => accepted.completion(),
+            Self::Transaction(transaction) => transaction.completion(),
         }
+    }
+
+    fn pages(&self) -> &[tex_exec::DetachedPreparedPage] {
+        self.completion().pages()
     }
 
     fn dvi_bytes(&self) -> Result<Vec<u8>, tex_out::dvi::DviError> {
@@ -1042,6 +1046,7 @@ impl VirtualCompileSession {
             outputs: options.outputs,
             html_asset_mode: options.html_asset_mode,
             incremental: None,
+            accepted_engine_output: None,
             accepted_output: None,
             accepted_render_document: None,
             pending_render_update: None,
@@ -1105,16 +1110,13 @@ impl VirtualCompileSession {
         let dumped_format = session.accepted_dumped_format();
         let format_dump_receipt = session.accepted_format_dump_receipt().cloned();
         let expansion_stats = session.accepted_expansion_stats();
-        let tex_incr::AcceptedUniverseFinalization {
-            universe: stores,
-            prepared_pages,
-        } = (*session)
-            .into_accepted_universe()
-            .map_err(|error| CompileError::Incremental(error.to_string()))?;
-        let pdf_raw_object_file_receipt = pdf_raw_object_file_receipt(&stores, &self.workspace)?;
+        let accepted = self.accepted_engine_output.ok_or_else(|| {
+            CompileError::Incremental("the accepted detached completion is missing".to_owned())
+        })?;
+        let pdf_raw_object_file_receipt =
+            pdf_raw_object_file_receipt(accepted.pdf(), &self.workspace)?;
         Ok(AcceptedFinalization {
-            stores,
-            prepared_pages,
+            completion: accepted.into_completion(),
             dumped_format,
             format_dump_receipt,
             expansion_stats,
@@ -1316,8 +1318,12 @@ impl VirtualCompileSession {
         let Some(session) = self.incremental.as_ref() else {
             return Ok(None);
         };
+        let accepted = self
+            .accepted_engine_output
+            .as_ref()
+            .expect("accepted output checked above");
         session
-            .rendered_source_location(page, event, unit, output_id, revision)
+            .rendered_source_location(accepted, page, event, unit, output_id, revision)
             .map(|location| {
                 location.map(|result| match result {
                     tex_incr::RenderedSourceResult::Current(location) => {
@@ -2231,17 +2237,6 @@ impl VirtualCompileSession {
             return Err(fatal);
         }
         match drive {
-            Ok(tex_incr::RevisionCandidateResult::Complete)
-                if self.authored_root_name.is_some() =>
-            {
-                let stores = match &mut retained.execution {
-                    RetainedExecution::Initial { candidate, .. }
-                    | RetainedExecution::Pending(candidate) => candidate
-                        .completed_universe_mut()
-                        .expect("a completed drive exposes its candidate universe"),
-                };
-                tex_state::file_framing::print_remaining_file_closes(stores);
-            }
             Ok(tex_incr::RevisionCandidateResult::Complete) => {}
             Ok(tex_incr::RevisionCandidateResult::AwaitingResources(_)) => {
                 generated_transaction.discard();
@@ -2257,22 +2252,20 @@ impl VirtualCompileSession {
         if self.outputs.contains(OutputCapability::Pdf) {
             #[cfg(not(target_arch = "wasm32"))]
             let pdf_request_extraction_started = Instant::now();
-            let stores = match &mut retained.execution {
+            let completion = match &retained.execution {
                 RetainedExecution::Initial { candidate, .. }
                 | RetainedExecution::Pending(candidate) => candidate
-                    .completed_universe_mut()
-                    .expect("a completed drive exposes its candidate universe"),
+                    .completion_resource_discovery()
+                    .expect("a completed drive exposes detached resource discovery"),
             };
             let unavailable_pk_fonts = self.unavailable_pk_font_keys();
-            let raw_object_files =
-                discover_pdf_raw_object_files(stores, &self.workspace).map_err(|message| {
-                    CompileError::OutputCapability {
-                        capability: OutputCapability::Pdf,
-                        message,
-                    }
+            let raw_object_files = discover_pdf_raw_object_files(completion.pdf(), &self.workspace)
+                .map_err(|message| CompileError::OutputCapability {
+                    capability: OutputCapability::Pdf,
+                    message,
                 })?;
             let mut discovery = pdf_resources::discover(
-                stores,
+                completion,
                 &self.workspace,
                 &mut self.virtual_font_resources,
                 &self.resolved_pk_fonts,
@@ -2349,17 +2342,17 @@ impl VirtualCompileSession {
         if self.outputs.contains(OutputCapability::Html) {
             #[cfg(not(target_arch = "wasm32"))]
             let html_request_extraction_started = Instant::now();
-            let artifacts = match &mut retained.execution {
+            let pages = match &retained.execution {
                 RetainedExecution::Initial { candidate, .. }
                 | RetainedExecution::Pending(candidate) => candidate
-                    .completed_universe_mut()
-                    .expect("a completed drive exposes its candidate universe")
-                    .world()
-                    .committed_artifacts(),
+                    .completion_resource_discovery()
+                    .expect("a completed drive exposes detached resource discovery")
+                    .completion()
+                    .pages(),
             };
             let unavailable_fonts = self.unavailable_font_keys();
             let required = discover_html_paint_resources(
-                artifacts,
+                pages.iter().map(tex_exec::DetachedPreparedPage::artifact),
                 &self.resolved_fonts,
                 &unavailable_fonts,
                 self.accepted_font_containers,
@@ -2415,15 +2408,10 @@ impl VirtualCompileSession {
         .map_err(|error| {
             CompileError::Diagnostic(CompileDiagnostic::from_session_error(&error, None))
         })?;
-        let accepted_world = match &execution {
-            PreparedExecution::Initial { session, .. } => session.materialize_accepted_world(),
-            PreparedExecution::Transaction(transaction) => self
-                .incremental
-                .as_ref()
-                .expect("a prepared patch has an accepted incremental session")
-                .materialize_prepared_world(transaction),
-        }
-        .map_err(|error| CompileError::Output(error.to_string()))?;
+        let mut accepted_world = tex_state::World::memory();
+        accepted_world
+            .publish_detached_effect_records(execution.completion().effects())
+            .map_err(|error| CompileError::Output(format!("{error:?}")))?;
         let terminal = accepted_world
             .memory_terminal_output()
             .ok_or_else(|| CompileError::Output("accepted output is not memory-backed".to_owned()))?
@@ -2434,17 +2422,16 @@ impl VirtualCompileSession {
             .to_vec();
         let files = publish_auxiliary_outputs(&accepted_world, &mut generated_transaction)
             .map_err(map_memory_output)?;
-        let dvi =
-            if !self.outputs.contains(OutputCapability::Dvi) || execution.artifacts().is_empty() {
-                Vec::new()
-            } else {
-                execution
-                    .dvi_bytes()
-                    .map_err(|error| CompileError::OutputCapability {
-                        capability: OutputCapability::Dvi,
-                        message: error.to_string(),
-                    })?
-            };
+        let dvi = if !self.outputs.contains(OutputCapability::Dvi) || execution.pages().is_empty() {
+            Vec::new()
+        } else {
+            execution
+                .dvi_bytes()
+                .map_err(|error| CompileError::OutputCapability {
+                    capability: OutputCapability::Dvi,
+                    message: error.to_string(),
+                })?
+        };
         let mut output = MemoryRunOutput {
             outputs: self.outputs,
             terminal,
@@ -2492,9 +2479,9 @@ impl VirtualCompileSession {
                 ..tex_out::html::HtmlOptions::default()
             };
             let pages = execution
-                .artifacts()
+                .pages()
                 .iter()
-                .map(|artifact| tex_out::PageArtifact::from_bytes(artifact.bytes()))
+                .map(|page| tex_out::PageArtifact::from_bytes(page.artifact().bytes()))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|error| CompileError::OutputCapability {
                     capability: OutputCapability::Html,
@@ -2553,16 +2540,20 @@ impl VirtualCompileSession {
         let previous_generated = generated_fingerprint(&self.workspace)?;
         let next_generated = generated_fingerprint(&pending_workspace)?;
         let reuse = execution.reuse();
-        match execution {
-            PreparedExecution::Initial { session, .. } => self.incremental = Some(session),
-            PreparedExecution::Transaction(transaction) => {
+        let accepted_engine_output = match execution {
+            PreparedExecution::Initial { session, accepted } => {
+                self.incremental = Some(session);
+                accepted
+            }
+            PreparedExecution::Transaction(transaction) => Box::new(
                 self.incremental
                     .as_mut()
                     .expect("a prepared patch has an accepted incremental session")
                     .accept_revision(*transaction)
-                    .map_err(|error| CompileError::Incremental(error.to_string()))?;
-            }
-        }
+                    .map_err(|error| CompileError::Incremental(error.to_string()))?,
+            ),
+        };
+        self.accepted_engine_output = Some(accepted_engine_output);
         self.workspace = pending_workspace;
         self.pending_patch = None;
         self.last_reuse = Some(reuse);
@@ -2953,8 +2944,8 @@ impl HtmlFontAssets for SessionFontResolver<'_> {
     }
 }
 
-fn discover_html_paint_resources(
-    artifacts: &[tex_state::CommittedArtifact],
+fn discover_html_paint_resources<'a>(
+    artifacts: impl IntoIterator<Item = &'a tex_state::CommittedArtifact>,
     resolved: &BTreeMap<FontRequestKey, OpenTypeFont>,
     unavailable: &BTreeSet<FontRequestKey>,
     accepted_containers: AcceptedFontContainers,
@@ -3023,23 +3014,16 @@ enum PdfRawObjectFileLookup {
     Unavailable,
 }
 
-fn discover_pdf_raw_object_files<G>(
-    stores: &Universe<G>,
+fn discover_pdf_raw_object_files(
+    pdf: Option<&tex_state::DetachedPdfCompletion>,
     workspace: &ProjectWorkspace,
 ) -> Result<Vec<FileRequest>, String> {
     let mut required = BTreeMap::new();
-    for record in stores.pdf_raw_objects() {
-        let Some(data) = record
-            .data()
-            .filter(|data| data.is_stream() && data.is_file())
-        else {
-            continue;
-        };
-        let source = crate::pdf_output::token_list_bytes(stores, data.data());
-        let name = std::str::from_utf8(&source).map_err(|_| {
+    for need in pdf.into_iter().flat_map(|pdf| pdf.raw_object_file_needs()) {
+        let name = std::str::from_utf8(&need.source_name).map_err(|_| {
             format!(
                 "PDF stream object {} has a non-UTF-8 file name",
-                record.id().raw()
+                need.object
             )
         })?;
         match lookup_pdf_raw_object_file(workspace, name)? {
@@ -3050,7 +3034,7 @@ fn discover_pdf_raw_object_files<G>(
             PdfRawObjectFileLookup::Unavailable => {
                 return Err(format!(
                     "PDF stream object {} file {name:?} is unavailable",
-                    record.id().raw()
+                    need.object
                 ));
             }
         }
@@ -3058,26 +3042,20 @@ fn discover_pdf_raw_object_files<G>(
     Ok(required.into_values().collect())
 }
 
-fn pdf_raw_object_file_receipt<G>(
-    stores: &Universe<G>,
+fn pdf_raw_object_file_receipt(
+    pdf: Option<&tex_state::DetachedPdfCompletion>,
     workspace: &ProjectWorkspace,
 ) -> Result<PdfRawObjectFileReceipt, CompileError> {
     let mut entries = BTreeMap::new();
-    for record in stores.pdf_raw_objects() {
-        let Some(data) = record
-            .data()
-            .filter(|data| data.is_stream() && data.is_file())
-        else {
-            continue;
-        };
-        let source = crate::pdf_output::token_list_bytes(stores, data.data());
-        let name = std::str::from_utf8(&source).map_err(|_| CompileError::OutputCapability {
-            capability: OutputCapability::Pdf,
-            message: format!(
-                "PDF stream object {} has a non-UTF-8 file name",
-                record.id().raw()
-            ),
-        })?;
+    for need in pdf.into_iter().flat_map(|pdf| pdf.raw_object_file_needs()) {
+        let name =
+            std::str::from_utf8(&need.source_name).map_err(|_| CompileError::OutputCapability {
+                capability: OutputCapability::Pdf,
+                message: format!(
+                    "PDF stream object {} has a non-UTF-8 file name",
+                    need.object
+                ),
+            })?;
         let PdfRawObjectFileLookup::Bound(entry) = lookup_pdf_raw_object_file(workspace, name)
             .map_err(|message| CompileError::OutputCapability {
                 capability: OutputCapability::Pdf,
@@ -3086,10 +3064,10 @@ fn pdf_raw_object_file_receipt<G>(
         else {
             return Err(CompileError::Incremental(format!(
                 "accepted PDF stream object {} has no bound file payload",
-                record.id().raw()
+                need.object
             )));
         };
-        entries.insert(record.id().raw(), entry);
+        entries.insert(need.object, entry);
     }
     Ok(PdfRawObjectFileReceipt { entries })
 }

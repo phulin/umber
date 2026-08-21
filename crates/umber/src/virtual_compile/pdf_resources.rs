@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tex_fonts::{TfmFont, VfProgram};
-use tex_state::Universe;
+use tex_state::{DetachedPdfFontOperation, PdfFontMapOperation};
 use umber_vfs::{FileContentId, ProjectWorkspace};
 
 use super::{FileKind, FileRequest, FileRequestKey, ResolvedPkFont, ResourceRequest};
@@ -27,6 +27,11 @@ pub struct CachedLocalTfm {
 pub struct PdfVirtualFontResources {
     pub virtual_fonts: BTreeMap<String, CachedVirtualFont>,
     pub local_tfms: BTreeMap<String, CachedLocalTfm>,
+    pub(crate) font_maps: BTreeMap<Vec<u8>, tex_fonts::PdfFontMap>,
+    pub(crate) encodings: BTreeMap<Vec<u8>, tex_fonts::PdfEncoding>,
+    pub(crate) type1_programs: BTreeMap<Vec<u8>, tex_fonts::PdfType1Program>,
+    pub(crate) truetype_programs: BTreeMap<Vec<u8>, tex_fonts::PdfTrueTypeProgram>,
+    pub(crate) pk_fonts: BTreeMap<tex_fonts::PdfPkFontRequest, tex_fonts::PdfPkFont>,
 }
 
 pub(super) struct Discovery {
@@ -36,8 +41,8 @@ pub(super) struct Discovery {
     pub observed_pk_fonts: Vec<tex_fonts::PdfPkFontRequest>,
 }
 
-pub(super) fn discover<G>(
-    stores: &mut Universe<G>,
+pub(super) fn discover(
+    discovery: tex_incr::CompletionResourceDiscovery<'_>,
     files: &ProjectWorkspace,
     cache: &mut PdfVirtualFontResources,
     pk_fonts: &BTreeMap<tex_fonts::PdfPkFontRequest, ResolvedPkFont>,
@@ -47,14 +52,19 @@ pub(super) fn discover<G>(
     let mut probes = BTreeMap::<FileRequestKey, FileRequest>::new();
     let mut observed_files = BTreeMap::<FileRequestKey, FileRequest>::new();
     let mut observed_pk_fonts = BTreeSet::new();
-    let mut fonts = stores
-        .pdf_font_resources()
-        .filter_map(|resource| {
-            let font = stores.font(resource.font());
-            stores
-                .font_uses_tfm_metrics(resource.font())
-                .then(|| font.name().to_owned())
-        })
+    let Some(pdf) = discovery.pdf() else {
+        return Ok(Discovery {
+            required: Vec::new(),
+            probes: Vec::new(),
+            observed_files: Vec::new(),
+            observed_pk_fonts: Vec::new(),
+        });
+    };
+    let mut fonts = pdf
+        .fonts()
+        .iter()
+        .filter(|resource| resource.recipe.opentype.is_none())
+        .map(|resource| resource.recipe.name.clone())
         .collect::<BTreeSet<_>>();
     if fonts.is_empty() {
         return Ok(Discovery {
@@ -136,144 +146,103 @@ pub(super) fn discover<G>(
         });
     }
 
-    let explicitly_requests_default = stores.pdf_font_maps().any(|operation| {
-        matches!(
-            operation,
-            tex_state::PdfFontMapOperation::File(file)
-                if file.logical_name == b"pdftex.map"
-        )
-    });
-    let mut implicit_default = false;
-    for name in stores.pdf_font_map_file_requests() {
+    for name in font_map_file_requests(pdf) {
         let name = utf8_name("PDF font map", &name)?;
-        if name == "pdftex.map" && !explicitly_requests_default {
-            implicit_default = true;
-            continue;
-        }
         let map_request = request(FileKind::PdfFontMap, name, "map")?;
         observed_files.insert(map_request.key().clone(), map_request.clone());
         if files.is_unavailable(map_request.key()) {
             return Err(format!("required PDF font map {name} is unavailable"));
         }
         if let Some(file) = files.get(map_request.key()) {
-            if !stores.has_pdf_font_map_file(name.as_bytes()) {
-                stores
-                    .provide_pdf_font_map_file(name.as_bytes().to_vec(), file.bytes())
-                    .map_err(|error| format!("PDF font map {name}: {error}"))?;
-            }
+            let map = tex_fonts::PdfFontMap::parse(file.bytes())
+                .map_err(|error| format!("PDF font map {name}: {error}"))?;
+            cache.font_maps.insert(name.as_bytes().to_vec(), map);
         } else {
             required.insert(map_request.key().clone(), map_request);
         }
     }
-    let covered_names = stores
-        .resolved_pdf_font_map_lines()
-        .into_iter()
-        .map(|entry| entry.tex_name)
-        .chain(stores.authoritative_pdf_font_map_names())
-        .filter_map(|name| String::from_utf8(name).ok())
-        .collect::<BTreeSet<_>>();
-    if implicit_default && !real_fonts.is_subset(&covered_names) {
-        let name = "pdftex.map";
-        let map_request = request(FileKind::PdfFontMap, name, "map")?;
-        observed_files.insert(map_request.key().clone(), map_request.clone());
-        if files.is_unavailable(map_request.key()) {
-            return Err(format!("required PDF font map {name} is unavailable"));
-        }
-        if let Some(file) = files.get(map_request.key()) {
-            if !stores.has_pdf_font_map_file(name.as_bytes()) {
-                stores
-                    .provide_pdf_font_map_file(name.as_bytes().to_vec(), file.bytes())
-                    .map_err(|error| format!("PDF font map {name}: {error}"))?;
-            }
-        } else {
-            required.insert(map_request.key().clone(), map_request);
-        }
-    }
-
-    for entry in stores
-        .resolved_pdf_font_map_lines()
-        .into_iter()
+    let resolved_map_lines = resolved_font_map_lines(pdf, cache);
+    for entry in resolved_map_lines
+        .iter()
         .filter(|entry| real_fonts.contains(utf8_name("mapped TFM", &entry.tex_name).unwrap_or("")))
     {
-        for encoding in entry.encoding_files {
-            let name = utf8_name("PDF encoding", &encoding)?;
-            if stores.pdf_encoding(name.as_bytes()).is_none() {
-                acquire_parsed(
-                    stores,
-                    files,
-                    &mut required,
-                    &mut observed_files,
-                    FileKind::PdfEncoding,
-                    name,
-                    |stores, bytes| {
-                        stores
-                            .provide_pdf_encoding(name.as_bytes().to_vec(), bytes)
-                            .map_err(|error| error.to_string())
-                    },
-                )?;
+        for encoding in &entry.encoding_files {
+            let name = utf8_name("PDF encoding", encoding)?;
+            let request = request(FileKind::PdfEncoding, name, "")?;
+            observed_files.insert(request.key().clone(), request.clone());
+            if let Some(file) = files.get(request.key()) {
+                cache.encodings.insert(
+                    name.as_bytes().to_vec(),
+                    tex_fonts::PdfEncoding::parse(file.bytes())
+                        .map_err(|error| format!("PDF encoding {name}: {error}"))?,
+                );
+            } else if files.is_unavailable(request.key()) {
+                return Err(format!("required PDF encoding {name} is unavailable"));
+            } else {
+                required.insert(request.key().clone(), request);
             }
         }
-        if let Some(program) = entry.font_file {
-            let name = utf8_name("PDF font program", &program)?;
+        if let Some(program) = &entry.font_file {
+            let name = utf8_name("PDF font program", program)?;
             let is_truetype = crate::pdf_output::is_pdf_sfnt_program(name.as_bytes());
-            let present = if is_truetype {
-                stores.pdf_truetype_program(name.as_bytes()).is_some()
+            let request = request(FileKind::PdfFontProgram, name, "")?;
+            observed_files.insert(request.key().clone(), request.clone());
+            if let Some(file) = files.get(request.key()) {
+                if is_truetype {
+                    cache.truetype_programs.insert(
+                        name.as_bytes().to_vec(),
+                        tex_fonts::PdfTrueTypeProgram::parse(file.bytes())
+                            .map_err(|error| format!("PDF font program {name}: {error}"))?,
+                    );
+                } else {
+                    cache.type1_programs.insert(
+                        name.as_bytes().to_vec(),
+                        tex_fonts::PdfType1Program::from_pfb(file.bytes())
+                            .map_err(|error| format!("PDF font program {name}: {error}"))?,
+                    );
+                }
+            } else if files.is_unavailable(request.key()) {
+                return Err(format!("required PDF font program {name} is unavailable"));
             } else {
-                stores.pdf_type1_program(name.as_bytes()).is_some()
-            };
-            if !present {
-                acquire_parsed(
-                    stores,
-                    files,
-                    &mut required,
-                    &mut observed_files,
-                    FileKind::PdfFontProgram,
-                    name,
-                    |stores, bytes| {
-                        if is_truetype {
-                            stores
-                                .provide_pdf_truetype_program(name.as_bytes().to_vec(), bytes)
-                                .map_err(|error| error.to_string())
-                        } else {
-                            stores
-                                .provide_pdf_type1_program(name.as_bytes().to_vec(), bytes)
-                                .map_err(|error| error.to_string())
-                        }
-                    },
-                )?;
+                required.insert(request.key().clone(), request);
             }
         }
     }
 
-    let mapped_names = stores
-        .resolved_pdf_font_map_lines()
-        .into_iter()
-        .map(|entry| entry.tex_name)
+    let mapped_names = resolved_map_lines
+        .iter()
+        .map(|entry| entry.tex_name.clone())
         .collect::<BTreeSet<_>>();
     let virtual_names = cache
         .virtual_fonts
         .keys()
         .map(|name| name.as_bytes().to_vec())
         .collect::<BTreeSet<_>>();
-    let pk_requests = stores
-        .pdf_font_resources()
+    let base_dpi = pdf.output_parameters().map_or(
+        crate::pdf_output::DEFAULT_PDF_PK_RESOLUTION,
+        |parameters| {
+            if parameters.pk_resolution == 0 {
+                crate::pdf_output::DEFAULT_PDF_PK_RESOLUTION
+            } else {
+                parameters.pk_resolution
+            }
+        },
+    );
+    let pk_requests = pdf
+        .fonts()
+        .iter()
+        .filter(|resource| resource.recipe.opentype.is_none())
         .filter_map(|resource| {
-            let font = stores.font(resource.font());
-            (!mapped_names.contains(font.name().as_bytes())
-                && !virtual_names.contains(font.name().as_bytes()))
-            .then(|| {
-                crate::pdf_output::pk_font_request(
-                    stores,
-                    resource.font(),
-                    crate::pdf_output::DEFAULT_PDF_PK_RESOLUTION,
-                )
-            })
+            let font = &resource.recipe;
+            (!mapped_names.contains(font.name.as_bytes())
+                && !virtual_names.contains(font.name.as_bytes()))
+            .then(|| detached_pk_request(font, base_dpi))
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
     let mut pk_required = Vec::new();
     for request in pk_requests {
         observed_pk_fonts.insert(request.clone());
-        if stores.pdf_pk_font(&request).is_some() {
+        if cache.pk_fonts.contains_key(&request) {
             continue;
         }
         if unavailable_pk_fonts.contains(&request) {
@@ -283,9 +252,11 @@ pub(super) fn discover<G>(
             ));
         }
         if let Some(resolved) = pk_fonts.get(&request) {
-            stores
-                .provide_pdf_pk_font(request, &resolved.bytes)
-                .map_err(|error| format!("PK font: {error}"))?;
+            cache.pk_fonts.insert(
+                request.clone(),
+                tex_fonts::PdfPkFont::parse(&resolved.bytes)
+                    .map_err(|error| format!("PK font: {error}"))?,
+            );
         } else {
             pk_required.push(ResourceRequest::PkFont(request));
         }
@@ -302,26 +273,138 @@ pub(super) fn discover<G>(
     })
 }
 
-fn acquire_parsed<G>(
-    stores: &mut Universe<G>,
-    files: &ProjectWorkspace,
-    required: &mut BTreeMap<FileRequestKey, FileRequest>,
-    observed: &mut BTreeMap<FileRequestKey, FileRequest>,
-    kind: FileKind,
-    name: &str,
-    parse: impl FnOnce(&mut Universe<G>, &[u8]) -> Result<(), String>,
-) -> Result<(), String> {
-    let request = request(kind, name, "")?;
-    observed.insert(request.key().clone(), request.clone());
-    if files.is_unavailable(request.key()) {
-        return Err(format!("required {} {name} is unavailable", kind));
+fn font_map_file_requests(pdf: &tex_state::DetachedPdfCompletion) -> Vec<Vec<u8>> {
+    let maps = pdf
+        .font_operations()
+        .iter()
+        .filter_map(|operation| match operation {
+            DetachedPdfFontOperation::Map(map) => Some(map),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let loads_default = maps.first().is_none_or(|operation| {
+        map_directive(operation) != tex_fonts::PdfFontMapDirective::Default
+    });
+    let mut requests = BTreeSet::new();
+    if loads_default {
+        requests.insert(b"pdftex.map".to_vec());
     }
-    if let Some(file) = files.get(request.key()) {
-        parse(stores, file.bytes())?;
-    } else {
-        required.insert(request.key().clone(), request);
+    for operation in maps {
+        if let PdfFontMapOperation::File(file) = operation {
+            requests.insert(file.logical_name.clone());
+        }
     }
-    Ok(())
+    requests.into_iter().collect()
+}
+
+pub(crate) fn resolved_font_map_lines(
+    pdf: &tex_state::DetachedPdfCompletion,
+    cache: &PdfVirtualFontResources,
+) -> Vec<tex_fonts::PdfFontMapEntry> {
+    let maps = pdf
+        .font_operations()
+        .iter()
+        .filter_map(|operation| match operation {
+            DetachedPdfFontOperation::Map(map) => Some(map),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut entries = BTreeMap::new();
+    if maps
+        .first()
+        .is_none_or(|operation| map_directive(operation) != tex_fonts::PdfFontMapDirective::Default)
+    {
+        apply_map_file(
+            pdf,
+            cache,
+            b"pdftex.map",
+            tex_fonts::PdfFontMapDirective::Default,
+            &mut entries,
+        );
+    }
+    for operation in maps {
+        match operation {
+            PdfFontMapOperation::BlockDefault => {}
+            PdfFontMapOperation::Line(entry) => apply_map_entry(entry.clone(), &mut entries),
+            PdfFontMapOperation::File(file) => {
+                apply_map_file(pdf, cache, &file.logical_name, file.directive, &mut entries)
+            }
+        }
+    }
+    entries.into_values().collect()
+}
+
+fn apply_map_file(
+    pdf: &tex_state::DetachedPdfCompletion,
+    cache: &PdfVirtualFontResources,
+    logical_name: &[u8],
+    directive: tex_fonts::PdfFontMapDirective,
+    entries: &mut BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>,
+) {
+    let map = pdf
+        .font_operations()
+        .iter()
+        .rev()
+        .find_map(|operation| match operation {
+            DetachedPdfFontOperation::MapFileContent {
+                logical_name: candidate,
+                map,
+            } if candidate == logical_name => Some(map),
+            _ => None,
+        })
+        .or_else(|| cache.font_maps.get(logical_name));
+    let Some(map) = map else { return };
+    for entry in map.entries() {
+        let mut entry = entry.clone();
+        entry.directive = directive;
+        apply_map_entry(entry, entries);
+    }
+}
+
+fn apply_map_entry(
+    entry: tex_fonts::PdfFontMapEntry,
+    entries: &mut BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>,
+) {
+    match entry.directive {
+        tex_fonts::PdfFontMapDirective::Default | tex_fonts::PdfFontMapDirective::Add => {
+            entries.entry(entry.tex_name.clone()).or_insert(entry);
+        }
+        tex_fonts::PdfFontMapDirective::Replace => {
+            entries.insert(entry.tex_name.clone(), entry);
+        }
+        tex_fonts::PdfFontMapDirective::Remove => {
+            entries.remove(&entry.tex_name);
+        }
+    }
+}
+
+const fn map_directive(operation: &PdfFontMapOperation) -> tex_fonts::PdfFontMapDirective {
+    match operation {
+        PdfFontMapOperation::BlockDefault => tex_fonts::PdfFontMapDirective::Default,
+        PdfFontMapOperation::File(file) => file.directive,
+        PdfFontMapOperation::Line(line) => line.directive,
+    }
+}
+
+fn detached_pk_request(
+    font: &tex_state::FontArtifactRecipe,
+    base_dpi: i32,
+) -> Result<tex_fonts::PdfPkFontRequest, String> {
+    let design_size = i64::from(font.design_size.raw());
+    if design_size <= 0 {
+        return Err(format!("font {} has invalid PK design size", font.name));
+    }
+    let dpi = i64::from(base_dpi.clamp(72, 8_000))
+        .checked_mul(i64::from(font.at_size.raw()))
+        .and_then(|value| value.checked_add(design_size / 2))
+        .map(|value| value / design_size)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| format!("font {} PK resolution overflows", font.name))?;
+    Ok(tex_fonts::PdfPkFontRequest::new(
+        font.name.as_bytes().to_vec(),
+        dpi,
+        Vec::new(),
+    ))
 }
 
 fn request(kind: FileKind, name: &str, extension: &str) -> Result<FileRequest, String> {
