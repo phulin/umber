@@ -985,6 +985,10 @@ pub enum InputStreamRequest {
         /// before §1225 enters `read_toks`.
         global: bool,
         tokens: AttemptTokenListId,
+        /// Parameterless macro definition allocated in the same command
+        /// attempt as `tokens`; both roots are promoted atomically before
+        /// semantic apply.
+        definition: AttemptDefinitionId,
     },
 }
 
@@ -2150,11 +2154,24 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // `scanner_status`, all of which are the command core's.
                 let tokens =
                     self.read_toks(stream, target, primitive == UnexpandablePrimitive::ReadLine)?;
+                let parameter_text = self
+                    .command
+                    .attempt
+                    .arena_mut()
+                    .allocate_token_list([])
+                    .map_err(crate::scan_toks::attempt_command_error)?;
+                let definition = self
+                    .command
+                    .attempt
+                    .arena_mut()
+                    .allocate_definition(parameter_text, tokens)
+                    .map_err(crate::scan_toks::attempt_command_error)?;
                 Ok(InputStreamRequest::Read {
                     stream,
                     target,
                     global: read_global,
                     tokens,
+                    definition,
                 })
             }
             _ => Err(CommandError::input_invariant()),

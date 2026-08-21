@@ -435,7 +435,7 @@ impl From<tex_command::PdfNavigationRequest>
 }
 
 impl From<tex_command::InputStreamRequest>
-    for RootedInputStreamRequest<tex_command::AttemptTokenListId>
+    for RootedInputStreamRequest<tex_command::AttemptTokenListId, tex_command::AttemptDefinitionId>
 {
     fn from(request: tex_command::InputStreamRequest) -> Self {
         match request {
@@ -464,12 +464,13 @@ impl From<tex_command::InputStreamRequest>
                 target,
                 global,
                 tokens,
+                definition,
             } => Self::Read {
                 stream,
                 target,
                 global,
                 tokens,
-                definition: (),
+                definition,
             },
         }
     }
@@ -1587,11 +1588,14 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
 ) -> Result<PreparedColdCommand<G>, ColdPreparationError> {
     let mut roots = Vec::new();
     operation.attempt_token_roots(&mut roots);
+    let mut definitions = Vec::new();
+    operation.attempt_definition_roots(&mut definitions);
     let receipt = command.promote_attempt_roots(
         stores,
-        tex_command::AttemptPromotionRoots::new(&roots, &[], &[], &[]),
+        tex_command::AttemptPromotionRoots::new(&roots, &[], &definitions, &[]),
     )?;
     let mut cursor = PromotionCursor::new(receipt.token_lists);
+    let mut definition_cursor = PromotionCursor::new(receipt.definitions);
     let prepared = match operation {
         ColdOperation::Continue => ColdOperation::Continue,
         ColdOperation::Relax => ColdOperation::Relax,
@@ -1875,13 +1879,10 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
                     target,
                     global,
                     tokens: _,
-                    definition: (),
+                    definition: _,
                 } => {
                     let tokens = cursor.token()?;
-                    let replacement = stores.tokens(tokens).to_vec();
-                    let definition = stores
-                        .allocate_definition(&[], &replacement)
-                        .map_err(ColdPreparationError::Definition)?;
+                    let definition = definition_cursor.token()?;
                     RootedInputStreamRequest::Read {
                         stream,
                         target,
@@ -2180,6 +2181,7 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
         }
     };
     cursor.finish()?;
+    definition_cursor.finish()?;
     Ok(prepared)
 }
 
@@ -2276,6 +2278,17 @@ impl<G> ColdOperation<G> {
             } => Some(ch),
             Self::CharacterCode { value, .. } => u32::try_from(value).ok().and_then(char::from_u32),
             _ => None,
+        }
+    }
+
+    /// Collects attempt-local macro definitions which must be promoted in
+    /// the same validated batch as their token-list children.
+    pub(in crate::main_control) fn attempt_definition_roots(
+        &self,
+        roots: &mut Vec<tex_command::AttemptDefinitionId>,
+    ) {
+        if let Self::InputStream { request, .. } = self {
+            input_stream_attempt_definition_roots(request, roots);
         }
     }
 }
@@ -2419,6 +2432,15 @@ fn input_stream_attempt_roots<T: Copy, D, S>(
     }
 }
 
+fn input_stream_attempt_definition_roots<T, D: Copy, S>(
+    request: &RootedInputStreamRequest<T, D, S>,
+    roots: &mut Vec<D>,
+) {
+    if let RootedInputStreamRequest::Read { definition, .. } = request {
+        roots.push(*definition);
+    }
+}
+
 /// A completed assignable quantity selector.  It is intentionally a semantic
 /// selector, never a delivered command or a raw input handle.
 #[derive(Clone, Copy, Debug)]
@@ -2483,12 +2505,15 @@ mod preparation_tests {
             target: (),
             global: false,
             tokens: 8,
-            definition: (),
+            definition: 9,
         };
         let mut roots = Vec::new();
         immediate_extension_attempt_roots(&immediate, &mut roots);
         input_stream_attempt_roots(&input, &mut roots);
         assert_eq!(roots, [6, 7, 8]);
+        let mut definitions = Vec::new();
+        input_stream_attempt_definition_roots(&input, &mut definitions);
+        assert_eq!(definitions, [9]);
     }
 
     #[test]
