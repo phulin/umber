@@ -327,3 +327,49 @@ fn pure_memo_capability_is_borrowed_and_does_not_keep_runtime_alive() {
     })
     .expect("universe allocation");
 }
+
+#[test]
+fn engine_boundary_hash_resolves_children_and_erases_runtime_provenance() {
+    with_universe(budget(), |universe| {
+        let left = universe.publish_page_nodes(&[Node::Penalty(7)]);
+        let right = universe.publish_page_nodes(&[Node::Penalty(7)]);
+        let boxed = |children| {
+            Node::HList(BoxNode::new(BoxNodeFields {
+                width: Scaled::from_raw(10),
+                height: Scaled::from_raw(20),
+                depth: Scaled::from_raw(3),
+                shift: Scaled::from_raw(0),
+                box_lr: BoxLr::Normal,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: crate::glue::Order::Normal,
+                children,
+            }))
+        };
+        let left_hash = universe.engine_boundary_hash(17, |hash| hash.nodes(&[boxed(left)]));
+        let right_hash = universe.engine_boundary_hash(17, |hash| hash.nodes(&[boxed(right)]));
+        assert_eq!(left_hash, right_hash, "page row identity is nonsemantic");
+
+        let character = |origin| Node::Char {
+            font: crate::font::NULL_FONT,
+            ch: 'x',
+            origin,
+        };
+        let unknown = universe.engine_boundary_hash(19, |hash| {
+            hash.nodes(&[character(crate::token::OriginId::UNKNOWN)]);
+        });
+        let sourced = universe.engine_boundary_hash(19, |hash| {
+            hash.nodes(&[character(crate::token::OriginId::from_raw(41))]);
+        });
+        assert_eq!(unknown, sourced, "diagnostic provenance is nonsemantic");
+        let changed = universe.engine_boundary_hash(19, |hash| {
+            hash.nodes(&[Node::Char {
+                font: crate::font::NULL_FONT,
+                ch: 'y',
+                origin: crate::token::OriginId::UNKNOWN,
+            }]);
+        });
+        assert_ne!(unknown, changed);
+    })
+    .expect("universe allocation");
+}

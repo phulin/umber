@@ -32,6 +32,138 @@ use crate::stores::{StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
 use crate::world::World;
 
+/// Canonical projection builder for executor-owned roots at memo/checkpoint
+/// boundaries. Runtime coordinates are resolved and masked before hashing.
+pub struct EngineBoundaryHasher<'a, G> {
+    universe: &'a Universe<G>,
+    hasher: crate::state_hash::StateHasher,
+}
+
+impl<G> EngineBoundaryHasher<'_, G> {
+    pub fn tag(&mut self, value: u8) {
+        self.hasher.tag(value);
+    }
+    pub fn bool(&mut self, value: bool) {
+        self.hasher.bool(value);
+    }
+    pub fn u8(&mut self, value: u8) {
+        self.hasher.u8(value);
+    }
+    pub fn u16(&mut self, value: u16) {
+        self.hasher.u16(value);
+    }
+    pub fn u32(&mut self, value: u32) {
+        self.hasher.u32(value);
+    }
+    pub fn u64(&mut self, value: u64) {
+        self.hasher.u64(value);
+    }
+    pub fn i32(&mut self, value: i32) {
+        self.hasher.i32(value);
+    }
+    pub fn usize(&mut self, value: usize) {
+        self.hasher.usize(value);
+    }
+    pub fn str(&mut self, value: &str) {
+        self.hasher.str(value);
+    }
+
+    pub fn token_list(&mut self, id: TokenListId<G>) {
+        let admitted = self.universe.admitted().expect("live boundary generation");
+        let words = admitted.token_list(id);
+        self.hasher.usize(words.len());
+        for word in words {
+            self.hasher.u32(word.raw());
+        }
+    }
+
+    pub fn glue(&mut self, id: GlueId<G>) {
+        self.glue_value(self.universe.glue_value(id));
+    }
+
+    fn glue_value(&mut self, value: GlueSpec) {
+        self.hasher.i32(value.width.raw());
+        self.hasher.i32(value.stretch.raw());
+        self.hasher.u8(value.stretch_order as u8);
+        self.hasher.i32(value.shrink.raw());
+        self.hasher.u8(value.shrink_order as u8);
+    }
+
+    pub fn font(&mut self, id: crate::ids::FontId) {
+        let recipe = self.universe.fonts.artifact_recipe(id);
+        // The artifact recipe is owned and handle-free. Its Debug vocabulary
+        // is fixed by the executable build, while the surrounding state hash
+        // is explicitly an in-process convergence aid rather than a durable
+        // content identity.
+        self.hasher.str(&format!("{recipe:?}"));
+    }
+
+    pub fn nodes(&mut self, nodes: &[Node]) {
+        self.hasher.usize(nodes.len());
+        for node in nodes {
+            self.node(node);
+        }
+    }
+
+    pub fn page_node_list(&mut self, _universe: &Universe<G>, list: PageListId) {
+        let nodes = self
+            .universe
+            .page_node_list(list)
+            .expect("boundary page root belongs to the live arena");
+        self.nodes(nodes.nodes());
+    }
+
+    fn node(&mut self, node: &Node) {
+        node.visit_semantic_node_lists(|child| {
+            self.hasher.tag(0xf0);
+            let child = self
+                .universe
+                .page_node_list(*child)
+                .expect("semantic child belongs to the live page arena");
+            self.nodes(child.nodes());
+        });
+        let mut value = node.clone();
+        value.visit_node_lists_mut(|child| *child = PageListId::empty());
+        match &mut value {
+            Node::Char { font, origin, .. } => {
+                self.font(*font);
+                *font = crate::font::NULL_FONT;
+                *origin = crate::token::OriginId::UNKNOWN;
+            }
+            Node::Lig { font, origins, .. } => {
+                self.font(*font);
+                *font = crate::font::NULL_FONT;
+                origins.clear();
+            }
+            Node::MarginKern { font, .. } => {
+                self.font(*font);
+                *font = crate::font::NULL_FONT;
+            }
+            Node::HList(box_node) | Node::VList(box_node) => {
+                box_node.diagnostic_children = None;
+                box_node.allocator_high_cell_overlap = 0;
+            }
+            Node::Glue {
+                leader:
+                    Some(
+                        crate::node::LeaderPayload::HList(box_node)
+                        | crate::node::LeaderPayload::VList(box_node),
+                    ),
+                ..
+            } => {
+                box_node.diagnostic_children = None;
+                box_node.allocator_high_cell_overlap = 0;
+            }
+            Node::Disc {
+                physical_replace_count,
+                ..
+            } => *physical_replace_count = 0,
+            _ => {}
+        }
+        self.hasher.str(&format!("{value:?}"));
+    }
+}
+
 /// Aggregate rollback roots retained while one shipout is speculative.
 struct ShipoutRollback<G> {
     state: StateCheckpoint<G>,
@@ -510,6 +642,37 @@ impl<G> Universe<G> {
     #[must_use]
     pub const fn fixed_pdf_output_parameters(&self) -> Option<crate::PdfOutputParameters> {
         self.pdf.output_parameters()
+    }
+
+    /// Projects executor-owned semantic roots into one deterministic,
+    /// allocation-independent in-process convergence fingerprint.
+    #[must_use]
+    pub fn engine_boundary_hash(
+        &self,
+        domain: u64,
+        build: impl FnOnce(&mut EngineBoundaryHasher<'_, G>),
+    ) -> u64 {
+        let mut projection = EngineBoundaryHasher {
+            universe: self,
+            hasher: crate::state_hash::StateHasher::new_exact(domain),
+        };
+        build(&mut projection);
+        projection.hasher.finish()
+    }
+
+    /// Computes four domain-separated projections with one semantic traversal.
+    #[must_use]
+    pub fn engine_boundary_hashes(
+        &self,
+        domains: [u64; 4],
+        build: impl FnOnce(&mut EngineBoundaryHasher<'_, G>),
+    ) -> [u64; 4] {
+        let mut projection = EngineBoundaryHasher {
+            universe: self,
+            hasher: crate::state_hash::StateHasher::new_quad(domains),
+        };
+        build(&mut projection);
+        projection.hasher.finish_quad()
     }
 
     fn current_pdf_output_parameters(&self) -> crate::PdfOutputParameters {

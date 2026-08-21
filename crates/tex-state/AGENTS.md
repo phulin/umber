@@ -177,7 +177,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   and layout-aware stable-recipe resolution.
 - `src/source_fragments/layout_index.rs`: Fragment-and-offset index for logarithmic current/deleted piece resolution across repeated views.
 - `src/source_fragments/tests.rs`: Fragment range, deletion, fork-liveness, anchor, allocator, snapshot, and line-index cache tests.
-- `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots and replay convergence checks.
+- `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots,
+  replay convergence checks, and the Universe-owned executor-boundary builder
+  which resolves child/font/value coordinates and erases diagnostic identity.
 - `src/stores.rs`: Coarse generation state owner, immutable/mutable admitted
   episode views, typed arena publication, and whole-generation retirement.
 - `src/stores/tests.rs`: Direct arena resolution, generation-id bank

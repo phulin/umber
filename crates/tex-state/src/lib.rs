@@ -178,9 +178,9 @@ pub use source_fragments::{
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
 pub use universe::{
-    DefinitionPromotion, InteractionMode, NodePromotionError, PromotionError, PromotionReceipt,
-    ShipoutTransaction, StateCheckpoint, StateCheckpointMark, TokenListPromotion, Universe,
-    UniverseError, UniverseRetirement, with_universe,
+    DefinitionPromotion, EngineBoundaryHasher, InteractionMode, NodePromotionError, PromotionError,
+    PromotionReceipt, ShipoutTransaction, StateCheckpoint, StateCheckpointMark, TokenListPromotion,
+    Universe, UniverseError, UniverseRetirement, with_universe,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;
