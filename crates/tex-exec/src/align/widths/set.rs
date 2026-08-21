@@ -34,6 +34,7 @@ pub(super) fn set_alignment_nodes<G>(
     empty: PageListId,
     offset: Scaled,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Result<Vec<Node>, ExecError> {
     let config = SetConfig {
         kind,
@@ -49,7 +50,9 @@ pub(super) fn set_alignment_nodes<G>(
                 let set = set_row(&config, row, stores)?;
                 out.push(set);
             }
-            Node::Rule { .. } => out.push(set_running_rule(&config, node, stores)),
+            Node::Rule { .. } => {
+                out.push(set_running_rule(&config, node, stores, diagnostic_context))
+            }
             _ => out.push(node.clone()),
         }
     }
@@ -70,6 +73,7 @@ fn set_running_rule<G>(
     config: &SetConfig<'_>,
     node: &Node,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Node {
     let prototype = &config.prototype.box_node;
     let Node::Rule {
@@ -94,6 +98,7 @@ fn set_running_rule<G>(
     let list = stores.publish_page_nodes(vec![rule]);
     let mut packed = crate::packing_params::hpack(
         stores,
+        diagnostic_context,
         list,
         tex_typeset::PackSpec::Natural,
         crate::packing_params::hpack_params(stores),

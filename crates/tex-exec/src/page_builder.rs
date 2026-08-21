@@ -272,10 +272,7 @@ pub(crate) fn ensure_insertion_vbox<G>(
     // Production page building is synchronous with the contributing command,
     // whose dispatcher supplies §82's live display. Only the explicit
     // source-free test seam falls back to the published summary.
-    let context = error_context.map_or_else(
-        || crate::diagnostics::show_context(stores, stores.input_summary()),
-        str::to_owned,
-    );
+    let context = error_context.unwrap_or_default().to_owned();
     crate::error_report::report_error(
         stores,
         "Insertions can only be added to a vbox",

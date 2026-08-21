@@ -58,6 +58,7 @@ pub(crate) fn display_line_prototype<G>(
 /// the display transparent to the surrounding TeXXeT paragraph direction.
 pub(super) fn package_directed_display_line<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     display_line: BoxNode,
     prototype: Option<BoxNode>,
     mut displacement: Scaled,
@@ -172,7 +173,14 @@ pub(super) fn package_directed_display_line<G>(
     });
     children.push(Node::Direction(tex_state::node::Direction::EndM));
     let list = stores.publish_page_nodes(children);
-    let mut boxed = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
+    let mut boxed = hpack_nodes(
+        stores,
+        diagnostic_context,
+        list,
+        PackSpec::Natural,
+        hpack_params(stores),
+    )
+    .node;
     boxed.shift = display_indent;
     boxed
 }

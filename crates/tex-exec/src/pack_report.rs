@@ -35,6 +35,48 @@ use tex_typeset::PackDiagnostic;
 
 use crate::node_dump::{DumpConfig, dump_node_slice};
 
+/// Detached command-owned values needed to label TeX82 pack diagnostics.
+///
+/// Execution barriers populate this from `CommandState` and the live mode
+/// level. Hot packing kernels never reach back into command or input state.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ExecutionDiagnosticContext {
+    pub(crate) current_line: i32,
+    pub(crate) pack_begin_line: i32,
+    pub(crate) output_routine_active: bool,
+    pub(crate) output_context: String,
+}
+
+impl ExecutionDiagnosticContext {
+    pub(crate) fn new(
+        current_line: i32,
+        pack_begin_line: i32,
+        output_routine_active: bool,
+        output_context: impl Into<String>,
+    ) -> Self {
+        Self {
+            current_line,
+            pack_begin_line,
+            output_routine_active,
+            output_context: output_context.into(),
+        }
+    }
+
+    pub(crate) fn source_free(output_context: impl Into<String>) -> Self {
+        Self {
+            output_context: output_context.into(),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn with_pack_begin_line(&self, pack_begin_line: i32) -> Self {
+        Self {
+            pack_begin_line,
+            ..self.clone()
+        }
+    }
+}
+
 /// Which of §660's and §674's two reporting sites is speaking.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PackedDirection {
@@ -80,13 +122,14 @@ impl PackedDirection {
 /// box itself.
 pub(crate) fn report_pack_diagnostics<G>(
     stores: &mut CommandContext<'_, G>,
+    context: &ExecutionDiagnosticContext,
     direction: PackedDirection,
     diagnostics: &[PackDiagnostic],
     packed: &Node,
     list_layout: DiagnosticListLayout,
 ) {
     for diagnostic in diagnostics {
-        report_one(stores, direction, diagnostic, packed, list_layout);
+        report_one(stores, context, direction, diagnostic, packed, list_layout);
     }
 }
 
@@ -94,6 +137,7 @@ pub(crate) fn report_pack_diagnostics<G>(
 /// horizontal-box diagnostic tail.
 pub(crate) fn report_lr_problems<G>(
     stores: &mut CommandContext<'_, G>,
+    context: &ExecutionDiagnosticContext,
     missing: usize,
     extra: usize,
     packed: &Node,
@@ -103,7 +147,7 @@ pub(crate) fn report_lr_problems<G>(
         unreachable!("LR recovery belongs to hpack")
     };
     let mut headline = format!("\n\\endL or \\endR problem ({missing} missing, {extra} extra");
-    headline.push_str(&origin_text(stores));
+    headline.push_str(&origin_text(context));
     headline.push('\n');
     headline.push_str(&short_display(stores, boxed.children.clone(), list_layout));
     headline.push('\n');
@@ -121,6 +165,7 @@ pub(crate) fn report_lr_problems<G>(
 
 fn report_one<G>(
     stores: &mut CommandContext<'_, G>,
+    context: &ExecutionDiagnosticContext,
     direction: PackedDirection,
     diagnostic: &PackDiagnostic,
     packed: &Node,
@@ -156,12 +201,12 @@ fn report_one<G>(
             let _ = write!(headline, "{badness}");
         }
     }
-    headline.push_str(&origin_text(stores));
+    headline.push_str(&origin_text(context));
     // TeX82 §675 puts its `print_ln` inside the non-output-active vbox
     // branch. During `\output`, §182's first `show_node_list` newline alone
     // terminates the headline. The hbox path always closes its headline in
     // §663 before printing the abbreviated list.
-    if direction == PackedDirection::Horizontal || !stores.output_routine_is_active() {
+    if direction == PackedDirection::Horizontal || !context.output_routine_active {
         headline.push('\n');
     }
 
@@ -194,11 +239,11 @@ fn report_one<G>(
 }
 
 /// §663's and §675's shared `<Finish issuing a diagnostic message...>`.
-fn origin_text<G>(stores: &CommandContext<'_, G>) -> String {
-    if stores.output_routine_is_active() {
+fn origin_text(context: &ExecutionDiagnosticContext) -> String {
+    if context.output_routine_active {
         return ") has occurred while \\output is active".to_owned();
     }
-    let pack_begin_line = stores.pack_begin_line();
+    let pack_begin_line = context.pack_begin_line;
     let mut text = String::new();
     if pack_begin_line == 0 {
         text.push_str(") detected at line ");
@@ -212,7 +257,7 @@ fn origin_text<G>(stores: &CommandContext<'_, G>) -> String {
         });
         let _ = write!(text, "{}--", pack_begin_line.abs());
     }
-    let _ = write!(text, "{}", stores.current_input_line());
+    let _ = write!(text, "{}", context.current_line);
     text
 }
 

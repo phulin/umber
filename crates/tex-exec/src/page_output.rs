@@ -14,6 +14,7 @@ use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use crate::ExecError;
+use crate::pack_report::ExecutionDiagnosticContext;
 use crate::packing_params::vpack;
 use crate::splitting::{natural_vlist_size, prune_page_top, vpack_natural};
 
@@ -34,9 +35,9 @@ pub(crate) enum SelectedPageOutput {
 pub(crate) fn select_pending_page_output<G>(
     stores: &mut CommandContext<'_, G>,
     fire_up: PageFireUp,
-    error_context: String,
+    diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<SelectedPageOutput, ExecError> {
-    prepare_box255(stores, fire_up, Some(&error_context))?;
+    prepare_box255(stores, fire_up, &diagnostic_context)?;
     let output_is_empty = stores
         .token_parameter(TokParam::OUTPUT)
         .expect("output token parameter is admitted")
@@ -49,7 +50,11 @@ pub(crate) fn select_pending_page_output<G>(
     }
     let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
     if dead_cycles >= stores.int_param(IntParam::MAX_DEAD_CYCLES) {
-        report_output_loop(stores, dead_cycles, error_context)?;
+        report_output_loop(
+            stores,
+            dead_cycles,
+            diagnostic_context.output_context.clone(),
+        )?;
         prepend_output_heldover(stores, Vec::new(), true);
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
@@ -64,25 +69,25 @@ pub(crate) fn select_pending_page_output<G>(
 pub(crate) fn resume_page_builder_after_output<G>(
     stores: &mut CommandContext<'_, G>,
     output_nodes: Vec<Node>,
-    error_context: String,
+    diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     if let Some(box255) = stores.copy_box_to_page(255) {
         stores.clear_box_preserving_level(255);
-        report_box255_not_emptied(stores, box255, error_context.clone())?;
+        report_box255_not_emptied(stores, box255, diagnostic_context.output_context.clone())?;
     }
     stores.clear_page_discards();
     prepend_output_heldover(stores, output_nodes, false);
-    crate::page_builder::build_page_with_error_context(stores, &error_context)
+    crate::page_builder::build_page_with_error_context(stores, &diagnostic_context.output_context)
 }
 
 pub(crate) fn prepare_box255<G>(
     stores: &mut CommandContext<'_, G>,
     fire_up: PageFireUp,
-    error_context: Option<&str>,
+    diagnostic_context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     if let Some(box255) = stores.copy_box_to_page(255) {
         stores.clear_box_preserving_level(255);
-        report_box255_not_void(stores, box255, error_context)?;
+        report_box255_not_void(stores, box255, Some(&diagnostic_context.output_context))?;
     }
 
     let split_index = fire_up.best_break().index();
@@ -97,12 +102,13 @@ pub(crate) fn prepare_box255<G>(
         )
         .expect("output penalty assignment targets admitted state");
     stores.prepend_page_contributions(after_break);
-    let distributed = distribute_insertions(stores, page_nodes, error_context)?;
+    let distributed = distribute_insertions(stores, diagnostic_context, page_nodes)?;
     update_page_marks_at_fire_up(stores, &distributed.page_nodes);
 
     let page_list = stores.publish_page_nodes(distributed.page_nodes);
     let packed = vpack(
         stores,
+        diagnostic_context,
         page_list,
         PackSpec::Exactly(fire_up.best_size()),
         VpackParams {
@@ -138,7 +144,7 @@ fn update_page_marks_at_fire_up<G>(stores: &mut CommandContext<'_, G>, page_node
         // previous top and first marks. The previous bot mark becomes the new
         // top mark unless its token list is empty; an empty bot mark is made
         // null so the sparse mark-class node can eventually disappear.
-        let old_bot = stores.page_mark_class_value(PageMark::Bot, class);
+        let old_bot = stores.page_mark_class_value(PageMark::Bot, class).cloned();
         stores.clear_page_mark_class(PageMark::Top, class);
         stores.clear_page_mark_class(PageMark::First, class);
         // TeX82 §1012 copies class zero's `bot_mark` pointer even when its
@@ -149,7 +155,7 @@ fn update_page_marks_at_fire_up<G>(stores: &mut CommandContext<'_, G>, page_node
         } else {
             old_bot.filter(|tokens| !tokens.is_empty())
         };
-        match top {
+        match top.as_ref() {
             Some(top) => stores.set_page_mark_class(PageMark::Top, class, top.clone()),
             None => stores.clear_page_mark_class(PageMark::Bot, class),
         }
@@ -176,7 +182,7 @@ fn update_page_marks_at_fire_up<G>(stores: &mut CommandContext<'_, G>, page_node
                 stores.set_page_mark_class(PageMark::Bot, class, bot);
             }
             _ => {
-                if let Some(top) = top {
+                if let Some(top) = top.as_ref() {
                     // e-TeX 2.6 `etex.ch` [26.1397] `fire_up_done`.
                     stores.set_page_mark_class(PageMark::First, class, top.clone());
                     stores.set_page_mark_class(PageMark::Bot, class, top.clone());
@@ -214,8 +220,8 @@ struct SplitInsertionContext {
 
 fn distribute_insertions<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &ExecutionDiagnosticContext,
     page_nodes: Vec<Node>,
-    error_context: Option<&str>,
 ) -> Result<DistributedInsertions, ExecError> {
     if stores.int_param(IntParam::HOLDING_INSERTS) > 0 {
         return Ok(DistributedInsertions {
@@ -232,7 +238,11 @@ fn distribute_insertions<G>(
             queues.insert(
                 insertion.class(),
                 InsertionQueue {
-                    nodes: insertion_box_nodes(stores, insertion.class(), error_context)?,
+                    nodes: insertion_box_nodes(
+                        stores,
+                        insertion.class(),
+                        Some(&diagnostic_context.output_context),
+                    )?,
                     best_ins_index,
                     status: insertion.status(),
                     accepting: true,
@@ -278,6 +288,7 @@ fn distribute_insertions<G>(
                     if queue.best_ins_index == index {
                         if let Some(remainder) = split_insertion_remainder(
                             stores,
+                            diagnostic_context,
                             queue,
                             SplitInsertionContext {
                                 insertion_start: start,
@@ -292,7 +303,7 @@ fn distribute_insertions<G>(
                             heldover_count += 1;
                         }
                         let boxed_nodes = std::mem::take(&mut queue.nodes);
-                        package_insertion_box(stores, class, boxed_nodes);
+                        package_insertion_box(stores, diagnostic_context, class, boxed_nodes);
                         queue.accepting = false;
                     }
                 }
@@ -344,6 +355,7 @@ fn insertion_box_nodes<G>(
 
 fn split_insertion_remainder<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &ExecutionDiagnosticContext,
     queue: &mut InsertionQueue,
     context: SplitInsertionContext,
 ) -> Result<Option<Node>, ExecError> {
@@ -369,7 +381,7 @@ fn split_insertion_remainder<G>(
         return Ok(None);
     }
     let content = stores.publish_page_nodes(pruned);
-    let size = natural_vlist_size(stores, content.clone())?;
+    let size = natural_vlist_size(stores, diagnostic_context, content.clone())?;
     Ok(Some(Node::Ins {
         class: context.class,
         size,
@@ -380,9 +392,14 @@ fn split_insertion_remainder<G>(
     }))
 }
 
-fn package_insertion_box<G>(stores: &mut CommandContext<'_, G>, class: u16, nodes: Vec<Node>) {
+fn package_insertion_box<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &ExecutionDiagnosticContext,
+    class: u16,
+    nodes: Vec<Node>,
+) {
     let list = stores.publish_page_nodes(nodes);
-    let packed = vpack_natural(stores, list);
+    let packed = vpack_natural(stores, diagnostic_context, list);
     let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
     stores.assign_page_box_global(class, boxed);
 }
@@ -474,10 +491,7 @@ fn report_box255_not_void<G>(
     deleted: PageListId,
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
-    let context = error_context.map_or_else(
-        || crate::diagnostics::show_context(stores, stores.input_summary()),
-        str::to_owned,
-    );
+    let context = error_context.unwrap_or_default().to_owned();
     let mut report = stores.print_err("");
     report
         .print_esc("box")

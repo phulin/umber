@@ -71,18 +71,24 @@ pub(crate) fn is_page_top_discardable(node: &Node) -> bool {
 
 pub(crate) fn natural_vlist_size<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     content: PageListId,
 ) -> Result<Scaled, ExecError> {
-    let packed = vpack_natural(stores, content);
+    let packed = vpack_natural(stores, diagnostic_context, content);
     packed
         .height
         .checked_add(packed.depth)
         .ok_or(ExecError::ArithmeticOverflow)
 }
 
-pub(crate) fn vpack_natural<G>(stores: &mut CommandContext<'_, G>, content: PageListId) -> BoxNode {
+pub(crate) fn vpack_natural<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
+    content: PageListId,
+) -> BoxNode {
     crate::packing_params::vpack(
         stores,
+        diagnostic_context,
         content,
         PackSpec::Natural,
         VpackParams {

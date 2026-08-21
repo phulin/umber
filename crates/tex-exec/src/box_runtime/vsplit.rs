@@ -17,6 +17,7 @@ use crate::splitting::{prune_page_top_with_discards, vpack_natural};
 
 pub(crate) fn split_vbox_register<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     index: u16,
     height: Scaled,
     error_context: &str,
@@ -80,13 +81,20 @@ pub(crate) fn split_vbox_register<G>(
     };
 
     update_split_marks(stores, &split_nodes);
-    replace_split_source(stores, index, remainder, split_top_skip);
+    replace_split_source(stores, diagnostic_context, index, remainder, split_top_skip);
 
     let split_list = stores.publish_page_nodes(split_nodes);
     let mut params = vpack_params(stores);
     params.box_max_depth = split_max_depth;
     Ok(Some(Node::VList(
-        vpack(stores, split_list, PackSpec::Exactly(height), params).node,
+        vpack(
+            stores,
+            diagnostic_context,
+            split_list,
+            PackSpec::Exactly(height),
+            params,
+        )
+        .node,
     )))
 }
 
@@ -117,6 +125,7 @@ fn normalize_split_infinite_shrink<G>(
 
 fn replace_split_source<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     index: u16,
     remainder: Vec<Node>,
     split_top_skip: tex_state::glue::GlueSpec,
@@ -131,7 +140,7 @@ fn replace_split_source<G>(
     }
 
     let remainder_list = stores.publish_page_nodes(pruned);
-    let packed = vpack_natural(stores, remainder_list);
+    let packed = vpack_natural(stores, diagnostic_context, remainder_list);
     let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
     stores.replace_page_box(index, boxed);
 }

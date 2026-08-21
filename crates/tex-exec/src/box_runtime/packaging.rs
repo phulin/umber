@@ -101,6 +101,7 @@ fn report_cannot_take_last_box<G>(
 
 pub(crate) fn hpack_with_overfull_rule<G>(
     stores: &mut CommandContext<'_, G>,
+    context: &crate::pack_report::ExecutionDiagnosticContext,
     children: tex_state::node_arena::PageListId,
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
@@ -138,7 +139,7 @@ pub(crate) fn hpack_with_overfull_rule<G>(
     {
         packed.node.diagnostic_children = Some(diagnostic_children);
     }
-    crate::packing_params::report_hpack(stores, &packed, lr_problems);
+    crate::packing_params::report_hpack(stores, context, &packed, lr_problems);
     packed.node
 }
 
@@ -185,6 +186,7 @@ fn physical_discretionary_projection<G>(
 
 pub(crate) fn hpack_owned_with_overfull_rule<G>(
     stores: &mut CommandContext<'_, G>,
+    context: &crate::pack_report::ExecutionDiagnosticContext,
     nodes: &mut Vec<Node>,
     mut diagnostic_nodes: Option<&mut Vec<Node>>,
     allocator_high_cell_overlap: u32,
@@ -257,6 +259,7 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
     };
     crate::pack_report::report_pack_diagnostics(
         stores,
+        context,
         crate::pack_report::PackedDirection::Horizontal,
         &packed.diagnostics,
         &Node::HList(diagnostic_box.clone()),
@@ -265,6 +268,7 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
     if let Some((missing, extra)) = lr_problems {
         crate::pack_report::report_lr_problems(
             stores,
+            context,
             missing,
             extra,
             &Node::HList(diagnostic_box.clone()),

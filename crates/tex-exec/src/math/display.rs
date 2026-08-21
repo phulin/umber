@@ -49,6 +49,7 @@ pub(crate) struct FinishedEqNo {
 
 pub(crate) fn finish_eq_no<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     side: EqNoSide,
     content: tex_state::node_arena::PageListId,
     error_context: Option<&MathConversionErrorContext>,
@@ -63,7 +64,14 @@ pub(crate) fn finish_eq_no<G>(
         error_context,
     );
     let list = stores.publish_page_nodes(nodes);
-    let mut boxed = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
+    let mut boxed = hpack_nodes(
+        stores,
+        diagnostic_context,
+        list,
+        PackSpec::Natural,
+        hpack_params(stores),
+    )
+    .node;
     boxed.box_lr = tex_state::node::BoxLr::DList;
     FinishedEqNo { side, boxed }
 }
@@ -71,6 +79,7 @@ pub(crate) fn finish_eq_no<G>(
 pub(crate) fn finish_display_math<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     content: tex_state::node_arena::PageListId,
     eq_no: Option<FinishedEqNo>,
     prototype: Option<BoxNode>,
@@ -103,6 +112,7 @@ pub(crate) fn finish_display_math<G>(
     let display_list = stores.publish_page_nodes(display_nodes);
     let mut display_box = hpack_nodes(
         stores,
+        diagnostic_context,
         display_list.clone(),
         PackSpec::Natural,
         hpack_params(stores),
@@ -133,6 +143,7 @@ pub(crate) fn finish_display_math<G>(
         if e.raw() != 0 && display_can_shrink_with_eqno(w, q, z, shrink) {
             display_box = hpack_nodes(
                 stores,
+                diagnostic_context,
                 display_list,
                 PackSpec::Exactly(z - q),
                 hpack_params(stores),
@@ -142,7 +153,12 @@ pub(crate) fn finish_display_math<G>(
         } else {
             e = Scaled::from_raw(0);
             if w > z {
-                display_box = hpack_with_overfull_rule(stores, display_list, PackSpec::Exactly(z));
+                display_box = hpack_with_overfull_rule(
+                    stores,
+                    diagnostic_context,
+                    display_list,
+                    PackSpec::Exactly(z),
+                );
                 display_box.box_lr = tex_state::node::BoxLr::DList;
             }
         }
@@ -203,7 +219,14 @@ pub(crate) fn finish_display_math<G>(
             vec![Node::HList(display_line), kern, Node::HList(eq_box)]
         };
         let list = stores.publish_page_nodes(children);
-        display_line = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
+        display_line = hpack_nodes(
+            stores,
+            diagnostic_context,
+            list,
+            PackSpec::Natural,
+            hpack_params(stores),
+        )
+        .node;
     }
     let pre_display_direction = stores.int_param(IntParam::PRE_DISPLAY_DIRECTION);
     if pre_display_direction == 0 {
@@ -211,6 +234,7 @@ pub(crate) fn finish_display_math<G>(
     } else {
         display_line = package_directed_display_line(
             stores,
+            diagnostic_context,
             display_line,
             prototype,
             d,

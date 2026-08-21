@@ -35,6 +35,7 @@ pub(crate) enum UnsetPackContext {
 /// every present and future §796 packaging site inherits it.
 pub(crate) fn make_unset_node<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     children: tex_state::node_arena::PageListId,
     kind: UnsetKind,
     span_count: u16,
@@ -49,7 +50,13 @@ pub(crate) fn make_unset_node<G>(
     // calls set \badness and are canonical packing transitions in their own
     // right; measuring the children directly silently skipped both effects.
     let packed = match kind {
-        UnsetKind::HBox => hpack(stores, children, PackSpec::Natural, hpack_params(stores)),
+        UnsetKind::HBox => hpack(
+            stores,
+            diagnostic_context,
+            children,
+            PackSpec::Natural,
+            hpack_params(stores),
+        ),
         UnsetKind::VBox => {
             let mut params = vpack_params(stores);
             // TeX82 §796 uses `vpackage(link(head),natural,0)` for a valign
@@ -60,7 +67,13 @@ pub(crate) fn make_unset_node<G>(
                 UnsetPackContext::Cell => tex_state::scaled::Scaled::from_raw(0),
                 UnsetPackContext::Row => tex_state::scaled::Scaled::MAX_DIMEN,
             };
-            vpack(stores, children, PackSpec::Natural, params)
+            vpack(
+                stores,
+                diagnostic_context,
+                children,
+                PackSpec::Natural,
+                params,
+            )
         }
     };
     let metrics = measure_unset(

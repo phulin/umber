@@ -54,7 +54,7 @@ pub(crate) fn break_current_paragraph<G>(
     stores: &mut CommandContext<'_, G>,
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
     reset_paragraph: bool,
-    error_context: String,
+    diagnostic_context: crate::pack_report::ExecutionDiagnosticContext,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars_with_fuel(nest, stores, fuel)?;
@@ -73,6 +73,7 @@ pub(crate) fn break_current_paragraph<G>(
         leader: None,
     });
     let mut level = commit_current_list(nest, stores, fuel)?;
+    let paragraph_diagnostic_context = diagnostic_context.with_pack_begin_line(level.entry_line());
     let mut hlist =
         crate::math::finish_math_lists_owned(stores, level.list_mutation().take_nodes(), true);
     let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
@@ -81,7 +82,7 @@ pub(crate) fn break_current_paragraph<G>(
         &mut params,
         &mut hlist,
         tracing,
-        Some(error_context.clone()),
+        Some(diagnostic_context.output_context.clone()),
     )?;
     let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {
@@ -115,12 +116,9 @@ pub(crate) fn break_current_paragraph<G>(
     let pdf_line_dimensions = pdf_line_dimensions(stores);
     let protrudes_chars = stores.pdf_font_configuration().protrudes_chars();
     let adjusts_spacing = stores.pdf_font_configuration().adjusts_spacing();
-    // §804: `pack_begin_line:=mode_line` for the whole of `post_line_break`,
-    // restored to 0 when the paragraph's lines are packed. This is what makes
-    // §663 say "in paragraph at lines A--B" instead of "detected at line B".
-    let restore_pack_begin_line = stores.pack_begin_line();
-    let paragraph_start_line = stores.pop_paragraph_start_line().unwrap_or(0);
-    stores.set_pack_begin_line(paragraph_start_line);
+    // §804 labels every line packed by `post_line_break` with the horizontal
+    // mode level's entry line. The value is detached before the packing loop,
+    // so reporting never reaches into command or input state.
     let mut materializer = LineMaterializer::new(decisions.tape, decisions.breaks, post_params);
     let mut line_nodes = Vec::new();
     let mut migrated = Vec::new();
@@ -172,6 +170,7 @@ pub(crate) fn break_current_paragraph<G>(
         }
         let line = hpack_owned_with_overfull_rule(
             stores,
+            &paragraph_diagnostic_context,
             &mut broken.nodes,
             needs_physical_diagnostic.then_some(&mut diagnostic_nodes),
             allocator_high_cell_overlap,
@@ -199,7 +198,6 @@ pub(crate) fn break_current_paragraph<G>(
         }
         line_nodes = broken.nodes;
     }
-    stores.set_pack_begin_line(restore_pack_begin_line);
     nest.current_list_mutation().set_prev_graf(
         params
             .prev_graf
@@ -209,7 +207,11 @@ pub(crate) fn break_current_paragraph<G>(
     if reset_paragraph {
         reset_after_par(nest, stores);
     }
-    crate::vertical::build_page_if_outer_vertical_with_error_context(nest, stores, &error_context)?;
+    crate::vertical::build_page_if_outer_vertical_with_error_context(
+        nest,
+        stores,
+        &diagnostic_context.output_context,
+    )?;
     Ok(ParagraphBreakResult {
         last_line,
         active_directions,
@@ -893,7 +895,13 @@ pub(crate) fn normal_paragraph<G>(_nest: &mut ModeNest, stores: &mut CommandCont
     // and widow arrays retain their scoped assignments (manual §3.4).
     let interline_penalties = stores.penalty_array(PenaltyArrayKind::InterLine);
     if !interline_penalties.is_empty() {
-        stores.set_penalty_array(PenaltyArrayKind::InterLine, &[], false);
+        stores
+            .assign_penalty_array(
+                PenaltyArrayKind::InterLine,
+                &[],
+                tex_state::AssignmentScope::Local,
+            )
+            .expect("paragraph reset targets admitted state");
         crate::assignments::tracing::trace_penalty_array(
             stores,
             PenaltyArrayKind::InterLine,
@@ -924,14 +932,16 @@ pub(crate) fn normal_paragraph<G>(_nest: &mut ModeNest, stores: &mut CommandCont
             .assign_int_param(IntParam::HANG_AFTER, 1, tex_state::AssignmentScope::Local)
             .expect("paragraph reset targets admitted state");
     }
-    stores.set_paragraph_shape(&[], false);
+    stores
+        .assign_paragraph_shape(&[], tex_state::AssignmentScope::Local)
+        .expect("paragraph reset targets admitted state");
 }
 
 pub(crate) fn start_paragraph<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     indent: bool,
-    error_context: &str,
+    diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     match nest.current_mode() {
         crate::Mode::Vertical | crate::Mode::InternalVertical => {
@@ -950,11 +960,10 @@ pub(crate) fn start_paragraph<G>(
                 crate::vertical::build_page_if_outer_vertical_with_error_context(
                     nest,
                     stores,
-                    error_context,
+                    &diagnostic_context.output_context,
                 )?;
             }
-            nest.push_at_line(crate::Mode::Horizontal, stores.current_input_line())?;
-            stores.push_paragraph_start_line(stores.current_input_line());
+            nest.push_at_line(crate::Mode::Horizontal, diagnostic_context.current_line)?;
             let (language, left, right) = crate::box_runtime::hmode::current_hyphen_context(stores);
             nest.current_list_mutation()
                 .set_hyphen_context(language, left, right);
