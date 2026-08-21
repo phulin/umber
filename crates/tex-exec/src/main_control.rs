@@ -45,9 +45,9 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, Token};
 use tex_state::token::{OriginId, TracedTokenWord};
 use tex_state::{
-    DependencyEngineField, DependencyKey, DependencyRegionError, DependencyValue, GroupKind,
-    InputOpenState, InputReadState, ObservedDependency, ParagraphShapeLine, PenaltyArrayKind,
-    PrintSink, StreamSlot, TrackedRegionBarrier, Universe,
+    CommandContext, DependencyEngineField, DependencyKey, DependencyRegionError, DependencyValue,
+    GroupKind, InputOpenState, InputReadState, ObservedDependency, ParagraphShapeLine,
+    PenaltyArrayKind, PrintSink, StreamSlot, TrackedRegionBarrier, Universe,
 };
 use tex_state::{GlueId, TokenListId};
 use tex_typeset::PackSpec;
@@ -3999,7 +3999,7 @@ impl<G> MainControl<G> {
     fn capture_first_causal_context(
         &mut self,
         stores: &Universe<G>,
-        diagnostics: &[PendingDiagnostic],
+        diagnostics: &[PendingDiagnostic<G>],
     ) {
         if self.first_causal_context.is_none()
             && let Some(cause_kind) = diagnostics.iter().find_map(PendingDiagnostic::causal_kind)
@@ -7668,7 +7668,7 @@ fn scan_replay_step<G>(
     display_eq_no: bool,
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
-    diagnostics: &mut Vec<PendingDiagnostic>,
+    diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<ScannedOperation<G>, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
@@ -7865,7 +7865,7 @@ fn scan_noalign_body<G>(
     mode: Mode,
     job_is_all_over: bool,
     shown_mode: &mut Option<Mode>,
-    diagnostics: &mut Vec<PendingDiagnostic>,
+    diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<ScannedOperation<G>, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
     let Some(command) = processor.get_x_token().map_err(command_error)? else {
@@ -7918,7 +7918,7 @@ fn scan_alignment_delivery_step<G>(
     job_is_all_over: bool,
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
-    diagnostics: &mut Vec<PendingDiagnostic>,
+    diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<ScannedOperation<G>, ExecError> {
     prepare_command_trace(processor, mode, *shown_mode);
     match processor
@@ -8081,7 +8081,7 @@ fn settle_preflight_step<G>(
     job_is_all_over: bool,
     display_eq_no: bool,
     shown_mode: &mut Option<Mode>,
-    diagnostics: &mut Vec<PendingDiagnostic>,
+    diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<ScannedOperation<G>, ExecError> {
     let delivery = processor
         .settle_preflight_command(command, main_loop)
@@ -8148,7 +8148,7 @@ fn scan_step<G>(
     display_eq_no: bool,
     main_loop_active: bool,
     shown_mode: &mut Option<Mode>,
-    diagnostics: &mut Vec<PendingDiagnostic>,
+    diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<ScannedOperation<G>, ExecError> {
     // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
     // `get_x_token`; §1034's inner character loop instead re-enters at
@@ -8359,7 +8359,7 @@ fn dispatch_main_control_command<G>(
     job_is_all_over: bool,
     display_eq_no: bool,
     shown_mode: &mut Option<Mode>,
-    diagnostics: &mut Vec<PendingDiagnostic>,
+    diagnostics: &mut Vec<PendingDiagnostic<G>>,
     alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
 ) -> Result<ScannedOperation<G>, ExecError> {
@@ -8448,7 +8448,7 @@ fn dispatch_main_control_command_inner<G>(
     job_is_all_over: bool,
     display_eq_no: bool,
     shown_mode: &mut Option<Mode>,
-    diagnostics: &mut Vec<PendingDiagnostic>,
+    diagnostics: &mut Vec<PendingDiagnostic<G>>,
     alignment: Option<AlignmentIdentity>,
     set_box_allowed: bool,
 ) -> Result<ScannedOperation<G>, ExecError> {
