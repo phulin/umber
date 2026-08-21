@@ -2,7 +2,6 @@ use super::{
     AlignState, AlignmentKind, AlignmentPackSpec, DisplayEqNo, DisplayInterrupt, EqNoSide,
     ExecError, IncompleteFraction, Mode, ModeLevelSummary, ModeNest,
 };
-use std::sync::Arc;
 use tex_command::{ConditionalMode, FatalError};
 use tex_state::ids::FontId;
 use tex_state::math::FractionThickness;
@@ -323,7 +322,7 @@ fn semantic_nest_summary_cannot_bypass_tex82_capacity() {
     );
 
     let mut oversized = full.clone();
-    Arc::make_mut(&mut oversized.levels).push(ModeLevelSummary::new(Mode::Math));
+    oversized.levels.push(ModeLevelSummary::new(Mode::Math));
     let error = ModeNest::from_summary(oversized).expect_err("oversized mode summary");
     assert!(matches!(
         &error,

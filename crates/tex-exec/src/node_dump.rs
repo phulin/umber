@@ -1462,21 +1462,12 @@ mod unset_diagnostic_tests {
                 dump_node_slice(context, &nodes, config),
                 "|kern2.0\n|mkern3.0mu\n"
             );
+            set_escape(context, -1);
+            assert_eq!(
+                dump_node_slice(context, &nodes, config),
+                "kern2.0\nmkern3.0mu\n"
+            );
         });
-
-        set_escape(context, -1);
-        assert_eq!(
-            dump_node_slice(
-                &context,
-                &nodes,
-                DumpConfig {
-                    breadth: 5,
-                    depth: 0,
-                    profile: CommandProfile::TEX82,
-                },
-            ),
-            "kern2.0\nmkern3.0mu\n"
-        );
     }
 
     #[test]
@@ -1607,21 +1598,12 @@ mod unset_diagnostic_tests {
                 dump_node_slice(context, &nodes, config),
                 "|mathon\n|mathoff, surrounded 3.0\n"
             );
+            set_escape(context, -1);
+            assert_eq!(
+                dump_node_slice(context, &nodes, config),
+                "mathon\nmathoff, surrounded 3.0\n"
+            );
         });
-
-        set_escape(context, -1);
-        assert_eq!(
-            dump_node_slice(
-                &context,
-                &nodes,
-                DumpConfig {
-                    breadth: 5,
-                    depth: 0,
-                    profile: CommandProfile::TEX82,
-                },
-            ),
-            "mathon\nmathoff, surrounded 3.0\n"
-        );
     }
 
     /// TeX82 §§63/696 routes both the noad name and its limit suffix through

@@ -461,10 +461,12 @@ fn usage_report_separates_a_partial_final_cleanup_line_before_breaking() {
     // final-cleanup column before its first `wlog_cr`-style line break.
     crate::test_harness::with_universe(|universe| {
         assign_global_int(universe, IntParam::TRACING_STATS, 1);
-        universe
-            .printer()
-            .set_selector(Selector::LogOnly)
-            .print("unfinished)");
+        crate::test_harness::with_admitted(universe, |context| {
+            context
+                .printer()
+                .set_selector(Selector::LogOnly)
+                .print("unfinished)");
+        });
 
         finish_test_job(
             universe,
@@ -489,10 +491,12 @@ fn usage_report_closes_log_before_shared_dvi_line_break() {
     // one terminal newline, but a second newline in the already-closed log.
     crate::test_harness::with_universe(|universe| {
         assign_global_int(universe, IntParam::TRACING_STATS, 1);
-        universe
-            .printer()
-            .set_selector(Selector::TermOnly)
-            .print("terminal tail");
+        crate::test_harness::with_admitted(universe, |context| {
+            context
+                .printer()
+                .set_selector(Selector::TermOnly)
+                .print("terminal tail");
+        });
 
         finish_test_job(
             universe,
@@ -520,10 +524,12 @@ fn direct_usage_report_preserves_the_open_log_cursor_for_the_dvi_break() {
     with_source_to_end(br"\shipout\hbox{}\end", |_, universe| {
         universe.set_interaction_mode(InteractionMode::Batch);
         assign_global_int(universe, IntParam::TRACING_STATS, 1);
-        universe
-            .printer()
-            .set_selector(Selector::LogOnly)
-            .print(" )");
+        crate::test_harness::with_admitted(universe, |context| {
+            context
+                .printer()
+                .set_selector(Selector::LogOnly)
+                .print(" )");
+        });
 
         finish_test_job(
             universe,
