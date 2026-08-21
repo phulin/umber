@@ -146,6 +146,22 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("command symbols are admitted")
     }
 
+    /// Assigns one already-resolved static or generation-local macro meaning.
+    pub fn assign_resolved_meaning(
+        &mut self,
+        symbol: Symbol,
+        meaning: ResolvedMeaning<G>,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        let word = match meaning {
+            ResolvedMeaning::Static(meaning) => MeaningWord::from_static(meaning),
+            ResolvedMeaning::Macro { flags, definition } => {
+                MeaningWord::macro_definition(flags, definition)
+            }
+        };
+        self.admitted.state().assign_meaning(symbol, word, scope)
+    }
+
     #[inline(always)]
     pub fn meaning_id(&self, symbol: SymbolId) -> Result<ResolvedMeaning<G>, StateError> {
         // `resolve_id` is the admission check. The compact slot is then a
@@ -460,6 +476,18 @@ impl<'a, G> CommandContext<'a, G> {
     #[inline(always)]
     pub fn code(&self, kind: CodeTableKind, scalar: char) -> Result<i64, StateError> {
         self.admitted.state_ref().code(kind, scalar)
+    }
+
+    pub fn assign_code(
+        &mut self,
+        kind: CodeTableKind,
+        scalar: char,
+        value: i64,
+        scope: AssignmentScope,
+    ) -> Result<(), StateError> {
+        self.admitted
+            .state()
+            .assign_code(kind, scalar, value, scope)
     }
 
     #[must_use]
