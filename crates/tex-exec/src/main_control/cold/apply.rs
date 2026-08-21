@@ -1119,7 +1119,7 @@ pub(in crate::main_control) fn apply<G>(
             // control-sequence text.
             let identifier = font_identifier_for_definition(stores, request.target);
             let observe_font_definition = command.state.profile().capabilities().supports_etex();
-            let bind_null_font = |stores: &mut Universe| {
+            let bind_null_font = |stores: &mut tex_state::CommandContext<'_, G>| {
                 let record = font_definition_mutation(
                     stores,
                     request.target,

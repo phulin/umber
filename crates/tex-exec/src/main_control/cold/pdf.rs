@@ -833,25 +833,51 @@ pub(in crate::main_control) fn pdf_image_dimensions(
 /// before the effective request is exposed to the host. These writes remain
 /// inside the step snapshot, so a resource suspension rolls them
 /// back together with their diagnostics and retries the transition once.
-pub(in crate::main_control) fn apply_pdf_image_compatibility_policy(stores: &mut Universe) {
+pub(in crate::main_control) fn apply_pdf_image_compatibility_policy<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
+) {
     let obsolete_page_box = stores.int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX);
     if obsolete_page_box != 0 {
-        stores.world_mut().write_text(
+        stores.write_text(
             PrintSink::TerminalAndLog,
             "PDF inclusion: Primitive \\pdfoptionalwaysusepdfpagebox is obsolete; use \\pdfpagebox instead.\n",
         );
-        stores.set_int_param_global(IntParam::PDF_FORCE_PAGE_BOX, obsolete_page_box);
-        stores.set_int_param_global(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX, 0);
+        stores
+            .assign_int_param(
+                IntParam::PDF_FORCE_PAGE_BOX,
+                obsolete_page_box,
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("PDF parameter belongs to admitted state");
+        stores
+            .assign_int_param(
+                IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX,
+                0,
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("PDF parameter belongs to admitted state");
     }
 
     let obsolete_error_level = stores.int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL);
     if obsolete_error_level != 0 {
-        stores.world_mut().write_text(
+        stores.write_text(
             PrintSink::TerminalAndLog,
             "PDF inclusion: Primitive \\pdfoptionpdfinclusionerrorlevel is obsolete; use \\pdfinclusionerrorlevel instead.\n",
         );
-        stores.set_int_param_global(IntParam::PDF_INCLUSION_ERROR_LEVEL, obsolete_error_level);
-        stores.set_int_param_global(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL, 0);
+        stores
+            .assign_int_param(
+                IntParam::PDF_INCLUSION_ERROR_LEVEL,
+                obsolete_error_level,
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("PDF parameter belongs to admitted state");
+        stores
+            .assign_int_param(
+                IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL,
+                0,
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("PDF parameter belongs to admitted state");
     }
 }
 
@@ -859,8 +885,8 @@ pub(in crate::main_control) fn apply_pdf_image_compatibility_policy(stores: &mut
 /// command-owned source scanning but before the immutable host request is
 /// exposed. This keeps `CommandProcessor` independent of `Universe` while
 /// ensuring the host sees the effective page-box identity.
-pub(in crate::main_control) fn pdf_image_page_box(
-    stores: &Universe,
+pub(in crate::main_control) fn pdf_image_page_box<G>(
+    stores: &tex_state::CommandContext<'_, G>,
     request: &PdfImageRequest,
 ) -> tex_command::PdfImagePageBox {
     let page_box = |value| match value {
@@ -893,9 +919,9 @@ pub(in crate::main_control) fn pdf_image_page_box(
 ///
 /// `total_pages` is incremented before the trace, so the published number is
 /// the one-based ordinal of the page just committed.
-pub(in crate::main_control) fn committed_shipout_observations(
+pub(in crate::main_control) fn committed_shipout_observations<G>(
     before: usize,
-    stores: &Universe,
+    stores: &Universe<G>,
 ) -> Vec<EffectRecord> {
     (before..stores.world().artifact_commits().len())
         .map(|committed| EffectRecord {
@@ -914,10 +940,10 @@ pub(in crate::main_control) fn committed_shipout_observations(
 /// reached it immediately or a whatsit reached it during later shipout.
 /// Observe the committed `tex_state::EffectRecord` delta, not the command
 /// spelling, so both entry paths publish the same ordered event exactly once.
-pub(in crate::main_control) fn committed_stream_effect_observations(
+pub(in crate::main_control) fn committed_stream_effect_observations<G>(
     before: usize,
     prepared_before: usize,
-    stores: &Universe,
+    stores: &Universe<G>,
     prepared_pages: &[crate::dispatch::PreparedDviPage],
 ) -> Vec<EffectRecord> {
     let shipped = &prepared_pages[prepared_before..];
@@ -972,9 +998,9 @@ pub(in crate::main_control) fn write_effect_channel(sink: PrintSink) -> String {
     format!("stream:{stream}")
 }
 
-pub(in crate::main_control) fn applied_effect_observation(
-    scanned: &ColdOperation,
-    stores: &Universe,
+pub(in crate::main_control) fn applied_effect_observation<G>(
+    scanned: &ColdOperation<G>,
+    stores: &Universe<G>,
 ) -> Option<EffectRecord> {
     match scanned {
         ColdOperation::Message { tokens, .. } => Some(EffectRecord {
@@ -1074,8 +1100,8 @@ pub(in crate::main_control) fn engine_termination_effect() -> EffectRecord {
 /// cosmetic: a `\write` whatsit inside the box prints *between* the two
 /// halves, so `[7` opens the bracket, the write's text follows, and `]`
 /// closes it.
-pub(in crate::main_control) fn print_ship_out_marker_open(
-    stores: &mut Universe,
+pub(in crate::main_control) fn print_ship_out_marker_open<G>(
+    stores: &mut Universe<G>,
     tracing_output: i32,
     counts: &[i32; 10],
     traced_node: Option<&Node>,
@@ -1136,8 +1162,8 @@ pub(in crate::main_control) fn print_ship_out_marker_open(
 
 /// §638's `if eqtb[int_base+tracing_output_code].int<=0 then print_char("]")`,
 /// run after the page has been written.
-pub(in crate::main_control) fn print_ship_out_marker_close(
-    stores: &mut Universe,
+pub(in crate::main_control) fn print_ship_out_marker_close<G>(
+    stores: &mut Universe<G>,
     tracing_output: i32,
 ) {
     if tracing_output <= 0 {
@@ -1153,8 +1179,8 @@ pub(in crate::main_control) fn print_ship_out_marker_close(
 /// Umber has no contiguous WEB memory gap, but retaining the profile's TeX
 /// capacity makes the diagnostic monotone and keeps the allocator-specific
 /// numbers isolated by the TRIP comparator's documented advisory policy.
-pub(in crate::main_control) fn print_shipout_memory_usage(
-    stores: &mut Universe,
+pub(in crate::main_control) fn print_shipout_memory_usage<G>(
+    stores: &mut Universe<G>,
     profile: CommandProfile,
     before: (usize, usize),
     after: (usize, usize),
@@ -1187,10 +1213,10 @@ pub(in crate::main_control) fn print_shipout_memory_usage(
         .print_ln();
 }
 
-pub(in crate::main_control) fn shipout_replay_box(
+pub(in crate::main_control) fn shipout_replay_box<G>(
     node: Node,
-    stores: &mut Universe,
-    command: &mut CommandMachine<'_>,
+    stores: &mut Universe<G>,
+    command: &mut CommandMachine<'_, G>,
 ) -> Result<Option<crate::dispatch::CommittedPagePublication>, ExecError> {
     // §638's `[` marker reports the page's `\count0`..`\count9` and, under
     // `\tracingoutput`, dumps the shipped box. Both are read before the page
@@ -1219,7 +1245,7 @@ pub(in crate::main_control) fn shipout_replay_box(
         .emit_dvi_override
         .unwrap_or(!supports_pdftex_profile);
     let command_cell = std::cell::RefCell::new(command);
-    let mut expand_write = |stores: &mut Universe, sink: PrintSink, tokens: &[TokenWord]| {
+    let mut expand_write = |stores: &mut Universe<G>, sink: PrintSink, tokens: &[TokenWord]| {
         let mut command = command_cell.borrow_mut();
         let input_snapshot = command.state.snapshot();
         // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
@@ -1314,7 +1340,7 @@ pub(in crate::main_control) fn shipout_replay_box(
         Ok(crate::shipout::ExpandedWrite::transactional(text))
     };
     let mut expand_replay =
-        |stores: &mut Universe, kind: crate::shipout::ReplayTextKind, tokens: &[TokenWord]| {
+        |stores: &mut Universe<G>, kind: crate::shipout::ReplayTextKind, tokens: &[TokenWord]| {
             let mut command = command_cell.borrow_mut();
             let mut diagnostics = Vec::new();
             let result = replay_text(&mut command, stores, kind, tokens, &mut diagnostics)
