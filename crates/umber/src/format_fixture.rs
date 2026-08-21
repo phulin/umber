@@ -18,7 +18,10 @@ use tex_exec::{CheckpointSink, ResourceNeed};
 use tex_observe::{LiveSessionTranslator, LiveSource};
 use tex_oracle::SchemaVersion;
 use tex_oracle::{OracleBundle, decode_oracle_bundle, encode_oracle_bundle};
-use tex_state::{JobClock, Universe, World};
+use tex_state::{
+    FormatMaterializationConfig, JobClock, ProvenanceBudgets, ProvenanceDemand, World,
+    with_format_destination,
+};
 
 use crate::{
     EngineMode, EngineSession, ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld,
@@ -212,16 +215,12 @@ impl FormatRecipe {
     pub fn identity(&self) -> Result<FormatCacheIdentity, FormatFixtureError> {
         self.guards.validate()?;
         let profile = self.engine.command_profile();
-        let mut registry = Universe::with_world(World::memory_with_clock(self.clock));
-        self.engine.prepare_initex(&mut registry);
-        let registry_state = registry.snapshot().state_hash();
         let semantic = framed_hash(&[
             &tex_state::CHECKPOINT_STATE_HASH_SCHEMA_VERSION.to_le_bytes(),
             &COMMAND_OBSERVATION_SCHEMA_VERSION.to_le_bytes(),
             &profile.to_stable_bytes(),
             &profile.fingerprint().get().to_le_bytes(),
             &(self.hyphenation_exception_capacity as u64).to_le_bytes(),
-            &registry_state.to_le_bytes(),
             &tex_oracle::ORACLE_BUNDLE_SCHEMA.to_le_bytes(),
             &(tex_oracle::MAX_BUNDLE_EVENTS_PER_STREAM as u64).to_le_bytes(),
             &(tex_oracle::MAX_BUNDLE_EVENT_BYTES as u64).to_le_bytes(),
@@ -296,20 +295,25 @@ impl FormatFixture {
     }
 
     pub fn load(&self, world: World) -> Result<LoadedFormatFixture, FormatFixtureError> {
-        let mut universe = Universe::from_format(world, self.image.as_bytes())
-            .map_err(|error| FormatFixtureError::Format(error.to_string()))?;
-        self.recipe.engine.install_after_format(&mut universe);
         Ok(LoadedFormatFixture {
             recipe: self.recipe.clone(),
-            universe,
+            image: self.image.clone(),
+            world,
+            provenance_demand: ProvenanceDemand::default(),
+            interaction_mode: None,
+            error_context_widths: None,
         })
     }
 }
 
-/// Fresh post-load aggregate. It exposes execution, never format dumping.
+/// Host-owned recipe for one fresh destination-local materialization.
 pub struct LoadedFormatFixture {
     recipe: FormatRecipe,
-    universe: Universe,
+    image: ValidatedFormatImage,
+    world: World,
+    provenance_demand: ProvenanceDemand,
+    interaction_mode: Option<tex_state::InteractionMode>,
+    error_context_widths: Option<tex_state::print::ErrorContextWidths>,
 }
 
 pub(crate) struct LoadedRunConfiguration {
@@ -325,7 +329,7 @@ impl LoadedFormatFixture {
     /// The policy is operational state applied only after format decoding, so
     /// it cannot alter or select the authenticated prepared-format bytes.
     pub(crate) fn with_provenance_demand(mut self, demand: tex_state::ProvenanceDemand) -> Self {
-        self.universe = self.universe.with_provenance_demand(demand);
+        self.provenance_demand = demand;
         self
     }
 
@@ -334,7 +338,7 @@ impl LoadedFormatFixture {
     /// Interaction is runtime control state and is deliberately excluded from
     /// the frozen format image.
     pub fn set_interaction_mode(&mut self, mode: tex_state::InteractionMode) {
-        self.universe.set_interaction_mode(mode);
+        self.interaction_mode = Some(mode);
     }
 
     /// Selects the job-local TeX error-context widths after format loading.
@@ -342,7 +346,7 @@ impl LoadedFormatFixture {
     /// These widths are process/driver configuration and are deliberately
     /// excluded from the immutable format image.
     pub fn set_error_context_widths(&mut self, widths: tex_state::print::ErrorContextWidths) {
-        self.universe.set_error_context_widths(widths);
+        self.error_context_widths = Some(widths);
     }
 
     pub fn run(
@@ -370,7 +374,7 @@ impl LoadedFormatFixture {
     }
 
     pub(crate) fn run_configured(
-        mut self,
+        self,
         source_name: &str,
         source_kind: RegisteredSourceKind,
         source: Arc<[u8]>,
@@ -379,46 +383,72 @@ impl LoadedFormatFixture {
         observer: &mut dyn CommandObserver,
     ) -> Result<LoadedFormatRun, FormatFixtureError> {
         let guards = config.guards.validate()?;
-        let mut session =
-            EngineSession::new(&mut self.universe, self.recipe.engine.command_profile());
-        session.set_preloaded_format(tex_exec::PreloadedFormat {
-            dump_name: self.recipe.format_name.clone(),
-            format_name: self.recipe.format_ident_name.clone(),
-            year: self.recipe.clock.year,
-            month: self.recipe.clock.month,
-            day: self.recipe.clock.day,
-        });
-        session.set_engine_binary(config.engine_binary);
-        session.set_fuel_limit(guards.command_fuel)?;
-        let source = tex_command::SourceRegistration::new(source_kind, source)
-            .with_name(format!("./{source_name}"));
-        let root_source = match config.completion {
-            tex_exec::RootCompletionPolicy::RequireTeXEnd => session
-                .register_retained_root_with_invocation(
-                    source_name,
-                    &config.startup_line,
-                    source,
-                )?,
-            tex_exec::RootCompletionPolicy::StopAtRootEof => session
-                .register_retained_fragment_with_invocation(
-                    source_name,
-                    &config.startup_line,
-                    source,
-                )?,
-        };
-        let checkpoints = GuardCheckpoints::new(guards)?;
-        let mut checkpoint_sink = &checkpoints;
-        let result = session.run_with_observer(
-            &mut LoadedResourceHost::new(resources, &self.recipe.resources),
-            &mut checkpoint_sink,
-            observer,
-        );
-        let result = finish_guarded_run(result, &checkpoints)?;
-        Ok(LoadedFormatRun {
-            result,
-            universe: self.universe,
-            root_source,
+        let Self {
+            recipe,
+            image,
+            world,
+            provenance_demand,
+            interaction_mode,
+            error_context_widths,
+        } = self;
+        with_format_destination(crate::engine_interner_budget(), world, |destination| {
+            destination.set_provenance_config(FormatMaterializationConfig {
+                provenance_demand,
+                provenance_budgets: ProvenanceBudgets::default(),
+            });
+            let staging = destination.stage(image.detached())?;
+            destination
+                .materialize(staging, |universe| {
+                    recipe.engine.install_after_format(universe);
+                    if let Some(mode) = interaction_mode {
+                        universe.set_interaction_mode(mode);
+                    }
+                    if let Some(widths) = error_context_widths {
+                        universe.set_error_context_widths(widths);
+                    }
+                    let mut session = EngineSession::new(universe, recipe.engine.command_profile());
+                    session.set_preloaded_format(tex_exec::PreloadedFormat {
+                        dump_name: recipe.format_name.clone(),
+                        format_name: recipe.format_ident_name.clone(),
+                        year: recipe.clock.year,
+                        month: recipe.clock.month,
+                        day: recipe.clock.day,
+                    });
+                    session.set_engine_binary(config.engine_binary);
+                    session.set_fuel_limit(guards.command_fuel)?;
+                    let source = tex_command::SourceRegistration::new(source_kind, source)
+                        .with_name(format!("./{source_name}"));
+                    match config.completion {
+                        tex_exec::RootCompletionPolicy::RequireTeXEnd => session
+                            .register_retained_root_with_invocation(
+                                source_name,
+                                &config.startup_line,
+                                source,
+                            )?,
+                        tex_exec::RootCompletionPolicy::StopAtRootEof => session
+                            .register_retained_fragment_with_invocation(
+                                source_name,
+                                &config.startup_line,
+                                source,
+                            )?,
+                    };
+                    let checkpoints = GuardCheckpoints::new(guards)?;
+                    let mut checkpoint_sink = &checkpoints;
+                    let result = session.run_with_observer(
+                        &mut LoadedResourceHost::new(resources, &recipe.resources),
+                        &mut checkpoint_sink,
+                        observer,
+                    );
+                    let result = finish_guarded_run(result, &checkpoints)?;
+                    Ok(LoadedFormatRun { result })
+                })
+                .map_err(|error| {
+                    tex_state::FormatError::InvalidState(format!(
+                        "format destination publication failed: {error:?}"
+                    ))
+                })
         })
+        .map_err(|error| FormatFixtureError::Format(error.to_string()))?
     }
 }
 
@@ -456,7 +486,7 @@ impl ResourceHost for LoadedResourceHost<'_> {
                             name: logical_name.clone(),
                             source: SourceRegistration::new(
                                 *source_kind,
-                                Arc::from(bytes.as_slice()),
+                                Arc::<[u8]>::from(bytes.as_slice()),
                             )
                             .with_name(resolved_name.clone()),
                         }))
@@ -476,7 +506,7 @@ impl ResourceHost for LoadedResourceHost<'_> {
                                     name: logical_name.clone(),
                                     source: SourceRegistration::new(
                                         *source_kind,
-                                        Arc::from(bytes.as_slice()),
+                                        Arc::<[u8]>::from(bytes.as_slice()),
                                     )
                                     .with_name(format!("./{logical_name}")),
                                 }))
@@ -498,8 +528,11 @@ impl ResourceHost for LoadedResourceHost<'_> {
                         ResourceFulfillment::InputProbe {
                             request: request.clone(),
                             resource: FileEnquiryResource::new(
-                                SourceRegistration::new(*source_kind, Arc::from(bytes.as_slice()))
-                                    .with_name(resolved_name.clone()),
+                                SourceRegistration::new(
+                                    *source_kind,
+                                    Arc::<[u8]>::from(bytes.as_slice()),
+                                )
+                                .with_name(resolved_name.clone()),
                                 None,
                             ),
                         },
@@ -520,7 +553,7 @@ impl ResourceHost for LoadedResourceHost<'_> {
                                     resource: FileEnquiryResource::new(
                                         SourceRegistration::new(
                                             *source_kind,
-                                            Arc::from(bytes.as_slice()),
+                                            Arc::<[u8]>::from(bytes.as_slice()),
                                         )
                                         .with_name(format!("./{logical_name}")),
                                         None,
@@ -542,7 +575,10 @@ impl ResourceHost for LoadedResourceHost<'_> {
                         == Some(std::ffi::OsStr::new(&request.name)) =>
                     {
                         let content = world
-                            .register_selected_file(logical_name, Arc::from(bytes.as_slice()))
+                            .register_selected_file(
+                                logical_name,
+                                Arc::<[u8]>::from(bytes.as_slice()),
+                            )
                             .ok()?;
                         Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                             request: request.clone(),
@@ -567,7 +603,7 @@ impl ResourceHost for LoadedResourceHost<'_> {
                                 let content = world
                                     .register_selected_file(
                                         logical_name,
-                                        Arc::from(bytes.as_slice()),
+                                        Arc::<[u8]>::from(bytes.as_slice()),
                                     )
                                     .ok()?;
                                 Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
@@ -589,9 +625,6 @@ impl ResourceHost for LoadedResourceHost<'_> {
 
 pub struct LoadedFormatRun {
     pub result: RunResult,
-    pub universe: Universe,
-    /// Provenance identity assigned to this job's retained root source.
-    pub root_source: tex_state::SourceId,
 }
 
 /// Ensures one recipe image exists in the validated content-addressed cache.
@@ -626,50 +659,51 @@ pub(crate) fn construct_format_in_worker(
     recipe: &FormatRecipe,
 ) -> Result<ConstructionResult, FormatFixtureError> {
     recipe.guards.validate()?;
-    let mut universe = Universe::with_world(World::memory_with_clock(recipe.clock));
-    recipe.engine.prepare_initex(&mut universe);
-    universe.set_hyphenation_exception_capacity(recipe.hyphenation_exception_capacity);
-    universe.set_interaction_mode(recipe.construction_interaction);
-    universe.set_error_context_widths(recipe.construction_error_context_widths);
-    let mut session =
-        EngineSession::prepared_initex(&mut universe, recipe.engine.command_profile());
-    session.set_fuel_limit(recipe.guards.command_fuel)?;
-    let root = session.register_retained_root_with_invocation(
-        &recipe.construction_source_name,
-        &recipe.construction_source_name,
-        SourceRegistration::new(
-            RegisteredSourceKind::Generated,
-            Arc::from(recipe.construction_source.as_slice()),
-        )
-        .with_name(format!("./{}", recipe.construction_source_name)),
-    )?;
-    let mut observer = LiveSessionTranslator::for_root(
-        SchemaVersion::V3,
-        "terminal",
-        LiveSource {
-            name: recipe.construction_source_name.clone(),
-            source: root,
-            bytes: Arc::from(recipe.construction_source.as_slice()),
+    crate::with_engine_world(
+        World::memory_with_clock(recipe.clock),
+        |universe| -> Result<ConstructionResult, FormatFixtureError> {
+            recipe.engine.prepare_initex(universe);
+            universe.set_interaction_mode(recipe.construction_interaction);
+            universe.set_error_context_widths(recipe.construction_error_context_widths);
+            let mut session =
+                EngineSession::prepared_initex(universe, recipe.engine.command_profile());
+            session.set_fuel_limit(recipe.guards.command_fuel)?;
+            let source_bytes = Arc::<[u8]>::from(recipe.construction_source.as_slice());
+            let root = session.register_retained_root_with_invocation(
+                &recipe.construction_source_name,
+                &recipe.construction_source_name,
+                SourceRegistration::new(RegisteredSourceKind::Generated, source_bytes.clone())
+                    .with_name(format!("./{}", recipe.construction_source_name)),
+            )?;
+            let mut observer = LiveSessionTranslator::for_root(
+                SchemaVersion::V3,
+                "terminal",
+                LiveSource {
+                    name: recipe.construction_source_name.clone(),
+                    source: root,
+                    bytes: source_bytes,
+                },
+            );
+            let guards = GuardCheckpoints::new(recipe.guards)?;
+            let mut checkpoints = &guards;
+            let result = session.run_with_observer(
+                &mut RecipeResourceHost::new(&recipe.resources),
+                &mut checkpoints,
+                &mut observer,
+            );
+            let result = finish_guarded_run(result, &guards)?;
+            let format_dump = result
+                .format_dump
+                .ok_or(FormatFixtureError::ConstructionDidNotDump)?;
+            let evidence = encode_oracle_bundle(&observer.finalize_detached_evidence())
+                .map_err(FormatFixtureError::Evidence)?;
+            Ok(ConstructionResult {
+                image: format_dump.image.into_bytes(),
+                evidence,
+            })
         },
-    );
-    let guards = GuardCheckpoints::new(recipe.guards)?;
-    let mut checkpoints = &guards;
-    let result = session.run_with_observer(
-        &mut RecipeResourceHost::new(&recipe.resources),
-        &mut checkpoints,
-        &mut observer,
-    );
-    let result = finish_guarded_run(result, &guards)?;
-    if !result.dumped_format {
-        return Err(FormatFixtureError::ConstructionDidNotDump);
-    }
-    let image = session
-        .stores()
-        .dump_format()
-        .map_err(|error| FormatFixtureError::Format(error.to_string()))?;
-    let evidence = encode_oracle_bundle(&observer.finalize_detached_evidence())
-        .map_err(FormatFixtureError::Evidence)?;
-    Ok(ConstructionResult { image, evidence })
+    )
+    .map_err(|error| FormatFixtureError::Format(format!("{error:?}")))?
 }
 
 #[cfg(test)]
@@ -790,7 +824,10 @@ impl ResourceHost for RecipeResourceHost<'_> {
                         ResourceFulfillment::InputProbe {
                             request: request.clone(),
                             resource: FileEnquiryResource::new(
-                                SourceRegistration::new(*source_kind, Arc::from(bytes.as_slice())),
+                                SourceRegistration::new(
+                                    *source_kind,
+                                    Arc::<[u8]>::from(bytes.as_slice()),
+                                ),
                                 None,
                             ),
                         },

@@ -5,7 +5,10 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use tex_state::{Universe, World};
+use tex_state::{
+    DetachedFormatImage, FORMAT_ABI_FINGERPRINT, FORMAT_LOOKUP_CONFIGURATION_FINGERPRINT,
+    FORMAT_SCHEMA_VERSION,
+};
 use umber_fetch::{BlobStore, CacheError, VerifiedBlobSpec};
 
 const DIRECTORY: &str = "formats-v2";
@@ -122,9 +125,9 @@ impl FormatCacheIdentity {
         Self {
             entry_kind: FormatCacheEntryKind::ImageOnly,
             engine_mode,
-            format_schema: Universe::FORMAT_SCHEMA_VERSION,
-            format_abi_fingerprint: Universe::FORMAT_ABI_FINGERPRINT,
-            lookup_configuration_fingerprint: Universe::FORMAT_LOOKUP_CONFIGURATION_FINGERPRINT,
+            format_schema: FORMAT_SCHEMA_VERSION,
+            format_abi_fingerprint: FORMAT_ABI_FINGERPRINT,
+            lookup_configuration_fingerprint: FORMAT_LOOKUP_CONFIGURATION_FINGERPRINT,
             distribution_snapshot,
             format_closure,
             source_lock,
@@ -143,9 +146,9 @@ impl FormatCacheIdentity {
         Self {
             entry_kind: FormatCacheEntryKind::CompoundEvidence,
             engine_mode: fixture.engine_mode,
-            format_schema: Universe::FORMAT_SCHEMA_VERSION,
-            format_abi_fingerprint: Universe::FORMAT_ABI_FINGERPRINT,
-            lookup_configuration_fingerprint: Universe::FORMAT_LOOKUP_CONFIGURATION_FINGERPRINT,
+            format_schema: FORMAT_SCHEMA_VERSION,
+            format_abi_fingerprint: FORMAT_ABI_FINGERPRINT,
+            lookup_configuration_fingerprint: FORMAT_LOOKUP_CONFIGURATION_FINGERPRINT,
             distribution_snapshot: fixture.distribution_snapshot,
             format_closure: fixture.format_closure,
             source_lock: fixture.source_lock,
@@ -201,21 +204,47 @@ impl FormatCacheIdentity {
     }
 }
 
-/// Format bytes that passed the complete schema-11 `Universe` decoder.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ValidatedFormatImage(Vec<u8>);
+/// A reusable format image that passed the complete detached decoder.
+#[derive(Debug)]
+pub struct ValidatedFormatImage(DetachedFormatImage);
 
 impl ValidatedFormatImage {
+    fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, FormatCacheError> {
+        DetachedFormatImage::try_from_bytes(bytes)
+            .map(Self)
+            .map_err(|error| FormatCacheError::InvalidFormat(error.to_string()))
+    }
+
     #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn detached(&self) -> &DetachedFormatImage {
         &self.0
     }
 
     #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
-        self.0
+        self.0.into_bytes()
     }
 }
+
+impl Clone for ValidatedFormatImage {
+    fn clone(&self) -> Self {
+        Self::try_from_bytes(self.as_bytes().to_vec())
+            .expect("a validated detached format remains valid when copied")
+    }
+}
+
+impl PartialEq for ValidatedFormatImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_bytes() == other.as_bytes()
+    }
+}
+
+impl Eq for ValidatedFormatImage {}
 
 /// One atomically cached image plus caller-validated opaque evidence.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -317,7 +346,8 @@ impl FormatCacheStore {
             .blobs
             .load_validated(&spec, |entry| validate_image_entry(entry, identity))?;
         Ok(entry.and_then(|entry| {
-            decode_entry(&entry, identity).map(|bytes| ValidatedFormatImage(bytes.to_vec()))
+            decode_entry(&entry, identity)
+                .and_then(|bytes| ValidatedFormatImage::try_from_bytes(bytes.to_vec()).ok())
         }))
     }
 
@@ -333,8 +363,7 @@ impl FormatCacheStore {
         if format.len() as u64 > MAX_FORMAT_BYTES {
             return Err(FormatCacheError::FormatTooLarge(format.len() as u64));
         }
-        Universe::from_format(World::memory(), format)
-            .map_err(|error| FormatCacheError::InvalidFormat(error.to_string()))?;
+        ValidatedFormatImage::try_from_bytes(format.to_vec())?;
         let entry = encode_entry(identity, format);
         self.blobs.ensure_validated::<FormatCacheError>(
             &self.spec(identity, MAX_FORMAT_BYTES + 4096)?,
@@ -379,8 +408,7 @@ impl FormatCacheStore {
                 "opaque evidence exceeds cache limit".into(),
             ));
         }
-        Universe::from_format(World::memory(), image)
-            .map_err(|error| FormatCacheError::InvalidFormat(error.to_string()))?;
+        ValidatedFormatImage::try_from_bytes(image.to_vec())?;
         validate_evidence(evidence).map_err(FormatCacheError::InvalidFormat)?;
         let entry = encode_compound_entry(identity, image, evidence);
         self.blobs.ensure_validated::<FormatCacheError>(
@@ -453,7 +481,7 @@ fn compound_limit() -> u64 {
 
 fn validate_image_entry(entry: &[u8], identity: &FormatCacheIdentity) -> Result<(), String> {
     let payload = decode_entry(entry, identity).ok_or("invalid format cache envelope")?;
-    Universe::from_format(World::memory(), payload)
+    DetachedFormatImage::try_from_bytes(payload.to_vec())
         .map(|_| ())
         .map_err(|error| error.to_string())
 }
@@ -465,14 +493,14 @@ fn validate_encoded_compound(
 ) -> Result<(), String> {
     let (image, evidence) =
         decode_compound_entry(bytes, identity).ok_or("invalid compound cache envelope")?;
-    Universe::from_format(World::memory(), image).map_err(|error| error.to_string())?;
+    DetachedFormatImage::try_from_bytes(image.to_vec()).map_err(|error| error.to_string())?;
     validate_evidence(evidence)
 }
 
 fn decoded_compound(bytes: &[u8], identity: &FormatCacheIdentity) -> Option<ValidatedFormatEntry> {
     let (image, evidence) = decode_compound_entry(bytes, identity)?;
     Some(ValidatedFormatEntry {
-        image: ValidatedFormatImage(image.to_vec()),
+        image: ValidatedFormatImage::try_from_bytes(image.to_vec()).ok()?,
         evidence: evidence.to_vec(),
     })
 }
@@ -544,8 +572,7 @@ fn validate_compound_payload(
             "opaque evidence exceeds cache limit".into(),
         ));
     }
-    Universe::from_format(World::memory(), image)
-        .map_err(|error| FormatCacheError::InvalidFormat(error.to_string()))?;
+    ValidatedFormatImage::try_from_bytes(image.to_vec())?;
     validate_evidence(evidence).map_err(FormatCacheError::InvalidFormat)
 }
 

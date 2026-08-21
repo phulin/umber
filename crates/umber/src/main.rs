@@ -9,6 +9,7 @@ use tex_command::{
     SourceControlSequenceKind, SourceRegistration, SourceToken, SourceTokenizationStep,
 };
 use tex_state::env::banks::IntParam;
+use tex_state::print::PrintSink;
 use tex_state::token::Token;
 use tex_state::{FormatError, Universe, World, WorldError};
 use umber::EngineMode as RunEngine;
@@ -527,11 +528,10 @@ fn finalize_run(
     let virtual_font_resources = finalization.virtual_font_resources;
     let pdf_raw_object_file_receipt = finalization.pdf_raw_object_file_receipt;
     let completion = finalization.completion;
-    let dumped_format = finalization.dumped_format;
-    let mut format_dump_receipt = finalization.format_dump_receipt;
+    let format_dump = finalization.format_dump;
     #[cfg_attr(not(feature = "profiling"), allow(unused_variables))]
     let expansion_stats = finalization.expansion_stats;
-    if opts.format_out.is_some() && !dumped_format {
+    if opts.format_out.is_some() && format_dump.is_none() {
         return Err(CliError::MissingFormatDump);
     }
     #[cfg(feature = "profiling")]
@@ -682,7 +682,7 @@ fn finalize_run(
         }
         driver_files.push(DriverFile::new(html_path.clone(), html.clone()));
     }
-    let format_output = dumped_format.then(|| {
+    let format_output = format_dump.as_ref().map(|_| {
         opts.format_out.clone().unwrap_or_else(|| {
             PathBuf::from(
                 opts.input
@@ -693,10 +693,12 @@ fn finalize_run(
         })
     });
     if let Some(output) = &format_output {
-        let format = format_dump_receipt
+        let format = format_dump
             .as_ref()
-            .expect("a dumped format has its detached receipt")
-            .detached_image_bytes();
+            .expect("a dumped format has its detached image")
+            .image
+            .as_bytes()
+            .to_vec();
         driver_files.push(DriverFile::new(output.clone(), format));
     }
     if let Some(receipt_output) = &opts.input_records_out {
@@ -716,8 +718,12 @@ fn finalize_run(
     let mut destination = World::real();
     let committed = finalization.commit_effects(&mut destination)?;
     committed.materialize(&mut destination)?;
-    if let (Some(receipt), Some(path)) = (&mut format_dump_receipt, &format_output) {
-        receipt.confirm_detached_publication(&mut destination, &path.to_string_lossy())?;
+    if let (Some(dump), Some(path)) = (&format_dump, &format_output) {
+        confirm_detached_format_publication(
+            &mut destination,
+            &dump.receipt,
+            &path.to_string_lossy(),
+        );
     }
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
@@ -728,6 +734,20 @@ fn finalize_run(
         );
     }
     Ok(())
+}
+
+fn confirm_detached_format_publication(
+    world: &mut World,
+    receipt: &tex_exec::FormatDumpReceipt,
+    displayed_file_name: &str,
+) {
+    let ident = &receipt.format_ident;
+    let announcement = format!(
+        "\nBeginning to dump on file {displayed_file_name}\n (preloaded format={} {}.{}.{})\n",
+        ident.format_name, ident.year, ident.month, ident.day
+    );
+    world.write_text(PrintSink::Terminal, &announcement);
+    world.write_text(PrintSink::Log, &announcement);
 }
 
 struct RunCliOptions {

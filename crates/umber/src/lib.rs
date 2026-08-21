@@ -516,7 +516,7 @@ impl FontResolver for FileFontResolver {
 }
 
 /// Result of running TeX through the batch executor.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct RunResult {
     pub terminal_text: String,
     /// TeX's process-level outcome after all engine finalization diagnostics.
@@ -536,7 +536,8 @@ pub struct RunResult {
     /// drained a prefix into the World's backing outputs.
     pub effects: Vec<EffectRecord>,
     pub dumped_format: bool,
-    pub format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
+    /// Exact handle-free INITEX result, captured only after aggregate quiescence.
+    pub format_dump: Option<tex_exec::DetachedFormatDump>,
 }
 
 /// TeX's completed process status, derived from the final §76 `history`.

@@ -24,7 +24,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(target_os = "linux")]
 use subtle::ConstantTimeEq;
 use tex_command::RegisteredSourceKind;
-use tex_state::{JobClock, Universe, World};
+use tex_state::{DetachedFormatImage, JobClock};
+#[cfg(test)]
+use tex_state::{Universe, World};
 #[cfg(target_os = "linux")]
 use zeroize::Zeroizing;
 
@@ -835,7 +837,7 @@ fn validate_response(
     {
         return Err(FormatFixtureError::WorkerIdentityMismatch);
     }
-    Universe::from_format(World::memory(), &result.image)
+    DetachedFormatImage::try_from_bytes(result.image.clone())
         .map_err(|error| FormatFixtureError::Format(error.to_string()))?;
     tex_oracle::decode_oracle_bundle(&result.evidence).map_err(FormatFixtureError::Evidence)?;
     Ok(ConstructionResult {

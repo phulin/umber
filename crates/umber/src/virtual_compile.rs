@@ -15,7 +15,7 @@ use tex_out::html::incremental::{
     build_render_document, plan_patch,
 };
 use tex_out::html::{HtmlFontAsset, HtmlFontAssets, HtmlFontKey};
-use tex_state::{ContentHash, JobClock, Universe, World};
+use tex_state::{ContentHash, JobClock, Universe};
 
 use crate::{
     MemoryOutputCollectionError, MemoryRunOutput, install_latex_format_primitives,
@@ -550,8 +550,7 @@ pub enum CompileAttemptResult {
 /// client-owned downstream finalizer. Effects remain uncommitted.
 pub struct AcceptedFinalization {
     pub completion: tex_exec::DetachedEngineCompletion,
-    pub dumped_format: bool,
-    pub format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
+    pub format_dump: Option<tex_exec::DetachedFormatDump>,
     pub expansion_stats: tex_incr::ExpansionStats,
     pub virtual_font_resources: PdfVirtualFontResources,
     pub pdf_font_closure_receipt: PdfFontClosureReceipt,
@@ -1107,18 +1106,16 @@ impl VirtualCompileSession {
         let session = self.incremental.ok_or_else(|| {
             CompileError::Incremental("the accepted incremental session is missing".to_owned())
         })?;
-        let dumped_format = session.accepted_dumped_format();
-        let format_dump_receipt = session.accepted_format_dump_receipt().cloned();
         let expansion_stats = session.accepted_expansion_stats();
         let accepted = self.accepted_engine_output.ok_or_else(|| {
             CompileError::Incremental("the accepted detached completion is missing".to_owned())
         })?;
         let pdf_raw_object_file_receipt =
             pdf_raw_object_file_receipt(accepted.pdf(), &self.workspace)?;
+        let (completion, format_dump) = accepted.into_terminal();
         Ok(AcceptedFinalization {
-            completion: accepted.into_completion(),
-            dumped_format,
-            format_dump_receipt,
+            completion,
+            format_dump,
             expansion_stats,
             virtual_font_resources: self.virtual_font_resources,
             pdf_font_closure_receipt,
@@ -1959,34 +1956,16 @@ impl VirtualCompileSession {
                 .map_err(|error| CompileError::World(error.to_string()))?
                 .ok_or_else(|| CompileError::MissingMainFile(self.main_path.to_string()))?;
             let source = source.bytes().to_vec();
-            let world = World::memory_with_clock(self.clock);
-            let mut template = if let Some(format) = &self.format {
-                let mut template = Universe::from_format(world, format)
+            let format_image = if let Some(format) = &self.format {
+                let image = tex_state::DetachedFormatImage::try_from_bytes(format.clone())
                     .map_err(|error| CompileError::Format(error.to_string()))?;
-                self.engine.install_after_format(&mut template);
-                if self.font_layout_policy == FontLayoutPolicy::OpenTypePreferred
-                    && let Some(font) = template
-                        .loaded_fonts()
-                        .skip(1)
-                        .find(|font| font.layout_policy() != FontLayoutPolicy::OpenTypePreferred)
-                {
-                    return Err(CompileError::Font(format!(
-                        "format preloads classic TFM font {}; OpenTypePreferred requires fonts to be selected through typed resources before layout",
-                        font.name()
-                    )));
-                }
-                template
+                Some(image)
             } else {
-                let mut template = Universe::with_world(world);
-                self.engine.prepare_fresh(&mut template);
-                template
+                None
             };
-            if let Some(name) = &self.authored_root_name {
-                tex_state::file_framing::print_startup_file_open(&mut template, name);
-            }
             let session = Box::new({
                 let mut session = tex_incr::Session::start_with_source_bytes(
-                    template,
+                    (),
                     &self.job_name,
                     self.main_path.as_str(),
                     self.initial_revision,
@@ -1994,7 +1973,11 @@ impl VirtualCompileSession {
                     self.limits.cached_file_bytes,
                 )
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
+                session.set_job_clock(self.clock);
                 session.set_command_profile(self.engine.command_profile(), self.format.is_none());
+                if let Some(image) = format_image {
+                    session.set_format_image(image);
+                }
                 session.set_utf8_input_as_bytes(self.engine.uses_latex_input());
                 session.set_dvi_output(self.outputs.contains(OutputCapability::Dvi));
                 session.set_render_cache_budget(self.limits.output_bytes);

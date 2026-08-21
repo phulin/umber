@@ -166,7 +166,7 @@ fn same_run_input_fulfillment(name: &str, content: FileContent) -> ResourceFulfi
 
 /// Result of driving the retained engine until it either completes or awaits
 /// an immutable host response.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum SessionState {
     NeedResource(ResourceNeed),
     Complete(RunResult),
@@ -193,6 +193,8 @@ pub enum SessionError {
     SourceRegistration(SourceRegistrationError),
     CommandSummary(tex_command::CommandSummaryError),
     Execution(tex_exec::ExecError),
+    FormatDump(tex_exec::FormatDumpError),
+    World(tex_state::WorldError),
 }
 
 impl fmt::Display for SessionError {
@@ -220,6 +222,8 @@ impl fmt::Display for SessionError {
             Self::SourceRegistration(error) => error.fmt(formatter),
             Self::CommandSummary(error) => error.fmt(formatter),
             Self::Execution(error) => error.fmt(formatter),
+            Self::FormatDump(error) => error.fmt(formatter),
+            Self::World(error) => error.fmt(formatter),
         }
     }
 }
@@ -241,6 +245,12 @@ impl From<tex_command::CommandSummaryError> for SessionError {
 impl From<tex_exec::ExecError> for SessionError {
     fn from(error: tex_exec::ExecError) -> Self {
         Self::Execution(error)
+    }
+}
+
+impl From<tex_state::WorldError> for SessionError {
+    fn from(error: tex_state::WorldError) -> Self {
+        Self::World(error)
     }
 }
 
@@ -517,7 +527,7 @@ impl<'a, G> EngineSession<'a, G> {
         self.root_framing_is_command_owned = source.name().is_some();
         self.control.set_root_completion_policy(completion);
         if completion == tex_exec::RootCompletionPolicy::StopAtRootEof {
-            self.terminal_input_cursor = Some(self.stores.terminal_input_position());
+            self.terminal_input_cursor = Some(self.stores.capture_terminal_input_position());
         }
         self.control.record_retained_startup_strings(
             self.stores,
@@ -1022,8 +1032,12 @@ impl<'a, G> EngineSession<'a, G> {
         self.artifact_cursor = commits.len();
         self.effect_cursor = effect_records.len();
         if let Some(position) = self.terminal_input_cursor.take() {
-            self.stores.restore_terminal_input_position(position);
+            self.stores.restore_terminal_input_position(position)?;
         }
+        let format_dump = self
+            .control
+            .take_format_dump(self.stores)
+            .map_err(SessionError::FormatDump)?;
         Ok(SessionState::Complete(RunResult {
             terminal_text,
             status: TexRunStatus::from_error_history(self.stores.world().error_channel().history()),
@@ -1033,8 +1047,8 @@ impl<'a, G> EngineSession<'a, G> {
             dvi_pages,
             committed_artifacts,
             effects,
-            dumped_format: self.control.dumped_format(),
-            format_dump_receipt: self.control.format_dump_receipt().cloned(),
+            dumped_format: format_dump.is_some(),
+            format_dump,
         }))
     }
 }
