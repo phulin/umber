@@ -1361,92 +1361,113 @@ mod unset_diagnostic_tests {
     use super::*;
     use tex_state::node::UnsetNodeFields;
 
+    fn with_context<R>(
+        test: impl for<'id> FnOnce(&mut CommandContext<'_, tex_state::GenerationBrand<'id>>) -> R,
+    ) -> R {
+        crate::test_harness::with_universe(|universe| {
+            crate::test_harness::with_admitted(universe, test)
+        })
+    }
+
+    fn set_escape<G>(context: &mut CommandContext<'_, G>, value: i32) {
+        context
+            .assign_int_param(
+                IntParam::ESCAPE_CHAR,
+                value,
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("escape character assignment");
+    }
+
     #[test]
     fn vertical_unset_node_uses_tex82_unsetbox_name() {
-        let stores = Universe::new();
-        let children = PageListId::empty();
-        let unset = Node::Unset(UnsetNode::new(UnsetNodeFields {
-            kind: UnsetKind::VBox,
-            width: Scaled::from_raw(0),
-            height: Scaled::from_raw(0),
-            depth: Scaled::from_raw(0),
-            span_count: 0,
-            stretch: Scaled::from_raw(0),
-            stretch_order: Order::Normal,
-            shrink: Scaled::from_raw(0),
-            shrink_order: Order::Normal,
-            children,
-        }));
+        with_context(|context| {
+            let children = PageListId::empty();
+            let unset = Node::Unset(UnsetNode::new(UnsetNodeFields {
+                kind: UnsetKind::VBox,
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                span_count: 0,
+                stretch: Scaled::from_raw(0),
+                stretch_order: Order::Normal,
+                shrink: Scaled::from_raw(0),
+                shrink_order: Order::Normal,
+                children,
+            }));
 
-        assert_eq!(
-            dump_node_slice(
-                &stores,
-                &[unset],
-                DumpConfig {
-                    breadth: 5,
-                    depth: 0,
-                    profile: CommandProfile::TEX82,
-                },
-            ),
-            "\\unsetbox(0.0+0.0)x0.0\n"
-        );
+            assert_eq!(
+                dump_node_slice(
+                    context,
+                    &[unset],
+                    DumpConfig {
+                        breadth: 5,
+                        depth: 0,
+                        profile: CommandProfile::TEX82,
+                    },
+                ),
+                "\\unsetbox(0.0+0.0)x0.0\n"
+            );
+        });
     }
 
     #[test]
     fn named_glue_node_uses_live_escape_character_for_both_names() {
-        let mut stores = Universe::new();
-        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let spec = GlueSpec::ZERO;
+        with_context(|context| {
+            set_escape(context, i32::from(b'|'));
+            let spec = GlueSpec::ZERO;
 
-        assert_eq!(
-            dump_node_slice(
-                &stores,
-                &[Node::Glue {
-                    spec,
-                    kind: GlueKind::LineSkip,
-                    leader: None,
-                }],
-                DumpConfig {
-                    breadth: 5,
-                    depth: 0,
-                    profile: CommandProfile::TEX82,
-                },
-            ),
-            "|glue(|lineskip) 0.0\n"
-        );
+            assert_eq!(
+                dump_node_slice(
+                    &context,
+                    &[Node::Glue {
+                        spec,
+                        kind: GlueKind::LineSkip,
+                        leader: None,
+                    }],
+                    DumpConfig {
+                        breadth: 5,
+                        depth: 0,
+                        profile: CommandProfile::TEX82,
+                    },
+                ),
+                "|glue(|lineskip) 0.0\n"
+            );
+        });
     }
 
     #[test]
     fn kern_headers_use_the_live_escape_character() {
         // TeX82 §§63/184: `show_node_list` routes both kern names through
         // `print_esc`; a negative `\escapechar` suppresses the prefix entirely.
-        let mut stores = Universe::new();
-        let nodes = [
-            Node::Kern {
-                amount: Scaled::from_raw(2 * Scaled::UNITY),
-                kind: KernKind::Font,
-            },
-            Node::Kern {
-                amount: Scaled::from_raw(3 * Scaled::UNITY),
-                kind: KernKind::Mu,
-            },
-        ];
-        let config = DumpConfig {
-            breadth: 5,
-            depth: 0,
-            profile: CommandProfile::TEX82,
-        };
+        with_context(|context| {
+            let nodes = [
+                Node::Kern {
+                    amount: Scaled::from_raw(2 * Scaled::UNITY),
+                    kind: KernKind::Font,
+                },
+                Node::Kern {
+                    amount: Scaled::from_raw(3 * Scaled::UNITY),
+                    kind: KernKind::Mu,
+                },
+            ];
+            let config = DumpConfig {
+                breadth: 5,
+                depth: 0,
+                profile: CommandProfile::TEX82,
+            };
 
-        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        assert_eq!(
-            dump_node_slice(&stores, &nodes, config),
-            "|kern2.0\n|mkern3.0mu\n"
-        );
+            set_escape(context, i32::from(b'|'));
+            assert_eq!(
+                dump_node_slice(context, &nodes, config),
+                "|kern2.0\n|mkern3.0mu\n"
+            );
+        });
 
-        stores.set_int_param(IntParam::ESCAPE_CHAR, -1);
+        set_escape(context, -1);
         assert_eq!(
             dump_node_slice(
-                &stores,
+                &context,
                 &nodes,
                 DumpConfig {
                     breadth: 5,
@@ -1462,130 +1483,136 @@ mod unset_diagnostic_tests {
     fn rule_headers_use_the_live_escape_character() {
         // TeX82 §191 begins a displayed rule with `print_esc("rule(")`;
         // leader rules use the same node display after their glue header.
-        let mut stores = Universe::new();
-        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let glue = GlueSpec::ZERO;
-        let nodes = [
-            Node::Rule {
-                width: Some(Scaled::from_raw(3 * Scaled::UNITY)),
-                height: Some(Scaled::from_raw(2 * Scaled::UNITY)),
-                depth: Some(Scaled::from_raw(Scaled::UNITY)),
-            },
-            Node::Glue {
-                spec: glue,
-                kind: GlueKind::Leaders,
-                leader: Some(LeaderPayload::Rule {
-                    width: Some(Scaled::from_raw(6 * Scaled::UNITY)),
-                    height: Some(Scaled::from_raw(5 * Scaled::UNITY)),
-                    depth: Some(Scaled::from_raw(4 * Scaled::UNITY)),
-                }),
-            },
-        ];
-
-        assert_eq!(
-            dump_node_slice(
-                &stores,
-                &nodes,
-                DumpConfig {
-                    breadth: 5,
-                    depth: 5,
-                    profile: CommandProfile::TEX82,
+        with_context(|context| {
+            set_escape(context, i32::from(b'|'));
+            let glue = GlueSpec::ZERO;
+            let nodes = [
+                Node::Rule {
+                    width: Some(Scaled::from_raw(3 * Scaled::UNITY)),
+                    height: Some(Scaled::from_raw(2 * Scaled::UNITY)),
+                    depth: Some(Scaled::from_raw(Scaled::UNITY)),
                 },
-            ),
-            "|rule(2.0+1.0)x3.0\n|leaders 0.0\n.|rule(5.0+4.0)x6.0\n"
-        );
+                Node::Glue {
+                    spec: glue,
+                    kind: GlueKind::Leaders,
+                    leader: Some(LeaderPayload::Rule {
+                        width: Some(Scaled::from_raw(6 * Scaled::UNITY)),
+                        height: Some(Scaled::from_raw(5 * Scaled::UNITY)),
+                        depth: Some(Scaled::from_raw(4 * Scaled::UNITY)),
+                    }),
+                },
+            ];
+
+            assert_eq!(
+                dump_node_slice(
+                    &context,
+                    &nodes,
+                    DumpConfig {
+                        breadth: 5,
+                        depth: 5,
+                        profile: CommandProfile::TEX82,
+                    },
+                ),
+                "|rule(2.0+1.0)x3.0\n|leaders 0.0\n.|rule(5.0+4.0)x6.0\n"
+            );
+        });
     }
 
     #[test]
     fn penalty_headers_use_the_live_escape_character() {
         // TeX82 §§63/184: the `penalty_node` arm routes its name through
         // `print_esc`, including suppression for a negative `\escapechar`.
-        let mut stores = Universe::new();
-        let nodes = [Node::Penalty(10_000)];
-        let config = DumpConfig {
-            breadth: 5,
-            depth: 0,
-            profile: CommandProfile::TEX82,
-        };
+        with_context(|context| {
+            let nodes = [Node::Penalty(10_000)];
+            let config = DumpConfig {
+                breadth: 5,
+                depth: 0,
+                profile: CommandProfile::TEX82,
+            };
 
-        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        assert_eq!(dump_node_slice(&stores, &nodes, config), "|penalty 10000\n");
+            set_escape(context, i32::from(b'|'));
+            assert_eq!(dump_node_slice(context, &nodes, config), "|penalty 10000\n");
 
-        stores.set_int_param(IntParam::ESCAPE_CHAR, -1);
-        assert_eq!(
-            dump_node_slice(
-                &stores,
-                &nodes,
-                DumpConfig {
-                    breadth: 5,
-                    depth: 0,
-                    profile: CommandProfile::TEX82,
-                },
-            ),
-            "penalty 10000\n"
-        );
+            set_escape(context, -1);
+            assert_eq!(
+                dump_node_slice(
+                    &context,
+                    &nodes,
+                    DumpConfig {
+                        breadth: 5,
+                        depth: 0,
+                        profile: CommandProfile::TEX82,
+                    },
+                ),
+                "penalty 10000\n"
+            );
+        });
     }
 
     #[test]
     fn mark_headers_use_the_live_escape_character() {
         // TeX82 §§63/200: the mark-node arm routes its name through
         // `print_esc`, including suppression for a negative `\escapechar`.
-        let mut stores = Universe::new();
-        let tokens = stores.intern_token_list(&[Token::Char {
-            ch: 'x',
-            cat: tex_state::token::Catcode::Letter,
-        }]);
-        let tokens = tex_state::node::NodeTokenList::new(stores.tokens(tokens).to_vec());
-        let nodes = [Node::Mark { class: 0, tokens }];
-        let config = DumpConfig {
-            breadth: 5,
-            depth: 0,
-            profile: CommandProfile::TEX82,
-        };
+        with_context(|context| {
+            let tokens =
+                tex_state::node::NodeTokenList::new(vec![tex_state::token::TokenWord::pack(
+                    Token::Char {
+                        ch: 'x',
+                        cat: tex_state::token::Catcode::Letter,
+                    },
+                )]);
+            let nodes = [Node::Mark { class: 0, tokens }];
+            let config = DumpConfig {
+                breadth: 5,
+                depth: 0,
+                profile: CommandProfile::TEX82,
+            };
 
-        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        assert_eq!(dump_node_slice(&stores, &nodes, config), "|mark{x}\n");
+            set_escape(context, i32::from(b'|'));
+            assert_eq!(dump_node_slice(context, &nodes, config), "|mark{x}\n");
 
-        stores.set_int_param(IntParam::ESCAPE_CHAR, -1);
-        assert_eq!(
-            dump_node_slice(
-                &stores,
-                &nodes,
-                DumpConfig {
-                    breadth: 5,
-                    depth: 0,
-                    profile: CommandProfile::TEX82,
-                },
-            ),
-            "mark{x}\n"
-        );
+            set_escape(context, -1);
+            assert_eq!(
+                dump_node_slice(
+                    &context,
+                    &nodes,
+                    DumpConfig {
+                        breadth: 5,
+                        depth: 0,
+                        profile: CommandProfile::TEX82,
+                    },
+                ),
+                "mark{x}\n"
+            );
+        });
     }
 
     #[test]
     fn math_node_headers_use_the_live_escape_character() {
         // TeX82 §§63/184 route both math-node subtype names through
         // `print_esc`, including suppression for a negative `\escapechar`.
-        let mut stores = Universe::new();
-        let nodes = [
-            Node::MathOn(Scaled::from_raw(0)),
-            Node::MathOff(Scaled::from_raw(3 * Scaled::UNITY)),
-        ];
-        let config = DumpConfig {
-            breadth: 5,
-            depth: 0,
-            profile: CommandProfile::TEX82,
-        };
+        with_context(|context| {
+            let nodes = [
+                Node::MathOn(Scaled::from_raw(0)),
+                Node::MathOff(Scaled::from_raw(3 * Scaled::UNITY)),
+            ];
+            let config = DumpConfig {
+                breadth: 5,
+                depth: 0,
+                profile: CommandProfile::TEX82,
+            };
 
-        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        assert_eq!(
-            dump_node_slice(&stores, &nodes, config),
-            "|mathon\n|mathoff, surrounded 3.0\n"
-        );
+            set_escape(context, i32::from(b'|'));
+            assert_eq!(
+                dump_node_slice(context, &nodes, config),
+                "|mathon\n|mathoff, surrounded 3.0\n"
+            );
+        });
 
-        stores.set_int_param(IntParam::ESCAPE_CHAR, -1);
+        set_escape(context, -1);
         assert_eq!(
             dump_node_slice(
-                &stores,
+                &context,
                 &nodes,
                 DumpConfig {
                     breadth: 5,
@@ -1601,100 +1628,103 @@ mod unset_diagnostic_tests {
     /// `print_esc`, so each observes the live `\escapechar` independently.
     #[test]
     fn math_noad_names_use_live_escape_character() {
-        let mut stores = Universe::new();
-        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let list = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
-            NoadKind::Operator(LimitType::Limits),
-            MathField::Empty,
-        ))]);
+        with_context(|context| {
+            set_escape(context, i32::from(b'|'));
+            let list = context.publish_page_nodes(vec![Node::MathNoad(MathNoad::new(
+                NoadKind::Operator(LimitType::Limits),
+                MathField::Empty,
+            ))]);
 
-        assert_eq!(
-            dump_page_list(
-                &stores,
-                list,
-                DumpConfig {
-                    breadth: 5,
-                    depth: 5,
-                    profile: CommandProfile::TEX82,
-                },
-            ),
-            "|mathop|limits\n"
-        );
+            assert_eq!(
+                dump_page_list(
+                    &context,
+                    list,
+                    DumpConfig {
+                        breadth: 5,
+                        depth: 5,
+                        profile: CommandProfile::TEX82,
+                    },
+                ),
+                "|mathop|limits\n"
+            );
+        });
     }
 
     /// TeX82 §§63/689/691 route the choice and math-character family names
     /// independently through the live `print_esc` projection.
     #[test]
     fn math_choice_and_family_names_use_live_escape_character() {
-        let mut stores = Universe::new();
-        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let arm = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
-            NoadKind::Normal(NoadClass::Ord),
-            MathField::MathChar(MathChar {
-                family: 1,
-                character: 'a',
-                origin: Default::default(),
-            }),
-        ))]);
-        let list = stores.publish_page_nodes(&[Node::MathChoice(MathChoice {
-            display: arm.clone(),
-            text: arm.clone(),
-            script: arm.clone(),
-            script_script: arm,
-        })]);
+        with_context(|context| {
+            set_escape(context, i32::from(b'|'));
+            let arm = context.publish_page_nodes(vec![Node::MathNoad(MathNoad::new(
+                NoadKind::Normal(NoadClass::Ord),
+                MathField::MathChar(MathChar {
+                    family: 1,
+                    character: 'a',
+                    origin: Default::default(),
+                }),
+            ))]);
+            let list = context.publish_page_nodes(vec![Node::MathChoice(MathChoice {
+                display: arm.clone(),
+                text: arm.clone(),
+                script: arm.clone(),
+                script_script: arm,
+            })]);
 
-        assert_eq!(
-            dump_page_list(
-                &stores,
-                list,
-                DumpConfig {
-                    breadth: 100,
-                    depth: 100,
-                    profile: CommandProfile::TEX82,
-                },
-            ),
-            concat!(
-                "|mathchoice\n",
-                "D|mathord\nD.|fam1 a\n",
-                "T|mathord\nT.|fam1 a\n",
-                "S|mathord\nS.|fam1 a\n",
-                "s|mathord\ns.|fam1 a\n",
-            ),
-        );
+            assert_eq!(
+                dump_page_list(
+                    &context,
+                    list,
+                    DumpConfig {
+                        breadth: 100,
+                        depth: 100,
+                        profile: CommandProfile::TEX82,
+                    },
+                ),
+                concat!(
+                    "|mathchoice\n",
+                    "D|mathord\nD.|fam1 a\n",
+                    "T|mathord\nT.|fam1 a\n",
+                    "S|mathord\nS.|fam1 a\n",
+                    "s|mathord\ns.|fam1 a\n",
+                ),
+            );
+        });
     }
 
     /// TeX82 §§63/697 route the complete fraction heading through the live
     /// `print_esc` projection, including when it is nested in a choice arm.
     #[test]
     fn fraction_dump_uses_live_escape_character_inside_choice_arm() {
-        let mut stores = Universe::new();
-        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
-        let empty = PageListId::empty();
-        let fraction = stores.publish_page_nodes(&[Node::FractionNoad(MathFraction {
-            numerator: empty.clone(),
-            denominator: empty.clone(),
-            thickness: FractionThickness::Default,
-            left_delimiter: None,
-            right_delimiter: None,
-        })]);
-        let list = stores.publish_page_nodes(&[Node::MathChoice(MathChoice {
-            display: empty.clone(),
-            text: empty.clone(),
-            script: fraction,
-            script_script: empty,
-        })]);
+        with_context(|context| {
+            set_escape(context, i32::from(b'|'));
+            let empty = PageListId::empty();
+            let fraction = context.publish_page_nodes(vec![Node::FractionNoad(MathFraction {
+                numerator: empty.clone(),
+                denominator: empty.clone(),
+                thickness: FractionThickness::Default,
+                left_delimiter: None,
+                right_delimiter: None,
+            })]);
+            let list = context.publish_page_nodes(vec![Node::MathChoice(MathChoice {
+                display: empty.clone(),
+                text: empty.clone(),
+                script: fraction,
+                script_script: empty,
+            })]);
 
-        assert_eq!(
-            dump_page_list(
-                &stores,
-                list,
-                DumpConfig {
-                    breadth: 100,
-                    depth: 100,
-                    profile: CommandProfile::TEX82,
-                },
-            ),
-            "|mathchoice\nS|fraction, thickness = default\nS\\{}\nS/{}\n",
-        );
+            assert_eq!(
+                dump_page_list(
+                    &context,
+                    list,
+                    DumpConfig {
+                        breadth: 100,
+                        depth: 100,
+                        profile: CommandProfile::TEX82,
+                    },
+                ),
+                "|mathchoice\nS|fraction, thickness = default\nS\\{}\nS/{}\n",
+            );
+        });
     }
 }
