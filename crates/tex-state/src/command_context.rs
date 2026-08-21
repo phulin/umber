@@ -1649,7 +1649,10 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn internal_integer(&self, integer: crate::meaning::InternalInteger) -> Option<i32> {
         use crate::meaning::InternalInteger;
         Some(match integer {
-            InternalInteger::Badness => 0,
+            // TeX82 §§422--424 read `badness_code` from `last_badness`;
+            // §§644/660 and §§668/674 update that same cell while
+            // packing horizontal and vertical lists respectively.
+            InternalInteger::Badness => self.int_param(IntParam::LAST_BADNESS),
             InternalInteger::InputLineNumber => return None,
             InternalInteger::ETeXVersion => 2,
             InternalInteger::PdfTeXVersion => 140,

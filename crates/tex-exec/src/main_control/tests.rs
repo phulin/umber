@@ -6435,7 +6435,17 @@ fn unvbox_splices_vertical_nodes_without_inserting_baseline_glue() {
 
 #[test]
 fn badness_reads_most_recent_pack_and_is_not_assignable() {
+    // TeX82 §§422--424 reads `\badness` from `last_badness`; §§644/660
+    // initializes and updates that same cell during horizontal packing.
     crate::test_harness::with_plain_universe(|mut stores| {
+        let initial = admitted!(stores, |context| (
+            context.int_param(IntParam::LAST_BADNESS),
+            context
+                .internal_integer(tex_state::meaning::InternalInteger::Badness)
+                .expect("badness is state-owned"),
+        ));
+        assert_eq!(initial, (0, 0), "badness is zero before the first pack");
+
         let mut control = MainControl::tex82_initex(&mut stores);
         register_source(
             &mut control,
@@ -6447,6 +6457,13 @@ fn badness_reads_most_recent_pack_and_is_not_assignable() {
             stores.count(0).expect("count register"),
             tex_typeset::INF_BAD
         );
+        let packed = admitted!(stores, |context| (
+            context.int_param(IntParam::LAST_BADNESS),
+            context
+                .internal_integer(tex_state::meaning::InternalInteger::Badness)
+                .expect("badness is state-owned"),
+        ));
+        assert_eq!(packed, (tex_typeset::INF_BAD, tex_typeset::INF_BAD));
         let rendered: String = macro_semantic_tokens(stores, "x")
             .into_iter()
             .filter_map(|token| match token {
@@ -6465,6 +6482,8 @@ fn badness_reads_most_recent_pack_and_is_not_assignable() {
 
 #[test]
 fn vbox_sets_overfull_badness_when_the_box_cannot_shrink() {
+    // TeX82 §§668/674 initializes and updates `last_badness` during
+    // vertical packing; §§422--424 exposes the resulting value as `\badness`.
     crate::test_harness::with_plain_universe(|mut stores| {
         let mut control = MainControl::tex82_initex(&mut stores);
         register_source(
