@@ -1,5 +1,5 @@
-use crate::env::AssignmentScope;
 use crate::env::banks::IntParam;
+use crate::env::AssignmentScope;
 use crate::interner::InternerBudget;
 use crate::scaled::Scaled;
 use crate::world::{EffectRecord, PrintSink};
@@ -96,16 +96,20 @@ fn online_print_nl_breaks_a_terminal_partial_line() {
             .assign_int_param(IntParam::TRACING_ONLINE, 1, AssignmentScope::Global)
             .expect("set tracingonline");
         universe.world_mut().write_text(PrintSink::Terminal, "term");
+        let before = universe.world().effect_records().len();
         let mut effects = super::DiagnosticEffects::new();
         let mut diagnostic = universe.begin_diagnostic(&mut effects);
         diagnostic.print_nl("first");
         diagnostic.end(false);
         universe.world_mut().publish_diagnostic_effects(effects);
+        let sequences = universe.world().effect_sequences();
+        assert_eq!(universe.world().effect_records().len(), before + 2);
+        assert_eq!(sequences[before], sequences[before + 1]);
         assert_eq!(
             routed(universe),
             vec![
-                (PrintSink::Terminal, "term".to_owned()),
-                (PrintSink::TerminalAndLog, "\nfirst\n".to_owned()),
+                (PrintSink::Terminal, "term\nfirst\n".to_owned()),
+                (PrintSink::Log, "first\n".to_owned()),
             ]
         );
     });
@@ -168,7 +172,7 @@ fn detached_publication_is_one_sequence_when_sink_offsets_diverge() {
         universe
             .world_mut()
             .write_text(PrintSink::Terminal, "terminal-prefix");
-        universe.world_mut().write_text(PrintSink::Log, "log");
+        universe.world_mut().write_text(PrintSink::Log, "log\n");
         let before = universe.world().effect_records().len();
 
         let mut effects = super::DiagnosticEffects::new();
