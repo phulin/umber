@@ -1394,7 +1394,7 @@ fn prepare_pdf_graphics<G>(
                 id,
                 action: action
                     .map(|action| {
-                        Ok(match action {
+                        Ok::<_, ColdPreparationError>(match action {
                             RootedPdfColorStackAction::Set(text) => {
                                 RootedPdfColorStackAction::Set(prepare_balanced(text, cursor)?)
                             }

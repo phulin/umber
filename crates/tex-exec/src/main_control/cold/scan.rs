@@ -7,6 +7,15 @@ use super::super::*;
 use super::operation::*;
 use super::support::*;
 
+fn material_origin<G>(
+    processor: &mut CommandProcessor<'_, G>,
+    command: &tex_command::CurrentCommand<G>,
+) -> tex_state::token::OriginId {
+    processor
+        .active_macro_origin()
+        .unwrap_or_else(|| command.origin())
+}
+
 #[allow(clippy::too_many_arguments)] // mirrors the typed main-control context
 pub(in crate::main_control) fn scan<G>(
     processor: &mut CommandProcessor<'_, G>,

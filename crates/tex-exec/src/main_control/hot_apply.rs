@@ -106,7 +106,7 @@ impl<G> PreparedHotOperation<G> {
                     let mut tokens = definition
                         .parameter_text()
                         .iter()
-                        .map(|word| match word.token() {
+                        .map(|word| match word.semantic_token() {
                             Token::Param(_) => ObservedToken::MacroMatch,
                             token => observed_macro_token(token, stores),
                         })
@@ -116,7 +116,7 @@ impl<G> PreparedHotOperation<G> {
                         definition
                             .replacement_text()
                             .iter()
-                            .map(|word| observed_macro_token(word.token(), stores)),
+                            .map(|word| observed_macro_token(word.semantic_token(), stores)),
                     );
                     tokens
                 },
