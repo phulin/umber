@@ -6,7 +6,7 @@ use tex_state::node::{BoxNode, Node, NodeTokenList};
 use tex_state::node_arena::PageListId;
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
-use tex_state::{EngineMode, Universe};
+use tex_state::{EngineBoundaryHasher, EngineMode, Universe};
 
 use crate::ExecError;
 
@@ -23,7 +23,9 @@ pub const IGNORE_DEPTH: Scaled = Scaled::from_raw(-65_536_000);
 /// consults the live cell at every prevdepth initialization and comparison.
 pub(crate) fn ignored_depth<G>(stores: &Universe<G>) -> Scaled {
     if stores.primitive_meaning("pdfignoreddimen").is_some() {
-        stores.dimen_param(tex_state::env::banks::DimenParam::PDF_IGNORED_DIMEN)
+        stores
+            .dimen_param(tex_state::env::banks::DimenParam::PDF_IGNORED_DIMEN)
+            .expect("mode reads an admitted live generation")
     } else {
         IGNORE_DEPTH
     }
@@ -925,19 +927,19 @@ impl ModeNestSummary {
         &self.levels
     }
 
-    pub(crate) fn semantic_fingerprint(&self, universe: &Universe) -> u64 {
+    pub(crate) fn semantic_fingerprint<G>(&self, universe: &Universe<G>) -> u64 {
         universe.engine_boundary_hash(0x6d6f_6465_5f6e_6573, |projection| {
             projection.usize(self.levels.len());
             for level in self.levels.iter() {
                 hash_mode(level.mode, projection);
                 projection.i32(level.entry_line);
-                hash_mode_list(&level.list, projection);
+                hash_mode_list(&level.list, universe, projection);
             }
         })
     }
 }
 
-fn hash_mode(mode: Mode, projection: &mut EngineBoundaryHasher<'_>) {
+fn hash_mode<G>(mode: Mode, projection: &mut EngineBoundaryHasher<'_, G>) {
     projection.u8(match mode {
         Mode::Vertical => 0,
         Mode::InternalVertical => 1,
@@ -948,7 +950,11 @@ fn hash_mode(mode: Mode, projection: &mut EngineBoundaryHasher<'_>) {
     });
 }
 
-fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
+fn hash_mode_list<G>(
+    list: &ModeList,
+    universe: &Universe<G>,
+    projection: &mut EngineBoundaryHasher<'_, G>,
+) {
     projection.nodes(list.nodes());
     match &list.align_state {
         Some(align) => {
@@ -989,7 +995,7 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
     match &list.incomplete_fraction {
         Some(fraction) => {
             projection.bool(true);
-            projection.u64(fraction.numerator.semantic_fingerprint());
+            projection.page_node_list(universe, fraction.numerator);
             match fraction.thickness {
                 FractionThickness::Default => projection.u8(0),
                 FractionThickness::Explicit(size) => {
@@ -1033,7 +1039,7 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
                 EqNoSide::Left => 0,
                 EqNoSide::Right => 1,
             });
-            projection.u64(eq_no.display.semantic_fingerprint());
+            projection.page_node_list(universe, eq_no.display);
         }
         None => projection.bool(false),
     }
@@ -1074,9 +1080,9 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
     projection.u8(list.right_hyphen_min);
 }
 
-fn hash_node_tokens(
+fn hash_node_tokens<G>(
     tokens: &tex_state::node::NodeTokenList,
-    projection: &mut EngineBoundaryHasher<'_>,
+    projection: &mut EngineBoundaryHasher<'_, G>,
 ) {
     projection.usize(tokens.words().len());
     for token in tokens.words() {
@@ -1084,7 +1090,10 @@ fn hash_node_tokens(
     }
 }
 
-fn hash_node_glue(glue: tex_state::glue::GlueSpec, projection: &mut EngineBoundaryHasher<'_>) {
+fn hash_node_glue<G>(
+    glue: tex_state::glue::GlueSpec,
+    projection: &mut EngineBoundaryHasher<'_, G>,
+) {
     projection.i32(glue.width.raw());
     projection.i32(glue.stretch.raw());
     projection.u8(glue.stretch_order as u8);
@@ -1092,7 +1101,7 @@ fn hash_node_glue(glue: tex_state::glue::GlueSpec, projection: &mut EngineBounda
     projection.u8(glue.shrink_order as u8);
 }
 
-fn hash_optional_usize(value: Option<usize>, projection: &mut EngineBoundaryHasher<'_>) {
+fn hash_optional_usize<G>(value: Option<usize>, projection: &mut EngineBoundaryHasher<'_, G>) {
     match value {
         Some(value) => {
             projection.bool(true);
@@ -1102,7 +1111,7 @@ fn hash_optional_usize(value: Option<usize>, projection: &mut EngineBoundaryHash
     }
 }
 
-fn hash_optional_u32(value: Option<u32>, projection: &mut EngineBoundaryHasher<'_>) {
+fn hash_optional_u32<G>(value: Option<u32>, projection: &mut EngineBoundaryHasher<'_, G>) {
     match value {
         Some(value) => {
             projection.bool(true);
@@ -1199,7 +1208,7 @@ impl ModeNest {
     /// Publishes every live native-node sidecar at an externally visible
     /// episode boundary. The immutable page roots are carried by the mode
     /// summary; subsequent mutation invalidates only the affected sidecar.
-    pub(crate) fn publish_node_sidecars(&mut self, stores: &mut Universe) {
+    pub(crate) fn publish_node_sidecars<G>(&mut self, stores: &mut Universe<G>) {
         for level in &mut self.levels {
             level.list.sequence.publish_sidecars(stores);
         }
