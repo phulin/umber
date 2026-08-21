@@ -1,5 +1,6 @@
 use tex_command::{
-    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandState,
+    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile,
+    CommandRestoreError, CommandState,
 };
 use tex_state::env::AssignmentScope;
 use tex_state::meaning::{Meaning, ResolvedMeaning};
@@ -61,11 +62,28 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
         )
         .expect("checkpoint captures");
 
-        command = CommandState::default();
-        modes = ModeNest::new();
+        let later_command_root = universe
+            .command_context()
+            .expect("command context")
+            .allocate_token_list(&[TokenWord::pack(Token::Char {
+                ch: 'x',
+                cat: Catcode::Other,
+            })])
+            .expect("later command root");
+        command.push_everypar(
+            &universe.command_context().expect("command context"),
+            later_command_root,
+        );
+        let _ = command.publish_named_token_list_pushes(
+            &mut universe.command_context().expect("command context"),
+        );
+        modes
+            .current_list_mutation()
+            .take_align_state()
+            .expect("alignment root is mutated after capture");
         checkpoint
             .restore_state(&mut command, &mut modes, universe)
-            .expect("retained checkpoint restores");
+            .expect("retained checkpoint restores into its owning timeline");
 
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = CommandProcessor::new(
@@ -104,6 +122,47 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
                 ch: 'v',
                 cat: Catcode::Other,
             })]
+        );
+    });
+}
+
+#[test]
+fn retained_checkpoint_rejects_a_fresh_command_timeline_before_mutation() {
+    crate::test_harness::with_universe(|universe| {
+        universe
+            .assign_count(0, 10, AssignmentScope::Global)
+            .expect("baseline count");
+        let checkpoint = EngineCheckpoint::capture_checkpoint(
+            EngineBoundary::JobStart,
+            &mut CommandState::default(),
+            &mut ModeNest::new(),
+            universe,
+            ExecutionBudgetCounters::default(),
+            true,
+        )
+        .expect("checkpoint captures");
+        universe
+            .assign_count(0, 20, AssignmentScope::Global)
+            .expect("candidate count");
+        let mut command = CommandState::default();
+        command.begin_file_name().expect("filename guard opens");
+        let mut modes = ModeNest::new();
+
+        assert!(matches!(
+            checkpoint.restore_state(&mut command, &mut modes, universe),
+            Err(CheckpointRestoreError::Command(
+                CommandRestoreError::ForeignGeneration
+            ))
+        ));
+        assert!(command.name_in_progress());
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("command context")
+                .count(0)
+                .expect("count"),
+            20,
+            "foreign-timeline validation must precede runtime mutation"
         );
     });
 }
