@@ -8,11 +8,124 @@ use tex_state::math::FractionThickness;
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 
+#[cfg(feature = "profiling")]
+#[global_allocator]
+static ALLOCATOR: tex_state::measurement::HotCoreAllocator =
+    tex_state::measurement::HotCoreAllocator;
+
+#[cfg(feature = "profiling")]
+static ALLOCATION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn kern(value: i32) -> Node {
     Node::Kern {
         amount: Scaled::from_raw(value),
         kind: KernKind::Explicit,
     }
+}
+
+#[cfg(feature = "profiling")]
+fn semantic_apply_allocations() -> tex_state::measurement::HotCoreAllocationMeasurement {
+    tex_state::measurement::hot_core_census().allocations
+        [tex_state::measurement::HotCoreAllocationOwner::SemanticApply as usize]
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_mode_journal_begin_and_commit_allocate_nothing() {
+    let _serial = ALLOCATION_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut nest = ModeNest::new();
+    let warm = nest.begin_journal();
+    nest.commit_journal(warm).expect("warm journal commit");
+    drop(tex_state::measurement::hot_core_allocation_scope(
+        tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+    ));
+
+    let before = semantic_apply_allocations();
+    {
+        let _scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+        );
+        for _ in 0..16_384 {
+            let cursor = nest.begin_journal();
+            nest.commit_journal(cursor).expect("journal commit");
+        }
+    }
+    let after = semantic_apply_allocations();
+    assert_eq!(after.calls - before.calls, 0);
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_long_pending_run_mutation_and_rollback_allocate_nothing() {
+    let _serial = ALLOCATION_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut nest = ModeNest::new();
+    nest.current_list_mutation().begin_pending_hchars(
+        FontId::testing_new(2),
+        'a',
+        tex_state::token::OriginId::UNKNOWN,
+    );
+    nest.current_list_mutation()
+        .with_pending_hchars_mut(|pending| {
+            pending.source.reserve(8_192);
+            for _ in 0..4_096 {
+                pending.source.push(super::PendingHChar {
+                    font: FontId::testing_new(2),
+                    ch: 'a',
+                    origin: tex_state::token::OriginId::UNKNOWN,
+                });
+            }
+        })
+        .expect("pending run");
+    let original_len = nest
+        .current_list()
+        .pending_hchars()
+        .expect("pending run")
+        .source
+        .len();
+    drop(tex_state::measurement::hot_core_allocation_scope(
+        tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+    ));
+
+    let before = semantic_apply_allocations();
+    {
+        let _scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+        );
+        for _ in 0..16_384 {
+            let cursor = nest.begin_journal();
+            nest.current_list_mutation()
+                .with_pending_hchars_mut(|pending| {
+                    pending.source.push(super::PendingHChar {
+                        font: FontId::testing_new(2),
+                        ch: 'b',
+                        origin: tex_state::token::OriginId::UNKNOWN,
+                    });
+                    pending.current = super::PendingHRunChar::new(
+                        FontId::testing_new(2),
+                        'b',
+                        tex_state::token::OriginId::UNKNOWN,
+                    );
+                })
+                .expect("pending run");
+            nest.rollback_journal(cursor).expect("journal rollback");
+        }
+    }
+    let after = semantic_apply_allocations();
+    assert_eq!(after.calls - before.calls, 0);
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+    assert_eq!(
+        nest.current_list()
+            .pending_hchars()
+            .expect("pending run")
+            .source
+            .len(),
+        original_len
+    );
 }
 
 #[test]
@@ -392,7 +505,7 @@ fn journal_append_watermarks_restore_scalars_without_append_inverses() {
         });
     }
 
-    assert_eq!(nest.journal_inverse_len_for_test(), 0);
+    assert_eq!(nest.journal_inverse_len_for_test(), 10);
     nest.rollback_journal(cursor).expect("rollback");
     assert_eq!(nest.summary(), before);
 }
@@ -426,7 +539,7 @@ fn journal_destructive_node_reconstitution_alignment_and_transfers_restore() {
     let _ = nest.current_list_mutation().pop_last_node();
     let _ = nest.current_list_mutation().take_nodes();
 
-    assert_eq!(nest.journal_inverse_len_for_test(), 6);
+    assert_eq!(nest.journal_inverse_len_for_test(), 2);
     nest.rollback_journal(cursor).expect("rollback");
     assert_eq!(nest.summary(), before);
 }

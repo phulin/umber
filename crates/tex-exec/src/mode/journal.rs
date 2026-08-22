@@ -1,65 +1,72 @@
-use tex_state::node::Node;
+use super::{ModeLevelSummary, ModeList, ModeNest};
 
-use super::{AlignState, ModeLevelSummary, ModeList, ModeNest};
+#[cfg(test)]
+use super::AlignState;
 
-#[derive(Clone)]
+const MAX_LIVE_LEVELS: usize = 41;
+const MAX_JOURNAL_FRAMES: usize = 4;
+const FIELD_COUNT: usize = 12;
+const UNRECORDED: usize = usize::MAX;
+
+const NODES: usize = 0;
+#[cfg(test)]
+const ALIGN_STATE: usize = 1;
+const INCOMPLETE_FRACTION: usize = 2;
+const DISPLAY_INTERRUPT: usize = 3;
+const DISPLAY_EQ_NO: usize = 4;
+const DISPLAY_ALIGNMENT: usize = 5;
+const PREV_DEPTH: usize = 6;
+const PREV_GRAF: usize = 7;
+const PENDING_HCHARS: usize = 8;
+const SPACE_FACTOR: usize = 9;
+const NO_BOUNDARY: usize = 10;
+const HYPHEN_CONTEXT: usize = 11;
+
+#[derive(Clone, Copy)]
 struct ListProjection {
     id: u64,
     node_len: usize,
     physical_node_len: usize,
-    scalars: ModeListScalars,
+    inverse_positions: [usize; FIELD_COUNT],
+}
+
+impl ListProjection {
+    fn capture(id: u64, list: &ModeList) -> Self {
+        Self {
+            id,
+            node_len: list.nodes().len(),
+            physical_node_len: list.physical_nodes().len(),
+            inverse_positions: [UNRECORDED; FIELD_COUNT],
+        }
+    }
 }
 
 #[derive(Clone)]
-struct ModeListScalars {
-    align_state: Option<AlignState>,
-    incomplete_fraction: Option<super::IncompleteFraction>,
-    display_interrupt: Option<super::DisplayInterrupt>,
-    display_eq_no: Option<super::DisplayEqNo>,
-    display_alignment: bool,
-    prev_depth: Option<tex_state::scaled::Scaled>,
-    prev_graf: i32,
-    pending_hchars: Option<super::PendingHRun>,
-    space_factor: i32,
-    no_boundary: bool,
-    hyphen_language: u8,
-    left_hyphen_min: u8,
-    right_hyphen_min: u8,
+struct PendingHRunProjection {
+    first: super::PendingHChar,
+    current: super::PendingHRunChar,
+    insertion_index: usize,
+    source_len: usize,
+    script: tex_fonts::Script,
 }
 
-impl ModeListScalars {
-    fn capture(list: &ModeList) -> Self {
+impl PendingHRunProjection {
+    fn capture(run: &super::PendingHRun) -> Self {
         Self {
-            align_state: list.align_state.clone(),
-            incomplete_fraction: list.incomplete_fraction.clone(),
-            display_interrupt: list.display_interrupt.clone(),
-            display_eq_no: list.display_eq_no.clone(),
-            display_alignment: list.display_alignment,
-            prev_depth: list.prev_depth,
-            prev_graf: list.prev_graf,
-            pending_hchars: list.pending_hchars.clone(),
-            space_factor: list.space_factor,
-            no_boundary: list.no_boundary,
-            hyphen_language: list.hyphen_language,
-            left_hyphen_min: list.left_hyphen_min,
-            right_hyphen_min: list.right_hyphen_min,
+            first: run.first.clone(),
+            current: run.current.clone(),
+            insertion_index: run.insertion_index,
+            source_len: run.source.len(),
+            script: run.script,
         }
     }
 
-    fn restore(self, list: &mut ModeList) {
-        list.align_state = self.align_state;
-        list.incomplete_fraction = self.incomplete_fraction;
-        list.display_interrupt = self.display_interrupt;
-        list.display_eq_no = self.display_eq_no;
-        list.display_alignment = self.display_alignment;
-        list.prev_depth = self.prev_depth;
-        list.prev_graf = self.prev_graf;
-        list.pending_hchars = self.pending_hchars;
-        list.space_factor = self.space_factor;
-        list.no_boundary = self.no_boundary;
-        list.hyphen_language = self.hyphen_language;
-        list.left_hyphen_min = self.left_hyphen_min;
-        list.right_hyphen_min = self.right_hyphen_min;
+    fn restore(self, run: &mut super::PendingHRun) {
+        run.first = self.first;
+        run.current = self.current;
+        run.insertion_index = self.insertion_index;
+        run.source.truncate(self.source_len);
+        run.script = self.script;
     }
 }
 
@@ -67,26 +74,72 @@ struct Frame {
     generation: u64,
     id: u64,
     cursor: usize,
-    lists: Vec<ListProjection>,
+    projection_start: usize,
 }
 
 enum Inverse {
-    Node {
-        level_id: u64,
-        index: usize,
-        old: Node,
-    },
     Nodes {
         level_id: u64,
         old: tex_state::node_sequence::NodeSequence,
+    },
+    #[cfg(test)]
+    AlignState {
+        level_id: u64,
+        old: Option<AlignState>,
+    },
+    IncompleteFraction {
+        level_id: u64,
+        old: Option<super::IncompleteFraction>,
+    },
+    DisplayInterrupt {
+        level_id: u64,
+        old: Option<super::DisplayInterrupt>,
+    },
+    DisplayEqNo {
+        level_id: u64,
+        old: Option<super::DisplayEqNo>,
+    },
+    DisplayAlignment {
+        level_id: u64,
+        old: bool,
+    },
+    PrevDepth {
+        level_id: u64,
+        old: Option<tex_state::scaled::Scaled>,
+    },
+    PrevGraf {
+        level_id: u64,
+        old: i32,
+    },
+    PendingHchars {
+        level_id: u64,
+        old: PendingHcharsRollback,
+    },
+    SpaceFactor {
+        level_id: u64,
+        old: i32,
+    },
+    NoBoundary {
+        level_id: u64,
+        old: bool,
+    },
+    HyphenContext {
+        level_id: u64,
+        old: (u8, u8, u8),
     },
     Push {
         level_id: u64,
     },
     Pop {
         level_id: u64,
-        level: Box<ModeLevelSummary>,
+        level: ModeLevelSummary,
     },
+}
+
+enum PendingHcharsRollback {
+    Absent,
+    Projection(PendingHRunProjection),
+    Value(Option<super::PendingHRun>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -110,26 +163,38 @@ pub(super) struct ModeJournal {
     next_frame_id: u64,
     level_ids: Vec<u64>,
     frames: Vec<Frame>,
+    projections: Vec<ListProjection>,
     inverses: Vec<Inverse>,
 }
 
 impl ModeJournal {
     pub(super) fn enabled(level_count: usize) -> Self {
-        let level_ids = (1..=level_count as u64).collect();
+        let mut level_ids = Vec::with_capacity(MAX_LIVE_LEVELS);
+        level_ids.extend(1..=level_count as u64);
         Self {
             enabled: true,
             generation: 1,
             next_level_id: level_count as u64 + 1,
             next_frame_id: 1,
             level_ids,
-            frames: Vec::new(),
-            inverses: Vec::new(),
+            frames: Vec::with_capacity(MAX_JOURNAL_FRAMES),
+            projections: Vec::with_capacity(MAX_LIVE_LEVELS * MAX_JOURNAL_FRAMES),
+            inverses: Vec::with_capacity(32),
         }
     }
 
     pub(super) fn list(&mut self, index: usize) -> Option<ListJournal<'_>> {
-        (self.enabled && !self.frames.is_empty()).then(|| ListJournal {
-            level_id: self.level_ids[index],
+        if !self.enabled {
+            return None;
+        }
+        let frame = self.frames.last()?;
+        let projection = self.projections.get_mut(frame.projection_start + index)?;
+        if projection.id != self.level_ids[index] {
+            return None;
+        }
+        Some(ListJournal {
+            level_id: projection.id,
+            inverse_positions: &mut projection.inverse_positions,
             inverses: &mut self.inverses,
         })
     }
@@ -151,10 +216,7 @@ impl ModeJournal {
         }
         let level_id = self.level_ids.pop().expect("journal level identity exists");
         if !self.frames.is_empty() {
-            self.inverses.push(Inverse::Pop {
-                level_id,
-                level: Box::new(level),
-            });
+            self.inverses.push(Inverse::Pop { level_id, level });
         }
     }
 
@@ -170,23 +232,161 @@ impl ModeJournal {
 
 pub(super) struct ListJournal<'a> {
     level_id: u64,
+    inverse_positions: &'a mut [usize; FIELD_COUNT],
     inverses: &'a mut Vec<Inverse>,
 }
 
 impl ListJournal<'_> {
-    pub(super) fn record_node(&mut self, index: usize, old: Node) {
-        self.inverses.push(Inverse::Node {
-            level_id: self.level_id,
-            index,
-            old,
-        });
+    fn record_once(&mut self, field: usize, inverse: Inverse) {
+        if self.inverse_positions[field] == UNRECORDED {
+            self.inverse_positions[field] = self.inverses.len();
+            self.inverses.push(inverse);
+        }
     }
 
-    pub(super) fn record_nodes(&mut self, old: tex_state::node_sequence::NodeSequence) {
-        self.inverses.push(Inverse::Nodes {
-            level_id: self.level_id,
-            old,
-        });
+    pub(super) fn record_nodes(&mut self, old: &tex_state::node_sequence::NodeSequence) {
+        if self.inverse_positions[NODES] == UNRECORDED {
+            self.inverse_positions[NODES] = self.inverses.len();
+            self.inverses.push(Inverse::Nodes {
+                level_id: self.level_id,
+                old: old.clone(),
+            });
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn record_align_state(&mut self, old: Option<AlignState>) {
+        self.record_once(
+            ALIGN_STATE,
+            Inverse::AlignState {
+                level_id: self.level_id,
+                old,
+            },
+        );
+    }
+
+    pub(super) fn record_incomplete_fraction(&mut self, old: Option<super::IncompleteFraction>) {
+        self.record_once(
+            INCOMPLETE_FRACTION,
+            Inverse::IncompleteFraction {
+                level_id: self.level_id,
+                old,
+            },
+        );
+    }
+
+    pub(super) fn record_display_interrupt(&mut self, old: Option<super::DisplayInterrupt>) {
+        self.record_once(
+            DISPLAY_INTERRUPT,
+            Inverse::DisplayInterrupt {
+                level_id: self.level_id,
+                old,
+            },
+        );
+    }
+
+    pub(super) fn record_display_eq_no(&mut self, old: Option<super::DisplayEqNo>) {
+        self.record_once(
+            DISPLAY_EQ_NO,
+            Inverse::DisplayEqNo {
+                level_id: self.level_id,
+                old,
+            },
+        );
+    }
+
+    pub(super) fn record_display_alignment(&mut self, old: bool) {
+        self.record_once(
+            DISPLAY_ALIGNMENT,
+            Inverse::DisplayAlignment {
+                level_id: self.level_id,
+                old,
+            },
+        );
+    }
+
+    pub(super) fn record_prev_depth(&mut self, old: Option<tex_state::scaled::Scaled>) {
+        self.record_once(
+            PREV_DEPTH,
+            Inverse::PrevDepth {
+                level_id: self.level_id,
+                old,
+            },
+        );
+    }
+
+    pub(super) fn record_prev_graf(&mut self, old: i32) {
+        self.record_once(
+            PREV_GRAF,
+            Inverse::PrevGraf {
+                level_id: self.level_id,
+                old,
+            },
+        );
+    }
+
+    pub(super) fn record_pending_projection(&mut self, old: Option<&super::PendingHRun>) {
+        if self.inverse_positions[PENDING_HCHARS] == UNRECORDED {
+            self.inverse_positions[PENDING_HCHARS] = self.inverses.len();
+            self.inverses.push(Inverse::PendingHchars {
+                level_id: self.level_id,
+                old: old.map_or(PendingHcharsRollback::Absent, |run| {
+                    PendingHcharsRollback::Projection(PendingHRunProjection::capture(run))
+                }),
+            });
+        }
+    }
+
+    pub(super) fn record_pending_value(&mut self, old: Option<&super::PendingHRun>) {
+        let position = self.inverse_positions[PENDING_HCHARS];
+        if position == UNRECORDED {
+            self.inverse_positions[PENDING_HCHARS] = self.inverses.len();
+            self.inverses.push(Inverse::PendingHchars {
+                level_id: self.level_id,
+                old: PendingHcharsRollback::Value(old.cloned()),
+            });
+            return;
+        }
+        let Inverse::PendingHchars { old: rollback, .. } = &mut self.inverses[position] else {
+            unreachable!("pending-hchar field records its own inverse variant")
+        };
+        if let PendingHcharsRollback::Projection(projection) = rollback {
+            let mut value = old.cloned();
+            if let Some(run) = &mut value {
+                projection.clone().restore(run);
+            }
+            *rollback = PendingHcharsRollback::Value(value);
+        }
+    }
+
+    pub(super) fn record_space_factor(&mut self, old: i32) {
+        self.record_once(
+            SPACE_FACTOR,
+            Inverse::SpaceFactor {
+                level_id: self.level_id,
+                old,
+            },
+        );
+    }
+
+    pub(super) fn record_no_boundary(&mut self, old: bool) {
+        self.record_once(
+            NO_BOUNDARY,
+            Inverse::NoBoundary {
+                level_id: self.level_id,
+                old,
+            },
+        );
+    }
+
+    pub(super) fn record_hyphen_context(&mut self, old: (u8, u8, u8)) {
+        self.record_once(
+            HYPHEN_CONTEXT,
+            Inverse::HyphenContext {
+                level_id: self.level_id,
+                old,
+            },
+        );
     }
 }
 
@@ -211,22 +411,18 @@ impl ModeNest {
             .next_frame_id
             .checked_add(1)
             .expect("mode journal frame identity overflow");
-        let lists = self
-            .levels
-            .iter()
-            .zip(&self.journal.level_ids)
-            .map(|(level, &id)| ListProjection {
-                id,
-                node_len: level.list.nodes().len(),
-                physical_node_len: level.list.physical_nodes().len(),
-                scalars: ModeListScalars::capture(&level.list),
-            })
-            .collect();
+        let projection_start = self.journal.projections.len();
+        self.journal.projections.extend(
+            self.levels
+                .iter()
+                .zip(&self.journal.level_ids)
+                .map(|(level, &id)| ListProjection::capture(id, &level.list)),
+        );
         self.journal.frames.push(Frame {
             generation: self.journal.generation,
             id: frame_id,
             cursor,
-            lists,
+            projection_start,
         });
         Cursor {
             generation: self.journal.generation,
@@ -242,7 +438,8 @@ impl ModeNest {
 
     pub(crate) fn commit_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
         self.validate_cursor(cursor)?;
-        self.journal.frames.pop();
+        let frame = self.journal.frames.pop().expect("validated frame exists");
+        self.journal.projections.truncate(frame.projection_start);
         if self.journal.frames.is_empty() {
             self.journal.inverses.clear();
         }
@@ -252,22 +449,59 @@ impl ModeNest {
     pub(crate) fn rollback_journal(&mut self, cursor: Cursor) -> Result<(), CursorError> {
         self.validate_cursor(cursor)?;
         let frame = self.journal.frames.pop().expect("validated frame exists");
-        let inverses = self.journal.inverses.split_off(frame.cursor);
-        for inverse in inverses.into_iter().rev() {
+        while self.journal.inverses.len() > frame.cursor {
+            let inverse = self.journal.inverses.pop().expect("cursor bounds inverses");
             match inverse {
-                Inverse::Node {
-                    level_id,
-                    index,
-                    old,
-                } => {
-                    let level = self.level_by_id_mut(level_id);
-                    level
-                        .list
-                        .sequence
-                        .mutate_semantic(|nodes| nodes[index] = old);
-                }
                 Inverse::Nodes { level_id, old } => {
                     self.level_by_id_mut(level_id).list.sequence = old;
+                }
+                #[cfg(test)]
+                Inverse::AlignState { level_id, old } => {
+                    self.level_by_id_mut(level_id).list.align_state = old;
+                }
+                Inverse::IncompleteFraction { level_id, old } => {
+                    self.level_by_id_mut(level_id).list.incomplete_fraction = old;
+                }
+                Inverse::DisplayInterrupt { level_id, old } => {
+                    self.level_by_id_mut(level_id).list.display_interrupt = old;
+                }
+                Inverse::DisplayEqNo { level_id, old } => {
+                    self.level_by_id_mut(level_id).list.display_eq_no = old;
+                }
+                Inverse::DisplayAlignment { level_id, old } => {
+                    self.level_by_id_mut(level_id).list.display_alignment = old;
+                }
+                Inverse::PrevDepth { level_id, old } => {
+                    self.level_by_id_mut(level_id).list.prev_depth = old;
+                }
+                Inverse::PrevGraf { level_id, old } => {
+                    self.level_by_id_mut(level_id).list.prev_graf = old;
+                }
+                Inverse::PendingHchars { level_id, old } => {
+                    let pending = &mut self.level_by_id_mut(level_id).list.pending_hchars;
+                    match old {
+                        PendingHcharsRollback::Absent => *pending = None,
+                        PendingHcharsRollback::Projection(projection) => projection.restore(
+                            pending
+                                .as_mut()
+                                .expect("projected pending run remains in place"),
+                        ),
+                        PendingHcharsRollback::Value(value) => *pending = value,
+                    }
+                }
+                Inverse::SpaceFactor { level_id, old } => {
+                    self.level_by_id_mut(level_id).list.space_factor = old;
+                }
+                Inverse::NoBoundary { level_id, old } => {
+                    self.level_by_id_mut(level_id).list.no_boundary = old;
+                }
+                Inverse::HyphenContext { level_id, old } => {
+                    let list = &mut self.level_by_id_mut(level_id).list;
+                    (
+                        list.hyphen_language,
+                        list.left_hyphen_min,
+                        list.right_hyphen_min,
+                    ) = old;
                 }
                 Inverse::Push { level_id } => {
                     let index = self.level_index(level_id);
@@ -275,19 +509,20 @@ impl ModeNest {
                     self.journal.level_ids.remove(index);
                 }
                 Inverse::Pop { level_id, level } => {
-                    self.levels.push(*level);
+                    self.levels.push(level);
                     self.journal.level_ids.push(level_id);
                 }
             }
         }
-        for projection in frame.lists {
+        for index in frame.projection_start..self.journal.projections.len() {
+            let projection = self.journal.projections[index];
             let level = self.level_by_id_mut(projection.id);
             level
                 .list
                 .sequence
                 .truncate(projection.node_len, projection.physical_node_len);
-            projection.scalars.restore(&mut level.list);
         }
+        self.journal.projections.truncate(frame.projection_start);
         Ok(())
     }
 

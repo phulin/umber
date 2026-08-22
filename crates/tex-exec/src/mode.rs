@@ -10,6 +10,11 @@ use tex_state::{CommandContext, EngineBoundaryHasher, EngineMode, Universe};
 
 use crate::ExecError;
 
+#[cfg(test)]
+thread_local! {
+    static SEMANTIC_FINGERPRINT_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 mod journal;
 pub(crate) use journal::Cursor as ModeJournalCursor;
 
@@ -497,18 +502,40 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_pending_projection(self.list.pending_hchars.as_ref());
+        }
         self.list.begin_pending_hchars(font, ch, origin);
     }
 
     pub(crate) fn set_pending_hchars(&mut self, pending: PendingHRun) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_pending_value(self.list.pending_hchars.as_ref());
+        }
         self.list.set_pending_hchars(pending);
     }
 
     pub(crate) fn take_pending_hchars(&mut self) -> Option<PendingHRun> {
+        if let Some(journal) = &mut self.journal {
+            journal.record_pending_value(self.list.pending_hchars.as_ref());
+        }
         self.list.take_pending_hchars()
     }
 
+    pub(crate) fn with_pending_hchars_mut<R>(
+        &mut self,
+        mutate: impl FnOnce(&mut PendingHRun) -> R,
+    ) -> Option<R> {
+        if let Some(journal) = &mut self.journal {
+            journal.record_pending_projection(self.list.pending_hchars.as_ref());
+        }
+        self.list.pending_hchars.as_mut().map(mutate)
+    }
+
     pub(crate) fn set_space_factor(&mut self, value: i32) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_space_factor(self.list.space_factor);
+        }
         self.list.set_space_factor(value);
     }
 
@@ -517,28 +544,54 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn set_no_boundary(&mut self, value: bool) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_no_boundary(self.list.no_boundary);
+        }
         self.list.set_no_boundary(value);
     }
 
     pub(crate) fn set_hyphen_context(&mut self, language: u8, left: u8, right: u8) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_hyphen_context((
+                self.list.hyphen_language,
+                self.list.left_hyphen_min,
+                self.list.right_hyphen_min,
+            ));
+        }
         self.list.set_hyphen_context(language, left, right);
     }
 
     #[cfg(test)]
     pub(crate) fn set_hyphen_language(&mut self, language: u8) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_hyphen_context((
+                self.list.hyphen_language,
+                self.list.left_hyphen_min,
+                self.list.right_hyphen_min,
+            ));
+        }
         self.list.set_hyphen_language(language);
     }
 
     pub(crate) fn set_prev_depth(&mut self, depth: Scaled) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_prev_depth(self.list.prev_depth);
+        }
         self.list.set_prev_depth(depth);
     }
 
     pub(crate) fn set_prev_graf(&mut self, lines: i32) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_prev_graf(self.list.prev_graf);
+        }
         self.list.set_prev_graf(lines);
     }
 
     #[cfg(test)]
     pub(crate) fn set_align_state(&mut self, state: AlignState) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_align_state(self.list.align_state.clone());
+        }
         self.list.set_align_state(state);
     }
 
@@ -547,19 +600,31 @@ impl ModeListMutation<'_> {
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut AlignState) -> R,
     ) -> Option<R> {
+        if let Some(journal) = &mut self.journal {
+            journal.record_align_state(self.list.align_state.clone());
+        }
         self.list.with_align_state_mut(mutate)
     }
 
     #[cfg(test)]
     pub(crate) fn take_align_state(&mut self) -> Option<AlignState> {
+        if let Some(journal) = &mut self.journal {
+            journal.record_align_state(self.list.align_state.clone());
+        }
         self.list.take_align_state()
     }
 
     pub(crate) fn set_incomplete_fraction(&mut self, fraction: IncompleteFraction) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_incomplete_fraction(self.list.incomplete_fraction.clone());
+        }
         self.list.set_incomplete_fraction(fraction);
     }
 
     pub(crate) fn take_incomplete_fraction(&mut self) -> Option<IncompleteFraction> {
+        if let Some(journal) = &mut self.journal {
+            journal.record_incomplete_fraction(self.list.incomplete_fraction.clone());
+        }
         self.list.take_incomplete_fraction()
     }
 
@@ -568,22 +633,39 @@ impl ModeListMutation<'_> {
     }
 
     pub(crate) fn set_display_interrupt(&mut self, interrupt: DisplayInterrupt) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_display_interrupt(self.list.display_interrupt.clone());
+        }
         self.list.set_display_interrupt(interrupt);
     }
 
     pub(crate) fn take_display_interrupt(&mut self) -> Option<DisplayInterrupt> {
+        if let Some(journal) = &mut self.journal {
+            journal.record_display_interrupt(self.list.display_interrupt.clone());
+        }
         self.list.take_display_interrupt()
     }
 
     pub(crate) fn set_display_eq_no(&mut self, eq_no: DisplayEqNo) {
+        if let Some(journal) = &mut self.journal {
+            journal.record_display_eq_no(self.list.display_eq_no.clone());
+        }
         self.list.set_display_eq_no(eq_no);
     }
 
     pub(crate) fn take_display_eq_no(&mut self) -> Option<DisplayEqNo> {
+        if let Some(journal) = &mut self.journal {
+            journal.record_display_eq_no(self.list.display_eq_no.clone());
+        }
         self.list.take_display_eq_no()
     }
 
     pub(crate) fn set_display_alignment(&mut self, nodes: Vec<Node>, prev_depth: Option<Scaled>) {
+        self.record_nodes();
+        if let Some(journal) = &mut self.journal {
+            journal.record_prev_depth(self.list.prev_depth);
+            journal.record_display_alignment(self.list.display_alignment);
+        }
         self.list.set_display_alignment(nodes, prev_depth);
     }
 
@@ -591,20 +673,24 @@ impl ModeListMutation<'_> {
         if self.list.display_alignment {
             self.record_nodes();
         }
+        if let Some(journal) = &mut self.journal {
+            journal.record_prev_depth(self.list.prev_depth);
+            journal.record_display_alignment(self.list.display_alignment);
+        }
         self.list.take_display_alignment()
     }
 
     fn record_node(&mut self, index: usize) {
         if let Some(journal) = &mut self.journal
-            && let Some(node) = self.list.nodes().get(index)
+            && self.list.nodes().get(index).is_some()
         {
-            journal.record_node(index, node.clone());
+            journal.record_nodes(&self.list.sequence);
         }
     }
 
     fn record_nodes(&mut self) {
         if let Some(journal) = &mut self.journal {
-            journal.record_nodes(self.list.sequence.clone());
+            journal.record_nodes(&self.list.sequence);
         }
     }
 }
@@ -943,6 +1029,8 @@ impl ModeNestSummary {
     }
 
     pub(crate) fn semantic_fingerprint<G>(&self, universe: &Universe<G>) -> u64 {
+        #[cfg(test)]
+        SEMANTIC_FINGERPRINT_CALLS.with(|calls| calls.set(calls.get() + 1));
         universe.engine_boundary_hash(0x6d6f_6465_5f6e_6573, |projection| {
             projection.usize(self.levels.len());
             for level in self.levels.iter() {
@@ -952,6 +1040,16 @@ impl ModeNestSummary {
             }
         })
     }
+}
+
+#[cfg(test)]
+pub(crate) fn reset_semantic_fingerprint_calls_for_test() {
+    SEMANTIC_FINGERPRINT_CALLS.with(|calls| calls.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn semantic_fingerprint_calls_for_test() -> u64 {
+    SEMANTIC_FINGERPRINT_CALLS.with(std::cell::Cell::get)
 }
 
 fn hash_mode<G>(mode: Mode, projection: &mut EngineBoundaryHasher<'_, G>) {
