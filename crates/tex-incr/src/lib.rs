@@ -445,6 +445,7 @@ pub struct RevisionCandidate {
     advance_calls: u64,
     cumulative_fuel: u64,
     generation: Option<tex_exec::RetainedEngineGeneration>,
+    runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
 }
 
 /// Result of driving a revision until it suspends or completes.
@@ -480,15 +481,18 @@ impl RevisionCandidate {
             Some(generation) => generation,
             None => self.new_retained_generation()?,
         };
+        let runtime_key = self.runtime_key.take();
         let result = generation
             .with_admitted(CandidateRun {
                 candidate: self,
                 host,
                 cancellation,
                 failed_attempt_fuel: &mut failed_attempt_fuel,
+                runtime_key,
             })
-            .map_err(SessionError::RetainedEngine)
-            .and_then(|result| result);
+            .map_err(SessionError::RetainedEngine)?;
+        self.runtime_key = result.runtime_key;
+        let result = result.execution;
         self.generation = Some(generation);
         let result = match result {
             Ok(result) => result,
@@ -499,9 +503,6 @@ impl RevisionCandidate {
         };
         match result {
             PlanExecution::Suspended(need) => {
-                // Until the resource-loop sidecar moves under the retained
-                // owner, retry uses the conservative cold recomputation path.
-                self.generation = None;
                 self.suspension_serial = self.suspension_serial.saturating_add(1);
                 Ok(RevisionCandidateResult::AwaitingResources(need))
             }
@@ -608,50 +609,96 @@ struct CandidateRun<'a> {
     host: &'a mut dyn ResourceHost,
     cancellation: &'a Cancellation,
     failed_attempt_fuel: &'a mut u64,
+    runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
 }
 
 impl tex_exec::RetainedEngineOperation for CandidateRun<'_> {
-    type Output = Result<PlanExecution, SessionError>;
+    type Output = CandidateRunResult;
 
     fn run<G: 'static>(
         self,
         mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
     ) -> Self::Output {
-        let (universe, checkpoints) = admitted.parts();
-        execute_plan(
-            universe,
-            checkpoints,
-            self.candidate,
-            self.host,
-            self.cancellation,
-            self.failed_attempt_fuel,
-        )
+        let mut runtime = match self.runtime_key {
+            Some(key) => match admitted.take_attachment::<CandidateRuntime<G>>(key) {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    return CandidateRunResult {
+                        execution: Err(SessionError::RetainedEngine(error)),
+                        runtime_key: None,
+                    };
+                }
+            },
+            None => match initialize_candidate_runtime(&mut admitted, self.candidate) {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    return CandidateRunResult {
+                        execution: Err(error),
+                        runtime_key: None,
+                    };
+                }
+            },
+        };
+        let execution = {
+            let (universe, checkpoints) = admitted.parts();
+            execute_plan(
+                universe,
+                checkpoints,
+                &mut runtime,
+                self.candidate,
+                self.host,
+                self.cancellation,
+                self.failed_attempt_fuel,
+            )
+        };
+        let runtime_key =
+            matches!(execution, Ok(PlanExecution::Suspended(_))).then(|| admitted.attach(runtime));
+        CandidateRunResult {
+            execution,
+            runtime_key,
+        }
     }
 }
 
-struct LiveHistorySink<'a, G> {
+struct CandidateRunResult {
+    execution: Result<PlanExecution, SessionError>,
+    runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
+}
+
+struct CandidateRuntime<G> {
+    control: MainControl<G>,
+    ledger: OutputLedger,
+    history: LiveHistoryState,
+    delivered_commands: usize,
+    answered_needs: Vec<ResourceNeed>,
+}
+
+struct LiveHistoryState {
     revision: RevisionId,
     records: Vec<BoundaryRecord>,
     occurrences: HashMap<(usize, EngineBoundary), u32>,
     paragraphs: usize,
-    retained: tex_exec::RetainedCheckpointStore<'a, G>,
     checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
 }
 
-impl<'a, G> LiveHistorySink<'a, G> {
-    fn new(revision: RevisionId, retained: tex_exec::RetainedCheckpointStore<'a, G>) -> Self {
+impl LiveHistoryState {
+    fn new(revision: RevisionId) -> Self {
         Self {
             revision,
             records: Vec::new(),
             occurrences: HashMap::new(),
             paragraphs: 0,
-            retained,
             checkpoint_keys: Vec::new(),
         }
     }
 }
 
-impl<G> CheckpointSink<G> for LiveHistorySink<'_, G> {
+struct LiveHistorySink<'state, 'generation, G> {
+    state: &'state mut LiveHistoryState,
+    retained: tex_exec::RetainedCheckpointStore<'generation, G>,
+}
+
+impl<G> CheckpointSink<G> for LiveHistorySink<'_, '_, G> {
     fn wants_exact_state_identity(&self, _boundary: EngineBoundary, _root_anchor: usize) -> bool {
         true
     }
@@ -660,11 +707,15 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, G> {
         let position = checkpoint.root_anchor();
         let boundary = checkpoint.boundary();
         if boundary == EngineBoundary::OuterParagraphEnd {
-            self.paragraphs = self.paragraphs.saturating_add(1);
+            self.state.paragraphs = self.state.paragraphs.saturating_add(1);
         }
-        let ordinal = self.occurrences.entry((position, boundary)).or_default();
-        self.records.push(BoundaryRecord {
-            revision: self.revision,
+        let ordinal = self
+            .state
+            .occurrences
+            .entry((position, boundary))
+            .or_default();
+        self.state.records.push(BoundaryRecord {
+            revision: self.state.revision,
             key: BoundaryKey {
                 position,
                 boundary,
@@ -674,19 +725,18 @@ impl<G> CheckpointSink<G> for LiveHistorySink<'_, G> {
             artifact_prefix: checkpoint.artifact_prefix_len(),
             state_hash: checkpoint.mode_hash(),
         });
-        self.checkpoint_keys.push(self.retained.retain(checkpoint));
+        self.state
+            .checkpoint_keys
+            .push(self.retained.retain(checkpoint));
         *ordinal = ordinal.saturating_add(1);
     }
 }
 
-fn execute_plan<G>(
-    universe: &mut Universe<G>,
-    checkpoints: tex_exec::RetainedCheckpointStore<'_, G>,
+fn initialize_candidate_runtime<G: 'static>(
+    admitted: &mut tex_exec::AdmittedEngineGeneration<'_, G>,
     candidate: &RevisionCandidate,
-    host: &mut dyn ResourceHost,
-    cancellation: &Cancellation,
-    failed_attempt_fuel: &mut u64,
-) -> Result<PlanExecution, SessionError> {
+) -> Result<CandidateRuntime<G>, SessionError> {
+    let (universe, checkpoints) = admitted.parts();
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
     if candidate.format_image.is_some()
         && candidate.required_font_layout_policy
@@ -732,11 +782,45 @@ fn execute_plan<G>(
         .set_fuel_limit(candidate.cumulative_fuel_limit)
         .expect("candidate fuel limit is positive");
     control.attach_pure_memo_capability(universe);
-    let mut sink = LiveHistorySink::new(candidate.plan.revision, checkpoints);
+    let mut history = LiveHistoryState::new(candidate.plan.revision);
     let mut ledger = OutputLedger::new(CheckpointIdentity::Exact);
-    ledger.commit_job_start(&mut control, universe, &mut sink)?;
-    let mut delivered_commands = 0usize;
-    let mut answered_needs = Vec::new();
+    ledger.commit_job_start(
+        &mut control,
+        universe,
+        &mut LiveHistorySink {
+            state: &mut history,
+            retained: checkpoints,
+        },
+    )?;
+    Ok(CandidateRuntime {
+        control,
+        ledger,
+        history,
+        delivered_commands: 0,
+        answered_needs: Vec::new(),
+    })
+}
+
+fn execute_plan<G>(
+    universe: &mut Universe<G>,
+    checkpoints: tex_exec::RetainedCheckpointStore<'_, G>,
+    runtime: &mut CandidateRuntime<G>,
+    candidate: &RevisionCandidate,
+    host: &mut dyn ResourceHost,
+    cancellation: &Cancellation,
+    failed_attempt_fuel: &mut u64,
+) -> Result<PlanExecution, SessionError> {
+    let CandidateRuntime {
+        control,
+        ledger,
+        history,
+        delivered_commands,
+        answered_needs,
+    } = runtime;
+    let mut sink = LiveHistorySink {
+        state: history,
+        retained: checkpoints,
+    };
     loop {
         if cancellation.is_cancelled() {
             return Err(SessionError::Execute(
@@ -747,7 +831,7 @@ fn execute_plan<G>(
             (
                 "steps",
                 candidate.execution_budgets.steps,
-                u64::try_from(delivered_commands).unwrap_or(u64::MAX),
+                u64::try_from(*delivered_commands).unwrap_or(u64::MAX),
             ),
             (
                 "live input frames",
@@ -781,34 +865,34 @@ fn execute_plan<G>(
                 ));
             }
         }
-        let step = CanonicalStepRunner::new(&mut control, universe, &mut ledger)
-            .step(&mut sink, cancellation);
+        let step =
+            CanonicalStepRunner::new(control, universe, ledger).step(&mut sink, cancellation);
         *failed_attempt_fuel = control.fuel_burned();
         match step {
             CanonicalStepResult::Progress(step)
             | CanonicalStepResult::Committed(step)
             | CanonicalStepResult::Completed(step) => {
                 answered_needs.clear();
-                delivered_commands = delivered_commands.saturating_add(1);
-                if u64::try_from(delivered_commands).unwrap_or(u64::MAX)
+                *delivered_commands = delivered_commands.saturating_add(1);
+                if u64::try_from(*delivered_commands).unwrap_or(u64::MAX)
                     > candidate.execution_budgets.steps
                 {
                     return Err(SessionError::Execute(
                         tex_exec::ExecError::ResourceBudgetExceeded {
                             resource: "steps",
                             limit: candidate.execution_budgets.steps,
-                            attempted: u64::try_from(delivered_commands).unwrap_or(u64::MAX),
+                            attempted: u64::try_from(*delivered_commands).unwrap_or(u64::MAX),
                         },
                     ));
                 }
                 if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
-                    let terminal = ledger.terminal_receipt(&control, step)?;
+                    let terminal = ledger.terminal_receipt(control, step)?;
                     let dependencies = universe.world().input_dependencies().cloned().collect();
                     let format_dump = control
                         .take_format_dump(universe)
                         .map_err(SessionError::FormatDump)?;
                     let completion = ledger.close_revision(
-                        &mut control,
+                        control,
                         universe,
                         &terminal,
                         EngineCompletionDemand::new(
@@ -818,11 +902,11 @@ fn execute_plan<G>(
                     return Ok(PlanExecution::Complete(
                         Box::new(CandidateCompletion {
                             completion,
-                            history: sink.records,
+                            history: std::mem::take(&mut sink.state.records),
                             dependencies,
-                            delivered_commands,
+                            delivered_commands: *delivered_commands,
                             format_dump,
-                            checkpoint_keys: sink.checkpoint_keys,
+                            checkpoint_keys: std::mem::take(&mut sink.state.checkpoint_keys),
                         }),
                         control.fuel_burned(),
                     ));
@@ -841,12 +925,12 @@ fn execute_plan<G>(
                 match outcome {
                     ResourceOutcome::Fulfilled(fulfillment) => {
                         ledger
-                            .fulfill(&mut control, &need, fulfillment)
+                            .fulfill(control, &need, fulfillment)
                             .map_err(|_| SessionError::UnexpectedResource)?;
                         answered_needs.push(need);
                     }
                     ResourceOutcome::Unavailable => {
-                        ledger.mark_unavailable(&mut control, &need, false);
+                        ledger.mark_unavailable(control, &need, false);
                         answered_needs.push(need);
                     }
                     ResourceOutcome::Declined => return Ok(PlanExecution::Suspended(need)),
@@ -1048,6 +1132,13 @@ struct RenderMapCache {
     max_retained_bytes: usize,
 }
 
+struct RetainedRevisionGeneration {
+    revision: RevisionId,
+    generation: tex_exec::RetainedEngineGeneration,
+    checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
+    charged_bytes: usize,
+}
+
 impl RenderMapCache {
     fn new(max_retained_bytes: usize) -> Self {
         Self {
@@ -1133,8 +1224,7 @@ pub struct Session {
     initex: bool,
     expansion_stats: ExpansionStats,
     render_maps: RefCell<RenderMapCache>,
-    accepted_generation: Option<tex_exec::RetainedEngineGeneration>,
-    accepted_checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
+    retained_generations: VecDeque<RetainedRevisionGeneration>,
     retired_generations: usize,
 }
 
@@ -1251,8 +1341,7 @@ impl Session {
             initex: true,
             expansion_stats: ExpansionStats::default(),
             render_maps: RefCell::new(RenderMapCache::new(usize::MAX)),
-            accepted_generation: None,
-            accepted_checkpoint_keys: Vec::new(),
+            retained_generations: VecDeque::new(),
             retired_generations: 0,
         })
     }
@@ -1384,6 +1473,24 @@ impl Session {
     #[must_use]
     pub const fn retired_generation_count(&self) -> usize {
         self.retired_generations
+    }
+
+    #[must_use]
+    pub fn retained_generation_count(&self) -> usize {
+        self.retained_generations.len()
+    }
+
+    pub fn retained_revision_ids(&self) -> impl Iterator<Item = RevisionId> + '_ {
+        self.retained_generations
+            .iter()
+            .map(|generation| generation.revision)
+    }
+
+    #[must_use]
+    pub fn current_retained_checkpoint_count(&self) -> usize {
+        self.retained_generations
+            .back()
+            .map_or(0, |generation| generation.checkpoint_keys.len())
     }
 
     pub fn register_input_file(&mut self, path: &Path, bytes: Vec<u8>) -> Result<(), SessionError> {
@@ -1541,6 +1648,7 @@ impl Session {
             advance_calls: 0,
             cumulative_fuel: 0,
             generation: None,
+            runtime_key: None,
         })
     }
 
@@ -1622,8 +1730,29 @@ impl Session {
         generation
             .prune_checkpoints(&retained_checkpoint_keys)
             .map_err(SessionError::RetainedEngine)?;
-        if let Some(previous) = self.accepted_generation.take() {
-            previous.retire().map_err(SessionError::Universe)?;
+        let incoming_generation_bytes = std::mem::size_of::<RetainedRevisionGeneration>()
+            .saturating_add(
+                retained_checkpoint_keys
+                    .len()
+                    .saturating_mul(std::mem::size_of::<tex_exec::RetainedCheckpointKey>()),
+            );
+        while !self.retained_generations.is_empty()
+            && self
+                .retained_generations
+                .iter()
+                .map(|generation| generation.charged_bytes)
+                .sum::<usize>()
+                .saturating_add(incoming_generation_bytes)
+                > self.checkpoint_budget
+        {
+            let previous = self
+                .retained_generations
+                .pop_front()
+                .expect("nonempty retained history has an oldest generation");
+            previous
+                .generation
+                .retire()
+                .map_err(SessionError::Universe)?;
             self.retired_generations = self.retired_generations.saturating_add(1);
         }
         let acceptance = Timer::start();
@@ -1633,8 +1762,13 @@ impl Session {
         self.layout = transaction.layout;
         self.content_hash = transaction.content_hash;
         self.history = pruned.records;
-        self.accepted_generation = Some(generation);
-        self.accepted_checkpoint_keys = retained_checkpoint_keys;
+        self.retained_generations
+            .push_back(RetainedRevisionGeneration {
+                revision: transaction.revision,
+                generation,
+                checkpoint_keys: retained_checkpoint_keys,
+                charged_bytes: incoming_generation_bytes,
+            });
         self.dependencies = transaction.dependencies;
         self.expansion_stats = transaction.expansion_stats;
         self.render_maps.borrow_mut().clear();

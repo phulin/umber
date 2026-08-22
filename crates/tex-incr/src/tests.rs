@@ -366,6 +366,8 @@ fn resource_suspension_replays_from_detached_plan_and_accepts_once() {
             .expect("first drive"),
         RevisionCandidateResult::AwaitingResources(ResourceNeed::Input { .. })
     ));
+    assert!(candidate.generation.is_some());
+    assert!(candidate.runtime_key.is_some());
     assert!(candidate.completion_resource_discovery().is_none());
     assert!(matches!(
         candidate
@@ -373,6 +375,8 @@ fn resource_suspension_replays_from_detached_plan_and_accepts_once() {
             .expect("replay"),
         RevisionCandidateResult::Complete
     ));
+    assert!(candidate.generation.is_some());
+    assert!(candidate.runtime_key.is_none());
     let discovery = candidate
         .completion_resource_discovery()
         .expect("terminal candidate exposes detached completion");
@@ -607,7 +611,7 @@ fn history_budget_keeps_job_start_and_newest_observation() {
         EngineBoundary::ShipoutComplete
     );
     assert_eq!(
-        session.accepted_checkpoint_keys.len(),
+        session.current_retained_checkpoint_count(),
         session.history().len(),
         "pruning releases every unnamed checkpoint root"
     );
@@ -631,7 +635,37 @@ fn repeated_revisions_match_fresh_cold_output() {
         assert_detached_output_eq(&output, &expected);
         source = next;
     }
-    assert_eq!(incremental.retired_generation_count(), 11);
+    assert_eq!(
+        incremental
+            .retired_generation_count()
+            .saturating_add(incremental.retained_generation_count()),
+        12,
+        "every accepted revision is either retained whole or retired once"
+    );
+}
+
+#[test]
+fn zero_history_budget_retires_only_complete_old_generations() {
+    let mut source = page_source(1);
+    let mut incremental =
+        Session::start((), "retirement", RevisionId::new(1), &source, 0).expect("session");
+    incremental.cold().expect("baseline");
+    for revision in 2_u64..=4 {
+        let next = page_source(revision as usize);
+        incremental
+            .advance(
+                RevisionId::new(revision),
+                edit(&incremental, 0..source.len(), &next),
+            )
+            .expect("accepted revision");
+        source = next;
+    }
+    assert_eq!(incremental.retained_generation_count(), 1);
+    assert_eq!(incremental.retired_generation_count(), 3);
+    assert_eq!(
+        incremental.retained_revision_ids().collect::<Vec<_>>(),
+        vec![RevisionId::new(4)]
+    );
 }
 
 /// Deterministic edit fuzzing is deliberately an explicit tier: it executes a

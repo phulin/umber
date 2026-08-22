@@ -1,5 +1,6 @@
 //! Opaque retained executor generations and owner-relative checkpoint keys.
 
+use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tex_state::{
@@ -64,6 +65,44 @@ impl<G> AdmittedEngineGeneration<'_, G> {
             .and_then(Option::as_ref)
             .ok_or(RetainedEngineAccessError::StaleCheckpoint)
     }
+
+    pub fn attach<T: 'static>(&mut self, attachment: T) -> RetainedEngineAttachmentKey {
+        let slot = self.sidecars.attachments.len();
+        self.sidecars.attachments.push(Some(Box::new(attachment)));
+        RetainedEngineAttachmentKey {
+            generation: self.generation,
+            slot,
+        }
+    }
+
+    pub fn attachment_mut<T: 'static>(
+        &mut self,
+        key: &RetainedEngineAttachmentKey,
+    ) -> Result<&mut T, RetainedEngineAccessError> {
+        validate_attachment_key(self.generation, key)?;
+        self.sidecars
+            .attachments
+            .get_mut(key.slot)
+            .and_then(Option::as_deref_mut)
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?
+            .downcast_mut::<T>()
+            .ok_or(RetainedEngineAccessError::AttachmentTypeMismatch)
+    }
+
+    pub fn take_attachment<T: 'static>(
+        &mut self,
+        key: RetainedEngineAttachmentKey,
+    ) -> Result<T, RetainedEngineAccessError> {
+        validate_attachment_key(self.generation, &key)?;
+        self.sidecars
+            .attachments
+            .get_mut(key.slot)
+            .and_then(Option::take)
+            .ok_or(RetainedEngineAccessError::StaleAttachment)?
+            .downcast::<T>()
+            .map(|attachment| *attachment)
+            .map_err(|_| RetainedEngineAccessError::AttachmentTypeMismatch)
+    }
 }
 
 /// Restricted checkpoint-store borrow used by a synchronous sink.
@@ -93,11 +132,20 @@ pub struct RetainedCheckpointKey {
     slot: usize,
 }
 
+/// Owner-relative key for one unpublished executor episode sidecar.
+#[derive(Debug, Eq, PartialEq)]
+pub struct RetainedEngineAttachmentKey {
+    generation: u64,
+    slot: usize,
+}
+
 /// Mutation-free retained executor admission failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RetainedEngineAccessError {
     ForeignGeneration,
     StaleCheckpoint,
+    StaleAttachment,
+    AttachmentTypeMismatch,
     State(RetainedStateAccessError),
 }
 
@@ -249,6 +297,7 @@ impl RetainedEngineOperation for PruneCheckpoints<'_> {
 struct EngineGenerationSidecars<G> {
     generation: u64,
     checkpoints: Vec<Option<EngineCheckpoint<G>>>,
+    attachments: Vec<Option<Box<dyn Any>>>,
 }
 
 struct InitializeSidecars {
@@ -262,6 +311,7 @@ impl RetainedStateOperation for InitializeSidecars {
         admitted.attach(EngineGenerationSidecars::<G> {
             generation: self.generation,
             checkpoints: Vec::new(),
+            attachments: Vec::new(),
         })
     }
 }
@@ -292,6 +342,16 @@ impl<O: RetainedEngineOperation> RetainedStateOperation for EngineOperationAdapt
 fn validate_checkpoint_key(
     generation: u64,
     key: &RetainedCheckpointKey,
+) -> Result<(), RetainedEngineAccessError> {
+    if key.generation != generation {
+        return Err(RetainedEngineAccessError::ForeignGeneration);
+    }
+    Ok(())
+}
+
+fn validate_attachment_key(
+    generation: u64,
+    key: &RetainedEngineAttachmentKey,
 ) -> Result<(), RetainedEngineAccessError> {
     if key.generation != generation {
         return Err(RetainedEngineAccessError::ForeignGeneration);
