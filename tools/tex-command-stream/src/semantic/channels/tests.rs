@@ -42,13 +42,17 @@ fn run_with_printable_sink_writes(committed: bool) -> SemanticRun {
         artifacts: Vec::new(),
         dvi: Vec::new(),
         fatal: None,
-        terminal: committed
-            .then_some(b"terminal|both|".to_vec())
-            .unwrap_or_default(),
-        log: committed
-            .then_some(b"log-only|both|".to_vec())
-            .unwrap_or_default(),
-        pending_effects: (!committed).then_some(writes).unwrap_or_default(),
+        terminal: if committed {
+            b"terminal|both|".to_vec()
+        } else {
+            Vec::new()
+        },
+        log: if committed {
+            b"log-only|both|".to_vec()
+        } else {
+            Vec::new()
+        },
+        pending_effects: if committed { Vec::new() } else { writes },
         effect_artifacts: Vec::new(),
         complete_job_channel_streams: None,
     }
