@@ -510,6 +510,10 @@ impl Hash for RegisteredSource {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceCursor {
     pub(crate) backing: RegisteredSource,
+    /// Whether the aggregate source map already owns this backing's cold
+    /// registration payload. This avoids retaining and releasing the
+    /// Arc-backed descriptor for every token after the first one.
+    pub(crate) backing_registered: bool,
     /// Backing for the loaded line alone, when it is not the physical one.
     ///
     /// TeX82 §363's `firm_up_the_line` moves a line typed at the terminal
@@ -521,6 +525,8 @@ pub(crate) struct SourceCursor {
     /// bytes goes through [`Self::current_backing`], while
     /// [`Self::load_next_line`] keeps advancing through the physical file.
     pub(crate) line_backing: Option<RegisteredSource>,
+    /// Whether the current replacement-line backing has been registered.
+    pub(crate) line_backing_registered: bool,
     /// This level's backing is one line tex.web §483 already acquired.
     ///
     /// §483 loads that line whether or not it has any characters: `limit:=
@@ -541,7 +547,9 @@ impl SourceCursor {
     pub(crate) fn new(backing: RegisteredSource) -> Self {
         Self {
             backing,
+            backing_registered: false,
             line_backing: None,
+            line_backing_registered: false,
             pending_acquired_line: false,
             next_physical_offset: 0,
             next_line_number: 1,

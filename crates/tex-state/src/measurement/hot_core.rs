@@ -177,6 +177,12 @@ pub struct HotCoreAllocationMeasurement {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HotCoreAllocationTrace {
+    pub owner: HotCoreAllocationOwner,
+    pub requested_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HotCoreCensus {
     pub allocations: [HotCoreAllocationMeasurement; HotCoreAllocationOwner::COUNT],
     pub episode_lengths: [u64; 257],
@@ -335,6 +341,32 @@ pub fn hot_core_allocation_scope(
     owner: HotCoreAllocationOwner,
 ) -> umber_hot_core_allocator::AllocationScope {
     umber_hot_core_allocator::scope(owner.index())
+}
+
+#[must_use]
+pub fn hot_core_allocation_trace_cursor() -> u64 {
+    umber_hot_core_allocator::trace_cursor()
+}
+
+#[must_use]
+pub fn hot_core_allocation_trace_entry(cursor: u64) -> Option<HotCoreAllocationTrace> {
+    let entry = umber_hot_core_allocator::trace_entry(cursor)?;
+    let owner = match entry.owner {
+        0 => HotCoreAllocationOwner::DeliveryAndScan,
+        1 => HotCoreAllocationOwner::SemanticApply,
+        2 => HotCoreAllocationOwner::EvidencePublication,
+        3 => HotCoreAllocationOwner::InterpreterConstruction,
+        4 => HotCoreAllocationOwner::InterpreterBorrow,
+        5 => HotCoreAllocationOwner::ColdMaterialization,
+        6 => HotCoreAllocationOwner::AttemptScratch,
+        7 => HotCoreAllocationOwner::GenerationBoundary,
+        8 => HotCoreAllocationOwner::ArenaGrowth,
+        _ => return None,
+    };
+    Some(HotCoreAllocationTrace {
+        owner,
+        requested_bytes: entry.requested_bytes,
+    })
 }
 
 pub fn record_hot_core_phase(phase: HotCorePhase) {

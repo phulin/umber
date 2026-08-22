@@ -1,6 +1,7 @@
 //! Dense source and token-list input-level ownership.
 #![allow(dead_code)] // consumed by the ordered raw-delivery implementation issues
 
+use smallvec::SmallVec;
 use tex_state::DefinitionId;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
@@ -237,11 +238,11 @@ impl<G> Clone for InputLevel<G> {
 /// slice directly and does not clone this owner.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct PackedTokenChunk {
-    words: Vec<TracedTokenWord>,
+    words: SmallVec<[TracedTokenWord; 1]>,
     /// Position-aligned only for backed-up physical-source tokens. Ordinary
     /// generated/stored runs canonically leave this empty: absence already
     /// denotes `None` and must not allocate a redundant per-position vector.
-    source_provenance: Vec<Option<SourceProvenance>>,
+    source_provenance: SmallVec<[Option<SourceProvenance>; 1]>,
     ownership: PackedTokenOwnership,
 }
 
@@ -267,7 +268,7 @@ impl PackedTokenChunk {
             .map(|token| TracedTokenWord::pack(token, origins.next().unwrap_or(OriginId::UNKNOWN)));
         Self {
             words: words.collect(),
-            source_provenance: Vec::new(),
+            source_provenance: SmallVec::new(),
             ownership: PackedTokenOwnership::Stored,
         }
     }
@@ -279,7 +280,7 @@ impl PackedTokenChunk {
                 .copied()
                 .map(|word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN))
                 .collect(),
-            source_provenance: Vec::new(),
+            source_provenance: SmallVec::new(),
             ownership: PackedTokenOwnership::Stored,
         }
     }
@@ -348,7 +349,7 @@ impl<G> TokenPayload<G> {
     pub(crate) fn transient(tokens: impl IntoIterator<Item = TracedTokenWord>) -> Self {
         Self::Packed(PackedTokenChunk {
             words: tokens.into_iter().collect(),
-            source_provenance: Vec::new(),
+            source_provenance: SmallVec::new(),
             ownership: PackedTokenOwnership::Transient,
         })
     }
@@ -364,15 +365,15 @@ impl<G> TokenPayload<G> {
                 .into_iter()
                 .map(|token| TracedTokenWord::pack(token, origin))
                 .collect(),
-            source_provenance: Vec::new(),
+            source_provenance: SmallVec::new(),
             ownership: PackedTokenOwnership::Transient,
         })
     }
 
     /// Packs commands restored by `back_input` into the canonical chunk.
     pub(crate) fn backed_up(tokens: impl IntoIterator<Item = BackedUpToken>) -> Self {
-        let mut words = Vec::new();
-        let mut source_provenance = Vec::new();
+        let mut words = SmallVec::new();
+        let mut source_provenance = SmallVec::new();
         for token in tokens {
             words.push(token.spelling);
             source_provenance.push(token.source_provenance);
@@ -428,17 +429,17 @@ impl<G> TokenPayload<G> {
         &mut self,
         prefix: impl IntoIterator<Item = BackedUpToken>,
     ) -> Option<()> {
-        let mut prefix = prefix.into_iter().collect::<Vec<_>>();
+        let mut prefix = prefix.into_iter().collect::<SmallVec<[_; 4]>>();
         match self {
             Self::Packed(chunk) if chunk.ownership == PackedTokenOwnership::BackedUp => {
-                let mut words = Vec::new();
-                let mut provenance = Vec::new();
+                let mut words = SmallVec::new();
+                let mut provenance = SmallVec::new();
                 for token in prefix.drain(..) {
                     words.push(token.spelling);
                     provenance.push(token.source_provenance);
                 }
-                words.append(&mut chunk.words);
-                provenance.append(&mut chunk.source_provenance);
+                words.extend(chunk.words.drain(..));
+                provenance.extend(chunk.source_provenance.drain(..));
                 chunk.words = words;
                 chunk.source_provenance = provenance;
             }

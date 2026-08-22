@@ -97,7 +97,7 @@ pub(crate) enum MacroCallOutcome {
 /// half-open range, so parameter replay never duplicates argument tokens.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct MacroArgumentBuilder {
-    arguments: Vec<AttemptTokenListId>,
+    arguments: smallvec::SmallVec<[AttemptTokenListId; 9]>,
     next_slot: u8,
 }
 

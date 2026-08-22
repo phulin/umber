@@ -451,6 +451,22 @@ impl SourceMap {
         Ok(SourcePos(start))
     }
 
+    /// Registers one source whose caller does not retain a line index.
+    ///
+    /// Ordinary token delivery calls this on every source token. Check the
+    /// direct source slot before constructing the cold registration payload so
+    /// a warm hit performs no `Arc` allocation or retain/release operation.
+    pub(crate) fn register_without_line_starts(
+        &mut self,
+        source: SourceId,
+        descriptor: SourceDescriptor,
+    ) -> Result<SourcePos, SourceMapError> {
+        if let Some(position) = self.existing_registration(source, &descriptor)? {
+            return Ok(position);
+        }
+        self.register_with_line_starts(source, descriptor, Arc::from([0_usize]))
+    }
+
     /// Resolves an already-live registration before callers build derived
     /// indexes for an immutable backing.
     pub(crate) fn existing_registration(

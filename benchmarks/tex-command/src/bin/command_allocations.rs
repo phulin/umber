@@ -335,10 +335,11 @@ fn with_universe<R>(
 }
 
 fn processor_case<G>(universe: &mut Universe<G>, workload: Workload) -> ProcessorCase<G> {
+    install_benchmark_catcodes(universe);
     let source = match workload {
         Workload::SingleTokenBackup => "x",
         Workload::MacroArgumentMatching => {
-            r"\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}"
+            r"\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}"
         }
         Workload::ScanToksAbsorption => "{abcdefghijklmnop}",
         Workload::KeywordScanning => "dimension ",
@@ -434,13 +435,30 @@ fn processor_case<G>(universe: &mut Universe<G>, workload: Workload) -> Processo
             CommandHostContext::new(&mut case.capabilities),
             &mut case.diagnostic_effects,
         );
-        for _ in 0..32 {
+        for _ in 0..48 {
             black_box(
                 processor
                     .get_x_token()
                     .expect("macro warmup succeeds")
                     .expect("macro warmup token is present"),
             );
+        }
+        for _ in 0..2 {
+            let replay_warmup = processor
+                .get_next()
+                .expect("macro replay warmup delivers")
+                .expect("macro replay warmup is present");
+            processor
+                .back_input(replay_warmup)
+                .expect("macro replay warmup backs up");
+            for _ in 0..16 {
+                black_box(
+                    processor
+                        .get_x_token()
+                        .expect("macro replay warmup succeeds")
+                        .expect("macro replay warmup token is present"),
+                );
+            }
         }
         let pending = processor
             .get_next()
@@ -451,6 +469,25 @@ fn processor_case<G>(universe: &mut Universe<G>, workload: Workload) -> Processo
             .expect("warmed macro call backs up");
     }
     case
+}
+
+fn install_benchmark_catcodes<G>(universe: &mut Universe<G>) {
+    let mut context = universe.command_context().expect("command context");
+    for (character, catcode) in [
+        ('{', Catcode::BeginGroup),
+        ('}', Catcode::EndGroup),
+        ('&', Catcode::AlignmentTab),
+        ('#', Catcode::Parameter),
+    ] {
+        context
+            .assign_code(
+                tex_state::CodeTableKind::Catcode,
+                character,
+                i64::from(catcode as u8),
+                AssignmentScope::Global,
+            )
+            .expect("command benchmark category code");
+    }
 }
 
 fn install_macro<G>(universe: &mut Universe<G>) {

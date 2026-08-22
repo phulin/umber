@@ -5,9 +5,13 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const OWNER_LIMIT: usize = 16;
+const TRACE_CAPACITY: usize = 256;
+const TRACE_SIZE_MASK: u64 = (1_u64 << 56) - 1;
 
 static CALLS: [AtomicU64; OWNER_LIMIT] = [const { AtomicU64::new(0) }; OWNER_LIMIT];
 static REQUESTED_BYTES: [AtomicU64; OWNER_LIMIT] = [const { AtomicU64::new(0) }; OWNER_LIMIT];
+static TRACE_CURSOR: AtomicU64 = AtomicU64::new(0);
+static TRACE: [AtomicU64; TRACE_CAPACITY] = [const { AtomicU64::new(0) }; TRACE_CAPACITY];
 
 thread_local! {
     static OWNER: Cell<Option<usize>> = const { Cell::new(None) };
@@ -17,6 +21,12 @@ thread_local! {
 pub struct AllocationMeasurement {
     pub calls: u64,
     pub requested_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AllocationTraceEntry {
+    pub owner: usize,
+    pub requested_bytes: usize,
 }
 
 /// The profiling binary's allocator. Unscoped process allocations are ignored.
@@ -77,7 +87,28 @@ pub fn record(requested_bytes: usize) {
     if let Some(owner) = owner {
         CALLS[owner].fetch_add(1, Ordering::Relaxed);
         REQUESTED_BYTES[owner].fetch_add(requested_bytes as u64, Ordering::Relaxed);
+        let cursor = TRACE_CURSOR.fetch_add(1, Ordering::Relaxed);
+        let encoded = ((owner as u64) << 56) | (requested_bytes as u64).min(TRACE_SIZE_MASK);
+        TRACE[cursor as usize % TRACE_CAPACITY].store(encoded, Ordering::Relaxed);
     }
+}
+
+#[must_use]
+pub fn trace_cursor() -> u64 {
+    TRACE_CURSOR.load(Ordering::Relaxed)
+}
+
+#[must_use]
+pub fn trace_entry(cursor: u64) -> Option<AllocationTraceEntry> {
+    let current = trace_cursor();
+    if cursor >= current || current.saturating_sub(cursor) > TRACE_CAPACITY as u64 {
+        return None;
+    }
+    let encoded = TRACE[cursor as usize % TRACE_CAPACITY].load(Ordering::Relaxed);
+    Some(AllocationTraceEntry {
+        owner: (encoded >> 56) as usize,
+        requested_bytes: (encoded & TRACE_SIZE_MASK) as usize,
+    })
 }
 
 #[must_use]

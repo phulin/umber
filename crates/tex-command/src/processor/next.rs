@@ -1628,7 +1628,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             Source {
                 identity: InputLevelId,
                 position: u64,
-                backing: crate::input::RegisteredSource,
+                registration:
+                    Option<(tex_state::SourceId, tex_state::source_map::SourceDescriptor)>,
             },
             Tokens {
                 identity: InputLevelId,
@@ -1646,12 +1647,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // here used to allocate a fresh `Box` and copy the complete
                 // mutable lexer/line cursor for every source token, even
                 // though `next_source_step` immediately advanced the live
-                // cursor instead. Keep the live level canonical and retain
-                // only the cheap Arc-backed registration across that call.
+                // cursor instead. Keep the live level canonical, and clone
+                // the Arc-backed descriptor only once when the source first
+                // enters the aggregate map.
                 InputLevel::Source(source) => ActiveInput::Source {
                     identity: source.identity(),
                     position: source.cursor.next_physical_offset,
-                    backing: source.cursor.backing.clone(),
+                    registration: (!source.cursor.backing_registered).then(|| {
+                        (
+                            source.cursor.backing.id,
+                            source.cursor.backing.source_descriptor(),
+                        )
+                    }),
                 },
                 InputLevel::Tokens(cursor) => ActiveInput::Tokens {
                     identity: cursor.identity(),
@@ -1677,9 +1684,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ActiveInput::Source {
                     identity,
                     position,
-                    backing,
+                    registration,
                 } => {
-                    self.ensure_source_registration(&backing);
+                    if let Some((source, descriptor)) = registration {
+                        let _ = self.state.register_source(source, descriptor);
+                        let Some(InputLevel::Source(level)) = self.command.input.levels.last_mut()
+                        else {
+                            return Err(CommandError::input_invariant());
+                        };
+                        if level.identity() != identity {
+                            return Err(CommandError::input_invariant());
+                        }
+                        level.cursor.backing_registered = true;
+                    }
                     match self.next_source_step() {
                         SourceTokenizationStep::Token(token) => {
                             self.ensure_replacement_line_registration();
@@ -1997,12 +2014,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         step
     }
 
-    fn ensure_source_registration(&mut self, source: &crate::input::RegisteredSource) {
-        let _ = self
-            .state
-            .register_source(source.id, source.source_descriptor());
-    }
-
     /// Registers the backing TeX82 §363 installed over the active line.
     ///
     /// The line the file supplied is registered before tokenization starts;
@@ -2010,7 +2021,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// step, so its identity is registered as soon as the step yields a token
     /// located in it.
     fn ensure_replacement_line_registration(&mut self) {
-        if let Some((source, descriptor)) = self.command.active_line_backing() {
+        if let Some((source, descriptor)) = self.command.take_active_line_registration() {
             let _ = self.state.register_source(source, descriptor);
         }
     }

@@ -253,6 +253,7 @@ fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
             attempt.token_buffer(buffer).expect("test fixture is valid"),
             &[word('a'), word('b')]
         );
+        let buffer_storage = attempt.token_buffers[buffer.index()].value.as_ptr();
         let frozen = attempt
             .finish_token_buffer(buffer)
             .expect("test fixture is valid");
@@ -260,10 +261,22 @@ fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
             attempt.token_words(frozen).expect("test fixture is valid"),
             &[word('a'), word('b')]
         );
+        let recycled = attempt
+            .allocate_token_buffer()
+            .expect("test fixture is valid");
+        assert_eq!(
+            attempt.token_buffers[recycled.index()].value.as_ptr(),
+            buffer_storage,
+            "finishing a scanner buffer returns its backing to the attempt pool"
+        );
 
         attempt.truncate(mark).expect("test fixture is valid");
         assert_eq!(
             attempt.token_buffer(buffer),
+            Err(AttemptError::InvalidCoordinate)
+        );
+        assert_eq!(
+            attempt.token_buffer(recycled),
             Err(AttemptError::InvalidCoordinate)
         );
         assert_eq!(

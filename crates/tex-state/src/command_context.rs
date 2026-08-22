@@ -1932,7 +1932,7 @@ impl<'a, G> CommandContext<'a, G> {
         descriptor: crate::source_map::SourceDescriptor,
     ) -> Result<crate::source_map::SourcePos, crate::source_map::SourceMapError> {
         self.sources
-            .register_with_line_starts(source, descriptor, std::sync::Arc::from([0_usize]))
+            .register_without_line_starts(source, descriptor)
     }
 
     #[must_use]

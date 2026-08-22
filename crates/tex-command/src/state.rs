@@ -2445,14 +2445,19 @@ impl<G> CommandState<G> {
     /// own, so the aggregate source map has to learn about it before any
     /// token located in it is reported. Returning `None` is the ordinary
     /// case: the line came from the file, which is registered already.
-    pub(crate) fn active_line_backing(
-        &self,
+    pub(crate) fn take_active_line_registration(
+        &mut self,
     ) -> Option<(tex_state::SourceId, tex_state::source_map::SourceDescriptor)> {
-        let Some(InputLevel::Source(level)) = self.input.levels.last() else {
+        let Some(InputLevel::Source(level)) = self.input.levels.last_mut() else {
             return None;
         };
+        if level.cursor.line_backing_registered {
+            return None;
+        }
         let backing = level.cursor.line_backing.as_ref()?;
-        Some((backing.id, backing.source_descriptor()))
+        let registration = (backing.id, backing.source_descriptor());
+        level.cursor.line_backing_registered = true;
+        Some(registration)
     }
 
     /// Captures the active source's immutable identity and bytes for detached

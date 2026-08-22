@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 criterion = "0.5"
 stats_alloc = "0.1"
-tex-command = { path = "../../crates/tex-command" }
+tex-command = { path = "../../crates/tex-command", features = ["profiling"] }
 tex-state = { path = "../../crates/tex-state", features = ["profiling"] }
 
 [[bin]]

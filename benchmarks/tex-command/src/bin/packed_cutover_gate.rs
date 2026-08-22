@@ -1,8 +1,6 @@
-use std::alloc::System;
 use std::hint::black_box;
 use std::sync::Arc;
 
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use tex_command::{
     CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
     RegisteredSourceKind, SourceRegistration,
@@ -11,10 +9,14 @@ use tex_state::Universe;
 use tex_state::env::AssignmentScope;
 use tex_state::interner::InternerBudget;
 use tex_state::meaning::{MeaningFlags, MeaningWord};
+use tex_state::measurement::{
+    HotCoreAllocationOwner, HotCoreAllocator, hot_core_allocation_scope,
+    hot_core_allocation_trace_cursor, hot_core_allocation_trace_entry, hot_core_census,
+};
 use tex_state::token::{Catcode, Token, TokenWord};
 
 #[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+static GLOBAL: HotCoreAllocator = HotCoreAllocator;
 
 fn main() {
     ordinary_source_delivery();
@@ -109,7 +111,7 @@ fn macro_argument_matching() {
         let mut command = CommandState::default();
         open_source(
             &mut command,
-            r"\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}",
+            r"\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}",
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -119,8 +121,16 @@ fn macro_argument_matching() {
             &mut capabilities,
             &mut diagnostic_effects,
         );
-        for _ in 0..32 {
+        for _ in 0..48 {
             black_box(processor.get_x_token().unwrap().unwrap());
+        }
+        for _ in 0..2 {
+            let replay_warmup = processor.get_next().unwrap().unwrap();
+            processor.back_input(replay_warmup).unwrap();
+            assert_char(processor.get_x_token().unwrap().unwrap(), 'a');
+            for _ in 0..15 {
+                black_box(processor.get_x_token().unwrap().unwrap());
+            }
         }
         let pending = processor.get_next().unwrap().unwrap();
         processor.back_input(pending).unwrap();
@@ -160,6 +170,19 @@ fn processor<'a, G>(
 }
 
 fn install_macro<G>(universe: &mut Universe<G>) {
+    {
+        let mut context = universe.command_context().expect("command context");
+        for (character, catcode) in [('{', Catcode::BeginGroup), ('}', Catcode::EndGroup)] {
+            context
+                .assign_code(
+                    tex_state::CodeTableKind::Catcode,
+                    character,
+                    i64::from(catcode as u8),
+                    AssignmentScope::Global,
+                )
+                .expect("macro benchmark category code");
+        }
+    }
     let name = universe.intern("m").expect("macro name");
     let definition = universe
         .allocate_definition(
@@ -187,10 +210,42 @@ fn assert_char<G>(command: tex_command::CurrentCommand<G>, expected: char) {
 }
 
 fn measure_zero(name: &str, operation: impl FnOnce()) {
-    let region = Region::new(GLOBAL);
+    let baseline = hot_core_census();
+    let trace_start = hot_core_allocation_trace_cursor();
+    let scope = hot_core_allocation_scope(HotCoreAllocationOwner::DeliveryAndScan);
     operation();
-    let stats = region.change();
-    assert_eq!(stats.allocations, 0, "{name}: allocation calls");
-    assert_eq!(stats.bytes_allocated, 0, "{name}: requested bytes");
+    drop(scope);
+    let trace_end = hot_core_allocation_trace_cursor();
+    let census = hot_core_census().saturating_sub(baseline);
+    let allocations = census
+        .allocations
+        .iter()
+        .map(|measurement| measurement.calls)
+        .sum::<u64>();
+    let requested_bytes = census
+        .allocations
+        .iter()
+        .map(|measurement| measurement.requested_bytes)
+        .sum::<u64>();
+    let attribution = HotCoreAllocationOwner::NAMES
+        .iter()
+        .zip(census.allocations)
+        .filter(|(_, measurement)| measurement.calls != 0)
+        .map(|(owner, measurement)| {
+            format!(
+                "{owner}={}/{}",
+                measurement.calls, measurement.requested_bytes
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let trace = (trace_start..trace_end)
+        .filter_map(hot_core_allocation_trace_entry)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        allocations, 0,
+        "{name}: allocation calls (requested_bytes={requested_bytes}; attribution={attribution}; trace={trace:?})"
+    );
+    assert_eq!(requested_bytes, 0, "{name}: requested bytes");
     println!("{name} allocations=0 requested_bytes=0");
 }

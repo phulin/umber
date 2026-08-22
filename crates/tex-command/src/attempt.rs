@@ -615,7 +615,9 @@ impl<G> AttemptArena<G> {
                 .expect("attempt token-buffer suffix is nonempty")
                 .value;
             buffer.clear();
-            self.recycled_token_buffers.push(buffer);
+            if buffer.capacity() != 0 {
+                self.recycled_token_buffers.push(buffer);
+            }
         }
         self.definitions.truncate(mark.definitions as usize);
         self.glue_values.truncate(mark.glue_values as usize);
@@ -1017,7 +1019,11 @@ impl<G> AttemptArena<G> {
         let mut words = core::mem::take(&mut row.value);
         let result = self.allocate_token_list(words.iter().copied());
         words.clear();
-        self.token_buffers[id.index()].value = words;
+        // The builder coordinate is consumed here. Keep its row as the
+        // operation-lifetime audit record, but return the geometrically grown
+        // backing to the scanner pool immediately so the next macro/scan does
+        // not allocate another per-value owner.
+        self.recycled_token_buffers.push(words);
         result
     }
 
