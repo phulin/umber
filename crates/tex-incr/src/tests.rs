@@ -649,10 +649,10 @@ fn zero_history_budget_retires_only_complete_old_generations() {
     let mut source = page_source(1);
     let mut incremental =
         Session::start((), "retirement", RevisionId::new(1), &source, 0).expect("session");
-    incremental.cold().expect("baseline");
+    let mut output = incremental.cold().expect("baseline");
     for revision in 2_u64..=4 {
         let next = page_source(revision as usize);
-        incremental
+        output = incremental
             .advance(
                 RevisionId::new(revision),
                 edit(&incremental, 0..source.len(), &next),
@@ -660,6 +660,9 @@ fn zero_history_budget_retires_only_complete_old_generations() {
             .expect("accepted revision");
         source = next;
     }
+    let mut cold = session(RevisionId::new(4), &source);
+    let expected = cold.cold().expect("cold comparison");
+    assert_detached_output_eq(&output, &expected);
     assert_eq!(incremental.retained_generation_count(), 1);
     assert_eq!(incremental.retired_generation_count(), 3);
     assert_eq!(incremental.compacted_generation_count(), 4);

@@ -179,6 +179,11 @@ impl<G> StateCore<G> {
     pub(crate) fn can_retire(&self) -> bool {
         self.generation.is_unique()
     }
+
+    #[must_use]
+    pub(crate) fn generation_owner_count(&self) -> usize {
+        self.generation.owner_count()
+    }
 }
 
 /// Immutable, already-admitted hot view.

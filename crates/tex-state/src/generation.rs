@@ -104,6 +104,13 @@ impl<G> GenerationOwner<G> {
         Arc::strong_count(&self.generation) == 1
     }
 
+    /// Cold lifecycle census used to prove that every coarse owner is inside
+    /// the aggregate selected for replacement before publication begins.
+    #[must_use]
+    pub(crate) fn owner_count(&self) -> usize {
+        Arc::strong_count(&self.generation)
+    }
+
     pub(crate) fn retire(self) -> Result<GenerationRetirement, Self> {
         match Arc::try_unwrap(self.generation) {
             Ok(generation) => Ok(generation

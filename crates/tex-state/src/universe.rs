@@ -2106,6 +2106,15 @@ impl<G> Universe<G> {
     }
 
     #[must_use]
+    pub(crate) fn generation_owner_count(&self) -> Result<usize, UniverseError> {
+        Ok(self
+            .core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .generation_owner_count())
+    }
+
+    #[must_use]
     pub const fn is_retired(&self) -> bool {
         self.core.is_none()
     }

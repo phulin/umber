@@ -50,6 +50,13 @@ impl<G: 'static> RetainedStateCompactionContext<'_, G> {
         self.source
     }
 
+    /// Counts coarse immutable owners before any source attachment is
+    /// released. Aggregate compaction uses this to reject unenumerated parent
+    /// owners before staging can become visible.
+    pub fn source_generation_owner_count(&self) -> Result<usize, UniverseError> {
+        self.source.generation_owner_count()
+    }
+
     pub fn destination_universe(&mut self) -> &mut Universe<G> {
         self.destination
     }
@@ -334,9 +341,10 @@ impl RetainedStateGeneration {
 
         let source_attachments = std::mem::take(&mut self.attachments);
         drop(source_attachments);
-        if !self.universe.generation_can_retire() {
-            panic!("validated compaction released every source-side coarse owner");
-        }
+        debug_assert!(
+            self.universe.generation_can_retire(),
+            "compaction preflight accounted for every source-side coarse owner"
+        );
         let mut source = std::mem::replace(&mut self.universe, destination);
         self.attachments = destination_attachments;
         self.incarnation = destination_incarnation;
