@@ -14,5 +14,5 @@ tex-incr = { path = "../../crates/tex-incr" }
 tex-state = { path = "../../crates/tex-state" }
 
 [[bench]]
-name = "pure_memo_edit"
+name = "accepted_edit"
 harness = false

@@ -1,16 +1,17 @@
 # tex-incr benchmarks
 
-This standalone crate contains the focused accepted-edit diagnostic for the
-incremental owner and is excluded from the root workspace correctness gate.
+This standalone crate contains focused two-generation accepted/rejected edit
+diagnostics for the incremental owner and is excluded from the root workspace
+correctness gate.
 
 Run it with:
 
 ```bash
 cargo bench --manifest-path benchmarks/tex-incr/Cargo.toml \
-  --bench pure_memo_edit
+  --bench accepted_edit
 ```
 
-`pure_memo_edit` compares an accepted edit with the bounded pretolerance,
-page-breaking, and shipout memo runtime disabled and enabled. It uses a real
-incremental session and verifies the initial cold run before timing the edit.
-It measures the retained pure caches, not the deleted paragraph replay design.
+`accepted_edit` uses a real incremental session and verifies the initial cold
+run before timing acceptance and rejection separately. Acceptance must retain
+exactly current and retire prior; rejection drops current while prior remains
+the sole retained generation.
