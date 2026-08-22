@@ -1037,7 +1037,7 @@ fn global_escapechar_survives_off_save_inserted_group_recovery() {
         let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
-            b"\\scrollmode\\tracingonline=1\\hbox{\\escapechar=127\\global\\escapechar=256\\end}",
+            b"\\scrollmode\\tracingonline=1\\tracingcommands=1\\hbox{\\escapechar=127\\global\\escapechar=256\\end}",
         );
 
         run_to_end(&mut control, stores);
@@ -1045,6 +1045,14 @@ fn global_escapechar_survives_off_save_inserted_group_recovery() {
         assert_eq!(stores.int_param(IntParam::ESCAPE_CHAR), 256);
         let terminal = terminal_text(stores);
         assert!(terminal.contains("! Missing } inserted."), "{terminal:?}");
+        let traced_end = terminal.find("{end}").expect("the offending command trace");
+        let recovery = terminal
+            .find("! Missing } inserted.")
+            .expect("the balancing-brace recovery");
+        assert!(
+            traced_end < recovery,
+            "§1030 command tracing precedes §1064 recovery: {terminal:?}"
+        );
     });
 }
 
@@ -3973,6 +3981,138 @@ fn deferred_write_expands_at_shipout_once() {
         let terminal = terminal_text(stores);
         assert_eq!(terminal.matches("late").count(), 1, "{terminal:?}");
         assert!(!terminal.contains("early"), "{terminal:?}");
+    });
+}
+
+#[test]
+fn deferred_write_retains_unfinished_condition_for_final_cleanup() {
+    // TeX82 §1370 expands a deferred write on the live conditional stack;
+    // §1335 consequently reports an unfinished conditional from that write
+    // before an older outer condition. Attempt-local write tokens are scratch,
+    // but the condition frames are committed command semantics.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            b"\\ifcase0\n\\shipout\\hbox{\\write16{\\iftrue x}}\n\\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        let output = terminal_text(stores);
+        let write_condition = output
+            .find("(\\end occurred when \\iftrue on line 2 was incomplete)")
+            .expect("the deferred-write condition remains live");
+        let outer_condition = output
+            .find("(\\end occurred when \\ifcase on line 1 was incomplete)")
+            .expect("the pre-existing outer condition remains live");
+        assert!(write_condition < outer_condition, "{output}");
+    });
+}
+
+#[test]
+fn batch_deferred_write_traces_materialize_inside_the_shipout_marker() {
+    // TeX82 §§245, 638, and 1370: batch-mode diagnostics select the log
+    // alone, but they still execute on the live `write_out` call stack. The
+    // aggregate shipout transaction must therefore commit the trace between
+    // its opening and closing markers rather than leave it for job-final
+    // detached publication.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\batchmode\tracingcommands=2
+               \shipout\hbox{\write16{\romannumeral0\relax}}\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        let terminal =
+            String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default());
+        let log = String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default());
+        let marker_open = log.find('[').expect("shipout marker opens");
+        let trace = log
+            .find("{no mode: \\romannumeral}")
+            .expect("deferred expansion trace is materialized");
+        let marker_close = log[trace..]
+            .find(']')
+            .map(|offset| trace + offset)
+            .expect("shipout marker closes after the trace");
+        assert!(marker_open < trace && trace < marker_close, "{log}");
+        assert!(!terminal.contains("romannumeral"), "{terminal}");
+        assert!(
+            !pending_sink_text(stores, false).contains("romannumeral"),
+            "the committed trace must not survive as a pending suffix"
+        );
+    });
+}
+
+#[test]
+fn tracingoutput_box_dump_precedes_deferred_write_expansion() {
+    // TeX82 §638 closes and displays the box before §1370 expands any
+    // deferred write inside it. Both reports are log-only in batch mode, so
+    // this also proves that splitting their admitted builders does not split
+    // or reverse their outer publication order.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\batchmode\tracingcommands=2\tracingoutput=1
+               \shipout\hbox{\write16{\romannumeral0\relax}}\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        let terminal =
+            String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default());
+        let log = String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default());
+        let announcement = log
+            .find("Completed box being shipped out")
+            .expect("shipout announcement is materialized");
+        let dump = log[announcement..]
+            .find("\\hbox(")
+            .map(|offset| announcement + offset)
+            .expect("box dump follows its announcement");
+        let write_trace = log[dump..]
+            .find("{no mode: \\romannumeral}")
+            .map(|offset| dump + offset)
+            .expect("deferred write trace follows the box dump");
+        assert!(announcement < dump && dump < write_trace, "{log}");
+        assert!(!terminal.contains("romannumeral"), "{terminal}");
+    });
+}
+
+#[test]
+fn batch_page_builder_diagnostics_materialize_before_the_shipout_marker() {
+    // TeX82 §§367, 1006, and 638: the command trace and its page-cost
+    // trace are complete before `fire_up` reaches `ship_out`. Batch mode
+    // changes only their sink, not their position in that ordered log stream.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\batchmode\tracingcommands=2\tracingpages=1
+               \topskip=0pt\vsize=100pt\hrule height2pt\penalty-10000\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        let terminal =
+            String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default());
+        let log = String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default());
+        let command_trace = log
+            .find("{\\penalty}")
+            .unwrap_or_else(|| panic!("penalty command trace is materialized: {log}"));
+        let page_trace = log[command_trace..]
+            .find("% t=")
+            .map(|offset| command_trace + offset)
+            .expect("page cost follows the command trace");
+        let marker = log[page_trace..]
+            .find('[')
+            .map(|offset| page_trace + offset)
+            .expect("shipout marker follows page diagnostics");
+        assert!(command_trace < page_trace && page_trace < marker, "{log}");
+        assert!(!terminal.contains("penalty"), "{terminal}");
     });
 }
 
@@ -13898,6 +14038,98 @@ fn batch_undefined_recovery_keeps_the_log_only_selector() {
         assert!(
             pending_sink_text(stores, false).contains("Undefined control sequence"),
             "batch errors remain in the transcript log"
+        );
+    });
+}
+
+#[test]
+fn interaction_transition_prints_its_unconditional_newline_after_the_command_trace() {
+    // TeX82 §§1030/1264: `show_cur_cmd_chr` completes before
+    // `new_interaction` performs its unconditional `print_ln` under the old
+    // selector. Detached trace publication must preserve that call order;
+    // otherwise the resulting blank line moves before `\batchmode`.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\tracingcommands=1\batchmode\output={}\end");
+        run_to_end_observed(&mut control, stores, &mut ObservationRecorder::default());
+
+        let log = pending_sink_text(stores, false);
+        assert!(
+            log.contains("{vertical mode: \\batchmode}\n\n{\\output}"),
+            "{log}"
+        );
+        assert!(
+            !log.contains("\n\n{vertical mode: \\batchmode}\n{\\output}"),
+            "the §1264 newline must not overtake the trace: {log}"
+        );
+    });
+}
+
+#[test]
+fn batch_undefined_recovery_after_a_live_mode_transition_keeps_the_log_only_selector() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\nonstopmode\batchmode\missing\scrollmode\end",
+        );
+        run_to_end_observed(&mut control, stores, &mut ObservationRecorder::default());
+
+        assert_eq!(
+            stores.interaction_mode(),
+            tex_state::InteractionMode::Scroll
+        );
+        assert_eq!(stores.world().error_channel().error_count(), 1);
+        assert!(
+            !pending_sink_text(stores, true).contains("Undefined control sequence"),
+            "batch errors must not escape the log-only selector after a live transition"
+        );
+        assert!(
+            pending_sink_text(stores, false).contains("Undefined control sequence"),
+            "batch errors remain in the transcript log after a live transition"
+        );
+    });
+}
+
+#[test]
+fn unavailable_font_retry_preserves_batch_mode_for_later_diagnostics() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\batchmode\font\missingfont=absent\missing\scrollmode\end",
+        );
+        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut checkpoints = Vec::new();
+        let cancellation = crate::Cancellation::new();
+        loop {
+            match crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+                .step_with_observer(
+                    &mut checkpoints,
+                    &cancellation,
+                    &mut ObservationRecorder::default(),
+                ) {
+                crate::CanonicalStepResult::ResourceNeed(need @ ResourceNeed::Font { .. }) => {
+                    ledger.mark_unavailable(&mut control, &need, false);
+                }
+                crate::CanonicalStepResult::Completed(_) => break,
+                crate::CanonicalStepResult::Progress(_)
+                | crate::CanonicalStepResult::Committed(_) => {}
+                other => panic!("unexpected unavailable-font step: {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            stores.interaction_mode(),
+            tex_state::InteractionMode::Scroll
+        );
+        assert!(
+            !pending_sink_text(stores, true).contains("Undefined control sequence"),
+            "batch errors must not escape the log-only selector across a resource retry"
+        );
+        assert!(
+            pending_sink_text(stores, false).contains("Undefined control sequence"),
+            "batch errors remain in the transcript log across a resource retry"
         );
     });
 }

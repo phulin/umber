@@ -253,6 +253,16 @@ pub(crate) fn shipout_node<G>(
             return Err(error);
         }
     };
+    // Deferred command expansion happens while the aggregate shipout
+    // transaction is live. Its detached diagnostics are part of the same
+    // ordered TeX print program as the surrounding `[` marker and the page
+    // payload, so admit them to the speculative World before that World
+    // commits its effect prefix. A later commit failure still rolls them back
+    // with the transaction; carrying them out to MainControl would publish
+    // them only after the already-materialized page output.
+    transaction
+        .world_mut()
+        .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
     let committed_effects = transaction.world().effect_records()[effect_start..]
         .to_vec()
         .into_boxed_slice();

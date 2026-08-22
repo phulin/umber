@@ -1915,6 +1915,12 @@ impl<G> MainControl<G> {
         crate::job::open_startup_input(stores, name);
     }
 
+    /// Records and prints a retained root whose one-shot job framing has
+    /// already opened the transcript.
+    pub fn open_startup_input_after_log(&mut self, stores: &mut Universe<G>, name: &str) {
+        crate::job::open_startup_input_after_log(stores, name);
+    }
+
     /// Declares that this session was restored from a dumped format, so
     /// [`Self::begin_job`] frames it as `-fmt=<name>` rather than as INITEX.
     ///
@@ -5256,6 +5262,17 @@ impl<G> MainControl<G> {
             };
             match selected {
                 crate::page_output::SelectedPageOutput::Default(page) => {
+                    // TeX82 §§1006/1012 finishes the contributing
+                    // command and page-cost reports before the default
+                    // `fire_up` path enters §638 `ship_out`. The reports are
+                    // now fully detached and command admission is closed, so
+                    // publish their ordered batch before the marker becomes
+                    // host-visible. Deferred whatsit diagnostics are added by
+                    // the nested shipout transaction at its own pre-commit
+                    // boundary.
+                    stores
+                        .world_mut()
+                        .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
                     let mut command = CommandMachine {
                         state: &mut self.command,
                         fuel: self.fuel.fuel_mut(),
@@ -7945,6 +7962,33 @@ impl<G> MainControl<G> {
             } => Some((*dump, incomplete_conditions.clone())),
             _ => None,
         };
+        if matches!(
+            &scanned,
+            ColdOperation::OffSave(_)
+                | ColdOperation::AlignmentRecovery { .. }
+                | ColdOperation::SetInteractionMode(_)
+                | ColdOperation::SetInteractionModeValue { .. }
+        ) {
+            // TeX82 §§1030/1064: command tracing happens when the offending
+            // command is fetched, before `off_save`/`align_error` prints its
+            // balancing-token error. The trace is detached while scanning,
+            // whereas the legacy recovery report writes synchronously during
+            // apply. Publish that
+            // already-committed trace at this admission boundary so the two
+            // mechanisms cannot invert their canonical order. This recovery
+            // operation requests no host resource and its error remains an
+            // observable result even when ErrorStop jumps out.
+            //
+            // §1264's `new_interaction` is another synchronous World-facing
+            // boundary: the already-rendered §1030 command trace must reach
+            // the old selector before `print_ln` and the selector transition.
+            // Otherwise the unconditional `print_ln` overtakes the detached
+            // trace, moving TeX's blank line from after `\batchmode` to before
+            // it and routing later output from the wrong partial-line state.
+            stores
+                .world_mut()
+                .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
+        }
         let effect = {
             let context = stores.command_context().expect("live generation");
             applied_effect_observation(&scanned, &context)
@@ -8035,11 +8079,22 @@ impl<G> MainControl<G> {
                     print.max_print_line,
                 );
             }
-            if let Some(shipout) = command.prepared_shipout.take()
-                && let Some(receipt) = shipout_replay_box(shipout.node, stores, &mut command)?
+            if let Some(shipout) = command.prepared_shipout.take() {
+                // TeX82 §§367/1006 print the delivered command and page
+                // cost before §638 opens the shipout marker. Both reports
+                // are detached while their respective admitted scanners run,
+                // so move their complete ordered program into World before
+                // the outer shipout transaction can materialize `[`. Any
+                // diagnostics produced by deferred whatsit replay join that
+                // transaction separately at its own pre-commit boundary.
+                stores
+                    .world_mut()
+                    .publish_diagnostic_effects(std::mem::take(command.diagnostic_effects));
+                if let Some(receipt) = shipout_replay_box(shipout.node, stores, &mut command)?
                     .and_then(|publication| publication.dvi)
-            {
-                push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
+                {
+                    push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
+                }
             }
         } else {
             command.immediate_prints.clear();

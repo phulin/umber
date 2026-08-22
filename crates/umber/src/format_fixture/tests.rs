@@ -203,15 +203,15 @@ fn recipe_identity_invalidates_every_fixture_input_class() {
 }
 
 #[test]
-fn producer_contract_fourteen_rejects_pre_synctex_pool_profiles() {
+fn producer_contract_fifteen_rejects_pre_job_clock_profiles() {
     let recipe = FormatRecipe::raw_tex82();
-    let stale = producer_contract(13, &recipe.format_name, &recipe.format_ident_name);
+    let stale = producer_contract(14, &recipe.format_name, &recipe.format_ident_name);
     let current = producer_contract(
         PRODUCER_CONTRACT_VERSION,
         &recipe.format_name,
         &recipe.format_ident_name,
     );
-    assert_eq!(PRODUCER_CONTRACT_VERSION, 14);
+    assert_eq!(PRODUCER_CONTRACT_VERSION, 15);
     assert_ne!(current, stale);
 }
 
@@ -498,6 +498,41 @@ fn loaded_driver_configuration_is_job_local() {
         )
         .expect("configured loaded run");
     assert!(run.result.format_dump.is_none());
+}
+
+#[test]
+fn complete_channel_projection_appends_the_pending_terminal_publication_suffix() {
+    crate::with_engine_world(World::memory(), |universe| {
+        universe
+            .world_mut()
+            .publish_detached_effect_records(&[tex_state::EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::TerminalAndLog,
+                text: "committed".into(),
+            }])
+            .expect("committed prefix publishes");
+        universe
+            .world_mut()
+            .begin_terminal_publication(tex_state::TerminalPublicationPhase::Notices);
+        universe
+            .world_mut()
+            .write_text(tex_state::PrintSink::TerminalAndLog, "-terminal");
+        universe.world_mut().commit_terminal_publication();
+
+        let projection = capture_loaded_projection(
+            universe,
+            &LoadedFormatProjectionDemand {
+                channels: true,
+                ..LoadedFormatProjectionDemand::default()
+            },
+            tex_exec::RootCompletionPolicy::RequireTeXEnd,
+        )
+        .expect("complete projection");
+        let channels = projection.channels.expect("channels requested");
+        assert_eq!(channels.terminal, b"committed-terminal");
+        assert_eq!(channels.log, b"committed-terminal");
+        assert_eq!(channels.pending_effects.len(), 1);
+    })
+    .expect("fresh universe");
 }
 
 #[test]

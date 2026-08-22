@@ -1546,6 +1546,14 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         &counts,
         traced_node.as_ref(),
     );
+    // TeX82 §638 completes the optional `show_box` diagnostic before
+    // `hlist_out`/`vlist_out` visits the first whatsit. The dump was rendered
+    // under command admission above; publish its detached program now so a
+    // deferred write expanded by the nested artifact transaction cannot
+    // overtake it in the host-visible stream.
+    stores
+        .world_mut()
+        .publish_diagnostic_effects(std::mem::take(command.diagnostic_effects));
     let effect_start = stores.world().effect_records().len();
     let effect_cursor = std::cell::Cell::new(effect_start);
     let replay_diagnostics = std::cell::RefCell::new(Vec::new());
@@ -1627,11 +1635,17 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                 context: "expanded deferred write",
             })?
             .to_vec();
+        // TeX82 §1370 expands deferred write text on the live command
+        // stack. Temporary input/token storage is exhausted by the frozen
+        // `\endwrite` stopper, but semantic mutations such as an unfinished
+        // conditional remain live for §1335's final cleanup. Reclaim only
+        // unreachable attempt storage here; restoring an aggregate command
+        // snapshot would incorrectly erase those committed condition frames.
         command
             .state
             .rollback_transient(input_snapshot, stores)
             .map_err(|_| ExecError::MissingToken {
-                context: "deferred write rollback",
+                context: "deferred write attempt reclamation",
             })?;
         let observed_tokens = command.observations.is_some().then(|| {
             let context = stores

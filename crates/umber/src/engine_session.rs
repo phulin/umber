@@ -690,7 +690,25 @@ impl<'a, G> EngineSession<'a, G> {
         }
         if !self.started {
             self.started = true;
-            if self.loaded_job_framing {
+            if self.initex {
+                // tex.web §§61/241 print the INITEX process headline before
+                // `open_log_file`, whose one-shot job initialization refreshes
+                // the volatile clock cells before the first input line.
+                self.print_startup_headline();
+                let input = self
+                    .startup_input_name
+                    .as_deref()
+                    .expect("a started session has a root");
+                let invocation = self
+                    .startup_invocation_line
+                    .as_deref()
+                    .expect("a started session has a startup invocation");
+                self.control.begin_job_after_terminal_headline_for_input(
+                    self.stores,
+                    invocation,
+                    input,
+                );
+            } else if self.loaded_job_framing {
                 let input = self
                     .startup_input_name
                     .as_deref()
@@ -751,8 +769,13 @@ impl<'a, G> EngineSession<'a, G> {
             .startup_input_name
             .as_deref()
             .expect("a started session has a registered root");
-        self.control
-            .open_startup_input(self.stores, startup_input_name);
+        if self.initex || self.loaded_job_framing {
+            self.control
+                .open_startup_input_after_log(self.stores, startup_input_name);
+        } else {
+            self.control
+                .open_startup_input(self.stores, startup_input_name);
+        }
     }
 
     /// Observed variant of [`Self::advance_until_waiting`].
@@ -2083,6 +2106,47 @@ mod tests {
     }
 
     #[test]
+    fn retained_initex_refreshes_the_job_clock_before_the_first_command() {
+        let clock = tex_state::JobClock {
+            time: 13 * 60 + 36,
+            second: 7,
+            day: 9,
+            month: 7,
+            year: 2026,
+        };
+        crate::with_engine_world(World::memory_with_clock(clock), |stores| {
+            crate::prepare_run_stores(stores);
+            let mut session = EngineSession::prepared_initex(stores, CommandProfile::TEX82);
+            session
+                .register_authored_job("clock.tex", Arc::from(&b"\\end"[..]))
+                .expect("INITEX root registers");
+            session
+                .run(&mut WorldHost, &mut Vec::new())
+                .expect("bounded INITEX source completes");
+            drop(session);
+
+            let context = stores.command_context().expect("admit clock projection");
+            assert_eq!(
+                context.int_param(tex_state::env::banks::IntParam::TIME),
+                clock.time
+            );
+            assert_eq!(
+                context.int_param(tex_state::env::banks::IntParam::DAY),
+                clock.day
+            );
+            assert_eq!(
+                context.int_param(tex_state::env::banks::IntParam::MONTH),
+                clock.month
+            );
+            assert_eq!(
+                context.int_param(tex_state::env::banks::IntParam::YEAR),
+                clock.year
+            );
+        })
+        .expect("fresh engine-session test universe");
+    }
+
+    #[test]
     fn startup_input_opening_uses_terminal_only_selector_in_initex_and_loaded_sessions() {
         const SOURCE: &[u8] = br"\end";
         let format = tex82_format_image();
@@ -2112,10 +2176,21 @@ mod tests {
                     terminal, expected_terminal,
                     "TeX82 §§1332, 537 startup framing, initex={initex}"
                 );
-                assert_eq!(
-                    log, " )",
-                    "§537 opens before the transcript, but §1335 closes after it, initex={initex}"
-                );
+                if initex {
+                    assert!(
+                        log.starts_with("This is TeX, Version 3.141592653 (TeX Live 2026)"),
+                        "§536 opens the transcript with the engine banner: {log:?}"
+                    );
+                    assert!(
+                        log.ends_with("\n**./trip.tex\n(./trip.tex )"),
+                        "§§534, 537, 1335 preserve startup echo/open/close order: {log:?}"
+                    );
+                } else {
+                    assert_eq!(
+                        log, " )",
+                        "a framing-neutral loaded session retains its host-owned startup prefix"
+                    );
+                }
             });
         }
     }

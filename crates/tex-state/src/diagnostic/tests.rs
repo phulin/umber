@@ -54,6 +54,44 @@ fn tracing_online_selects_the_transcript_or_both_channels() {
 }
 
 #[test]
+fn eager_publication_materializes_log_only_and_term_only_batches_to_exact_sinks() {
+    with_test_universe(|universe| {
+        let mut effects = super::DiagnosticEffects::new();
+        effects.push(super::DetachedDiagnosticEffect {
+            selector: crate::print::Selector::LogOnly,
+            max_print_line: 79,
+            records_warning_history: false,
+            operations: vec![super::DiagnosticPrintOperation::Rendered(
+                "log-only\n".into(),
+            )],
+        });
+        effects.push(super::DetachedDiagnosticEffect {
+            selector: crate::print::Selector::TermOnly,
+            max_print_line: 79,
+            records_warning_history: false,
+            operations: vec![super::DiagnosticPrintOperation::Rendered(
+                "term-only\n".into(),
+            )],
+        });
+
+        universe.world_mut().publish_diagnostic_effects(effects);
+        universe
+            .publish_effect_prefix(universe.world().effect_pos())
+            .expect("eager diagnostic publication commits");
+
+        assert_eq!(
+            universe.world().memory_log_output(),
+            Some(&b"log-only\n"[..])
+        );
+        assert_eq!(
+            universe.world().memory_terminal_output(),
+            Some(&b"term-only\n"[..])
+        );
+        assert!(universe.world().effect_records().is_empty());
+    });
+}
+
+#[test]
 fn end_diagnostic_closes_the_line_and_optional_blank_line() {
     for (blank_line, expected) in [(false, "trace\n"), (true, "trace\n\n")] {
         with_test_universe(|universe| {

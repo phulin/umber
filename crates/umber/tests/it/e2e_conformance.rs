@@ -156,7 +156,11 @@ fn trip_construction_evidence_is_fresh_complete_and_canonical() {
         .expect("semantic stream has a header and events");
     assert_eq!(
         format!("{:x}", Sha256::digest(semantic_payload)),
-        "263c650cd04c70554d3284c6033472a003379d60a4c8f5575f536a1d995ddf95"
+        // Producer contract 15 initializes tex.web §241's job clock during
+        // the fresh INITEX construction episode. That canonical state
+        // mutation is part of the detached semantic stream and therefore of
+        // this whole-payload pin.
+        "953fe73c75581f20c25efe18457b4ccddaa609e95df4f121671cb8375451124a"
     );
     let event = |sequence: usize| &semantic_stream.events[sequence].semantic;
     assert!(matches!(
@@ -1586,6 +1590,12 @@ fn compare_trip_phase(
         &actual_geometry,
     )
     .expect("write geometry events");
+    fs::write(
+        artifact_root.join(format!("{phase}-terminal.txt")),
+        &run.terminal,
+    )
+    .expect("write terminal artifact");
+    fs::write(artifact_root.join(format!("{phase}.log")), &run.log).expect("write log artifact");
     let label = format!("{fixture_name}-{phase}");
     let (expected_terminal, actual_terminal) =
         phase_contract.text_channel(&expected_terminal, &run.terminal);
