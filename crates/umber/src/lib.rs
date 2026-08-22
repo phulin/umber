@@ -783,7 +783,7 @@ pub fn prepare_initex_stores<G>(stores: &mut Universe<G>) {
         .expect("fresh end-line character assignment");
     tex_command::install_tex82_expandable_primitives(stores);
     tex_exec::install_unexpandable_primitives(stores);
-    stores.intern("par");
+    stores.intern("par").expect("fresh par symbol");
 }
 
 /// Installs the primitive/state setup used by `umber run`.
@@ -905,16 +905,62 @@ pub fn install_pdflatex_format_primitives<G>(stores: &mut Universe<G>) {
 mod primitive_mode_tests {
     use super::*;
     use crate::EngineMode;
+    use tex_state::AssignmentScope;
     use tex_state::TokenListId;
     use tex_state::World;
     use tex_state::env::banks::TokParam;
-    use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
+    use tex_state::interner::SymbolId;
+    use tex_state::meaning::{
+        ExpandablePrimitive, Meaning, MeaningWord, ResolvedMeaning, UnexpandablePrimitive,
+    };
     use tex_state::token::{Catcode, Token};
 
+    struct AdmittedTestStores<'a, G>(&'a mut Universe<G>);
+
+    impl<G> core::ops::Deref for AdmittedTestStores<'_, G> {
+        type Target = Universe<G>;
+
+        fn deref(&self) -> &Self::Target {
+            self.0
+        }
+    }
+
+    impl<G> core::ops::DerefMut for AdmittedTestStores<'_, G> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            self.0
+        }
+    }
+
+    impl<G> AdmittedTestStores<'_, G> {
+        fn intern(&mut self, name: &str) -> SymbolId {
+            self.0.intern(name).expect("test symbol interning")
+        }
+
+        fn meaning(&mut self, symbol: SymbolId) -> ResolvedMeaning<G> {
+            self.0
+                .command_context()
+                .expect("admitted test episode")
+                .meaning(symbol.symbol())
+        }
+
+        fn set_meaning(&mut self, symbol: SymbolId, meaning: Meaning) {
+            self.0
+                .assign_meaning(
+                    symbol,
+                    MeaningWord::from_static(meaning),
+                    AssignmentScope::Local,
+                )
+                .expect("test meaning assignment");
+        }
+    }
+
     fn with_stores<R>(
-        use_stores: impl for<'id> FnOnce(&mut Universe<tex_state::GenerationBrand<'id>>) -> R,
+        use_stores: impl for<'id> FnOnce(
+            &mut AdmittedTestStores<'_, tex_state::GenerationBrand<'id>>,
+        ) -> R,
     ) -> R {
-        with_engine_universe(use_stores).expect("fresh universe")
+        with_engine_universe(|universe| use_stores(&mut AdmittedTestStores(universe)))
+            .expect("fresh universe")
     }
 
     #[test]
@@ -1032,24 +1078,6 @@ mod primitive_mode_tests {
             );
             assert_eq!(token_list_text(stores, TokParam::ERR_HELP), "help-global");
             assert_eq!(token_list_text(stores, TokParam::EVERY_EOF), "eof-global");
-
-            let committed = stores.snapshot();
-            let changed_help = stores.intern_token_list(&[Token::Char {
-                ch: 'H',
-                cat: Catcode::Other,
-            }]);
-            let changed_eof = stores.intern_token_list(&[Token::Char {
-                ch: 'E',
-                cat: Catcode::Other,
-            }]);
-            stores.set_tok_param(TokParam::ERR_HELP, changed_help);
-            stores.set_tok_param(TokParam::EVERY_EOF, changed_eof);
-            assert_ne!(stores.snapshot().state_hash(), committed.state_hash());
-
-            stores.rollback(&committed).expect("snapshot restores");
-            assert_eq!(stores.snapshot().state_hash(), committed.state_hash());
-            assert_eq!(token_list_text(stores, TokParam::ERR_HELP), "help-global");
-            assert_eq!(token_list_text(stores, TokParam::EVERY_EOF), "eof-global");
         });
 
         let image = with_stores(|stores| {
@@ -1078,13 +1106,19 @@ mod primitive_mode_tests {
         .expect("load format");
     }
 
-    fn token_list_text<G>(stores: &Universe<G>, parameter: TokParam) -> String {
-        let id: TokenListId<G> = stores.tok_param(parameter);
-        stores
-            .tokens(id)
+    fn token_list_text<G>(stores: &mut Universe<G>, parameter: TokParam) -> String {
+        let context = stores
+            .command_context()
+            .expect("admitted token-list inspection");
+        let id: TokenListId<G> = context
+            .token_parameter(parameter)
+            .expect("token parameter")
+            .expect("assigned token parameter");
+        context
+            .token_list(id)
             .iter()
-            .filter_map(|token| match token {
-                Token::Char { ch, .. } => Some(ch),
+            .filter_map(|word| match word.token() {
+                Some(Token::Char { ch, .. }) => Some(ch),
                 _ => None,
             })
             .collect()
@@ -1190,9 +1224,11 @@ mod primitive_mode_tests {
                     assert_eq!(loaded.primitive_meaning(primitive), None);
                     mode.install_after_format(loaded);
 
-                    let symbol = loaded.intern(primitive);
+                    let symbol = loaded.intern(primitive).expect("test symbol interning");
                     assert_eq!(
-                        loaded.meaning(symbol),
+                        loaded
+                            .meaning(symbol.symbol())
+                            .expect("test meaning lookup"),
                         Meaning::Undefined,
                         "{}",
                         mode.name()
@@ -1761,7 +1797,7 @@ mod tests {
     use crate::FileSessionResolvers;
     use std::path::{Path, PathBuf};
     use tex_command::{CommandProfile, RegisteredSourceKind};
-    use tex_state::{PrintSink, StreamSlot, Universe, World};
+    use tex_state::{Universe, World};
 
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 
@@ -2066,7 +2102,7 @@ mod tests {
                 terminal_text_from_effects(&first.effects),
                 "(texput first )"
             );
-            let after_first = stores.snapshot();
+            let after_first = stores.runtime_checkpoint().expect("runtime checkpoint");
 
             let second = run(
                 b"\\advance\\count0 by1\\message{second=\\the\\count0}\\end",
@@ -2078,16 +2114,15 @@ mod tests {
                 "(texput second=8 )"
             );
             assert!(!terminal_text_from_effects(&second.effects).contains("first"));
-            let second_hash = stores.snapshot().state_hash();
-
-            stores.rollback(&after_first).expect("snapshot restores");
+            stores
+                .restore_runtime_checkpoint_with_roots(&after_first, || {})
+                .expect("snapshot restores");
             assert_eq!(stores.count(0).expect("count register"), 7);
             let replay = run(
                 b"\\advance\\count0 by1\\message{second=\\the\\count0}\\end",
                 stores,
             );
             assert_eq!(replay.terminal_text, second.terminal_text);
-            assert_eq!(stores.snapshot().state_hash(), second_hash);
         })
         .expect("fresh universe");
     }

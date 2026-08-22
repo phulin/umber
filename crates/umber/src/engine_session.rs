@@ -1209,134 +1209,152 @@ mod tests {
         let source = Arc::<[u8]>::from(
             &br"\count0=0\count1=0\count2=0\def\e#1{\advance\count0by#1\global\advance\count1by#1\ifnum#1<5\global\advance\count2by1\else\global\advance\count2by2\fi A\kern#1sp}\shipout\hbox{\e{1}\e{8}}\end"[..],
         );
-        let mut stores = Universe::new_with_plain_catcodes();
-        let mut session = EngineSession::tex82_initex(&mut stores);
-        let font = session.stores.intern_font(packed_episode_font());
-        session.stores.set_current_font_global(font);
-        session
-            .register_authored_job("packed.tex", source)
-            .expect("root registers");
-        let mut checkpoints = Vec::new();
-        let result = session
-            .run(&mut WorldHost, &mut checkpoints)
-            .expect("retained batch job completes");
+        with_fresh_stores(|stores| {
+            let mut session = EngineSession::tex82_initex(stores);
+            let mut context = session.stores.command_context().expect("admit font setup");
+            let font = context.intern_font(packed_episode_font());
+            context
+                .assign_current_font(font, tex_state::AssignmentScope::Global)
+                .expect("select packed-episode font");
+            drop(context);
+            session
+                .register_authored_job("packed.tex", source)
+                .expect("root registers");
+            let mut checkpoints = Vec::new();
+            let result = session
+                .run(&mut WorldHost, &mut checkpoints)
+                .expect("retained batch job completes");
 
-        assert_eq!(result.artifacts.len(), 1);
-        assert_eq!(result.dvi_pages.len(), 1);
-        assert_eq!(
-            checkpoints
-                .iter()
-                .map(tex_exec::EngineCheckpoint::boundary)
-                .collect::<Vec<_>>(),
-            [EngineBoundary::JobStart, EngineBoundary::ShipoutComplete]
-        );
-        let telemetry = session.episode_telemetry();
-        assert_eq!(
-            telemetry.semantic_barriers(tex_exec::SemanticEpisodeBarrier::Output),
-            1
-        );
-        assert_eq!(telemetry.terminals(), 1);
+            assert_eq!(result.artifacts.len(), 1);
+            assert_eq!(result.dvi_pages.len(), 1);
+            assert_eq!(
+                checkpoints
+                    .iter()
+                    .map(tex_exec::EngineCheckpoint::boundary)
+                    .collect::<Vec<_>>(),
+                [EngineBoundary::JobStart, EngineBoundary::ShipoutComplete]
+            );
+            let telemetry = session.episode_telemetry();
+            assert_eq!(
+                telemetry.semantic_barriers(tex_exec::SemanticEpisodeBarrier::Output),
+                1
+            );
+            assert_eq!(telemetry.terminals(), 1);
+        });
     }
 
-    fn startup_session(interaction: tex_state::InteractionMode) -> Universe {
-        let mut stores = Universe::new_with_plain_catcodes();
-        stores.set_interaction_mode(interaction);
-        stores
-            .world_mut()
-            .set_memory_file("paper.tex", b"\\end".to_vec())
-            .expect("startup fixture registers");
-        stores
+    fn with_fresh_stores<R>(
+        use_stores: impl for<'id> FnOnce(&mut Universe<tex_state::GenerationBrand<'id>>) -> R,
+    ) -> R {
+        crate::with_engine_universe(use_stores).expect("fresh engine-session test universe")
+    }
+
+    fn with_startup_session<R>(
+        interaction: tex_state::InteractionMode,
+        use_stores: impl for<'id> FnOnce(&mut Universe<tex_state::GenerationBrand<'id>>) -> R,
+    ) -> R {
+        with_fresh_stores(|stores| {
+            stores.set_interaction_mode(interaction);
+            stores
+                .world_mut()
+                .set_memory_file("paper.tex", b"\\end".to_vec())
+                .expect("startup fixture registers");
+            use_stores(stores)
+        })
     }
 
     #[test]
     fn startup_acquisition_orders_banner_log_echo_and_root_open() {
-        let mut stores = startup_session(tex_state::InteractionMode::ErrorStop);
-        let mut session = EngineSession::tex82_initex(&mut stores);
-        let mut lines = StartupLines::new(&["paper.tex"]);
-        session
-            .acquire_startup_root(&mut lines, &mut WorldHost)
-            .expect("startup root opens");
-        session
-            .run(&mut WorldHost, &mut Vec::new())
-            .expect("startup job completes");
+        with_startup_session(tex_state::InteractionMode::ErrorStop, |stores| {
+            let mut session = EngineSession::tex82_initex(stores);
+            let mut lines = StartupLines::new(&["paper.tex"]);
+            session
+                .acquire_startup_root(&mut lines, &mut WorldHost)
+                .expect("startup root opens");
+            session
+                .run(&mut WorldHost, &mut Vec::new())
+                .expect("startup job completes");
 
-        assert_eq!(lines.prompts, ["**"]);
-        assert_eq!(session.control.capabilities_mut().job_name(), "paper");
-        let (terminal, log) = transcript_channels(session.stores());
-        assert!(terminal.starts_with("This is TeX"));
-        assert!(
-            terminal.contains("(paper.tex"),
-            "terminal={terminal:?} log={log:?}"
-        );
-        assert!(
-            log.find("This is TeX").expect("log banner")
-                < log.find("**paper.tex").expect("startup echo")
-        );
-        let echo = log.find("**paper.tex");
-        let opening = log.find("(paper.tex");
-        assert!(
-            echo.zip(opening)
-                .is_some_and(|(echo, opening)| echo < opening),
-            "terminal={terminal:?} log={log:?}"
-        );
+            assert_eq!(lines.prompts, ["**"]);
+            assert_eq!(session.control.capabilities_mut().job_name(), "paper");
+            let (terminal, log) = transcript_channels(session.stores());
+            assert!(terminal.starts_with("This is TeX"));
+            assert!(
+                terminal.contains("(paper.tex"),
+                "terminal={terminal:?} log={log:?}"
+            );
+            assert!(
+                log.find("This is TeX").expect("log banner")
+                    < log.find("**paper.tex").expect("startup echo")
+            );
+            let echo = log.find("**paper.tex");
+            let opening = log.find("(paper.tex");
+            assert!(
+                echo.zip(opening)
+                    .is_some_and(|(echo, opening)| echo < opening),
+                "terminal={terminal:?} log={log:?}"
+            );
+        });
     }
 
     #[test]
     fn expansion_stats_project_only_committed_expanded_deliveries_with_provenance() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        let mut session = EngineSession::tex82_initex(&mut stores);
-        session
-            .register_authored_job("stats.tex", b"\\number42\\end".to_vec().into())
-            .expect("stats root registers");
-        let (_, stats) = session
-            .run_with_expansion_stats(&mut WorldHost, &mut Vec::new())
-            .expect("stats fixture completes");
-        assert_eq!(
-            stats,
-            ExpansionStats {
-                token_frame_steps: 10,
-                provenance_resolutions: 9,
-                character_tokens: 5,
-                meaning_lookups: 10,
-                literal_spans: 2,
-                literal_tokens: 5,
-                source_text_span_attempts: 10,
-                source_text_spans: 1,
-                source_text_tokens: 3,
-                ..ExpansionStats::default()
-            }
-        );
-        assert!(stats.character_fraction().is_finite());
-        assert!(stats.mean_source_text_run().is_finite());
+        with_fresh_stores(|stores| {
+            let mut session = EngineSession::tex82_initex(stores);
+            session
+                .register_authored_job("stats.tex", b"\\number42\\end".to_vec().into())
+                .expect("stats root registers");
+            let (_, stats) = session
+                .run_with_expansion_stats(&mut WorldHost, &mut Vec::new())
+                .expect("stats fixture completes");
+            assert_eq!(
+                stats,
+                ExpansionStats {
+                    token_frame_steps: 10,
+                    provenance_resolutions: 9,
+                    character_tokens: 5,
+                    meaning_lookups: 10,
+                    literal_spans: 2,
+                    literal_tokens: 5,
+                    source_text_span_attempts: 10,
+                    source_text_spans: 1,
+                    source_text_tokens: 3,
+                    ..ExpansionStats::default()
+                }
+            );
+            assert!(stats.character_fraction().is_finite());
+            assert!(stats.mean_source_text_run().is_finite());
+        });
     }
 
     #[test]
     fn startup_acquisition_retries_once_and_applies_default_tex_extension() {
-        let mut stores = startup_session(tex_state::InteractionMode::Scroll);
-        let mut session = EngineSession::tex82_initex(&mut stores);
-        let mut lines = StartupLines::new(&["missing", "paper"]);
-        session
-            .acquire_startup_root(&mut lines, &mut WorldHost)
-            .expect("replacement root opens");
+        with_startup_session(tex_state::InteractionMode::Scroll, |stores| {
+            let mut session = EngineSession::tex82_initex(stores);
+            let mut lines = StartupLines::new(&["missing", "paper"]);
+            session
+                .acquire_startup_root(&mut lines, &mut WorldHost)
+                .expect("replacement root opens");
 
-        assert_eq!(lines.prompts, ["**", ""]);
-        assert_eq!(session.control.capabilities_mut().job_name(), "paper");
-        let (terminal, log) = transcript_channels(session.stores());
-        assert_eq!(
-            terminal.matches("I can't find file `missing.tex'").count(),
-            1
-        );
-        assert_eq!(
-            terminal
-                .matches("Please type another input file name")
-                .count(),
-            1
-        );
-        // §534 echoes the replacement terminal buffer; §529's default `.tex`
-        // extension belongs to the selected filename, not that buffer.
-        assert!(log.contains("**paper\n"));
-        assert!(!log.contains("**paper.tex"));
-        assert!(!log.contains("missing"));
+            assert_eq!(lines.prompts, ["**", ""]);
+            assert_eq!(session.control.capabilities_mut().job_name(), "paper");
+            let (terminal, log) = transcript_channels(session.stores());
+            assert_eq!(
+                terminal.matches("I can't find file `missing.tex'").count(),
+                1
+            );
+            assert_eq!(
+                terminal
+                    .matches("Please type another input file name")
+                    .count(),
+                1
+            );
+            // §534 echoes the replacement terminal buffer; §529's default `.tex`
+            // extension belongs to the selected filename, not that buffer.
+            assert!(log.contains("**paper\n"));
+            assert!(!log.contains("**paper.tex"));
+            assert!(!log.contains("missing"));
+        });
     }
 
     #[test]
@@ -1345,23 +1363,24 @@ mod tests {
             tex_state::InteractionMode::Nonstop,
             tex_state::InteractionMode::Batch,
         ] {
-            let mut stores = startup_session(interaction);
-            let mut session = EngineSession::tex82_initex(&mut stores);
-            let mut lines = StartupLines::new(&["missing", "paper"]);
-            let error = session
-                .acquire_startup_root(&mut lines, &mut WorldHost)
-                .expect_err("missing startup root is fatal");
+            with_startup_session(interaction, |stores| {
+                let mut session = EngineSession::tex82_initex(stores);
+                let mut lines = StartupLines::new(&["missing", "paper"]);
+                let error = session
+                    .acquire_startup_root(&mut lines, &mut WorldHost)
+                    .expect_err("missing startup root is fatal");
 
-            assert!(matches!(
-                error,
-                SessionError::StartupFileUnavailable { ref name }
-                    if name == "missing.tex"
-            ));
-            assert_eq!(lines.prompts, ["**"]);
-            assert_eq!(
-                session.stores().world().error_channel().history(),
-                tex_state::print::ErrorHistory::FatalErrorStop
-            );
+                assert!(matches!(
+                    error,
+                    SessionError::StartupFileUnavailable { ref name }
+                        if name == "missing.tex"
+                ));
+                assert_eq!(lines.prompts, ["**"]);
+                assert_eq!(
+                    session.stores().world().error_channel().history(),
+                    tex_state::print::ErrorHistory::FatalErrorStop
+                );
+            });
         }
     }
 
@@ -1416,14 +1435,61 @@ mod tests {
         }
     }
 
-    fn prepared_session(source: &'static [u8]) -> (Universe, Arc<[u8]>) {
-        let mut stores = Universe::new_with_plain_catcodes();
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_exec::install_unexpandable_primitives(&mut stores);
-        (stores, Arc::from(source))
+    fn with_prepared_session<R>(
+        source: &'static [u8],
+        use_session: impl for<'id> FnOnce(
+            &mut Universe<tex_state::GenerationBrand<'id>>,
+            Arc<[u8]>,
+        ) -> R,
+    ) -> R {
+        with_fresh_stores(|stores| {
+            tex_command::install_tex82_expandable_primitives(stores);
+            tex_exec::install_unexpandable_primitives(stores);
+            use_session(stores, Arc::from(source))
+        })
     }
 
-    fn transcript_channels(stores: &Universe) -> (String, String) {
+    fn tex82_format_image() -> tex_state::DetachedFormatImage {
+        with_fresh_stores(|stores| {
+            tex_command::install_tex82_expandable_primitives(stores);
+            tex_exec::install_unexpandable_primitives(stores);
+            let mut session = EngineSession::prepared_initex(stores, CommandProfile::TEX82);
+            session
+                .register_authored_job("format.tex", Arc::from(&b"\\dump"[..]))
+                .expect("format root registers");
+            session
+                .run(&mut WorldHost, &mut Vec::new())
+                .expect("test format completes")
+                .format_dump
+                .expect("test format dump")
+                .image
+        })
+    }
+
+    fn with_fresh_or_loaded<R>(
+        loaded: bool,
+        format: &tex_state::DetachedFormatImage,
+        use_stores: impl for<'id> FnOnce(&mut Universe<tex_state::GenerationBrand<'id>>) -> R,
+    ) -> R {
+        let mut use_stores = Some(use_stores);
+        if loaded {
+            tex_state::with_materialized_format(
+                crate::engine_interner_budget(),
+                World::memory(),
+                format,
+                |stores| use_stores.take().expect("single format callback")(stores),
+            )
+            .expect("format restores")
+        } else {
+            with_fresh_stores(|stores| {
+                tex_command::install_tex82_expandable_primitives(stores);
+                tex_exec::install_unexpandable_primitives(stores);
+                use_stores.take().expect("single fresh callback")(stores)
+            })
+        }
+    }
+
+    fn transcript_channels<G>(stores: &Universe<G>) -> (String, String) {
         let mut terminal = String::new();
         let mut log = String::new();
         for effect in stores.world().effect_records() {
@@ -1443,65 +1509,63 @@ mod tests {
         (terminal, log)
     }
 
+    fn hyphen_positions<G>(stores: &mut Universe<G>, word: &str) -> Vec<usize> {
+        stores
+            .command_context()
+            .expect("admit hyphenation test context")
+            .hyphen_positions_for_language(0, word, 2, 3)
+    }
+
     #[test]
     fn retained_observer_captures_fresh_and_format_loaded_production_runs() {
         let source: Arc<[u8]> = Arc::from(&b"\\message{observed}\\end"[..]);
-        let mut base = Universe::new_with_plain_catcodes();
-        tex_command::install_tex82_expandable_primitives(&mut base);
-        tex_exec::install_unexpandable_primitives(&mut base);
-        let format = base.dump_format().expect("base format dumps");
+        let format = tex82_format_image();
 
         for loaded in [false, true] {
-            let mut stores = if loaded {
-                Universe::from_format(World::memory(), &format).expect("format restores")
-            } else {
-                let mut stores = Universe::new_with_plain_catcodes();
-                tex_command::install_tex82_expandable_primitives(&mut stores);
-                tex_exec::install_unexpandable_primitives(&mut stores);
-                stores
-            };
-            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-            session
-                .register_authored_job("observer", Arc::clone(&source))
-                .expect("root registers");
-            let mut observations = ObservationRecorder::default();
-            let run = session
-                .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
-                .expect("observed run completes");
+            with_fresh_or_loaded(loaded, &format, |stores| {
+                let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+                session
+                    .register_authored_job("observer", Arc::clone(&source))
+                    .expect("root registers");
+                let mut observations = ObservationRecorder::default();
+                let run = session
+                    .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
+                    .expect("observed run completes");
 
-            assert_eq!(run.terminal_text, "(observer observed )");
-            assert!(
-                observations
-                    .0
-                    .iter()
-                    .any(|event| matches!(event, CommandObservation::Command(_))),
-                "loaded={loaded}: command delivery is observed"
-            );
-            assert!(
-                observations
-                    .0
-                    .iter()
-                    .any(|event| matches!(event, CommandObservation::Effect(_))),
-                "loaded={loaded}: committed effects are observed"
-            );
-            assert!(matches!(
-                observations.0.last(),
-                Some(CommandObservation::Effect(effect))
-                    if effect.kind == tex_command::ObservationEffectKind::Terminate
-            ));
-            assert_eq!(
-                observations
-                    .0
-                    .iter()
-                    .filter(|event| matches!(
-                        event,
-                        CommandObservation::Effect(effect)
-                            if effect.kind == tex_command::ObservationEffectKind::Terminate
-                    ))
-                    .count(),
-                1,
-                "loaded={loaded}: the retained session owns one terminal observation"
-            );
+                assert_eq!(run.terminal_text, "(observer observed )");
+                assert!(
+                    observations
+                        .0
+                        .iter()
+                        .any(|event| matches!(event, CommandObservation::Command(_))),
+                    "loaded={loaded}: command delivery is observed"
+                );
+                assert!(
+                    observations
+                        .0
+                        .iter()
+                        .any(|event| matches!(event, CommandObservation::Effect(_))),
+                    "loaded={loaded}: committed effects are observed"
+                );
+                assert!(matches!(
+                    observations.0.last(),
+                    Some(CommandObservation::Effect(effect))
+                        if effect.kind == tex_command::ObservationEffectKind::Terminate
+                ));
+                assert_eq!(
+                    observations
+                        .0
+                        .iter()
+                        .filter(|event| matches!(
+                            event,
+                            CommandObservation::Effect(effect)
+                                if effect.kind == tex_command::ObservationEffectKind::Terminate
+                        ))
+                        .count(),
+                    1,
+                    "loaded={loaded}: the retained session owns one terminal observation"
+                );
+            });
         }
     }
 
@@ -1524,39 +1588,40 @@ mod tests {
             source.push_str(&format!("\\undefined{index}"));
         }
         source.push_str("\\end");
-        let (mut stores, _) = prepared_session(b"");
-        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session
-            .set_fuel_limit(100_000)
-            .expect("bounded fatal microfixture fuel");
-        session
-            .register_authored_job("undefined.tex", Arc::from(source.into_bytes()))
-            .expect("root registers");
+        with_prepared_session(b"", |stores, _| {
+            stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session
+                .set_fuel_limit(100_000)
+                .expect("bounded fatal microfixture fuel");
+            session
+                .register_authored_job("undefined.tex", Arc::from(source.into_bytes()))
+                .expect("root registers");
 
-        let run = session
-            .run_with_observer(
-                &mut WorldHost,
-                &mut Vec::new(),
-                &mut ObservationRecorder::default(),
-            )
-            .expect("TeX fatal stop reaches engine termination");
+            let run = session
+                .run_with_observer(
+                    &mut WorldHost,
+                    &mut Vec::new(),
+                    &mut ObservationRecorder::default(),
+                )
+                .expect("TeX fatal stop reaches engine termination");
 
-        assert_eq!(run.status, TexRunStatus::Fatal);
+            assert_eq!(run.status, TexRunStatus::Fatal);
 
-        assert_eq!(
-            session.control.fatal_error(),
-            Some(tex_command::FatalError::TooManyErrors)
-        );
-        assert_eq!(
-            session.stores().world().error_channel().error_count(),
-            100,
-            "§82 stops at its hundredth error, not later"
-        );
-        assert_eq!(
-            session.stores().world().error_channel().history(),
-            tex_state::print::ErrorHistory::FatalErrorStop
-        );
+            assert_eq!(
+                session.control.fatal_error(),
+                Some(tex_command::FatalError::TooManyErrors)
+            );
+            assert_eq!(
+                session.stores().world().error_channel().error_count(),
+                100,
+                "§82 stops at its hundredth error, not later"
+            );
+            assert_eq!(
+                session.stores().world().error_channel().history(),
+                tex_state::print::ErrorHistory::FatalErrorStop
+            );
+        });
     }
 
     #[test]
@@ -1566,160 +1631,164 @@ mod tests {
             source.push_str("\\insert255{}");
         }
         source.push_str("}\\end");
-        let (mut stores, _) = prepared_session(b"");
-        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session
-            .set_fuel_limit(100_000)
-            .expect("bounded fatal microfixture fuel");
-        session
-            .register_authored_job("fatal.tex", Arc::from(source.into_bytes()))
-            .expect("root registers");
-        let mut observations = ObservationRecorder::default();
+        with_prepared_session(b"", |stores, _| {
+            stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session
+                .set_fuel_limit(100_000)
+                .expect("bounded fatal microfixture fuel");
+            session
+                .register_authored_job("fatal.tex", Arc::from(source.into_bytes()))
+                .expect("root registers");
+            let mut observations = ObservationRecorder::default();
 
-        session
-            .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
-            .expect("TeX fatal stop reaches engine termination");
+            session
+                .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
+                .expect("TeX fatal stop reaches engine termination");
 
-        assert_eq!(
-            session.control.fatal_error(),
-            Some(tex_command::FatalError::TooManyErrors)
-        );
-        assert_eq!(
-            session.stores().world().error_channel().history(),
-            tex_state::print::ErrorHistory::FatalErrorStop
-        );
-        assert!(matches!(
-            observations.0.as_slice(),
-            [.., CommandObservation::Diagnostic(_), CommandObservation::Effect(effect)]
-                if effect.kind == tex_command::ObservationEffectKind::Terminate
-        ));
-        assert_eq!(
-            observations
-                .0
-                .iter()
-                .filter(|event| matches!(
-                    event,
-                    CommandObservation::Effect(effect)
-                        if effect.kind == tex_command::ObservationEffectKind::Terminate
-                ))
-                .count(),
-            1
-        );
+            assert_eq!(
+                session.control.fatal_error(),
+                Some(tex_command::FatalError::TooManyErrors)
+            );
+            assert_eq!(
+                session.stores().world().error_channel().history(),
+                tex_state::print::ErrorHistory::FatalErrorStop
+            );
+            assert!(matches!(
+                observations.0.as_slice(),
+                [.., CommandObservation::Diagnostic(_), CommandObservation::Effect(effect)]
+                    if effect.kind == tex_command::ObservationEffectKind::Terminate
+            ));
+            assert_eq!(
+                observations
+                    .0
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        CommandObservation::Effect(effect)
+                            if effect.kind == tex_command::ObservationEffectKind::Terminate
+                    ))
+                    .count(),
+                1
+            );
+        });
     }
 
     #[test]
     fn recovered_error_completes_with_unsuccessful_status_after_termination() {
-        let (mut stores, root) = prepared_session(b"\\undefined\\end");
-        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session
-            .register_authored_job("recovered.tex", root)
-            .expect("root registers");
-        let mut observations = ObservationRecorder::default();
+        with_prepared_session(b"\\undefined\\end", |stores, root| {
+            stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session
+                .register_authored_job("recovered.tex", root)
+                .expect("root registers");
+            let mut observations = ObservationRecorder::default();
 
-        let run = session
-            .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
-            .expect("recoverable diagnostic does not abort execution");
+            let run = session
+                .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
+                .expect("recoverable diagnostic does not abort execution");
 
-        assert_eq!(run.status, TexRunStatus::CompletedWithErrors);
-        assert!(run.fatal.is_none());
-        assert!(run.terminal_text.contains("Undefined control sequence"));
-        assert!(matches!(
-            observations.0.last(),
-            Some(CommandObservation::Effect(effect))
-                if effect.kind == tex_command::ObservationEffectKind::Terminate
-        ));
+            assert_eq!(run.status, TexRunStatus::CompletedWithErrors);
+            assert!(run.fatal.is_none());
+            assert!(run.terminal_text.contains("Undefined control sequence"));
+            assert!(matches!(
+                observations.0.last(),
+                Some(CommandObservation::Effect(effect))
+                    if effect.kind == tex_command::ObservationEffectKind::Terminate
+            ));
+        });
     }
 
     #[test]
     fn source_exhaustion_terminates_once_after_stop_under_finite_fuel() {
-        let (mut stores, root) = prepared_session(b"");
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session.set_fuel_limit(16).expect("finite fuel");
-        session
-            .register_authored_fragment("empty.tex", root)
-            .expect("root registers");
-        let mut observations = ObservationRecorder::default();
-
-        assert!(matches!(
+        with_prepared_session(b"", |stores, root| {
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session.set_fuel_limit(16).expect("finite fuel");
             session
-                .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
-                .expect("empty source completes"),
-            SessionState::Complete(_)
-        ));
-        let stop = observations
-            .0
-            .iter()
-            .position(|observation| {
-                matches!(
-                    observation,
-                    CommandObservation::Input(input)
-                        if input.transition == tex_command::InputTransition::Stop
-                            && input.reason == tex_command::InputReason::Source
-                )
-            })
-            .expect("terminal source stop");
-        let terminations = observations
-            .0
-            .iter()
-            .enumerate()
-            .filter(|(_, observation)| {
-                matches!(
-                    observation,
-                    CommandObservation::Effect(effect)
-                        if effect.kind == tex_command::ObservationEffectKind::Terminate
-                )
-            })
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        assert_eq!(terminations, vec![stop + 1]);
-        let burned = session.fuel_burned();
-        assert!(burned <= session.fuel_limit());
+                .register_authored_fragment("empty.tex", root)
+                .expect("root registers");
+            let mut observations = ObservationRecorder::default();
 
-        assert!(matches!(
-            session
-                .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
-                .expect("completed session remains complete"),
-            SessionState::Complete(_)
-        ));
-        assert_eq!(session.fuel_burned(), burned);
-        assert_eq!(
-            observations
+            assert!(matches!(
+                session
+                    .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+                    .expect("empty source completes"),
+                SessionState::Complete(_)
+            ));
+            let stop = observations
                 .0
                 .iter()
-                .filter(|observation| matches!(
-                    observation,
-                    CommandObservation::Effect(effect)
-                        if effect.kind == tex_command::ObservationEffectKind::Terminate
-                ))
-                .count(),
-            1
-        );
+                .position(|observation| {
+                    matches!(
+                        observation,
+                        CommandObservation::Input(input)
+                            if input.transition == tex_command::InputTransition::Stop
+                                && input.reason == tex_command::InputReason::Source
+                    )
+                })
+                .expect("terminal source stop");
+            let terminations = observations
+                .0
+                .iter()
+                .enumerate()
+                .filter(|(_, observation)| {
+                    matches!(
+                        observation,
+                        CommandObservation::Effect(effect)
+                            if effect.kind == tex_command::ObservationEffectKind::Terminate
+                    )
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            assert_eq!(terminations, vec![stop + 1]);
+            let burned = session.fuel_burned();
+            assert!(burned <= session.fuel_limit());
+
+            assert!(matches!(
+                session
+                    .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+                    .expect("completed session remains complete"),
+                SessionState::Complete(_)
+            ));
+            assert_eq!(session.fuel_burned(), burned);
+            assert_eq!(
+                observations
+                    .0
+                    .iter()
+                    .filter(|observation| matches!(
+                        observation,
+                        CommandObservation::Effect(effect)
+                            if effect.kind == tex_command::ObservationEffectKind::Terminate
+                    ))
+                    .count(),
+                1
+            );
+        });
     }
 
     #[test]
     fn explicit_fragment_eof_completes_without_terminal_input_or_final_cleanup() {
-        let (mut stores, root) = prepared_session(b"\\global\\count0=7");
-        stores
-            .world_mut()
-            .push_memory_terminal_line("\\global\\count0=99\\end")
-            .expect("terminal line is staged");
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session
-            .register_authored_fragment("fragment", root)
-            .expect("fragment registers");
+        with_prepared_session(b"\\global\\count0=7", |stores, root| {
+            stores
+                .world_mut()
+                .push_memory_terminal_line("\\global\\count0=99\\end")
+                .expect("terminal line is staged");
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session
+                .register_authored_fragment("fragment", root)
+                .expect("fragment registers");
 
-        let run = session
-            .run(&mut WorldHost, &mut Vec::new())
-            .expect("fragment EOF completes");
+            let run = session
+                .run(&mut WorldHost, &mut Vec::new())
+                .expect("fragment EOF completes");
 
-        assert_eq!(session.stores().count(0), 7);
-        assert_eq!(
-            session.stores().world().stream_bufs().terminal_input_next(),
-            0
-        );
-        assert!(run.fatal.is_none());
+            assert_eq!(session.stores().count(0), Ok(7));
+            assert_eq!(
+                session.stores().world().stream_bufs().terminal_input_next(),
+                0
+            );
+            assert!(run.fatal.is_none());
+        });
     }
 
     #[test]
@@ -1730,44 +1799,45 @@ mod tests {
             tex_state::InteractionMode::Scroll,
             tex_state::InteractionMode::ErrorStop,
         ] {
-            let (mut stores, root) = prepared_session(b"");
-            stores.set_interaction_mode(interaction);
-            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-            session.set_fuel_limit(32).expect("finite EOF fuel");
-            session
-                .register_authored_job("missing-end.tex", root)
-                .expect("job registers");
-
-            let run = session
-                .run(&mut WorldHost, &mut Vec::new())
-                .expect("fatal EOF reaches terminal completion");
-            let help = if matches!(
-                interaction,
-                tex_state::InteractionMode::Scroll | tex_state::InteractionMode::ErrorStop
-            ) {
-                "End of file on the terminal!"
-            } else {
-                "*** (job aborted, no legal \\end found)"
-            };
-            assert_eq!(
-                run.fatal,
-                Some(tex_command::FatalError::emergency_stop(help)),
-                "interaction {interaction:?}"
-            );
-            assert_eq!(run.status, TexRunStatus::Fatal);
-            assert_eq!(
-                session.stores().world().error_channel().history(),
-                tex_state::print::ErrorHistory::FatalErrorStop
-            );
-            let burned = session.fuel_burned();
-            assert!(burned <= session.fuel_limit());
-            assert!(matches!(
+            with_prepared_session(b"", |stores, root| {
+                stores.set_interaction_mode(interaction);
+                let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+                session.set_fuel_limit(32).expect("finite EOF fuel");
                 session
-                    .advance_until_waiting(&mut Vec::new())
-                    .expect("fatal completion stays latched"),
-                SessionState::Complete(_)
-            ));
-            assert_eq!(session.fuel_burned(), burned);
+                    .register_authored_job("missing-end.tex", root)
+                    .expect("job registers");
+
+                let run = session
+                    .run(&mut WorldHost, &mut Vec::new())
+                    .expect("fatal EOF reaches terminal completion");
+                let help = if matches!(
+                    interaction,
+                    tex_state::InteractionMode::Scroll | tex_state::InteractionMode::ErrorStop
+                ) {
+                    "End of file on the terminal!"
+                } else {
+                    "*** (job aborted, no legal \\end found)"
+                };
+                assert_eq!(
+                    run.fatal,
+                    Some(tex_command::FatalError::emergency_stop(help)),
+                    "interaction {interaction:?}"
+                );
+                assert_eq!(run.status, TexRunStatus::Fatal);
+                assert_eq!(
+                    session.stores().world().error_channel().history(),
+                    tex_state::print::ErrorHistory::FatalErrorStop
+                );
+                let burned = session.fuel_burned();
+                assert!(burned <= session.fuel_limit());
+                assert!(matches!(
+                    session
+                        .advance_until_waiting(&mut Vec::new())
+                        .expect("fatal completion stays latched"),
+                    SessionState::Complete(_)
+                ));
+                assert_eq!(session.fuel_burned(), burned);
+            });
         }
     }
 
@@ -1777,271 +1847,269 @@ mod tests {
             tex_state::InteractionMode::Scroll,
             tex_state::InteractionMode::ErrorStop,
         ] {
-            let (mut stores, root) = prepared_session(b"");
-            stores.set_interaction_mode(interaction);
-            stores
-                .world_mut()
-                .push_memory_terminal_line("")
-                .expect("empty terminal line is staged");
-            stores
-                .world_mut()
-                .push_memory_terminal_line("\\global\\count0=42\\end")
-                .expect("terminating terminal line is staged");
-            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-            session.set_fuel_limit(64).expect("finite terminal fuel");
-            session
-                .register_authored_job("terminal-end.tex", root)
-                .expect("job registers");
-            let mut observations = ObservationRecorder::default();
+            with_prepared_session(b"", |stores, root| {
+                stores.set_interaction_mode(interaction);
+                stores
+                    .world_mut()
+                    .push_memory_terminal_line("")
+                    .expect("empty terminal line is staged");
+                stores
+                    .world_mut()
+                    .push_memory_terminal_line("\\global\\count0=42\\end")
+                    .expect("terminating terminal line is staged");
+                let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+                session.set_fuel_limit(64).expect("finite terminal fuel");
+                session
+                    .register_authored_job("terminal-end.tex", root)
+                    .expect("job registers");
+                let mut observations = ObservationRecorder::default();
 
-            let run = session
-                .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
-                .expect("terminal end completes the job");
+                let run = session
+                    .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
+                    .expect("terminal end completes the job");
 
-            assert!(run.fatal.is_none(), "interaction {interaction:?}");
-            assert_eq!(session.stores().count(0), 42);
-            assert_eq!(
-                session.stores().world().stream_bufs().terminal_input_next(),
-                2
-            );
-            assert!(observations.0.iter().any(|observation| matches!(
-                observation,
-                CommandObservation::Input(input)
-                    if input.source_name == Some(tex_command::SourceNameClass::Terminal)
-            )));
-            assert!(session.fuel_burned() <= session.fuel_limit());
+                assert!(run.fatal.is_none(), "interaction {interaction:?}");
+                assert_eq!(session.stores().count(0), Ok(42));
+                assert_eq!(
+                    session.stores().world().stream_bufs().terminal_input_next(),
+                    2
+                );
+                assert!(observations.0.iter().any(|observation| matches!(
+                    observation,
+                    CommandObservation::Input(input)
+                        if input.source_name == Some(tex_command::SourceNameClass::Terminal)
+                )));
+                assert!(session.fuel_burned() <= session.fuel_limit());
+            });
         }
     }
 
     #[test]
     fn unobserved_completion_does_not_republish_termination() {
-        let (mut stores, root) = prepared_session(b"");
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session
-            .register_authored_fragment("empty.tex", root)
-            .expect("root registers");
+        with_prepared_session(b"", |stores, root| {
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session
+                .register_authored_fragment("empty.tex", root)
+                .expect("root registers");
 
-        assert!(matches!(
-            session
-                .advance_until_waiting(&mut Vec::new())
-                .expect("unobserved source completes"),
-            SessionState::Complete(_)
-        ));
-        let mut observations = ObservationRecorder::default();
-        assert!(matches!(
-            session
-                .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
-                .expect("completion remains latched"),
-            SessionState::Complete(_)
-        ));
-        assert!(observations.0.is_empty());
+            assert!(matches!(
+                session
+                    .advance_until_waiting(&mut Vec::new())
+                    .expect("unobserved source completes"),
+                SessionState::Complete(_)
+            ));
+            let mut observations = ObservationRecorder::default();
+            assert!(matches!(
+                session
+                    .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+                    .expect("completion remains latched"),
+                SessionState::Complete(_)
+            ));
+            assert!(observations.0.is_empty());
+        });
     }
 
     #[test]
     fn resource_suspension_does_not_publish_or_latch_termination() {
-        let (mut stores, root) = prepared_session(br"\input child\end");
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session
-            .register_authored_job("job.tex", root)
-            .expect("root registers");
-        let mut observations = ObservationRecorder::default();
-
-        let need = match session
-            .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
-            .expect("missing child suspends")
-        {
-            SessionState::NeedResource(need) => need,
-            SessionState::Complete(_) => panic!("missing child must suspend"),
-        };
-        assert!(
-            !observations.0.iter().any(|observation| matches!(
-                observation,
-                CommandObservation::Effect(effect)
-                    if effect.kind == tex_command::ObservationEffectKind::Terminate
-            )),
-            "rolled-back suspension cannot terminate the session"
-        );
-
-        session
-            .fulfill(
-                &need,
-                ResourceFulfillment::input(
-                    "child.tex",
-                    RegisteredSourceKind::Generated,
-                    Arc::from(&b""[..]),
-                ),
-            )
-            .expect("child fulfillment matches");
-        assert!(matches!(
+        with_prepared_session(br"\input child\end", |stores, root| {
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
             session
+                .register_authored_job("job.tex", root)
+                .expect("root registers");
+            let mut observations = ObservationRecorder::default();
+
+            let need = match session
                 .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
-                .expect("retry completes"),
-            SessionState::Complete(_)
-        ));
-        assert_eq!(
-            observations
-                .0
-                .iter()
-                .filter(|observation| matches!(
+                .expect("missing child suspends")
+            {
+                SessionState::NeedResource(need) => need,
+                SessionState::Complete(_) => panic!("missing child must suspend"),
+            };
+            assert!(
+                !observations.0.iter().any(|observation| matches!(
                     observation,
                     CommandObservation::Effect(effect)
                         if effect.kind == tex_command::ObservationEffectKind::Terminate
-                ))
-                .count(),
-            1
-        );
+                )),
+                "rolled-back suspension cannot terminate the session"
+            );
+
+            session
+                .fulfill(
+                    &need,
+                    ResourceFulfillment::input(
+                        "child.tex",
+                        RegisteredSourceKind::Generated,
+                        Arc::from(&b""[..]),
+                    ),
+                )
+                .expect("child fulfillment matches");
+            assert!(matches!(
+                session
+                    .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
+                    .expect("retry completes"),
+                SessionState::Complete(_)
+            ));
+            assert_eq!(
+                observations
+                    .0
+                    .iter()
+                    .filter(|observation| matches!(
+                        observation,
+                        CommandObservation::Effect(effect)
+                            if effect.kind == tex_command::ObservationEffectKind::Terminate
+                    ))
+                    .count(),
+                1
+            );
+        });
     }
 
     #[test]
     fn etex_alphabetic_constants_preserve_control_symbol_spelling() {
         let source: Arc<[u8]> = Arc::from(&br"\endlinechar=`\^^M \newlinechar=`\^^J \end"[..]);
-        let mut stores = Universe::new_with_plain_catcodes();
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_exec::install_unexpandable_primitives(&mut stores);
-        let mut session = EngineSession::new(&mut stores, CommandProfile::ETEX26);
-        session
-            .register_authored_job("alphabetic.tex", source)
-            .expect("root registers");
-        let mut observations = ObservationRecorder::default();
-        session
-            .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
-            .expect("assignment microfixture completes");
+        with_fresh_stores(|stores| {
+            tex_command::install_tex82_expandable_primitives(stores);
+            tex_exec::install_unexpandable_primitives(stores);
+            let mut session = EngineSession::new(stores, CommandProfile::ETEX26);
+            session
+                .register_authored_job("alphabetic.tex", source)
+                .expect("root registers");
+            let mut observations = ObservationRecorder::default();
+            session
+                .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
+                .expect("assignment microfixture completes");
 
-        let spellings = observations
-            .0
-            .iter()
-            .filter_map(|event| match event {
-                CommandObservation::Command(record)
-                    if record.boundary == tex_command::CommandDeliveryBoundary::Raw =>
-                {
-                    Some(&record.spelling)
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert!(spellings.iter().any(|spelling| {
-            matches!(
-                spelling,
-                tex_command::ObservedToken::ControlSequence(name) if name == "\r"
-            )
-        }));
-        assert!(spellings.iter().any(|spelling| {
-            matches!(
-                spelling,
-                tex_command::ObservedToken::ControlSequence(name) if name == "\n"
-            )
-        }));
+            let spellings = observations
+                .0
+                .iter()
+                .filter_map(|event| match event {
+                    CommandObservation::Command(record)
+                        if record.boundary == tex_command::CommandDeliveryBoundary::Raw =>
+                    {
+                        Some(&record.spelling)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert!(spellings.iter().any(|spelling| {
+                matches!(
+                    spelling,
+                    tex_command::ObservedToken::ControlSequence(name) if name == "\r"
+                )
+            }));
+            assert!(spellings.iter().any(|spelling| {
+                matches!(
+                    spelling,
+                    tex_command::ObservedToken::ControlSequence(name) if name == "\n"
+                )
+            }));
+        });
     }
 
     #[test]
     fn retained_session_retries_input_without_duplicate_effect_or_receipt() {
-        let (mut stores, root) =
-            prepared_session(b"\\message{once}\\shipout\\hbox{x}\\input child \\end");
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session
-            .register_authored_job("job.tex", root)
-            .expect("root registers");
-        let mut host = OneInputHost { calls: 0 };
-        let mut checkpoints = Vec::new();
-        let run = session
-            .run(&mut host, &mut checkpoints)
-            .expect("run completes");
+        with_prepared_session(
+            b"\\message{once}\\shipout\\hbox{x}\\input child \\end",
+            |stores, root| {
+                let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+                session
+                    .register_authored_job("job.tex", root)
+                    .expect("root registers");
+                let mut host = OneInputHost { calls: 0 };
+                let mut checkpoints = Vec::new();
+                let run = session
+                    .run(&mut host, &mut checkpoints)
+                    .expect("run completes");
 
-        assert_eq!(host.calls, 1);
-        assert_eq!(
-            session.stores().world().memory_terminal_output(),
-            // The first attempt materializes §638's `[0]` before the later
-            // `\input` suspends. The replay reaches that same marker again,
-            // but the retained session reconciles the repeated suffix. The
-            // input framing remains virtual because no later shipout commits
-            // it in this fragment.
-            Some(&b"(job.tex once [0]"[..]),
-            "aggregate rollback must not repeat a materialized write"
+                assert_eq!(host.calls, 1);
+                assert_eq!(
+                    session.stores().world().memory_terminal_output(),
+                    // The first attempt materializes §638's `[0]` before the later
+                    // `\input` suspends. The replay reaches that same marker again,
+                    // but the retained session reconciles the repeated suffix. The
+                    // input framing remains virtual because no later shipout commits
+                    // it in this fragment.
+                    Some(&b"(job.tex once [0]"[..]),
+                    "aggregate rollback must not repeat a materialized write"
+                );
+                assert_eq!(run.artifacts.len(), 1);
+                assert_eq!(run.dvi_pages.len(), run.artifacts.len());
+                let boundaries = checkpoints
+                    .iter()
+                    .map(tex_exec::EngineCheckpoint::boundary)
+                    .collect::<Vec<_>>();
+                assert!(boundaries.contains(&EngineBoundary::JobStart));
+                assert!(boundaries.contains(&EngineBoundary::ShipoutComplete));
+            },
         );
-        assert_eq!(run.artifacts.len(), 1);
-        assert_eq!(run.dvi_pages.len(), run.artifacts.len());
-        let boundaries = checkpoints
-            .iter()
-            .map(tex_exec::EngineCheckpoint::boundary)
-            .collect::<Vec<_>>();
-        assert!(boundaries.contains(&EngineBoundary::JobStart));
-        assert!(boundaries.contains(&EngineBoundary::ShipoutComplete));
     }
 
     #[test]
     fn initex_prints_tex82_startup_headline_before_the_first_command() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        let mut session = EngineSession::tex82_initex(&mut stores);
-        session.set_fuel_limit(64).expect("finite fuel");
-        session
-            .register_authored_job("headline.tex", Arc::from(&b"\\end"[..]))
-            .expect("INITEX root registers");
+        with_fresh_stores(|stores| {
+            let mut session = EngineSession::tex82_initex(stores);
+            session.set_fuel_limit(64).expect("finite fuel");
+            session
+                .register_authored_job("headline.tex", Arc::from(&b"\\end"[..]))
+                .expect("INITEX root registers");
 
-        session
-            .run(&mut WorldHost, &mut Vec::new())
-            .expect("bounded INITEX source completes");
+            session
+                .run(&mut WorldHost, &mut Vec::new())
+                .expect("bounded INITEX source completes");
 
-        let first = session
-            .stores()
-            .world()
-            .effect_records()
-            .first()
-            .expect("startup headline is the first effect");
-        assert_eq!(
-            first,
-            &tex_state::EffectRecord::StreamWrite {
-                sink: tex_state::PrintSink::Terminal,
-                text: "This is TeX, Version 3.141592653 (TeX Live 2026) (INITEX)".into(),
-            },
-            "TeX82 §1332 writes the process headline to the terminal before main_control"
-        );
+            let first = session
+                .stores()
+                .world()
+                .effect_records()
+                .first()
+                .expect("startup headline is the first effect");
+            assert_eq!(
+                first,
+                &tex_state::EffectRecord::StreamWrite {
+                    sink: tex_state::PrintSink::Terminal,
+                    text: "This is TeX, Version 3.141592653 (TeX Live 2026) (INITEX)".into(),
+                },
+                "TeX82 §1332 writes the process headline to the terminal before main_control"
+            );
+        });
     }
 
     #[test]
     fn startup_input_opening_uses_terminal_only_selector_in_initex_and_loaded_sessions() {
         const SOURCE: &[u8] = br"\end";
-        let mut format_source = Universe::new_with_plain_catcodes();
-        tex_command::install_tex82_expandable_primitives(&mut format_source);
-        tex_exec::install_unexpandable_primitives(&mut format_source);
-        let format = format_source.dump_format().expect("base format dumps");
+        let format = tex82_format_image();
 
         for initex in [true, false] {
-            let mut stores = if initex {
-                Universe::new_with_plain_catcodes()
-            } else {
-                Universe::from_format(World::memory(), &format).expect("format restores")
-            };
-            if initex {
-                tex_command::install_tex82_expandable_primitives(&mut stores);
-                tex_exec::install_unexpandable_primitives(&mut stores);
-            }
-            let mut session = if initex {
-                EngineSession::prepared_initex(&mut stores, CommandProfile::TEX82)
-            } else {
-                EngineSession::new(&mut stores, CommandProfile::TEX82)
-            };
-            session
-                .register_authored_job("./trip.tex", Arc::from(SOURCE))
-                .expect("root registers");
+            with_fresh_or_loaded(!initex, &format, |stores| {
+                let mut session = if initex {
+                    EngineSession::prepared_initex(stores, CommandProfile::TEX82)
+                } else {
+                    EngineSession::new(stores, CommandProfile::TEX82)
+                };
+                session
+                    .register_authored_job("./trip.tex", Arc::from(SOURCE))
+                    .expect("root registers");
 
-            session
-                .run(&mut WorldHost, &mut Vec::new())
-                .expect("bounded root completes");
+                session
+                    .run(&mut WorldHost, &mut Vec::new())
+                    .expect("bounded root completes");
 
-            let expected_terminal = if initex {
-                "This is TeX, Version 3.141592653 (TeX Live 2026) (INITEX)\n(./trip.tex )"
-            } else {
-                "(./trip.tex )"
-            };
-            let (terminal, log) = transcript_channels(session.stores());
-            assert_eq!(
-                terminal, expected_terminal,
-                "TeX82 §§1332, 537 startup framing, initex={initex}"
-            );
-            assert_eq!(
-                log, " )",
-                "§537 opens before the transcript, but §1335 closes after it, initex={initex}"
-            );
+                let expected_terminal = if initex {
+                    "This is TeX, Version 3.141592653 (TeX Live 2026) (INITEX)\n(./trip.tex )"
+                } else {
+                    "(./trip.tex )"
+                };
+                let (terminal, log) = transcript_channels(session.stores());
+                assert_eq!(
+                    terminal, expected_terminal,
+                    "TeX82 §§1332, 537 startup framing, initex={initex}"
+                );
+                assert_eq!(
+                    log, " )",
+                    "§537 opens before the transcript, but §1335 closes after it, initex={initex}"
+                );
+            });
         }
     }
 
@@ -2049,77 +2117,83 @@ mod tests {
     fn initex_session_loads_patterns_while_cold_session_rejects_them() {
         const SOURCE: &[u8] = br"\patterns{o1ce eed3i}\lefthyphenmin=2 \righthyphenmin=3 \end";
 
-        let (mut cold_stores, cold_root) = prepared_session(SOURCE);
-        let mut cold = EngineSession::new(&mut cold_stores, CommandProfile::TEX82);
-        cold.register_authored_job("cold.tex", cold_root)
-            .expect("cold root registers");
-        cold.run(&mut WorldHost, &mut Vec::new())
-            .expect("cold session recovers from init-only patterns");
-        assert_eq!(
-            cold.stores()
-                .hyphen_positions_for_language(0, "proceeding", 2, 3),
-            Vec::<usize>::new(),
-            "TeX82 §1252 rejects patterns outside INITEX"
-        );
+        with_prepared_session(SOURCE, |cold_stores, cold_root| {
+            let mut cold = EngineSession::new(cold_stores, CommandProfile::TEX82);
+            cold.register_authored_job("cold.tex", cold_root)
+                .expect("cold root registers");
+            cold.run(&mut WorldHost, &mut Vec::new())
+                .expect("cold session recovers from init-only patterns");
+            drop(cold);
+            assert_eq!(
+                hyphen_positions(cold_stores, "proceeding"),
+                Vec::<usize>::new(),
+                "TeX82 §1252 rejects patterns outside INITEX"
+            );
 
-        let mut initex_stores = Universe::new_with_plain_catcodes();
-        let mut initex = EngineSession::tex82_initex(&mut initex_stores);
-        initex
-            .register_authored_job("initex.tex", Arc::from(SOURCE))
-            .expect("INITEX root registers");
-        initex
-            .run(&mut WorldHost, &mut Vec::new())
-            .expect("INITEX patterns execute");
-        assert_eq!(
-            initex
-                .stores()
-                .hyphen_positions_for_language(0, "proceeding", 2, 3),
-            vec![3, 7],
-            "the two oracle pattern matches produce pro-ceed-ing"
-        );
+            with_fresh_stores(|initex_stores| {
+                let mut initex = EngineSession::tex82_initex(initex_stores);
+                initex
+                    .register_authored_job("initex.tex", Arc::from(SOURCE))
+                    .expect("INITEX root registers");
+                initex
+                    .run(&mut WorldHost, &mut Vec::new())
+                    .expect("INITEX patterns execute");
+                drop(initex);
+                assert_eq!(
+                    hyphen_positions(initex_stores, "proceeding"),
+                    vec![3, 7],
+                    "the two oracle pattern matches produce pro-ceed-ing"
+                );
+            });
+        });
     }
 
     #[test]
     fn initex_dump_receipt_survives_the_direct_session_boundary() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        let mut session = EngineSession::tex82_initex(&mut stores);
-        session
-            .register_authored_job("plain.tex", Arc::from(&b"\\dump"[..]))
-            .expect("INITEX root registers");
+        with_fresh_stores(|stores| {
+            let mut session = EngineSession::tex82_initex(stores);
+            session
+                .register_authored_job("plain.tex", Arc::from(&b"\\dump"[..]))
+                .expect("INITEX root registers");
 
-        let run = session
-            .run(&mut WorldHost, &mut Vec::new())
-            .expect("INITEX dump completes");
+            let run = session
+                .run(&mut WorldHost, &mut Vec::new())
+                .expect("INITEX dump completes");
 
-        assert!(run.format_dump.is_some());
-        session
-            .stores()
-            .dump_format()
-            .expect("the host may serialize after the dump receipt");
+            assert!(run.format_dump.is_some());
+            assert!(
+                !run.format_dump
+                    .expect("format dump")
+                    .image
+                    .as_bytes()
+                    .is_empty()
+            );
+        });
     }
 
     #[test]
     fn declining_host_is_bounded_without_mutating_effects() {
-        let (mut stores, root) = prepared_session(b"\\input never\\end");
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session.set_no_progress_limit(2);
-        session
-            .register_authored_job("job.tex", root)
-            .expect("root registers");
-        let mut host = OneInputHost { calls: 0 };
-        let mut checkpoints = Vec::new();
-        let error = session
-            .run(&mut host, &mut checkpoints)
-            .expect_err("host declines");
-        assert!(matches!(
-            error,
-            SessionError::NoProgress { attempts: 2, .. }
-        ));
-        assert_eq!(
-            transcript_channels(session.stores()),
-            ("(job.tex".into(), String::new()),
-            "only the committed §537 root opening precedes the declined child request"
-        );
+        with_prepared_session(b"\\input never\\end", |stores, root| {
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session.set_no_progress_limit(2);
+            session
+                .register_authored_job("job.tex", root)
+                .expect("root registers");
+            let mut host = OneInputHost { calls: 0 };
+            let mut checkpoints = Vec::new();
+            let error = session
+                .run(&mut host, &mut checkpoints)
+                .expect_err("host declines");
+            assert!(matches!(
+                error,
+                SessionError::NoProgress { attempts: 2, .. }
+            ));
+            assert_eq!(
+                transcript_channels(session.stores()),
+                ("(job.tex".into(), String::new()),
+                "only the committed §537 root opening precedes the declined child request"
+            );
+        });
     }
 
     #[test]
@@ -2128,183 +2202,189 @@ mod tests {
             tex_state::InteractionMode::Scroll,
             tex_state::InteractionMode::ErrorStop,
         ] {
-            let (mut stores, root) = prepared_session(b"\\input missing\\end");
-            stores.set_interaction_mode(interaction);
-            stores
-                .world_mut()
-                .push_memory_terminal_line("replacement")
-                .expect("replacement filename is staged");
-            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-            session
-                .register_authored_job("job.tex", root)
-                .expect("root registers");
-            let mut host = MissingThenReplacementHost {
-                replacement: Some("replacement.tex"),
-                calls: Vec::new(),
-            };
+            with_prepared_session(b"\\input missing\\end", |stores, root| {
+                stores.set_interaction_mode(interaction);
+                stores
+                    .world_mut()
+                    .push_memory_terminal_line("replacement")
+                    .expect("replacement filename is staged");
+                let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+                session
+                    .register_authored_job("job.tex", root)
+                    .expect("root registers");
+                let mut host = MissingThenReplacementHost {
+                    replacement: Some("replacement.tex"),
+                    calls: Vec::new(),
+                };
 
-            let run = session
-                .run(&mut host, &mut Vec::new())
-                .expect("interactive lookup retries after completed absence");
-            assert_eq!(host.calls, ["missing.tex", "replacement.tex"]);
-            assert_eq!(run.status, TexRunStatus::Success);
-            assert_eq!(run.fatal, None);
-            assert_eq!(
-                session.stores().world().error_channel().history(),
-                tex_state::print::ErrorHistory::Spotless
-            );
-            let (terminal, log) = transcript_channels(session.stores());
-            for output in [&terminal, &log] {
+                let run = session
+                    .run(&mut host, &mut Vec::new())
+                    .expect("interactive lookup retries after completed absence");
+                assert_eq!(host.calls, ["missing.tex", "replacement.tex"]);
+                assert_eq!(run.status, TexRunStatus::Success);
+                assert_eq!(run.fatal, None);
                 assert_eq!(
-                    output.matches("! I can't find file `missing.tex'.").count(),
-                    1,
-                    "output={output:?}"
+                    session.stores().world().error_channel().history(),
+                    tex_state::print::ErrorHistory::Spotless
                 );
-                assert!(output.contains("l.1 \\input missing"), "output={output:?}");
-                assert!(!output.contains("Emergency stop"), "output={output:?}");
-            }
-            assert_eq!(
-                terminal
-                    .matches("Please type another input file name: ")
-                    .count(),
-                1,
-                "terminal={terminal:?}"
-            );
-            assert_eq!(
-                log.matches("Please type another input file name: replacement")
-                    .count(),
-                1,
-                "log={log:?}"
-            );
+                let (terminal, log) = transcript_channels(session.stores());
+                for output in [&terminal, &log] {
+                    assert_eq!(
+                        output.matches("! I can't find file `missing.tex'.").count(),
+                        1,
+                        "output={output:?}"
+                    );
+                    assert!(output.contains("l.1 \\input missing"), "output={output:?}");
+                    assert!(!output.contains("Emergency stop"), "output={output:?}");
+                }
+                assert_eq!(
+                    terminal
+                        .matches("Please type another input file name: ")
+                        .count(),
+                    1,
+                    "terminal={terminal:?}"
+                );
+                assert_eq!(
+                    log.matches("Please type another input file name: replacement")
+                        .count(),
+                    1,
+                    "log={log:?}"
+                );
+            });
         }
 
         for interaction in [
             tex_state::InteractionMode::Batch,
             tex_state::InteractionMode::Nonstop,
         ] {
-            let (mut stores, root) = prepared_session(b"\\input missing\\end");
-            stores.set_interaction_mode(interaction);
-            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-            session
-                .register_authored_job("job.tex", root)
-                .expect("root registers");
-            let mut host = MissingThenReplacementHost {
-                replacement: None,
-                calls: Vec::new(),
-            };
-
-            let run = session
-                .run(&mut host, &mut Vec::new())
-                .expect("fatal termination still completes retained cleanup");
-            let fatal =
-                tex_command::FatalError::emergency_stop("job aborted, file error in nonstop mode");
-            assert_eq!(run.fatal, Some(fatal));
-            assert_eq!(run.status, TexRunStatus::Fatal);
-            assert_eq!(session.control.fatal_error(), Some(fatal));
-            assert_eq!(host.calls, ["missing.tex"]);
-            assert_eq!(
-                session.stores().world().error_channel().history(),
-                tex_state::print::ErrorHistory::FatalErrorStop
-            );
-            let (terminal, log) = transcript_channels(session.stores());
-            assert_eq!(
-                log.matches("! I can't find file `missing.tex'.").count(),
-                1,
-                "log={log:?}"
-            );
-            assert_eq!(
-                log.matches("Please type another input file name").count(),
-                1,
-                "log={log:?}"
-            );
-            assert_eq!(log.matches("! Emergency stop.").count(), 1, "log={log:?}");
-            assert_eq!(
-                log.matches("*** (job aborted, file error in nonstop mode)")
-                    .count(),
-                1,
-                "log={log:?}"
-            );
-            assert_eq!(
-                log.matches("l.1 \\input missing").count(),
-                2,
-                "§530 and §93 each render the live context: log={log:?}"
-            );
-            assert_eq!(
-                terminal.contains("! I can't find file `missing.tex'."),
-                interaction == tex_state::InteractionMode::Nonstop,
-                "terminal={terminal:?}"
-            );
-            assert!(matches!(
+            with_prepared_session(b"\\input missing\\end", |stores, root| {
+                stores.set_interaction_mode(interaction);
+                let mut session = EngineSession::new(stores, CommandProfile::TEX82);
                 session
-                    .advance_until_waiting(&mut Vec::new())
-                    .expect("fatal retained cleanup stays complete"),
-                SessionState::Complete(result) if result.fatal == Some(fatal)
-            ));
-            assert_eq!(host.calls, ["missing.tex"]);
+                    .register_authored_job("job.tex", root)
+                    .expect("root registers");
+                let mut host = MissingThenReplacementHost {
+                    replacement: None,
+                    calls: Vec::new(),
+                };
+
+                let run = session
+                    .run(&mut host, &mut Vec::new())
+                    .expect("fatal termination still completes retained cleanup");
+                let fatal = tex_command::FatalError::emergency_stop(
+                    "job aborted, file error in nonstop mode",
+                );
+                assert_eq!(run.fatal, Some(fatal));
+                assert_eq!(run.status, TexRunStatus::Fatal);
+                assert_eq!(session.control.fatal_error(), Some(fatal));
+                assert_eq!(host.calls, ["missing.tex"]);
+                assert_eq!(
+                    session.stores().world().error_channel().history(),
+                    tex_state::print::ErrorHistory::FatalErrorStop
+                );
+                let (terminal, log) = transcript_channels(session.stores());
+                assert_eq!(
+                    log.matches("! I can't find file `missing.tex'.").count(),
+                    1,
+                    "log={log:?}"
+                );
+                assert_eq!(
+                    log.matches("Please type another input file name").count(),
+                    1,
+                    "log={log:?}"
+                );
+                assert_eq!(log.matches("! Emergency stop.").count(), 1, "log={log:?}");
+                assert_eq!(
+                    log.matches("*** (job aborted, file error in nonstop mode)")
+                        .count(),
+                    1,
+                    "log={log:?}"
+                );
+                assert_eq!(
+                    log.matches("l.1 \\input missing").count(),
+                    2,
+                    "§530 and §93 each render the live context: log={log:?}"
+                );
+                assert_eq!(
+                    terminal.contains("! I can't find file `missing.tex'."),
+                    interaction == tex_state::InteractionMode::Nonstop,
+                    "terminal={terminal:?}"
+                );
+                assert!(matches!(
+                    session
+                        .advance_until_waiting(&mut Vec::new())
+                        .expect("fatal retained cleanup stays complete"),
+                    SessionState::Complete(result) if result.fatal == Some(fatal)
+                ));
+                assert_eq!(host.calls, ["missing.tex"]);
+            });
         }
     }
 
     #[test]
     fn committed_output_is_visible_to_later_input_after_atomic_retry() {
-        let (mut stores, root) = prepared_session(
+        with_prepared_session(
             br"\immediate\openout1=same.out
 \immediate\write1{generated}
 \immediate\closeout1
 \shipout\hbox{}
 \input same.out
 \end",
-        );
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session.set_no_progress_limit(1);
-        session
-            .register_authored_job("job.tex", root)
-            .expect("root registers");
-        let mut host = OneInputHost { calls: 0 };
+            |stores, root| {
+                let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+                session.set_no_progress_limit(1);
+                session
+                    .register_authored_job("job.tex", root)
+                    .expect("root registers");
+                let mut host = OneInputHost { calls: 0 };
 
-        let run = session
-            .run(&mut host, &mut Vec::new())
-            .expect("same-run output makes retry progress");
+                let run = session
+                    .run(&mut host, &mut Vec::new())
+                    .expect("same-run output makes retry progress");
 
-        assert_eq!(host.calls, 1, "host policy gets one bounded opportunity");
-        assert_eq!(
-            session.stores().world().memory_output("same.out"),
-            Some(&b"generated\n"[..]),
-            "retry neither duplicates nor loses the committed output"
-        );
-        assert_eq!(run.artifacts.len(), 2);
-        assert!(
-            session
-                .stores()
-                .world()
-                .input_records()
-                .iter()
-                .any(|record| {
-                    record.path() == Path::new("same.out")
-                        && record.origin() == tex_state::InputOrigin::SameRunGenerated
-                })
+                assert_eq!(host.calls, 1, "host policy gets one bounded opportunity");
+                assert_eq!(
+                    session.stores().world().memory_output("same.out"),
+                    Some(&b"generated\n"[..]),
+                    "retry neither duplicates nor loses the committed output"
+                );
+                assert_eq!(run.artifacts.len(), 2);
+                assert!(
+                    session
+                        .stores()
+                        .world()
+                        .input_records()
+                        .iter()
+                        .any(|record| {
+                            record.path() == Path::new("same.out")
+                                && record.origin() == tex_state::InputOrigin::SameRunGenerated
+                        })
+                );
+            },
         );
     }
 
     #[test]
     fn same_run_input_fulfillment_retains_its_resolved_local_name() {
-        let mut stores = Universe::new();
-        stores
-            .world_mut()
-            .set_memory_file("same.out", b"generated")
-            .expect("same-run stand-in is seeded");
-        let content = stores
-            .world_mut()
-            .read_file("same.out")
-            .expect("selected bytes are retained");
+        with_fresh_stores(|stores| {
+            stores
+                .world_mut()
+                .set_memory_file("same.out", b"generated")
+                .expect("same-run stand-in is seeded");
+            let content = stores
+                .world_mut()
+                .read_file("same.out")
+                .expect("selected bytes are retained");
 
-        let ResourceFulfillment::Input { name, source } =
-            same_run_input_fulfillment("same.out", content)
-        else {
-            panic!("same-run input helper returned a non-input fulfillment");
-        };
+            let ResourceFulfillment::Input { name, source } =
+                same_run_input_fulfillment("same.out", content)
+            else {
+                panic!("same-run input helper returned a non-input fulfillment");
+            };
 
-        assert_eq!(name, "same.out");
-        assert_eq!(source.name().map(AsRef::as_ref), Some("./same.out"));
+            assert_eq!(name, "same.out");
+            assert_eq!(source.name().map(AsRef::as_ref), Some("./same.out"));
+        });
     }
 
     #[test]
@@ -2312,7 +2392,7 @@ mod tests {
         // TeX82 §§262 and 1370: expanded write tokens are first captured as
         // an internal string, then printed through the stream selector. A
         // character equal to `newlinechar` is therefore a physical line end.
-        let (mut stores, root) = prepared_session(
+        with_prepared_session(
             br"\newlinechar=1
 \immediate\openout1=same.out
 \immediate\write1{\noexpand\global\noexpand\count0=123^^A\noexpand\global\noexpand\count1=456}
@@ -2320,193 +2400,220 @@ mod tests {
 \shipout\hbox{}
 \input same.out
 \end",
-        );
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session
-            .register_authored_job("job.tex", root)
-            .expect("root registers");
-        let mut host = OneInputHost { calls: 0 };
+            |stores, root| {
+                let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+                session
+                    .register_authored_job("job.tex", root)
+                    .expect("root registers");
+                let mut host = OneInputHost { calls: 0 };
 
-        session
-            .run(&mut host, &mut Vec::new())
-            .expect("same-run output is written and reopened");
+                session
+                    .run(&mut host, &mut Vec::new())
+                    .expect("same-run output is written and reopened");
 
-        assert_eq!(
-            session.stores().world().memory_output("same.out"),
-            Some(&b"\\global \\count 0=123\n\\global \\count 1=456\n"[..])
+                assert_eq!(
+                    session.stores().world().memory_output("same.out"),
+                    Some(&b"\\global \\count 0=123\n\\global \\count 1=456\n"[..])
+                );
+                assert!(
+                    session
+                        .stores()
+                        .world()
+                        .input_records()
+                        .iter()
+                        .any(|record| record.path() == Path::new("same.out")
+                            && record.origin() == tex_state::InputOrigin::SameRunGenerated)
+                );
+                assert_eq!(session.stores().count(0), Ok(123));
+                assert_eq!(session.stores().count(1), Ok(456));
+            },
         );
-        assert!(
-            session
-                .stores()
-                .world()
-                .input_records()
-                .iter()
-                .any(|record| record.path() == Path::new("same.out")
-                    && record.origin() == tex_state::InputOrigin::SameRunGenerated)
-        );
-        assert_eq!(session.stores().count(0), 123);
-        assert_eq!(session.stores().count(1), 456);
     }
 
     #[test]
     fn world_host_records_selected_input_once_and_preserves_retry_effects() {
-        let (mut stores, root) = prepared_session(b"\\message{once}\\input child\\end");
-        stores
-            .world_mut()
-            .set_memory_file("child.tex", b"\\message{child}")
-            .expect("child is seeded");
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session
-            .register_authored_job("job.tex", root)
-            .expect("root registers");
+        with_prepared_session(b"\\message{once}\\input child\\end", |stores, root| {
+            stores
+                .world_mut()
+                .set_memory_file("child.tex", b"\\message{child}")
+                .expect("child is seeded");
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session
+                .register_authored_job("job.tex", root)
+                .expect("root registers");
 
-        let run = session
-            .run(&mut WorldHost, &mut Vec::new())
-            .expect("world-backed input completes");
+            let run = session
+                .run(&mut WorldHost, &mut Vec::new())
+                .expect("world-backed input completes");
 
-        // TeX82 §1280 separates the two messages with one space, because
-        // the first left `term_offset` nonzero. §537/§362 additionally
-        // bracket the root and `\input child` in parens around their own
-        // messages, each named as opened the way §537's `a_make_name_string`
-        // does: the startup input opening supplies `(job.tex`, and §1335
-        // closes that still-open root after the child reached ordinary EOF.
-        assert_eq!(run.terminal_text, "(job.tex once (child.tex child) )");
-        let records = session.stores().world().input_records();
-        assert_eq!(records.len(), 1, "the selected child is recorded once");
-        assert_eq!(records[0].path(), Path::new("child.tex"));
-        assert_eq!(
-            session.stores().world().input_content(records[0].hash()),
-            Some(&b"\\message{child}"[..])
-        );
+            // TeX82 §1280 separates the two messages with one space, because
+            // the first left `term_offset` nonzero. §537/§362 additionally
+            // bracket the root and `\input child` in parens around their own
+            // messages, each named as opened the way §537's `a_make_name_string`
+            // does: the startup input opening supplies `(job.tex`, and §1335
+            // closes that still-open root after the child reached ordinary EOF.
+            assert_eq!(run.terminal_text, "(job.tex once (child.tex child) )");
+            let records = session.stores().world().input_records();
+            assert_eq!(records.len(), 1, "the selected child is recorded once");
+            assert_eq!(records[0].path(), Path::new("child.tex"));
+            assert_eq!(
+                session.stores().world().input_content(records[0].hash()),
+                Some(&b"\\message{child}"[..])
+            );
+        });
     }
 
     #[test]
     fn world_host_fulfills_font_and_image_with_matching_selected_bytes() {
-        let (mut font_stores, font_root) = prepared_session(b"\\font\\tenrm=cmr10 \\tenrm A\\end");
-        font_stores
-            .world_mut()
-            .set_memory_file("cmr10.tfm", CMR10)
-            .expect("font is seeded");
-        let mut font_session = EngineSession::new(&mut font_stores, CommandProfile::TEX82);
-        font_session
-            .register_authored_job("font.tex", font_root)
-            .expect("font root registers");
-        font_session
-            .run(&mut WorldHost, &mut Vec::new())
-            .expect("world-backed font completes");
-        let font_record = font_session
-            .stores()
-            .world()
-            .input_records()
-            .first()
-            .expect("selected font is recorded");
-        assert_eq!(font_record.path(), Path::new("cmr10.tfm"));
-        assert_eq!(font_record.len(), CMR10.len());
+        with_prepared_session(
+            b"\\font\\tenrm=cmr10 \\tenrm A\\end",
+            |font_stores, font_root| {
+                font_stores
+                    .world_mut()
+                    .set_memory_file("cmr10.tfm", CMR10)
+                    .expect("font is seeded");
+                let mut font_session = EngineSession::new(font_stores, CommandProfile::TEX82);
+                font_session
+                    .register_authored_job("font.tex", font_root)
+                    .expect("font root registers");
+                font_session
+                    .run(&mut WorldHost, &mut Vec::new())
+                    .expect("world-backed font completes");
+                let font_record = font_session
+                    .stores()
+                    .world()
+                    .input_records()
+                    .first()
+                    .expect("selected font is recorded");
+                assert_eq!(font_record.path(), Path::new("cmr10.tfm"));
+                assert_eq!(font_record.len(), CMR10.len());
 
-        let mut image_stores = Universe::new_with_plain_catcodes();
-        crate::prepare_pdftex_run_stores(&mut image_stores);
-        image_stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
-        image_stores
-            .world_mut()
-            .set_memory_file("image.png", b"world-selected image")
-            .expect("image is seeded");
-        let mut image_session = EngineSession::new(&mut image_stores, CommandProfile::PDFTEX14029);
-        image_session
-            .register_authored_job("image.tex", Arc::from(&b"\\pdfximage {image.png}\\end"[..]))
-            .expect("image root registers");
-        image_session
-            .run(&mut WorldHost, &mut Vec::new())
-            .expect("world-backed image completes");
-        let image_record = image_session
-            .stores()
-            .world()
-            .input_records()
-            .first()
-            .expect("selected image is recorded");
-        assert_eq!(image_record.path(), Path::new("image.png"));
-        assert_eq!(
-            image_session
-                .stores()
-                .pdf_last_external_image()
-                .map(|image| image.identity()),
-            Some(image_record.hash())
+                with_fresh_stores(|image_stores| {
+                    crate::prepare_pdftex_run_stores(image_stores);
+                    image_stores
+                        .command_context()
+                        .expect("admit PDF output setup")
+                        .assign_int_param(
+                            tex_state::env::banks::IntParam::PDF_OUTPUT,
+                            1,
+                            tex_state::AssignmentScope::Global,
+                        )
+                        .expect("enable PDF output");
+                    image_stores
+                        .world_mut()
+                        .set_memory_file("image.png", b"world-selected image")
+                        .expect("image is seeded");
+                    let mut image_session =
+                        EngineSession::new(image_stores, CommandProfile::PDFTEX14029);
+                    image_session
+                        .register_authored_job(
+                            "image.tex",
+                            Arc::from(&b"\\pdfximage {image.png}\\end"[..]),
+                        )
+                        .expect("image root registers");
+                    image_session
+                        .run(&mut WorldHost, &mut Vec::new())
+                        .expect("world-backed image completes");
+                    let image_record = image_session
+                        .stores()
+                        .world()
+                        .input_records()
+                        .first()
+                        .expect("selected image is recorded");
+                    assert_eq!(image_record.path(), Path::new("image.png"));
+                    let image_hash = image_record.hash();
+                    drop(image_session);
+                    let context = image_stores
+                        .command_context()
+                        .expect("admit image result reader");
+                    let image = context
+                        .internal_integer(tex_state::meaning::InternalInteger::PdfLastXImage)
+                        .and_then(|raw| u32::try_from(raw).ok())
+                        .and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok())
+                        .and_then(|id| context.pdf_external_image_record(id));
+                    assert_eq!(image.map(|image| image.identity()), Some(image_hash));
+                });
+            },
         );
     }
 
     #[test]
     fn fulfillment_rejects_mismatched_typed_need() {
-        let (mut stores, root) = prepared_session(b"\\input child\\end");
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        session
-            .register_authored_job("job.tex", root)
-            .expect("root registers");
-        let need = match session
-            .advance_until_waiting(&mut Vec::new())
-            .expect("input suspends")
-        {
-            SessionState::NeedResource(need) => need,
-            other => panic!("expected resource need, got {other:?}"),
-        };
-        let error = session
-            .fulfill(
-                &need,
-                ResourceFulfillment::input(
-                    "other",
-                    RegisteredSourceKind::Generated,
-                    Arc::from(&b"\\end"[..]),
-                ),
-            )
-            .expect_err("mismatched input is rejected");
-        assert!(matches!(error, SessionError::UnexpectedFulfillment { .. }));
+        with_prepared_session(b"\\input child\\end", |stores, root| {
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            session
+                .register_authored_job("job.tex", root)
+                .expect("root registers");
+            let need = match session
+                .advance_until_waiting(&mut Vec::new())
+                .expect("input suspends")
+            {
+                SessionState::NeedResource(need) => need,
+                other => panic!("expected resource need, got {other:?}"),
+            };
+            let error = session
+                .fulfill(
+                    &need,
+                    ResourceFulfillment::input(
+                        "other",
+                        RegisteredSourceKind::Generated,
+                        Arc::from(&b"\\end"[..]),
+                    ),
+                )
+                .expect_err("mismatched input is rejected");
+            assert!(matches!(error, SessionError::UnexpectedFulfillment { .. }));
+        });
     }
 
     #[test]
     fn engine_session_has_finite_configurable_command_fuel() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-        assert_eq!(
-            session.fuel_limit(),
-            tex_command::DEFAULT_COMMAND_FUEL_LIMIT
-        );
-        assert_ne!(session.fuel_limit(), u64::MAX);
-        session.set_fuel_limit(17).expect("valid finite limit");
-        assert_eq!(session.fuel_limit(), 17);
-        assert_eq!(session.fuel_burned(), 0);
-        for invalid in [0, tex_command::MAX_COMMAND_FUEL_LIMIT + 1, u64::MAX] {
-            assert!(session.set_fuel_limit(invalid).is_err());
+        with_fresh_stores(|stores| {
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
+            assert_eq!(
+                session.fuel_limit(),
+                tex_command::DEFAULT_COMMAND_FUEL_LIMIT
+            );
+            assert_ne!(session.fuel_limit(), u64::MAX);
+            session.set_fuel_limit(17).expect("valid finite limit");
             assert_eq!(session.fuel_limit(), 17);
-        }
+            assert_eq!(session.fuel_burned(), 0);
+            for invalid in [0, tex_command::MAX_COMMAND_FUEL_LIMIT + 1, u64::MAX] {
+                assert!(session.set_fuel_limit(invalid).is_err());
+                assert_eq!(session.fuel_limit(), 17);
+            }
+        });
     }
 
     #[test]
     fn tiny_limit_stops_a_cyclic_run_with_typed_error() {
         fn run(observed: bool) -> (SessionError, u64) {
-            let (mut stores, root) = prepared_session(b"\\def\\cycle{\\cycle}\\cycle");
-            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
-            session
-                .register_authored_job("cycle.tex", root)
-                .expect("root registers");
-            session.set_fuel_limit(19).expect("valid tiny limit");
-            let mut observations = ObservationRecorder::default();
-            let error = if observed {
+            with_prepared_session(b"\\def\\cycle{\\cycle}\\cycle", |stores, root| {
+                let mut session = EngineSession::new(stores, CommandProfile::TEX82);
                 session
-                    .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
-                    .expect_err("observed cyclic run exhausts fuel")
-            } else {
-                session
-                    .run(&mut WorldHost, &mut Vec::new())
-                    .expect_err("cyclic run exhausts fuel")
-            };
-            assert!(
-                !observations.0.iter().any(|event| matches!(
-                    event,
-                    CommandObservation::Effect(effect)
-                        if effect.kind == tex_command::ObservationEffectKind::Terminate
-                )),
-                "fuel exhaustion is an aborted outcome, not engine completion"
-            );
-            let burned = session.fuel_burned();
-            (error, burned)
+                    .register_authored_job("cycle.tex", root)
+                    .expect("root registers");
+                session.set_fuel_limit(19).expect("valid tiny limit");
+                let mut observations = ObservationRecorder::default();
+                let error = if observed {
+                    session
+                        .run_with_observer(&mut WorldHost, &mut Vec::new(), &mut observations)
+                        .expect_err("observed cyclic run exhausts fuel")
+                } else {
+                    session
+                        .run(&mut WorldHost, &mut Vec::new())
+                        .expect_err("cyclic run exhausts fuel")
+                };
+                assert!(
+                    !observations.0.iter().any(|event| matches!(
+                        event,
+                        CommandObservation::Effect(effect)
+                            if effect.kind == tex_command::ObservationEffectKind::Terminate
+                    )),
+                    "fuel exhaustion is an aborted outcome, not engine completion"
+                );
+                let burned = session.fuel_burned();
+                (error, burned)
+            })
         }
 
         let (unobserved_error, unobserved_burned) = run(false);

@@ -1,12 +1,8 @@
 use crate::FontContainer;
 use std::path::Path;
 use tex_incr::RevisionId;
-use tex_state::TokenListId;
-use tex_state::env::banks::{DimenParam, IntParam};
-use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
+use tex_state::World;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
-use tex_state::scaled::Scaled;
-use tex_state::{FormatError, Universe, World};
 
 use super::*;
 
@@ -112,151 +108,56 @@ fn session(main: &str) -> VirtualCompileSession {
     session
 }
 
-fn load_profile_format(mode: EngineMode, bytes: &[u8]) -> Universe {
-    let mut stores = Universe::from_format(World::memory(), bytes).expect("profile format loads");
-    mode.install_after_format(&mut stores);
-    stores
-}
-
-fn assert_profile_surface(mode: EngineMode, stores: &mut Universe) {
-    for (name, available) in [
-        ("count", true),
-        ("numexpr", mode != EngineMode::Tex82),
-        ("pdfoutput", mode == EngineMode::PdfTex),
-        ("pdfprimitive", mode == EngineMode::PdfTex),
-    ] {
-        let symbol = stores.intern(name);
-        assert_eq!(
-            stores.meaning(symbol) != Meaning::Undefined,
-            available,
-            "{name} availability in {mode:?}",
-        );
-        assert_eq!(
-            stores.primitive_meaning(name).is_some(),
-            available,
-            "{name} primitive identity in {mode:?}",
-        );
-    }
+fn construct_test_format(mode: EngineMode, source: &str) -> tex_state::DetachedFormatImage {
+    crate::with_engine_world(World::memory(), |stores| {
+        mode.prepare_initex(stores);
+        crate::run_memory_collecting_artifacts_with_profile(
+            source,
+            stores,
+            mode.command_profile(),
+            false,
+        )
+        .expect("test format construction")
+        .format_dump
+        .expect("test format dump")
+        .image
+    })
+    .expect("fresh format-construction universe")
 }
 
 #[test]
 fn tex_etex_pdftex_fresh_and_twice_loaded_format_matrix() {
-    let mut profile_hashes = Vec::new();
+    let mut images = Vec::new();
 
     for mode in [EngineMode::Tex82, EngineMode::ETex, EngineMode::PdfTex] {
-        let mut fresh = Universe::default();
-        mode.prepare_fresh(&mut fresh);
-        assert_profile_surface(mode, &mut fresh);
-
-        fresh.set_count(37, 1_403);
-        fresh.set_int_param(IntParam::SAVING_V_DISCARDS, 2);
-        fresh.set_int_param(IntParam::TEX_XET_STATE, 1);
-        fresh.add_hyphenation_exception(ExceptionSpec {
-            word: "deterministic".to_owned(),
-            positions: vec![2, 5],
-        });
-        fresh
-            .add_hyphenation_pattern(PatternSpec {
-                letters: "matrix".chars().collect(),
-                values: vec![0, 0, 1, 0, 0, 0, 0],
-            })
-            .expect("profile format pattern fits the pdfTeX trie");
-        let font_symbol = fresh.intern("matrixfont");
-        let font = fresh.intern_font_with_identifier(
-            tex_fonts::LoadedFont::new(
-                "matrix-font",
-                "matrix-font.tfm",
-                [0x5a; 32],
-                0,
-                Scaled::from_raw(10 * Scaled::UNITY),
-                Scaled::from_raw(10 * Scaled::UNITY),
-                vec![Scaled::from_raw(0); 7],
-                tex_fonts::FontMetrics::default(),
-            ),
-            font_symbol,
-        );
-        fresh.set_meaning(font_symbol, Meaning::Font(font));
-        if mode == EngineMode::PdfTex {
-            fresh.set_int_param(IntParam::PDF_COMPRESS_LEVEL, 6);
-            fresh.set_dimen_param(DimenParam::PDF_PAGE_WIDTH, Scaled::from_raw(12_345));
-        }
-
-        let fresh_hash = fresh.snapshot().state_hash();
-        profile_hashes.push((mode, fresh_hash));
-        let first_bytes = fresh.dump_format().expect("fresh profile dumps");
-        let mut once = load_profile_format(mode, &first_bytes);
-        assert_profile_surface(mode, &mut once);
-        assert_eq!(once.count(37), 1_403, "ordinary state in {mode:?}");
-        assert_eq!(
-            once.int_param(IntParam::SAVING_V_DISCARDS),
-            2,
-            "ordinary e-TeX state in {mode:?}",
-        );
-        assert_eq!(
-            once.int_param(IntParam::TEX_XET_STATE),
-            0,
-            "optional e-TeX state resets in {mode:?}",
-        );
-        assert_eq!(
-            once.hyphenation_exception("deterministic"),
-            Some([2, 5].as_slice()),
-            "hyphenation exception in {mode:?}",
-        );
-        assert!(!once.hyphenation_patterns_open(), "loaded trie in {mode:?}");
-        let Meaning::Font(once_font) = once.meaning(once.symbol("matrixfont").expect("font name"))
-        else {
-            panic!("loaded font meaning in {mode:?}");
+        let image = construct_test_format(mode, "\\count37=1403\\dump");
+        let mut loaded = VirtualCompileSession::new(SessionOptions {
+            format: Some(image.as_bytes().to_vec()),
+            engine: mode,
+            ..SessionOptions::default()
+        })
+        .expect("loaded profile session");
+        loaded
+            .add_user_file("main.tex", b"\\message{count=\\the\\count37}\\end".to_vec())
+            .expect("loaded profile main");
+        let CompileAttemptResult::Complete(output) = loaded.compile_attempt() else {
+            panic!("loaded profile completes in {mode:?}");
         };
-        assert_eq!(
-            once.font(once_font).name(),
-            "matrix-font",
-            "loaded font in {mode:?}"
+        assert!(
+            String::from_utf8_lossy(&output.terminal).contains("count=1403"),
+            "ordinary state restores in {mode:?}"
         );
-        if mode == EngineMode::PdfTex {
-            assert_eq!(once.int_param(IntParam::PDF_COMPRESS_LEVEL), 6);
-            assert_eq!(once.dimen_param(DimenParam::PDF_PAGE_WIDTH).raw(), 12_345);
-        }
-
-        let second_bytes = once.dump_format().expect("first load redumps");
-        assert_eq!(
-            second_bytes, first_bytes,
-            "first deterministic redump in {mode:?}"
-        );
-        let mut twice = load_profile_format(mode, &second_bytes);
-        assert_profile_surface(mode, &mut twice);
-        let Meaning::Font(twice_font) =
-            twice.meaning(twice.symbol("matrixfont").expect("font name"))
-        else {
-            panic!("twice-loaded font meaning in {mode:?}");
-        };
-        assert_eq!(
-            twice.font(twice_font).name(),
-            "matrix-font",
-            "twice-loaded font in {mode:?}"
-        );
-        assert_eq!(
-            twice.dump_format().expect("second load redumps"),
-            first_bytes,
-            "second deterministic redump in {mode:?}",
-        );
+        images.push(image.into_bytes());
     }
 
-    assert_ne!(profile_hashes[0].1, profile_hashes[1].1);
-    assert_ne!(profile_hashes[1].1, profile_hashes[2].1);
-    assert_ne!(profile_hashes[0].1, profile_hashes[2].1);
+    assert_ne!(images[0], images[1]);
+    assert_ne!(images[1], images[2]);
+    assert_ne!(images[0], images[2]);
 }
 
 #[test]
 fn profile_format_dump_and_malformed_load_fail_exactly() {
-    let mut stores = Universe::default();
-    EngineMode::PdfTex.prepare_fresh(&mut stores);
-    stores
-        .append_pdf_document_fragment(tex_state::PdfDocumentFragmentKind::Info, TokenListId::EMPTY);
-    assert_eq!(stores.dump_format(), Err(FormatError::NonEmptyPdfDocument));
-
-    let mut valid = Universe::default();
-    EngineMode::PdfTex.prepare_fresh(&mut valid);
-    let bytes = valid.dump_format().expect("valid pdfTeX format");
+    let bytes = construct_test_format(EngineMode::PdfTex, "\\dump").into_bytes();
     for (label, malformed, expected) in [
         (
             "truncated",
@@ -273,7 +174,7 @@ fn profile_format_dump_and_malformed_load_fail_exactly() {
             "not an Umber format file",
         ),
     ] {
-        let error = Universe::from_format(World::memory(), &malformed)
+        let error = tex_state::DetachedFormatImage::try_from_bytes(malformed)
             .expect_err("malformed format must fail closed");
         assert_eq!(error.to_string(), expected, "{label}");
     }
@@ -1603,7 +1504,7 @@ fn pdf_raw_object_file_uses_an_identity_pinned_accepted_payload() {
     assert_eq!(entry.source_name, "t1.cmap");
     assert_eq!(entry.virtual_path, "/texlive/tex/latex/cmap/t1.cmap");
     assert_eq!(entry.content_id, FileContentId::for_bytes(T1_CMAP));
-    assert_eq!(entry.bytes.as_ref(), T1_CMAP);
+    assert_eq!(entry.bytes.as_slice(), T1_CMAP);
     assert!(matches!(
         &entry.source,
         PdfRawObjectFileSource::Resolved(key) if key == request.key()
@@ -3171,11 +3072,12 @@ fn native_and_vfs_single_pass_outputs_are_byte_identical() {
         "\\immediate\\write1{same} ",
         "\\immediate\\closeout1 \\message{same}\\end"
     );
-    let mut stores = Universe::with_world(World::memory());
-    prepare_run_stores(&mut stores);
-    crate::run_memory_with_stores(source, &mut stores).expect("native memory run");
-    let native =
-        crate::collect_final_memory_output(&mut stores, &[], 1 << 20).expect("native output");
+    let native = crate::with_engine_world(World::memory(), |stores| {
+        prepare_run_stores(stores);
+        crate::run_memory_with_stores(source, stores).expect("native memory run");
+        crate::collect_final_memory_output(stores, &[], 1 << 20).expect("native output")
+    })
+    .expect("fresh native-output universe");
 
     let mut virtual_session = VirtualCompileSession::new(SessionOptions {
         job_name: Some("texput".to_owned()),
@@ -3390,16 +3292,14 @@ fn every_engine_mode_has_source_and_schema_11_format_artifact_equivalence() {
         EngineMode::Latex,
         EngineMode::PdfLatex,
     ] {
-        let mut stores = Universe::with_world(World::memory());
-        engine.prepare_fresh(&mut stores);
-        let format = stores.dump_format().expect("dump schema-11 format");
+        let format = construct_test_format(engine, "\\dump");
         assert_eq!(
-            u32::from_le_bytes(format[8..12].try_into().expect("schema bytes")),
+            u32::from_le_bytes(format.as_bytes()[8..12].try_into().expect("schema bytes")),
             11
         );
 
         let mut formatted = VirtualCompileSession::new(SessionOptions {
-            format: Some(format),
+            format: Some(format.into_bytes()),
             engine,
             ..SessionOptions::default()
         })
@@ -3441,28 +3341,34 @@ fn virtual_initex_installs_the_canonical_profile_registry() {
         EngineMode::Latex,
         EngineMode::PdfLatex,
     ] {
-        let mut stores = Universe::with_world(World::memory());
-        engine.prepare_initex(&mut stores);
+        crate::with_engine_world(World::memory(), |stores| {
+            engine.prepare_initex(stores);
 
-        let iftrue = stores.intern("iftrue");
-        assert_eq!(
-            stores.meaning(iftrue),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue),
-            "{} TeX82 registry",
-            engine.name()
-        );
-        assert_eq!(
-            stores.primitive_meaning("ifdefined").is_some(),
-            !matches!(engine, EngineMode::Tex82),
-            "{} e-TeX registry",
-            engine.name()
-        );
-        assert_eq!(
-            stores.primitive_meaning("pdfprimitive").is_some(),
-            matches!(engine, EngineMode::PdfTex | EngineMode::PdfLatex),
-            "{} pdfTeX registry",
-            engine.name()
-        );
+            let iftrue = stores.intern("iftrue").expect("iftrue symbol");
+            let iftrue_meaning = stores
+                .command_context()
+                .expect("admit INITEX registry")
+                .meaning(iftrue.symbol());
+            assert_eq!(
+                iftrue_meaning,
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue),
+                "{} TeX82 registry",
+                engine.name()
+            );
+            assert_eq!(
+                stores.primitive_meaning("ifdefined").is_some(),
+                !matches!(engine, EngineMode::Tex82),
+                "{} e-TeX registry",
+                engine.name()
+            );
+            assert_eq!(
+                stores.primitive_meaning("pdfprimitive").is_some(),
+                matches!(engine, EngineMode::PdfTex | EngineMode::PdfLatex),
+                "{} pdfTeX registry",
+                engine.name()
+            );
+        })
+        .expect("fresh INITEX registry universe");
     }
 }
 
@@ -3504,37 +3410,49 @@ fn virtual_format_registry_preserves_live_meanings_and_profile_distinctions() {
         EngineMode::Latex,
         EngineMode::PdfLatex,
     ] {
-        let mut stores = Universe::with_world(World::memory());
-        let names = ["iftrue", "ifdefined", "pdfprimitive"];
-        for name in names {
-            let symbol = stores.intern(name);
-            stores.set_meaning(symbol, Meaning::Relax);
-        }
+        crate::with_engine_world(World::memory(), |stores| {
+            let names = ["iftrue", "ifdefined", "pdfprimitive"];
+            for name in names {
+                let symbol = stores.intern(name).expect("shadow symbol");
+                stores
+                    .assign_meaning(
+                        symbol,
+                        tex_state::MeaningWord::from_static(Meaning::Relax),
+                        tex_state::AssignmentScope::Local,
+                    )
+                    .expect("shadow primitive");
+            }
 
-        engine.install_after_format(&mut stores);
+            engine.install_after_format(stores);
 
-        for name in names {
-            let symbol = stores.intern(name);
+            for name in names {
+                let symbol = stores.intern(name).expect("restored symbol");
+                let meaning = stores
+                    .command_context()
+                    .expect("admit restored registry")
+                    .meaning(symbol.symbol());
+                assert_eq!(
+                    meaning,
+                    Meaning::Relax,
+                    "{} must preserve restored \\{name}",
+                    engine.name()
+                );
+            }
+            assert!(stores.primitive_meaning("iftrue").is_some());
             assert_eq!(
-                stores.meaning(symbol),
-                Meaning::Relax,
-                "{} must preserve restored \\{name}",
+                stores.primitive_meaning("ifdefined").is_some(),
+                !matches!(engine, EngineMode::Tex82),
+                "{} e-TeX restored registry",
                 engine.name()
             );
-        }
-        assert!(stores.primitive_meaning("iftrue").is_some());
-        assert_eq!(
-            stores.primitive_meaning("ifdefined").is_some(),
-            !matches!(engine, EngineMode::Tex82),
-            "{} e-TeX restored registry",
-            engine.name()
-        );
-        assert_eq!(
-            stores.primitive_meaning("pdfprimitive").is_some(),
-            matches!(engine, EngineMode::PdfTex | EngineMode::PdfLatex),
-            "{} pdfTeX restored registry",
-            engine.name()
-        );
+            assert_eq!(
+                stores.primitive_meaning("pdfprimitive").is_some(),
+                matches!(engine, EngineMode::PdfTex | EngineMode::PdfLatex),
+                "{} pdfTeX restored registry",
+                engine.name()
+            );
+        })
+        .expect("fresh format-registry universe");
     }
 }
 
@@ -3575,20 +3493,10 @@ fn format_rejection_and_job_clock_are_deterministic() {
 
 #[test]
 fn formatted_session_starts_with_fresh_clock_everyjob_and_checkpoint_state() {
-    let mut initex = Universe::with_world(World::memory_with_clock(tex_state::JobClock {
-        time: 1,
-        second: 2,
-        day: 3,
-        month: 4,
-        year: 2001,
-    }));
-    prepare_run_stores(&mut initex);
-    crate::run_memory_with_stores(
+    let format = construct_test_format(
+        EngineMode::Tex82,
         "\\everyjob{\\count0=41\\message{everyjob}}\\dump",
-        &mut initex,
-    )
-    .expect("create format");
-    let format = initex.dump_format().expect("dump format");
+    );
     let clock = tex_state::JobClock {
         time: 754,
         second: 56,
@@ -3597,7 +3505,7 @@ fn formatted_session_starts_with_fresh_clock_everyjob_and_checkpoint_state() {
         year: 2042,
     };
     let mut formatted = VirtualCompileSession::new(SessionOptions {
-        format: Some(format),
+        format: Some(format.into_bytes()),
         clock,
         ..SessionOptions::default()
     })
@@ -3633,21 +3541,35 @@ fn formatted_session_starts_with_fresh_clock_everyjob_and_checkpoint_state() {
 
 #[test]
 fn modern_policy_rejects_classic_preloaded_format_fonts_before_execution() {
-    let mut initex = Universe::with_world(World::memory());
-    prepare_run_stores(&mut initex);
-    initex.intern_font(tex_fonts::LoadedFont::new(
-        "classic-format-font",
-        "classic-format-font.tfm",
-        [1; 32],
-        0,
-        tex_state::scaled::Scaled::from_raw(10 << 16),
-        tex_state::scaled::Scaled::from_raw(10 << 16),
-        vec![tex_state::scaled::Scaled::from_raw(0); 7],
-        tex_fonts::FontMetrics::default(),
-    ));
-    let format = initex.dump_format().expect("dump classic font format");
+    let format = crate::with_engine_world(World::memory(), |stores| {
+        prepare_run_stores(stores);
+        stores
+            .command_context()
+            .expect("admit classic format font")
+            .intern_font(tex_fonts::LoadedFont::new(
+                "classic-format-font",
+                "classic-format-font.tfm",
+                [1; 32],
+                0,
+                tex_state::scaled::Scaled::from_raw(10 << 16),
+                tex_state::scaled::Scaled::from_raw(10 << 16),
+                vec![tex_state::scaled::Scaled::from_raw(0); 7],
+                tex_fonts::FontMetrics::default(),
+            ));
+        crate::run_memory_collecting_artifacts_with_profile(
+            "\\dump",
+            stores,
+            tex_command::CommandProfile::TEX82,
+            false,
+        )
+        .expect("dump classic font format")
+        .format_dump
+        .expect("classic font format dump")
+        .image
+    })
+    .expect("fresh classic-font format universe");
     let mut session = VirtualCompileSession::new(SessionOptions {
-        format: Some(format),
+        format: Some(format.into_bytes()),
         font_layout_policy: tex_fonts::FontLayoutPolicy::OpenTypePreferred,
         ..SessionOptions::default()
     })
@@ -3736,9 +3658,7 @@ fn source_session_installs_positive_prefetch_responses_for_the_next_attempt() {
 
 #[test]
 fn formatted_session_reports_unsupported_schema_version() {
-    let mut stores = Universe::with_world(World::memory());
-    prepare_run_stores(&mut stores);
-    let mut format = stores.dump_format().expect("dump format");
+    let mut format = construct_test_format(EngineMode::Tex82, "\\dump").into_bytes();
     format[8..12].copy_from_slice(&9_u32.to_le_bytes());
     let mut session = VirtualCompileSession::new(SessionOptions {
         format: Some(format),
@@ -4074,16 +3994,12 @@ fn unavailable_openin_retries_into_tex_missing_file_semantics() {
 
 #[test]
 fn format_macro_reads_same_run_output_after_an_authoritative_missing_probe() {
-    let mut initex = Universe::with_world(World::memory());
-    prepare_run_stores(&mut initex);
-    crate::run_memory_with_stores(
+    let format = construct_test_format(
+        EngineMode::Tex82,
         "\\long\\def\\GenerateAfterProbe#1{\\openin1=\"#1\" \\ifeof1 \\message{OPTIONAL-MISSING}\\else \\errmessage{unexpected existing input}\\fi \\immediate\\openout1=#1 \\immediate\\write1{\\string\\message{GENERATED-READ}}\\immediate\\closeout1 \\input #1}\\dump",
-        &mut initex,
-    )
-    .expect("create format with optional-input macro");
-    let format = initex.dump_format().expect("dump format");
+    );
     let mut session = VirtualCompileSession::new(SessionOptions {
-        format: Some(format),
+        format: Some(format.into_bytes()),
         ..SessionOptions::default()
     })
     .expect("formatted session");
@@ -4114,16 +4030,12 @@ fn format_macro_reads_same_run_output_after_an_authoritative_missing_probe() {
 
 #[test]
 fn generated_output_reopens_after_a_negative_probe_and_unrelated_suspension() {
-    let mut initex = Universe::with_world(World::memory());
-    prepare_run_stores(&mut initex);
-    crate::run_memory_with_stores(
+    let format = construct_test_format(
+        EngineMode::Tex82,
         "\\long\\def\\GenerateAfterProbe#1{\\openin1=\"#1\" \\ifeof1 \\message{OPTIONAL-MISSING}\\else \\errmessage{unexpected existing input}\\fi \\immediate\\openout15=#1 \\immediate\\write15{SNR, AWGN}\\immediate\\closeout15}\\dump",
-        &mut initex,
-    )
-    .expect("create format with optional-input generator");
-    let format = initex.dump_format().expect("dump format");
+    );
     let mut session = VirtualCompileSession::new(SessionOptions {
-        format: Some(format),
+        format: Some(format.into_bytes()),
         ..SessionOptions::default()
     })
     .expect("formatted session");
@@ -4319,12 +4231,9 @@ fn invalid_and_absolute_file_enquiries_are_missing_without_host_access() {
 
 #[test]
 fn invalid_legacy_platform_filesize_probe_expands_to_nothing() {
-    let mut stores = Universe::with_world(World::memory());
-    prepare_run_stores(&mut stores);
-    tex_command::install_latex_expandable_primitives(&mut stores);
-    let format = stores.dump_format().expect("dump format");
+    let format = construct_test_format(EngineMode::Latex, "\\dump");
     let mut session = VirtualCompileSession::new(SessionOptions {
-        format: Some(format),
+        format: Some(format.into_bytes()),
         ..SessionOptions::default()
     })
     .expect("formatted session");

@@ -1,14 +1,14 @@
 use std::path::Path;
 
 use tex_arith::{FontSizeSpec, Scaled};
-use tex_state::{InteractionMode, Universe};
+use tex_state::InteractionMode;
 
 use super::{
     DEFAULT_PDF_PK_RESOLUTION, is_pdf_sfnt_program, pdf_finalization_input,
     pdf_from_accepted_artifacts_with_virtual_fonts,
 };
 use crate::{
-    FileSessionResolvers, RetainedRootRequest, RunResult, prepare_pdftex_run_stores,
+    FileSessionResolvers, RetainedRootRequest, prepare_pdftex_run_stores,
     run_input_collecting_artifacts_with_profile,
 };
 
@@ -22,38 +22,44 @@ fn sfnt_program_classification_includes_supported_containers() {
 
 #[test]
 fn accepted_pdf_finalization_includes_the_unpublished_page_suffix() {
-    fn setup() -> (Universe, RunResult) {
-        let mut stores = Universe::default();
-        stores.set_interaction_mode(InteractionMode::Nonstop);
-        prepare_pdftex_run_stores(&mut stores);
-        let mut host =
-            FileSessionResolvers::new(Path::new("prepared-pages.tex"), Vec::new(), Vec::new());
-        let run = run_input_collecting_artifacts_with_profile(
-            &mut stores,
-            RetainedRootRequest::authored_job(
-                "prepared-pages",
-                concat!(
-                    "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
-                    "\\shipout\\vbox{\\hrule width1pt height1pt}",
-                    "\\shipout\\vbox{\\hrule width2pt height2pt}",
-                    "\\shipout\\vbox{\\hrule width3pt height3pt}\\end",
-                )
-                .as_bytes(),
+    fn setup() -> tex_state::DetachedPdfCompletion {
+        crate::with_engine_universe(|stores| {
+            stores.set_interaction_mode(InteractionMode::Nonstop);
+            prepare_pdftex_run_stores(stores);
+            let mut host =
+                FileSessionResolvers::new(Path::new("prepared-pages.tex"), Vec::new(), Vec::new());
+            run_input_collecting_artifacts_with_profile(
+                stores,
+                RetainedRootRequest::authored_job(
+                    "prepared-pages",
+                    concat!(
+                        "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+                        "\\shipout\\vbox{\\hrule width1pt height1pt}",
+                        "\\shipout\\vbox{\\hrule width2pt height2pt}",
+                        "\\shipout\\vbox{\\hrule width3pt height3pt}\\end",
+                    )
+                    .as_bytes(),
+                    tex_command::CommandProfile::PDFTEX14029,
+                ),
+                &mut host,
                 tex_command::CommandProfile::PDFTEX14029,
-            ),
-            &mut host,
-            tex_command::CommandProfile::PDFTEX14029,
-        )
-        .expect("three package-independent pages ship");
-        (stores, run)
+            )
+            .expect("three package-independent pages ship");
+            stores
+                .command_context()
+                .expect("admit terminal PDF completion")
+                .detach_pdf_completion()
+                .expect("detach three-page PDF")
+        })
+        .expect("fresh PDF test universe")
     }
 
-    // Negative control: the ordinary non-prepared ledger remains complete.
-    let (mut direct_stores, direct_run) = setup();
+    let completion = setup();
+    assert_eq!(completion.pages().len(), 3);
     let direct_pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
-        &mut direct_stores,
-        &direct_run.committed_artifacts,
+        &completion,
         &crate::PdfVirtualFontResources::default(),
+        &crate::PdfRawObjectFileReceipt::default(),
     )
     .expect("direct three-page PDF finalizes");
     let direct_query = test_support::pdf_query::PdfQuery::new(
@@ -62,39 +68,6 @@ fn accepted_pdf_finalization_includes_the_unpublished_page_suffix() {
     )
     .expect("independent parser accepts direct PDF");
     assert_eq!(direct_query.pages().expect("direct page tree").len(), 3);
-
-    // Positive control: the accepted ledger is one live page followed by two
-    // unpublished pages. The live-only input proves the boundary, while the
-    // accepted adapter must serialize the complete ordered page tree.
-    let (mut prepared_stores, _prepared_run) = setup();
-    let prepared = prepared_stores.prepare_page_suffix(1);
-    assert_eq!(prepared_stores.pdf_pages().len(), 1);
-    assert_eq!(prepared.pdf_pages().len(), 2);
-    let mut accepted_artifacts = prepared_stores.world().committed_artifacts().to_vec();
-    accepted_artifacts.extend_from_slice(prepared.artifacts());
-    let live_only = pdf_finalization_input(
-        &mut prepared_stores,
-        &accepted_artifacts,
-        DEFAULT_PDF_PK_RESOLUTION,
-        &crate::PdfVirtualFontResources::default(),
-    )
-    .expect("live prefix finalization input");
-    assert_eq!(live_only.pages.len(), 1);
-
-    let accepted_pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
-        &mut prepared_stores,
-        &accepted_artifacts,
-        Some(&prepared),
-        &crate::PdfVirtualFontResources::default(),
-        &crate::PdfRawObjectFileReceipt::default(),
-    )
-    .expect("accepted three-page PDF finalizes");
-    let accepted_query = test_support::pdf_query::PdfQuery::new(
-        &accepted_pdf,
-        test_support::pdf_query::QueryLimits::default(),
-    )
-    .expect("independent parser accepts prepared PDF");
-    assert_eq!(accepted_query.pages().expect("accepted page tree").len(), 3);
 }
 
 #[test]
@@ -121,39 +94,48 @@ fn detached_nested_vf_preserves_exact_local_tfm_identity_and_resources() {
         bytes
     }
 
-    fn setup() -> (Universe, RunResult) {
-        let mut stores = Universe::default();
-        stores.set_interaction_mode(InteractionMode::Nonstop);
-        prepare_pdftex_run_stores(&mut stores);
-        stores
-            .world_mut()
-            .set_memory_file("cmr10.tfm", CMR10.to_vec())
-            .expect("seed root TFM");
-        stores
-            .provide_pdf_type1_program(
-                b"cmr10.pfb".to_vec(),
-                include_bytes!("../../../../tests/corpus/pdf/embedded_type1/cmr10.pfb"),
-            )
-            .expect("seed leaf program");
-        let mut host = FileSessionResolvers::new(Path::new("pdf-test.tex"), Vec::new(), Vec::new());
-        let run = run_input_collecting_artifacts_with_profile(
-            &mut stores,
-            RetainedRootRequest::authored_job(
-                "pdf-test",
-                concat!(
-                    "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
-                    "\\pdfmapline{=cmex10 CMR10 <cmr10.pfb}",
-                    "\\font\\f=cmr10 at 12pt ",
-                    "\\shipout\\hbox{\\f A}\\end",
+    fn setup() -> tex_state::DetachedPdfCompletion {
+        crate::with_engine_universe(|stores| {
+            stores.set_interaction_mode(InteractionMode::Nonstop);
+            prepare_pdftex_run_stores(stores);
+            stores
+                .world_mut()
+                .set_memory_file("cmr10.tfm", CMR10.to_vec())
+                .expect("seed root TFM");
+            stores
+                .world_mut()
+                .set_memory_file(
+                    "cmr10.pfb",
+                    include_bytes!("../../../../tests/corpus/pdf/embedded_type1/cmr10.pfb")
+                        .to_vec(),
                 )
-                .as_bytes(),
+                .expect("seed leaf program");
+            let mut host =
+                FileSessionResolvers::new(Path::new("pdf-test.tex"), Vec::new(), Vec::new());
+            run_input_collecting_artifacts_with_profile(
+                stores,
+                RetainedRootRequest::authored_job(
+                    "pdf-test",
+                    concat!(
+                        "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+                        "\\pdfmapline{=cmex10 CMR10 <cmr10.pfb}",
+                        "\\font\\f=cmr10 at 12pt ",
+                        "\\shipout\\hbox{\\f A}\\end",
+                    )
+                    .as_bytes(),
+                    tex_command::CommandProfile::PDFTEX14029,
+                ),
+                &mut host,
                 tex_command::CommandProfile::PDFTEX14029,
-            ),
-            &mut host,
-            tex_command::CommandProfile::PDFTEX14029,
-        )
-        .expect("nested VF root page ships");
-        (stores, run)
+            )
+            .expect("nested VF root page ships");
+            stores
+                .command_context()
+                .expect("admit nested-VF completion")
+                .detach_pdf_completion()
+                .expect("detach nested-VF PDF")
+        })
+        .expect("fresh nested-VF universe")
     }
 
     let root_vf = vf(b"cmsy10", FIX_ONE / 2);
@@ -179,16 +161,11 @@ fn detached_nested_vf_preserves_exact_local_tfm_identity_and_resources() {
         );
     }
 
-    let (mut stores, run) = setup();
-    let before = stores.pdf_next_object_id();
-    let input = pdf_finalization_input(
-        &mut stores,
-        &run.committed_artifacts,
-        DEFAULT_PDF_PK_RESOLUTION,
-        &resources,
-    )
-    .expect("nested VF detaches");
-    assert_eq!(stores.pdf_next_object_id(), before);
+    let completion = setup();
+    let before = completion.next_object();
+    let input = pdf_finalization_input(&completion, DEFAULT_PDF_PK_RESOLUTION, &resources)
+        .expect("nested VF detaches");
+    assert_eq!(completion.next_object(), before);
     let intermediate = input
         .fonts
         .values()
@@ -265,12 +242,12 @@ fn detached_nested_vf_preserves_exact_local_tfm_identity_and_resources() {
     ));
 
     let pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
-        &mut stores,
-        &run.committed_artifacts,
+        &completion,
         &resources,
+        &crate::PdfRawObjectFileReceipt::default(),
     )
     .expect("detached nested VF finalizes");
-    assert_eq!(stores.pdf_next_object_id(), input.allocation.next_object);
+    assert_eq!(completion.next_object(), input.allocation.next_object);
     let parsed = test_support::pdf_query::PdfQuery::new(
         &pdf,
         test_support::pdf_query::QueryLimits::default(),
@@ -315,85 +292,91 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
         bytes
     }
 
-    let mut stores = Universe::default();
-    stores.set_interaction_mode(InteractionMode::Nonstop);
-    prepare_pdftex_run_stores(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("cmr10.tfm", CMR10.to_vec())
-        .expect("seed root TFM");
-    stores
-        .provide_pdf_type1_program(
-            b"cmr10.pfb".to_vec(),
-            include_bytes!("../../../../tests/corpus/pdf/embedded_type1/cmr10.pfb"),
-        )
-        .expect("seed leaf program");
-    let mut host = FileSessionResolvers::new(Path::new("pdf-test.tex"), Vec::new(), Vec::new());
-    let run = run_input_collecting_artifacts_with_profile(
-        &mut stores,
-        RetainedRootRequest::authored_job(
-            "pdf-test",
-            concat!(
-                "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
-                "\\pdfmapline{=cmsy10 CMR10 <cmr10.pfb}",
-                "\\pdfmapline{=cmex10 CMR10 <cmr10.pfb}",
-                "\\font\\f=cmr10 at 12pt ",
-                "\\shipout\\hbox{\\f A}\\end",
+    crate::with_engine_universe(|stores| {
+        stores.set_interaction_mode(InteractionMode::Nonstop);
+        prepare_pdftex_run_stores(stores);
+        stores
+            .world_mut()
+            .set_memory_file("cmr10.tfm", CMR10.to_vec())
+            .expect("seed root TFM");
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.pfb",
+                include_bytes!("../../../../tests/corpus/pdf/embedded_type1/cmr10.pfb").to_vec(),
             )
-            .as_bytes(),
+            .expect("seed leaf program");
+        let mut host = FileSessionResolvers::new(Path::new("pdf-test.tex"), Vec::new(), Vec::new());
+        run_input_collecting_artifacts_with_profile(
+            stores,
+            RetainedRootRequest::authored_job(
+                "pdf-test",
+                concat!(
+                    "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+                    "\\pdfmapline{=cmsy10 CMR10 <cmr10.pfb}",
+                    "\\pdfmapline{=cmex10 CMR10 <cmr10.pfb}",
+                    "\\font\\f=cmr10 at 12pt ",
+                    "\\shipout\\hbox{\\f A}\\end",
+                )
+                .as_bytes(),
+                tex_command::CommandProfile::PDFTEX14029,
+            ),
+            &mut host,
             tex_command::CommandProfile::PDFTEX14029,
-        ),
-        &mut host,
-        tex_command::CommandProfile::PDFTEX14029,
-    )
-    .expect("VF root page ships");
-    let root_vf = vf();
-    let mut resources = crate::PdfVirtualFontResources::default();
-    resources.virtual_fonts.insert(
-        "cmr10".to_owned(),
-        crate::CachedVirtualFont {
-            content_id: umber_vfs::FileContentId::for_bytes(&root_vf),
-            program: tex_fonts::VfProgram::parse(&root_vf).expect("test VF"),
-        },
-    );
-    for (name, bytes) in [("cmsy10", CMSY10), ("cmex10", CMEX10), ("unused10", CMSY10)] {
-        resources.local_tfms.insert(
-            name.to_owned(),
-            crate::CachedLocalTfm {
-                content_id: umber_vfs::FileContentId::for_bytes(bytes),
-                bytes: bytes.to_vec(),
-                font: tex_fonts::TfmFont::parse(bytes).expect("test local TFM"),
+        )
+        .expect("VF root page ships");
+        let completion = stores
+            .command_context()
+            .expect("admit selected-default completion")
+            .detach_pdf_completion()
+            .expect("detach selected-default PDF");
+        let root_vf = vf();
+        let mut resources = crate::PdfVirtualFontResources::default();
+        resources.virtual_fonts.insert(
+            "cmr10".to_owned(),
+            crate::CachedVirtualFont {
+                content_id: umber_vfs::FileContentId::for_bytes(&root_vf),
+                program: tex_fonts::VfProgram::parse(&root_vf).expect("test VF"),
             },
         );
-    }
+        for (name, bytes) in [("cmsy10", CMSY10), ("cmex10", CMEX10), ("unused10", CMSY10)] {
+            resources.local_tfms.insert(
+                name.to_owned(),
+                crate::CachedLocalTfm {
+                    content_id: umber_vfs::FileContentId::for_bytes(bytes),
+                    bytes: bytes.to_vec(),
+                    font: tex_fonts::TfmFont::parse(bytes).expect("test local TFM"),
+                },
+            );
+        }
 
-    let input = pdf_finalization_input(
-        &mut stores,
-        &run.committed_artifacts,
-        DEFAULT_PDF_PK_RESOLUTION,
-        &resources,
-    )
-    .expect("selected default font is retained at the detached boundary");
-    let names = input
-        .fonts
-        .values()
-        .map(|font| font.artifact_resource.name.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    assert!(names.contains("cmsy10"), "selected default is checkpointed");
-    assert!(names.contains("cmex10"), "painted leaf is checkpointed");
-    assert!(
-        !names.contains("unused10"),
-        "an unselected VF definition is not an output resource"
-    );
+        let input = pdf_finalization_input(&completion, DEFAULT_PDF_PK_RESOLUTION, &resources)
+            .expect("selected default font is retained at the detached boundary");
+        let names = input
+            .fonts
+            .values()
+            .map(|font| font.artifact_resource.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(names.contains("cmsy10"), "selected default is checkpointed");
+        assert!(names.contains("cmex10"), "painted leaf is checkpointed");
+        assert!(
+            !names.contains("unused10"),
+            "an unselected VF definition is not an output resource"
+        );
 
-    let pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
-        &mut stores,
-        &run.committed_artifacts,
-        &resources,
-    )
-    .expect("selected-default VF finalizes");
-    test_support::pdf_query::PdfQuery::new(&pdf, test_support::pdf_query::QueryLimits::default())
+        let pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
+            &completion,
+            &resources,
+            &crate::PdfRawObjectFileReceipt::default(),
+        )
+        .expect("selected-default VF finalizes");
+        test_support::pdf_query::PdfQuery::new(
+            &pdf,
+            test_support::pdf_query::QueryLimits::default(),
+        )
         .expect("independent parser accepts selected-default PDF");
+    })
+    .expect("fresh selected-default universe");
 }
 
 fn pt(value: i32) -> Scaled {

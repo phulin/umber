@@ -138,39 +138,40 @@ fn execute(case: &str) -> ActualChannels {
         "tests/pdftex-properties/fixtures/{case}/{case}.tex"
     ))
     .unwrap_or_else(|error| panic!("read {case} source: {error:#}"));
-    let mut stores = pdftex_oracle_stores();
-    if case == "pdf_ximage_enquiries" {
-        seed_ximage_inputs(&mut stores);
-    }
-    prepare_pdftex_run_stores(&mut stores);
-    let result = run_pdf_memory_result(
-        std::str::from_utf8(&source).expect("fixture source is UTF-8"),
-        &mut stores,
-    );
-    let returned = result
-        .as_ref()
-        .map(|result| result.terminal_text.as_str())
-        .unwrap_or_default();
-    let terminal = format!(
-        "{}{}",
-        String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default()),
-        returned
-    );
-    let log = format!(
-        "{}{}",
-        String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default()),
-        returned
-    );
-    let status = match result {
-        Ok(result) if result.status.is_success() => "success".to_owned(),
-        Ok(_) => "error".to_owned(),
-        Err(error) => format!("error:{error}"),
-    };
-    ActualChannels {
-        status,
-        terminal,
-        log,
-    }
+    with_pdftex_oracle_stores(|stores| {
+        if case == "pdf_ximage_enquiries" {
+            seed_ximage_inputs(stores);
+        }
+        prepare_pdftex_run_stores(stores);
+        let result = run_pdf_memory_result(
+            std::str::from_utf8(&source).expect("fixture source is UTF-8"),
+            stores,
+        );
+        let returned = result
+            .as_ref()
+            .map(|result| result.terminal_text.as_str())
+            .unwrap_or_default();
+        let terminal = format!(
+            "{}{}",
+            String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default()),
+            returned
+        );
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default()),
+            returned
+        );
+        let status = match result {
+            Ok(result) if result.status.is_success() => "success".to_owned(),
+            Ok(_) => "error".to_owned(),
+            Err(error) => format!("error:{error}"),
+        };
+        ActualChannels {
+            status,
+            terminal,
+            log,
+        }
+    })
 }
 
 fn reference_channels(reference: &str) -> (bool, &str, &str) {
@@ -193,7 +194,7 @@ fn normalize(text: &str) -> String {
         .collect()
 }
 
-fn seed_ximage_inputs(stores: &mut Universe) {
+fn seed_ximage_inputs<G>(stores: &mut Universe<G>) {
     let mut pdf = ValidPdfFixture::new("1.7").expect("create three-page PDF");
     pdf.add_dictionary(
         1,
