@@ -25,8 +25,9 @@ fn kern(value: i32) -> Node {
 
 #[cfg(feature = "profiling")]
 fn semantic_apply_allocations() -> tex_state::measurement::HotCoreAllocationMeasurement {
-    tex_state::measurement::hot_core_census().allocations
-        [tex_state::measurement::HotCoreAllocationOwner::SemanticApply as usize]
+    tex_state::measurement::hot_core_thread_allocation_measurement(
+        tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+    )
 }
 
 #[cfg(feature = "profiling")]

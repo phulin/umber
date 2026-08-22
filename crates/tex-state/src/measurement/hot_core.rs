@@ -344,6 +344,17 @@ pub fn hot_core_allocation_scope(
 }
 
 #[must_use]
+pub fn hot_core_thread_allocation_measurement(
+    owner: HotCoreAllocationOwner,
+) -> HotCoreAllocationMeasurement {
+    let measurement = umber_hot_core_allocator::thread_measurement(owner.index());
+    HotCoreAllocationMeasurement {
+        calls: measurement.calls,
+        requested_bytes: measurement.requested_bytes,
+    }
+}
+
+#[must_use]
 pub fn hot_core_allocation_trace_cursor() -> u64 {
     umber_hot_core_allocator::trace_cursor()
 }

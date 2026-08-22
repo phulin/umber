@@ -15,6 +15,9 @@ static TRACE: [AtomicU64; TRACE_CAPACITY] = [const { AtomicU64::new(0) }; TRACE_
 
 thread_local! {
     static OWNER: Cell<Option<usize>> = const { Cell::new(None) };
+    static THREAD_CALLS: Cell<[u64; OWNER_LIMIT]> = const { Cell::new([0; OWNER_LIMIT]) };
+    static THREAD_REQUESTED_BYTES: Cell<[u64; OWNER_LIMIT]> =
+        const { Cell::new([0; OWNER_LIMIT]) };
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -85,11 +88,33 @@ pub fn record(requested_bytes: usize) {
         return;
     };
     if let Some(owner) = owner {
+        THREAD_CALLS.with(|calls| {
+            let mut values = calls.get();
+            values[owner] = values[owner].saturating_add(1);
+            calls.set(values);
+        });
+        THREAD_REQUESTED_BYTES.with(|bytes| {
+            let mut values = bytes.get();
+            values[owner] = values[owner].saturating_add(requested_bytes as u64);
+            bytes.set(values);
+        });
         CALLS[owner].fetch_add(1, Ordering::Relaxed);
         REQUESTED_BYTES[owner].fetch_add(requested_bytes as u64, Ordering::Relaxed);
         let cursor = TRACE_CURSOR.fetch_add(1, Ordering::Relaxed);
         let encoded = ((owner as u64) << 56) | (requested_bytes as u64).min(TRACE_SIZE_MASK);
         TRACE[cursor as usize % TRACE_CAPACITY].store(encoded, Ordering::Relaxed);
+    }
+}
+
+#[must_use]
+pub fn thread_measurement(owner: usize) -> AllocationMeasurement {
+    assert!(
+        owner < OWNER_LIMIT,
+        "profiling allocation owner exceeds table"
+    );
+    AllocationMeasurement {
+        calls: THREAD_CALLS.with(|values| values.get()[owner]),
+        requested_bytes: THREAD_REQUESTED_BYTES.with(|values| values.get()[owner]),
     }
 }
 
