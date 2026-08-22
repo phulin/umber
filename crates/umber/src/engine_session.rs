@@ -449,6 +449,16 @@ impl<'a, G> EngineSession<'a, G> {
         self.control.current_mode()
     }
 
+    /// Renders one execution error through this session's admitted
+    /// diagnostic and provenance boundary.
+    pub fn format_execution_error(&mut self, error: &tex_exec::ExecError) -> String {
+        let mut context = self
+            .stores
+            .command_context()
+            .expect("retained session has a live generation");
+        error.format_with_provenance(&mut context)
+    }
+
     /// Bounds only consecutive host declines for one suspension epoch.
     pub fn set_no_progress_limit(&mut self, limit: u8) {
         self.no_progress_limit = limit.max(1);

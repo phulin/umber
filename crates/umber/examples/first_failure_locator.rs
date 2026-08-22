@@ -147,7 +147,7 @@ fn run_locator<G>(stores: &mut Universe<G>, source: &str) -> ExitCode {
             ExitCode::SUCCESS
         }
         Ok(Err(error)) => {
-            report_error(&source, &session, &error);
+            report_error(source, &mut session, &error);
             ExitCode::FAILURE
         }
         Err(panic) => {
@@ -157,12 +157,12 @@ fn run_locator<G>(stores: &mut Universe<G>, source: &str) -> ExitCode {
     }
 }
 
-fn report_error<G>(source: &str, session: &EngineSession<'_, G>, error: &SessionError) {
+fn report_error<G>(source: &str, session: &mut EngineSession<'_, G>, error: &SessionError) {
     eprintln!("first_failure_locator: {source} run stopped");
     eprintln!("current mode: {:?}", session.current_mode());
     match error {
         SessionError::Execution(exec_error) => {
-            eprintln!("{}", exec_error.format_with_provenance(session.stores()));
+            eprintln!("{}", session.format_execution_error(exec_error));
             if let ExecError::Command(command_error) = exec_error {
                 eprintln!(
                     "note: this is a canonical command-core failure ({command_error:?}); \
