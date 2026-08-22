@@ -10,7 +10,7 @@ use tex_command::{
 };
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
-use tex_state::{FormatError, PrintSink, Universe, World, WorldError};
+use tex_state::{FileContent, FormatError, PrintSink, Universe, World, WorldError};
 use umber::EngineMode as RunEngine;
 use umber::{DriverFile, PlannedFinalization};
 
@@ -93,41 +93,45 @@ fn run() -> Result<(), CliError> {
 fn lex_dump(path: &str) -> Result<(), CliError> {
     umber::with_engine_world(World::real(), |stores| {
         let content = stores.world_mut().read_file(path)?;
-        // `lex-dump` reports what a format-loaded engine would tokenize,
-        // matching `umber run`; the run-store preparation supplies the plain
-        // category codes that INITEX itself deliberately leaves as `other`.
-        umber::prepare_run_stores(stores);
-        let mut command =
-            CommandState::new(CommandProfile::unicode_extended(CommandDialect::Tex82));
-        let source = command
-            .register_source(SourceRegistration::world(content))
-            .map_err(|error| CliError::Lex(error.to_string()))?;
-        command
-            .open_registered_source(source)
-            .map_err(|error| CliError::Lex(error.to_string()))?;
-        loop {
-            let step = command.next_unicode_source_step(
-                stores.int_param(IntParam::END_LINE_CHAR),
-                &mut CatcodeQueries(|code: CharacterCode| {
-                    stores.catcode(code.to_char().expect("Unicode command profile"))
-                }),
-            );
-            match step {
-                SourceTokenizationStep::Token(token) => {
-                    println!("{}", format_source_token(&token));
-                }
-                SourceTokenizationStep::InvalidCharacter(invalid) => {
-                    return Err(CliError::Lex(format!(
-                        "invalid character {}",
-                        invalid.code().to_char().expect("Unicode command profile") as u32
-                    )));
-                }
-                SourceTokenizationStep::End => break,
-            }
-        }
-        Ok(())
+        lex_dump_generation(stores, content)
     })
     .map_err(|error| CliError::Lex(format!("{error:?}")))?
+}
+
+fn lex_dump_generation<G>(stores: &mut Universe<G>, content: FileContent) -> Result<(), CliError> {
+    // `lex-dump` reports what a format-loaded engine would tokenize, matching
+    // `umber run`; the run-store preparation supplies the plain category codes
+    // that INITEX itself deliberately leaves as `other`.
+    umber::prepare_run_stores(stores);
+    let mut command =
+        CommandState::<G>::new(CommandProfile::unicode_extended(CommandDialect::Tex82));
+    let source = command
+        .register_source(SourceRegistration::world(content))
+        .map_err(|error| CliError::Lex(error.to_string()))?;
+    command
+        .open_registered_source(source)
+        .map_err(|error| CliError::Lex(error.to_string()))?;
+    loop {
+        let step = command.next_unicode_source_step(
+            stores.int_param(IntParam::END_LINE_CHAR),
+            &mut CatcodeQueries(|code: CharacterCode| {
+                stores.catcode(code.to_char().expect("Unicode command profile"))
+            }),
+        );
+        match step {
+            SourceTokenizationStep::Token(token) => {
+                println!("{}", format_source_token(&token));
+            }
+            SourceTokenizationStep::InvalidCharacter(invalid) => {
+                return Err(CliError::Lex(format!(
+                    "invalid character {}",
+                    invalid.code().to_char().expect("Unicode command profile") as u32
+                )));
+            }
+            SourceTokenizationStep::End => break,
+        }
+    }
+    Ok(())
 }
 
 #[cfg(feature = "profiling")]
