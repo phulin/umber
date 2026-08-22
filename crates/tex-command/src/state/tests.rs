@@ -285,6 +285,78 @@ fn post_mark_macro_arguments_survive_commit_until_activation_retirement() {
 }
 
 #[test]
+fn resource_suspension_moves_the_arena_and_restores_its_opening_cursor() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let retained = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('a')])
+            .expect("pre-operation attempt value");
+        let opening = state.begin_attempt_operation();
+        let rejected = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('b')])
+            .expect("operation-local attempt value");
+        let resume = crate::AttemptResumePoint {
+            command: 3,
+            scanner: 5,
+            expansion: 7,
+            subordinate: 11,
+        };
+
+        let pending = state
+            .suspend_attempt(universe, opening, resume, "font request")
+            .expect("live generation owner");
+        assert!(state.attempt.is_empty());
+        assert_eq!(
+            universe.retire(),
+            Err(tex_state::UniverseError::State(
+                tex_state::StateError::GenerationInUse
+            ))
+        );
+
+        let (restored_opening, restored_resume, request) = state
+            .resume_attempt(universe, pending)
+            .ok()
+            .expect("same admitted generation");
+        assert_eq!(restored_opening, opening);
+        assert_eq!(restored_resume, resume);
+        assert_eq!(request, "font request");
+        state.discard_attempt_operation(restored_opening);
+        assert_eq!(state.attempt_token_words(retained), Ok(&[word('a')][..]));
+        assert!(state.attempt_token_words(rejected).is_err());
+    });
+}
+
+#[test]
+fn failed_resource_suspension_keeps_the_live_attempt_installed() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let retained = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("attempt value");
+        let opening = state.begin_attempt_operation();
+        universe.retire().expect("unowned generation retires");
+
+        assert!(
+            state
+                .suspend_attempt(
+                    universe,
+                    opening,
+                    crate::AttemptResumePoint::default(),
+                    "input request",
+                )
+                .is_err()
+        );
+        assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
+    });
+}
+
+#[test]
 fn alignment_state_restores_outer_running_depth_after_nested_lifecycle() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();

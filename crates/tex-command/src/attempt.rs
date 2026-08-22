@@ -1185,12 +1185,14 @@ pub struct AttemptResumePoint {
 /// Complete in-process command suspension package.
 ///
 /// `R` owns the typed request and resume variant. No field borrows either the
-/// attempt or generation; resumption consumes the package, validates its
-/// coarse generation, drops that extra owner, and only then re-borrows live
-/// storage through `Universe`.
+/// attempt or generation. The opening mark and state-machine resume point are
+/// fixed-size integer coordinates into this owned attempt. Resumption consumes
+/// the package, validates both the coarse generation and opening mark, drops
+/// that extra owner, and only then re-borrows live storage through `Universe`.
 pub struct PendingCommandAttempt<G, R> {
     attempt: CommandAttempt<G>,
     generation: GenerationOwner<G>,
+    opening: CommandAttemptMark,
     resume: AttemptResumePoint,
     pending: R,
 }
@@ -1203,9 +1205,34 @@ impl<G, R> PendingCommandAttempt<G, R> {
         resume: AttemptResumePoint,
         pending: R,
     ) -> Self {
+        let opening = CommandAttemptMark::new(attempt.arena().mark());
         Self {
             attempt,
             generation,
+            opening,
+            resume,
+            pending,
+        }
+    }
+
+    pub(crate) fn new_at_validated_mark(
+        attempt: CommandAttempt<G>,
+        generation: GenerationOwner<G>,
+        opening: CommandAttemptMark,
+        resume: AttemptResumePoint,
+        pending: R,
+    ) -> Self {
+        debug_assert!(
+            attempt
+                .arena()
+                .validate_mark(opening.attempt_mark())
+                .is_ok(),
+            "a pending attempt may retain only its own validated opening cursor"
+        );
+        Self {
+            attempt,
+            generation,
+            opening,
             resume,
             pending,
         }
@@ -1214,17 +1241,24 @@ impl<G, R> PendingCommandAttempt<G, R> {
     pub fn resume(
         self,
         universe: &Universe<G>,
-    ) -> Result<(CommandAttempt<G>, AttemptResumePoint, R), Self> {
-        if !universe.owns_generation(&self.generation) {
+    ) -> Result<(CommandAttempt<G>, CommandAttemptMark, AttemptResumePoint, R), Self> {
+        if !universe.owns_generation(&self.generation)
+            || self
+                .attempt
+                .arena()
+                .validate_mark(self.opening.attempt_mark())
+                .is_err()
+        {
             return Err(self);
         }
         let Self {
             attempt,
             generation,
+            opening,
             resume,
             pending,
         } = self;
         drop(generation);
-        Ok((attempt, resume, pending))
+        Ok((attempt, opening, resume, pending))
     }
 }

@@ -418,10 +418,11 @@ fn pending_attempt_owns_generation_and_resumes_without_a_borrow() {
             ))
         );
 
-        let (attempt, resume, request) = pending
+        let (attempt, opening, resume, request) = pending
             .resume(universe)
             .ok()
             .expect("test fixture is valid");
+        assert_eq!(opening.attempt_mark(), attempt.arena().mark());
         assert_eq!(resume.command, 7);
         assert_eq!(request, "font request");
         assert!(attempt.arena().mark().traced_words == 0);

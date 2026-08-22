@@ -783,10 +783,20 @@ impl<G> From<ColdOperation<G>> for ScannedOperation<G> {
 }
 
 struct PendingResourceOperation<G> {
+    attempt: tex_command::PendingCommandAttempt<G, PreparedResourceResume<G>>,
+}
+
+struct PreparedResourceResume<G> {
     scanned: Box<ColdOperation<G>>,
     capabilities: crate::transaction_protocol::CommandCapabilities,
-    attempt: tex_command::CommandAttemptMark,
 }
+
+const PREPARED_RESOURCE_RESUME: tex_command::AttemptResumePoint = tex_command::AttemptResumePoint {
+    command: 1,
+    scanner: 0,
+    expansion: 0,
+    subordinate: 0,
+};
 
 #[derive(Clone, Copy, Debug)]
 struct PendingAlignmentDelivery {
@@ -819,7 +829,7 @@ impl<G> std::fmt::Debug for PendingResourceOperation<G> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("PendingResourceOperation<G>")
-            .field("family", &self.capabilities.family())
+            .field("state", &"owned command attempt")
             .finish_non_exhaustive()
     }
 }
@@ -3574,6 +3584,24 @@ impl<G> MainControl<G> {
         self.finish_direct_operation(stores, mark, DirectAttemptDisposition::RetainForRetry);
     }
 
+    fn suspend_prepared_resource_operation(
+        &mut self,
+        stores: &Universe<G>,
+        mark: tex_command::CommandAttemptMark,
+        scanned: Box<ColdOperation<G>>,
+        capabilities: crate::transaction_protocol::CommandCapabilities,
+    ) {
+        let pending = PreparedResourceResume::<G> {
+            scanned,
+            capabilities,
+        };
+        let attempt = self
+            .command
+            .suspend_attempt(stores, mark, PREPARED_RESOURCE_RESUME, pending)
+            .expect("live main control can retain its admitted generation");
+        self.pending_resource_operation = Some(PendingResourceOperation::<G> { attempt });
+    }
+
     fn finish_direct_operation(
         &mut self,
         _stores: &mut Universe<G>,
@@ -3729,7 +3757,17 @@ impl<G> MainControl<G> {
             let mut operation_mark = self.begin_direct_operation(stores);
             let mut diagnostic_effects = DiagnosticEffects::new();
             let preflight = if let Some(pending) = self.pending_resource_operation.take() {
-                operation_mark.attempt = pending.attempt;
+                let (opening, resume, pending) = self
+                    .command
+                    .resume_attempt(stores, pending.attempt)
+                    .unwrap_or_else(|_| {
+                        panic!("resource continuation belongs to the admitted generation")
+                    });
+                assert_eq!(
+                    resume, PREPARED_RESOURCE_RESUME,
+                    "resource continuation resumes at its prepared-operation cursor"
+                );
+                operation_mark.attempt = opening;
                 PreflightDelivery::<G> {
                     delivery: OperationDelivery::<G>::Prepared(pending.scanned),
                     capabilities: pending.capabilities,
@@ -3919,11 +3957,12 @@ impl<G> MainControl<G> {
                             let _ = stores.abandon_dependency_region(mark);
                         }
                         if let Some(scanned) = failure.unavailable {
-                            self.pending_resource_operation = Some(PendingResourceOperation::<G> {
+                            self.suspend_prepared_resource_operation(
+                                stores,
+                                operation_mark.attempt,
                                 scanned,
-                                capabilities: preflight.capabilities,
-                                attempt: operation_mark.attempt,
-                            });
+                                preflight.capabilities,
+                            );
                             self.advance_telemetry.rollbacks += 1;
                             #[cfg(feature = "profiling")]
                             self.episode_telemetry
@@ -4106,11 +4145,12 @@ impl<G> MainControl<G> {
                             let _ = stores.abandon_dependency_region(mark);
                         }
                         if let Some(scanned) = failure.unavailable {
-                            self.pending_resource_operation = Some(PendingResourceOperation::<G> {
+                            self.suspend_prepared_resource_operation(
+                                stores,
+                                operation_mark.attempt,
                                 scanned,
-                                capabilities: preflight.capabilities,
-                                attempt: operation_mark.attempt,
-                            });
+                                preflight.capabilities,
+                            );
                             let result =
                                 self.finish_resource_preflight_failure(stores, *failure.error);
                             self.retain_direct_operation_for_retry(stores, operation_mark);
@@ -4338,11 +4378,12 @@ impl<G> MainControl<G> {
                             let _ = stores.abandon_dependency_region(mark);
                         }
                         if let Some(scanned) = failure.unavailable {
-                            self.pending_resource_operation = Some(PendingResourceOperation::<G> {
+                            self.suspend_prepared_resource_operation(
+                                stores,
+                                operation_mark.attempt,
                                 scanned,
-                                capabilities: preflight.capabilities,
-                                attempt: operation_mark.attempt,
-                            });
+                                preflight.capabilities,
+                            );
                         }
                         let result = self.finish_resource_preflight_failure(stores, *failure.error);
                         if matches!(result, Ok(StepResult::Suspended(_)))
