@@ -708,9 +708,9 @@ scripts/check-node-width-budget.sh
 
 The width script preserves the committed row names, means, and 10% tolerance.
 The allocation binary preserves the alignment, line-breaking, deep-choice,
-deep-sublist, and flat-math ceilings. The incremental pure-memo edit diagnostic
-is separately runnable from its owner with
-`cargo bench --manifest-path benchmarks/tex-incr/Cargo.toml --bench pure_memo_edit`.
+deep-sublist, and flat-math ceilings. The incremental two-generation accepted
+and rejected edit diagnostic is separately runnable from its owner with
+`cargo bench --manifest-path benchmarks/tex-incr/Cargo.toml --bench accepted_edit`.
 
 Authenticated native distribution startup has a focused hermetic benchmark:
 
@@ -748,32 +748,29 @@ cache payload failures. Native resolver controls separately prove that corrupt
 unrequested closure/dependency objects are not opened or hashed by a normal
 compile.
 
-Snapshot scaling has a separate explicit performance tier:
+Final state and coarse generation ownership have a separate explicit
+performance tier:
 
 ```bash
-cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench snapshot_budgets
 scripts/check-snapshot-budgets.sh
+cargo bench --manifest-path benchmarks/tex-state/Cargo.toml --bench state_budgets
 ```
 
-The Criterion command records the small/large latency rows. The script enforces
-the low-noise latency ratio and requested-allocation retention budgets described
-in [Snapshot Performance](snapshot_performance.md). Neither belongs in the
-default cargo-test tier because its workload deliberately materializes large
-input, page, mode, stream, hyphenation, provenance, and Unicode code-table
-state.
+The script enforces zero warmed allocation for direct reads, operation-local
+assignment rollback, and page-queue reuse, plus exact prior/current owner
+lifecycle as described in [Final State and Generation Performance](snapshot_performance.md).
+The Criterion command reports the same direct state operations and cold coarse
+generation construction. Neither belongs in the default cargo-test tier.
 
-Macro-invocation provenance has an assertion-bearing state performance tier:
+Dependency observation has a separate state performance diagnostic:
 
 ```bash
-cargo bench --manifest-path benchmarks/tex-state/Cargo.toml \
-  --bench state_budgets provenance_memory/macro_long_run_arena_growth
+cargo run --release --manifest-path benchmarks/tex-state/Cargo.toml \
+  --bin dependency_gate
 ```
 
-Before timing, the benchmark expands 2,048 calls with 16-token bodies and
-fails above 64 retained bytes per invocation. The charge includes archived
-packed keys plus chunk and affine key-index metadata. Production admits at
-most 1,048,576 record charges, a 64 MiB logical provenance-record budget;
-excess diagnostic history degrades to unknown rather than aborting execution.
+It compares disabled recording, active unique reads, unchanged validation, and
+semantic backdating while reporting the retained detached observation bytes.
 
 Classic BibTeX has its own release-only performance and persistence tier:
 
