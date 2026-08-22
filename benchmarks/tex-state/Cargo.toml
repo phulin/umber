@@ -10,15 +10,11 @@ publish = false
 criterion = "0.5"
 tex-command = { path = "../../crates/tex-command" }
 tex-exec = { path = "../../crates/tex-exec" }
-tex-state = { path = "../../crates/tex-state", features = ["testing"] }
+tex-state = { path = "../../crates/tex-state", features = ["profiling", "testing"] }
 umber = { path = "../../crates/umber" }
 
 [[bench]]
 name = "state_budgets"
-harness = false
-
-[[bench]]
-name = "snapshot_budgets"
 harness = false
 
 [[bench]]

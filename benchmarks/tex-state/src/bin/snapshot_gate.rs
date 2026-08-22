@@ -1,315 +1,230 @@
-use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
 
-use tex_state::token::Catcode;
-use tex_state_benchmarks::{
-    DEEP_GROUP_GLOBAL_WRITE_BUDGET, DEEP_GROUP_LARGE_DEPTH, DEEP_GROUP_SMALL_DEPTH,
-    DETACHED_CODE_TABLE_WRITE_BUDGET, LATENCY_NOISE_ALLOWANCE_NS, LATENCY_SCALE_BUDGET,
-    RETAINED_BYTES_PER_CAPTURE_BUDGET, RETAINED_CAPTURES, WORKLOADS, WorkloadKind, build_workload,
-    deep_group_code_table_workload,
+use tex_state::interner::Symbol;
+use tex_state::meaning::{Meaning, ResolvedMeaning};
+use tex_state::measurement::{
+    HotCoreAllocationMeasurement, HotCoreAllocationOwner, HotCoreAllocator, hot_core_census,
+    retained_generation_census,
 };
-
-struct TrackingAllocator;
-
-static LIVE_REQUESTED_BYTES: AtomicU64 = AtomicU64::new(0);
-static PEAK_REQUESTED_BYTES: AtomicU64 = AtomicU64::new(0);
+use tex_state::node::Node;
+use tex_state::{
+    AssignmentScope, RetainedStateGeneration, SessionInternerEpoch, World, with_universe,
+};
+use tex_state_benchmarks::{DIRECT_READS, PAGE_QUEUE_LEN, WARM_WRITES, engine_budget};
 
 #[global_allocator]
-static ALLOCATOR: TrackingAllocator = TrackingAllocator;
+static ALLOCATOR: HotCoreAllocator = HotCoreAllocator;
 
-// SAFETY: every operation delegates to System with the original pointer/layout,
-// and the counters do not affect allocation behavior.
-unsafe impl GlobalAlloc for TrackingAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: delegated with the caller-provided valid layout.
-        let ptr = unsafe { System.alloc(layout) };
-        if !ptr.is_null() {
-            add_live(layout.size() as u64);
-        }
-        ptr
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        // SAFETY: delegated with the caller-provided valid layout.
-        let ptr = unsafe { System.alloc_zeroed(layout) };
-        if !ptr.is_null() {
-            add_live(layout.size() as u64);
-        }
-        ptr
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        LIVE_REQUESTED_BYTES.fetch_sub(layout.size() as u64, Ordering::Relaxed);
-        // SAFETY: delegated with the allocation's original pointer/layout.
-        unsafe { System.dealloc(ptr, layout) };
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        // SAFETY: delegated with the allocation's original pointer/layout.
-        let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
-        if !new_ptr.is_null() {
-            if new_size >= layout.size() {
-                add_live((new_size - layout.size()) as u64);
-            } else {
-                LIVE_REQUESTED_BYTES
-                    .fetch_sub((layout.size() - new_size) as u64, Ordering::Relaxed);
-            }
-        }
-        new_ptr
-    }
+#[derive(Clone, Copy, Debug, Default)]
+struct AllocationDelta {
+    calls: u64,
+    requested_bytes: u64,
 }
 
-fn add_live(bytes: u64) {
-    let live = LIVE_REQUESTED_BYTES.fetch_add(bytes, Ordering::Relaxed) + bytes;
-    PEAK_REQUESTED_BYTES.fetch_max(live, Ordering::Relaxed);
-}
-
-#[derive(Clone, Copy)]
-struct AllocationObservation {
-    retained_bytes: u64,
-    peak_bytes: u64,
-}
-
-#[derive(Clone, Copy)]
-struct GateObservation {
-    logical_live_bytes: u64,
-    median_latency: Duration,
-    one_capture: AllocationObservation,
-    retained_run: AllocationObservation,
+impl AllocationDelta {
+    fn between(before: HotCoreAllocationMeasurement, after: HotCoreAllocationMeasurement) -> Self {
+        Self {
+            calls: after.calls.saturating_sub(before.calls),
+            requested_bytes: after.requested_bytes.saturating_sub(before.requested_bytes),
+        }
+    }
 }
 
 fn main() {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let enforce = args.iter().any(|arg| arg == "--enforce");
-    let workload_filter = args.iter().find_map(|arg| arg.strip_prefix("--workload="));
+    let enforce = std::env::args().any(|argument| argument == "--enforce");
     let mut failures = Vec::new();
-    let mut selected = 0_usize;
+
+    let (reads, writes, page_queue) = hot_state_gate();
+    check_zero("warmed direct reads", reads, &mut failures);
+    check_zero("warmed same-cell writes", writes, &mut failures);
+    check_zero("warmed page queue", page_queue, &mut failures);
+    generation_lifecycle_gate(&mut failures);
+
     println!(
-        "workload scale logical_live_bytes median_ns one_retained_bytes one_peak_bytes retained_{}_bytes retained_{}_peak_bytes",
-        RETAINED_CAPTURES, RETAINED_CAPTURES
+        "FINAL_STATE_GATE direct_reads={} reads_allocations={} reads_bytes={} warm_writes={} writes_allocations={} writes_bytes={} page_nodes={} page_allocations={} page_bytes={}",
+        DIRECT_READS,
+        reads.calls,
+        reads.requested_bytes,
+        WARM_WRITES,
+        writes.calls,
+        writes.requested_bytes,
+        PAGE_QUEUE_LEN,
+        page_queue.calls,
+        page_queue.requested_bytes,
     );
-    for kind in WORKLOADS {
-        if workload_filter.is_some_and(|filter| filter != kind.name()) {
-            continue;
-        }
-        selected += 1;
-        let small = observe(kind, kind.small_units());
-        let large = observe(kind, kind.large_units());
-        print_observation(kind, "small", small);
-        print_observation(kind, "large", large);
-        check(kind, small, large, &mut failures);
-    }
-    if workload_filter.is_none_or(|filter| filter == WorkloadKind::UnicodeCodeTables.name()) {
-        check_detached_code_table_write(&mut failures);
-        check_deep_group_global_write(&mut failures);
-    }
-    if selected == 0 {
-        eprintln!(
-            "snapshot-gate: unknown workload {}",
-            workload_filter.expect("a filter excluded every workload")
-        );
-        std::process::exit(2);
-    }
+
     if failures.is_empty() {
-        println!("snapshot-gate: all budgets met");
+        println!("final-state-gate: all budgets met");
     } else if enforce {
-        for failure in &failures {
-            eprintln!("snapshot-gate: {failure}");
+        for failure in failures {
+            eprintln!("final-state-gate: {failure}");
         }
         std::process::exit(1);
     } else {
         println!(
-            "snapshot-gate: {} budget violation(s); rerun with --enforce to fail",
+            "final-state-gate: {} budget violation(s); rerun with --enforce to fail",
             failures.len()
         );
     }
 }
 
-fn check_deep_group_global_write(failures: &mut Vec<String>) {
-    let small_latency = deep_group_global_write_median(DEEP_GROUP_SMALL_DEPTH);
-    let large_latency = deep_group_global_write_median(DEEP_GROUP_LARGE_DEPTH);
-    let mut universe = deep_group_code_table_workload(DEEP_GROUP_LARGE_DEPTH);
-    let snapshot = universe.snapshot();
-    let (observation, ()) = allocation_delta(|| {
-        universe.set_catcode_global('\u{10fffc}', Catcode::Active);
-    });
-    black_box(&snapshot);
-    println!(
-        "unicode_code_tables deep_group_global_write {} {} {} {}",
-        small_latency.as_nanos(),
-        large_latency.as_nanos(),
-        observation.retained_bytes,
-        observation.peak_bytes,
-    );
-
-    let latency_limit = small_latency
-        .as_nanos()
-        .saturating_mul(LATENCY_SCALE_BUDGET)
-        .saturating_add(LATENCY_NOISE_ALLOWANCE_NS);
-    if large_latency.as_nanos() > latency_limit {
-        failures.push(format!(
-            "Unicode global write scales with group depth: small={}ns large={}ns limit={}ns",
-            small_latency.as_nanos(),
-            large_latency.as_nanos(),
-            latency_limit,
-        ));
-    }
-    if observation.retained_bytes > DEEP_GROUP_GLOBAL_WRITE_BUDGET {
-        failures.push(format!(
-            "Unicode deep-group global write retained {} bytes (budget {})",
-            observation.retained_bytes, DEEP_GROUP_GLOBAL_WRITE_BUDGET,
-        ));
-    }
-}
-
-// Group construction and snapshot capture stay outside this assignment-only
-// timing boundary so the row detects depth-dependent saved-root rewriting.
-#[allow(clippy::disallowed_methods)]
-fn deep_group_global_write_median(depth: usize) -> Duration {
-    let mut timings = Vec::with_capacity(31);
-    for _ in 0..31 {
-        let mut universe = deep_group_code_table_workload(depth);
-        let snapshot = universe.snapshot();
-        let start = Instant::now();
-        universe.set_catcode_global('\u{10fffc}', Catcode::Active);
-        timings.push(start.elapsed());
-        black_box(snapshot);
-    }
-    timings.sort_unstable();
-    timings[timings.len() / 2]
-}
-
-fn check_detached_code_table_write(failures: &mut Vec<String>) {
-    let mut workload = build_workload(
-        WorkloadKind::UnicodeCodeTables,
-        WorkloadKind::UnicodeCodeTables.large_units(),
-    );
-    workload.warm_capture();
-    let snapshot = workload.capture();
-    let (observation, ()) = allocation_delta(|| {
-        workload.set_unicode_catcode('\u{10fffd}', Catcode::Active);
-    });
-    black_box(&snapshot);
-    println!(
-        "unicode_code_tables detached_write {} {}",
-        observation.retained_bytes, observation.peak_bytes
-    );
-    drop(snapshot);
-    if observation.retained_bytes > DETACHED_CODE_TABLE_WRITE_BUDGET {
-        failures.push(format!(
-            "Unicode detached write retained {} bytes (budget {})",
-            observation.retained_bytes, DETACHED_CODE_TABLE_WRITE_BUDGET,
-        ));
-    }
-}
-
-// This standalone benchmark is the clock-owning measurement boundary; engine
-// code continues to obtain semantic time only through World.
-#[allow(clippy::disallowed_methods)]
-fn observe(kind: WorkloadKind, units: usize) -> GateObservation {
-    let mut workload = build_workload(kind, units);
-    workload.warm_capture();
-    let logical_live_bytes = workload.logical_live_bytes();
-    let mut timings = Vec::with_capacity(31);
-    for _ in 0..31 {
-        let start = Instant::now();
-        let captured = black_box(workload.capture());
-        timings.push(start.elapsed());
-        drop(captured);
-    }
-    timings.sort_unstable();
-
-    let (one_capture, captured) = allocation_delta(|| black_box(workload.capture()));
-    black_box(&captured);
-    drop(captured);
-    let mut captures = Vec::with_capacity(RETAINED_CAPTURES);
-    let (retained_run, ()) = allocation_delta(|| {
-        for _ in 0..RETAINED_CAPTURES {
-            captures.push(workload.capture());
+fn hot_state_gate() -> (AllocationDelta, AllocationDelta, AllocationDelta) {
+    with_universe(engine_budget(), |universe| {
+        let symbol = universe
+            .intern("phase-eight-direct-read")
+            .expect("intern")
+            .symbol();
+        {
+            let mut context = universe.command_context().expect("admit command context");
+            context
+                .assign_resolved_meaning(
+                    symbol,
+                    ResolvedMeaning::Static(Meaning::Relax),
+                    AssignmentScope::Global,
+                )
+                .expect("install direct meaning");
+            context
+                .assign_count(0, 0, AssignmentScope::Global)
+                .expect("warm count cell");
         }
-        black_box(&captures);
-    });
-    drop(captures);
 
-    GateObservation {
-        logical_live_bytes,
-        median_latency: timings[timings.len() / 2],
-        one_capture,
-        retained_run,
+        let reads = {
+            let context = universe.command_context().expect("read context");
+            measure(HotCoreAllocationOwner::DeliveryAndScan, || {
+                direct_reads(&context, symbol)
+            })
+        };
+        let write_mark = universe.journal_cursor().expect("warm journal cursor");
+        {
+            let mut context = universe.command_context().expect("write context");
+            context
+                .assign_count(0, 1, AssignmentScope::Global)
+                .expect("prime one rollback slice");
+        }
+        universe
+            .restore_state(write_mark)
+            .expect("restore priming write");
+        let writes = measure(HotCoreAllocationOwner::SemanticApply, || {
+            for value in 0..WARM_WRITES {
+                {
+                    let mut context = universe.command_context().expect("write context");
+                    context
+                        .assign_count(0, value as i32, AssignmentScope::Global)
+                        .expect("same admitted count cell remains writable");
+                }
+                universe
+                    .restore_state(write_mark)
+                    .expect("discard one operation-local journal slice");
+            }
+            black_box(universe.count(0).expect("read restored count"));
+        });
+
+        {
+            let mut context = universe.command_context().expect("page context");
+            for index in 0..PAGE_QUEUE_LEN {
+                context.append_page_contribution(Node::Penalty(index as i32));
+            }
+            while context.pop_page_contribution_front().is_some() {}
+        }
+        let page_queue = measure(HotCoreAllocationOwner::SemanticApply, || {
+            let mut context = universe.command_context().expect("page context");
+            for index in 0..PAGE_QUEUE_LEN {
+                context.append_page_contribution(Node::Penalty(index as i32));
+            }
+            for index in 0..PAGE_QUEUE_LEN {
+                assert_eq!(
+                    context.pop_page_contribution_front(),
+                    Some(Node::Penalty(index as i32))
+                );
+            }
+        });
+        (reads, writes, page_queue)
+    })
+    .expect("final state gate universe")
+}
+
+fn direct_reads<G>(context: &tex_state::CommandContext<'_, G>, symbol: Symbol) {
+    let mut checksum = 0_u64;
+    for index in 0..DIRECT_READS {
+        checksum ^= match context.meaning(black_box(symbol)) {
+            ResolvedMeaning::Static(Meaning::Relax) => index as u64,
+            _ => unreachable!("warm fixture retains the direct static meaning"),
+        };
+        checksum ^= context.count(0).expect("warm count cell") as u64;
+    }
+    black_box(checksum);
+}
+
+fn measure(owner: HotCoreAllocationOwner, operation: impl FnOnce()) -> AllocationDelta {
+    let before = hot_core_census().allocations[owner as usize];
+    {
+        let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+        operation();
+    }
+    let after = hot_core_census().allocations[owner as usize];
+    AllocationDelta::between(before, after)
+}
+
+fn check_zero(name: &str, delta: AllocationDelta, failures: &mut Vec<String>) {
+    if delta.calls != 0 || delta.requested_bytes != 0 {
+        failures.push(format!(
+            "{name} allocated {} time(s), requesting {} byte(s)",
+            delta.calls, delta.requested_bytes
+        ));
     }
 }
 
-fn allocation_delta<T>(operation: impl FnOnce() -> T) -> (AllocationObservation, T) {
-    let baseline = LIVE_REQUESTED_BYTES.load(Ordering::SeqCst);
-    PEAK_REQUESTED_BYTES.store(baseline, Ordering::SeqCst);
-    let result = operation();
-    let retained = LIVE_REQUESTED_BYTES
-        .load(Ordering::SeqCst)
-        .saturating_sub(baseline);
-    let peak = PEAK_REQUESTED_BYTES
-        .load(Ordering::SeqCst)
-        .saturating_sub(baseline);
-    (
-        AllocationObservation {
-            retained_bytes: retained,
-            peak_bytes: peak,
-        },
-        result,
-    )
-}
+fn generation_lifecycle_gate(failures: &mut Vec<String>) {
+    let baseline = retained_generation_census();
+    let epoch = SessionInternerEpoch::new(engine_budget());
+    let prior = RetainedStateGeneration::new(&epoch, World::memory()).expect("prior generation");
+    let rejected =
+        RetainedStateGeneration::new(&epoch, World::memory()).expect("candidate generation");
+    let two_live = retained_generation_census();
+    if two_live.live != baseline.live + 2 {
+        failures.push(format!(
+            "prior/current admission retained {} owners, expected {}",
+            two_live.live,
+            baseline.live + 2
+        ));
+    }
 
-fn print_observation(kind: WorkloadKind, scale: &str, value: GateObservation) {
+    drop(rejected);
+    let after_rejection = retained_generation_census();
+    if after_rejection.live != baseline.live + 1 {
+        failures.push("candidate rejection did not drop exactly current".to_owned());
+    }
+
+    let accepted =
+        RetainedStateGeneration::new(&epoch, World::memory()).expect("replacement candidate");
+    drop(prior);
+    let after_acceptance = retained_generation_census();
+    if after_acceptance.live != baseline.live + 1 {
+        failures.push("acceptance did not drop whole prior generation".to_owned());
+    }
+    accepted
+        .retire()
+        .expect("explicit terminal retirement succeeds");
+    let terminal = retained_generation_census();
+    if terminal.live != baseline.live
+        || terminal.created.saturating_sub(baseline.created) != 3
+        || terminal.dropped.saturating_sub(baseline.dropped) != 3
+        || terminal
+            .retired_explicitly
+            .saturating_sub(baseline.retired_explicitly)
+            != 1
+    {
+        failures.push(format!(
+            "coarse lifecycle mismatch: baseline={baseline:?} terminal={terminal:?}"
+        ));
+    }
     println!(
-        "{} {} {} {} {} {} {} {}",
-        kind.name(),
-        scale,
-        value.logical_live_bytes,
-        value.median_latency.as_nanos(),
-        value.one_capture.retained_bytes,
-        value.one_capture.peak_bytes,
-        value.retained_run.retained_bytes,
-        value.retained_run.peak_bytes,
+        "RETAINED_GENERATION_GATE created={} dropped={} max_simultaneous=2 terminal_live={} explicit_retire={}",
+        terminal.created.saturating_sub(baseline.created),
+        terminal.dropped.saturating_sub(baseline.dropped),
+        terminal.live.saturating_sub(baseline.live),
+        terminal
+            .retired_explicitly
+            .saturating_sub(baseline.retired_explicitly),
     );
-}
-
-fn check(
-    kind: WorkloadKind,
-    small: GateObservation,
-    large: GateObservation,
-    failures: &mut Vec<String>,
-) {
-    let latency_limit = small
-        .median_latency
-        .as_nanos()
-        .saturating_mul(LATENCY_SCALE_BUDGET)
-        .saturating_add(LATENCY_NOISE_ALLOWANCE_NS);
-    if large.median_latency.as_nanos() > latency_limit {
-        failures.push(format!(
-            "{} capture latency scales with payload: small={}ns large={}ns limit={}ns",
-            kind.name(),
-            small.median_latency.as_nanos(),
-            large.median_latency.as_nanos(),
-            latency_limit,
-        ));
-    }
-    if large.one_capture.retained_bytes > RETAINED_BYTES_PER_CAPTURE_BUDGET {
-        failures.push(format!(
-            "{} one capture retained {} bytes (budget {})",
-            kind.name(),
-            large.one_capture.retained_bytes,
-            RETAINED_BYTES_PER_CAPTURE_BUDGET,
-        ));
-    }
-    let retained_budget = RETAINED_BYTES_PER_CAPTURE_BUDGET * RETAINED_CAPTURES as u64;
-    if large.retained_run.retained_bytes > retained_budget {
-        failures.push(format!(
-            "{} retained {} bytes across {} captures (budget {})",
-            kind.name(),
-            large.retained_run.retained_bytes,
-            RETAINED_CAPTURES,
-            retained_budget,
-        ));
-    }
 }

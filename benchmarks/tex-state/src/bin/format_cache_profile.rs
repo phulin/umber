@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use tex_state::{Universe, World};
+use tex_state::interner::InternerBudget;
+use tex_state::{DetachedFormatImage, FORMAT_SCHEMA_VERSION, World, with_materialized_format};
 use umber::{
     FormatCacheClock, FormatCacheIdentity, FormatCacheStore, FormatEngineMode, FormatFingerprint,
 };
@@ -82,7 +83,9 @@ fn main() {
     );
     let format = std::fs::read(&format_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", format_path.display()));
-    Universe::from_format(World::memory(), &format).expect("profile input must be schema-11");
+    let image =
+        DetachedFormatImage::try_from_bytes(format.clone()).expect("profile input format image");
+    materialize(&image);
 
     let root =
         std::env::temp_dir().join(format!("umber-format-cache-profile-{}", std::process::id()));
@@ -117,21 +120,30 @@ fn main() {
             .expect("validated repeated store");
     });
     let direct_decode = observe(21, || {
-        let universe = Universe::from_format(World::memory(), &format).expect("direct decode");
-        black_box(universe);
+        let image = DetachedFormatImage::try_from_bytes(format.clone()).expect("direct decode");
+        materialize(&image);
     });
 
     println!(
         "schema={} format_bytes={}",
-        Universe::FORMAT_SCHEMA_VERSION,
+        FORMAT_SCHEMA_VERSION,
         format.len()
     );
     print("cold_miss", miss);
     print("first_store", first_store);
     print("warm_hit", hit);
     print("validated_repeated_store", repeated_store);
-    print("direct_format_decode", direct_decode);
+    print("direct_format_validate_and_materialize", direct_decode);
     std::fs::remove_dir_all(&root).expect("remove owned profile directory");
+}
+
+fn materialize(image: &DetachedFormatImage) {
+    let budget =
+        InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024).expect("profile interner budget");
+    with_materialized_format(budget, World::memory(), image, |universe| {
+        black_box(universe.interaction_mode());
+    })
+    .expect("validated profile format materializes");
 }
 
 fn observe(samples: usize, mut operation: impl FnMut()) -> Observation {
