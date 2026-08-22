@@ -2001,6 +2001,10 @@ impl VirtualCompileSession {
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
             candidate.set_execution_budgets(self.execution_budgets());
+            candidate.set_provenance_config(
+                tex_state::ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
+                tex_state::ProvenanceBudgets::default(),
+            );
             Box::new(RetainedCandidate {
                 workspace: candidate_workspace.clone(),
                 execution: RetainedExecution::Initial { session, candidate },
@@ -2025,6 +2029,10 @@ impl VirtualCompileSession {
             .map_err(|error| CompileError::Incremental(error.to_string()))?;
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
             candidate.set_execution_budgets(self.execution_budgets());
+            candidate.set_provenance_config(
+                tex_state::ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
+                tex_state::ProvenanceBudgets::default(),
+            );
             Box::new(RetainedCandidate {
                 workspace: candidate_workspace,
                 execution: RetainedExecution::Pending(candidate),

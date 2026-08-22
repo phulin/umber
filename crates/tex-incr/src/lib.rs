@@ -465,6 +465,8 @@ pub struct RevisionCandidate {
     completed: Option<CandidateCompletion>,
     cumulative_fuel_limit: u64,
     execution_budgets: tex_exec::ExecutionBudgets,
+    provenance_demand: tex_state::ProvenanceDemand,
+    provenance_budgets: tex_state::ProvenanceBudgets,
     suspension_serial: u64,
     advance_calls: u64,
     cumulative_fuel: u64,
@@ -528,6 +530,17 @@ impl RevisionCandidate {
 
     pub fn set_execution_budgets(&mut self, budgets: tex_exec::ExecutionBudgets) {
         self.execution_budgets = budgets;
+    }
+
+    /// Selects the provenance consumers and their independent retention
+    /// budgets for this candidate's fresh or loaded engine job.
+    pub fn set_provenance_config(
+        &mut self,
+        demand: tex_state::ProvenanceDemand,
+        budgets: tex_state::ProvenanceBudgets,
+    ) {
+        self.provenance_demand = demand;
+        self.provenance_budgets = budgets;
     }
 
     #[must_use]
@@ -646,6 +659,7 @@ fn execute_plan<G>(
     host: &mut dyn ResourceHost,
     cancellation: &Cancellation,
 ) -> Result<PlanExecution, SessionError> {
+    universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
     universe.begin_retained_session()?;
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     if candidate.format_image.is_none() {
@@ -687,15 +701,43 @@ fn execute_plan<G>(
                 tex_exec::ExecError::ExecutionCancelled,
             ));
         }
-        let attempted = u64::try_from(delivered_commands).unwrap_or(u64::MAX);
-        if attempted > candidate.execution_budgets.steps {
-            return Err(SessionError::Execute(
-                tex_exec::ExecError::ResourceBudgetExceeded {
-                    resource: "steps",
-                    limit: candidate.execution_budgets.steps,
-                    attempted,
-                },
-            ));
+        let budget_usage = [
+            (
+                "steps",
+                candidate.execution_budgets.steps,
+                u64::try_from(delivered_commands).unwrap_or(u64::MAX),
+            ),
+            (
+                "live input frames",
+                candidate.execution_budgets.input_frames,
+                u64::try_from(control.input_level_count()).unwrap_or(u64::MAX),
+            ),
+            (
+                "environment journal bytes",
+                candidate.execution_budgets.journal_bytes,
+                u64::try_from(
+                    universe
+                        .state_journal_bytes()
+                        .map_err(SessionError::Universe)?,
+                )
+                .unwrap_or(u64::MAX),
+            ),
+            (
+                "pending effects",
+                candidate.execution_budgets.effects,
+                u64::try_from(universe.world().effect_records().len()).unwrap_or(u64::MAX),
+            ),
+        ];
+        for (resource, limit, attempted) in budget_usage {
+            if attempted > limit {
+                return Err(SessionError::Execute(
+                    tex_exec::ExecError::ResourceBudgetExceeded {
+                        resource,
+                        limit,
+                        attempted,
+                    },
+                ));
+            }
         }
         match CanonicalStepRunner::new(&mut control, universe, &mut ledger)
             .step(&mut sink, cancellation)
@@ -858,7 +900,11 @@ fn candidate_control<G>(
     // lifecycle boundary that opens §536's transcript and frames §534's
     // startup line. This must precede root registration so §537's opening
     // parenthesis cannot overtake the banner/log prefix.
-    control.begin_job_for_input(universe, options.source_path, options.job_name);
+    control.begin_job_for_input(
+        universe,
+        options.root_framing_name.unwrap_or(options.source_path),
+        options.job_name,
+    );
     let mut registration = SourceRegistration::new(RegisteredSourceKind::Generated, options.bytes)
         .with_name(options.source_path)
         .with_framing(options.root_framing);
@@ -1370,6 +1416,8 @@ impl Session {
             completed: None,
             cumulative_fuel_limit: MainControl::<GenerationBrand<'static>>::DEFAULT_FUEL_LIMIT,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
+            provenance_demand: tex_state::ProvenanceDemand::default(),
+            provenance_budgets: tex_state::ProvenanceBudgets::default(),
             suspension_serial: 0,
             advance_calls: 0,
             cumulative_fuel: 0,

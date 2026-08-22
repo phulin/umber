@@ -164,6 +164,13 @@ impl<G> SaveJournal<G> {
     }
 
     #[must_use]
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.entries
+            .capacity()
+            .saturating_mul(core::mem::size_of::<JournalEntry<G>>())
+    }
+
+    #[must_use]
     pub(crate) fn entry(&self, index: usize) -> JournalEntry<G> {
         self.entries[index]
     }

@@ -1492,6 +1492,11 @@ impl<G> DenseState<G> {
     }
 
     #[must_use]
+    pub(crate) fn journal_retained_bytes(&self) -> usize {
+        self.journal.retained_bytes()
+    }
+
+    #[must_use]
     pub(crate) fn allocated_overflow_pages(&self) -> usize {
         self.counts.allocated_overflow_pages()
             + self.dimensions.allocated_overflow_pages()

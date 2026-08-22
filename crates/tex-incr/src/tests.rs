@@ -101,6 +101,37 @@ fn cold_candidate_runs_canonical_job_start_before_root_input() {
 }
 
 #[test]
+fn root_framing_alias_is_used_for_startup_while_provenance_keeps_the_source_path() {
+    let mut session = Session::start_with_source_path(
+        (),
+        "job",
+        "/job/main.tex",
+        RevisionId::new(1),
+        "\\end",
+        4096,
+    )
+    .expect("session starts");
+    session.set_root_source_framing_name("texput");
+
+    let output = session.cold().expect("cold execution");
+    let text = output
+        .completion()
+        .effects()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+
+    assert!(text.contains("(texput"), "startup framing: {text:?}");
+    assert!(
+        !text.contains("(/job/main.tex"),
+        "startup framing: {text:?}"
+    );
+}
+
+#[test]
 fn semantic_edit_matches_a_fresh_cold_execution() {
     let original = page_source(10);
     let replacement = page_source(24);

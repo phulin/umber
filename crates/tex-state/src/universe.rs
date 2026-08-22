@@ -446,6 +446,23 @@ impl<G> Universe<G> {
         self
     }
 
+    /// Installs the explicit provenance consumer policy before an admitted
+    /// job begins. Unlike the builder form, this works inside an HRTB fresh or
+    /// format-materialization callback without moving the branded universe.
+    pub fn set_provenance_config(
+        &mut self,
+        demand: crate::ProvenanceDemand,
+        budgets: crate::ProvenanceBudgets,
+    ) {
+        self.provenance_demand = demand;
+        self.provenance_budgets = budgets;
+    }
+
+    /// Changes only the provenance consumer demand, retaining its budgets.
+    pub fn set_provenance_demand(&mut self, demand: crate::ProvenanceDemand) {
+        self.provenance_demand = demand;
+    }
+
     #[must_use]
     pub fn with_provenance_demand(self, demand: crate::ProvenanceDemand) -> Self {
         let budgets = self.provenance_budgets;
@@ -1586,6 +1603,21 @@ impl<G> Universe<G> {
             .admit()
             .state()
             .journal_cursor())
+    }
+
+    /// Current bytes retained by the ordered state journal.
+    ///
+    /// This detached scalar exposes no journal entries or restoration cursor;
+    /// outer execution hosts use it solely to enforce configured admission
+    /// budgets.
+    pub fn state_journal_bytes(&self) -> Result<usize, UniverseError> {
+        Ok(self
+            .core
+            .as_ref()
+            .ok_or(UniverseError::Retired)?
+            .admit()
+            .state()
+            .journal_retained_bytes())
     }
 
     pub fn restore_state(&mut self, cursor: JournalCursor<G>) -> Result<(), UniverseError> {
