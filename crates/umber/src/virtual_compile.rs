@@ -355,6 +355,14 @@ impl EngineMode {
     }
 
     #[must_use]
+    pub const fn command_compatibility(self) -> tex_incr::CommandCompatibility {
+        match self {
+            Self::Latex | Self::PdfLatex => tex_incr::CommandCompatibility::Latex,
+            Self::Tex82 | Self::ETex | Self::PdfTex => tex_incr::CommandCompatibility::Profile,
+        }
+    }
+
+    #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Tex82 => "tex82",
@@ -1975,6 +1983,7 @@ impl VirtualCompileSession {
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
                 session.set_job_clock(self.clock);
                 session.set_command_profile(self.engine.command_profile(), self.format.is_none());
+                session.set_command_compatibility(self.engine.command_compatibility());
                 if let Some(image) = format_image {
                     session.set_format_image(image);
                 }

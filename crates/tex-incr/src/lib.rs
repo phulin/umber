@@ -443,6 +443,19 @@ struct CandidateCompletion {
     format_dump: Option<DetachedFormatDump>,
 }
 
+/// Command spellings and fresh-state conventions layered over a canonical
+/// engine profile.
+///
+/// e-TeX and LaTeX share a dialect, but LaTeX exposes an additional primitive
+/// namespace. Keeping that choice beside the profile lets a generation-free
+/// session reproduce it for both fresh and format-loaded candidates.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CommandCompatibility {
+    #[default]
+    Profile,
+    Latex,
+}
+
 /// Handle-free plan for one revision execution.
 ///
 /// A resource suspension retains only this plan and detached host state. The
@@ -455,6 +468,7 @@ pub struct RevisionCandidate {
     plan: CandidatePlan,
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
     profile: CommandProfile,
+    compatibility: CommandCompatibility,
     initex: bool,
     dvi_output: bool,
     root_framing: SourceFramingPolicy,
@@ -678,7 +692,7 @@ fn execute_plan<G>(
     if candidate.format_image.is_none() {
         install_plain_catcodes(universe)?;
     } else {
-        register_materialized_primitives(universe, candidate.profile);
+        register_materialized_primitives(universe, candidate.profile, candidate.compatibility);
     }
     for (path, bytes) in &candidate.registered_inputs {
         universe.world_mut().set_memory_file(path, bytes.clone())?;
@@ -693,6 +707,7 @@ fn execute_plan<G>(
                 candidate.root_source_is_byte_projection,
             ),
             profile: candidate.profile,
+            compatibility: candidate.compatibility,
             initex: candidate.initex,
             emit_dvi: candidate.dvi_output,
             root_framing: candidate.root_framing,
@@ -816,7 +831,11 @@ fn execute_plan<G>(
     }
 }
 
-fn register_materialized_primitives<G>(universe: &mut Universe<G>, profile: CommandProfile) {
+fn register_materialized_primitives<G>(
+    universe: &mut Universe<G>,
+    profile: CommandProfile,
+    compatibility: CommandCompatibility,
+) {
     tex_command::register_tex82_expandable_primitives(universe);
     tex_exec::register_unexpandable_primitives(universe);
     if profile.capabilities().supports_etex() {
@@ -827,6 +846,24 @@ fn register_materialized_primitives<G>(universe: &mut Universe<G>, profile: Comm
         tex_command::register_pdftex_expandable_primitives(universe);
         tex_command::register_pdftex_unexpandable_primitives(universe);
     }
+    if compatibility == CommandCompatibility::Latex {
+        tex_command::register_latex_expandable_primitives(universe);
+    }
+}
+
+fn install_latex_compatibility<G>(universe: &mut Universe<G>) -> Result<(), SessionError> {
+    tex_command::install_latex_expandable_primitives(universe);
+    for character in ['{', '}', '$', '&', '#', '^', '_'] {
+        universe
+            .assign_code(
+                CodeTableKind::Catcode,
+                character,
+                i64::from(tex_state::token::Catcode::Other as u8),
+                AssignmentScope::Global,
+            )
+            .map_err(SessionError::Universe)?;
+    }
+    Ok(())
 }
 
 fn install_plain_catcodes<G>(universe: &mut Universe<G>) -> Result<(), SessionError> {
@@ -872,6 +909,7 @@ struct CandidateControlOptions<'a> {
     source_path: &'a str,
     bytes: Vec<u8>,
     profile: CommandProfile,
+    compatibility: CommandCompatibility,
     initex: bool,
     emit_dvi: bool,
     root_framing: SourceFramingPolicy,
@@ -896,6 +934,9 @@ fn candidate_control<G>(
             universe.enable_pdf_output();
             tex_command::install_pdftex_expandable_primitives(universe);
             tex_command::install_pdftex_unexpandable_primitives(universe);
+        }
+        if options.compatibility == CommandCompatibility::Latex {
+            install_latex_compatibility(universe)?;
         }
     }
     let mut control = if options.initex {
@@ -1060,6 +1101,7 @@ pub struct Session {
     root_framing_name: Option<String>,
     root_source_is_byte_projection: bool,
     command_profile: CommandProfile,
+    command_compatibility: CommandCompatibility,
     initex: bool,
     expansion_stats: ExpansionStats,
     render_maps: RefCell<RenderMapCache>,
@@ -1172,6 +1214,7 @@ impl Session {
             root_framing_name: None,
             root_source_is_byte_projection,
             command_profile: CommandProfile::TEX82,
+            command_compatibility: CommandCompatibility::Profile,
             initex: true,
             expansion_stats: ExpansionStats::default(),
             render_maps: RefCell::new(RenderMapCache::new(usize::MAX)),
@@ -1219,6 +1262,14 @@ impl Session {
         assert!(self.history.is_empty(), "profile is fixed after execution");
         self.command_profile = profile;
         self.initex = initex;
+    }
+
+    pub fn set_command_compatibility(&mut self, compatibility: CommandCompatibility) {
+        assert!(
+            self.history.is_empty(),
+            "command compatibility is fixed after execution"
+        );
+        self.command_compatibility = compatibility;
     }
 
     /// Selects one validated, handle-free format image for every candidate.
@@ -1420,6 +1471,7 @@ impl Session {
             } else {
                 CommandProfile::unicode_extended(self.command_profile.dialect())
             },
+            compatibility: self.command_compatibility,
             initex: self.initex,
             dvi_output: self.dvi_output,
             root_framing: self.root_framing,

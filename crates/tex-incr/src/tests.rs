@@ -42,6 +42,18 @@ fn assert_detached_output_eq(actual: &AcceptedOutput, expected: &AcceptedOutput)
     assert_eq!(actual.pdf(), expected.pdf());
 }
 
+fn terminal_effect_text(output: &AcceptedOutput) -> String {
+    output
+        .completion()
+        .effects()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
 fn cold_execution_publishes_detached_artifact_and_boundary_history() {
     let source = page_source(10);
@@ -76,15 +88,7 @@ fn cold_candidate_runs_canonical_job_start_before_root_input() {
     });
 
     let output = session.cold().expect("cold execution");
-    let text = output
-        .completion()
-        .effects()
-        .iter()
-        .filter_map(|effect| match effect {
-            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect::<String>();
+    let text = terminal_effect_text(&output);
 
     assert!(
         text.contains("This is TeX"),
@@ -150,6 +154,83 @@ fn root_framing_alias_is_used_for_startup_while_provenance_keeps_the_source_path
         !text.contains("(/job/main.tex"),
         "startup framing: {text:?}"
     );
+}
+
+#[test]
+fn latex_compatibility_is_distinct_from_etex() {
+    let source = r"\catcode123=1 \catcode125=2 \immediate\write16{created=\creationdate}\end";
+    let clock = JobClock {
+        time: 12 * 60 + 34,
+        second: 23,
+        day: 9,
+        month: 8,
+        year: 2026,
+    };
+
+    let mut etex = session(RevisionId::new(1), source);
+    etex.set_command_profile(CommandProfile::ETEX26, true);
+    etex.set_job_clock(clock);
+    let etex_text = terminal_effect_text(&etex.cold().expect("e-TeX execution"));
+    assert!(
+        etex_text.contains("Undefined control sequence"),
+        "{etex_text}"
+    );
+    assert!(!etex_text.contains("created=D:20260809123423Z"));
+
+    let mut latex = session(RevisionId::new(1), source);
+    latex.set_command_profile(CommandProfile::ETEX26, true);
+    latex.set_command_compatibility(CommandCompatibility::Latex);
+    latex.set_job_clock(clock);
+    let latex_text = terminal_effect_text(&latex.cold().expect("LaTeX execution"));
+    assert!(
+        latex_text.contains("created=D:20260809123423Z"),
+        "{latex_text}"
+    );
+    assert!(!latex_text.contains("Undefined control sequence"));
+}
+
+#[test]
+fn latex_compatibility_matches_fresh_and_loaded_candidates() {
+    let clock = JobClock {
+        time: 12 * 60 + 34,
+        second: 23,
+        day: 9,
+        month: 8,
+        year: 2026,
+    };
+    let source = r"\catcode123=1 \catcode125=2 \immediate\write16{created=\creationdate}\end";
+
+    let mut format = session(RevisionId::new(1), r"\dump");
+    format.set_command_profile(CommandProfile::ETEX26, true);
+    format.set_command_compatibility(CommandCompatibility::Latex);
+    let format = format.cold().expect("LaTeX format construction");
+    let image = DetachedFormatImage::try_from_bytes(
+        format
+            .format_dump()
+            .expect("LaTeX format dump")
+            .image
+            .as_bytes()
+            .to_vec(),
+    )
+    .expect("detached LaTeX format image");
+
+    let mut fresh = session(RevisionId::new(1), source);
+    fresh.set_command_profile(CommandProfile::ETEX26, true);
+    fresh.set_command_compatibility(CommandCompatibility::Latex);
+    fresh.set_job_clock(clock);
+    let fresh_text = terminal_effect_text(&fresh.cold().expect("fresh LaTeX candidate"));
+
+    let mut loaded = session(RevisionId::new(1), source);
+    loaded.set_command_profile(CommandProfile::ETEX26, false);
+    loaded.set_command_compatibility(CommandCompatibility::Latex);
+    loaded.set_format_image(image);
+    loaded.set_job_clock(clock);
+    let loaded_text = terminal_effect_text(&loaded.cold().expect("loaded LaTeX candidate"));
+
+    for text in [fresh_text, loaded_text] {
+        assert!(text.contains("created=D:20260809123423Z"), "{text}");
+        assert!(!text.contains("Undefined control sequence"));
+    }
 }
 
 #[test]
