@@ -62,6 +62,45 @@ fn cold_execution_publishes_detached_artifact_and_boundary_history() {
 }
 
 #[test]
+fn cold_candidate_runs_canonical_job_start_before_root_input() {
+    let mut session = session(
+        RevisionId::new(1),
+        r"\immediate\write16{\the\time/\the\day/\the\month/\the\year}\end",
+    );
+    session.set_job_clock(JobClock {
+        time: 754,
+        second: 23,
+        day: 9,
+        month: 8,
+        year: 2026,
+    });
+
+    let output = session.cold().expect("cold execution");
+    let text = output
+        .completion()
+        .effects()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+
+    assert!(
+        text.contains("This is TeX"),
+        "startup banner missing: {text:?}"
+    );
+    assert!(
+        text.contains("**<editor>"),
+        "startup line missing: {text:?}"
+    );
+    assert!(
+        text.contains("754/9/8/2026"),
+        "§241 clock cells were not refreshed: {text:?}"
+    );
+}
+
+#[test]
 fn semantic_edit_matches_a_fresh_cold_execution() {
     let original = page_source(10);
     let replacement = page_source(24);

@@ -851,6 +851,14 @@ fn candidate_control<G>(
         control.set_engine_binary(tex_exec::EngineBinaryIdentity::Pdftex14029);
     }
     control.set_dvi_output(options.emit_dvi);
+    control
+        .capabilities_mut()
+        .set_startup_job_name(options.job_name);
+    // tex.web §241 refreshes the four volatile clock cells at the same
+    // lifecycle boundary that opens §536's transcript and frames §534's
+    // startup line. This must precede root registration so §537's opening
+    // parenthesis cannot overtake the banner/log prefix.
+    control.begin_job_for_input(universe, options.source_path, options.job_name);
     let mut registration = SourceRegistration::new(RegisteredSourceKind::Generated, options.bytes)
         .with_name(options.source_path)
         .with_framing(options.root_framing);
@@ -859,9 +867,6 @@ fn candidate_control<G>(
     }
     control.register_root_source(registration)?;
     control.flush_pending_file_framing(universe);
-    control
-        .capabilities_mut()
-        .set_startup_job_name(options.job_name);
     Ok(control)
 }
 
