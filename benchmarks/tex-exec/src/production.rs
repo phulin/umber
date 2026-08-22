@@ -2,9 +2,10 @@ use std::fmt;
 
 use tex_command::{RegisteredSourceKind, SourceRegistration};
 use tex_exec::{MainControl, MainControlStep, StepResult};
-use tex_state::Universe;
+use tex_state::interner::InternerBudget;
+use tex_state::{AssignmentScope, Universe};
 
-use crate::{BatchResult, Workload, benchmark_font, serialize_dvi};
+use crate::{BatchResult, Workload, benchmark_font, prepare_plain_catcodes, serialize_dvi};
 
 #[derive(Debug)]
 pub enum ProductionError {
@@ -17,6 +18,7 @@ pub enum ProductionError {
     MissingDvi,
     ExtraDvi(usize),
     Dvi(tex_out::dvi::DviError),
+    State(String),
 }
 
 impl fmt::Display for ProductionError {
@@ -28,10 +30,29 @@ impl fmt::Display for ProductionError {
 impl std::error::Error for ProductionError {}
 
 pub fn run_production(workload: &Workload) -> Result<BatchResult, ProductionError> {
-    let mut stores = Universe::new_with_plain_catcodes();
-    let font = stores.intern_font(benchmark_font());
-    let mut control = MainControl::tex82_initex(&mut stores);
-    stores.set_current_font_global(font);
+    let budget =
+        InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024).expect("benchmark interner budget");
+    tex_state::with_universe(budget, |stores| run_generation(stores, workload))
+        .map_err(|error| ProductionError::State(format!("{error:?}")))?
+}
+
+fn run_generation<G>(
+    stores: &mut Universe<G>,
+    workload: &Workload,
+) -> Result<BatchResult, ProductionError> {
+    prepare_plain_catcodes(stores);
+    let font = {
+        let mut context = stores
+            .command_context()
+            .map_err(|error| ProductionError::State(format!("{error:?}")))?;
+        let font = context.intern_font(benchmark_font());
+        context
+            .assign_current_font(font, AssignmentScope::Global)
+            .map_err(|error| ProductionError::State(format!("{error:?}")))?;
+        font
+    };
+    std::hint::black_box(font);
+    let mut control = MainControl::tex82_initex(stores);
     control.set_dvi_output(true);
     let source = SourceRegistration::new(RegisteredSourceKind::Generated, workload.source());
     control
@@ -40,7 +61,7 @@ pub fn run_production(workload: &Workload) -> Result<BatchResult, ProductionErro
 
     loop {
         match control
-            .advance_episode(&mut stores)
+            .advance_episode(stores)
             .map_err(ProductionError::Execute)?
         {
             StepResult::Progress(MainControlStep::Continue) => {}
@@ -80,7 +101,17 @@ pub fn run_production(workload: &Workload) -> Result<BatchResult, ProductionErro
         .unwrap_or_default()
         .to_vec();
     Ok(BatchResult {
-        counts: [stores.count(0), stores.count(1), stores.count(2)],
+        counts: [
+            stores
+                .count(0)
+                .map_err(|error| ProductionError::State(format!("{error:?}")))?,
+            stores
+                .count(1)
+                .map_err(|error| ProductionError::State(format!("{error:?}")))?,
+            stores
+                .count(2)
+                .map_err(|error| ProductionError::State(format!("{error:?}")))?,
+        ],
         artifact,
         artifact_bytes,
         dvi,

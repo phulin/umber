@@ -17,6 +17,30 @@ pub const CHARACTER_WIDTH: i32 = 500;
 pub const CHARACTER_HEIGHT: i32 = 300;
 pub const CHARACTER_DEPTH: i32 = 100;
 
+/// Installs the format-level category codes needed by the synthetic Plain
+/// workload without introducing a live template or compatibility Universe.
+pub fn prepare_plain_catcodes<G>(stores: &mut tex_state::Universe<G>) {
+    let mut context = stores.command_context().expect("fresh benchmark admission");
+    for (character, catcode) in [
+        ('{', tex_state::token::Catcode::BeginGroup),
+        ('}', tex_state::token::Catcode::EndGroup),
+        ('$', tex_state::token::Catcode::MathShift),
+        ('&', tex_state::token::Catcode::AlignmentTab),
+        ('#', tex_state::token::Catcode::Parameter),
+        ('^', tex_state::token::Catcode::Superscript),
+        ('_', tex_state::token::Catcode::Subscript),
+    ] {
+        context
+            .assign_code(
+                tex_state::CodeTableKind::Catcode,
+                character,
+                i64::from(catcode as u8),
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("plain category-code assignment");
+    }
+}
+
 /// One complete, deterministic macro-heavy source job.
 #[derive(Clone, Debug)]
 pub struct Workload {
@@ -188,7 +212,10 @@ mod tests {
         assert!(!production.artifact_bytes.is_empty());
         assert!(!production.dvi.is_empty());
         assert_eq!(
-            production.command_work.expect("packed production work").fuel_charges,
+            production
+                .command_work
+                .expect("packed production work")
+                .fuel_charges,
             73 + 67 * workload.calls() as u64
                 + workload.relax_padding() as u64
                 + 16

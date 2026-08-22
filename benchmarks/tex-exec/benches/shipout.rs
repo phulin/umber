@@ -1,58 +1,75 @@
-use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tex_command::{RegisteredSourceKind, SourceRegistration};
 use tex_exec::{MainControl, MainControlStep};
-use tex_state::Universe;
+use tex_exec_benchmarks::prepare_plain_catcodes;
 use tex_state::glue::Order;
+use tex_state::interner::InternerBudget;
 use tex_state::math::{MathField, MathListNode, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
+use tex_state::{Universe, with_universe};
 
 const NODE_COUNT: usize = 1_024;
 
+#[derive(Clone, Copy)]
+enum Shape {
+    Ordinary,
+    DeferredMath,
+}
+
 fn shipout(c: &mut Criterion) {
-    let mut group = c.benchmark_group("shipout_lowering");
+    let mut group = c.benchmark_group("shipout_generation_episode");
     group.throughput(Throughput::Elements(NODE_COUNT as u64));
     group.bench_function("ordinary_hlist", |b| {
-        b.iter_batched(ordinary_shipout, run_shipout, BatchSize::SmallInput);
+        b.iter(|| run_shipout(Shape::Ordinary));
     });
     group.bench_function("deferred_math_lists", |b| {
-        b.iter_batched(deferred_math_shipout, run_shipout, BatchSize::SmallInput);
+        b.iter(|| run_shipout(Shape::DeferredMath));
     });
     group.finish();
 }
 
-fn ordinary_shipout() -> (Universe, MainControl) {
-    let mut stores = prepared_universe();
-    let nodes = (0..NODE_COUNT)
-        .map(|index| Node::Penalty(index as i32))
-        .collect::<Vec<_>>();
-    install_box(&mut stores, &nodes);
-    let control = shipout_input(&mut stores);
-    (stores, control)
+fn run_shipout(shape: Shape) {
+    let budget =
+        InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024).expect("benchmark interner budget");
+    with_universe(budget, |stores| {
+        prepare_plain_catcodes(stores);
+        match shape {
+            Shape::Ordinary => {
+                let nodes = (0..NODE_COUNT)
+                    .map(|index| Node::Penalty(index as i32))
+                    .collect::<Vec<_>>();
+                install_box(stores, nodes);
+            }
+            Shape::DeferredMath => {
+                let mut context = stores.command_context().expect("command context");
+                let content = context.publish_page_nodes(vec![Node::MathNoad(MathNoad::new(
+                    NoadKind::Normal(NoadClass::Ord),
+                    MathField::Empty,
+                ))]);
+                let list = MathListNode {
+                    display: false,
+                    content,
+                };
+                drop(context);
+                install_box(stores, vec![Node::MathList(list); NODE_COUNT]);
+            }
+        }
+        let mut control = shipout_input(stores);
+        loop {
+            match control.step(stores).expect("benchmark shipout succeeds") {
+                MainControlStep::End | MainControlStep::EndOfInput => break,
+                MainControlStep::Continue => {}
+            }
+        }
+        black_box(stores.world().artifact_commits().len());
+    })
+    .expect("shipout benchmark universe");
 }
 
-fn deferred_math_shipout() -> (Universe, MainControl) {
-    let mut stores = prepared_universe();
-    let content = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
-        NoadKind::Normal(NoadClass::Ord),
-        MathField::Empty,
-    ))]);
-    let list = MathListNode {
-        display: false,
-        content,
-    };
-    let nodes = vec![Node::MathList(list); NODE_COUNT];
-    install_box(&mut stores, &nodes);
-    let control = shipout_input(&mut stores);
-    (stores, control)
-}
-
-fn prepared_universe() -> Universe {
-    Universe::new()
-}
-
-fn install_box(stores: &mut Universe, nodes: &[Node]) {
-    let children = stores.freeze_node_list(nodes);
+fn install_box<G>(stores: &mut Universe<G>, nodes: Vec<Node>) {
+    let mut context = stores.command_context().expect("command context");
+    let children = context.publish_page_nodes(nodes);
     let root = Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(0),
         height: Scaled::from_raw(0),
@@ -64,11 +81,13 @@ fn install_box(stores: &mut Universe, nodes: &[Node]) {
         glue_order: Order::Normal,
         children,
     }));
-    let root_list = stores.freeze_node_list(&[root]);
-    stores.set_box_reg(0, root_list);
+    let root_list = context.publish_page_nodes(vec![root]);
+    context
+        .assign_page_box_global(0, root_list)
+        .expect("benchmark box promotes");
 }
 
-fn shipout_input(stores: &mut Universe) -> MainControl {
+fn shipout_input<G>(stores: &mut Universe<G>) -> MainControl<G> {
     let mut control = MainControl::tex82_initex(stores);
     control
         .register_root_source(SourceRegistration::new(
@@ -77,20 +96,6 @@ fn shipout_input(stores: &mut Universe) -> MainControl {
         ))
         .expect("benchmark source registers");
     control
-}
-
-fn run_shipout((mut stores, mut control): (Universe, MainControl)) {
-    loop {
-        match control
-            .step(&mut stores)
-            .expect("benchmark shipout succeeds")
-        {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
-            MainControlStep::Continue => {}
-        }
-    }
-    black_box(stores.world().artifact_commits().len());
-    black_box(stores);
 }
 
 criterion_group!(benches, shipout);
