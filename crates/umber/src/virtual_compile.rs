@@ -1996,10 +1996,10 @@ impl VirtualCompileSession {
                     .rsplit('/')
                     .next()
                     .expect("a canonical virtual path has a final component");
-                session.set_root_source_framing_name(format!("./{startup_name}"));
-                if self.authored_root_name.is_some() {
-                    session
-                        .set_root_source_framing(tex_command::SourceFramingPolicy::ExternallyOwned);
+                if let Some(authored_root_name) = &self.authored_root_name {
+                    session.set_root_source_framing_name(authored_root_name.clone());
+                } else {
+                    session.set_root_source_framing_name(format!("./{startup_name}"));
                 }
                 session
             });

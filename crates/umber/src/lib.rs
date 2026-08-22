@@ -1671,7 +1671,7 @@ pub fn run_memory_collecting_artifacts_with_profile<G>(
     let mut host = FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
     let mut session = EngineSession::new(stores, profile);
     session.project_terminal_text_to_root_body();
-    session.register_retained_fragment_with_invocation(
+    session.register_retained_root_with_invocation(
         "texput",
         "texput",
         SourceRegistration::new(
@@ -1809,8 +1809,9 @@ mod tests {
     use super::{
         DriverFile, FinalizationCommit, FinalizationError, PlannedFinalization, TexRunStatus,
         engine_interner_budget, prepare_pdftex_run_stores,
-        run_input_collecting_artifacts_with_profile, run_memory_collecting_artifacts_with_profile,
-        terminal_text_from_effects, with_engine_universe, with_engine_world,
+        run_input_collecting_artifacts_with_profile,
+        run_memory_collecting_initex_artifacts_with_profile, terminal_text_from_effects,
+        with_engine_universe, with_engine_world,
     };
     use crate::FileSessionResolvers;
     use std::path::{Path, PathBuf};
@@ -1846,10 +1847,11 @@ mod tests {
         session
             .add_user_file("main.tex", source.as_bytes().to_vec())
             .expect("finalization test source");
-        assert!(matches!(
-            session.compile_attempt(),
-            crate::CompileAttemptResult::Complete(_)
-        ));
+        let attempt = session.compile_attempt();
+        assert!(
+            matches!(attempt, crate::CompileAttemptResult::Complete(_)),
+            "finalization fixture must complete: {attempt:?}"
+        );
         session
             .into_accepted_finalization()
             .expect("accepted finalization")
@@ -2151,12 +2153,11 @@ mod tests {
 
         let mode = EngineMode::PdfTex;
         let format = with_engine_world(World::memory(), |format_stores| {
-            mode.prepare_fresh(format_stores);
-            run_memory_collecting_artifacts_with_profile(
+            mode.prepare_initex(format_stores);
+            run_memory_collecting_initex_artifacts_with_profile(
                 "\\dump",
                 format_stores,
                 mode.command_profile(),
-                false,
             )
             .expect("base format executes")
             .format_dump
@@ -2232,8 +2233,12 @@ mod tests {
     #[test]
     #[allow(clippy::disallowed_methods)] // Verifies real host ordering at the World boundary.
     fn driver_materialization_follows_engine_effect_commit() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let output = temp.path().join("shared.out");
+        let temp = tempfile::Builder::new()
+            .prefix("driver-order.")
+            .tempdir_in(".")
+            .expect("temp dir");
+        let root = Path::new(temp.path().file_name().expect("relative temp root"));
+        let output = root.join("shared.out");
         let publication = publication(&format!(
             "\\openout1={} \\write1{{engine}}\\closeout1\\end",
             output.display()
@@ -2250,17 +2255,21 @@ mod tests {
             .materialize(&mut world)
             .expect("driver materializes");
 
-        assert_eq!(std::fs::read(output).expect("read output"), b"driver");
+        assert_eq!(std::fs::read(&output).expect("read output"), b"driver");
     }
 
     #[test]
     fn failed_effect_commit_cannot_materialize_driver_file() {
-        let temp = tempfile::tempdir().expect("temp dir");
+        let temp = tempfile::Builder::new()
+            .prefix("driver-failure.")
+            .tempdir_in(".")
+            .expect("temp dir");
+        let root = Path::new(temp.path().file_name().expect("relative temp root"));
         let publication = publication(&format!(
             "\\openout1={} \\write1{{cannot write a directory}}\\end",
-            temp.path().display()
+            root.display()
         ));
-        let driver_path = temp.path().join("driver.dvi");
+        let driver_path = root.join("driver.dvi");
         let plan = PlannedFinalization::new(
             publication,
             vec![DriverFile::new(driver_path.clone(), b"driver".to_vec())],
@@ -2275,14 +2284,18 @@ mod tests {
     #[test]
     #[allow(clippy::disallowed_methods)] // Verifies retry ordering against the real backend.
     fn retryable_finalization_keeps_plan_and_does_not_replay_committed_prefix() {
-        let temp = tempfile::tempdir().expect("temp dir");
-        let prefix_path = temp.path().join("prefix.out");
-        let replacement_path = temp.path().join("replacement.out");
-        let driver_path = temp.path().join("driver.dvi");
+        let temp = tempfile::Builder::new()
+            .prefix("driver-retry.")
+            .tempdir_in(".")
+            .expect("temp dir");
+        let root = Path::new(temp.path().file_name().expect("relative temp root"));
+        let prefix_path = root.join("prefix.out");
+        let replacement_path = root.join("replacement.out");
+        let driver_path = root.join("driver.dvi");
         let publication = publication(&format!(
             "\\openout1={} \\write1{{once}}\\closeout1 \\openout2={} \\write2{{suffix}}\\end",
             prefix_path.display(),
-            temp.path().display()
+            root.display()
         ));
         let plan = PlannedFinalization::new(
             publication,
@@ -2297,7 +2310,7 @@ mod tests {
         else {
             panic!("directory open must suspend finalization");
         };
-        assert_eq!(failure.path(), Some(temp.path()));
+        assert_eq!(failure.path(), Some(root));
         assert_eq!(
             std::fs::read(&prefix_path).expect("committed prefix"),
             b"once\n"

@@ -1,5 +1,7 @@
 //! Umber adapter from terminal PDF completion to the pure `tex-out` boundary.
 
+mod virtual_fonts;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -90,16 +92,40 @@ pub fn pdf_finalization_input_with_raw_object_files(
         })
         .collect::<BTreeMap<_, _>>();
 
-    let artifacts_by_font = pages
+    let artifacts = pages
         .iter()
         .map(|page| page.artifact_bytes.as_ref())
         .chain(forms.values().map(|form| form.artifact_bytes.as_ref()))
         .map(tex_out::PageArtifact::from_bytes)
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flat_map(|artifact| artifact.fonts.clone())
+        .collect::<Result<Vec<_>, _>>()?;
+    let artifacts_by_font = artifacts
+        .iter()
+        .flat_map(|artifact| artifact.fonts.iter().cloned())
         .map(|font| (font.semantic_identity, font))
         .collect::<BTreeMap<_, _>>();
+    let mut artifact_font_usage = BTreeMap::<_, BTreeSet<_>>::new();
+    for (page_index, artifact) in artifacts.iter().enumerate() {
+        let positioned = tex_out::positioned::lower_page(
+            artifact,
+            u32::try_from(page_index).unwrap_or(u32::MAX),
+        )?;
+        for run in positioned.events.iter().filter_map(|event| match event {
+            tex_out::positioned::PositionedEvent::TextRun(run) => Some(run),
+            _ => None,
+        }) {
+            let Some(font) = positioned
+                .fonts
+                .iter()
+                .find(|font| font.font_id == run.font_id)
+            else {
+                continue;
+            };
+            artifact_font_usage
+                .entry(font.semantic_identity)
+                .or_default()
+                .extend(run.physical_codes.iter().flatten().copied());
+        }
+    }
     let resolved_map = crate::virtual_compile::resolved_font_map_lines(pdf, resources)
         .into_iter()
         .map(|entry| (entry.tex_name.clone(), entry))
@@ -135,7 +161,13 @@ pub fn pdf_finalization_input_with_raw_object_files(
         {
             PdfFontProgramInput::Resident
         } else {
-            detached_font_program(pdf, resources, detached, map_entry.as_ref(), driver_dpi)?
+            detached_font_program(
+                pdf,
+                resources,
+                &detached.recipe,
+                map_entry.as_ref(),
+                driver_dpi,
+            )?
         };
         let mut glyph_names = encoding
             .as_ref()
@@ -197,6 +229,15 @@ pub fn pdf_finalization_input_with_raw_object_files(
             },
         );
     }
+    let (document_objects, mut next_object) = document_objects(pdf)?;
+    virtual_fonts::materialize_destination_font_instances(
+        pdf,
+        resources,
+        driver_dpi,
+        &artifact_font_usage,
+        &mut fonts,
+        &mut next_object,
+    )?;
 
     let images = pdf
         .images()
@@ -264,7 +305,6 @@ pub fn pdf_finalization_input_with_raw_object_files(
         })
         .collect::<Result<Vec<_>, PdfBuildError>>()?;
 
-    let (document_objects, next_object) = document_objects(pdf)?;
     let document = pdf.document();
     let metadata = PdfDocumentMetadataInput {
         include_info_dictionary: document.include_info_dictionary,
@@ -368,13 +408,13 @@ fn detached_encoding(
 fn detached_font_program(
     pdf: &DetachedPdfCompletion,
     resources: &crate::PdfVirtualFontResources,
-    font: &tex_state::DetachedPdfFontResource,
+    recipe: &tex_state::FontArtifactRecipe,
     map: Option<&tex_fonts::PdfFontMapEntry>,
     driver_dpi: i32,
 ) -> Result<PdfFontProgramInput, PdfBuildError> {
     let Some(map) = map else {
         let request = crate::virtual_compile::detached_pk_request(
-            &font.recipe,
+            recipe,
             pdf.font_configuration().resolved_pk_resolution(driver_dpi),
         )
         .map_err(PdfBuildError::PkFont)?;

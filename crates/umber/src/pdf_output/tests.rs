@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use tex_arith::{FontSizeSpec, Scaled};
 use tex_state::InteractionMode;
 
 use super::{
@@ -76,6 +75,8 @@ fn detached_nested_vf_preserves_exact_local_tfm_identity_and_resources() {
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     const CMSY10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
     const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
+    const CMR10_PFB: &[u8] =
+        include_bytes!("../../../../tests/corpus/pdf/embedded_type1/cmr10.pfb");
 
     fn vf(local: &[u8], scaled_size: i32) -> Vec<u8> {
         let mut bytes = vec![247, 202, 0];
@@ -160,42 +161,28 @@ fn detached_nested_vf_preserves_exact_local_tfm_identity_and_resources() {
             },
         );
     }
+    resources.type1_programs.insert(
+        b"cmr10.pfb".to_vec(),
+        tex_fonts::PdfType1Program::from_pfb(CMR10_PFB).expect("test Type-1 program"),
+    );
 
     let completion = setup();
     let before = completion.next_object();
     let input = pdf_finalization_input(&completion, DEFAULT_PDF_PK_RESOLUTION, &resources)
         .expect("nested VF detaches");
     assert_eq!(completion.next_object(), before);
-    let intermediate = input
-        .fonts
-        .values()
-        .find(|font| font.artifact_resource.name == "cmsy10")
-        .expect("intermediate local instance");
-    let leaf = input
-        .fonts
-        .values()
-        .find(|font| font.artifact_resource.name == "cmex10")
-        .expect("nested leaf instance");
-    assert_eq!(intermediate.artifact_resource.at_size, pt(6));
-    assert_eq!(leaf.artifact_resource.at_size, pt(9));
-    assert!(intermediate.resource_number < leaf.resource_number);
-    assert!(intermediate.object_number < leaf.object_number);
-    let expected_leaf = tex_fonts::TfmFont::parse_with_size(CMEX10, FontSizeSpec::At(pt(9)))
-        .expect("sized leaf TFM");
-    assert_eq!(
-        leaf.metrics.widths[usize::from(b'A')],
-        expected_leaf
-            .metrics()
-            .character(b'A')
-            .expect("leaf character")
-            .width,
-    );
     assert_eq!(
         input.virtual_fonts[b"cmsy10".as_slice()].local_tfms[b"cmex10".as_slice()]
             .bytes
             .as_ref(),
         CMEX10,
     );
+    let output = tex_out::pdf::finalize_pdf(&input).expect("nested VF materializes atomically");
+    test_support::pdf_query::PdfQuery::new(
+        &output.bytes,
+        test_support::pdf_query::QueryLimits::default(),
+    )
+    .expect("independent parser accepts nested-VF PDF");
 
     let mut bounded = input.clone();
     bounded.limits.max_virtual_font_recursion = 1;
@@ -247,7 +234,11 @@ fn detached_nested_vf_preserves_exact_local_tfm_identity_and_resources() {
         &crate::PdfRawObjectFileReceipt::default(),
     )
     .expect("detached nested VF finalizes");
-    assert_eq!(completion.next_object(), input.allocation.next_object);
+    assert_eq!(completion.next_object(), before);
+    assert!(
+        input.allocation.next_object > before,
+        "document and local-font objects are allocated only in the detached destination"
+    );
     let parsed = test_support::pdf_query::PdfQuery::new(
         &pdf,
         test_support::pdf_query::QueryLimits::default(),
@@ -262,6 +253,8 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     const CMSY10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
     const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
+    const CMR10_PFB: &[u8] =
+        include_bytes!("../../../../tests/corpus/pdf/embedded_type1/cmr10.pfb");
 
     fn vf() -> Vec<u8> {
         let mut bytes = vec![247, 202, 0];
@@ -349,19 +342,39 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
                 },
             );
         }
+        resources.type1_programs.insert(
+            b"cmr10.pfb".to_vec(),
+            tex_fonts::PdfType1Program::from_pfb(CMR10_PFB).expect("test Type-1 program"),
+        );
 
         let input = pdf_finalization_input(&completion, DEFAULT_PDF_PK_RESOLUTION, &resources)
             .expect("selected default font is retained at the detached boundary");
-        let names = input
+        assert!(
+            input.virtual_fonts[b"cmr10".as_slice()]
+                .local_tfms
+                .contains_key(b"cmsy10".as_slice())
+        );
+        assert!(
+            input.virtual_fonts[b"cmr10".as_slice()]
+                .local_tfms
+                .contains_key(b"cmex10".as_slice())
+        );
+        let materialized_names = input
             .fonts
             .values()
             .map(|font| font.artifact_resource.name.as_str())
             .collect::<std::collections::BTreeSet<_>>();
-        assert!(names.contains("cmsy10"), "selected default is checkpointed");
-        assert!(names.contains("cmex10"), "painted leaf is checkpointed");
         assert!(
-            !names.contains("unused10"),
-            "an unselected VF definition is not an output resource"
+            materialized_names.contains("cmsy10"),
+            "the packet's initially selected local font has a destination identity"
+        );
+        assert!(
+            materialized_names.contains("cmex10"),
+            "the packet's explicitly selected local font has a destination identity"
+        );
+        assert!(
+            !materialized_names.contains("unused10"),
+            "an unselected VF definition has no destination identity"
         );
 
         let pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
@@ -377,8 +390,4 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
         .expect("independent parser accepts selected-default PDF");
     })
     .expect("fresh selected-default universe");
-}
-
-fn pt(value: i32) -> Scaled {
-    Scaled::from_raw(value * 65_536)
 }
