@@ -31,6 +31,30 @@ fn output() -> PdfOutputParameters {
 }
 
 #[test]
+fn aliased_pdf_fonts_enumerate_one_terminal_resource_object() {
+    let mut state = PdfState::<()>::default();
+    let identity = tex_fonts::PdfFontResourceIdentity::new([7; 32], None);
+    let first = state
+        .ensure_font_resource(
+            crate::ids::FontId::testing_new(1),
+            tex_fonts::FontSourceIdentity::from_bytes([1; 32]),
+            identity,
+        )
+        .expect("first PDF font resource");
+    let alias = state
+        .ensure_font_resource(
+            crate::ids::FontId::testing_new(2),
+            tex_fonts::FontSourceIdentity::from_bytes([2; 32]),
+            identity,
+        )
+        .expect("aliased PDF font resource");
+
+    assert_eq!(alias.object_number(), first.object_number());
+    assert_eq!(alias.resource_number(), first.resource_number());
+    assert_eq!(state.font_resources().collect::<Vec<_>>(), vec![first]);
+}
+
+#[test]
 fn page_coordinates_are_generation_typed_and_checkpointed() {
     with_universe(budget(), |universe| {
         let id = universe

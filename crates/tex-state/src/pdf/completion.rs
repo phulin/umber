@@ -460,8 +460,7 @@ pub(crate) fn detach<G>(
         .collect::<Result<Vec<_>, _>>()?;
 
     let fonts = pdf
-        .font_resources
-        .iter()
+        .font_resources()
         .map(|resource| {
             let metrics: Vec<_> = (0..=u8::MAX)
                 .map(|code| font_metrics(resource.font, code))
