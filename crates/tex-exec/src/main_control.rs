@@ -1667,6 +1667,7 @@ impl<G> MainControl<G> {
         let image = stores
             .capture_format_image()
             .map_err(crate::FormatDumpError::State)?;
+        self.command.close_format_dump_boundary();
         let receipt = self
             .dumped_format
             .take()

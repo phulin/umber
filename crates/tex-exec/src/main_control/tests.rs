@@ -12035,6 +12035,26 @@ fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
 }
 
 #[test]
+fn initex_dump_discards_unread_terminal_command_state_after_image_capture() {
+    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        let mut control = MainControl::tex82_initex(&mut stores);
+        control
+            .capabilities_mut()
+            .set_startup_job_name("trailing-dump.tex");
+        register_source(&mut control, br"\dump\relax");
+
+        run_to_end(&mut control, &mut stores);
+
+        let detached = control
+            .take_format_dump(&stores)
+            .expect("terminal unread input is discardable")
+            .expect("successful INITEX dump");
+        assert!(!detached.image.as_bytes().is_empty());
+        assert!(control.command_mut().format_dump_is_quiescent());
+    });
+}
+
+#[test]
 fn valign_cell_endv_closes_an_open_paragraph_before_fin_col() {
     crate::test_harness::with_nonstop_plain_universe(|mut stores| {
         let mut control = MainControl::tex82_initex(&mut stores);

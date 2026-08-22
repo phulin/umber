@@ -563,23 +563,28 @@ impl<G> CommandState<G> {
         self.validate_summary_quiescence().is_ok()
     }
 
-    /// Reports whether no command/input/condition owner can cross a cold
-    /// format boundary.
+    /// Reports whether the terminal format boundary can discard the remaining
+    /// command-only state without abandoning an active scanner or attempt.
     ///
-    /// Named checkpoints may retain live source levels by design. A format
-    /// publication may not: it is a fresh-job image rather than a resumable
-    /// command continuation.
+    /// TeX's terminal `\dump` can leave unread input or macro levels behind;
+    /// those levels are not part of a fresh-job format image. They are dropped
+    /// only after aggregate image capture has succeeded.
     #[must_use]
     pub fn format_dump_is_quiescent(&self) -> bool {
         self.validate_summary_quiescence().is_ok()
-            && self.input.levels.is_empty()
-            && self.parameters.activations.is_empty()
-            && self.conditions.frames.is_empty()
-            && self.group_payloads.is_empty()
-            && self.afterassignment.is_none()
-            && self.named_token_list_pushes.is_empty()
-            && self.file_framing_events.is_empty()
-            && self.expansion.pending_diagnostics.is_empty()
+    }
+
+    /// Drops the command-only remainder of one successfully captured terminal
+    /// format boundary. Engine semantics live in the format's Universe state;
+    /// no input, continuation, timeline, or attempt owner crosses with it.
+    pub fn close_format_dump_boundary(&mut self) {
+        assert!(
+            self.format_dump_is_quiescent(),
+            "terminal format closure requires quiescent command state"
+        );
+        self.roots = Arc::new(crate::state::CommandStateRoots::default());
+        self.timeline = Arc::new(CommandTimeline::default());
+        self.attempt = crate::CommandAttempt::default();
     }
 
     fn checkpoint_arenas(
