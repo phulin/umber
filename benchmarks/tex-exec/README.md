@@ -13,8 +13,10 @@ cargo bench --manifest-path benchmarks/tex-exec/Cargo.toml --bench shipout
 `ordinary_hlist` measures the normal artifact-lowering fast path.
 `deferred_math_lists` measures shipout-local Appendix G conversion for frozen
 math lists that survived into a shipped tree. Both cases lower 1,024 child
-nodes. Each Criterion iteration builds fresh state outside the timed region,
-then times execution and artifact commit.
+nodes. Each Criterion iteration owns the complete generative Universe episode:
+state construction, admitted page publication, execution, and artifact commit
+all remain inside one HRTB callback so no live id or owner escapes into a
+benchmark fixture.
 
 ## Canonical episode workload
 
