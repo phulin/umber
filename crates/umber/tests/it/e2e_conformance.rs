@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use parity_harness::run_named_fixture_document;
 use parity_harness::{
-    ManifestBoundSource, TripObservers, TripTriageChannels, TripTriageInput, TripTriageSource,
-    compare_dvi_files, write_trip_triage_artifact,
+    compare_dvi_files, write_trip_triage_artifact, ManifestBoundSource, TripObservers,
+    TripTriageChannels, TripTriageInput, TripTriageSource,
 };
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
@@ -22,9 +22,9 @@ use tex_state::{JobClock, World};
 
 use umber::FormatCacheStore;
 use umber::{
-    EngineMode, FormatGenerationGuards, FormatRecipe, FormatResource, LoadedFormatProjectionDemand,
-    LoadedFormatResource, OutputCapability, PreparedFormatJob, PreparedFormatProvider,
-    dvi_from_page_plans,
+    dvi_from_page_plans, EngineMode, FormatGenerationGuards, FormatRecipe, FormatResource,
+    LoadedFormatProjectionDemand, LoadedFormatResource, OutputCapability, PreparedFormatJob,
+    PreparedFormatProvider,
 };
 
 #[path = "e2e_conformance/assets.rs"]
@@ -640,7 +640,7 @@ fn two_phase_trip_helper_forbids_private_format_paths() {
         ".prepare(&recipe)",
         ".construction_evidence()",
         "PreparedFormatJob {",
-        "let mut loaded_run = provider",
+        "let loaded_run = provider",
         ".run(",
     ] {
         assert!(
@@ -1868,17 +1868,20 @@ fn format_image_contract_excludes_runtime_state_and_rebuilds_registry() {
         source
             .world_mut()
             .write_text(PrintSink::TerminalAndLog, "host effect excluded");
-        umber::run_memory_collecting_artifacts_with_profile(
-            "\\dump",
-            source,
-            tex_command::CommandProfile::TEX82,
-            false,
-        )
-        .expect("format contract construction")
-        .format_dump
-        .expect("bounded format image")
-        .image
-        .into_bytes()
+        let mut session =
+            umber::EngineSession::prepared_initex(source, tex_command::CommandProfile::TEX82);
+        session
+            .register_authored_job("format.tex", Arc::from(&b"\\dump"[..]))
+            .expect("format contract root registers");
+        let mut host =
+            umber::FileSessionResolvers::new(Path::new("format.tex"), Vec::new(), Vec::new());
+        session
+            .run(&mut host, &mut Vec::new())
+            .expect("format contract construction")
+            .format_dump
+            .expect("bounded format image")
+            .image
+            .into_bytes()
     })
     .expect("fresh format-contract universe");
 
@@ -2465,16 +2468,12 @@ fn trip_loaded_final_operator_has_one_zero_before_rebox() {
     let natural = (64_881, 0, 0);
     let exact = (64_881, 1_284_506, 0);
 
-    assert!(
-        hpacks
-            .windows(3)
-            .any(|packs| packs == [(0, 0, 0), natural, exact])
-    );
-    assert!(
-        !hpacks
-            .windows(4)
-            .any(|packs| packs == [(0, 0, 0), (0, 0, 0), natural, exact])
-    );
+    assert!(hpacks
+        .windows(3)
+        .any(|packs| packs == [(0, 0, 0), natural, exact]));
+    assert!(!hpacks
+        .windows(4)
+        .any(|packs| packs == [(0, 0, 0), (0, 0, 0), natural, exact]));
 }
 
 #[test]
@@ -2679,11 +2678,9 @@ fn trip_loaded_nested_empty_math_box_does_not_republish_source_hpack() {
                 (6_553_600, 458_752, 65_536),
             ]
     }));
-    assert!(
-        !hpacks
-            .windows(3)
-            .any(|packs| { packs == [(7_864_320, 0, 0), (7_864_320, 0, 0), (7_864_320, 0, 0),] })
-    );
+    assert!(!hpacks
+        .windows(3)
+        .any(|packs| { packs == [(7_864_320, 0, 0), (7_864_320, 0, 0), (7_864_320, 0, 0),] }));
 }
 
 #[test]

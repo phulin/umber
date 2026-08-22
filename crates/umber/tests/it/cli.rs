@@ -7,8 +7,8 @@ use std::{
 
 use sha2::{Digest, Sha256};
 use test_support::{
-    CorpusCase, assert_matches_fixture, closed_case::FixtureCase, corpus_cases, dvi, normalize,
-    read_binary_fixture,
+    assert_matches_fixture, closed_case::FixtureCase, corpus_cases, dvi, normalize,
+    read_binary_fixture, CorpusCase,
 };
 
 const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
@@ -125,18 +125,21 @@ fn format_cache_cli_stores_restores_and_reports_misses() {
     fs::write(&build_configuration, b"profile=release\n").expect("write build config");
     let format_path = directory.path().join("generated.fmt");
     let format = umber::with_engine_universe(|stores| {
-        umber::prepare_initex_stores(stores);
-        umber::run_memory_collecting_artifacts_with_profile(
-            "\\dump",
-            stores,
-            tex_command::CommandProfile::TEX82,
-            false,
-        )
-        .expect("format construction")
-        .format_dump
-        .expect("schema-11 format")
-        .image
-        .into_bytes()
+        umber::EngineMode::Tex82.prepare_initex(stores);
+        let mut session =
+            umber::EngineSession::prepared_initex(stores, tex_command::CommandProfile::TEX82);
+        session
+            .register_authored_job("format.tex", std::sync::Arc::from(&b"\\dump"[..]))
+            .expect("format root registers");
+        let mut host =
+            umber::FileSessionResolvers::new(Path::new("format.tex"), Vec::new(), Vec::new());
+        session
+            .run(&mut host, &mut Vec::new())
+            .expect("format construction")
+            .format_dump
+            .expect("schema-11 format")
+            .image
+            .into_bytes()
     })
     .expect("fresh CLI format universe");
     fs::write(&format_path, format).expect("write format image");
@@ -603,16 +606,14 @@ fn bibliography_typed_arguments_reject_path_authority_and_undeclared_roles() {
         );
     }
 
-    assert!(
-        BibInvocationCase::parse(
-            "bib-invocation-v2\n\
+    assert!(BibInvocationCase::parse(
+        "bib-invocation-v2\n\
          arg=input:ambient\n\
          status=0\n\
          stdout=empty\n\
          stderr=empty\n",
-        )
-        .is_err()
-    );
+    )
+    .is_err());
 }
 
 #[test]
@@ -914,10 +915,8 @@ fn run_publishes_a_dumped_format_from_the_resource_session() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!fs::read(&format).expect("read dumped format").is_empty());
-    assert!(
-        String::from_utf8_lossy(&output.stdout)
-            .contains(&format!("Beginning to dump on file {}", format.display()))
-    );
+    assert!(String::from_utf8_lossy(&output.stdout)
+        .contains(&format!("Beginning to dump on file {}", format.display())));
 }
 
 #[test]
@@ -986,14 +985,10 @@ fn run_publishes_dump_to_default_tex82_name_before_announcing_it() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        !fs::read(temp_dir.path().join("plain.fmt"))
-            .expect("read default dumped format")
-            .is_empty()
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains("Beginning to dump on file plain.fmt")
-    );
+    assert!(!fs::read(temp_dir.path().join("plain.fmt"))
+        .expect("read default dumped format")
+        .is_empty());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Beginning to dump on file plain.fmt"));
 }
 
 #[test]
@@ -1843,11 +1838,9 @@ fn pdftex_mode_reports_the_pinned_engine_identity() {
         "pdfTeX run failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        String::from_utf8(output.stdout)
-            .expect("stdout is utf-8")
-            .contains("engine=140.27")
-    );
+    assert!(String::from_utf8(output.stdout)
+        .expect("stdout is utf-8")
+        .contains("engine=140.27"));
 }
 
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.

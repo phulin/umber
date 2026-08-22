@@ -513,6 +513,7 @@ fn check_embedded_font_case(case: &str) {
         }
     }
 
+    fs::write(temp.path().join("pdftex.map"), b"").expect("stage empty default PDF map");
     let actual_path = temp.path().join(format!("{case}.umber.pdf"));
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .args(["run", "--pdftex"])
