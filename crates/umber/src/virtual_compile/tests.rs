@@ -1,9 +1,9 @@
 use crate::FontContainer;
 use std::path::Path;
 use tex_incr::RevisionId;
+use tex_state::TokenListId;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
-use tex_state::ids::TokenListId;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::scaled::Scaled;
 use tex_state::{FormatError, Universe, World};

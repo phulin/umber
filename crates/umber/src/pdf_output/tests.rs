@@ -6,7 +6,6 @@ use tex_state::{InteractionMode, Universe};
 use super::{
     DEFAULT_PDF_PK_RESOLUTION, is_pdf_sfnt_program, pdf_finalization_input,
     pdf_from_accepted_artifacts_with_virtual_fonts,
-    pdf_from_committed_artifacts_with_virtual_fonts,
 };
 use crate::{
     FileSessionResolvers, RetainedRootRequest, RunResult, prepare_pdftex_run_stores,
@@ -51,7 +50,7 @@ fn accepted_pdf_finalization_includes_the_unpublished_page_suffix() {
 
     // Negative control: the ordinary non-prepared ledger remains complete.
     let (mut direct_stores, direct_run) = setup();
-    let direct_pdf = pdf_from_committed_artifacts_with_virtual_fonts(
+    let direct_pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
         &mut direct_stores,
         &direct_run.committed_artifacts,
         &crate::PdfVirtualFontResources::default(),
@@ -265,7 +264,7 @@ fn detached_nested_vf_preserves_exact_local_tfm_identity_and_resources() {
         Err(tex_out::pdf::PdfBuildError::VirtualFontCycle { .. })
     ));
 
-    let pdf = pdf_from_committed_artifacts_with_virtual_fonts(
+    let pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
         &mut stores,
         &run.committed_artifacts,
         &resources,
@@ -387,7 +386,7 @@ fn detached_vf_retains_selected_default_resource_but_not_unreached_definitions()
         "an unselected VF definition is not an output resource"
     );
 
-    let pdf = pdf_from_committed_artifacts_with_virtual_fonts(
+    let pdf = pdf_from_accepted_artifacts_with_virtual_fonts(
         &mut stores,
         &run.committed_artifacts,
         &resources,

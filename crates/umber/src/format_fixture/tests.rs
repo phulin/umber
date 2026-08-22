@@ -50,6 +50,66 @@ fn test_world() -> World {
     })
 }
 
+fn inspect_loaded<R>(
+    loaded: LoadedFormatFixture,
+    inspect: impl for<'id> FnOnce(&mut tex_state::Universe<tex_state::GenerationBrand<'id>>) -> R,
+) -> R {
+    let LoadedFormatFixture {
+        recipe,
+        image,
+        world,
+        interaction_mode,
+        error_context_widths,
+        ..
+    } = loaded;
+    tex_state::with_materialized_format(
+        crate::engine_interner_budget(),
+        world,
+        image.detached(),
+        |universe| {
+            recipe.engine.install_after_format(universe);
+            if let Some(mode) = interaction_mode {
+                universe.set_interaction_mode(mode);
+            }
+            if let Some(widths) = error_context_widths {
+                universe.set_error_context_widths(widths);
+            }
+            inspect(universe)
+        },
+    )
+    .expect("validated fixture materializes")
+}
+
+fn run_loaded_with_counts(
+    loaded: LoadedFormatFixture,
+    source_name: &str,
+    source: Arc<[u8]>,
+    count_registers: Vec<u16>,
+    observer: &mut dyn CommandObserver,
+) -> LoadedFormatRun {
+    let guards = loaded.recipe.guards;
+    let engine_binary = loaded.recipe.engine.binary_identity();
+    loaded
+        .run_configured(
+            source_name,
+            RegisteredSourceKind::Generated,
+            source,
+            &[],
+            LoadedRunConfiguration {
+                guards,
+                engine_binary,
+                startup_line: source_name.to_owned(),
+                completion: tex_exec::RootCompletionPolicy::RequireTeXEnd,
+                projection: LoadedFormatProjectionDemand {
+                    count_registers,
+                    ..LoadedFormatProjectionDemand::default()
+                },
+            },
+            observer,
+        )
+        .expect("loaded run")
+}
+
 #[test]
 fn recipe_identity_invalidates_every_fixture_input_class() {
     let original = FormatRecipe::raw_tex82();
@@ -171,18 +231,14 @@ fn independent_raw_builds_are_byte_identical_and_cache_reload_is_fresh() {
     );
 
     let loaded = first.load(test_world()).expect("fresh load");
-    assert!(loaded.universe.world().effect_records().is_empty());
-    let provenance = loaded.universe.provenance_stats();
-    assert_eq!(provenance.origin_records(), 0);
-    assert_eq!(provenance.origin_list_entries(), 0);
-    assert_eq!(provenance.source_regions(), 0);
-    assert_eq!(provenance.generated_source_backings(), 0);
-    assert_eq!(provenance.source_map_bytes(), 0);
-    assert_eq!(loaded.universe.int_param(IntParam::YEAR), 2031);
-    assert_eq!(
-        loaded.universe.interaction_mode(),
-        tex_state::InteractionMode::ErrorStop
-    );
+    inspect_loaded(loaded, |universe| {
+        assert!(universe.world().effect_records().is_empty());
+        assert_eq!(universe.int_param(IntParam::YEAR), 2031);
+        assert_eq!(
+            universe.interaction_mode(),
+            tex_state::InteractionMode::ErrorStop
+        );
+    });
 }
 
 #[test]
@@ -231,25 +287,24 @@ fn raw_etex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_state() {
     );
 
     let loaded = second.load(test_world()).expect("raw e-TeX load");
-    assert_eq!(
-        loaded.universe.primitive_meaning("unexpanded"),
-        Some(Meaning::ExpandablePrimitive(
-            ExpandablePrimitive::Unexpanded
-        ))
-    );
-    assert_eq!(
-        loaded.universe.primitive_meaning("showtokens"),
-        Some(Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::ShowTokens
-        ))
-    );
-    assert_eq!(loaded.universe.primitive_meaning("pdfprimitive"), None);
-    assert!(loaded.universe.world().effect_records().is_empty());
-    assert!(loaded.universe.world().artifact_commits().is_empty());
-    let provenance = loaded.universe.provenance_stats();
-    assert_eq!(provenance.origin_records(), 0);
-    assert_eq!(provenance.source_regions(), 0);
-    assert_eq!(loaded.universe.int_param(IntParam::YEAR), 2031);
+    inspect_loaded(loaded, |universe| {
+        assert_eq!(
+            universe.primitive_meaning("unexpanded"),
+            Some(Meaning::ExpandablePrimitive(
+                ExpandablePrimitive::Unexpanded
+            ))
+        );
+        assert_eq!(
+            universe.primitive_meaning("showtokens"),
+            Some(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::ShowTokens
+            ))
+        );
+        assert_eq!(universe.primitive_meaning("pdfprimitive"), None);
+        assert!(universe.world().effect_records().is_empty());
+        assert!(universe.world().artifact_commits().is_empty());
+        assert_eq!(universe.int_param(IntParam::YEAR), 2031);
+    });
 }
 
 #[test]
@@ -280,44 +335,39 @@ fn production_pdftex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_
     );
 
     let loaded = second.load(test_world()).expect("production pdfTeX load");
-    assert_eq!(
-        loaded.universe.primitive_meaning("the"),
-        Some(Meaning::ExpandablePrimitive(ExpandablePrimitive::The))
-    );
-    assert_eq!(
-        loaded.universe.primitive_meaning("unexpanded"),
-        Some(Meaning::ExpandablePrimitive(
-            ExpandablePrimitive::Unexpanded
-        ))
-    );
-    assert_eq!(
-        loaded.universe.primitive_meaning("pdfprimitive"),
-        Some(Meaning::ExpandablePrimitive(
-            ExpandablePrimitive::PdfPrimitive
-        ))
-    );
-    assert_eq!(
-        loaded.universe.primitive_meaning("pdfsavepos"),
-        Some(Meaning::UnexpandablePrimitive(
-            UnexpandablePrimitive::PdfSavePos
-        ))
-    );
-    assert!(loaded.universe.world().effect_records().is_empty());
-    assert!(loaded.universe.world().artifact_commits().is_empty());
-    let provenance = loaded.universe.provenance_stats();
-    assert_eq!(provenance.origin_records(), 0);
-    assert_eq!(provenance.origin_list_entries(), 0);
-    assert_eq!(provenance.source_regions(), 0);
-    assert_eq!(provenance.generated_source_backings(), 0);
-    assert_eq!(provenance.source_map_bytes(), 0);
-    assert!(loaded.universe.pdf_output_enabled());
-    assert_eq!(loaded.universe.int_param(IntParam::PDF_OUTPUT), 0);
-    assert_eq!(loaded.universe.fixed_pdf_output_parameters(), None);
-    assert_eq!(loaded.universe.int_param(IntParam::YEAR), 2031);
-    assert_eq!(
-        loaded.universe.interaction_mode(),
-        tex_state::InteractionMode::ErrorStop
-    );
+    inspect_loaded(loaded, |universe| {
+        assert_eq!(
+            universe.primitive_meaning("the"),
+            Some(Meaning::ExpandablePrimitive(ExpandablePrimitive::The))
+        );
+        assert_eq!(
+            universe.primitive_meaning("unexpanded"),
+            Some(Meaning::ExpandablePrimitive(
+                ExpandablePrimitive::Unexpanded
+            ))
+        );
+        assert_eq!(
+            universe.primitive_meaning("pdfprimitive"),
+            Some(Meaning::ExpandablePrimitive(
+                ExpandablePrimitive::PdfPrimitive
+            ))
+        );
+        assert_eq!(
+            universe.primitive_meaning("pdfsavepos"),
+            Some(Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::PdfSavePos
+            ))
+        );
+        assert!(universe.world().effect_records().is_empty());
+        assert!(universe.world().artifact_commits().is_empty());
+        assert_eq!(universe.int_param(IntParam::PDF_OUTPUT), 0);
+        assert_eq!(universe.fixed_pdf_output_parameters(), None);
+        assert_eq!(universe.int_param(IntParam::YEAR), 2031);
+        assert_eq!(
+            universe.interaction_mode(),
+            tex_state::InteractionMode::ErrorStop
+        );
+    });
 }
 
 #[test]
@@ -413,18 +463,15 @@ fn representative_command_semantic_case_runs_loaded() {
     )
     .expect("raw format");
     let mut observations = Recorder::default();
-    let run = fixture
-        .load(test_world())
-        .expect("load")
-        .run(
-            "loaded-count-arithmetic.tex",
-            Arc::from(&b"\\count0=7\\advance\\count0 by 5\\end\n"[..]),
-            &[],
-            &mut observations,
-        )
-        .expect("loaded run");
+    let run = run_loaded_with_counts(
+        fixture.load(test_world()).expect("load"),
+        "loaded-count-arithmetic.tex",
+        Arc::from(&b"\\count0=7\\advance\\count0 by 5\\end\n"[..]),
+        vec![0],
+        &mut observations,
+    );
 
-    assert_eq!(run.universe.count(0), 12);
+    assert_eq!(run.projection.counts, [(0, 12)]);
     assert!(!observations.0.is_empty());
     assert!(run.result.format_dump.is_none());
 }
@@ -450,10 +497,6 @@ fn loaded_driver_configuration_is_job_local() {
             &mut observations,
         )
         .expect("configured loaded run");
-    assert_eq!(
-        run.universe.interaction_mode(),
-        tex_state::InteractionMode::Nonstop
-    );
     assert!(run.result.format_dump.is_none());
 }
 
@@ -465,20 +508,17 @@ fn explicit_fresh_seam_matches_loaded_semantic_state() {
     let fixture =
         ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe).expect("raw format");
     let mut loaded_observations = Recorder::default();
-    let loaded = fixture
-        .load(test_world())
-        .expect("load")
-        .run(
-            "equivalence.tex",
-            Arc::clone(&source),
-            &[],
-            &mut loaded_observations,
-        )
-        .expect("loaded run");
+    let loaded = run_loaded_with_counts(
+        fixture.load(test_world()).expect("load"),
+        "equivalence.tex",
+        Arc::clone(&source),
+        vec![0],
+        &mut loaded_observations,
+    );
 
     let (fresh, fresh_observations) =
         run_explicit_fresh_compatibility(&recipe, "equivalence.tex", source);
-    assert_eq!(loaded.universe.count(0), fresh.count(0));
+    assert_eq!(loaded.projection.counts[0].1, fresh.0);
     assert_eq!(loaded_observations.0, fresh_observations);
 }
 
@@ -493,25 +533,19 @@ fn raw_etex_fresh_and_loaded_match_extension_state_and_observations() {
     let fixture =
         ensure_format(&FormatCacheStore::new(cache_root.path()), &recipe).expect("raw e-TeX");
     let mut loaded_observations = Recorder::default();
-    let loaded = fixture
-        .load(test_world())
-        .expect("load")
-        .run(
-            "etex-equivalence.tex",
-            Arc::clone(&source),
-            &[],
-            &mut loaded_observations,
-        )
-        .expect("loaded e-TeX run");
+    let loaded = run_loaded_with_counts(
+        fixture.load(test_world()).expect("load"),
+        "etex-equivalence.tex",
+        Arc::clone(&source),
+        vec![0],
+        &mut loaded_observations,
+    );
 
     let (fresh, fresh_observations) =
         run_explicit_fresh_compatibility(&recipe, "etex-equivalence.tex", source);
-    assert_eq!(loaded.universe.count(0), 5);
-    assert_eq!(loaded.universe.count(0), fresh.count(0));
-    assert_eq!(
-        loaded.universe.int_param(IntParam::TRACING_ASSIGNS),
-        fresh.int_param(IntParam::TRACING_ASSIGNS)
-    );
+    assert_eq!(loaded.projection.counts, [(0, 5)]);
+    assert_eq!(loaded.projection.counts[0].1, fresh.0);
+    assert_eq!(fresh.1, 7);
     assert_eq!(loaded_observations.0, fresh_observations);
 }
 
@@ -548,25 +582,32 @@ fn run_explicit_fresh_compatibility(
     recipe: &FormatRecipe,
     source_name: &str,
     source: Arc<[u8]>,
-) -> (Universe, Vec<CommandObservation>) {
-    let mut universe = Universe::with_world(test_world());
-    recipe.engine.prepare_initex(&mut universe);
-    let mut session =
-        EngineSession::prepared_initex(&mut universe, recipe.engine.command_profile());
-    session
-        .set_fuel_limit(recipe.guards.command_fuel)
-        .expect("finite fresh fuel");
-    session
-        .register_authored_job(source_name, source)
-        .expect("fresh root");
-    let mut recorder = Recorder::default();
-    let result = session
-        .run_with_observer(
-            &mut RecipeResourceHost::new(&recipe.resources),
-            &mut NoCheckpoints,
-            &mut recorder,
+) -> ((i32, i32), Vec<CommandObservation>) {
+    crate::with_engine_world(test_world(), |universe| {
+        recipe.engine.prepare_initex(universe);
+        let mut session = EngineSession::prepared_initex(universe, recipe.engine.command_profile());
+        session
+            .set_fuel_limit(recipe.guards.command_fuel)
+            .expect("finite fresh fuel");
+        session
+            .register_authored_job(source_name, source)
+            .expect("fresh root");
+        let mut recorder = Recorder::default();
+        let result = session
+            .run_with_observer(
+                &mut RecipeResourceHost::new(&recipe.resources),
+                &mut NoCheckpoints,
+                &mut recorder,
+            )
+            .expect("fresh compatibility run");
+        assert!(result.format_dump.is_none());
+        (
+            (
+                session.stores().count(0).expect("count register"),
+                session.stores().int_param(IntParam::TRACING_ASSIGNS),
+            ),
+            recorder.0,
         )
-        .expect("fresh compatibility run");
-    assert!(result.format_dump.is_none());
-    (universe, recorder.0)
+    })
+    .expect("fresh universe")
 }

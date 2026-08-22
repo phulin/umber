@@ -24,9 +24,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(target_os = "linux")]
 use subtle::ConstantTimeEq;
 use tex_command::RegisteredSourceKind;
-use tex_state::{DetachedFormatImage, JobClock};
 #[cfg(test)]
-use tex_state::{Universe, World};
+use tex_state::World;
+use tex_state::{DetachedFormatImage, JobClock};
 #[cfg(target_os = "linux")]
 use zeroize::Zeroizing;
 
@@ -1223,8 +1223,15 @@ mod tests {
         let identity = recipe.identity().expect("identity");
         let identity_bytes = identity.key().bytes();
         let constructed = construct_format_in_worker(&recipe).expect("decoder-valid image");
-        Universe::from_format(World::memory(), &constructed.image)
-            .expect("forgery is decoder-valid");
+        let image = tex_state::DetachedFormatImage::try_from_bytes(constructed.image.clone())
+            .expect("forgery is a detached format image");
+        tex_state::with_materialized_format(
+            crate::engine_interner_budget(),
+            World::memory(),
+            &image,
+            |_| (),
+        )
+        .expect("forgery is decoder-valid");
 
         let parent_key = [0x19; AUTH_KEY_BYTES];
         let attacker_key = [0x73; AUTH_KEY_BYTES];

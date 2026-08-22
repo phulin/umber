@@ -1,10 +1,10 @@
 //! Pinned pdfTeX 1.40.29 engine-layer inventory and mode registration.
 
+#[cfg(test)]
+use tex_state::TokenListId;
 use tex_state::Universe;
 #[cfg(test)]
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
-#[cfg(test)]
-use tex_state::ids::TokenListId;
 #[cfg(test)]
 use tex_state::meaning::{InternalInteger, Meaning, UnexpandablePrimitive};
 #[cfg(test)]

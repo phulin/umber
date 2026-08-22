@@ -1213,7 +1213,7 @@ fn incompatible_format_schema_is_rejected_before_cache_lookup_or_acquisition() {
     let format_bytes = b"format that must not be acquired";
     let format_digest = hex_digest(format_bytes);
     let shard_digest = "0".repeat(64);
-    let incompatible_schema = Universe::FORMAT_SCHEMA_VERSION + 1;
+    let incompatible_schema = tex_state::FORMAT_SCHEMA_VERSION + 1;
     let root = format!(
         "{{\"schema\":3,\"distribution\":\"schema-preflight\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"],\"formats\":{{\"latex\":{{\"object\":\"sha256-{format_digest}\",\"sha256\":\"{format_digest}\",\"bytes\":{},\"engine\":\"umber\",\"engineVersion\":\"{}\",\"formatSchema\":{incompatible_schema},\"sourceDistribution\":\"schema-preflight\",\"sourceManifestSha256\":\"{}\",\"sourceDateEpoch\":0}}}}}}\n",
         format_bytes.len(),
@@ -1252,7 +1252,7 @@ fn incompatible_format_schema_is_rejected_before_cache_lookup_or_acquisition() {
         error.to_string(),
         format!(
             "format resource error: format latex uses schema {incompatible_schema}; this runtime requires schema {}",
-            Universe::FORMAT_SCHEMA_VERSION
+            tex_state::FORMAT_SCHEMA_VERSION
         )
     );
     assert_eq!(
@@ -1270,9 +1270,18 @@ fn format_closure_is_loaded_only_as_each_input_is_requested() {
         let objects = distribution.join("objects");
         std::fs::create_dir_all(&objects).expect("objects directory");
 
-        let mut initex = tex_state::Universe::with_world(World::memory());
-        engine.prepare_fresh(&mut initex);
-        let format = initex.dump_format().expect("schema-11 format");
+        let mut recipe = if engine == EngineMode::Latex {
+            crate::FormatRecipe::raw_etex26()
+        } else {
+            crate::FormatRecipe::production_pdftex14029()
+        };
+        recipe.engine = engine;
+        recipe.format_name = format!("closure-{engine:?}");
+        recipe.format_ident_name = recipe.format_name.clone();
+        recipe.distribution_identity = format!("closure-test-{engine:?}").into_bytes();
+        let format = crate::format_fixture::construct_format_in_worker(&recipe)
+            .expect("schema-11 format")
+            .image;
         let format_digest = hex_digest(&format);
         std::fs::write(objects.join(format!("sha256-{format_digest}")), &format)
             .expect("format object");

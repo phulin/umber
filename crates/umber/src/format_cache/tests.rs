@@ -10,7 +10,6 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use tempfile::TempDir;
-use tex_state::Universe;
 
 use super::*;
 
@@ -41,7 +40,9 @@ fn compound_identity(mode: FormatEngineMode) -> FormatCacheIdentity {
 }
 
 fn format() -> Vec<u8> {
-    Universe::new().dump_format().expect("schema-11 format")
+    crate::format_fixture::construct_format_in_worker(&crate::FormatRecipe::raw_tex82())
+        .expect("schema-11 format")
+        .image
 }
 
 #[test]

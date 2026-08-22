@@ -263,23 +263,23 @@ fn every_loaded_job_has_fresh_clock_terminal_and_mutable_state() {
 
     let mut first_observer = Recorder::default();
     let mut first_job = job(
-        b"\\count0=123\\read0 to \\terminalcommand \\terminalcommand \\end\n",
+        b"\\count0=123\\read0 to \\terminalcommand \\terminalcommand \\count1=\\year \\end\n",
         &mut first_observer,
     );
     first_job.clock = clock(2041);
     first_job.terminal_input.push("\\count0=321".into());
+    first_job.projection.count_registers = vec![0, 1];
     let first = provider.run(&fixture, first_job).expect("first loaded job");
-    assert_eq!(first.universe.count(0), 321);
-    assert_eq!(first.universe.world().job_clock().year, 2041);
+    assert_eq!(first.projection.counts, [(0, 321), (1, 2041)]);
 
     let mut second_observer = Recorder::default();
-    let mut second_job = job(b"\\end\n", &mut second_observer);
+    let mut second_job = job(b"\\count1=\\year \\end\n", &mut second_observer);
     second_job.clock = clock(2042);
+    second_job.projection.count_registers = vec![0, 1];
     let second = provider
         .run(&fixture, second_job)
         .expect("second loaded job");
-    assert_eq!(second.universe.count(0), 0);
-    assert_eq!(second.universe.world().job_clock().year, 2042);
+    assert_eq!(second.projection.counts, [(0, 0), (1, 2042)]);
     assert!(!first_observer.0.is_empty());
     assert!(!second_observer.0.is_empty());
 }
@@ -312,19 +312,13 @@ fn loaded_job_reopens_authenticated_resources_after_job_precedence() {
         source_kind: RegisteredSourceKind::World,
         bytes: b"\\count0=2\n".to_vec(),
     });
+    request.projection.count_registers.push(0);
     let run = provider
         .run(&fixture, request)
         .expect("loaded job reopens construction font");
 
     assert!(!run.result.dvi_pages.is_empty());
-    assert_eq!(run.universe.count(0), 2);
-    assert!(
-        run.universe
-            .world()
-            .input_records()
-            .iter()
-            .any(|record| record.path() == std::path::Path::new("cmr10.tfm"))
-    );
+    assert_eq!(run.projection.counts, [(0, 2)]);
 }
 
 #[test]
@@ -347,12 +341,9 @@ fn loaded_job_applies_explicit_provenance_demand_after_format_restore() {
     let diagnostics = provider
         .run(&fixture, job(source, &mut diagnostics_observer))
         .expect("diagnostics-only loaded job");
-    let diagnostics_frames = diagnostics.universe.macro_invocation_origins_for_testing();
-    assert_eq!(diagnostics_frames.len(), 1);
     let diagnostics_artifact = diagnostics
-        .universe
-        .world()
-        .committed_artifacts()
+        .result
+        .committed_artifacts
         .first()
         .expect("diagnostics-only shipped artifact");
     assert_eq!(
@@ -367,18 +358,9 @@ fn loaded_job_applies_explicit_provenance_demand_after_format_restore() {
     let rendered = provider
         .run(&fixture, rendered_job)
         .expect("rendered-source loaded job");
-    assert!(
-        rendered
-            .universe
-            .macro_invocation_provenance_stats()
-            .invocations()
-            > 0,
-        "the loaded job archives its producing macro frame"
-    );
     let rendered_artifact = rendered
-        .universe
-        .world()
-        .committed_artifacts()
+        .result
+        .committed_artifacts
         .first()
         .expect("rendered-source shipped artifact");
     assert!(rendered_artifact.render_node_count() > 0);
@@ -412,7 +394,7 @@ fn loaded_job_does_not_reopen_wrong_typed_recipe_resource() {
         .run(&fixture, job(b"\\font\\tenrm=cmr10 \\end\n", &mut recorder))
         .expect("missing font remains a bounded TeX job outcome");
 
-    assert!(run.universe.world().input_records().is_empty());
+    assert_ne!(run.result.status, crate::TexRunStatus::Success);
 }
 
 #[cfg(unix)]

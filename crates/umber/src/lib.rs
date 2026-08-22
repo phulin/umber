@@ -905,172 +905,186 @@ pub fn install_pdflatex_format_primitives<G>(stores: &mut Universe<G>) {
 mod primitive_mode_tests {
     use super::*;
     use crate::EngineMode;
+    use tex_state::TokenListId;
     use tex_state::World;
     use tex_state::env::banks::TokParam;
-    use tex_state::ids::TokenListId;
     use tex_state::meaning::{ExpandablePrimitive, Meaning, UnexpandablePrimitive};
     use tex_state::token::{Catcode, Token};
+
+    fn with_stores<R>(
+        use_stores: impl for<'id> FnOnce(&mut Universe<tex_state::GenerationBrand<'id>>) -> R,
+    ) -> R {
+        with_engine_universe(use_stores).expect("fresh universe")
+    }
 
     #[test]
     fn composed_initex_setup_preserves_tex82_category_defaults() {
         for mode in [EngineMode::Tex82, EngineMode::ETex, EngineMode::PdfTex] {
-            let mut stores = Universe::default();
-            mode.prepare_initex(&mut stores);
+            with_stores(|stores| {
+                mode.prepare_initex(stores);
 
-            assert_eq!(stores.catcode('{'), Catcode::Other, "{}", mode.name());
-            assert_eq!(stores.catcode('}'), Catcode::Other, "{}", mode.name());
-            assert_eq!(stores.catcode('#'), Catcode::Other, "{}", mode.name());
-            assert!(
-                stores.primitive_token("catcode").is_some(),
-                "{} INITEX primitives are installed",
-                mode.name()
-            );
+                assert_eq!(stores.catcode('{'), Catcode::Other, "{}", mode.name());
+                assert_eq!(stores.catcode('}'), Catcode::Other, "{}", mode.name());
+                assert_eq!(stores.catcode('#'), Catcode::Other, "{}", mode.name());
+                assert!(
+                    stores.primitive_token("catcode").is_some(),
+                    "{} INITEX primitives are installed",
+                    mode.name()
+                );
+            });
         }
     }
 
     #[test]
     fn latex_format_restores_frozen_base_primitives_without_rebinding_live_names() {
-        let mut stores = Universe::with_world(World::memory()).with_plain_catcodes();
-        let relax = stores.intern("relax");
-        stores.set_meaning(relax, Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi));
+        with_stores(|stores| {
+            install_plain_catcodes(stores);
+            let relax = stores.intern("relax");
+            stores.set_meaning(relax, Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi));
 
-        install_latex_format_primitives(&mut stores);
+            install_latex_format_primitives(stores);
 
-        assert_eq!(
-            stores.meaning(relax),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
-            "format restoration must preserve the live meaning"
-        );
-        let frozen_relax = stores
-            .primitive_token("relax")
-            .expect("base primitive registry is reconstructed");
-        assert_eq!(
-            stores.frozen_primitive_meaning(frozen_relax),
-            Some(Meaning::Relax)
-        );
-        assert!(stores.primitive_token("ifcsname").is_some());
+            assert_eq!(
+                stores.meaning(relax),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Fi),
+                "format restoration must preserve the live meaning"
+            );
+            let frozen_relax = stores
+                .primitive_token("relax")
+                .expect("base primitive registry is reconstructed");
+            assert_eq!(
+                stores.frozen_primitive_meaning(frozen_relax),
+                Some(Meaning::Relax)
+            );
+            assert!(stores.primitive_token("ifcsname").is_some());
+        });
     }
 
     #[test]
     fn protected_is_hidden_in_tex82_compatibility_mode() {
-        let mut stores = Universe::default();
-        prepare_run_stores(&mut stores);
-        let protected = stores.intern("protected");
-        assert_eq!(stores.meaning(protected), Meaning::Undefined);
-        let readline = stores.intern("readline");
-        assert_eq!(stores.meaning(readline), Meaning::Undefined);
-        let everyeof = stores.intern("everyeof");
-        assert_eq!(stores.meaning(everyeof), Meaning::Undefined);
-        let errhelp = stores.intern("errhelp");
-        assert_eq!(
-            stores.meaning(errhelp),
-            Meaning::TokParam(TokParam::ERR_HELP.raw())
-        );
+        with_stores(|stores| {
+            prepare_run_stores(stores);
+            let protected = stores.intern("protected");
+            assert_eq!(stores.meaning(protected), Meaning::Undefined);
+            let readline = stores.intern("readline");
+            assert_eq!(stores.meaning(readline), Meaning::Undefined);
+            let everyeof = stores.intern("everyeof");
+            assert_eq!(stores.meaning(everyeof), Meaning::Undefined);
+            let errhelp = stores.intern("errhelp");
+            assert_eq!(
+                stores.meaning(errhelp),
+                Meaning::TokParam(TokParam::ERR_HELP.raw())
+            );
+        });
     }
 
     #[test]
     fn protected_is_installed_in_etex_extended_mode() {
-        let mut stores = Universe::default();
-        prepare_etex_run_stores(&mut stores);
-        let protected = stores.intern("protected");
-        assert_eq!(
-            stores.meaning(protected),
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Protected)
-        );
-        let readline = stores.intern("readline");
-        assert_eq!(
-            stores.meaning(readline),
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ReadLine)
-        );
-        let everyeof = stores.intern("everyeof");
-        assert_eq!(
-            stores.meaning(everyeof),
-            Meaning::TokParam(TokParam::EVERY_EOF.raw())
-        );
-        let errhelp = stores.intern("errhelp");
-        assert_eq!(
-            stores.meaning(errhelp),
-            Meaning::TokParam(TokParam::ERR_HELP.raw())
-        );
-        assert_ne!(stores.meaning(errhelp), stores.meaning(everyeof));
+        with_stores(|stores| {
+            prepare_etex_run_stores(stores);
+            let protected = stores.intern("protected");
+            assert_eq!(
+                stores.meaning(protected),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Protected)
+            );
+            let readline = stores.intern("readline");
+            assert_eq!(
+                stores.meaning(readline),
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ReadLine)
+            );
+            let everyeof = stores.intern("everyeof");
+            assert_eq!(
+                stores.meaning(everyeof),
+                Meaning::TokParam(TokParam::EVERY_EOF.raw())
+            );
+            let errhelp = stores.intern("errhelp");
+            assert_eq!(
+                stores.meaning(errhelp),
+                Meaning::TokParam(TokParam::ERR_HELP.raw())
+            );
+            assert_ne!(stores.meaning(errhelp), stores.meaning(everyeof));
+        });
     }
 
     #[test]
     fn errhelp_and_everyeof_assign_group_snapshot_hash_and_format_independently() {
-        let mut stores = Universe::default();
-        prepare_etex_run_stores(&mut stores);
-        let output = run_memory_with_stores(
-            concat!(
-                "\\errhelp{help-outer}\\everyeof{eof-outer}",
-                "{\\errhelp{help-inner}\\everyeof{eof-inner}",
-                "\\message{local=[\\the\\errhelp]/[\\the\\everyeof]}}",
-                "\\message{restored=[\\the\\errhelp]/[\\the\\everyeof]}",
-                "{\\globaldefs=1\\errhelp{help-global}\\everyeof{eof-global}}",
-                "\\end",
-            ),
-            &mut stores,
-        )
-        .expect("independent token parameters execute");
-        assert!(
-            output.contains("local=[help-inner]/[eof-inner]"),
-            "{output}"
-        );
-        assert!(
-            output.contains("restored=[help-outer]/[eof-outer]"),
-            "{output}"
-        );
-        assert_eq!(token_list_text(&stores, TokParam::ERR_HELP), "help-global");
-        assert_eq!(token_list_text(&stores, TokParam::EVERY_EOF), "eof-global");
+        with_stores(|stores| {
+            prepare_etex_run_stores(stores);
+            let output = run_memory_with_stores(
+                concat!(
+                    "\\errhelp{help-outer}\\everyeof{eof-outer}",
+                    "{\\errhelp{help-inner}\\everyeof{eof-inner}",
+                    "\\message{local=[\\the\\errhelp]/[\\the\\everyeof]}}",
+                    "\\message{restored=[\\the\\errhelp]/[\\the\\everyeof]}",
+                    "{\\globaldefs=1\\errhelp{help-global}\\everyeof{eof-global}}",
+                    "\\end",
+                ),
+                stores,
+            )
+            .expect("independent token parameters execute");
+            assert!(
+                output.contains("local=[help-inner]/[eof-inner]"),
+                "{output}"
+            );
+            assert!(
+                output.contains("restored=[help-outer]/[eof-outer]"),
+                "{output}"
+            );
+            assert_eq!(token_list_text(stores, TokParam::ERR_HELP), "help-global");
+            assert_eq!(token_list_text(stores, TokParam::EVERY_EOF), "eof-global");
 
-        let committed = stores.snapshot();
-        let changed_help = stores.intern_token_list(&[Token::Char {
-            ch: 'H',
-            cat: Catcode::Other,
-        }]);
-        let changed_eof = stores.intern_token_list(&[Token::Char {
-            ch: 'E',
-            cat: Catcode::Other,
-        }]);
-        stores.set_tok_param(TokParam::ERR_HELP, changed_help);
-        stores.set_tok_param(TokParam::EVERY_EOF, changed_eof);
-        assert_ne!(stores.snapshot().state_hash(), committed.state_hash());
-
-        stores.rollback(&committed);
-        assert_eq!(stores.snapshot().state_hash(), committed.state_hash());
-        assert_eq!(token_list_text(&stores, TokParam::ERR_HELP), "help-global");
-        assert_eq!(token_list_text(&stores, TokParam::EVERY_EOF), "eof-global");
-
-        let mut format_stores = Universe::default();
-        prepare_etex_run_stores(&mut format_stores);
-        let format_help = intern_text(&mut format_stores, "help-format");
-        let format_eof = intern_text(&mut format_stores, "eof-format");
-        format_stores.set_tok_param_global(TokParam::ERR_HELP, format_help);
-        format_stores.set_tok_param_global(TokParam::EVERY_EOF, format_eof);
-        let format = format_stores.dump_format().expect("token parameter format");
-        let loaded = Universe::from_format(World::default(), &format).expect("load format");
-        assert_eq!(loaded.dump_format().expect("redump format"), format);
-        assert_eq!(token_list_text(&loaded, TokParam::ERR_HELP), "help-format");
-        assert_eq!(token_list_text(&loaded, TokParam::EVERY_EOF), "eof-format");
-    }
-
-    fn intern_text(stores: &mut Universe, text: &str) -> TokenListId {
-        let tokens = text
-            .chars()
-            .map(|ch| Token::Char {
-                ch,
+            let committed = stores.snapshot();
+            let changed_help = stores.intern_token_list(&[Token::Char {
+                ch: 'H',
                 cat: Catcode::Other,
-            })
-            .collect::<Vec<_>>();
-        stores.intern_token_list(&tokens)
+            }]);
+            let changed_eof = stores.intern_token_list(&[Token::Char {
+                ch: 'E',
+                cat: Catcode::Other,
+            }]);
+            stores.set_tok_param(TokParam::ERR_HELP, changed_help);
+            stores.set_tok_param(TokParam::EVERY_EOF, changed_eof);
+            assert_ne!(stores.snapshot().state_hash(), committed.state_hash());
+
+            stores.rollback(&committed).expect("snapshot restores");
+            assert_eq!(stores.snapshot().state_hash(), committed.state_hash());
+            assert_eq!(token_list_text(stores, TokParam::ERR_HELP), "help-global");
+            assert_eq!(token_list_text(stores, TokParam::EVERY_EOF), "eof-global");
+        });
+
+        let image = with_stores(|stores| {
+            prepare_etex_run_stores(stores);
+            run_memory_collecting_artifacts_with_profile(
+                "\\errhelp{help-format}\\everyeof{eof-format}\\dump",
+                stores,
+                CommandProfile::ETEX26,
+                false,
+            )
+            .expect("format parameters execute")
+            .format_dump
+            .expect("token parameter format")
+            .image
+        });
+        tex_state::with_materialized_format(
+            engine_interner_budget(),
+            World::default(),
+            &image,
+            |loaded| {
+                EngineMode::ETex.install_after_format(loaded);
+                assert_eq!(token_list_text(loaded, TokParam::ERR_HELP), "help-format");
+                assert_eq!(token_list_text(loaded, TokParam::EVERY_EOF), "eof-format");
+            },
+        )
+        .expect("load format");
     }
 
-    fn token_list_text(stores: &Universe, parameter: TokParam) -> String {
-        let id: TokenListId = stores.tok_param(parameter);
+    fn token_list_text<G>(stores: &Universe<G>, parameter: TokParam) -> String {
+        let id: TokenListId<G> = stores.tok_param(parameter);
         stores
             .tokens(id)
             .iter()
             .filter_map(|token| match token {
-                Token::Char { ch, .. } => Some(*ch),
+                Token::Char { ch, .. } => Some(ch),
                 _ => None,
             })
             .collect()
@@ -1078,61 +1092,64 @@ mod primitive_mode_tests {
 
     #[test]
     fn latex_extensions_are_isolated_from_plain_etex_mode() {
-        let mut etex = Universe::default();
-        prepare_etex_run_stores(&mut etex);
-        let expanded = etex.intern("expanded");
-        assert_eq!(etex.meaning(expanded), Meaning::Undefined);
-        let strcmp = etex.intern("strcmp");
-        assert_eq!(etex.meaning(strcmp), Meaning::Undefined);
+        with_stores(|etex| {
+            prepare_etex_run_stores(etex);
+            let expanded = etex.intern("expanded");
+            assert_eq!(etex.meaning(expanded), Meaning::Undefined);
+            let strcmp = etex.intern("strcmp");
+            assert_eq!(etex.meaning(strcmp), Meaning::Undefined);
+        });
 
-        let mut latex = Universe::default();
-        prepare_latex_run_stores(&mut latex);
-        let expanded = latex.intern("expanded");
-        assert_eq!(
-            latex.meaning(expanded),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded)
-        );
-        let strcmp = latex.intern("strcmp");
-        assert_eq!(
-            latex.meaning(strcmp),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare)
-        );
-        let ifincsname = latex.intern("ifincsname");
-        assert_eq!(
-            latex.meaning(ifincsname),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInCsName)
-        );
-        assert_eq!(latex.catcode('{'), Catcode::Other);
-        assert_eq!(latex.catcode('#'), Catcode::Other);
-        assert_eq!(latex.catcode('A'), Catcode::Letter);
-        assert_eq!(latex.catcode('\\'), Catcode::Escape);
-        let pdftex_version = latex.intern("pdftexversion");
-        assert_eq!(latex.meaning(pdftex_version), Meaning::Undefined);
+        with_stores(|latex| {
+            prepare_latex_run_stores(latex);
+            let expanded = latex.intern("expanded");
+            assert_eq!(
+                latex.meaning(expanded),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded)
+            );
+            let strcmp = latex.intern("strcmp");
+            assert_eq!(
+                latex.meaning(strcmp),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare)
+            );
+            let ifincsname = latex.intern("ifincsname");
+            assert_eq!(
+                latex.meaning(ifincsname),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInCsName)
+            );
+            assert_eq!(latex.catcode('{'), Catcode::Other);
+            assert_eq!(latex.catcode('#'), Catcode::Other);
+            assert_eq!(latex.catcode('A'), Catcode::Letter);
+            assert_eq!(latex.catcode('\\'), Catcode::Escape);
+            let pdftex_version = latex.intern("pdftexversion");
+            assert_eq!(latex.meaning(pdftex_version), Meaning::Undefined);
+        });
 
-        let mut latex_initex = Universe::default();
-        EngineMode::Latex.prepare_initex(&mut latex_initex);
-        let pdftex_version = latex_initex.intern("pdftexversion");
-        assert_eq!(latex_initex.meaning(pdftex_version), Meaning::Undefined);
+        with_stores(|latex_initex| {
+            EngineMode::Latex.prepare_initex(latex_initex);
+            let pdftex_version = latex_initex.intern("pdftexversion");
+            assert_eq!(latex_initex.meaning(pdftex_version), Meaning::Undefined);
+        });
     }
 
     #[test]
     fn pdflatex_composes_pdftex_and_latex_layers() {
-        let mut stores = Universe::default();
-        prepare_pdflatex_run_stores(&mut stores);
+        with_stores(|stores| {
+            prepare_pdflatex_run_stores(stores);
 
-        let pdfoutput = stores.intern("pdfoutput");
-        assert_eq!(
-            stores.meaning(pdfoutput),
-            Meaning::IntParam(IntParam::PDF_OUTPUT.raw())
-        );
-        let strcmp = stores.intern("strcmp");
-        assert_eq!(
-            stores.meaning(strcmp),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare)
-        );
-        assert_eq!(stores.catcode('{'), Catcode::Other);
-        assert_eq!(stores.catcode('#'), Catcode::Other);
-        assert!(stores.pdf_output_enabled());
+            let pdfoutput = stores.intern("pdfoutput");
+            assert_eq!(
+                stores.meaning(pdfoutput),
+                Meaning::IntParam(IntParam::PDF_OUTPUT.raw())
+            );
+            let strcmp = stores.intern("strcmp");
+            assert_eq!(
+                stores.meaning(strcmp),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::StringCompare)
+            );
+            assert_eq!(stores.catcode('{'), Catcode::Other);
+            assert_eq!(stores.catcode('#'), Catcode::Other);
+        });
     }
 
     #[test]
@@ -1144,123 +1161,58 @@ mod primitive_mode_tests {
             (EngineMode::Latex, "strcmp"),
             (EngineMode::PdfLatex, "strcmp"),
         ] {
-            let mut source = Universe::default();
-            mode.prepare_fresh(&mut source);
-            let original = source
-                .primitive_meaning(primitive)
-                .unwrap_or_else(|| panic!("{} must register {primitive}", mode.name()));
-            let symbol = source.intern(primitive);
-            source.set_meaning(symbol, Meaning::Undefined);
-            let format = source
-                .dump_format()
-                .expect("dump shadowed primitive format");
+            let image = with_stores(|source| {
+                mode.prepare_fresh(source);
+                assert!(
+                    source.primitive_meaning(primitive).is_some(),
+                    "{} must register {primitive}",
+                    mode.name()
+                );
+                let symbol = source.intern(primitive);
+                source.set_meaning(symbol, Meaning::Undefined);
+                run_memory_collecting_artifacts_with_profile(
+                    "\\dump",
+                    source,
+                    mode.command_profile(),
+                    false,
+                )
+                .expect("dump shadowed primitive format")
+                .format_dump
+                .expect("format dump")
+                .image
+            });
 
-            let mut loaded =
-                Universe::from_format(World::default(), &format).expect("load engine format");
-            assert_eq!(loaded.primitive_meaning(primitive), None);
-            mode.install_after_format(&mut loaded);
+            tex_state::with_materialized_format(
+                engine_interner_budget(),
+                World::default(),
+                &image,
+                |loaded| {
+                    assert_eq!(loaded.primitive_meaning(primitive), None);
+                    mode.install_after_format(loaded);
 
-            let symbol = loaded.intern(primitive);
-            assert_eq!(
-                loaded.meaning(symbol),
-                Meaning::Undefined,
-                "{}",
-                mode.name()
-            );
-            assert_eq!(
-                loaded.primitive_meaning(primitive),
-                Some(original),
-                "{}",
-                mode.name()
-            );
-            let frozen = loaded
-                .primitive_token(primitive)
-                .expect("primitive token is reconstructed");
-            assert_eq!(loaded.frozen_primitive_meaning(frozen), Some(original));
+                    let symbol = loaded.intern(primitive);
+                    assert_eq!(
+                        loaded.meaning(symbol),
+                        Meaning::Undefined,
+                        "{}",
+                        mode.name()
+                    );
+                    let original = loaded
+                        .primitive_meaning(primitive)
+                        .unwrap_or_else(|| panic!("{} must restore {primitive}", mode.name()));
+                    let frozen = loaded
+                        .primitive_token(primitive)
+                        .expect("primitive token is reconstructed");
+                    assert_eq!(loaded.frozen_primitive_meaning(frozen), Some(original));
+                },
+            )
+            .expect("load engine format");
         }
     }
 
     #[test]
     fn etex_expandable_primitives_follow_driver_mode() {
-        let mut compatibility = Universe::default();
-        prepare_run_stores(&mut compatibility);
-        let unexpanded = compatibility.intern("unexpanded");
-        let detokenize = compatibility.intern("detokenize");
-        let unless = compatibility.intern("unless");
-        let scantokens = compatibility.intern("scantokens");
-        let etex_version = compatibility.intern("eTeXversion");
-        let etex_revision = compatibility.intern("eTeXrevision");
-        let ifdefined = compatibility.intern("ifdefined");
-        let ifcsname = compatibility.intern("ifcsname");
-        let currentgrouplevel = compatibility.intern("currentgrouplevel");
-        let currentgrouptype = compatibility.intern("currentgrouptype");
-        let currentiflevel = compatibility.intern("currentiflevel");
-        let currentiftype = compatibility.intern("currentiftype");
-        let currentifbranch = compatibility.intern("currentifbranch");
-        let lastnodetype = compatibility.intern("lastnodetype");
-        let iffontchar = compatibility.intern("iffontchar");
-        let fontcharwd = compatibility.intern("fontcharwd");
-        let fontcharht = compatibility.intern("fontcharht");
-        let fontchardp = compatibility.intern("fontchardp");
-        let fontcharic = compatibility.intern("fontcharic");
-        let interactionmode = compatibility.intern("interactionmode");
-        let tracingscantokens = compatibility.intern("tracingscantokens");
-        let numexpr = compatibility.intern("numexpr");
-        let dimexpr = compatibility.intern("dimexpr");
-        let glueexpr = compatibility.intern("glueexpr");
-        let muexpr = compatibility.intern("muexpr");
-        let gluestretch = compatibility.intern("gluestretch");
-        let glueshrink = compatibility.intern("glueshrink");
-        let gluestretchorder = compatibility.intern("gluestretchorder");
-        let glueshrinkorder = compatibility.intern("glueshrinkorder");
-        let gluetomu = compatibility.intern("gluetomu");
-        let mutoglue = compatibility.intern("mutoglue");
-        let showtokens = compatibility.intern("showtokens");
-        let showgroups = compatibility.intern("showgroups");
-        let showifs = compatibility.intern("showifs");
-        let tex_xet_state = compatibility.intern("TeXXeTstate");
-        let predisplaydirection = compatibility.intern("predisplaydirection");
-        assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
-        assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
-        assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
-        assert_eq!(compatibility.meaning(scantokens), Meaning::Undefined);
-        for symbol in [
-            etex_version,
-            etex_revision,
-            ifdefined,
-            ifcsname,
-            currentgrouplevel,
-            currentgrouptype,
-            currentiflevel,
-            currentiftype,
-            currentifbranch,
-            lastnodetype,
-            iffontchar,
-            fontcharwd,
-            fontcharht,
-            fontchardp,
-            fontcharic,
-            interactionmode,
-            tracingscantokens,
-            numexpr,
-            dimexpr,
-            glueexpr,
-            muexpr,
-            gluestretch,
-            glueshrink,
-            gluestretchorder,
-            glueshrinkorder,
-            gluetomu,
-            mutoglue,
-            showtokens,
-            showgroups,
-            showifs,
-            tex_xet_state,
-            predisplaydirection,
-        ] {
-            assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
-        }
-        let wvo_primitives = [
+        const WVO_PRIMITIVES: [&str; 18] = [
             "marks",
             "topmarks",
             "firstmarks",
@@ -1280,147 +1232,227 @@ mod primitive_mode_tests {
             "savinghyphcodes",
             "savingvdiscards",
         ];
-        for name in wvo_primitives {
-            let symbol = compatibility.intern(name);
-            assert_eq!(compatibility.meaning(symbol), Meaning::Undefined, "{name}");
-        }
+        with_stores(|compatibility| {
+            prepare_run_stores(compatibility);
+            let unexpanded = compatibility.intern("unexpanded");
+            let detokenize = compatibility.intern("detokenize");
+            let unless = compatibility.intern("unless");
+            let scantokens = compatibility.intern("scantokens");
+            let etex_version = compatibility.intern("eTeXversion");
+            let etex_revision = compatibility.intern("eTeXrevision");
+            let ifdefined = compatibility.intern("ifdefined");
+            let ifcsname = compatibility.intern("ifcsname");
+            let currentgrouplevel = compatibility.intern("currentgrouplevel");
+            let currentgrouptype = compatibility.intern("currentgrouptype");
+            let currentiflevel = compatibility.intern("currentiflevel");
+            let currentiftype = compatibility.intern("currentiftype");
+            let currentifbranch = compatibility.intern("currentifbranch");
+            let lastnodetype = compatibility.intern("lastnodetype");
+            let iffontchar = compatibility.intern("iffontchar");
+            let fontcharwd = compatibility.intern("fontcharwd");
+            let fontcharht = compatibility.intern("fontcharht");
+            let fontchardp = compatibility.intern("fontchardp");
+            let fontcharic = compatibility.intern("fontcharic");
+            let interactionmode = compatibility.intern("interactionmode");
+            let tracingscantokens = compatibility.intern("tracingscantokens");
+            let numexpr = compatibility.intern("numexpr");
+            let dimexpr = compatibility.intern("dimexpr");
+            let glueexpr = compatibility.intern("glueexpr");
+            let muexpr = compatibility.intern("muexpr");
+            let gluestretch = compatibility.intern("gluestretch");
+            let glueshrink = compatibility.intern("glueshrink");
+            let gluestretchorder = compatibility.intern("gluestretchorder");
+            let glueshrinkorder = compatibility.intern("glueshrinkorder");
+            let gluetomu = compatibility.intern("gluetomu");
+            let mutoglue = compatibility.intern("mutoglue");
+            let showtokens = compatibility.intern("showtokens");
+            let showgroups = compatibility.intern("showgroups");
+            let showifs = compatibility.intern("showifs");
+            let tex_xet_state = compatibility.intern("TeXXeTstate");
+            let predisplaydirection = compatibility.intern("predisplaydirection");
+            assert_eq!(compatibility.meaning(unexpanded), Meaning::Undefined);
+            assert_eq!(compatibility.meaning(detokenize), Meaning::Undefined);
+            assert_eq!(compatibility.meaning(unless), Meaning::Undefined);
+            assert_eq!(compatibility.meaning(scantokens), Meaning::Undefined);
+            for symbol in [
+                etex_version,
+                etex_revision,
+                ifdefined,
+                ifcsname,
+                currentgrouplevel,
+                currentgrouptype,
+                currentiflevel,
+                currentiftype,
+                currentifbranch,
+                lastnodetype,
+                iffontchar,
+                fontcharwd,
+                fontcharht,
+                fontchardp,
+                fontcharic,
+                interactionmode,
+                tracingscantokens,
+                numexpr,
+                dimexpr,
+                glueexpr,
+                muexpr,
+                gluestretch,
+                glueshrink,
+                gluestretchorder,
+                glueshrinkorder,
+                gluetomu,
+                mutoglue,
+                showtokens,
+                showgroups,
+                showifs,
+                tex_xet_state,
+                predisplaydirection,
+            ] {
+                assert_eq!(compatibility.meaning(symbol), Meaning::Undefined);
+            }
+            for name in WVO_PRIMITIVES {
+                let symbol = compatibility.intern(name);
+                assert_eq!(compatibility.meaning(symbol), Meaning::Undefined, "{name}");
+            }
+        });
 
-        let mut extended = Universe::default();
-        prepare_etex_run_stores(&mut extended);
-        for name in wvo_primitives {
-            let symbol = extended.intern(name);
-            assert_ne!(extended.meaning(symbol), Meaning::Undefined, "{name}");
-        }
-        let unexpanded = extended.intern("unexpanded");
-        let detokenize = extended.intern("detokenize");
-        let unless = extended.intern("unless");
-        let scantokens = extended.intern("scantokens");
-        assert_eq!(
-            extended.meaning(unexpanded),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded)
-        );
-        assert_eq!(
-            extended.meaning(detokenize),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize)
-        );
-        assert_eq!(
-            extended.meaning(unless),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless)
-        );
-        assert_eq!(
-            extended.meaning(scantokens),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens)
-        );
-        let version = extended.intern("eTeXversion");
-        assert_eq!(
-            extended.meaning(version),
-            Meaning::InternalInteger(tex_state::meaning::InternalInteger::ETeXVersion)
-        );
-        for (name, value) in [
-            (
-                "currentgrouplevel",
-                tex_state::meaning::InternalInteger::CurrentGroupLevel,
-            ),
-            (
-                "currentgrouptype",
-                tex_state::meaning::InternalInteger::CurrentGroupType,
-            ),
-            (
-                "currentiflevel",
-                tex_state::meaning::InternalInteger::CurrentIfLevel,
-            ),
-            (
-                "currentiftype",
-                tex_state::meaning::InternalInteger::CurrentIfType,
-            ),
-            (
-                "currentifbranch",
-                tex_state::meaning::InternalInteger::CurrentIfBranch,
-            ),
-            (
-                "lastnodetype",
-                tex_state::meaning::InternalInteger::LastNodeType,
-            ),
-        ] {
-            let symbol = extended.intern(name);
-            assert_eq!(extended.meaning(symbol), Meaning::InternalInteger(value));
-        }
-        for (name, primitive) in [
-            ("eTeXrevision", ExpandablePrimitive::ETeXRevision),
-            ("ifdefined", ExpandablePrimitive::IfDefined),
-            ("ifcsname", ExpandablePrimitive::IfCsName),
-            ("iffontchar", ExpandablePrimitive::IfFontChar),
-        ] {
-            let symbol = extended.intern(name);
+        with_stores(|extended| {
+            prepare_etex_run_stores(extended);
+            for name in WVO_PRIMITIVES {
+                let symbol = extended.intern(name);
+                assert_ne!(extended.meaning(symbol), Meaning::Undefined, "{name}");
+            }
+            let unexpanded = extended.intern("unexpanded");
+            let detokenize = extended.intern("detokenize");
+            let unless = extended.intern("unless");
+            let scantokens = extended.intern("scantokens");
             assert_eq!(
-                extended.meaning(symbol),
-                Meaning::ExpandablePrimitive(primitive)
+                extended.meaning(unexpanded),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded)
             );
-        }
-        let ifincsname = extended.intern("ifincsname");
-        assert_eq!(extended.meaning(ifincsname), Meaning::Undefined);
-        for (name, primitive) in [
-            ("fontcharwd", UnexpandablePrimitive::FontCharWd),
-            ("fontcharht", UnexpandablePrimitive::FontCharHt),
-            ("fontchardp", UnexpandablePrimitive::FontCharDp),
-            ("fontcharic", UnexpandablePrimitive::FontCharIc),
-            ("numexpr", UnexpandablePrimitive::NumExpr),
-            ("dimexpr", UnexpandablePrimitive::DimExpr),
-            ("glueexpr", UnexpandablePrimitive::GlueExpr),
-            ("muexpr", UnexpandablePrimitive::MuExpr),
-            ("gluestretch", UnexpandablePrimitive::GlueStretch),
-            ("glueshrink", UnexpandablePrimitive::GlueShrink),
-            ("gluestretchorder", UnexpandablePrimitive::GlueStretchOrder),
-            ("glueshrinkorder", UnexpandablePrimitive::GlueShrinkOrder),
-            ("gluetomu", UnexpandablePrimitive::GlueToMu),
-            ("mutoglue", UnexpandablePrimitive::MuToGlue),
-            ("showtokens", UnexpandablePrimitive::ShowTokens),
-            ("showgroups", UnexpandablePrimitive::ShowGroups),
-            ("showifs", UnexpandablePrimitive::ShowIfs),
-            ("interactionmode", UnexpandablePrimitive::InteractionMode),
-            ("beginL", UnexpandablePrimitive::BeginL),
-            ("endL", UnexpandablePrimitive::EndL),
-            ("beginR", UnexpandablePrimitive::BeginR),
-            ("endR", UnexpandablePrimitive::EndR),
-            ("middle", UnexpandablePrimitive::Middle),
-        ] {
-            let symbol = extended.intern(name);
             assert_eq!(
-                extended.meaning(symbol),
-                Meaning::UnexpandablePrimitive(primitive)
+                extended.meaning(detokenize),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize)
             );
-        }
-        let tracingscantokens = extended.intern("tracingscantokens");
-        assert_eq!(
-            extended.meaning(tracingscantokens),
-            Meaning::IntParam(tex_state::env::banks::IntParam::TRACING_SCAN_TOKENS.raw())
-        );
-        for (name, parameter) in [
-            (
-                "TeXXeTstate",
-                tex_state::env::banks::IntParam::TEX_XET_STATE,
-            ),
-            (
-                "predisplaydirection",
-                tex_state::env::banks::IntParam::PRE_DISPLAY_DIRECTION,
-            ),
-            (
-                "tracingassigns",
-                tex_state::env::banks::IntParam::TRACING_ASSIGNS,
-            ),
-            (
-                "tracinggroups",
-                tex_state::env::banks::IntParam::TRACING_GROUPS,
-            ),
-            ("tracingifs", tex_state::env::banks::IntParam::TRACING_IFS),
-            (
-                "tracingnesting",
-                tex_state::env::banks::IntParam::TRACING_NESTING,
-            ),
-        ] {
-            let symbol = extended.intern(name);
-            assert_eq!(extended.meaning(symbol), Meaning::IntParam(parameter.raw()));
-        }
+            assert_eq!(
+                extended.meaning(unless),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless)
+            );
+            assert_eq!(
+                extended.meaning(scantokens),
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens)
+            );
+            let version = extended.intern("eTeXversion");
+            assert_eq!(
+                extended.meaning(version),
+                Meaning::InternalInteger(tex_state::meaning::InternalInteger::ETeXVersion)
+            );
+            for (name, value) in [
+                (
+                    "currentgrouplevel",
+                    tex_state::meaning::InternalInteger::CurrentGroupLevel,
+                ),
+                (
+                    "currentgrouptype",
+                    tex_state::meaning::InternalInteger::CurrentGroupType,
+                ),
+                (
+                    "currentiflevel",
+                    tex_state::meaning::InternalInteger::CurrentIfLevel,
+                ),
+                (
+                    "currentiftype",
+                    tex_state::meaning::InternalInteger::CurrentIfType,
+                ),
+                (
+                    "currentifbranch",
+                    tex_state::meaning::InternalInteger::CurrentIfBranch,
+                ),
+                (
+                    "lastnodetype",
+                    tex_state::meaning::InternalInteger::LastNodeType,
+                ),
+            ] {
+                let symbol = extended.intern(name);
+                assert_eq!(extended.meaning(symbol), Meaning::InternalInteger(value));
+            }
+            for (name, primitive) in [
+                ("eTeXrevision", ExpandablePrimitive::ETeXRevision),
+                ("ifdefined", ExpandablePrimitive::IfDefined),
+                ("ifcsname", ExpandablePrimitive::IfCsName),
+                ("iffontchar", ExpandablePrimitive::IfFontChar),
+            ] {
+                let symbol = extended.intern(name);
+                assert_eq!(
+                    extended.meaning(symbol),
+                    Meaning::ExpandablePrimitive(primitive)
+                );
+            }
+            let ifincsname = extended.intern("ifincsname");
+            assert_eq!(extended.meaning(ifincsname), Meaning::Undefined);
+            for (name, primitive) in [
+                ("fontcharwd", UnexpandablePrimitive::FontCharWd),
+                ("fontcharht", UnexpandablePrimitive::FontCharHt),
+                ("fontchardp", UnexpandablePrimitive::FontCharDp),
+                ("fontcharic", UnexpandablePrimitive::FontCharIc),
+                ("numexpr", UnexpandablePrimitive::NumExpr),
+                ("dimexpr", UnexpandablePrimitive::DimExpr),
+                ("glueexpr", UnexpandablePrimitive::GlueExpr),
+                ("muexpr", UnexpandablePrimitive::MuExpr),
+                ("gluestretch", UnexpandablePrimitive::GlueStretch),
+                ("glueshrink", UnexpandablePrimitive::GlueShrink),
+                ("gluestretchorder", UnexpandablePrimitive::GlueStretchOrder),
+                ("glueshrinkorder", UnexpandablePrimitive::GlueShrinkOrder),
+                ("gluetomu", UnexpandablePrimitive::GlueToMu),
+                ("mutoglue", UnexpandablePrimitive::MuToGlue),
+                ("showtokens", UnexpandablePrimitive::ShowTokens),
+                ("showgroups", UnexpandablePrimitive::ShowGroups),
+                ("showifs", UnexpandablePrimitive::ShowIfs),
+                ("interactionmode", UnexpandablePrimitive::InteractionMode),
+                ("beginL", UnexpandablePrimitive::BeginL),
+                ("endL", UnexpandablePrimitive::EndL),
+                ("beginR", UnexpandablePrimitive::BeginR),
+                ("endR", UnexpandablePrimitive::EndR),
+                ("middle", UnexpandablePrimitive::Middle),
+            ] {
+                let symbol = extended.intern(name);
+                assert_eq!(
+                    extended.meaning(symbol),
+                    Meaning::UnexpandablePrimitive(primitive)
+                );
+            }
+            let tracingscantokens = extended.intern("tracingscantokens");
+            assert_eq!(
+                extended.meaning(tracingscantokens),
+                Meaning::IntParam(tex_state::env::banks::IntParam::TRACING_SCAN_TOKENS.raw())
+            );
+            for (name, parameter) in [
+                (
+                    "TeXXeTstate",
+                    tex_state::env::banks::IntParam::TEX_XET_STATE,
+                ),
+                (
+                    "predisplaydirection",
+                    tex_state::env::banks::IntParam::PRE_DISPLAY_DIRECTION,
+                ),
+                (
+                    "tracingassigns",
+                    tex_state::env::banks::IntParam::TRACING_ASSIGNS,
+                ),
+                (
+                    "tracinggroups",
+                    tex_state::env::banks::IntParam::TRACING_GROUPS,
+                ),
+                ("tracingifs", tex_state::env::banks::IntParam::TRACING_IFS),
+                (
+                    "tracingnesting",
+                    tex_state::env::banks::IntParam::TRACING_NESTING,
+                ),
+            ] {
+                let symbol = extended.intern(name);
+                assert_eq!(extended.meaning(symbol), Meaning::IntParam(parameter.raw()));
+            }
+        });
     }
 }
 
@@ -1722,8 +1754,9 @@ impl From<tex_out::html::HtmlError> for HtmlBuildError {
 mod tests {
     use super::{
         DriverFile, FinalizationCommit, FinalizationError, PlannedFinalization, TexRunStatus,
-        prepare_pdftex_run_stores, run_input_collecting_artifacts_with_profile,
-        terminal_text_from_effects,
+        engine_interner_budget, prepare_pdftex_run_stores,
+        run_input_collecting_artifacts_with_profile, run_memory_collecting_artifacts_with_profile,
+        terminal_text_from_effects, with_engine_universe, with_engine_world,
     };
     use crate::FileSessionResolvers;
     use std::path::{Path, PathBuf};
@@ -1731,6 +1764,27 @@ mod tests {
     use tex_state::{PrintSink, StreamSlot, Universe, World};
 
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+
+    fn run_plain_log(source: &str, seed_cmr10: bool) -> String {
+        with_engine_world(World::memory(), |stores| {
+            crate::prepare_run_stores(stores);
+            if seed_cmr10 {
+                stores
+                    .world_mut()
+                    .set_memory_file("cmr10.tfm", CMR10.to_vec())
+                    .expect("seed cmr10");
+            }
+            crate::run_memory_with_stores(source, stores).expect("run completes");
+            String::from_utf8_lossy(
+                stores
+                    .world()
+                    .memory_log_output()
+                    .expect("memory-backed log"),
+            )
+            .into_owned()
+        })
+        .expect("fresh universe")
+    }
 
     fn publication(source: &str) -> tex_exec::PreparedEnginePublication {
         let mut session = crate::VirtualCompileSession::new(crate::SessionOptions::default())
@@ -1774,20 +1828,10 @@ mod tests {
 
     #[test]
     fn tracingcommands_display_end_probe_reports_restored_mode() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        crate::prepare_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        let output = run_plain_log(
             "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\noindent$$\\vtop{\\noindent$$Aa$\\ifvmode$\\fi}\\hss\\end",
-            &mut stores,
-        )
-        .expect("run completes");
-        let output = String::from_utf8_lossy(
-            stores
-                .world()
-                .memory_log_output()
-                .expect("memory-backed log"),
-        )
-        .into_owned();
+            false,
+        );
         assert!(
             output.contains("{math shift character $}\n! Math formula deleted:")
                 && output.contains("{internal vertical mode: \\ifvmode}\n{true}"),
@@ -1801,18 +1845,9 @@ mod tests {
         // mode before the expanded second-dollar probe evaluates these
         // conditionals. Close the enclosing display too, so unrelated final
         // cleanup recovery cannot print the branch markers as source context.
-        let mut stores = Universe::new_with_plain_catcodes();
-        crate::prepare_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        let output = run_plain_log(
             "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\noindent$$\\vtop{\\noindent$$$\\ifvmode\\else\\errmessage{ifvmode stale}\\fi\\ifhmode\\errmessage{ifhmode stale}\\fi\\ifmmode\\errmessage{ifmmode stale}\\fi$}\\hss$$\\end",
-            &mut stores,
-        )
-        .expect("run completes");
-        let output = String::from_utf8_lossy(
-            stores
-                .world()
-                .memory_log_output()
-                .expect("memory-backed log"),
+            false,
         );
         assert!(
             output.contains("{internal vertical mode: \\ifvmode}\n{true}")
@@ -1833,18 +1868,9 @@ mod tests {
 
     #[test]
     fn tracingcommands_same_mode_conditional_omits_mode_prefix() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        crate::prepare_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        let output = run_plain_log(
             "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\ifvmode\\fi\\noindent$$\\vtop{\\noindent$$Aa$\\ifvmode$\\fi}\\hss\\end",
-            &mut stores,
-        )
-        .expect("run completes");
-        let output = String::from_utf8_lossy(
-            stores
-                .world()
-                .memory_log_output()
-                .expect("memory-backed log"),
+            false,
         );
         assert!(
             output.contains("{vertical mode: \\tracingonline}\n{\\ifvmode}\n{true}"),
@@ -1859,18 +1885,9 @@ mod tests {
         // sequence. The packing scan has already completed when the preamble
         // processor expands `\iftrue`, so that distinct episode must publish
         // the internal-vertical mode pushed by `init_align`.
-        let mut stores = Universe::new_with_plain_catcodes();
-        crate::prepare_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        let output = run_plain_log(
             "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\halign{&#\\span\\iftrue\\relax\\span\\else\\span\\fi\\span&#\\cr a&b\\cr}\\end",
-            &mut stores,
-        )
-        .expect("run completes");
-        let output = String::from_utf8_lossy(
-            stores
-                .world()
-                .memory_log_output()
-                .expect("memory-backed log"),
+            false,
         );
 
         assert!(
@@ -1884,25 +1901,9 @@ mod tests {
         // TeX82 §§789, 1034, and 1038: the u-template's final `A` enters
         // main_loop. Its bare lookahead fetches the adjacent first body `A`
         // without returning to §1030's traced reswitch boundary.
-        let mut stores = Universe::new_with_plain_catcodes();
-        crate::prepare_run_stores(&mut stores);
-        stores
-            .world_mut()
-            .set_memory_file(
-                "cmr10.tfm",
-                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
-            )
-            .expect("seed cmr10");
-        crate::run_memory_with_stores(
+        let output = run_plain_log(
             "\\nonstopmode\\font\\tracefont=cmr10 \\tracefont\\tracingcommands=2\\tracingonline=1\\halign{A#\\cr A\\cr}\\end",
-            &mut stores,
-        )
-        .expect("run completes");
-        let output = String::from_utf8_lossy(
-            stores
-                .world()
-                .memory_log_output()
-                .expect("memory-backed log"),
+            true,
         );
         assert_eq!(output.matches("the letter A}").count(), 1, "{output}");
         assert!(
@@ -1918,25 +1919,9 @@ mod tests {
         // A non-character returns to §1030's big_switch. The following `A`
         // is therefore a genuinely distinct traced reswitch, even though it
         // has the same token value as the template and first body tokens.
-        let mut stores = Universe::new_with_plain_catcodes();
-        crate::prepare_run_stores(&mut stores);
-        stores
-            .world_mut()
-            .set_memory_file(
-                "cmr10.tfm",
-                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
-            )
-            .expect("seed cmr10");
-        crate::run_memory_with_stores(
+        let output = run_plain_log(
             "\\nonstopmode\\font\\tracefont=cmr10 \\tracefont\\tracingcommands=2\\tracingonline=1\\halign{A#\\cr A\\kern0pt A\\cr}\\end",
-            &mut stores,
-        )
-        .expect("run completes");
-        let output = String::from_utf8_lossy(
-            stores
-                .world()
-                .memory_log_output()
-                .expect("memory-backed log"),
+            true,
         );
         assert_eq!(output.matches("the letter A}").count(), 2, "{output}");
         assert!(
@@ -1947,18 +1932,9 @@ mod tests {
 
     #[test]
     fn valign_packing_scan_preserves_same_horizontal_mode_capability() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        crate::prepare_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        let output = run_plain_log(
             "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\hbox{\\valign to \\ifhmode13pt\\else\\errmessage{valign mode stale}26pt\\fi{#\\cr y\\cr}}\\end",
-            &mut stores,
-        )
-        .expect("run completes");
-        let output = String::from_utf8_lossy(
-            stores
-                .world()
-                .memory_log_output()
-                .expect("memory-backed log"),
+            false,
         );
 
         assert!(
@@ -1970,100 +1946,102 @@ mod tests {
 
     #[test]
     fn public_file_root_retains_world_identity_across_typed_input_retry() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        crate::prepare_run_stores(&mut stores);
-        stores
-            .world_mut()
+        let mut world = World::memory();
+        world
             .set_memory_file("/project/root.tex", b"\\message{root}\\input child \\end")
             .expect("root is staged");
-        stores
-            .world_mut()
+        world
             .set_memory_file("/project/child.tex", b"\\message{child}")
             .expect("child is staged");
-        let root = stores
-            .world_mut()
-            .read_file("/project/root.tex")
-            .expect("root is selected");
-        let root_hash = root.hash();
-        let mut host = super::FileSessionResolvers::new(
-            Path::new("/project/root.tex"),
-            Vec::new(),
-            Vec::new(),
-        );
+        with_engine_world(world, |stores| {
+            crate::prepare_run_stores(stores);
+            let root = stores
+                .world_mut()
+                .read_file("/project/root.tex")
+                .expect("root is selected");
+            let root_hash = root.hash();
+            let mut host = super::FileSessionResolvers::new(
+                Path::new("/project/root.tex"),
+                Vec::new(),
+                Vec::new(),
+            );
 
-        let result = super::run_input_collecting_artifacts(
-            &mut stores,
-            super::RetainedRootRequest::file("root", root, CommandProfile::TEX82),
-            &mut host,
-        )
-        .expect("file-root run completes");
+            let result = super::run_input_collecting_artifacts(
+                stores,
+                super::RetainedRootRequest::file("root", root, CommandProfile::TEX82),
+                &mut host,
+            )
+            .expect("file-root run completes");
 
-        assert!(result.terminal_text.contains("root"));
-        assert!(result.terminal_text.contains("child"));
-        assert!(matches!(
-            stores.world().input_records(),
-            [root_record, child_record]
-                if root_record.hash() == root_hash
-                    && root_record.path() == Path::new("/project/root.tex")
-                    && child_record.path() == Path::new("/project/child.tex")
-        ));
+            assert!(result.terminal_text.contains("root"));
+            assert!(result.terminal_text.contains("child"));
+            assert!(matches!(
+                stores.world().input_records(),
+                [root_record, child_record]
+                    if root_record.hash() == root_hash
+                        && root_record.path() == Path::new("/project/root.tex")
+                        && child_record.path() == Path::new("/project/child.tex")
+            ));
+        })
+        .expect("fresh universe");
     }
 
     #[test]
     fn deferred_pdf_nodes_follow_the_explicit_session_profile() {
         let source = "\\pdfoutput=1\\shipout\\hbox{\\pdfliteral{q}}\\end";
         for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
-            let mut stores = Universe::default();
-            prepare_pdftex_run_stores(&mut stores);
+            with_engine_universe(|stores| {
+                prepare_pdftex_run_stores(stores);
+                let mut host = super::FileSessionResolvers::new(
+                    Path::new("profile-boundary.tex"),
+                    Vec::new(),
+                    Vec::new(),
+                );
+                let error = run_input_collecting_artifacts_with_profile(
+                    stores,
+                    super::RetainedRootRequest::authored_job(
+                        "profile-boundary",
+                        source.as_bytes(),
+                        profile,
+                    ),
+                    &mut host,
+                    profile,
+                )
+                .expect_err("TeX and e-TeX profiles must traverse deferred nodes in DVI mode");
+                assert_eq!(
+                    error.to_string(),
+                    "pdfTeX error (ext4): \\pdfliteral used while \\pdfoutput is not set."
+                );
+            })
+            .expect("fresh universe");
+        }
+
+        with_engine_universe(|stores| {
+            prepare_pdftex_run_stores(stores);
             let mut host = super::FileSessionResolvers::new(
                 Path::new("profile-boundary.tex"),
                 Vec::new(),
                 Vec::new(),
             );
-            let error = run_input_collecting_artifacts_with_profile(
-                &mut stores,
+            let result = run_input_collecting_artifacts_with_profile(
+                stores,
                 super::RetainedRootRequest::authored_job(
                     "profile-boundary",
                     source.as_bytes(),
-                    profile,
+                    CommandProfile::PDFTEX14029,
                 ),
                 &mut host,
-                profile,
-            )
-            .expect_err("TeX and e-TeX profiles must traverse deferred nodes in DVI mode");
-            assert_eq!(
-                error.to_string(),
-                "pdfTeX error (ext4): \\pdfliteral used while \\pdfoutput is not set."
-            );
-        }
-
-        let mut stores = Universe::default();
-        prepare_pdftex_run_stores(&mut stores);
-        let mut host = super::FileSessionResolvers::new(
-            Path::new("profile-boundary.tex"),
-            Vec::new(),
-            Vec::new(),
-        );
-        let result = run_input_collecting_artifacts_with_profile(
-            &mut stores,
-            super::RetainedRootRequest::authored_job(
-                "profile-boundary",
-                source.as_bytes(),
                 CommandProfile::PDFTEX14029,
-            ),
-            &mut host,
-            CommandProfile::PDFTEX14029,
-        )
-        .expect("pdfTeX profile accepts deferred PDF nodes in PDF mode");
-        assert_eq!(result.committed_artifacts.len(), 1);
+            )
+            .expect("pdfTeX profile accepts deferred PDF nodes in PDF mode");
+            assert_eq!(result.committed_artifacts.len(), 1);
+        })
+        .expect("fresh universe");
     }
 
     #[test]
     fn retained_memory_roots_project_local_text_and_keep_effect_cursors_rollbackable() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        crate::prepare_run_stores(&mut stores);
-
-        let run = |source: &'static [u8], stores: &mut Universe| {
+        fn run<G>(source: &'static [u8], stores: &mut Universe<G>) -> super::RunResult {
             let mut host =
                 FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
             let mut session = crate::EngineSession::new(stores, CommandProfile::TEX82);
@@ -2078,36 +2056,40 @@ mod tests {
             session
                 .run(&mut host, &mut super::NoCheckpoints)
                 .expect("retained root completes")
-        };
+        }
 
-        let first = run(b"\\count0=7\\message{first}\\end", &mut stores);
-        assert_eq!(first.terminal_text, " first");
-        assert_eq!(
-            terminal_text_from_effects(&first.effects),
-            "(texput first )"
-        );
-        let after_first = stores.snapshot();
+        with_engine_world(World::memory(), |stores| {
+            crate::prepare_run_stores(stores);
+            let first = run(b"\\count0=7\\message{first}\\end", stores);
+            assert_eq!(first.terminal_text, " first");
+            assert_eq!(
+                terminal_text_from_effects(&first.effects),
+                "(texput first )"
+            );
+            let after_first = stores.snapshot();
 
-        let second = run(
-            b"\\advance\\count0 by1\\message{second=\\the\\count0}\\end",
-            &mut stores,
-        );
-        assert_eq!(second.terminal_text, " second=8");
-        assert_eq!(
-            terminal_text_from_effects(&second.effects),
-            "(texput second=8 )"
-        );
-        assert!(!terminal_text_from_effects(&second.effects).contains("first"));
-        let second_hash = stores.snapshot().state_hash();
+            let second = run(
+                b"\\advance\\count0 by1\\message{second=\\the\\count0}\\end",
+                stores,
+            );
+            assert_eq!(second.terminal_text, " second=8");
+            assert_eq!(
+                terminal_text_from_effects(&second.effects),
+                "(texput second=8 )"
+            );
+            assert!(!terminal_text_from_effects(&second.effects).contains("first"));
+            let second_hash = stores.snapshot().state_hash();
 
-        stores.rollback(&after_first);
-        assert_eq!(stores.count(0), 7);
-        let replay = run(
-            b"\\advance\\count0 by1\\message{second=\\the\\count0}\\end",
-            &mut stores,
-        );
-        assert_eq!(replay.terminal_text, second.terminal_text);
-        assert_eq!(stores.snapshot().state_hash(), second_hash);
+            stores.rollback(&after_first).expect("snapshot restores");
+            assert_eq!(stores.count(0).expect("count register"), 7);
+            let replay = run(
+                b"\\advance\\count0 by1\\message{second=\\the\\count0}\\end",
+                stores,
+            );
+            assert_eq!(replay.terminal_text, second.terminal_text);
+            assert_eq!(stores.snapshot().state_hash(), second_hash);
+        })
+        .expect("fresh universe");
     }
 
     #[test]
@@ -2115,9 +2097,20 @@ mod tests {
         use crate::EngineMode;
 
         let mode = EngineMode::PdfTex;
-        let mut format_stores = Universe::new_with_plain_catcodes();
-        mode.prepare_fresh(&mut format_stores);
-        let format = format_stores.dump_format().expect("base format dumps");
+        let format = with_engine_world(World::memory(), |format_stores| {
+            mode.prepare_fresh(format_stores);
+            run_memory_collecting_artifacts_with_profile(
+                "\\dump",
+                format_stores,
+                mode.command_profile(),
+                false,
+            )
+            .expect("base format executes")
+            .format_dump
+            .expect("base format dumps")
+            .image
+        })
+        .expect("fresh format universe");
         let mut png = vec![0_u8; 29];
         png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
         png[12..16].copy_from_slice(b"IHDR");
@@ -2126,6 +2119,30 @@ mod tests {
         png[24] = 8;
         png[25] = 0;
         let root = b"\\font\\tenrm=cmr10 \\tenrm A\\pdfoutput=1\\pdfximage {image.png}\\end";
+
+        fn exercise<G>(stores: &mut Universe<G>, mode: EngineMode) {
+            let selected_root = stores
+                .world_mut()
+                .read_file("/project/job.tex")
+                .expect("World selects the root");
+            let root_hash = selected_root.hash();
+            let mut session = crate::EngineSession::new(stores, mode.command_profile());
+            session
+                .register_world_root("job", selected_root)
+                .expect("selected root registers unchanged");
+            let mut host =
+                crate::FileSessionResolvers::new(Path::new("/project/job.tex"), vec![], vec![]);
+            let run = session
+                .run(&mut host, &mut Vec::new())
+                .expect("typed retries complete");
+
+            assert!(run.format_dump.is_none());
+            let records = session.stores().world().input_records();
+            assert_eq!(records.len(), 3);
+            assert_eq!(records[0].hash(), root_hash);
+            assert_eq!(records[1].path(), Path::new("/project/cmr10.tfm"));
+            assert_eq!(records[2].path(), Path::new("/project/image.png"));
+        }
 
         for loaded in [false, true] {
             let mut world = World::memory();
@@ -2138,37 +2155,24 @@ mod tests {
             world
                 .set_memory_file("/project/image.png", png.clone())
                 .expect("image is seeded");
-            let mut stores = if loaded {
-                let mut stores = Universe::from_format(world, &format).expect("format restores");
-                mode.install_after_format(&mut stores);
-                stores
+            if loaded {
+                tex_state::with_materialized_format(
+                    engine_interner_budget(),
+                    world,
+                    &format,
+                    |stores| {
+                        mode.install_after_format(stores);
+                        exercise(stores, mode);
+                    },
+                )
+                .expect("format restores");
             } else {
-                let mut stores = Universe::with_world(world);
-                mode.prepare_fresh(&mut stores);
-                stores
-            };
-            let selected_root = stores
-                .world_mut()
-                .read_file("/project/job.tex")
-                .expect("World selects the root");
-            let root_hash = selected_root.hash();
-            let mut session = crate::EngineSession::new(&mut stores, mode.command_profile());
-            session
-                .register_world_root("job", selected_root)
-                .expect("selected root registers unchanged");
-            let mut host =
-                crate::FileSessionResolvers::new(Path::new("/project/job.tex"), vec![], vec![]);
-            let run = session
-                .run(&mut host, &mut Vec::new())
-                .expect("typed retries complete");
-
-            assert!(run.format_dump.is_none());
-            assert!(session.stores().pdf_last_external_image().is_some());
-            let records = session.stores().world().input_records();
-            assert_eq!(records.len(), 3);
-            assert_eq!(records[0].hash(), root_hash);
-            assert_eq!(records[1].path(), Path::new("/project/cmr10.tfm"));
-            assert_eq!(records[2].path(), Path::new("/project/image.png"));
+                with_engine_world(world, |stores| {
+                    mode.prepare_fresh(stores);
+                    exercise(stores, mode);
+                })
+                .expect("fresh universe");
+            }
         }
     }
 

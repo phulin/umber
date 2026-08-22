@@ -848,7 +848,7 @@ mod tests {
         Dictionary as FixtureDictionary, ValidPdfFixture, array, name, reference,
     };
     use tex_exec::{PdfImagePageBox, PdfImageRequest};
-    use tex_state::{InputOpenState, PdfExternalImageMetadata, Universe, World};
+    use tex_state::{InputOpenState, PdfExternalImageMetadata, World};
     use umber_vfs::{ProjectWorkspace, VfsLimits};
 
     #[test]
@@ -862,32 +862,33 @@ mod tests {
         let workspace = ProjectWorkspace::new(VfsLimits::default()).expect("empty workspace");
         let snapshot = workspace.snapshot();
         let mut resolver = VirtualFileResolver::from_ledger(&snapshot, workspace.resource_ledger());
-        let mut stores = Universe::with_world(World::memory());
-
-        assert!(matches!(
-            resolver
-                .open_classified(
-                    &mut stores.input_open_context(),
-                    FileKind::TexInput,
-                    "shared.cfg",
-                    7,
-                    FileOpenIntent::Probe,
-                )
-                .expect("probe lookup"),
-            HostLookup::NeedResource
-        ));
-        assert!(matches!(
-            resolver
-                .open_classified(
-                    &mut stores.input_open_context(),
-                    FileKind::TexInput,
-                    "shared.cfg",
-                    9,
-                    FileOpenIntent::Required,
-                )
-                .expect("required lookup"),
-            HostLookup::NeedResource
-        ));
+        crate::with_engine_world(World::memory(), |stores| {
+            assert!(matches!(
+                resolver
+                    .open_classified(
+                        &mut stores.input_open_context(),
+                        FileKind::TexInput,
+                        "shared.cfg",
+                        7,
+                        FileOpenIntent::Probe,
+                    )
+                    .expect("probe lookup"),
+                HostLookup::NeedResource
+            ));
+            assert!(matches!(
+                resolver
+                    .open_classified(
+                        &mut stores.input_open_context(),
+                        FileKind::TexInput,
+                        "shared.cfg",
+                        9,
+                        FileOpenIntent::Required,
+                    )
+                    .expect("required lookup"),
+                HostLookup::NeedResource
+            ));
+        })
+        .expect("fresh universe");
         assert!(resolver.probes.is_empty());
         assert_eq!(resolver.misses.len(), 1);
         assert_eq!(resolver.misses[0].0, 7);
