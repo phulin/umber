@@ -23,99 +23,6 @@ pub trait RetainedStateOperation {
     fn run<G: 'static>(self, admitted: RetainedStateAdmission<'_, G>) -> Self::Output;
 }
 
-/// One universally generic cold compaction of state and aggregate sidecars.
-pub trait RetainedStateCompactionOperation {
-    type Output;
-    type Error;
-
-    fn run<G: 'static>(
-        self,
-        context: RetainedStateCompactionContext<'_, G>,
-    ) -> Result<Self::Output, Self::Error>;
-}
-
-/// Borrowed source and unpublished destination for one cold copy.
-pub struct RetainedStateCompactionContext<'a, G> {
-    source_incarnation: u64,
-    destination_incarnation: u64,
-    source: &'a Universe<G>,
-    destination: &'a mut Universe<G>,
-    relocation: &'a crate::universe::UniverseRelocation<G>,
-    source_attachments: &'a [Option<Box<dyn Any>>],
-    destination_attachments: &'a mut Vec<Option<Box<dyn Any>>>,
-}
-
-impl<G: 'static> RetainedStateCompactionContext<'_, G> {
-    pub fn source_universe(&self) -> &Universe<G> {
-        self.source
-    }
-
-    /// Counts coarse immutable owners before any source attachment is
-    /// released. Aggregate compaction uses this to reject unenumerated parent
-    /// owners before staging can become visible.
-    pub fn source_generation_owner_count(&self) -> Result<usize, UniverseError> {
-        self.source.generation_owner_count()
-    }
-
-    pub fn destination_universe(&mut self) -> &mut Universe<G> {
-        self.destination
-    }
-
-    pub fn destination_universe_ref(&self) -> &Universe<G> {
-        self.destination
-    }
-
-    pub fn destination_generation_owner(&self) -> Result<crate::GenerationOwner<G>, UniverseError> {
-        self.destination.generation_owner()
-    }
-
-    pub fn relocate_runtime_checkpoint(
-        &self,
-        checkpoint: &crate::RuntimeCheckpoint<G>,
-    ) -> Result<crate::RuntimeCheckpoint<G>, crate::UniverseCompactionError> {
-        checkpoint.dense_copy(self.source, self.destination, self.relocation)
-    }
-
-    pub fn relocate_page_list(
-        &self,
-        list: crate::node_arena::PageListId,
-    ) -> Result<crate::node_arena::PageListId, crate::node_arena::NodeArenaError> {
-        self.relocation.page_nodes.relocate(list)
-    }
-
-    pub fn source_attachment<T: 'static>(
-        &self,
-        key: &RetainedAttachmentKey,
-    ) -> Result<&T, RetainedStateAccessError> {
-        if key.incarnation != self.source_incarnation {
-            return Err(RetainedStateAccessError::ForeignGeneration);
-        }
-        self.source_attachments
-            .get(key.slot)
-            .and_then(Option::as_deref)
-            .ok_or(RetainedStateAccessError::StaleAttachment)?
-            .downcast_ref::<T>()
-            .ok_or(RetainedStateAccessError::AttachmentTypeMismatch)
-    }
-
-    pub fn attach<T: 'static>(&mut self, attachment: T) -> RetainedAttachmentKey {
-        let slot = self.destination_attachments.len();
-        self.destination_attachments
-            .push(Some(Box::new(attachment)));
-        RetainedAttachmentKey {
-            incarnation: self.destination_incarnation,
-            slot,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum RetainedStateCompactionError<Error> {
-    State(crate::UniverseCompactionError),
-    Operation(Error),
-    Retirement(UniverseError),
-}
-
 /// Branded mutable admission of one physical generation and its sidecars.
 pub struct RetainedStateAdmission<'a, G> {
     incarnation: u64,
@@ -302,58 +209,6 @@ impl RetainedStateGeneration {
         }
     }
 
-    /// Stages a complete replacement, lets the aggregate owner relocate every
-    /// generation-typed sidecar, and publishes only after both layers pass.
-    pub fn compact<O: RetainedStateCompactionOperation>(
-        &mut self,
-        operation: O,
-    ) -> Result<(O::Output, RetainedStateRetirement), RetainedStateCompactionError<O::Error>> {
-        let interner = self
-            .epoch
-            .lease()
-            .expect("one retained generation is admitted at a time");
-        self.universe.admit_session_epoch(interner);
-        let destination_incarnation = next_incarnation();
-        let staged = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let (mut destination, relocation) = self
-                .universe
-                .dense_copy()
-                .map_err(RetainedStateCompactionError::State)?;
-            let mut destination_attachments = Vec::new();
-            let output = operation
-                .run(RetainedStateCompactionContext {
-                    source_incarnation: self.incarnation,
-                    destination_incarnation,
-                    source: &self.universe,
-                    destination: &mut destination,
-                    relocation: &relocation,
-                    source_attachments: &self.attachments,
-                    destination_attachments: &mut destination_attachments,
-                })
-                .map_err(RetainedStateCompactionError::Operation)?;
-            Ok((destination, destination_attachments, output))
-        }));
-        drop(self.universe.release_session_epoch());
-        let (destination, destination_attachments, output) = match staged {
-            Ok(result) => result?,
-            Err(payload) => std::panic::resume_unwind(payload),
-        };
-
-        let source_attachments = std::mem::take(&mut self.attachments);
-        drop(source_attachments);
-        debug_assert!(
-            self.universe.generation_can_retire(),
-            "compaction preflight accounted for every source-side coarse owner"
-        );
-        let mut source = std::mem::replace(&mut self.universe, destination);
-        self.attachments = destination_attachments;
-        self.incarnation = destination_incarnation;
-        let retired = source
-            .retire_generation()
-            .map_err(RetainedStateCompactionError::Retirement)?;
-        Ok((output, retained_state_retirement(retired)))
-    }
-
     #[must_use]
     pub fn attachment_count(&self) -> usize {
         self.attachments
@@ -373,21 +228,15 @@ impl RetainedStateGeneration {
         self.universe.admit_session_epoch(interner);
         let retired = self.universe.retire_generation()?;
         drop(self.universe.release_session_epoch());
-        Ok(retained_state_retirement(retired))
-    }
-}
-
-fn retained_state_retirement(
-    retired: crate::stores::StateCoreRetirement,
-) -> RetainedStateRetirement {
-    RetainedStateRetirement {
-        definitions: retired.generation.definitions,
-        token_lists: retired.generation.token_lists,
-        glue_values: retired.generation.glue_values,
-        provenance_records: retired.generation.provenance_records,
-        durable_node_lists: retired.durable_node_lists,
-        journal_entries: retired.journal_entries,
-        allocated_overflow_pages: retired.allocated_overflow_pages,
+        Ok(RetainedStateRetirement {
+            definitions: retired.generation.definitions,
+            token_lists: retired.generation.token_lists,
+            glue_values: retired.generation.glue_values,
+            provenance_records: retired.generation.provenance_records,
+            durable_node_lists: retired.durable_node_lists,
+            journal_entries: retired.journal_entries,
+            allocated_overflow_pages: retired.allocated_overflow_pages,
+        })
     }
 }
 

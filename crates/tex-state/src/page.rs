@@ -394,34 +394,6 @@ impl Default for PageBuilderState {
 }
 
 impl PageBuilderState {
-    pub(crate) fn dense_copy(
-        &self,
-        relocation: &crate::node_arena::NodeRelocation<
-            crate::node_arena::PageLifetime,
-            crate::node_arena::PageLifetime,
-        >,
-    ) -> Result<Self, crate::node_arena::NodeArenaError> {
-        let mut destination = self.clone();
-        destination.current_page.relocate_lists(relocation)?;
-        for node in destination
-            .contribution
-            .iter_mut()
-            .chain(&mut destination.page_discards)
-            .chain(&mut destination.split_discards)
-        {
-            let mut result = Ok(());
-            node.visit_node_lists_mut(|list| {
-                if result.is_ok() {
-                    result = relocation
-                        .relocate(*list)
-                        .map(|relocated| *list = relocated);
-                }
-            });
-            result?;
-        }
-        Ok(destination)
-    }
-
     pub(crate) fn font_roots_are_live(
         &self,
         mut is_live: impl FnMut(crate::ids::FontId) -> bool,

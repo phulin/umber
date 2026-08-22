@@ -167,55 +167,6 @@ pub struct NodeArena<L, Glue = GlueSpec, Tokens = NodeTokenList> {
     rows: Vec<Option<NodeArenaRow<L, Glue, Tokens>>>,
 }
 
-/// Dense old-to-new coordinate table produced by one cold arena copy.
-///
-/// This destination-local scratch is never retained by ordinary reads.
-pub(crate) struct NodeRelocation<Source, Destination> {
-    source_owner: u64,
-    source_generations: Vec<Option<u64>>,
-    rows: Vec<Option<NodeListId<Destination>>>,
-    destination_cursor_by_prefix: Vec<u32>,
-    _source: PhantomData<fn(&Source) -> &Source>,
-}
-
-impl<Source, Destination> NodeRelocation<Source, Destination> {
-    pub(crate) fn relocate(
-        &self,
-        source: NodeListId<Source>,
-    ) -> Result<NodeListId<Destination>, NodeArenaError> {
-        let Some(index) = source.index() else {
-            return Ok(NodeListId::empty());
-        };
-        if source.owner != self.source_owner
-            || self.source_generations.get(index).copied().flatten() != Some(source.generation)
-        {
-            return Err(NodeArenaError::InvalidList);
-        }
-        self.rows
-            .get(index)
-            .copied()
-            .flatten()
-            .ok_or(NodeArenaError::InvalidList)
-    }
-
-    pub(crate) fn relocate_cursor<Glue, Tokens>(
-        &self,
-        source: NodeArenaCursor<Source>,
-        destination: &NodeArena<Destination, Glue, Tokens>,
-    ) -> Result<NodeArenaCursor<Destination>, NodeArenaError> {
-        if source.owner != self.source_owner
-            || source.rows as usize >= self.destination_cursor_by_prefix.len()
-        {
-            return Err(NodeArenaError::ForeignCursor);
-        }
-        Ok(NodeArenaCursor {
-            owner: destination.owner,
-            rows: self.destination_cursor_by_prefix[source.rows as usize],
-            _lifetime: PhantomData,
-        })
-    }
-}
-
 struct NodeArenaRow<L, Glue, Tokens> {
     generation: u64,
     nodes: Box<[Node<NodeListId<L>, Glue, Tokens>]>,
@@ -370,64 +321,6 @@ impl<L, Glue, Tokens> NodeArena<L, Glue, Tokens> {
             core::convert::identity,
             core::convert::identity,
         )
-    }
-
-    /// Copies every live row to an independent arena in canonical old-row
-    /// order and returns the dense relocation table for roots and cursors.
-    pub(crate) fn dense_copy<D, OtherGlue, OtherTokens>(
-        &self,
-        mut map_glue: impl FnMut(Glue) -> OtherGlue,
-        mut map_tokens: impl FnMut(Tokens) -> OtherTokens,
-    ) -> Result<(NodeArena<D, OtherGlue, OtherTokens>, NodeRelocation<L, D>), NodeArenaError>
-    where
-        Glue: Clone,
-        Tokens: Clone,
-    {
-        let mut destination = NodeArena::new();
-        let roots = self
-            .rows
-            .iter()
-            .enumerate()
-            .filter_map(|(index, row)| {
-                row.as_ref().map(|row| {
-                    NodeListId::from_row(
-                        self.owner,
-                        u32::try_from(index + 1).expect("live row fits u32"),
-                        row.generation,
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-        let relocated =
-            self.promote_into_with(&roots, &mut destination, &mut map_glue, &mut map_tokens)?;
-        let mut rows = vec![None; self.rows.len()];
-        for (source, destination) in roots.iter().zip(relocated) {
-            rows[source.index().expect("live root")] = Some(destination);
-        }
-        let mut destination_cursor_by_prefix = Vec::new();
-        destination_cursor_by_prefix
-            .try_reserve_exact(self.rows.len().saturating_add(1))
-            .map_err(|_| NodeArenaError::AllocationFailed)?;
-        destination_cursor_by_prefix.push(0);
-        let mut live = 0_u32;
-        for row in &self.rows {
-            live = live.saturating_add(u32::from(row.is_some()));
-            destination_cursor_by_prefix.push(live);
-        }
-        Ok((
-            destination,
-            NodeRelocation {
-                source_owner: self.owner,
-                source_generations: self
-                    .rows
-                    .iter()
-                    .map(|row| row.as_ref().map(|row| row.generation))
-                    .collect(),
-                rows,
-                destination_cursor_by_prefix,
-                _source: PhantomData,
-            },
-        ))
     }
 
     /// Collects semantic payload roots in the same deterministic order used

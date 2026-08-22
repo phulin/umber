@@ -133,46 +133,6 @@ pub(crate) struct SaveJournal<G> {
 }
 
 impl<G> SaveJournal<G> {
-    pub(crate) fn dense_copy(
-        &self,
-        mut map_word: impl FnMut(StateWord<G>) -> Result<StateWord<G>, crate::env::StateError>,
-    ) -> Result<Self, crate::env::StateError> {
-        let mut destination = Self::new();
-        destination
-            .entries
-            .try_reserve_exact(self.entries.len())
-            .map_err(|_| {
-                crate::env::StateError::Bank(crate::env::banks::BankError::AllocationFailed)
-            })?;
-        for entry in &self.entries {
-            destination.entries.push(match *entry {
-                JournalEntry::Mutation(mutation) => JournalEntry::Mutation(Mutation {
-                    cell: mutation.cell,
-                    before: map_word(mutation.before)?,
-                    before_level: mutation.before_level,
-                    after: map_word(mutation.after)?,
-                    after_level: mutation.after_level,
-                    saved_at: mutation.saved_at,
-                    kind: mutation.kind,
-                }),
-                JournalEntry::GroupEnter(frame) => JournalEntry::GroupEnter(frame),
-                JournalEntry::GroupExit(frame) => JournalEntry::GroupExit(frame),
-            });
-        }
-        Ok(destination)
-    }
-
-    pub(crate) fn relocate_cursor(
-        &self,
-        source: &Self,
-        cursor: JournalCursor<G>,
-    ) -> Result<JournalCursor<G>, crate::env::StateError> {
-        if !source.validate_cursor(cursor) || cursor.position() as usize > self.entries.len() {
-            return Err(crate::env::StateError::InvalidCursor);
-        }
-        Ok(JournalCursor::new(self.owner, cursor.position()))
-    }
-
     #[must_use]
     pub(crate) fn new() -> Self {
         let owner = NEXT_JOURNAL_OWNER

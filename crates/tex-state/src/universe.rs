@@ -182,21 +182,6 @@ pub struct RuntimeCheckpoint<G> {
     prepared_mag: Option<i32>,
 }
 
-/// A cold generation copy could not be staged without changing its source.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UniverseCompactionError {
-    Retired,
-    NonQuiescent,
-    AllocationFailed,
-    InvalidCheckpoint,
-}
-
-/// Destination-local dense relocation state for runtime checkpoint roots.
-pub(crate) struct UniverseRelocation<G> {
-    durable_nodes: crate::node_arena::NodeRelocation<G, G>,
-    pub(crate) page_nodes: crate::node_arena::NodeRelocation<PageLifetime, PageLifetime>,
-}
-
 impl<G> Clone for RuntimeCheckpoint<G> {
     fn clone(&self) -> Self {
         Self {
@@ -211,59 +196,6 @@ impl<G> Clone for RuntimeCheckpoint<G> {
             interaction_mode: self.interaction_mode,
             prepared_mag: self.prepared_mag,
         }
-    }
-}
-
-impl<G> RuntimeCheckpoint<G> {
-    pub(crate) fn dense_copy(
-        &self,
-        source: &Universe<G>,
-        destination: &Universe<G>,
-        relocation: &UniverseRelocation<G>,
-    ) -> Result<Self, UniverseCompactionError> {
-        let source_core = source
-            .core
-            .as_ref()
-            .ok_or(UniverseCompactionError::Retired)?;
-        let destination_core = destination
-            .core
-            .as_ref()
-            .ok_or(UniverseCompactionError::Retired)?;
-        let mark = self.state.mark();
-        source_core
-            .validate_durable_node_cursor(*mark.durable())
-            .map_err(|_| UniverseCompactionError::InvalidCheckpoint)?;
-        let journal = destination_core
-            .relocate_journal_cursor(source_core, *mark.journal())
-            .map_err(|_| UniverseCompactionError::InvalidCheckpoint)?;
-        let durable = destination_core
-            .relocate_durable_cursor(&relocation.durable_nodes, *mark.durable())
-            .map_err(|_| UniverseCompactionError::InvalidCheckpoint)?;
-        let page = relocation
-            .page_nodes
-            .relocate_cursor(*mark.page(), &destination.page_nodes)
-            .map_err(|_| UniverseCompactionError::InvalidCheckpoint)?;
-        Ok(Self {
-            state: GenerationCheckpoint::new(
-                destination_core.generation_owner(),
-                BoundedStateMark::new(journal, durable, page, ()),
-            ),
-            page: self
-                .page
-                .dense_copy(&relocation.page_nodes)
-                .map_err(|_| UniverseCompactionError::InvalidCheckpoint)?,
-            pdf: self
-                .pdf
-                .dense_copy(&relocation.durable_nodes)
-                .map_err(|_| UniverseCompactionError::InvalidCheckpoint)?,
-            world: self.world.clone(),
-            fonts: self.fonts,
-            sources: self.sources,
-            hyphenation: self.hyphenation.clone(),
-            dependencies: self.dependencies.clone(),
-            interaction_mode: self.interaction_mode,
-            prepared_mag: self.prepared_mag,
-        })
     }
 }
 
@@ -477,68 +409,6 @@ pub struct Universe<G> {
 }
 
 impl<G> Universe<G> {
-    /// Stages a complete cold copy into independent physical owners.
-    ///
-    /// Immutable row coordinates remain dense and index-stable; durable and
-    /// page node coordinates are rewritten through explicit relocation
-    /// tables. The source is borrowed immutably until the caller publishes
-    /// the fully validated destination.
-    pub(crate) fn dense_copy(
-        &self,
-    ) -> Result<(Self, UniverseRelocation<G>), UniverseCompactionError> {
-        if self.restore_owner.is_some()
-            || !self.dependencies.compaction_is_quiescent()
-            || !self.world.compaction_is_quiescent()
-        {
-            return Err(UniverseCompactionError::NonQuiescent);
-        }
-        let source_core = self.core.as_ref().ok_or(UniverseCompactionError::Retired)?;
-        let (core, state_relocation) = source_core
-            .dense_copy()
-            .map_err(|_| UniverseCompactionError::AllocationFailed)?;
-        let (page_nodes, page_relocation) = self
-            .page_nodes
-            .dense_copy(core::convert::identity, core::convert::identity)
-            .map_err(|_| UniverseCompactionError::AllocationFailed)?;
-        let page = self
-            .page
-            .dense_copy(&page_relocation)
-            .map_err(|_| UniverseCompactionError::InvalidCheckpoint)?;
-        let pdf = self
-            .pdf
-            .dense_copy(state_relocation.durable_nodes())
-            .map_err(|_| UniverseCompactionError::InvalidCheckpoint)?;
-        Ok((
-            Self {
-                interner: None,
-                core: Some(core),
-                page_nodes,
-                fonts: self.fonts.clone(),
-                page,
-                pdf,
-                sources: self.sources.clone(),
-                hyphenation: self.hyphenation.clone(),
-                world: self.world.clone(),
-                dependencies: self.dependencies.clone(),
-                interaction_mode: self.interaction_mode,
-                prepared_mag: self.prepared_mag,
-                error_context_widths: self.error_context_widths,
-                engine_usage: self.engine_usage.clone(),
-                provenance_demand: self.provenance_demand,
-                provenance_budgets: self.provenance_budgets,
-                primitive_names: self.primitive_names.clone(),
-                primitive_meanings: self.primitive_meanings.clone(),
-                pure_memo_config: self.pure_memo_config,
-                pure_memo_capability: self.pure_memo_capability.clone(),
-                restore_owner: None,
-            },
-            UniverseRelocation {
-                durable_nodes: state_relocation.durable_nodes,
-                page_nodes: page_relocation,
-            },
-        ))
-    }
-
     pub(crate) fn interner(&self) -> &Interner {
         self.interner
             .as_deref()
@@ -2074,11 +1944,6 @@ impl<G> Universe<G> {
             .as_ref()
             .expect("live Universe has an admitted session epoch")
             .is_last_owner()
-            || !self
-                .core
-                .as_ref()
-                .ok_or(UniverseError::Retired)?
-                .can_retire()
         {
             return Err(UniverseError::State(StateError::GenerationInUse));
         }
@@ -2103,20 +1968,6 @@ impl<G> Universe<G> {
             .ok_or(UniverseError::Retired)?
             .retire()
             .map_err(UniverseError::State)
-    }
-
-    #[must_use]
-    pub(crate) fn generation_can_retire(&self) -> bool {
-        self.core.as_ref().is_some_and(StateCore::can_retire)
-    }
-
-    #[must_use]
-    pub(crate) fn generation_owner_count(&self) -> Result<usize, UniverseError> {
-        Ok(self
-            .core
-            .as_ref()
-            .ok_or(UniverseError::Retired)?
-            .generation_owner_count())
     }
 
     #[must_use]

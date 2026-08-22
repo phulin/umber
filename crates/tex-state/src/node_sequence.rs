@@ -73,41 +73,6 @@ impl PartialEq for NodeSequence {
 }
 
 impl NodeSequence {
-    /// Rewrites every nested page-list coordinate in both semantic and
-    /// physical channels. This is a cold relocation hook, never a hot read.
-    pub fn try_map_lists<Error>(
-        &mut self,
-        mut map: impl FnMut(PageListId) -> Result<PageListId, Error>,
-    ) -> Result<(), Error> {
-        for node in self.semantic.iter_mut().chain(&mut self.physical) {
-            let mut error = None;
-            node.visit_node_lists_mut(|list| {
-                if error.is_none() {
-                    match map(*list) {
-                        Ok(relocated) => *list = relocated,
-                        Err(found) => error = Some(found),
-                    }
-                }
-            });
-            if let Some(error) = error {
-                return Err(error);
-            }
-        }
-        self.frozen_semantic = self.frozen_semantic.map(&mut map).transpose()?;
-        self.frozen_physical = self.frozen_physical.map(&mut map).transpose()?;
-        for lineage in self
-            .semantic_high_cell_lineages
-            .iter_mut()
-            .chain(&mut self.physical_high_cell_lineages)
-            .flatten()
-        {
-            if let DirectHighCellLineage::Frozen { list, .. } = lineage {
-                *list = map(*list)?;
-            }
-        }
-        Ok(())
-    }
-
     #[must_use]
     pub fn mirrored(nodes: Vec<Node>) -> Self {
         let len = nodes.len();

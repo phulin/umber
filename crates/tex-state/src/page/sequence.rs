@@ -10,27 +10,6 @@ pub(super) struct PageNodeSequence {
 }
 
 impl PageNodeSequence {
-    pub(super) fn relocate_lists(
-        &mut self,
-        relocation: &crate::node_arena::NodeRelocation<
-            crate::node_arena::PageLifetime,
-            crate::node_arena::PageLifetime,
-        >,
-    ) -> Result<(), crate::node_arena::NodeArenaError> {
-        for node in &mut self.nodes {
-            let mut result = Ok(());
-            node.visit_node_lists_mut(|list| {
-                if result.is_ok() {
-                    result = relocation
-                        .relocate(*list)
-                        .map(|relocated| *list = relocated);
-                }
-            });
-            result?;
-        }
-        Ok(())
-    }
-
     #[cfg(test)]
     pub(super) fn retained_bytes(&self) -> usize {
         self.nodes

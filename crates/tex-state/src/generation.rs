@@ -104,13 +104,6 @@ impl<G> GenerationOwner<G> {
         Arc::strong_count(&self.generation) == 1
     }
 
-    /// Cold lifecycle census used to prove that every coarse owner is inside
-    /// the aggregate selected for replacement before publication begins.
-    #[must_use]
-    pub(crate) fn owner_count(&self) -> usize {
-        Arc::strong_count(&self.generation)
-    }
-
     pub(crate) fn retire(self) -> Result<GenerationRetirement, Self> {
         match Arc::try_unwrap(self.generation) {
             Ok(generation) => Ok(generation
@@ -132,23 +125,6 @@ pub(crate) struct GenerationRetirement {
 }
 
 impl<G> Generation<G> {
-    pub(crate) fn dense_copy(&self) -> Result<Self, crate::env::StateError> {
-        Ok(Self {
-            definitions: self.definitions.dense_copy().map_err(|_| {
-                crate::env::StateError::Bank(crate::env::banks::BankError::AllocationFailed)
-            })?,
-            token_lists: self.token_lists.dense_copy().map_err(|_| {
-                crate::env::StateError::Bank(crate::env::banks::BankError::AllocationFailed)
-            })?,
-            glue: self.glue.dense_copy().map_err(|_| {
-                crate::env::StateError::Bank(crate::env::banks::BankError::AllocationFailed)
-            })?,
-            provenance: self.provenance.dense_copy().map_err(|_| {
-                crate::env::StateError::Bank(crate::env::banks::BankError::AllocationFailed)
-            })?,
-        })
-    }
-
     pub(crate) fn new() -> Self {
         Self {
             definitions: DefinitionArena::new(ArenaToken::new()),

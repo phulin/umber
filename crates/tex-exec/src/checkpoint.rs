@@ -62,45 +62,6 @@ impl<G> Clone for EngineCheckpoint<G> {
 }
 
 impl<G> EngineCheckpoint<G> {
-    pub(crate) fn dense_copy_for_compaction(
-        &self,
-        context: &tex_state::RetainedStateCompactionContext<'_, G>,
-    ) -> Result<Self, crate::RetainedEngineCompactionError>
-    where
-        G: 'static,
-    {
-        let runtime = context
-            .relocate_runtime_checkpoint(&self.runtime)
-            .map_err(crate::RetainedEngineCompactionError::State)?;
-        let generation = context
-            .destination_generation_owner()
-            .map_err(crate::RetainedEngineCompactionError::Universe)?;
-        let command = self
-            .command
-            .dense_copy_for_compaction(generation)
-            .map_err(crate::RetainedEngineCompactionError::Command)?;
-        let modes = self
-            .modes
-            .dense_copy_for_compaction(|list| context.relocate_page_list(list))
-            .map_err(crate::RetainedEngineCompactionError::Nodes)?;
-        let mode_hash = modes.semantic_fingerprint(context.destination_universe_ref());
-        if mode_hash != self.mode_hash {
-            return Err(crate::RetainedEngineCompactionError::SemanticMismatch);
-        }
-        Ok(Self {
-            schema_version: self.schema_version,
-            boundary: self.boundary,
-            runtime,
-            command: Box::new(command),
-            modes,
-            mode_hash,
-            root_anchor: self.root_anchor,
-            effect_prefix: self.effect_prefix,
-            artifact_prefix: self.artifact_prefix,
-            budget_counters: self.budget_counters,
-        })
-    }
-
     /// Captures a named boundary. Command publication proves that no scanner,
     /// macro matcher, alignment delivery, or attempt arena remains live.
     pub fn capture_checkpoint(

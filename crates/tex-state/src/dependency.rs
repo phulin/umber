@@ -317,11 +317,6 @@ impl Clone for DependencyRuntime {
 }
 
 impl DependencyRuntime {
-    #[must_use]
-    pub(crate) const fn compaction_is_quiescent(&self) -> bool {
-        self.active.is_none()
-    }
-
     /// Starts a region. Nested computations should instead record a bounded
     /// [`DependencyKey::Query`] in their parent.
     pub fn begin_region(&mut self) -> Result<DependencyRegionToken, DependencyRegionError> {

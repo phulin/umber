@@ -19,7 +19,7 @@ use crate::ids::FontId;
 use crate::interner::Symbol;
 use crate::journal::{JournalCursor, JournalEntry, Mutation, MutationKind, SaveJournal};
 use crate::meaning::{MeaningWord, ResolvedMeaning};
-use crate::node_arena::{DurableListId, NodeRelocation};
+use crate::node_arena::DurableListId;
 use crate::scaled::Scaled;
 use crate::world::JobClock;
 
@@ -448,87 +448,6 @@ pub(crate) struct DenseState<G> {
 }
 
 impl<G> DenseState<G> {
-    pub(crate) fn dense_copy(&self, nodes: &NodeRelocation<G, G>) -> Result<Self, StateError> {
-        let relocate_word = |word: StateWord<G>| -> Result<StateWord<G>, StateError> {
-            Ok(match word {
-                StateWord::NodeList(value) => StateWord::NodeList(
-                    value
-                        .map(|value| nodes.relocate(value))
-                        .transpose()
-                        .map_err(|_| StateError::InvalidCursor)?,
-                ),
-                other => other,
-            })
-        };
-        let mut groups = Vec::new();
-        groups
-            .try_reserve_exact(self.groups.len())
-            .map_err(|_| StateError::Bank(BankError::AllocationFailed))?;
-        groups.extend_from_slice(&self.groups);
-        Ok(Self {
-            meanings: self.meanings.try_map(core::convert::identity)?,
-            counts: self.counts.try_map(core::convert::identity, zero_i32)?,
-            dimensions: self
-                .dimensions
-                .try_map(core::convert::identity, zero_scaled)?,
-            token_registers: self
-                .token_registers
-                .try_map(core::convert::identity, no_token_list::<G>)?,
-            glue_registers: self
-                .glue_registers
-                .try_map(core::convert::identity, no_glue::<G>)?,
-            box_registers: self.box_registers.try_map_result(
-                |value| {
-                    value
-                        .map(|value| nodes.relocate(value))
-                        .transpose()
-                        .map_err(|_| StateError::InvalidCursor)
-                },
-                no_node_list::<G>,
-            )?,
-            mu_glue_registers: self
-                .mu_glue_registers
-                .try_map(core::convert::identity, no_glue::<G>)?,
-            integer_parameters: self.integer_parameters.try_map(core::convert::identity)?,
-            dimension_parameters: self.dimension_parameters.try_map(core::convert::identity)?,
-            token_parameters: self.token_parameters.try_map(core::convert::identity)?,
-            glue_parameters: self.glue_parameters.try_map(core::convert::identity)?,
-            current_font: self.current_font,
-            math_family_fonts: self.math_family_fonts.try_map(core::convert::identity)?,
-            catcodes: self
-                .catcodes
-                .try_map(core::convert::identity, catcode_default)?,
-            lccodes: self
-                .lccodes
-                .try_map(core::convert::identity, lccode_default)?,
-            uccodes: self
-                .uccodes
-                .try_map(core::convert::identity, uccode_default)?,
-            sfcodes: self
-                .sfcodes
-                .try_map(core::convert::identity, sfcode_default)?,
-            mathcodes: self
-                .mathcodes
-                .try_map(core::convert::identity, mathcode_default)?,
-            delcodes: self
-                .delcodes
-                .try_map(core::convert::identity, delcode_default)?,
-            font_runtime: self.font_runtime.dense_copy()?,
-            fresh_parameter_profiles: self.fresh_parameter_profiles,
-            journal: self.journal.dense_copy(relocate_word)?,
-            groups,
-            next_group_lineage: self.next_group_lineage,
-        })
-    }
-
-    pub(crate) fn relocate_journal_cursor(
-        &self,
-        source: &Self,
-        cursor: JournalCursor<G>,
-    ) -> Result<JournalCursor<G>, StateError> {
-        self.journal.relocate_cursor(&source.journal, cursor)
-    }
-
     pub(crate) fn capture_format_font_runtime(
         &self,
         font: FontId,

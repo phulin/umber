@@ -444,39 +444,6 @@ impl<G, Owner> CommandSummary<G, Owner> {
     }
 }
 
-impl<G> CommandSummary<G> {
-    /// Copies the one selected quiescent command root into an independent
-    /// destination timeline whose coarse immutable owner is the freshly
-    /// relocated state generation.
-    pub fn dense_copy_for_compaction(
-        &self,
-        destination_generation: GenerationOwner<G>,
-    ) -> Result<Self, CommandRestoreError> {
-        let (roots, attempt) = self
-            .generation
-            .resolve(self.cursor)
-            .ok_or(CommandRestoreError::InvalidCursor)?;
-        if !attempt.is_empty() {
-            return Err(CommandRestoreError::InvalidCursor);
-        }
-        let timeline = Arc::new(CommandTimeline::default());
-        let cursor = timeline
-            .retain(
-                Arc::new(roots.as_ref().clone()),
-                attempt,
-                self.cursor.arenas(),
-                self.cursor.stacks(),
-            )
-            .map_err(|_| CommandRestoreError::InvalidCursor)?;
-        Ok(Self::new(
-            CommandGenerationOwner::new(destination_generation, timeline),
-            cursor,
-            self.profile_fingerprint,
-            self.root_source_anchor,
-        ))
-    }
-}
-
 /// The first nonquiescent command-state class preventing summary publication.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum CommandSummaryError {
