@@ -38,8 +38,11 @@ use tex_state::{
     ResolvedSourceLocation, Universe, World, WorldError,
 };
 
+mod history;
 mod trace;
 
+pub use history::{BoundaryKey, BoundaryRecord};
+use history::{HistoryComparison, compare_histories, prune_history};
 pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
 
 const SESSION_INTERNER_NAMES: u32 = 65_536;
@@ -78,51 +81,6 @@ pub struct Edit {
     pub expected_hash: ContentHash,
     pub range: std::ops::Range<usize>,
     pub replacement: String,
-}
-
-/// Executor-owned occurrence key for one named boundary.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct BoundaryKey {
-    pub position: usize,
-    pub boundary: EngineBoundary,
-    pub ordinal: u32,
-}
-
-/// Handle-free accepted observation of one named runtime boundary.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BoundaryRecord {
-    revision: RevisionId,
-    key: BoundaryKey,
-    effect_prefix: usize,
-    artifact_prefix: usize,
-    state_hash: u64,
-}
-
-impl BoundaryRecord {
-    #[must_use]
-    pub const fn revision(&self) -> RevisionId {
-        self.revision
-    }
-
-    #[must_use]
-    pub const fn key(&self) -> BoundaryKey {
-        self.key
-    }
-
-    #[must_use]
-    pub const fn artifact_prefix(&self) -> usize {
-        self.artifact_prefix
-    }
-
-    #[must_use]
-    pub const fn effect_prefix(&self) -> usize {
-        self.effect_prefix
-    }
-
-    #[must_use]
-    pub const fn state_hash(&self) -> u64 {
-        self.state_hash
-    }
 }
 
 /// Honest split between restart observations and detached accepted output.
@@ -1813,104 +1771,6 @@ impl Session {
     }
 }
 
-struct HistoryComparison<'a> {
-    execution_path: RevisionExecutionPath,
-    old: &'a [BoundaryRecord],
-    new: &'a [BoundaryRecord],
-    unchanged_content: bool,
-    source_len: usize,
-    delivered_commands: usize,
-    revision_setup_latency: Duration,
-    pages_retyped: usize,
-}
-
-fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetrics {
-    let HistoryComparison {
-        execution_path,
-        old,
-        new,
-        unchanged_content,
-        source_len,
-        delivered_commands,
-        revision_setup_latency,
-        pages_retyped,
-    } = comparison;
-    if execution_path == RevisionExecutionPath::Cold || old.is_empty() {
-        return ReuseMetrics {
-            execution_path,
-            pages_retyped,
-            reexecuted_bytes: source_len,
-            reexecuted_tokens: delivered_commands,
-            reexecuted_commands: delivered_commands,
-            reexecuted_paragraphs: new
-                .iter()
-                .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
-                .count(),
-            revision_setup_latency,
-            trace_retained_bytes: std::mem::size_of_val(new),
-            ..ReuseMetrics::default()
-        };
-    }
-    if !unchanged_content {
-        return ReuseMetrics {
-            execution_path,
-            pages_retyped,
-            reexecuted_bytes: source_len,
-            reexecuted_tokens: delivered_commands,
-            reexecuted_commands: delivered_commands,
-            reexecuted_paragraphs: new
-                .iter()
-                .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
-                .count(),
-            same_history_stop: SameHistoryStop::HashesDiverged,
-            revision_setup_latency,
-            trace_retained_bytes: std::mem::size_of_val(new),
-            ..ReuseMetrics::default()
-        };
-    }
-    let started = Timer::start();
-    let mut attempts = 0usize;
-    let mut mismatches = 0usize;
-    let mut convergence = None;
-    for (old_record, new_record) in old.iter().zip(new) {
-        if old_record.key.boundary != new_record.key.boundary {
-            continue;
-        }
-        attempts = attempts.saturating_add(1);
-        if old_record.key == new_record.key && old_record.state_hash == new_record.state_hash {
-            convergence.get_or_insert(new_record.key);
-        } else {
-            mismatches = mismatches.saturating_add(1);
-        }
-    }
-    ReuseMetrics {
-        execution_path,
-        convergence_boundary: convergence,
-        pages_retyped,
-        reexecuted_bytes: source_len,
-        reexecuted_tokens: delivered_commands,
-        reexecuted_commands: delivered_commands,
-        reexecuted_paragraphs: new
-            .iter()
-            .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
-            .count(),
-        same_history_attempts: attempts,
-        same_history_hash_mismatches: mismatches,
-        trace_nodes_walked: attempts,
-        trace_retained_bytes: std::mem::size_of_val(new),
-        same_history_stop: if convergence.is_some() {
-            SameHistoryStop::Matched
-        } else if attempts == 0 {
-            SameHistoryStop::NoComparableBoundary
-        } else {
-            SameHistoryStop::HashesDiverged
-        },
-        revision_setup_latency,
-        trace_validation_latency: started.elapsed(),
-        ..ReuseMetrics::default()
-    }
-}
-
 fn source_file_bytes(source: &str, byte_projection: bool) -> Vec<u8> {
     if !byte_projection {
         return source.as_bytes().to_vec();
@@ -2104,32 +1964,6 @@ fn replace_layout_range(
         pieces,
         fragments,
     )?)
-}
-
-fn prune_history(mut history: Vec<BoundaryRecord>, budget: usize) -> Vec<BoundaryRecord> {
-    while std::mem::size_of_val(history.as_slice()) > budget && history.len() > 2 {
-        let newest = history.len() - 1;
-        let victim = history
-            .iter()
-            .enumerate()
-            .find(|(index, record)| {
-                *index != 0
-                    && *index != newest
-                    && record.key.boundary == EngineBoundary::OuterParagraphEnd
-            })
-            .or_else(|| {
-                history
-                    .iter()
-                    .enumerate()
-                    .find(|(index, _)| *index != 0 && *index != newest)
-            })
-            .map(|(index, _)| index);
-        let Some(victim) = victim else {
-            break;
-        };
-        history.remove(victim);
-    }
-    history
 }
 
 fn detached_output_bytes(completion: &DetachedEngineCompletion) -> usize {
