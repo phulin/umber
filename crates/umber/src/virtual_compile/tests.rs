@@ -376,7 +376,7 @@ fn replacement_openout_name_becomes_published_artifact_identity() {
     assert!(context_lines[0].ends_with("\\shipout\\copy0\\end"));
     assert_eq!(context_lines[0].chars().count(), 50);
     assert_eq!(context_lines[1].chars().count(), 50);
-    plan = retained;
+    plan = *retained;
     plan.retarget_stream_open(&failure, &replacement)
         .expect("retarget prepared page");
     assert!(matches!(
@@ -498,7 +498,7 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
     };
     assert_eq!(failure.slot(), Some(tex_state::StreamSlot::new(1)));
     assert_eq!(failure.path(), Some(blocked.as_path()));
-    plan = retained;
+    plan = *retained;
     plan.retarget_stream_open(&failure, &replacement)
         .expect("exact occurrence retargets");
 
@@ -576,7 +576,7 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
     assert_eq!(second_failure.slot(), Some(tex_state::StreamSlot::new(1)));
     assert_eq!(second_failure.path(), Some(blocked.as_path()));
     assert_ne!(second_failure.ordinal(), failure.ordinal());
-    plan = retained;
+    plan = *retained;
     plan.retarget_stream_open(&second_failure, &replacement)
         .expect("second exact occurrence retargets");
     plan.commit_effects(&mut destination)
@@ -659,7 +659,8 @@ fn incremental_effect_prefix_edit_preserves_openout_retry_identity() {
         hashes_before,
         "only successful retarget changes prepared artifact identity"
     );
-    plan.commit_effects(&mut destination)
+    (*plan)
+        .commit_effects(&mut destination)
         .expect("replacement finalization succeeds");
 }
 

@@ -169,7 +169,7 @@ fn same_run_input_fulfillment(name: &str, content: FileContent) -> ResourceFulfi
 #[derive(Debug)]
 pub enum SessionState {
     NeedResource(ResourceNeed),
-    Complete(RunResult),
+    Complete(Box<RunResult>),
 }
 
 /// Failure of the retained host/session protocol.
@@ -891,7 +891,7 @@ impl<'a, G> EngineSession<'a, G> {
                 None => self.advance_until_waiting(checkpoints)?,
             };
             match state {
-                SessionState::Complete(result) => return Ok(result),
+                SessionState::Complete(result) => return Ok(*result),
                 SessionState::NeedResource(need) => {
                     declined = if self.answer_need(host, &need)? {
                         0
@@ -1048,7 +1048,7 @@ impl<'a, G> EngineSession<'a, G> {
             .control
             .take_format_dump(self.stores)
             .map_err(SessionError::FormatDump)?;
-        Ok(SessionState::Complete(RunResult {
+        Ok(SessionState::Complete(Box::new(RunResult {
             terminal_text,
             status: TexRunStatus::from_error_history(self.stores.world().error_channel().history()),
             mode_transitions: self.mode_transitions.clone(),
@@ -1058,7 +1058,7 @@ impl<'a, G> EngineSession<'a, G> {
             committed_artifacts,
             effects,
             format_dump,
-        }))
+        })))
     }
 }
 

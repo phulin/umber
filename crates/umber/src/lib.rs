@@ -595,7 +595,7 @@ pub struct PlannedFinalization {
 pub enum FinalizationCommit {
     Committed(CommittedFinalization),
     Retry {
-        plan: PlannedFinalization,
+        plan: Box<PlannedFinalization>,
         failure: tex_exec::CompletionPublicationFailure,
     },
 }
@@ -665,10 +665,10 @@ impl PlannedFinalization {
             }
             tex_exec::CompletionPublication::Retry { plan, failure } => {
                 Ok(FinalizationCommit::Retry {
-                    plan: Self {
+                    plan: Box::new(Self {
                         publication: plan,
                         files: self.files,
-                    },
+                    }),
                     failure,
                 })
             }
@@ -2319,7 +2319,7 @@ mod tests {
 
         plan.retarget_stream_open(&failure, &replacement_path)
             .expect("retarget pending open");
-        let FinalizationCommit::Committed(committed) = plan
+        let FinalizationCommit::Committed(committed) = (*plan)
             .commit_effects_retryable(&mut world)
             .expect("replacement commits")
         else {

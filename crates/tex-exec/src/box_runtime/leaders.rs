@@ -56,6 +56,7 @@ pub(crate) fn take_register_payload<G>(
         .and_then(payload_from_node)
 }
 
+#[allow(clippy::too_many_arguments)] // Leader contribution keeps mode, glue, fuel, and diagnostics independent.
 pub(crate) fn append_leader_contribution<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,

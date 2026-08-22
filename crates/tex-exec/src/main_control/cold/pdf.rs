@@ -1728,8 +1728,6 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
     )?;
     let mut shipout_diagnostics = transaction.take_diagnostic_effects();
     drop(transaction);
-    drop(expand_write);
-    drop(expand_replay);
     let command = command_cell.into_inner();
     for effect in shipout_diagnostics.drain() {
         command.diagnostic_effects.push(effect);

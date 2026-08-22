@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use tex_state::{InputOpenState, World};
+use tex_state::World;
 
 use super::{TexFontSearchPath, TexInputSearchPath};
 

@@ -954,12 +954,13 @@ fn generic_pdf_asset_uses_the_snapshot_tex_vocabulary() {
     );
     assert_eq!(
         resolver
-            .resolve_generic_asset(
+            .resolve_generic_file(
                 &local_resolver(directory.path()),
                 b"pdftex.map",
                 &FetchCancellation::new(),
             )
-            .expect("generic asset resolves"),
+            .expect("generic asset resolves")
+            .bytes,
         bytes
     );
 }

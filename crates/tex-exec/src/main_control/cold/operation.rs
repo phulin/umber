@@ -1273,16 +1273,15 @@ pub(in crate::main_control) type PreparedColdCommand<G> =
 
 #[derive(Debug)]
 pub(in crate::main_control) enum ColdPreparationError {
-    Promotion(tex_command::AttemptError),
+    Promotion,
     Allocation,
     ReceiptUnderflow,
-    ReceiptRemainder { remaining: usize },
-    Definition(tex_state::UniverseError),
+    ReceiptRemainder,
 }
 
 impl From<tex_command::AttemptError> for ColdPreparationError {
-    fn from(error: tex_command::AttemptError) -> Self {
-        Self::Promotion(error)
+    fn from(_: tex_command::AttemptError) -> Self {
+        Self::Promotion
     }
 }
 
@@ -1304,11 +1303,10 @@ impl<T> PromotionCursor<T> {
     }
 
     fn finish(self) -> Result<(), ColdPreparationError> {
-        let remaining = self.token_lists.len();
-        if remaining == 0 {
+        if self.token_lists.len() == 0 {
             Ok(())
         } else {
-            Err(ColdPreparationError::ReceiptRemainder { remaining })
+            Err(ColdPreparationError::ReceiptRemainder)
         }
     }
 }
@@ -2263,58 +2261,6 @@ impl<G> ColdOperation<G> {
         }
     }
 
-    pub(in crate::main_control) const fn fires_afterassignment(&self) -> bool {
-        matches!(
-            self,
-            Self::Count { .. }
-                | Self::Dimen { .. }
-                | Self::BoxDimensionAssignment { .. }
-                | Self::Skip { .. }
-                | Self::Muskip { .. }
-                | Self::Toks { .. }
-                | Self::IntParam { .. }
-                | Self::DimenParam { .. }
-                | Self::TokParam { .. }
-                | Self::GlueParam { .. }
-                | Self::CodeTable { .. }
-                | Self::PdfFontCode { .. }
-                | Self::PdfNoLigatures { .. }
-                | Self::FontDimen { .. }
-                | Self::FontInteger { .. }
-                | Self::FontDefinition { .. }
-                | Self::GeneratedFontDefinition { .. }
-                | Self::InputStream { .. }
-                | Self::Arithmetic { .. }
-                | Self::InvalidArithmeticTarget { .. }
-                | Self::CharacterDefinition { .. }
-                | Self::RegisterDefinition { .. }
-                | Self::ParagraphShape { .. }
-                | Self::PenaltyArray { .. }
-                | Self::FontSelect { .. }
-                | Self::MathFamily { .. }
-                | Self::SetBox { .. }
-                | Self::PrevDepth { .. }
-                | Self::SpaceFactor { .. }
-                | Self::PrevGraf { .. }
-                | Self::PageDimension { .. }
-                | Self::PageInteger { .. }
-                | Self::HyphenationData { .. }
-                | Self::SetInteractionMode(..)
-        )
-    }
-
-    pub(in crate::main_control) fn main_loop_character(&self) -> Option<char> {
-        match *self {
-            Self::Character {
-                ch,
-                cat: Catcode::Letter | Catcode::Other,
-                ..
-            } => Some(ch),
-            Self::CharacterCode { value, .. } => u32::try_from(value).ok().and_then(char::from_u32),
-            _ => None,
-        }
-    }
-
     /// Collects attempt-local macro definitions which must be promoted in
     /// the same validated batch as their token-list children.
     pub(in crate::main_control) fn attempt_definition_roots(
@@ -2561,7 +2507,7 @@ mod preparation_tests {
         let extra = PromotionCursor::new(vec![1_u8, 2]);
         assert!(matches!(
             extra.finish(),
-            Err(ColdPreparationError::ReceiptRemainder { remaining: 2 })
+            Err(ColdPreparationError::ReceiptRemainder)
         ));
     }
 }

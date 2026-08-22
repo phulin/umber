@@ -57,7 +57,10 @@ fn output_provenance_admits_only_owned_recipes_within_budget() {
 
     let verified = tex_state::VerifiedArtifact::new(Vec::new())
         .with_built_render_origins(vec![1], builder.finish());
-    let source = verified.render_origins_for_memo().get(0).unwrap()[0]
+    let source = verified
+        .render_origins_for_memo()
+        .get(0)
+        .expect("one artifact origin row")[0]
         .as_ref()
         .expect("detached source recipe");
     assert_eq!(source, &resolver.recipe);

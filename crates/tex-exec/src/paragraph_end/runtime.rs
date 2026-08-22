@@ -49,6 +49,7 @@ pub(crate) fn display_line_dimensions<G>(
     line_shape(&params).dimensions(2)
 }
 
+#[allow(clippy::too_many_arguments)] // Paragraph finalization keeps policy and admitted execution services explicit.
 pub(crate) fn break_current_paragraph<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,

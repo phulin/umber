@@ -85,45 +85,6 @@ impl<G> HotOperation<G> {
     }
 }
 
-impl<G> PreparedHotOperation<G> {
-    pub(super) fn protected_definition_observation(
-        &self,
-        stores: &tex_state::CommandContext<'_, G>,
-    ) -> Option<TokenListRecord> {
-        let Self::MacroDefinition {
-            definition, flags, ..
-        } = self
-        else {
-            return None;
-        };
-        let definition = stores.definition(*definition);
-        flags
-            .contains(MeaningFlags::PROTECTED)
-            .then(|| TokenListRecord {
-                transition: "complete",
-                purpose: "protected_macro",
-                tokens: {
-                    let mut tokens = definition
-                        .parameter_text()
-                        .iter()
-                        .map(|word| match word.semantic_token() {
-                            Token::Param(_) => ObservedToken::MacroMatch,
-                            token => observed_macro_token(token, stores),
-                        })
-                        .collect::<Vec<_>>();
-                    tokens.push(ObservedToken::MacroEndMatch);
-                    tokens.extend(
-                        definition
-                            .replacement_text()
-                            .iter()
-                            .map(|word| observed_macro_token(word.semantic_token(), stores)),
-                    );
-                    tokens
-                },
-            })
-    }
-}
-
 /// Promotes every declared hot-operation root before command-state admission.
 pub(super) fn prepare<G>(
     operation: HotOperation<G>,

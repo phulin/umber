@@ -62,36 +62,6 @@ pub enum RevisionOutputPatchError {
 }
 
 impl RevisionOutputPatch {
-    pub(crate) fn close(
-        effects: tex_state::EffectJournal,
-        artifacts: ArtifactLedger,
-        prepared_dvi_pages: Vec<PreparedDviPage>,
-    ) -> Result<Self, RevisionOutputPatchError> {
-        if !prepared_dvi_pages.is_empty() && prepared_dvi_pages.len() != artifacts.artifacts.len() {
-            return Err(RevisionOutputPatchError::DviPageCount);
-        }
-        for (prepared, (artifact, publication)) in prepared_dvi_pages
-            .iter()
-            .zip(artifacts.artifacts.iter().zip(&artifacts.publications))
-        {
-            if prepared.publication != *publication {
-                return Err(RevisionOutputPatchError::DviPublicationMismatch);
-            }
-            if prepared.hash != artifact.hash() {
-                return Err(RevisionOutputPatchError::DviArtifactMismatch);
-            }
-        }
-        let mut dvi_pages = Vec::with_capacity(prepared_dvi_pages.len());
-        for prepared in prepared_dvi_pages {
-            dvi_pages.push(prepared.plan);
-        }
-        Ok(Self {
-            effects,
-            artifacts,
-            dvi_pages,
-        })
-    }
-
     #[must_use]
     pub const fn effects(&self) -> &tex_state::EffectJournal {
         &self.effects

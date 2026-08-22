@@ -1347,7 +1347,7 @@ fn tracing_display_includes_automatic_discretionary_replacement_after_font_kern(
             kind: DiscKind::AutomaticHyphen,
             pre: empty,
             post: empty,
-            replace: replace,
+            replace,
             physical_replace_count: 1,
         },
         Node::Kern {

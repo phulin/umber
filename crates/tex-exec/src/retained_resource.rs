@@ -7,7 +7,7 @@ use tex_command::{
     FileEnquiryRequest, FileEnquiryResource, FontLoadRequest, FontResource, PdfImageRequest,
     PdfImageResource, RegisteredSourceKind, SourceRegistration,
 };
-use tex_state::{FileContent, InputOpenState, InputReadState, Universe, WorldError};
+use tex_state::{FileContent, InputReadState, Universe, WorldError};
 
 use crate::ResourceNeed;
 

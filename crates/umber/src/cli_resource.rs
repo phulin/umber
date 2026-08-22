@@ -1400,16 +1400,6 @@ impl DistributionResolver {
         Ok(misses)
     }
 
-    fn resolve_generic_asset(
-        &mut self,
-        local: &LocalResolver,
-        logical_name: &[u8],
-        cancellation: &FetchCancellation,
-    ) -> Result<Vec<u8>, NativeRunError> {
-        self.resolve_generic_file(local, logical_name, cancellation)
-            .map(|file| file.bytes)
-    }
-
     fn resolve_generic_file(
         &mut self,
         local: &LocalResolver,

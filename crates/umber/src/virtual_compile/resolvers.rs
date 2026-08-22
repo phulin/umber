@@ -848,7 +848,7 @@ mod tests {
         Dictionary as FixtureDictionary, ValidPdfFixture, array, name, reference,
     };
     use tex_exec::{PdfImagePageBox, PdfImageRequest};
-    use tex_state::{InputOpenState, PdfExternalImageMetadata, World};
+    use tex_state::{PdfExternalImageMetadata, World};
     use umber_vfs::{ProjectWorkspace, VfsLimits};
 
     #[test]

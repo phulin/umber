@@ -82,6 +82,7 @@ pub(crate) fn finish_eq_no<G>(
     FinishedEqNo { side, boxed }
 }
 
+#[allow(clippy::too_many_arguments)] // Display completion keeps nest, pack services, and optional equation state explicit.
 pub(crate) fn finish_display_math<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,

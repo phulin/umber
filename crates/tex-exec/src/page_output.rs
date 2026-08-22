@@ -152,7 +152,9 @@ pub(crate) fn prepare_box255<G>(
         },
     );
     let box255 = stores.publish_page_nodes(vec![Node::VList(packed.node)]);
-    stores.assign_page_box_global(255, box255);
+    stores
+        .assign_page_box_global(255, box255)
+        .expect("output box stays in admitted page storage");
     stores.start_page_after_output();
     for node in distributed.heldover {
         stores.push_current_page_node(node);
@@ -469,7 +471,9 @@ fn package_insertion_box<G>(
         list,
     );
     let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
-    stores.assign_page_box_global(class, boxed);
+    stores
+        .assign_page_box_global(class, boxed)
+        .expect("insertion box stays in admitted page storage");
 }
 
 pub(crate) fn prepend_output_heldover<G>(

@@ -169,7 +169,9 @@ fn replace_split_source<G>(
         remainder_list,
     );
     let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
-    stores.replace_page_box(index, boxed);
+    stores
+        .replace_page_box(index, boxed)
+        .expect("split remainder stays in admitted page storage");
 }
 
 fn update_split_marks<G>(stores: &mut CommandContext<'_, G>, nodes: &[Node]) {

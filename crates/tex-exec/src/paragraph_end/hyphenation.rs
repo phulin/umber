@@ -255,6 +255,7 @@ fn update_hyphenation_context(node: &Node, language: &mut u8, left: &mut usize, 
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Hyphenation traversal keeps cursor, fuel, and projection state independent.
 fn hyphenate_after_glue<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
@@ -569,6 +570,7 @@ fn current_language<G>(stores: &CommandContext<'_, G>) -> u8 {
     u8::try_from(stores.int_param(IntParam::LANGUAGE)).unwrap_or(0)
 }
 
+#[allow(clippy::too_many_arguments)] // Word reconstruction carries independent boundary and projection state.
 fn append_hyphenated_word<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
@@ -663,6 +665,7 @@ fn append_hyphenated_word<G>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Discretionary reconstruction mirrors TeX's source and replacement coordinates.
 fn discretionary_through_node<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,

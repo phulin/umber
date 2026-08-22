@@ -27,6 +27,7 @@ struct SetConfig<'a> {
     offset: Scaled,
 }
 
+#[allow(clippy::too_many_arguments)] // Alignment resolution applies one explicit immutable width plan.
 pub(super) fn set_alignment_nodes<G>(
     kind: AlignmentKind,
     rows: &[Node],

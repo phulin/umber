@@ -352,8 +352,8 @@ fn fraction_rule_delimiter_style_and_rebox_matrix() {
                 let delimiter =
                     delimiters.then_some(super::super::tests::delimiter_code(1, b'(', 1, b'|'));
                 let fraction = MathFraction {
-                    numerator: numerator,
-                    denominator: denominator,
+                    numerator,
+                    denominator,
                     thickness,
                     left_delimiter: delimiter,
                     right_delimiter: delimiter,

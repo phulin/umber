@@ -188,6 +188,7 @@ fn physical_discretionary_projection<G>(
     Some(physical)
 }
 
+#[allow(clippy::too_many_arguments)] // Packing exposes independent TeX parameters and diagnostic capabilities.
 pub(crate) fn hpack_owned_with_overfull_rule<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,

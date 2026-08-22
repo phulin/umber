@@ -324,6 +324,7 @@ fn emit<G>(
 /// that turns it off must still show it. The "into"/"reassigning" half is
 /// checked live (post-write) through [`emit`], for the same reason in
 /// reverse.
+#[allow(clippy::too_many_arguments)] // Mirrors e-TeX's independent pre/post assignment trace facts.
 fn trace_scalar<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,

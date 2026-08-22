@@ -71,6 +71,7 @@ pub fn retry_unavailable_stream_open<G>(
 /// boundary therefore renders §82's context before staging and passes only
 /// its owned string here. The live pending-effect offset remains a separate
 /// transaction argument rather than entering that detached value.
+#[allow(clippy::too_many_arguments)] // Shipout is the explicit join of transaction capabilities and page policy.
 pub(crate) fn shipout_node<G>(
     node: Node,
     origin: ShipoutOrigin,
@@ -367,6 +368,7 @@ fn report_huge_page_deleted_box<G>(
     diagnostic.end(true);
 }
 
+#[allow(clippy::too_many_arguments)] // Staging retains the same explicit capabilities at the replay boundary.
 pub(crate) fn stage_page<G>(
     node: Node,
     origin: ShipoutOrigin,

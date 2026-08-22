@@ -25,7 +25,7 @@ use tex_command::{
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
     MutationTarget, ObservationEffectKind, ObservationValue, ObservedToken, ParameterClass,
-    TokenListRecord, parameter_mutation_key_for_dialect,
+    parameter_mutation_key_for_dialect,
 };
 use tex_state::GlueId;
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
@@ -72,6 +72,7 @@ mod hot_apply;
 use cold::*;
 
 type PreparedDviPages = Arc<Vec<crate::dispatch::PreparedDviPage>>;
+type GluePointerSource<G> = Option<(GlueId<G>, Option<GlueId<G>>)>;
 
 /// TeX82 §1176's live `math_shift_group` context as observed by e-TeX
 /// [49.1292]. Equation-number groups retain §1177's saved side.
@@ -145,11 +146,11 @@ pub struct MainControl<G> {
     /// last skip-register definition. The second component is `None` when
     /// scanning allocated a fresh TeX glue node that Umber subsequently
     /// hash-consed with an equal existing node.
-    skip_pointer_sources: Vec<Option<(GlueId<G>, Option<GlueId<G>>)>>,
+    skip_pointer_sources: Vec<GluePointerSource<G>>,
     /// Mu-glue counterpart of [`Self::skip_pointer_sources`]. e-TeX's
     /// `\gluetomu` and `\mutoglue` conversions retain the source pointer, so
     /// the two register banks need the same identity accounting.
-    muskip_pointer_sources: Vec<Option<(GlueId<G>, Option<GlueId<G>>)>>,
+    muskip_pointer_sources: Vec<GluePointerSource<G>>,
     /// True while `main_control` is parked at TeX82 §1034's
     /// `main_loop_lookahead` rather than at §1030's `big_switch`.
     ///
@@ -750,6 +751,11 @@ struct PreflightDelivery<G> {
 struct PreparedColdOperation<G> {
     scanned: PreparedColdCommand<G>,
     alignment_preamble: Option<PreparedAlignmentPreamble<G>>,
+    output_start: OperationOutputStart,
+}
+
+#[derive(Clone, Copy)]
+struct OperationOutputStart {
     outer_paragraph_was_active: bool,
     artifact_count: usize,
     effect_count: usize,
@@ -770,7 +776,7 @@ struct PreparedAlignmentPreamble<G> {
 /// returned. Cold and barrier families retain the existing prepared value.
 enum OperationReadiness<G> {
     Applied(Result<ReplayStep, ExecError>),
-    Prepared(PreparedColdOperation<G>),
+    Prepared(Box<PreparedColdOperation<G>>),
 }
 
 /// One command after canonical delivery and operand scanning.
@@ -920,7 +926,6 @@ impl<G> From<Box<UnavailablePreparedResource<G>>> for PrepareOperationError<G> {
 enum OperationTransaction {
     Advance,
     Alignment,
-    Nested,
 }
 
 const MAX_OPERATION_EVIDENCE_RECORDS: usize = 1_000_000;
@@ -2993,10 +2998,7 @@ impl<G> MainControl<G> {
     fn finish_host_owned_step(
         &mut self,
         applied: Result<ReplayStep, ExecError>,
-        outer_paragraph_was_active: bool,
-        artifact_count: usize,
-        _effect_count: usize,
-        _prepared_page_count: usize,
+        output_start: OperationOutputStart,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<ReplayStep, ExecError> {
@@ -3049,14 +3051,14 @@ impl<G> MainControl<G> {
                 // command state held across the transition, then the shipouts
                 // it committed, then the episode's own records.
                 records.extend(
-                    committed_shipout_observations(artifact_count, stores)
+                    committed_shipout_observations(output_start.artifact_count, stores)
                         .into_iter()
                         .map(CommandObservation::Effect),
                 );
                 records.extend(
                     committed_stream_effect_observations(
-                        _effect_count,
-                        _prepared_page_count,
+                        output_start.effect_count,
+                        output_start.prepared_page_count,
                         stores,
                         &self.prepared_dvi_pages,
                     )
@@ -3068,8 +3070,12 @@ impl<G> MainControl<G> {
             self.observe_committed(records);
             self.page_output_observations.clear();
         }
-        self.finish_shipout_publication(artifact_count, _effect_count, stores);
-        self.finish_paragraph_boundary(outer_paragraph_was_active);
+        self.finish_shipout_publication(
+            output_start.artifact_count,
+            output_start.effect_count,
+            stores,
+        );
+        self.finish_paragraph_boundary(output_start.outer_paragraph_was_active);
         Ok(applied)
     }
 
@@ -4296,13 +4302,10 @@ impl<G> MainControl<G> {
                         }
                     }
                 };
-                if let OperationReadiness::<G>::Prepared(PreparedColdOperation::<G> {
-                    scanned:
-                        ColdOperation::ImmediateExtension(
-                            RootedImmediateExtension::PdfExtensionInDviMode(primitive),
-                        ),
-                    ..
-                }) = &prepared
+                if let OperationReadiness::<G>::Prepared(prepared) = &prepared
+                    && let ColdOperation::ImmediateExtension(
+                        RootedImmediateExtension::PdfExtensionInDviMode(primitive),
+                    ) = &prepared.scanned
                 {
                     retry_command =
                         Some(PendingPreflightCommand::<G>::ImmediatePdfRetry(*primitive));
@@ -4623,22 +4626,6 @@ impl<G> MainControl<G> {
             // of instrumentation, so drop the moved evidence owner instead
             // of publishing it into some later unrelated observed step.
             self.suspended_operation_observation = None;
-        }
-        if matches!(transaction, OperationTransaction::Nested) {
-            let mut diagnostic_effects = DiagnosticEffects::new();
-            let result = self.apply_operation(stores, delivery, &mut diagnostic_effects);
-            self.record_save_stack_usage(stores);
-            if result.is_ok()
-                && let Some(error) = self.operation_evidence_limit_error()
-            {
-                return Err(error);
-            }
-            if result.is_ok() {
-                stores
-                    .world_mut()
-                    .publish_diagnostic_effects(diagnostic_effects);
-            }
-            return result.map(StepResult::Progress);
         }
         let initial_delivery =
             matches!(transaction, OperationTransaction::Alignment).then_some(delivery);
@@ -7127,7 +7114,7 @@ impl<G> MainControl<G> {
         match readiness {
             OperationReadiness::<G>::Applied(result) => result,
             OperationReadiness::<G>::Prepared(prepared) => {
-                self.apply_prepared_operation(stores, prepared, diagnostic_effects)
+                self.apply_prepared_operation(stores, *prepared, diagnostic_effects)
             }
         }
     }
@@ -7477,17 +7464,16 @@ impl<G> MainControl<G> {
         let scanned = match scanned {
             ScannedOperation::<G>::Cold(scanned) => scanned,
             ScannedOperation::<G>::Hot(operation) => {
-                let artifact_count = stores.world().artifact_commits().len();
-                let effect_count = stores.world().effect_records().len();
-                let prepared_page_count = self.prepared_dvi_pages.len();
                 return Ok(OperationReadiness::<G>::Applied(self.apply_hot_operation(
                     stores,
                     diagnostic_effects,
                     operation,
-                    outer_paragraph_was_active,
-                    artifact_count,
-                    effect_count,
-                    prepared_page_count,
+                    OperationOutputStart {
+                        outer_paragraph_was_active,
+                        artifact_count: stores.world().artifact_commits().len(),
+                        effect_count: stores.world().effect_records().len(),
+                        prepared_page_count: self.prepared_dvi_pages.len(),
+                    },
                 )));
             }
         };
@@ -7548,32 +7534,30 @@ impl<G> MainControl<G> {
         tex_state::measurement::record_hot_core_materialization(
             tex_state::measurement::HotCoreMaterialization::PreparedOperation,
         );
-        Ok(OperationReadiness::<G>::Prepared(PreparedColdOperation::<
-            G,
-        > {
-            scanned,
-            alignment_preamble,
-            outer_paragraph_was_active,
-            artifact_count: stores.world().artifact_commits().len(),
-            effect_count: stores.world().effect_records().len(),
-            prepared_page_count: self.prepared_dvi_pages.len(),
-        }))
+        Ok(OperationReadiness::<G>::Prepared(Box::new(
+            PreparedColdOperation::<G> {
+                scanned,
+                alignment_preamble,
+                output_start: OperationOutputStart {
+                    outer_paragraph_was_active,
+                    artifact_count: stores.world().artifact_commits().len(),
+                    effect_count: stores.world().effect_records().len(),
+                    prepared_page_count: self.prepared_dvi_pages.len(),
+                },
+            },
+        )))
     }
 
     /// Applies a measured common operation without constructing the universal
     /// scan/preparation DTOs. `CommandProcessor` has released its borrow, but
     /// the enclosing direct-operation transaction and persistent interpreter
     /// remain the same ones that performed delivery and scanning.
-    #[allow(clippy::too_many_arguments)]
     fn apply_hot_operation(
         &mut self,
         stores: &mut Universe<G>,
         diagnostic_effects: &mut DiagnosticEffects,
         operation: hot_apply::HotOperation<G>,
-        outer_paragraph_was_active: bool,
-        artifact_count: usize,
-        effect_count: usize,
-        prepared_page_count: usize,
+        output_start: OperationOutputStart,
     ) -> Result<ReplayStep, ExecError> {
         self.main_loop_active = false;
         #[cfg(feature = "profiling")]
@@ -7644,15 +7628,15 @@ impl<G> MainControl<G> {
             );
             records.extend(
                 committed_stream_effect_observations(
-                    effect_count,
-                    prepared_page_count,
+                    output_start.effect_count,
+                    output_start.prepared_page_count,
                     stores,
                     &self.prepared_dvi_pages,
                 )
                 .into_iter()
                 .map(CommandObservation::Effect),
             );
-            for shipout in committed_shipout_observations(artifact_count, stores) {
+            for shipout in committed_shipout_observations(output_start.artifact_count, stores) {
                 records.push(CommandObservation::Effect(shipout));
             }
             self.page_output_observations.append_to(&mut records);
@@ -7675,8 +7659,12 @@ impl<G> MainControl<G> {
         }
         self.page_output_observations.clear();
         if result.is_ok() {
-            self.finish_shipout_publication(artifact_count, effect_count, stores);
-            self.finish_paragraph_boundary(outer_paragraph_was_active);
+            self.finish_shipout_publication(
+                output_start.artifact_count,
+                output_start.effect_count,
+                stores,
+            );
+            self.finish_paragraph_boundary(output_start.outer_paragraph_was_active);
         }
         result
     }
@@ -7690,10 +7678,7 @@ impl<G> MainControl<G> {
         let PreparedColdOperation::<G> {
             scanned,
             alignment_preamble,
-            outer_paragraph_was_active,
-            artifact_count,
-            effect_count,
-            prepared_page_count,
+            output_start,
         } = prepared;
         let parking = self.suspend_main_control_parking(&scanned);
         #[cfg(feature = "profiling")]
@@ -7708,10 +7693,7 @@ impl<G> MainControl<G> {
             ControlFlow::Break(applied) => {
                 return self.finish_host_owned_step(
                     applied,
-                    outer_paragraph_was_active,
-                    artifact_count,
-                    effect_count,
-                    prepared_page_count,
+                    output_start,
                     stores,
                     diagnostic_effects,
                 );
@@ -8084,8 +8066,8 @@ impl<G> MainControl<G> {
                     .map(CommandObservation::Input),
             );
             let effects = committed_stream_effect_observations(
-                effect_count,
-                prepared_page_count,
+                output_start.effect_count,
+                output_start.prepared_page_count,
                 stores,
                 &self.prepared_dvi_pages,
             );
@@ -8154,7 +8136,7 @@ impl<G> MainControl<G> {
                 }
                 records.extend(effects.into_iter().map(CommandObservation::Effect));
             }
-            for shipout in committed_shipout_observations(artifact_count, stores) {
+            for shipout in committed_shipout_observations(output_start.artifact_count, stores) {
                 records.push(CommandObservation::Effect(shipout));
             }
             self.page_output_observations.append_to(&mut records);
@@ -8180,8 +8162,12 @@ impl<G> MainControl<G> {
         }
         self.page_output_observations.clear();
         if result.is_ok() {
-            self.finish_shipout_publication(artifact_count, effect_count, stores);
-            self.finish_paragraph_boundary(outer_paragraph_was_active);
+            self.finish_shipout_publication(
+                output_start.artifact_count,
+                output_start.effect_count,
+                stores,
+            );
+            self.finish_paragraph_boundary(output_start.outer_paragraph_was_active);
         }
         result
     }

@@ -343,6 +343,7 @@ fn insertion_delta<G>(stores: &CommandContext<'_, G>) -> Result<Scaled, ExecErro
     add(delta, stores.page_dimension(PageDimension::Shrink))
 }
 
+#[allow(clippy::too_many_arguments)] // Insertion splitting mirrors TeX's live insertion and split parameters.
 fn split_page_insertion<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,

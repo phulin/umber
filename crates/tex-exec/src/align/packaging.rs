@@ -34,6 +34,7 @@ pub(crate) enum UnsetPackContext {
 /// place any alignment row or column commits a span count to the quarterword
 /// field, so the guard belongs here rather than at each individual caller --
 /// every present and future §796 packaging site inherits it.
+#[allow(clippy::too_many_arguments)] // TeX unset packing keeps pack services and node facts explicit.
 pub(crate) fn make_unset_node<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,

@@ -36,10 +36,11 @@ fn retained_checkpoint_restores_command_and_mode_token_roots() {
             &universe.command_context().expect("command context"),
             command_root,
         );
-        command.publish_named_token_list_pushes(
+        let pushes = command.publish_named_token_list_pushes(
             &mut universe.command_context().expect("command context"),
             &mut diagnostic_effects,
         );
+        assert_eq!(pushes.len(), 1, "everypar publishes one retained push");
         let mut modes = ModeNest::new();
         modes
             .current_list_mutation()

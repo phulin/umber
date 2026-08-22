@@ -99,6 +99,7 @@ fn finish_math_list_node_with_reads<G>(
     (nodes, family_mask)
 }
 
+#[allow(clippy::too_many_arguments)] // Math lowering keeps style, penalties, params, and error context independent.
 pub(super) fn convert_math_hlist_with_error_context<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,

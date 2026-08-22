@@ -880,10 +880,11 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
         target.index,
         traced_box.as_ref(),
         target.global,
-        |stores| match (target.global, boxed) {
-            (global, boxed) => stores
+        |stores| {
+            let (global, boxed) = (target.global, boxed);
+            stores
                 .assign_page_box(target.index, boxed, assignment_scope(global))
-                .expect("box assignment promotes admitted page nodes"),
+                .expect("box assignment promotes admitted page nodes")
         },
     );
     command.retain_assignment_receipt(receipt);

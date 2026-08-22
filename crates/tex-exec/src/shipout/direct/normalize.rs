@@ -232,6 +232,7 @@ fn node_requires_normalization(node: &Node) -> bool {
     )
 }
 
+#[allow(clippy::too_many_arguments)] // Recursive normalization carries explicit replay and overlay state.
 fn normalize_index<G>(
     stores: &mut Universe<G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,

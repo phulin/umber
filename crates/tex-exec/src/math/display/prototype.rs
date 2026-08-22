@@ -56,6 +56,7 @@ pub(crate) fn display_line_prototype<G>(
 /// The inner `dlist` identity belongs to the formula box. The line appended
 /// to the vertical list is a normal hbox whose math-direction boundaries make
 /// the display transparent to the surrounding TeXXeT paragraph direction.
+#[allow(clippy::too_many_arguments)] // Display packaging preserves the independent §1200 geometry inputs.
 pub(super) fn package_directed_display_line<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
