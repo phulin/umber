@@ -10,7 +10,7 @@ use tex_command::{
 };
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
-use tex_state::{FileContent, FormatError, PrintSink, Universe, World, WorldError};
+use tex_state::{FileContent, FormatError, Universe, World, WorldError};
 use umber::EngineMode as RunEngine;
 use umber::{DriverFile, PlannedFinalization};
 
@@ -724,11 +724,7 @@ fn finalize_run(
     let committed = finalization.commit_effects(&mut destination)?;
     committed.materialize(&mut destination)?;
     if let (Some(dump), Some(path)) = (&format_dump, &format_output) {
-        confirm_detached_format_publication(
-            &mut destination,
-            &dump.receipt,
-            &path.to_string_lossy(),
-        );
+        confirm_detached_format_publication(&dump.receipt, &path.to_string_lossy());
     }
     if env::var_os("UMBER_RESOURCE_TELEMETRY").is_some_and(|value| value == "1") {
         eprintln!(
@@ -742,7 +738,6 @@ fn finalize_run(
 }
 
 fn confirm_detached_format_publication(
-    world: &mut World,
     receipt: &tex_exec::FormatDumpReceipt,
     displayed_file_name: &str,
 ) {
@@ -751,8 +746,7 @@ fn confirm_detached_format_publication(
         "\nBeginning to dump on file {displayed_file_name}\n (preloaded format={} {}.{}.{})\n",
         ident.format_name, ident.year, ident.month, ident.day
     );
-    world.write_text(PrintSink::Terminal, &announcement);
-    world.write_text(PrintSink::Log, &announcement);
+    print!("{announcement}");
 }
 
 struct RunCliOptions {
