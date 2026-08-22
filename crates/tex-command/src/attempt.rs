@@ -239,6 +239,16 @@ pub enum AttemptError {
     Promotion(PromotionError),
 }
 
+/// Failure to move one live attempt across an in-process resource boundary.
+///
+/// A stale opening coordinate is distinguished from failure to retain the
+/// current generation. Both are detected before the live arena is moved.
+#[derive(Debug)]
+pub enum AttemptSuspendError {
+    StaleMark(AttemptError),
+    Generation(tex_state::UniverseError),
+}
+
 impl From<PromotionError> for AttemptError {
     fn from(error: PromotionError) -> Self {
         Self::Promotion(error)
@@ -1199,7 +1209,7 @@ pub struct PendingCommandAttempt<G, R> {
 
 impl<G, R> PendingCommandAttempt<G, R> {
     #[must_use]
-    pub fn new(
+    pub(crate) fn new(
         attempt: CommandAttempt<G>,
         generation: GenerationOwner<G>,
         resume: AttemptResumePoint,
@@ -1238,7 +1248,7 @@ impl<G, R> PendingCommandAttempt<G, R> {
         }
     }
 
-    pub fn resume(
+    pub(crate) fn resume(
         self,
         universe: &Universe<G>,
     ) -> Result<(CommandAttempt<G>, CommandAttemptMark, AttemptResumePoint, R), Self> {

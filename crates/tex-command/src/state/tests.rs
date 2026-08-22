@@ -357,6 +357,74 @@ fn failed_resource_suspension_keeps_the_live_attempt_installed() {
 }
 
 #[test]
+fn stale_resource_suspension_mark_is_typed_and_mutation_free() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let retained = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("retained attempt value");
+        let live = state.begin_attempt_operation();
+        state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('y')])
+            .expect("discarded attempt value");
+        let stale = state.begin_attempt_operation();
+        state.discard_attempt_operation(live);
+
+        let error = match state.suspend_attempt(
+            universe,
+            stale,
+            crate::AttemptResumePoint::default(),
+            "input request",
+        ) {
+            Ok(_) => panic!("truncated opening mark must be stale"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            crate::AttemptSuspendError::StaleMark(crate::AttemptError::InvalidCoordinate)
+        ));
+        assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
+    });
+}
+
+#[test]
+fn resource_resume_rejects_a_nonempty_live_attempt_without_mutation() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let opening = state.begin_attempt_operation();
+        let pending = state
+            .suspend_attempt(
+                universe,
+                opening,
+                crate::AttemptResumePoint::default(),
+                "font request",
+            )
+            .expect("attempt suspends");
+        let live = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('z')])
+            .expect("new live attempt value");
+
+        let pending = state
+            .resume_attempt(universe, pending)
+            .expect_err("a pending arena cannot overwrite live attempt state");
+        assert_eq!(state.attempt_token_words(live), Ok(&[word('z')][..]));
+
+        state.attempt = crate::CommandAttempt::default();
+        let (_, _, request) = state
+            .resume_attempt(universe, pending)
+            .ok()
+            .expect("unchanged pending attempt remains resumable");
+        assert_eq!(request, "font request");
+    });
+}
+
+#[test]
 fn alignment_state_restores_outer_running_depth_after_nested_lifecycle() {
     crate::test_harness::with_universe(|_universe| {
         let mut state = CommandState::<()>::default();

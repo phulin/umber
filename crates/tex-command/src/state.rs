@@ -797,12 +797,14 @@ impl<G> CommandState<G> {
         opening: crate::CommandAttemptMark,
         resume: crate::AttemptResumePoint,
         pending: R,
-    ) -> Result<crate::PendingCommandAttempt<G, R>, tex_state::UniverseError> {
+    ) -> Result<crate::PendingCommandAttempt<G, R>, crate::AttemptSuspendError> {
         self.attempt
             .arena()
             .validate_mark(opening.attempt_mark())
-            .expect("resource suspension owns a valid command-attempt opening cursor");
-        let generation = universe.generation_owner()?;
+            .map_err(crate::AttemptSuspendError::StaleMark)?;
+        let generation = universe
+            .generation_owner()
+            .map_err(crate::AttemptSuspendError::Generation)?;
         let attempt = core::mem::take(&mut self.attempt);
         Ok(crate::PendingCommandAttempt::new_at_validated_mark(
             attempt, generation, opening, resume, pending,
@@ -818,6 +820,9 @@ impl<G> CommandState<G> {
         (crate::CommandAttemptMark, crate::AttemptResumePoint, R),
         crate::PendingCommandAttempt<G, R>,
     > {
+        if !self.attempt.is_empty() {
+            return Err(pending);
+        }
         let (attempt, opening, resume, pending) = pending.resume(universe)?;
         self.attempt = attempt;
         Ok((opening, resume, pending))

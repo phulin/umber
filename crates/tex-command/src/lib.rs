@@ -30,10 +30,11 @@ macro_rules! observe {
 }
 
 mod attempt;
+pub(crate) use attempt::CommandAttempt;
 pub use attempt::{
     AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptNameId, AttemptPromotionReceipt,
-    AttemptPromotionRoots, AttemptProvenanceId, AttemptResumePoint, AttemptTokenListId,
-    CommandAttempt, CommandAttemptMark, PendingCommandAttempt,
+    AttemptPromotionRoots, AttemptProvenanceId, AttemptResumePoint, AttemptSuspendError,
+    AttemptTokenListId, CommandAttemptMark, PendingCommandAttempt,
 };
 mod command;
 mod conditionals;
