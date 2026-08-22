@@ -38,6 +38,12 @@ The two remaining `Weak` uses are coarse boundaries, not value ownership:
 retained-generation lifecycle test API exposes a weak witness to one coarse
 owner. Neither is consulted by an ordinary value read or mutation.
 
+The remaining binary searches are likewise outside the warmed ordinary paths:
+PDF object/resource ledgers are cold publication structures, source-fragment
+layout indexes serve incremental edit mapping, and the immutable hyphenation
+trie searches semantic edges. Meaning, assignment, page-list, mark-class,
+rollback, and resume paths use packed or dense direct indexing.
+
 ## Profiling boundary
 
 `tex-state/profiling` compiles a process-local allocator and structural census.

@@ -5,15 +5,22 @@ use tex_state::interner::InternerBudget;
 use tex_state::measurement::{
     HotCoreAllocationMeasurement, HotCoreAllocationOwner, HotCoreAllocator, hot_core_census,
 };
-use tex_state::{DetachedFormatImage, World, with_materialized_format};
-
-const PLAIN_FORMAT: &[u8] = include_bytes!("../../../crates/umber-wasm/assets/plain.fmt");
+use tex_state::{DetachedFormatImage, World, with_materialized_format, with_universe};
 
 #[global_allocator]
 static ALLOCATOR: HotCoreAllocator = HotCoreAllocator;
 
 fn budget() -> InternerBudget {
     InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024).expect("benchmark interner budget")
+}
+
+fn current_schema_image() -> DetachedFormatImage {
+    with_universe(budget(), |universe| {
+        universe
+            .capture_format_image()
+            .expect("benchmark state must have a detachable format image")
+    })
+    .expect("benchmark universe")
 }
 
 fn materialize(image: &DetachedFormatImage) {
@@ -42,9 +49,9 @@ fn decode(c: &mut Criterion) {
     // Validation is an explicit detached-input boundary and happens once. The
     // measured operation is destination-local materialization of that already
     // validated image.
-    let image = DetachedFormatImage::try_from_bytes(PLAIN_FORMAT.to_vec())
-        .expect("pinned Plain format must validate");
-    assert_eq!(image.as_bytes(), PLAIN_FORMAT);
+    let captured = current_schema_image();
+    let image = DetachedFormatImage::try_from_bytes(captured.into_bytes())
+        .expect("current-schema format must validate");
     materialize(&image);
 
     let before = hot_core_census();
@@ -67,7 +74,7 @@ fn decode(c: &mut Criterion) {
         generation.requested_bytes,
     );
 
-    c.bench_function("loaded_format_materialization/plain", |b| {
+    c.bench_function("loaded_format_materialization/current_schema", |b| {
         b.iter(|| materialize(black_box(&image)));
     });
 }
