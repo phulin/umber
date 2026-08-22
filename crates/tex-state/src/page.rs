@@ -322,6 +322,7 @@ pub(crate) struct PageBuilderState {
     best_size: Scaled,
     fire_up: Option<PageFireUp>,
     insertions: Vec<PageInsertion>,
+    insertion_positions: Vec<Option<u16>>,
     top_mark: Option<NodeTokenList>,
     first_mark: Option<NodeTokenList>,
     bot_mark: Option<NodeTokenList>,
@@ -353,6 +354,7 @@ pub(crate) struct PageMemoState {
     pub(crate) best_size: Scaled,
     pub(crate) fire_up: Option<PageFireUp>,
     pub(crate) insertions: Vec<PageInsertion>,
+    pub(crate) insertion_positions: Vec<Option<u16>>,
 }
 
 impl Default for PageBuilderState {
@@ -383,6 +385,7 @@ impl Default for PageBuilderState {
             best_size: Scaled::from_raw(0),
             fire_up: None,
             insertions: Vec::new(),
+            insertion_positions: Vec::new(),
             top_mark: None,
             first_mark: None,
             bot_mark: None,
@@ -463,6 +466,7 @@ impl PageBuilderState {
             best_size: self.best_size,
             fire_up: self.fire_up,
             insertions: self.insertions.clone(),
+            insertion_positions: self.insertion_positions.clone(),
         };
         (nodes, state)
     }
@@ -549,6 +553,7 @@ impl PageBuilderState {
         self.best_size = state.best_size;
         self.fire_up = state.fire_up;
         self.insertions = state.insertions;
+        self.insertion_positions = state.insertion_positions;
         Ok(())
     }
 
@@ -575,6 +580,11 @@ impl PageBuilderState {
                 self.insertions
                     .capacity()
                     .saturating_mul(std::mem::size_of::<PageInsertion>()),
+            )
+            .saturating_add(
+                self.insertion_positions
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Option<u16>>()),
             )
             .saturating_add(
                 self.mark_classes
@@ -607,6 +617,7 @@ impl PageBuilderState {
             && self.best_size == Scaled::from_raw(0)
             && self.fire_up.is_none()
             && self.insertions.is_empty()
+            && self.insertion_positions.is_empty()
             && self.top_mark.is_none()
             && self.first_mark.is_none()
             && self.bot_mark.is_none()
@@ -779,6 +790,7 @@ impl PageBuilderState {
         self.best_page_break = None;
         self.best_size = Scaled::from_raw(0);
         self.insertions.clear();
+        self.insertion_positions.clear();
     }
 
     pub(crate) fn start_new_page(&mut self) {
@@ -810,6 +822,7 @@ impl PageBuilderState {
         self.best_size = Scaled::from_raw(0);
         self.fire_up = None;
         self.insertions.clear();
+        self.insertion_positions.clear();
     }
 
     pub(crate) const fn contents(&self) -> PageContents {
@@ -942,20 +955,43 @@ impl PageBuilderState {
     }
 
     pub(crate) fn page_insertion(&self, class: u16) -> Option<PageInsertion> {
-        self.insertions
-            .binary_search_by_key(&class, PageInsertion::class)
-            .ok()
-            .map(|index| self.insertions[index])
+        self.insertion_positions
+            .get(usize::from(class))
+            .copied()
+            .flatten()
+            .map(|index| self.insertions[usize::from(index)])
     }
 
     pub(crate) fn upsert_page_insertion(&mut self, insertion: PageInsertion) {
-        match self
-            .insertions
-            .binary_search_by_key(&insertion.class(), PageInsertion::class)
-        {
-            Ok(index) => self.insertions[index] = insertion,
-            Err(index) => self.insertions.insert(index, insertion),
+        let class = insertion.class();
+        let class_index = usize::from(class);
+        if self.insertion_positions.len() <= class_index {
+            self.insertion_positions.resize(class_index + 1, None);
         }
+        if let Some(index) = self.insertion_positions[class_index] {
+            self.insertions[usize::from(index)] = insertion;
+            return;
+        }
+
+        // A class enters the active page at most once. Keep canonical class
+        // order on that cold edge, then use the dense direct index for every
+        // ordinary lookup and update.
+        let index = self
+            .insertions
+            .iter()
+            .position(|active| active.class() > class)
+            .unwrap_or(self.insertions.len());
+        self.insertions.insert(index, insertion);
+        for position in self.insertion_positions.iter_mut().flatten() {
+            if usize::from(*position) >= index {
+                *position = position
+                    .checked_add(1)
+                    .expect("active insertion-class count fits u16");
+            }
+        }
+        self.insertion_positions[class_index] = Some(
+            u16::try_from(index).expect("active insertion-class count fits the TeX register space"),
+        );
     }
 
     pub(crate) fn take_current_page_prefix(

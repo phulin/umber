@@ -1,5 +1,5 @@
-use super::PageBuilderState;
 use super::state_hash::PageHashCache;
+use super::{PageBuilderState, PageInsertion};
 use crate::node::{KernKind, Node, NodeTokenList};
 use crate::page::PageMark;
 use crate::scaled::Scaled;
@@ -111,4 +111,30 @@ fn detached_page_memo_parts_roundtrip_all_owned_sequences() {
     assert_eq!(roundtrip_nodes, nodes);
     assert_eq!(roundtrip_state, state);
     assert!(restored.retained_bytes() >= std::mem::size_of::<PageBuilderState>());
+}
+
+#[test]
+fn insertion_classes_use_dense_direct_positions_and_canonical_iteration_order() {
+    let mut page = PageBuilderState::default();
+    page.upsert_page_insertion(PageInsertion::new(4095, Scaled::from_raw(3)));
+    page.upsert_page_insertion(PageInsertion::new(7, Scaled::from_raw(1)));
+    page.upsert_page_insertion(PageInsertion::new(255, Scaled::from_raw(2)));
+    page.upsert_page_insertion(PageInsertion::new(255, Scaled::from_raw(9)));
+
+    assert_eq!(
+        page.page_insertions()
+            .iter()
+            .map(PageInsertion::class)
+            .collect::<Vec<_>>(),
+        [7, 255, 4095]
+    );
+    assert_eq!(
+        page.page_insertion(255).map(|insertion| insertion.height()),
+        Some(Scaled::from_raw(9))
+    );
+    assert_eq!(page.page_insertion(8), None);
+
+    page.start_page_after_output();
+    assert!(page.page_insertions().is_empty());
+    assert_eq!(page.page_insertion(255), None);
 }

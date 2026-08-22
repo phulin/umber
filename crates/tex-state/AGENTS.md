@@ -119,6 +119,10 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/meaning.rs`: Static packed TeX meanings plus generation-typed macro
   meaning words; raw integers never materialize runtime definition ids.
 - `src/meaning/tests.rs`: Static codec, primitive, and typed macro-meaning tests.
+- `src/measurement.rs` and `src/measurement/hot_core.rs`: Profiling-feature-only
+  allocation attribution, structural dispatch census, and coarse retained
+  generation lifetime counters. Ordinary builds compile neither the module nor
+  any associated fields, branches, or atomics.
 - `src/memo.rs`: Opaque schema-versioned detached memo envelopes, handle-free
   transition/effect/result DTOs, explicit validation staging, and
   generation-local token/glue/macro publication.
@@ -140,8 +144,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   owner-checked rollback, invalid-publication controls, completed-page release,
   and stale-coordinate rejection after bounded row reuse.
 - `src/page.rs`: Page-lifetime builder state with directly owned contribution,
-  current-page, discard, insertion, and mark buffers; the aggregate Universe
-  owns immutable page-list publication and rollback cursors.
+  current-page, discard, insertion, and mark buffers; active insertion classes
+  retain canonical iteration order beside a dense direct lookup index. The
+  aggregate Universe owns immutable page-list publication and rollback cursors.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with generation-typed token
   coordinates in catalog/page collections, deterministic object allocation,
   durable form-list coordinates, owned checkpoint collections, owned external
