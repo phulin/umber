@@ -92,7 +92,7 @@ pub fn package_version() -> String {
 
 #[wasm_bindgen(js_name = formatSchemaVersion)]
 pub fn format_schema_version() -> u32 {
-    tex_state::Universe::FORMAT_SCHEMA_VERSION
+    tex_state::FORMAT_SCHEMA_VERSION
 }
 
 #[wasm_bindgen(js_name = acceptedInputObservationSchemaVersion)]
