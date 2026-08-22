@@ -217,12 +217,6 @@ fn current_format_schema_receipts_cover_every_release_surface() {
             reason: "memo artifact schema, not the frozen-format schema",
         },
         HistoricalSchema10Use {
-            path: "crates/tex-state/src/memo/tests.rs",
-            marker: "artifact_schema: 10,",
-            expected_count: 1,
-            reason: "memo artifact schema fixture, not the frozen-format schema",
-        },
-        HistoricalSchema10Use {
             path: "docs/architecture.md",
             marker: "Schema 10 introduced authoritative fixed-width sections",
             expected_count: 1,
