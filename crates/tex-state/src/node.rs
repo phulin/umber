@@ -398,6 +398,17 @@ impl<List: Hash, Glue: Hash, Tokens: Hash> Hash for Node<List, Glue, Tokens> {
 }
 
 impl<List, Glue, Tokens> Node<List, Glue, Tokens> {
+    /// Rewrites every direct immutable-font coordinate in this node.
+    pub(crate) fn map_fonts(mut self, mut map: impl FnMut(FontId) -> FontId) -> Self {
+        match &mut self {
+            Self::Char { font, .. } | Self::Lig { font, .. } | Self::MarginKern { font, .. } => {
+                *font = map(*font)
+            }
+            _ => {}
+        }
+        self
+    }
+
     /// Visits exact immutable-font coordinates retained directly by this node.
     pub fn visit_fonts(&self, mut visit: impl FnMut(FontId)) {
         match self {

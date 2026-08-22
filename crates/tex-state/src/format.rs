@@ -961,6 +961,13 @@ impl<G> Universe<G> {
         }
         self.fonts = crate::font::FontStore::restore_format_fonts(&format.fonts, &self.interner)
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
+        let fonts = (0..self.fonts.len())
+            .map(|slot| {
+                self.fonts
+                    .id_at(slot as u32)
+                    .expect("restored format font prefix is dense")
+            })
+            .collect::<Vec<_>>();
         self.core
             .as_mut()
             .expect("format candidate retains core")
@@ -1031,6 +1038,7 @@ impl<G> Universe<G> {
             &format.node_lists,
             &promoted.token_lists,
             &promoted.glue,
+            &fonts,
         )?;
         self.core
             .as_mut()
@@ -1042,7 +1050,7 @@ impl<G> Universe<G> {
                 &promoted.token_lists,
                 &promoted.glue,
                 &node_lists,
-                self.fonts.len(),
+                &fonts,
             )
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
         self.hyphenation = format.hyphenation.clone();
@@ -1055,6 +1063,7 @@ impl<G> Universe<G> {
         rows: &[FormatNodeList],
         token_lists: &[crate::TokenListId<G>],
         glue: &[crate::GlueId<G>],
+        fonts: &[crate::ids::FontId],
     ) -> Result<Vec<crate::node_arena::DurableListId<G>>, FormatError> {
         let mut installed = Vec::with_capacity(rows.len());
         for row in rows {
@@ -1075,7 +1084,8 @@ impl<G> Universe<G> {
                         .map_payloads(
                             |value| glue[value as usize],
                             |value| token_lists[value as usize],
-                        );
+                        )
+                        .map_fonts(|font| fonts[font.raw() as usize]);
                     Ok(node)
                 })
                 .collect::<Result<Vec<_>, FormatError>>()?;

@@ -596,7 +596,7 @@ impl<G> DenseState<G> {
         token_lists: &[crate::TokenListId<G>],
         glue_values: &[crate::GlueId<G>],
         node_lists: &[crate::node_arena::DurableListId<G>],
-        font_count: usize,
+        fonts: &[FontId],
     ) -> Result<(), &'static str> {
         use crate::format::schema::{FormatCell, FormatMeaning};
         for &cell in cells {
@@ -604,10 +604,11 @@ impl<G> DenseState<G> {
                 FormatCell::Meaning(index, meaning) => {
                     let meaning = match meaning {
                         FormatMeaning::Static(word) => MeaningWord::Static(word),
-                        FormatMeaning::Font(font) if (font as usize) < font_count => {
-                            MeaningWord::Font(FontId::new(font))
-                        }
-                        FormatMeaning::Font(_) => return Err("format references an unloaded font"),
+                        FormatMeaning::Font(font) => MeaningWord::Font(
+                            *fonts
+                                .get(font as usize)
+                                .ok_or("format references an unloaded font")?,
+                        ),
                         FormatMeaning::Macro { flags, definition } => MeaningWord::Macro {
                             flags: crate::meaning::MeaningFlags::from_bits(flags),
                             definition: *definitions
@@ -665,8 +666,17 @@ impl<G> DenseState<G> {
                     .write(
                         index,
                         BankCell::level_one(Some(
+                            // Format node rows are one-based so zero can name
+                            // the empty root in nested node/PDF recipes. Box
+                            // cells are validated as nonzero before this
+                            // destination-local relocation.
                             *node_lists
-                                .get(value as usize)
+                                .get(
+                                    value
+                                        .checked_sub(1)
+                                        .ok_or("format node reference is out of range")?
+                                        as usize,
+                                )
                                 .ok_or("format node reference is out of range")?,
                         )),
                     )
@@ -704,16 +714,24 @@ impl<G> DenseState<G> {
                         )),
                     )
                     .map_err(|_| "format glue parameter index")?,
-                FormatCell::CurrentFont(font) if (font as usize) < font_count => {
-                    self.current_font = BankCell::level_one(FontId::new(font));
+                FormatCell::CurrentFont(font) => {
+                    self.current_font = BankCell::level_one(
+                        *fonts
+                            .get(font as usize)
+                            .ok_or("format references an unloaded font")?,
+                    );
                 }
-                FormatCell::MathFamilyFont(index, font) if (font as usize) < font_count => self
+                FormatCell::MathFamilyFont(index, font) => self
                     .math_family_fonts
-                    .write(u32::from(index), BankCell::level_one(FontId::new(font)))
+                    .write(
+                        u32::from(index),
+                        BankCell::level_one(
+                            *fonts
+                                .get(font as usize)
+                                .ok_or("format references an unloaded font")?,
+                        ),
+                    )
                     .map_err(|_| "format math-family index")?,
-                FormatCell::CurrentFont(_) | FormatCell::MathFamilyFont(_, _) => {
-                    return Err("format references an unloaded font");
-                }
                 FormatCell::Code {
                     kind,
                     scalar,

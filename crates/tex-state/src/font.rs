@@ -715,6 +715,12 @@ impl FontStore {
         self.fonts.len()
     }
 
+    /// Resolves a validated dense format coordinate to this timeline's fresh
+    /// live font identity.
+    pub(crate) fn id_at(&self, slot: u32) -> Option<FontId> {
+        self.identities.identity_at(slot).map(FontId::from_identity)
+    }
+
     #[must_use]
     pub(crate) fn watermark(&self) -> FontStoreMark {
         FontStoreMark {
