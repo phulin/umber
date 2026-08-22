@@ -45,22 +45,6 @@ impl PdfDocumentObjectIds {
     pub const fn info(self) -> Option<u32> {
         self.info
     }
-
-    pub(crate) fn set_pages(&mut self, id: u32) {
-        self.pages = Some(id);
-    }
-
-    pub(crate) fn set_names(&mut self, id: u32) {
-        self.names = Some(id);
-    }
-
-    pub(crate) fn set_catalog(&mut self, id: u32) {
-        self.catalog = Some(id);
-    }
-
-    pub(crate) fn set_info(&mut self, id: u32) {
-        self.info = Some(id);
-    }
 }
 
 impl PdfDocumentFragmentKind {

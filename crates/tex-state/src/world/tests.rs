@@ -1,7 +1,4 @@
 use super::*;
-use crate::interner::InternerBudget;
-use crate::token::{Token, TokenWord};
-use crate::universe::with_universe;
 
 fn source(path: &str, start: u64, end: u64) -> ArtifactSourceRecipe {
     ArtifactSourceRecipe {
@@ -10,30 +7,6 @@ fn source(path: &str, start: u64, end: u64) -> ArtifactSourceRecipe {
         start,
         end,
     }
-}
-
-#[test]
-fn deferred_write_journal_owns_a_handle_free_memo_value() {
-    let detached = with_universe(
-        InternerBudget::new(64, 128, 4 * 1024).expect("test fixture is valid"),
-        |universe| {
-            let id = universe
-                .allocate_token_list(&[TokenWord::pack(Token::param(5))])
-                .expect("test fixture is valid");
-            universe
-                .detach_token_list(id)
-                .expect("test fixture is valid")
-        },
-    )
-    .expect("test fixture is valid");
-    let expected = detached.clone();
-    let mut world = World::memory();
-    world.record_deferred_write(StreamSlot::new(3), detached);
-    let journal = world.effect_journal();
-    let [EffectRecord::DeferredWrite { tokens, .. }] = journal.records() else {
-        panic!("expected one deferred write")
-    };
-    assert_eq!(tokens, &expected);
 }
 
 #[test]

@@ -539,38 +539,10 @@ struct PdfFormatImage {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PdfFontOperation {
     Map(PdfFontMapOperation),
-    MapFileContent {
-        logical_name: Vec<u8>,
-        map: tex_fonts::PdfFontMap,
-    },
-    Attribute {
-        font: FontId,
-        bytes: Vec<u8>,
-    },
-    IncludeChars {
-        font: FontId,
-        chars: Vec<u8>,
-    },
+    Attribute { font: FontId, bytes: Vec<u8> },
+    IncludeChars { font: FontId, chars: Vec<u8> },
     GlyphToUnicode(PdfGlyphToUnicode),
-    NoBuiltinToUnicode {
-        font: FontId,
-    },
-    Type1Program {
-        logical_name: Vec<u8>,
-        program: tex_fonts::PdfType1Program,
-    },
-    Encoding {
-        logical_name: Vec<u8>,
-        encoding: tex_fonts::PdfEncoding,
-    },
-    TrueTypeProgram {
-        logical_name: Vec<u8>,
-        program: tex_fonts::PdfTrueTypeProgram,
-    },
-    PkFont {
-        request: tex_fonts::PdfPkFontRequest,
-        font: tex_fonts::PdfPkFont,
-    },
+    NoBuiltinToUnicode { font: FontId },
 }
 
 /// Live pdfTeX microtype and font-output controls.
@@ -1244,22 +1216,17 @@ impl<G> PdfState<G> {
         self.fingerprint = base_fingerprint(true);
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn enabled(&self) -> bool {
         self.enabled
     }
+
     #[must_use]
     pub(crate) fn pages(&self) -> &[PdfPageRecord<G>] {
         &self.pages
     }
 
-    pub(crate) fn take_page_suffix(&mut self, start: usize) -> Vec<PdfPageRecord<G>> {
-        self.pages.split_off(start.min(self.pages.len()))
-    }
-
-    pub(crate) fn restore_page_suffix(&mut self, pages: Vec<PdfPageRecord<G>>) {
-        self.pages.extend(pages);
-    }
     pub(crate) fn set_space_font_name(&mut self, name: Vec<u8>) {
         let id = if let Some(&id) = self.space_font_name_lookup.get(&name) {
             id
@@ -1277,14 +1244,6 @@ impl<G> PdfState<G> {
     #[must_use]
     pub(crate) const fn current_space_font_name_id(&self) -> u32 {
         self.current_space_font_name
-    }
-    #[must_use]
-    pub(crate) fn space_font_name(&self, id: u32) -> Option<&[u8]> {
-        self.space_font_names.get(id as usize).map(Vec::as_slice)
-    }
-    #[must_use]
-    pub(crate) const fn next_object(&self) -> u32 {
-        self.next_object
     }
     pub(crate) fn capture_format(
         &self,
@@ -1545,16 +1504,6 @@ impl<G> PdfState<G> {
         Ok(state)
     }
 
-    #[cfg(test)]
-    pub(crate) fn is_format_empty(&self) -> bool {
-        self.next_object == FIRST_DYNAMIC_OBJECT
-            && self.raw_objects.records().is_empty()
-            && self.external_images.is_empty()
-            && self.forms.is_empty()
-            && self.font_operations.is_empty()
-            && self.document_fragments.is_empty()
-    }
-
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {
         if !self.enabled || self.output_parameters.unwrap_or(parameters).output <= 0 {
             return Ok(());
@@ -1622,33 +1571,8 @@ impl<G> PdfState<G> {
         self.output_parameters
     }
 
-    #[must_use]
-    pub(crate) fn pk_mode(&self) -> Option<TokenListId<G>> {
-        self.pk_mode.as_ref().map(PdfTokenParameter::<G>::id)
-    }
-
     pub(crate) fn push_font_map(&mut self, operation: PdfFontMapOperation) {
         self.push_font_operation(PdfFontOperation::Map(operation));
-    }
-
-    pub(crate) fn provide_font_map_file(
-        &mut self,
-        logical_name: Vec<u8>,
-        map: tex_fonts::PdfFontMap,
-    ) {
-        self.push_font_operation(PdfFontOperation::MapFileContent { logical_name, map });
-    }
-
-    pub(crate) fn has_font_map_file(&self, logical_name: &[u8]) -> bool {
-        self.font_operations.iter().rev().any(|operation| {
-            matches!(
-                operation,
-                PdfFontOperation::MapFileContent {
-                    logical_name: candidate,
-                    ..
-                } if candidate == logical_name
-            )
-        })
     }
 
     pub(crate) fn set_font_attribute(&mut self, font: FontId, bytes: Vec<u8>) {
@@ -1665,17 +1589,6 @@ impl<G> PdfState<G> {
 
     pub(crate) fn disable_builtin_to_unicode(&mut self, font: FontId) {
         self.push_font_operation(PdfFontOperation::NoBuiltinToUnicode { font });
-    }
-
-    pub(crate) fn provide_type1_program(
-        &mut self,
-        logical_name: Vec<u8>,
-        program: tex_fonts::PdfType1Program,
-    ) {
-        self.push_font_operation(PdfFontOperation::Type1Program {
-            logical_name,
-            program,
-        });
     }
 
     pub(crate) fn ensure_font_resource(
@@ -1730,16 +1643,7 @@ impl<G> PdfState<G> {
             .find(|record| record.font == font)
     }
 
-    pub(crate) fn font_resource_by_identity(
-        &self,
-        identity: tex_fonts::FontSourceIdentity,
-    ) -> Option<PdfFontResourceRecord> {
-        self.font_resources
-            .iter()
-            .copied()
-            .find(|record| record.source_identity == identity)
-    }
-
+    #[cfg(test)]
     pub(crate) fn font_resources(&self) -> impl Iterator<Item = PdfFontResourceRecord> + '_ {
         self.font_resources
             .iter()
@@ -1756,11 +1660,10 @@ impl<G> PdfState<G> {
     /// Every live font-to-resource association, including aliases that share
     /// one emitted PDF object.
     ///
-    /// [`Self::font_resources`] is the object-enumeration view used by the
-    /// live ledger. Terminal detachment instead needs this identity view:
-    /// page artifacts address realized semantic font identities, and two TeX
-    /// fonts with different scale recipes may intentionally share one PDF
-    /// resource object.
+    /// Terminal detachment needs the complete identity view: page artifacts
+    /// address realized semantic font identities, and two TeX fonts with
+    /// different scale recipes may intentionally share one PDF resource
+    /// object.
     pub(crate) fn font_resource_records(&self) -> impl Iterator<Item = PdfFontResourceRecord> + '_ {
         self.font_resources.iter().copied()
     }
@@ -1800,6 +1703,7 @@ impl<G> PdfState<G> {
         Ok(*record)
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn annotations(&self) -> &[PdfAnnotationRecord<G>] {
         &self.annotations
@@ -1871,14 +1775,6 @@ impl<G> PdfState<G> {
         })
     }
 
-    pub(crate) fn destinations(&self, structure: bool) -> &[PdfDestinationRecord] {
-        if structure {
-            &self.structure_destinations
-        } else {
-            &self.destinations
-        }
-    }
-
     pub(crate) fn append_thread_bead(
         &mut self,
         identity: PdfDestinationIdentity,
@@ -1922,10 +1818,6 @@ impl<G> PdfState<G> {
         threads.push(record.clone());
         self.thread_fingerprint = thread_fingerprint(threads);
         Ok(record)
-    }
-
-    pub(crate) fn threads(&self) -> &[PdfThreadRecord] {
-        &self.threads
     }
 
     /// Detaches unresolved navigation identities in pdfTeX's finalization
@@ -1983,6 +1875,7 @@ impl<G> PdfState<G> {
         Ok(record)
     }
 
+    #[cfg(test)]
     pub(crate) fn outlines(&self) -> &[PdfOutlineRecord<G>] {
         &self.outlines
     }
@@ -2018,16 +1911,13 @@ impl<G> PdfState<G> {
         Ok(record)
     }
 
-    pub(crate) fn reserve_link_continuation(&mut self) -> Result<u32, PdfObjectCapacityError> {
-        self.reserve_document_object()
-    }
-
     pub(crate) fn end_link(&mut self) -> Option<PdfOpenLink<G>> {
         let open = self.open_links.pop();
         self.open_link_fingerprint = open_link_fingerprint(&self.open_links);
         open
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn links(&self) -> &[PdfLinkRecord<G>] {
         &self.links
@@ -2038,98 +1928,10 @@ impl<G> PdfState<G> {
         self.links.last().map_or(0, |record| record.object())
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn open_links(&self) -> &[PdfOpenLink<G>] {
         &self.open_links
-    }
-
-    #[must_use]
-    pub(crate) fn type1_program(&self, logical_name: &[u8]) -> Option<&tex_fonts::PdfType1Program> {
-        self.font_operations
-            .iter()
-            .rev()
-            .find_map(|operation| match operation {
-                PdfFontOperation::Type1Program {
-                    logical_name: candidate,
-                    program,
-                } if candidate == logical_name => Some(program),
-                _ => None,
-            })
-    }
-
-    pub(crate) fn provide_encoding(
-        &mut self,
-        logical_name: Vec<u8>,
-        encoding: tex_fonts::PdfEncoding,
-    ) {
-        self.push_font_operation(PdfFontOperation::Encoding {
-            logical_name,
-            encoding,
-        });
-    }
-
-    pub(crate) fn encoding(&self, logical_name: &[u8]) -> Option<&tex_fonts::PdfEncoding> {
-        self.font_operations
-            .iter()
-            .rev()
-            .find_map(|operation| match operation {
-                PdfFontOperation::Encoding {
-                    logical_name: candidate,
-                    encoding,
-                } if candidate == logical_name => Some(encoding),
-                _ => None,
-            })
-    }
-
-    pub(crate) fn provide_truetype_program(
-        &mut self,
-        logical_name: Vec<u8>,
-        program: tex_fonts::PdfTrueTypeProgram,
-    ) {
-        self.push_font_operation(PdfFontOperation::TrueTypeProgram {
-            logical_name,
-            program,
-        });
-    }
-
-    pub(crate) fn provide_pk_font(
-        &mut self,
-        request: tex_fonts::PdfPkFontRequest,
-        font: tex_fonts::PdfPkFont,
-    ) {
-        self.push_font_operation(PdfFontOperation::PkFont { request, font });
-    }
-
-    pub(crate) fn pk_font(
-        &self,
-        request: &tex_fonts::PdfPkFontRequest,
-    ) -> Option<&tex_fonts::PdfPkFont> {
-        self.font_operations
-            .iter()
-            .rev()
-            .find_map(|operation| match operation {
-                PdfFontOperation::PkFont {
-                    request: candidate,
-                    font,
-                } if candidate == request => Some(font),
-                _ => None,
-            })
-    }
-
-    pub(crate) fn truetype_program(
-        &self,
-        logical_name: &[u8],
-    ) -> Option<&tex_fonts::PdfTrueTypeProgram> {
-        self.font_operations
-            .iter()
-            .rev()
-            .find_map(|operation| match operation {
-                PdfFontOperation::TrueTypeProgram {
-                    logical_name: candidate,
-                    program,
-                } if candidate == logical_name => Some(program),
-                _ => None,
-            })
     }
 
     fn push_font_operation(&mut self, operation: PdfFontOperation) {
@@ -2142,84 +1944,11 @@ impl<G> PdfState<G> {
             .iter()
             .filter_map(|operation| match operation {
                 PdfFontOperation::Map(map) => Some(map),
-                PdfFontOperation::MapFileContent { .. }
-                | PdfFontOperation::Attribute { .. }
+                PdfFontOperation::Attribute { .. }
                 | PdfFontOperation::IncludeChars { .. }
                 | PdfFontOperation::GlyphToUnicode(_)
-                | PdfFontOperation::NoBuiltinToUnicode { .. }
-                | PdfFontOperation::Type1Program { .. }
-                | PdfFontOperation::Encoding { .. }
-                | PdfFontOperation::TrueTypeProgram { .. }
-                | PdfFontOperation::PkFont { .. } => None,
+                | PdfFontOperation::NoBuiltinToUnicode { .. } => None,
             })
-    }
-
-    #[must_use]
-    pub(crate) fn font_map_file_requests(&self) -> Vec<Vec<u8>> {
-        let maps = self.font_maps().collect::<Vec<_>>();
-        let loads_default = maps.first().is_none_or(|operation| {
-            Self::font_map_operation_directive(operation) != tex_fonts::PdfFontMapDirective::Default
-        });
-        let mut requests = BTreeMap::<Vec<u8>, ()>::new();
-        if loads_default {
-            requests.insert(b"pdftex.map".to_vec(), ());
-        }
-        for operation in maps {
-            if let PdfFontMapOperation::File(file) = operation {
-                requests.insert(file.logical_name.clone(), ());
-            }
-        }
-        requests.into_keys().collect()
-    }
-
-    #[must_use]
-    pub(crate) fn authoritative_font_map_names(&self) -> BTreeMap<Vec<u8>, ()> {
-        let mut names = BTreeMap::new();
-        for operation in self.font_maps() {
-            match operation {
-                PdfFontMapOperation::Line(entry)
-                    if matches!(
-                        entry.directive,
-                        tex_fonts::PdfFontMapDirective::Replace
-                            | tex_fonts::PdfFontMapDirective::Remove
-                    ) =>
-                {
-                    names.insert(entry.tex_name.clone(), ());
-                }
-                PdfFontMapOperation::File(file)
-                    if matches!(
-                        file.directive,
-                        tex_fonts::PdfFontMapDirective::Replace
-                            | tex_fonts::PdfFontMapDirective::Remove
-                    ) =>
-                {
-                    if let Some(map) =
-                        self.font_operations
-                            .iter()
-                            .rev()
-                            .find_map(|operation| match operation {
-                                PdfFontOperation::MapFileContent { logical_name, map }
-                                    if logical_name == &file.logical_name =>
-                                {
-                                    Some(map)
-                                }
-                                _ => None,
-                            })
-                    {
-                        for entry in map.entries() {
-                            names.insert(entry.tex_name.clone(), ());
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        names
-    }
-
-    #[must_use]
-    pub(crate) fn resolved_font_map_lines(&self) -> Vec<tex_fonts::PdfFontMapEntry> {
-        self.resolve_font_map_lines().0.into_values().collect()
     }
 
     #[must_use]
@@ -2232,70 +1961,15 @@ impl<G> PdfState<G> {
     ) -> (BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>, Vec<Vec<u8>>) {
         let mut entries = BTreeMap::new();
         let mut duplicates = Vec::new();
-        let maps = self.font_maps().collect::<Vec<_>>();
-        if maps.first().is_none_or(|operation| {
-            Self::font_map_operation_directive(operation) != tex_fonts::PdfFontMapDirective::Default
-        }) {
-            self.apply_font_map_file(
-                b"pdftex.map",
-                tex_fonts::PdfFontMapDirective::Default,
-                &mut entries,
-                &mut duplicates,
-            );
-        }
-        for operation in maps {
+        for operation in self.font_maps() {
             match operation {
-                PdfFontMapOperation::BlockDefault => {}
+                PdfFontMapOperation::BlockDefault | PdfFontMapOperation::File(_) => {}
                 PdfFontMapOperation::Line(entry) => {
                     Self::apply_font_map_entry(entry.clone(), &mut entries, &mut duplicates);
                 }
-                PdfFontMapOperation::File(file) => self.apply_font_map_file(
-                    &file.logical_name,
-                    file.directive,
-                    &mut entries,
-                    &mut duplicates,
-                ),
             }
         }
         (entries, duplicates)
-    }
-
-    fn apply_font_map_file(
-        &self,
-        logical_name: &[u8],
-        directive: tex_fonts::PdfFontMapDirective,
-        entries: &mut BTreeMap<Vec<u8>, tex_fonts::PdfFontMapEntry>,
-        duplicates: &mut Vec<Vec<u8>>,
-    ) {
-        let Some(map) = self
-            .font_operations
-            .iter()
-            .rev()
-            .find_map(|operation| match operation {
-                PdfFontOperation::MapFileContent {
-                    logical_name: candidate,
-                    map,
-                } if candidate == logical_name => Some(map),
-                _ => None,
-            })
-        else {
-            return;
-        };
-        for entry in map.entries() {
-            let mut entry = entry.clone();
-            entry.directive = directive;
-            Self::apply_font_map_entry(entry, entries, duplicates);
-        }
-    }
-
-    fn font_map_operation_directive(
-        operation: &PdfFontMapOperation,
-    ) -> tex_fonts::PdfFontMapDirective {
-        match operation {
-            PdfFontMapOperation::BlockDefault => tex_fonts::PdfFontMapDirective::Default,
-            PdfFontMapOperation::File(file) => file.directive,
-            PdfFontMapOperation::Line(line) => line.directive,
-        }
     }
 
     fn apply_font_map_entry(
@@ -2365,66 +2039,6 @@ impl<G> PdfState<G> {
     }
 
     #[must_use]
-    pub(crate) fn has_glyph_to_unicode_mappings(&self) -> bool {
-        self.font_operations
-            .iter()
-            .any(|operation| matches!(operation, PdfFontOperation::GlyphToUnicode(_)))
-    }
-
-    #[must_use]
-    pub(crate) fn glyph_to_unicode(&self, tfm_name: &[u8], glyph_name: &[u8]) -> Option<&[u32]> {
-        let glyph_name = glyph_name
-            .split(|byte| *byte == b'.')
-            .next()
-            .unwrap_or(glyph_name);
-        for scoped in [true, false] {
-            if let Some(mapping) = self.font_operations.iter().rev().find_map(|operation| {
-                let PdfFontOperation::GlyphToUnicode(mapping) = operation else {
-                    return None;
-                };
-                let scope_matches = if scoped {
-                    mapping.tfm_name.as_deref() == Some(tfm_name)
-                } else {
-                    mapping.tfm_name.is_none()
-                };
-                (scope_matches && mapping.glyph_name == glyph_name).then_some(mapping)
-            }) {
-                return Some(&mapping.unicode);
-            }
-        }
-        None
-    }
-
-    pub(crate) fn register_external_image(
-        &mut self,
-        id: PdfExternalImageId,
-        metadata: PdfExternalImageMetadata,
-    ) -> Result<(), PdfExternalImageRegistrationError> {
-        let images = &mut self.external_images;
-        match images.binary_search_by_key(&id, |record| record.id) {
-            Ok(_) => return Err(PdfExternalImageRegistrationError::Duplicate(id)),
-            Err(index) => images.insert(
-                index,
-                PdfExternalImageRecord {
-                    id,
-                    identity: ContentHash::new([0; 32]),
-                    metadata,
-                    dimensions: PdfExternalImageDimensions {
-                        width: Scaled::from_raw(0),
-                        height: Scaled::from_raw(0),
-                        depth: Scaled::from_raw(0),
-                    },
-                    color_space_object: 0,
-                    bytes: Vec::new(),
-                    mask_object: None,
-                },
-            ),
-        }
-        self.external_image_fingerprint = external_image_fingerprint(images);
-        Ok(())
-    }
-
-    #[must_use]
     pub(crate) fn external_image(
         &self,
         id: PdfExternalImageId,
@@ -2482,10 +2096,6 @@ impl<G> PdfState<G> {
         self.external_images.last().cloned()
     }
 
-    #[must_use]
-    pub(crate) fn external_images(&self) -> &[PdfExternalImageRecord] {
-        &self.external_images
-    }
     pub(crate) fn reserve_raw_object(&mut self) -> Result<PdfRawObjectId, PdfObjectCapacityError> {
         let raw = (self.next_object <= MAX_OBJECT_ID)
             .then_some(self.next_object)
@@ -2547,10 +2157,6 @@ impl<G> PdfState<G> {
             .iter()
             .find(|form| form.object == object)
             .cloned()
-    }
-
-    pub(crate) fn forms(&self) -> impl ExactSizeIterator<Item = PdfFormRecord<G>> + '_ {
-        self.forms.iter().cloned()
     }
 
     #[must_use]
@@ -2684,38 +2290,6 @@ impl<G> PdfState<G> {
             .map(|reservation| reservation.object)
     }
 
-    pub(crate) fn finalize_document_objects(
-        &mut self,
-        include_info: bool,
-    ) -> Result<PdfDocumentObjectIds, PdfObjectCapacityError> {
-        if self.document_objects.pages().is_none() {
-            let id = self.reserve_document_object()?;
-            self.document_objects.set_pages(id);
-        }
-        if self.document_objects.names().is_none()
-            && (self
-                .document_fragments(PdfDocumentFragmentKind::Names)
-                .next()
-                .is_some()
-                || self
-                    .destinations(false)
-                    .iter()
-                    .any(|record| matches!(record.identity(), PdfDestinationIdentity::Name(_))))
-        {
-            let id = self.reserve_document_object()?;
-            self.document_objects.set_names(id);
-        }
-        if self.document_objects.catalog().is_none() {
-            let id = self.reserve_document_object()?;
-            self.document_objects.set_catalog(id);
-        }
-        if include_info && self.document_objects.info().is_none() {
-            let id = self.reserve_document_object()?;
-            self.document_objects.set_info(id);
-        }
-        Ok(self.document_objects)
-    }
-
     fn reserve_document_object(&mut self) -> Result<u32, PdfObjectCapacityError> {
         let id = (self.next_object <= MAX_OBJECT_ID)
             .then_some(self.next_object)
@@ -2804,13 +2378,7 @@ impl<G> PdfState<G> {
                 PdfFontOperation::Attribute { font, .. }
                 | PdfFontOperation::IncludeChars { font, .. }
                 | PdfFontOperation::NoBuiltinToUnicode { font } => is_live(*font),
-                PdfFontOperation::Map(_)
-                | PdfFontOperation::MapFileContent { .. }
-                | PdfFontOperation::GlyphToUnicode(_)
-                | PdfFontOperation::Type1Program { .. }
-                | PdfFontOperation::Encoding { .. }
-                | PdfFontOperation::TrueTypeProgram { .. }
-                | PdfFontOperation::PkFont { .. } => true,
+                PdfFontOperation::Map(_) | PdfFontOperation::GlyphToUnicode(_) => true,
             })
             && self.font_resources[..cursor.font_resource_count]
                 .iter()
@@ -2905,65 +2473,6 @@ impl<G> PdfState<G> {
             .haystack
             .get(start as usize..end as usize)?;
         Some((start, bytes))
-    }
-
-    #[must_use]
-    pub(crate) fn hash_fragment(&self) -> StateHashFragment {
-        let cursor = self.cursor();
-        StateHashFragment::from_exact_builder(PDF_STATE_DOMAIN, |hasher| {
-            hasher.bool(cursor.enabled);
-            hasher.u32(cursor.next_object);
-            hasher.usize(cursor.page_count);
-            hash_output_parameters(hasher, cursor.output_parameters);
-            hasher.bool(cursor.pk_mode.is_some());
-            if let Some(pk_mode) = cursor.pk_mode {
-                hasher.bytes(&pk_mode.semantic_id.bytes());
-            }
-            hasher.usize(cursor.font_operation_count);
-            hasher.usize(cursor.font_resource_count);
-            cursor.fingerprint.apply(hasher);
-            cursor.match_fingerprint.apply(hasher);
-            cursor.external_image_fingerprint.apply(hasher);
-            cursor.raw_object_fingerprint.apply(hasher);
-            cursor.document_fragment_fingerprint.apply(hasher);
-            cursor.action_fingerprint.apply(hasher);
-            cursor.page_reservation_fingerprint.apply(hasher);
-            hasher.usize(cursor.space_font_name_count);
-            hasher.u32(cursor.current_space_font_name);
-            cursor.space_font_name_fingerprint.apply(hasher);
-            cursor.annotation_fingerprint.apply(hasher);
-            cursor.link_fingerprint.apply(hasher);
-            cursor.open_link_fingerprint.apply(hasher);
-            cursor.form_fingerprint.apply(hasher);
-            hasher.u32(cursor.next_form_resource);
-            cursor.form_artifact_fingerprint.apply(hasher);
-            hasher.i32(cursor.return_value);
-            cursor.destination_fingerprint.apply(hasher);
-            cursor.structure_destination_fingerprint.apply(hasher);
-            cursor.outline_fingerprint.apply(hasher);
-            cursor.thread_fingerprint.apply(hasher);
-            hasher.bool(cursor.document_objects.pages().is_some());
-            if let Some(id) = cursor.document_objects.pages() {
-                hasher.u32(id);
-            }
-            hasher.bool(cursor.document_objects.names().is_some());
-            if let Some(id) = cursor.document_objects.names() {
-                hasher.u32(id);
-            }
-            hasher.bool(cursor.document_objects.catalog().is_some());
-            if let Some(id) = cursor.document_objects.catalog() {
-                hasher.u32(id);
-            }
-            hasher.bool(cursor.document_objects.info().is_some());
-            if let Some(id) = cursor.document_objects.info() {
-                hasher.u32(id);
-            }
-            cursor.color_stack_fingerprint.apply(hasher);
-            hasher.i32(cursor.last_position.0.raw());
-            hasher.i32(cursor.last_position.1.raw());
-            hasher.i32(cursor.snap_reference.0.raw());
-            hasher.i32(cursor.snap_reference.1.raw());
-        })
     }
 
     pub(crate) const fn last_position(&self) -> (Scaled, Scaled) {
@@ -3407,31 +2916,6 @@ fn append_font_fingerprint(
             }
             hasher.tag(line.program as u8);
         }
-        PdfFontOperation::MapFileContent { logical_name, map } => {
-            hasher.tag(11);
-            hasher.bytes(logical_name);
-            for entry in map.entries() {
-                hasher.bytes(&entry.tex_name);
-                hasher.bool(entry.postscript_name.is_some());
-                if let Some(name) = &entry.postscript_name {
-                    hasher.bytes(name);
-                }
-                for instruction in &entry.special_instructions {
-                    hasher.bytes(instruction);
-                }
-                for encoding in &entry.encoding_files {
-                    hasher.bytes(encoding);
-                }
-                for header in &entry.header_files {
-                    hasher.bytes(header);
-                }
-                hasher.bool(entry.font_file.is_some());
-                if let Some(file) = &entry.font_file {
-                    hasher.bytes(file);
-                }
-                hasher.tag(entry.program as u8);
-            }
-        }
         PdfFontOperation::Attribute { font, bytes } => {
             hasher.tag(2);
             hasher.u32(font.raw());
@@ -3456,40 +2940,6 @@ fn append_font_fingerprint(
         PdfFontOperation::NoBuiltinToUnicode { font } => {
             hasher.tag(9);
             hasher.u32(font.raw());
-        }
-        PdfFontOperation::Type1Program {
-            logical_name,
-            program,
-        } => {
-            hasher.tag(4);
-            hasher.bytes(logical_name);
-            hasher.bytes(&program.identity().bytes());
-        }
-        PdfFontOperation::Encoding {
-            logical_name,
-            encoding,
-        } => {
-            hasher.tag(6);
-            hasher.bytes(logical_name);
-            hasher.bytes(encoding.name());
-            for name in encoding.glyph_names() {
-                hasher.bytes(name);
-            }
-        }
-        PdfFontOperation::TrueTypeProgram {
-            logical_name,
-            program,
-        } => {
-            hasher.tag(7);
-            hasher.bytes(logical_name);
-            hasher.bytes(&program.identity().bytes());
-        }
-        PdfFontOperation::PkFont { request, font } => {
-            hasher.tag(10);
-            hasher.bytes(request.tex_name());
-            hasher.u32(request.dpi());
-            hasher.bytes(request.mode());
-            hasher.bytes(&font.identity().bytes());
         }
     }
     hasher.finish_fragment()

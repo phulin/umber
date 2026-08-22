@@ -66,8 +66,8 @@ fn downstream_crate_cannot_commit_world_effects_without_universe_boundary() {
         &[
             "E0624",
             "method `commit_effects` is private",
-            "method `record_deferred_write` is private",
-            "method `rollback_generation_fork` is private",
+            "no method named `record_deferred_write` found",
+            "no method named `rollback_generation_fork` found",
         ],
     );
 }

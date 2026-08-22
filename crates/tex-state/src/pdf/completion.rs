@@ -497,12 +497,6 @@ pub(crate) fn detach<G>(
         .iter()
         .map(|operation| match operation {
             PdfFontOperation::Map(value) => DetachedPdfFontOperation::Map(value.clone()),
-            PdfFontOperation::MapFileContent { logical_name, map } => {
-                DetachedPdfFontOperation::MapFileContent {
-                    logical_name: logical_name.clone(),
-                    map: map.clone(),
-                }
-            }
             PdfFontOperation::Attribute { font, bytes } => DetachedPdfFontOperation::Attribute {
                 font: font_recipe(*font),
                 bytes: bytes.clone(),
@@ -521,31 +515,6 @@ pub(crate) fn detach<G>(
                     font: font_recipe(*font),
                 }
             }
-            PdfFontOperation::Type1Program {
-                logical_name,
-                program,
-            } => DetachedPdfFontOperation::Type1Program {
-                logical_name: logical_name.clone(),
-                program: program.clone(),
-            },
-            PdfFontOperation::Encoding {
-                logical_name,
-                encoding,
-            } => DetachedPdfFontOperation::Encoding {
-                logical_name: logical_name.clone(),
-                encoding: encoding.clone(),
-            },
-            PdfFontOperation::TrueTypeProgram {
-                logical_name,
-                program,
-            } => DetachedPdfFontOperation::TrueTypeProgram {
-                logical_name: logical_name.clone(),
-                program: program.clone(),
-            },
-            PdfFontOperation::PkFont { request, font } => DetachedPdfFontOperation::PkFont {
-                request: request.clone(),
-                font: font.clone(),
-            },
         })
         .collect();
 

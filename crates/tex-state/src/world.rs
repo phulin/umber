@@ -6,11 +6,10 @@
 
 #![allow(clippy::disallowed_methods)]
 
-use crate::dependency::{DependencyValue, DependencyWorldField};
 use crate::env::banks::IntParam;
 use crate::identity::{HandleIdentity, IdentityAllocator, IdentityMark};
-use crate::memo::{DetachedMemoValue, MemoValueKind};
-use crate::state_hash::{StateHashFragment, StateHasher};
+use crate::memo::DetachedMemoValue;
+use crate::state_hash::StateHashFragment;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
@@ -898,32 +897,6 @@ pub struct TerminalInputPosition {
 }
 
 impl StreamBufState {
-    fn retained_bytes(&self) -> usize {
-        let read_paths = self
-            .read_streams
-            .iter()
-            .flatten()
-            .map(|target| target.path.as_os_str().len())
-            .sum::<usize>();
-        let write_paths = self
-            .write_streams
-            .iter()
-            .flatten()
-            .map(|target| target.path.as_os_str().len())
-            .sum::<usize>();
-        std::mem::size_of::<Self>()
-            .saturating_add(read_paths)
-            .saturating_add(write_paths)
-            .saturating_add(
-                self.partial_lines
-                    .iter()
-                    .map(String::capacity)
-                    .sum::<usize>(),
-            )
-            .saturating_add(self.log_partial_line.capacity())
-            .saturating_add(self.terminal_partial_line.capacity())
-    }
-
     #[must_use]
     pub fn read_stream_path(&self, slot: StreamSlot) -> Option<&Path> {
         self.read_streams[slot.index()]
@@ -1090,10 +1063,6 @@ pub struct RngState {
 }
 
 impl RngState {
-    pub(crate) const fn state_words(self) -> [u64; 4] {
-        self.state
-    }
-
     #[must_use]
     pub fn from_seed(seed: u64) -> Self {
         let mut value = seed;
@@ -1582,39 +1551,6 @@ pub struct WorldSnapshot {
     error_channel: crate::print::ErrorChannel,
 }
 
-impl WorldSnapshot {
-    pub(crate) fn output_segment_matches(
-        &self,
-        effect_range: std::ops::Range<usize>,
-        artifact_range: std::ops::Range<usize>,
-        other: &Self,
-        other_effect_range: std::ops::Range<usize>,
-        other_artifact_range: std::ops::Range<usize>,
-    ) -> bool {
-        let Some(self_effect_base) = usize::try_from(self.effect_base.raw()).ok() else {
-            return false;
-        };
-        let Some(other_effect_base) = usize::try_from(other.effect_base.raw()).ok() else {
-            return false;
-        };
-        self.effects.get(
-            effect_range.start.saturating_sub(self_effect_base)
-                ..effect_range.end.saturating_sub(self_effect_base),
-        ) == other.effects.get(
-            other_effect_range.start.saturating_sub(other_effect_base)
-                ..other_effect_range.end.saturating_sub(other_effect_base),
-        ) && self.artifact_commits.get(
-            artifact_range.start.saturating_sub(self.artifact_base)
-                ..artifact_range.end.saturating_sub(self.artifact_base),
-        ) == other.artifact_commits.get(
-            other_artifact_range
-                .start
-                .saturating_sub(other.artifact_base)
-                ..other_artifact_range.end.saturating_sub(other.artifact_base),
-        )
-    }
-}
-
 /// Engine capability object for all external effects.
 #[derive(Debug)]
 pub struct World {
@@ -1686,10 +1622,6 @@ pub struct World {
     file_framing: crate::file_framing::FileFraming,
     execution_tracing: bool,
     execution_trace: Vec<ExecutionTraceEvent>,
-    #[cfg(test)]
-    effect_commit_fault: Option<EffectCommitFault>,
-    #[cfg(test)]
-    publish_rename_fault: Option<usize>,
     unavailable_memory_outputs: BTreeSet<PathBuf>,
     stream_open_contexts: Arc<BTreeMap<EffectPos, String>>,
 }
@@ -2071,13 +2003,6 @@ impl PageOutputPublicationReceipt {
     }
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum EffectCommitFault {
-    Before(EffectPos),
-    AfterPartial(EffectPos),
-}
-
 impl Clone for World {
     fn clone(&self) -> Self {
         Self {
@@ -2151,10 +2076,6 @@ impl Clone for World {
             file_framing: self.file_framing,
             execution_tracing: self.execution_tracing,
             execution_trace: self.execution_trace.clone(),
-            #[cfg(test)]
-            effect_commit_fault: self.effect_commit_fault,
-            #[cfg(test)]
-            publish_rename_fault: self.publish_rename_fault,
             unavailable_memory_outputs: self.unavailable_memory_outputs.clone(),
             stream_open_contexts: self.stream_open_contexts.clone(),
         }
@@ -2203,87 +2124,6 @@ impl World {
     pub fn start_profiling_timer() -> ProfilingTimer {
         ProfilingTimer(Instant::now())
     }
-    pub(crate) fn generation_retained_bytes(&self) -> usize {
-        let backend = match &self.backend {
-            WorldBackend::Real { artifact_dir } => artifact_dir.as_os_str().len(),
-            WorldBackend::Memory(memory) => memory
-                .files
-                .iter()
-                .map(|(path, bytes)| path.as_os_str().len().saturating_add(bytes.len()))
-                .sum::<usize>()
-                .saturating_add(
-                    memory
-                        .outputs
-                        .iter()
-                        .map(|(path, bytes)| {
-                            path.as_os_str().len().saturating_add(bytes.capacity())
-                        })
-                        .sum::<usize>(),
-                )
-                .saturating_add(memory.terminal_output.capacity())
-                .saturating_add(memory.log_output.capacity()),
-        };
-        let inputs = self
-            .inputs
-            .capacity()
-            .saturating_mul(std::mem::size_of::<InputRecord>())
-            .saturating_add(
-                self.inputs
-                    .iter()
-                    .map(|record| record.path.as_os_str().len())
-                    .sum::<usize>(),
-            );
-        let input_contents = self
-            .input_contents
-            .len()
-            .saturating_mul(std::mem::size_of::<(ContentHash, Arc<[u8]>)>())
-            .saturating_add(
-                self.input_contents
-                    .values()
-                    .map(|bytes| bytes.len())
-                    .sum::<usize>(),
-            );
-        let input_dependencies = self
-            .input_dependencies
-            .len()
-            .saturating_mul(std::mem::size_of::<(Arc<Path>, InputDependency)>())
-            .saturating_add(
-                self.input_dependencies
-                    .keys()
-                    .map(|path| path.as_os_str().len())
-                    .sum::<usize>(),
-            );
-        std::mem::size_of::<Self>()
-            .saturating_add(backend)
-            .saturating_add(self.stream_bufs.retained_bytes())
-            .saturating_add(inputs)
-            .saturating_add(input_contents)
-            .saturating_add(input_dependencies)
-            .saturating_add(
-                self.terminal_inputs
-                    .iter()
-                    .map(String::capacity)
-                    .sum::<usize>(),
-            )
-            .saturating_add(
-                self.shell_escapes
-                    .iter()
-                    .map(|record| record.command.capacity())
-                    .sum::<usize>(),
-            )
-            .saturating_add(
-                self.execution_trace
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<ExecutionTraceEvent>()),
-            )
-            .saturating_add(
-                self.execution_trace
-                    .iter()
-                    .map(|event| event.message.capacity())
-                    .sum::<usize>(),
-            )
-    }
-
     /// Creates a deterministic in-memory world for tests and hermetic runs.
     #[must_use]
     pub fn memory() -> Self {
@@ -2407,10 +2247,6 @@ impl World {
             file_framing: crate::file_framing::FileFraming::default(),
             execution_tracing: false,
             execution_trace: Vec::new(),
-            #[cfg(test)]
-            effect_commit_fault: None,
-            #[cfg(test)]
-            publish_rename_fault: None,
             unavailable_memory_outputs: BTreeSet::new(),
             stream_open_contexts: Arc::new(BTreeMap::new()),
         }
@@ -2463,21 +2299,6 @@ impl World {
     #[must_use]
     pub fn execution_trace(&self) -> &[ExecutionTraceEvent] {
         &self.execution_trace
-    }
-
-    #[cfg(test)]
-    pub(crate) fn fail_effect_commit_before(&mut self, position: EffectPos) {
-        self.effect_commit_fault = Some(EffectCommitFault::Before(position));
-    }
-
-    #[cfg(test)]
-    pub(crate) fn fail_effect_commit_after_partial(&mut self, position: EffectPos) {
-        self.effect_commit_fault = Some(EffectCommitFault::AfterPartial(position));
-    }
-
-    #[cfg(test)]
-    pub(crate) fn fail_publish_rename_at(&mut self, index: usize) {
-        self.publish_rename_fault = Some(index);
     }
 
     /// Adds or replaces one file in an in-memory world.
@@ -2660,22 +2481,6 @@ impl World {
         content
     }
 
-    pub(crate) fn register_detached_input_content(
-        &mut self,
-        path: PathBuf,
-        bytes: Arc<[u8]>,
-        modification_date: Option<FileModificationDate>,
-        origin: InputOrigin,
-    ) -> InputRecordId {
-        if let WorldBackend::Memory(memory) = &mut self.backend {
-            Arc::make_mut(memory)
-                .files
-                .insert(path.clone(), Arc::clone(&bytes));
-        }
-        self.register_input_content(&path, bytes, modification_date, origin)
-            .record()
-    }
-
     /// Replays the uncommitted stream suffix for one path without publishing
     /// it to the host. TeX may close an immediate output and read it again in
     /// the same job (LaTeX does this with its main aux file), while retained
@@ -2805,8 +2610,6 @@ impl World {
     /// mutation pass.
     pub fn publish_files(&mut self, files: Vec<(PathBuf, Vec<u8>)>) -> Result<(), WorldError> {
         static NEXT_TEMP_OUTPUT: AtomicU64 = AtomicU64::new(0);
-        #[cfg(test)]
-        let publish_rename_fault = self.publish_rename_fault.take();
         match &mut self.backend {
             WorldBackend::Real { .. } => {
                 let mut staged: Vec<StagedPublication> = Vec::with_capacity(files.len());
@@ -2898,13 +2701,6 @@ impl World {
                 }
 
                 for (published, (path, temporary, _)) in staged.iter().enumerate() {
-                    #[cfg(test)]
-                    let result = if publish_rename_fault == Some(published) {
-                        Err(io::Error::other("injected publish rename failure"))
-                    } else {
-                        std::fs::rename(temporary, path)
-                    };
-                    #[cfg(not(test))]
                     let result = std::fs::rename(temporary, path);
                     if let Err(error) = result {
                         rollback_staged_publication(&staged, published);
@@ -2985,17 +2781,6 @@ impl World {
             return true;
         };
         !self.input_contents.contains_key(&target.hash)
-    }
-
-    pub(crate) fn input_stream_dependency(&self, slot: StreamSlot) -> Option<(ContentHash, u64)> {
-        self.stream_bufs.read_streams[slot.index()]
-            .as_ref()
-            .map(|target| {
-                (
-                    target.hash,
-                    u64::try_from(target.next_byte).expect("stream cursor fits u64"),
-                )
-            })
     }
 
     pub fn read_stream_line(&mut self, slot: StreamSlot) -> Result<Option<String>, WorldError> {
@@ -3481,20 +3266,6 @@ impl World {
             ordered.dedup_by_key(|record| record.publication());
             *records = Arc::from(ordered);
         }
-    }
-
-    pub(crate) fn take_artifact_suffix(&mut self, start: usize) -> Vec<CommittedArtifact> {
-        let start = start.min(self.committed_artifacts.len());
-        Arc::make_mut(&mut self.artifact_commits).truncate(start);
-        Arc::make_mut(&mut self.committed_artifacts).split_off(start)
-    }
-
-    pub(crate) fn take_artifact_publication_suffix(
-        &mut self,
-        start: usize,
-    ) -> Vec<ArtifactPublicationRecord> {
-        let start = start.min(self.artifact_publications.len());
-        Arc::make_mut(&mut self.artifact_publications).split_off(start)
     }
 
     pub(crate) fn store_prepared_artifact(
@@ -4079,13 +3850,6 @@ impl World {
             PrintSink::Stream(_) => unreachable!("stream writes are not printable-sink writes"),
         }
     }
-    /// Appends a deferred `\write` after the owning `Universe` validates the
-    /// token-list capability against its live store timeline.
-    pub(crate) fn record_deferred_write(&mut self, stream: StreamSlot, tokens: DetachedMemoValue) {
-        assert_eq!(tokens.kind(), MemoValueKind::Tokens);
-        self.append_effect(EffectRecord::DeferredWrite { stream, tokens });
-    }
-
     pub fn record_special(&mut self, class: impl Into<String>, payload: impl Into<Vec<u8>>) {
         self.append_effect(EffectRecord::Special {
             class: class.into(),
@@ -4865,106 +4629,6 @@ impl World {
         Ok(())
     }
 
-    pub(crate) fn replace_retained_outputs(
-        &mut self,
-        effects: Vec<EffectRecord>,
-        artifacts: Vec<CommittedArtifact>,
-        artifact_publications: Vec<ArtifactPublicationRecord>,
-    ) -> Result<(), WorldError> {
-        if self.commit_mode != WorldCommitMode::Retained {
-            return Err(WorldError::new(
-                "replace retained outputs",
-                None,
-                "world is not a rollback-capable retained session",
-            ));
-        }
-        self.effect_base = EffectPos::default();
-        self.effects = Arc::new(effects);
-        self.effect_sequences = Arc::new(
-            (0..self.effects.len())
-                .map(|_| self.allocate_effect_sequence())
-                .collect(),
-        );
-        self.effect_publications = Arc::new(vec![None; self.effects.len()]);
-        self.effect_publication_record_ordinals = Arc::new(vec![None; self.effects.len()]);
-        self.next_effect_publication_record_ordinals.clear();
-        self.effect_domains = Arc::new(
-            (0..self.effects.len())
-                .map(|_| self.allocate_effect_domain())
-                .collect(),
-        );
-        self.effect_semantic_record_ordinals = Arc::new(
-            self.effect_domains
-                .clone()
-                .iter()
-                .copied()
-                .map(|domain| self.allocate_effect_semantic_record_ordinal(domain))
-                .collect(),
-        );
-        self.effect_placement_intra_orders = Arc::new(
-            (0..self.effects.len())
-                .map(|_| self.allocate_effect_placement_intra_order())
-                .collect(),
-        );
-        self.effect_commit_poison = None;
-        for artifact in &artifacts {
-            let stored = self.store_artifact(artifact.bytes())?;
-            if stored != artifact.hash() {
-                return Err(WorldError::new(
-                    "replace retained outputs",
-                    None,
-                    "accepted artifact identity does not match its bytes",
-                ));
-            }
-        }
-        if artifact_publications.len() != artifacts.len() {
-            return Err(WorldError::new(
-                "replace retained outputs",
-                None,
-                "artifact publication sidecar is not aligned",
-            ));
-        }
-        self.artifact_base = 0;
-        self.artifact_commits = Arc::new(artifacts.iter().map(CommittedArtifact::hash).collect());
-        self.committed_artifacts = Arc::new(artifacts);
-        self.next_artifact_publication_identity = self.next_artifact_publication_identity.max(
-            artifact_publications
-                .iter()
-                .map(|record| record.publication.0)
-                .max()
-                .unwrap_or(0),
-        );
-        self.next_publication_sequence = self.next_publication_sequence.max(
-            artifact_publications
-                .iter()
-                .map(|record| record.sequence.0)
-                .max()
-                .unwrap_or(0),
-        );
-        self.artifact_publications = Arc::new(artifact_publications);
-        Ok(())
-    }
-
-    #[must_use]
-    pub(crate) fn retained_output_bytes(&self) -> usize {
-        let effects = self
-            .effects
-            .iter()
-            .map(effect_retained_bytes)
-            .sum::<usize>();
-        let artifacts = self
-            .committed_artifacts
-            .iter()
-            .map(|artifact| {
-                artifact
-                    .bytes
-                    .len()
-                    .saturating_add(artifact.render_provenance_bytes())
-            })
-            .sum::<usize>();
-        effects.saturating_add(artifacts)
-    }
-
     #[must_use]
     pub fn memory_output(&self, path: impl AsRef<Path>) -> Option<&[u8]> {
         let WorldBackend::Memory(memory) = &self.backend else {
@@ -5042,188 +4706,13 @@ impl World {
         &self.stream_bufs
     }
 
-    /// Stable request identity used by [`DependencyWorldField::InputResource`].
+    /// Stable request identity used for tracked input resources.
     #[must_use]
     pub fn input_resource_dependency_identity(path: impl AsRef<Path>) -> u64 {
         StateHashFragment::from_exact_builder(0x776f_726c_645f_7271, |hash| {
             hash.bytes(path.as_ref().as_os_str().as_encoded_bytes());
         })
         .fingerprint()
-    }
-
-    /// Reads one canonical, allocation-independent tracked World fact.
-    pub(crate) fn dependency_value(
-        &self,
-        field: DependencyWorldField,
-        index: u64,
-    ) -> Option<DependencyValue> {
-        const SCHEMA: u32 = 1;
-        let projection =
-            |domain, build: &mut dyn FnMut(&mut StateHasher)| DependencyValue::Projection {
-                schema: SCHEMA,
-                fingerprint: StateHashFragment::from_exact_builder(domain, |hash| build(hash))
-                    .fingerprint(),
-            };
-        let unit_index = || (index == 0).then_some(());
-        Some(match field {
-            DependencyWorldField::InputResource => {
-                let mut matches = self.input_dependencies.values().filter(|dependency| {
-                    Self::input_resource_dependency_identity(dependency.path()) == index
-                });
-                let Some(first) = matches.next() else {
-                    return Some(DependencyValue::Absent);
-                };
-                let mut dependencies = std::iter::once(first).chain(matches).collect::<Vec<_>>();
-                dependencies.sort_by(|left, right| {
-                    left.path()
-                        .as_os_str()
-                        .as_encoded_bytes()
-                        .cmp(right.path().as_os_str().as_encoded_bytes())
-                });
-                let mut build = |hash: &mut StateHasher| {
-                    hash.usize(dependencies.len());
-                    for dependency in &dependencies {
-                        hash.bytes(dependency.path().as_os_str().as_encoded_bytes());
-                        hash.u8(match dependency.access() {
-                            InputDependencyAccess::RequiredRead => 0,
-                            InputDependencyAccess::AuthoritativeProbe => 1,
-                        });
-                        match dependency.outcome() {
-                            InputDependencyOutcome::Present(content) => {
-                                hash.tag(0);
-                                hash.bytes(&content.bytes());
-                            }
-                            InputDependencyOutcome::Missing => hash.tag(1),
-                        }
-                    }
-                };
-                projection(0x776f_726c_645f_6972, &mut build)
-            }
-            DependencyWorldField::OutputStream => {
-                let raw = u8::try_from(index).ok()?;
-                if usize::from(raw) >= STREAM_SLOT_COUNT {
-                    return None;
-                }
-                let slot = StreamSlot::new(raw);
-                let mut build = |hash: &mut StateHasher| {
-                    if let Some(target) = self.stream_bufs.write_stream_target(slot) {
-                        hash.bool(true);
-                        hash.bytes(target.path().as_os_str().as_encoded_bytes());
-                    } else {
-                        hash.bool(false);
-                    }
-                };
-                projection(0x776f_726c_645f_6f73, &mut build)
-            }
-            DependencyWorldField::InputStream => {
-                let raw = u8::try_from(index).ok()?;
-                if usize::from(raw) >= STREAM_SLOT_COUNT {
-                    return None;
-                }
-                let slot = StreamSlot::new(raw);
-                let mut build = |hash: &mut StateHasher| {
-                    if let Some(target) = self.stream_bufs.read_stream_target(slot) {
-                        hash.bool(true);
-                        hash.bytes(target.path().as_os_str().as_encoded_bytes());
-                        hash.bytes(&target.hash().bytes());
-                        hash.usize(target.next_byte());
-                    } else {
-                        hash.bool(false);
-                    }
-                };
-                projection(0x776f_726c_645f_6973, &mut build)
-            }
-            DependencyWorldField::TerminalInputCursor => {
-                unit_index()?;
-                let cursor = self.stream_bufs.terminal_input_next();
-                let mut build = |hash: &mut StateHasher| {
-                    hash.usize(cursor);
-                    match self.terminal_inputs.get(cursor) {
-                        Some(line) => {
-                            hash.bool(true);
-                            hash.str(line);
-                        }
-                        None => hash.bool(false),
-                    }
-                };
-                projection(0x776f_726c_645f_7469, &mut build)
-            }
-            DependencyWorldField::EffectPolicy => {
-                unit_index()?;
-                DependencyValue::Integer(match self.commit_mode {
-                    WorldCommitMode::Eager => 0,
-                    WorldCommitMode::Retained => 1,
-                    WorldCommitMode::Exported => 2,
-                })
-            }
-            DependencyWorldField::ShellEscapePolicy => {
-                unit_index()?;
-                DependencyValue::Integer(match self.shell_escape_policy {
-                    ShellEscapePolicy::Disabled => 0,
-                    ShellEscapePolicy::Enabled => 1,
-                    ShellEscapePolicy::Restricted => 2,
-                })
-            }
-            DependencyWorldField::JobClock => {
-                unit_index()?;
-                let mut build = |hash: &mut StateHasher| {
-                    hash.i32(self.job_clock.time);
-                    hash.i32(self.job_clock.second);
-                    hash.i32(self.job_clock.day);
-                    hash.i32(self.job_clock.month);
-                    hash.i32(self.job_clock.year);
-                };
-                projection(0x776f_726c_645f_6a63, &mut build)
-            }
-            DependencyWorldField::Rng => {
-                unit_index()?;
-                let mut build = |hash: &mut StateHasher| {
-                    for word in self.rng.state_words() {
-                        hash.u64(word);
-                    }
-                };
-                projection(0x776f_726c_645f_726e, &mut build)
-            }
-            DependencyWorldField::LoadedResources => {
-                unit_index()?;
-                let mut build = |hash: &mut StateHasher| {
-                    hash.usize(self.input_contents.len());
-                    for (content, bytes) in &self.input_contents {
-                        hash.bytes(&content.bytes());
-                        hash.usize(bytes.len());
-                    }
-                    hash.usize(self.input_dependencies.len());
-                    for dependency in self.input_dependencies.values() {
-                        hash.bytes(dependency.path().as_os_str().as_encoded_bytes());
-                        hash.u8(match dependency.access() {
-                            InputDependencyAccess::RequiredRead => 0,
-                            InputDependencyAccess::AuthoritativeProbe => 1,
-                        });
-                        match dependency.outcome() {
-                            InputDependencyOutcome::Present(content) => {
-                                hash.tag(0);
-                                hash.bytes(&content.bytes());
-                            }
-                            InputDependencyOutcome::Missing => hash.tag(1),
-                        }
-                    }
-                };
-                projection(0x776f_726c_645f_6c72, &mut build)
-            }
-            DependencyWorldField::MaterializationBarrier => {
-                unit_index()?;
-                let mut build = |hash: &mut StateHasher| {
-                    hash.u64(self.effect_base.raw());
-                    hash.usize(self.artifact_base);
-                    hash.bool(self.effect_commit_poison.is_some());
-                };
-                projection(0x776f_726c_645f_6d62, &mut build)
-            }
-        })
-    }
-
-    pub(crate) fn stream_bufs_root(&self) -> Arc<StreamBufState> {
-        Arc::clone(&self.stream_bufs)
     }
 
     fn stream_bufs_mut(&mut self) -> &mut StreamBufState {
@@ -5233,14 +4722,6 @@ impl World {
     #[must_use]
     pub const fn rng_state(&self) -> RngState {
         self.rng
-    }
-
-    pub(crate) fn pdf_random_state(&self) -> (i32, usize, [i32; 55]) {
-        (self.pdf_rng.seed, self.pdf_rng.next, self.pdf_rng.values)
-    }
-
-    pub(crate) const fn pdf_timer_state(&self) -> (u64, u64) {
-        (self.pdf_time_micros, self.pdf_timer_origin_micros)
     }
 
     #[must_use]
@@ -5312,16 +4793,6 @@ impl World {
             && (self.artifact_base..=self.artifact_pos()).contains(&snapshot.artifact_commit_len)
     }
 
-    /// Returns whether a strongly owned snapshot is structurally valid as a
-    /// persistent generation-fork root. Unlike rollback validation, this does
-    /// not require its effect position to remain ahead of the live
-    /// materialization barrier: a fork detaches that already-accepted prefix
-    /// instead of attempting to unpublish it on the source timeline.
-    #[must_use]
-    pub(crate) fn snapshot_is_forkable(&self, snapshot: &WorldSnapshot) -> bool {
-        snapshot.effect_pos == EffectPos(snapshot.effect_base.raw() + snapshot.effects.len() as u64)
-    }
-
     fn snapshot_effects_are_retained(&self, snapshot: &WorldSnapshot) -> bool {
         snapshot.effect_pos >= self.effect_base
             && snapshot.effect_pos
@@ -5382,142 +4853,6 @@ impl World {
             Arc::make_mut(&mut self.artifact_commits).truncate(retained);
             Arc::make_mut(&mut self.committed_artifacts).truncate(retained);
             Arc::make_mut(&mut self.artifact_publications).truncate(retained);
-        }
-        self.commit_mode = snapshot.commit_mode;
-        self.file_framing = snapshot.file_framing;
-        self.error_channel = snapshot.error_channel.clone();
-    }
-
-    /// Restores a checkpoint on a freshly cloned generation while detaching
-    /// the accepted generation's immutable effect prefix.  The fork keeps the
-    /// absolute effect position so semantic cursors remain comparable, but
-    /// owns only effects produced after the restart anchor.
-    pub(crate) fn rollback_generation_fork(&mut self, snapshot: &WorldSnapshot) {
-        assert!(
-            self.snapshot_is_forkable(snapshot),
-            "World snapshot effect root is not a valid generation fork"
-        );
-        self.input_identities
-            .rollback(snapshot.input_identities)
-            .expect("World input identity mark must name a retained ancestor");
-        let mut page_effect_prefix = self.page_effect_prefix.as_ref().clone();
-        let mut page_effect_prefix_sequences = self.page_effect_prefix_sequences.as_ref().clone();
-        let mut page_effect_prefix_publications =
-            self.page_effect_prefix_publications.as_ref().clone();
-        let mut page_effect_prefix_publication_record_ordinals = self
-            .page_effect_prefix_publication_record_ordinals
-            .as_ref()
-            .clone();
-        let mut page_effect_prefix_domains = self.page_effect_prefix_domains.as_ref().clone();
-        let mut page_effect_prefix_semantic_record_ordinals = self
-            .page_effect_prefix_semantic_record_ordinals
-            .as_ref()
-            .clone();
-        let mut page_effect_prefix_placement_intra_orders = self
-            .page_effect_prefix_placement_intra_orders
-            .as_ref()
-            .clone();
-        let snapshot_base = usize::try_from(snapshot.effect_base.raw())
-            .expect("effect position must fit in memory address space");
-        assert!(
-            page_effect_prefix.len() >= snapshot_base,
-            "generation fork page-effect prefix must cover the snapshot base"
-        );
-        page_effect_prefix.truncate(snapshot_base);
-        page_effect_prefix_sequences.truncate(snapshot_base);
-        page_effect_prefix_publications.truncate(snapshot_base);
-        page_effect_prefix_publication_record_ordinals.truncate(snapshot_base);
-        page_effect_prefix_domains.truncate(snapshot_base);
-        page_effect_prefix_semantic_record_ordinals.truncate(snapshot_base);
-        page_effect_prefix_placement_intra_orders.truncate(snapshot_base);
-        page_effect_prefix.extend(snapshot.effects.iter().cloned());
-        page_effect_prefix_sequences.extend(snapshot.effect_sequences.iter().copied());
-        page_effect_prefix_publications.extend(snapshot.effect_publications.iter().copied());
-        page_effect_prefix_publication_record_ordinals
-            .extend(snapshot.effect_publication_record_ordinals.iter().copied());
-        page_effect_prefix_domains.extend(snapshot.effect_domains.iter().copied());
-        page_effect_prefix_semantic_record_ordinals
-            .extend(snapshot.effect_semantic_record_ordinals.iter().copied());
-        page_effect_prefix_placement_intra_orders
-            .extend(snapshot.effect_placement_intra_orders.iter().copied());
-        assert_eq!(
-            u64::try_from(page_effect_prefix.len()).unwrap_or(u64::MAX),
-            snapshot.effect_pos.raw(),
-            "generation fork page-effect prefix must cover the absolute effect cursor"
-        );
-        self.page_effect_prefix = Arc::new(page_effect_prefix);
-        self.page_effect_prefix_sequences = Arc::new(page_effect_prefix_sequences);
-        self.page_effect_prefix_publications = Arc::new(page_effect_prefix_publications);
-        self.page_effect_prefix_publication_record_ordinals =
-            Arc::new(page_effect_prefix_publication_record_ordinals);
-        self.page_effect_prefix_domains = Arc::new(page_effect_prefix_domains);
-        self.page_effect_prefix_semantic_record_ordinals =
-            Arc::new(page_effect_prefix_semantic_record_ordinals);
-        self.page_effect_prefix_placement_intra_orders =
-            Arc::new(page_effect_prefix_placement_intra_orders);
-        self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
-        self.effect_base = snapshot.effect_pos;
-        self.effects = Arc::new(Vec::new());
-        self.effect_sequences = Arc::new(Vec::new());
-        self.effect_publications = Arc::new(Vec::new());
-        self.effect_publication_record_ordinals = Arc::new(Vec::new());
-        self.effect_domains = Arc::new(Vec::new());
-        self.effect_semantic_record_ordinals = Arc::new(Vec::new());
-        self.effect_placement_intra_orders = Arc::new(Vec::new());
-        self.active_effect_publication = None;
-        self.active_effect_output_attempt = None;
-        // A retained-generation fork starts a new output transaction.
-        // Accepted dispositions keep their own publication-local ordinals,
-        // so a descendant attempt can name the accepted attempt it supersedes.
-        self.active_effect_domain = None;
-        self.provisional_page_output_receipts =
-            Arc::clone(&snapshot.provisional_page_output_receipts);
-        self.next_terminal_publication_identity = self
-            .next_terminal_publication_identity
-            .max(snapshot.next_terminal_publication_identity);
-        self.next_artifact_publication_identity = self
-            .next_artifact_publication_identity
-            .max(snapshot.next_artifact_publication_identity);
-        self.active_artifact_publication_group = None;
-        self.active_terminal_publication = None;
-        self.stream_open_contexts = Arc::clone(&snapshot.stream_open_contexts);
-        self.next_effect_sequence = snapshot.next_effect_sequence;
-        self.next_effect_publication_record_ordinals =
-            snapshot.next_effect_publication_record_ordinals.clone();
-        self.next_publication_sequence = self
-            .next_publication_sequence
-            .max(snapshot.next_publication_sequence);
-        self.next_effect_publication_identity = self
-            .next_effect_publication_identity
-            .max(snapshot.next_effect_publication_identity);
-        self.next_effect_domain = snapshot.next_effect_domain;
-        self.next_effect_semantic_record_ordinals =
-            snapshot.next_effect_semantic_record_ordinals.clone();
-        self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
-        let mut ancestry = snapshot
-            .effect_root_ancestry
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        let snapshot_root = effect_root_identity_for(&snapshot.effects);
-        if !ancestry.iter().any(|root| root == &snapshot_root) {
-            ancestry.push(snapshot_root);
-        }
-        self.effect_root_ancestry = Arc::new(ancestry);
-        self.stream_bufs = snapshot.stream_bufs.clone();
-        self.rng = snapshot.rng;
-        self.pdf_rng = snapshot.pdf_rng.clone();
-        self.pdf_time_micros = snapshot.pdf_time_micros;
-        self.pdf_timer_origin_micros = snapshot.pdf_timer_origin_micros;
-        self.shell_escape_policy = snapshot.shell_escape_policy;
-        self.inputs.truncate(snapshot.input_len);
-        self.input_dependencies = snapshot.input_dependencies.clone();
-        self.shell_escapes.truncate(snapshot.shell_escape_len);
-        if snapshot.commit_mode == WorldCommitMode::Retained {
-            self.artifact_base = snapshot.artifact_commit_len;
-            self.artifact_commits = Arc::new(Vec::new());
-            self.committed_artifacts = Arc::new(Vec::new());
-            self.artifact_publications = Arc::new(Vec::new());
         }
         self.commit_mode = snapshot.commit_mode;
         self.file_framing = snapshot.file_framing;
@@ -5664,48 +4999,6 @@ impl World {
     }
 
     fn apply_effect(&mut self, index: usize) -> Result<(), WorldError> {
-        #[cfg(test)]
-        {
-            let position = EffectPos(self.effect_base.0 + index as u64 + 1);
-            match self.effect_commit_fault {
-                Some(EffectCommitFault::Before(target)) if target == position => {
-                    self.effect_commit_fault = None;
-                    return Err(
-                        WorldError::new("injected effect commit", None, "before apply")
-                            .effect_retry(EffectRetrySafety::Safe),
-                    );
-                }
-                Some(EffectCommitFault::AfterPartial(target)) if target == position => {
-                    self.effect_commit_fault = None;
-                    if let EffectRecord::StreamWrite { sink, text } = &self.effects[index] {
-                        let midpoint = text.len().div_ceil(2);
-                        Self::commit_write(
-                            &mut self.backend,
-                            &self.committed_write_streams,
-                            *sink,
-                            &text.as_bytes()[..midpoint],
-                        )?;
-                    } else if let EffectRecord::StreamWriteBytes { sink, bytes } =
-                        &self.effects[index]
-                    {
-                        let midpoint = bytes.len().div_ceil(2);
-                        Self::commit_write(
-                            &mut self.backend,
-                            &self.committed_write_streams,
-                            *sink,
-                            &bytes[..midpoint],
-                        )?;
-                    }
-                    return Err(WorldError::new(
-                        "injected effect commit",
-                        None,
-                        "after partial apply",
-                    )
-                    .effect_retry(EffectRetrySafety::Poisoned));
-                }
-                _ => {}
-            }
-        }
         match &self.effects[index] {
             EffectRecord::StreamOpen { slot, target } => {
                 let position = EffectPos(self.effect_base.0 + index as u64 + 1);

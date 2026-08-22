@@ -11,9 +11,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::ContentHash;
-use crate::source_map::{
-    LogicalPositionAllocator, RegisteredSource, SourceMapError, SourcePos, SourceSpan,
-};
+#[cfg(test)]
+use crate::source_map::SourceSpan;
+use crate::source_map::{LogicalPositionAllocator, RegisteredSource, SourceMapError, SourcePos};
 use layout_index::FragmentPieceIndex;
 
 static NEXT_FRAGMENT_LINEAGE: AtomicU64 = AtomicU64::new(1);
@@ -383,6 +383,7 @@ impl FragmentStore {
             .saturating_add(self.source_bytes())
     }
 
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn metadata_snapshot(&self) -> Self {
         Self {
             sources: Arc::new(HashMap::new()),
@@ -708,23 +709,20 @@ impl FragmentStore {
     }
 
     fn get(&self, id: FragmentId) -> Option<&SourceFragment> {
-        self.sources
+        let fragment = self
+            .sources
             .get(&id)
             .map(|source| &source.fragment)
-            .or_else(|| self.retired.iter().find(|fragment| fragment.id == id))
-            .or_else(|| {
-                #[cfg(test)]
-                {
-                    return self
-                        .root_coordinates
-                        .as_ref()?
-                        .fragments
-                        .iter()
-                        .find(|fragment| fragment.id == id);
-                }
-                #[cfg(not(test))]
-                None
-            })
+            .or_else(|| self.retired.iter().find(|fragment| fragment.id == id));
+        #[cfg(test)]
+        let fragment = fragment.or_else(|| {
+            self.root_coordinates
+                .as_ref()?
+                .fragments
+                .iter()
+                .find(|fragment| fragment.id == id)
+        });
+        fragment
     }
 
     fn fragment_at(&self, position: SourcePos) -> Option<(FragmentId, &SourceFragment)> {

@@ -707,6 +707,7 @@ impl PageBuilderState {
         } = None;
     }
 
+    #[cfg(test)]
     pub(crate) fn mark_class(&self, mark: PageMark, class: u16) -> NodeTokenList {
         self.mark_class_value(mark, class)
             .cloned()
@@ -831,14 +832,6 @@ impl PageBuilderState {
         self.least_page_cost
     }
 
-    pub(crate) const fn best_page_break(&self) -> Option<PageBreak> {
-        self.best_page_break
-    }
-
-    pub(crate) const fn best_size(&self) -> Scaled {
-        self.best_size
-    }
-
     pub(crate) fn record_best_break(&mut self, break_index: usize, best_size: Scaled, cost: i32) {
         self.best_page_break = Some(PageBreak::new(break_index));
         self.best_size = best_size;
@@ -861,10 +854,6 @@ impl PageBuilderState {
 
     pub(crate) const fn fire_up(&self) -> Option<PageFireUp> {
         self.fire_up
-    }
-
-    pub(crate) fn defer_fire_up(&mut self) {
-        self.fire_up = None;
     }
 
     pub(crate) fn push_contribution(&mut self, node: Node) {
@@ -894,16 +883,8 @@ impl PageBuilderState {
         self.contribution.get(1)
     }
 
-    pub(crate) fn contribution_tail(&self) -> Option<&Node> {
-        self.contribution.back()
-    }
-
     pub(crate) fn pop_contribution_front(&mut self) -> Option<Node> {
         self.contribution.pop_front()
-    }
-
-    pub(crate) fn pop_contribution_tail(&mut self) -> Option<Node> {
-        self.contribution.pop_back()
     }
 
     pub(crate) fn prepend_contributions(&mut self, nodes: Vec<Node>) {
@@ -920,10 +901,6 @@ impl PageBuilderState {
         self.current_page.iter()
     }
 
-    pub(crate) fn page_discards(&self) -> &[Node] {
-        &self.page_discards
-    }
-
     pub(crate) fn push_page_discard(&mut self, node: Node) {
         self.page_discards.push(node);
     }
@@ -934,10 +911,6 @@ impl PageBuilderState {
 
     pub(crate) fn clear_page_discards(&mut self) {
         self.page_discards.clear();
-    }
-
-    pub(crate) fn split_discards(&self) -> &[Node] {
-        &self.split_discards
     }
 
     pub(crate) fn set_split_discards(&mut self, nodes: Vec<Node>) {
