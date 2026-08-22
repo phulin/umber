@@ -2074,6 +2074,11 @@ impl<G> Universe<G> {
             .as_ref()
             .expect("live Universe has an admitted session epoch")
             .is_last_owner()
+            || !self
+                .core
+                .as_ref()
+                .ok_or(UniverseError::Retired)?
+                .can_retire()
         {
             return Err(UniverseError::State(StateError::GenerationInUse));
         }
