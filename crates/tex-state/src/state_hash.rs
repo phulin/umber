@@ -53,7 +53,7 @@ pub(crate) fn exact_identity_bytes(domain: &[u8], bytes: &[u8]) -> u64 {
 /// profiling can attribute both traversal and elapsed time without changing
 /// the canonical projection bytes.
 #[derive(Clone, Copy, Debug)]
-#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) enum StateHashComponent {
     Journal,
     CodeTables,
@@ -76,10 +76,10 @@ pub(crate) enum StateHashComponent {
 }
 
 impl StateHashComponent {
-    #[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) const COUNT: usize = 18;
 
-    #[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) const fn index(self) -> usize {
         self as usize
     }
@@ -169,14 +169,9 @@ impl StateHashFragment {
         component: StateHashComponent,
         build: impl FnOnce(&mut StateHasher) -> usize,
     ) -> Self {
-        #[cfg(feature = "profiling")]
-        let started = crate::world::World::start_profiling_timer();
         let mut hasher = StateHasher::new_exact(domain);
         let visits = build(&mut hasher);
         let fragment = hasher.finish_fragment();
-        #[cfg(feature = "profiling")]
-        crate::measurement::record_state_hash_component(component, visits, started.elapsed());
-        #[cfg(not(feature = "profiling"))]
         let _ = (component, visits);
         fragment
     }

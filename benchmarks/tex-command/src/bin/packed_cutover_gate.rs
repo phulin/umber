@@ -8,10 +8,10 @@ use tex_command::{
     RegisteredSourceKind, SourceRegistration,
 };
 use tex_state::Universe;
-use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::{Meaning, MeaningFlags};
-use tex_state::measurement::{HotCoreCensus, hot_core_census};
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::env::AssignmentScope;
+use tex_state::interner::InternerBudget;
+use tex_state::meaning::{MeaningFlags, MeaningWord};
+use tex_state::token::{Catcode, Token, TokenWord};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
@@ -25,85 +25,117 @@ fn main() {
 }
 
 fn ordinary_source_delivery() {
-    let (mut universe, mut command, mut capabilities) = source_case("ssssssssssssssss");
-    let mut processor = processor(&mut universe, &mut command, &mut capabilities);
-    for _ in 0..3 {
-        assert_char(processor.get_next().unwrap().unwrap(), 's');
-    }
-    measure_zero("ordinary_source_delivery", || {
-        assert_char(processor.get_next().unwrap().unwrap(), 's');
+    with_universe(|universe| {
+        let mut command = CommandState::default();
+        open_source(&mut command, "ssssssssssssssss");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        for _ in 0..3 {
+            assert_char(processor.get_next().unwrap().unwrap(), 's');
+        }
+        measure_zero("ordinary_source_delivery", || {
+            assert_char(processor.get_next().unwrap().unwrap(), 's');
+        });
     });
 }
 
 fn packed_backup_and_replay() {
-    let (mut universe, mut command, mut capabilities) = source_case("bbbbbbbbbbbbbbbb");
-    let mut processor = processor(&mut universe, &mut command, &mut capabilities);
-    for _ in 0..2 {
+    with_universe(|universe| {
+        let mut command = CommandState::default();
+        open_source(&mut command, "bbbbbbbbbbbbbbbb");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        for _ in 0..2 {
+            let delivered = processor.get_next().unwrap().unwrap();
+            processor.back_input(delivered).unwrap();
+            assert_char(processor.get_next().unwrap().unwrap(), 'b');
+        }
         let delivered = processor.get_next().unwrap().unwrap();
-        processor.back_input(delivered).unwrap();
-        assert_char(processor.get_next().unwrap().unwrap(), 'b');
-    }
-    let delivered = processor.get_next().unwrap().unwrap();
-    measure_zero("packed_backup_and_replay", || {
-        processor.back_input(delivered).unwrap();
-        assert_char(processor.get_next().unwrap().unwrap(), 'b');
+        measure_zero("packed_backup_and_replay", || {
+            processor.back_input(delivered).unwrap();
+            assert_char(processor.get_next().unwrap().unwrap(), 'b');
+        });
     });
 }
 
 fn stored_token_replay() {
-    let mut universe = Universe::new_with_plain_catcodes();
-    let words = (0..16)
-        .map(|_| {
-            TracedTokenWord::pack(
-                Token::Char {
+    with_universe(|universe| {
+        let words = (0..16)
+            .map(|_| {
+                TokenWord::pack(Token::Char {
                     ch: 't',
                     cat: Catcode::Letter,
-                },
-                OriginId::UNKNOWN,
-            )
-        })
-        .collect::<Vec<_>>();
-    let stored = universe.finish_traced_token_list(&words);
-    let mut command = CommandState::default();
-    command.push_everyjob(&universe.command_context(), stored);
-    let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut universe, &mut command, &mut capabilities);
-    for _ in 0..3 {
-        assert_char(processor.get_token().unwrap().unwrap(), 't');
-    }
-    measure_zero("stored_token_replay", || {
-        assert_char(processor.get_token().unwrap().unwrap(), 't');
+                })
+            })
+            .collect::<Vec<_>>();
+        let stored = universe.allocate_token_list(&words).expect("stored tokens");
+        let mut command = CommandState::default();
+        {
+            let context = universe.command_context().expect("command context");
+            command.push_everyjob(&context, stored);
+        }
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        for _ in 0..3 {
+            assert_char(processor.get_token().unwrap().unwrap(), 't');
+        }
+        measure_zero("stored_token_replay", || {
+            assert_char(processor.get_token().unwrap().unwrap(), 't');
+        });
     });
 }
 
 fn macro_argument_matching() {
-    let mut universe = Universe::new_with_plain_catcodes();
-    install_macro(&mut universe);
-    let mut command = CommandState::default();
-    open_source(
-        &mut command,
-        r"\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}",
-    );
-    let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut universe, &mut command, &mut capabilities);
-    for _ in 0..32 {
-        black_box(processor.get_x_token().unwrap().unwrap());
-    }
-    let pending = processor.get_next().unwrap().unwrap();
-    processor.back_input(pending).unwrap();
-    measure_zero("macro_matching_replay_expansion", || {
-        assert_char(processor.get_x_token().unwrap().unwrap(), 'a');
+    with_universe(|universe| {
+        install_macro(universe);
+        let mut command = CommandState::default();
+        open_source(
+            &mut command,
+            r"\m{abcdefghijklmnop}\m{abcdefghijklmnop}\m{abcdefghijklmnop}",
+        );
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = processor(
+            universe,
+            &mut command,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        for _ in 0..32 {
+            black_box(processor.get_x_token().unwrap().unwrap());
+        }
+        let pending = processor.get_next().unwrap().unwrap();
+        processor.back_input(pending).unwrap();
+        measure_zero("macro_matching_replay_expansion", || {
+            assert_char(processor.get_x_token().unwrap().unwrap(), 'a');
+        });
     });
 }
 
-fn source_case(source: &str) -> (Universe, CommandState, CommandHostCapabilities) {
-    let universe = Universe::new_with_plain_catcodes();
-    let mut command = CommandState::default();
-    open_source(&mut command, source);
-    (universe, command, CommandHostCapabilities::default())
+fn with_universe(test: impl for<'id> FnOnce(&mut Universe<tex_state::GenerationBrand<'id>>)) {
+    let budget = InternerBudget::new(4_096, 4_096, 1 << 20).expect("benchmark interner budget");
+    tex_state::with_universe(budget, test).expect("benchmark universe");
 }
 
-fn open_source(command: &mut CommandState, source: &str) {
+fn open_source<G>(command: &mut CommandState<G>, source: &str) {
     let registered = command
         .register_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
@@ -113,37 +145,38 @@ fn open_source(command: &mut CommandState, source: &str) {
     command.open_registered_source(registered).unwrap();
 }
 
-fn processor<'a>(
-    universe: &'a mut Universe,
-    command: &'a mut CommandState,
+fn processor<'a, G>(
+    universe: &'a mut Universe<G>,
+    command: &'a mut CommandState<G>,
     capabilities: &'a mut CommandHostCapabilities,
-) -> CommandProcessor<'a> {
+    diagnostic_effects: &'a mut tex_state::diagnostic::DiagnosticEffects,
+) -> CommandProcessor<'a, 'a, G> {
     CommandProcessor::new(
         command,
-        universe.command_context(),
+        universe.command_context().expect("command context"),
         CommandHostContext::new(capabilities),
+        diagnostic_effects,
     )
 }
 
-fn install_macro(universe: &mut Universe) {
-    let name = universe.intern("m").symbol();
-    let parameters = universe.intern_token_list_ref(&[Token::param(1)]);
-    let replacement = universe.intern_token_list_ref(&[Token::param(1)]);
-    let definition = universe.intern_macro(MacroMeaning::new(
-        MeaningFlags::EMPTY,
-        parameters.id(),
-        replacement.id(),
-    ));
-    universe.set_meaning(
-        name,
-        Meaning::Macro {
-            flags: MeaningFlags::EMPTY,
-            definition: definition.id(),
-        },
-    );
+fn install_macro<G>(universe: &mut Universe<G>) {
+    let name = universe.intern("m").expect("macro name");
+    let definition = universe
+        .allocate_definition(
+            &[TokenWord::pack(Token::param(1))],
+            &[TokenWord::pack(Token::param(1))],
+        )
+        .expect("macro definition");
+    universe
+        .assign_meaning(
+            name,
+            MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+            AssignmentScope::Global,
+        )
+        .expect("macro meaning");
 }
 
-fn assert_char(command: tex_command::CurrentCommand, expected: char) {
+fn assert_char<G>(command: tex_command::CurrentCommand<G>, expected: char) {
     assert_eq!(
         command.spelling().semantic_token(),
         Token::Char {
@@ -154,37 +187,10 @@ fn assert_char(command: tex_command::CurrentCommand, expected: char) {
 }
 
 fn measure_zero(name: &str, operation: impl FnOnce()) {
-    let before = hot_core_census();
     let region = Region::new(GLOBAL);
     operation();
     let stats = region.change();
-    let delta = hot_core_census().saturating_sub(before);
     assert_eq!(stats.allocations, 0, "{name}: allocation calls");
     assert_eq!(stats.bytes_allocated, 0, "{name}: requested bytes");
-    assert_zero_ownership(name, delta);
-    println!(
-        "{name} allocations=0 requested_bytes=0 arc_retains=0 weak_retains=0 weak_upgrades=0 weak_index_calls=0 content_hash_calls=0"
-    );
-}
-
-fn assert_zero_ownership(name: &str, delta: HotCoreCensus) {
-    assert_eq!(delta.weak_graph.arc_retains, 0, "{name}: Arc retains");
-    assert_eq!(delta.weak_graph.weak_retains, 0, "{name}: weak retains");
-    assert_eq!(
-        delta.weak_graph.weak_upgrade_calls, 0,
-        "{name}: weak upgrades"
-    );
-    assert_eq!(delta.weak_index.calls, 0, "{name}: weak-index calls");
-    assert_eq!(
-        delta.weak_index.candidate_entries, 0,
-        "{name}: weak-index candidates"
-    );
-    assert_eq!(
-        delta.weak_index.exact_comparisons, 0,
-        "{name}: weak-index comparisons"
-    );
-    assert_eq!(
-        delta.weak_index.content_hash_calls, 0,
-        "{name}: content hashes"
-    );
+    println!("{name} allocations=0 requested_bytes=0");
 }

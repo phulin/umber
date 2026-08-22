@@ -15,14 +15,7 @@ use tex_exec::{CheckpointSink, EngineCheckpoint};
 use tex_incr::{
     AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionId, SameHistoryStop, Session,
 };
-#[cfg(feature = "profiling")]
-use tex_state::measurement::{
-    NODE_APPEND_CAPACITY_COLUMNS, NodeAppendMeasurement, StateHashMeasurement,
-    node_append_measurement, state_hash_measurement,
-};
-use tex_state::{
-    ContentHash, JobClock, PureMemoConfig, PureMemoRecordingPolicy, PureMemoStats, Universe, World,
-};
+use tex_state::{ContentHash, JobClock, PureMemoRecordingPolicy, PureMemoStats, World};
 use tex_state::{MemoLayerStats, PureMemoLayer};
 #[cfg(feature = "profiling")]
 use umber::ExpansionStats;
@@ -179,7 +172,7 @@ impl<G> CheckpointSink<G> for ProfileCheckpointSink {
 
     fn checkpoint(&mut self, checkpoint: EngineCheckpoint<G>) {
         self.count += 1;
-        self.hash = self.hash.rotate_left(7) ^ checkpoint.state_hash();
+        self.hash = self.hash.rotate_left(7) ^ checkpoint.mode_hash();
     }
 }
 
@@ -221,8 +214,6 @@ fn run() -> Result<(), String> {
     }
 
     #[cfg(feature = "profiling")]
-    let node_append_before = node_append_measurement();
-    #[cfg(feature = "profiling")]
     let alignment_template_before = alignment_template_measurement();
     let started = Instant::now();
     let mut last = execute_once(&template, options.checkpoints)?;
@@ -243,34 +234,6 @@ fn run() -> Result<(), String> {
     print_summary(&options, &last, elapsed);
     #[cfg(feature = "profiling")]
     {
-        let node_append = node_append_delta(node_append_measurement(), node_append_before);
-        println!(
-            "gentle-profile node append: calls={} words={} sidecar_rows={:?} capacity_growth_events={} retained_payload_bytes_grown={}",
-            node_append.calls,
-            node_append.words,
-            node_append.sidecar_rows,
-            node_append.capacity_growth_events,
-            node_append.retained_payload_bytes_grown,
-        );
-        let growth_columns = NODE_APPEND_CAPACITY_COLUMNS
-            .iter()
-            .zip(node_append.capacity_growth_by_column)
-            .filter(|(_, count)| *count != 0)
-            .map(|(name, count)| format!("{name}={count}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        println!("gentle-profile node growth columns: {growth_columns}");
-        let compact_growth_columns = NODE_APPEND_CAPACITY_COLUMNS
-            .iter()
-            .zip(node_append.compact_copy_growth_by_column)
-            .filter(|(_, count)| *count != 0)
-            .map(|(name, count)| format!("{name}={count}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        println!(
-            "gentle-profile compact-copy growth: calls={} words={} columns={compact_growth_columns}",
-            node_append.compact_copy_calls, node_append.compact_copy_words,
-        );
         let templates =
             alignment_template_delta(alignment_template_measurement(), alignment_template_before);
         println!(
@@ -314,40 +277,6 @@ fn alignment_template_delta(
             .inert_glue_commands
             .saturating_sub(before.inert_glue_commands),
         other_commands: after.other_commands.saturating_sub(before.other_commands),
-    }
-}
-
-#[cfg(feature = "profiling")]
-fn node_append_delta(
-    after: NodeAppendMeasurement,
-    before: NodeAppendMeasurement,
-) -> NodeAppendMeasurement {
-    NodeAppendMeasurement {
-        calls: after.calls.saturating_sub(before.calls),
-        words: after.words.saturating_sub(before.words),
-        sidecar_rows: core::array::from_fn(|index| {
-            after.sidecar_rows[index].saturating_sub(before.sidecar_rows[index])
-        }),
-        capacity_growth_events: after
-            .capacity_growth_events
-            .saturating_sub(before.capacity_growth_events),
-        capacity_growth_by_column: core::array::from_fn(|index| {
-            after.capacity_growth_by_column[index]
-                .saturating_sub(before.capacity_growth_by_column[index])
-        }),
-        compact_copy_calls: after
-            .compact_copy_calls
-            .saturating_sub(before.compact_copy_calls),
-        compact_copy_words: after
-            .compact_copy_words
-            .saturating_sub(before.compact_copy_words),
-        compact_copy_growth_by_column: core::array::from_fn(|index| {
-            after.compact_copy_growth_by_column[index]
-                .saturating_sub(before.compact_copy_growth_by_column[index])
-        }),
-        retained_payload_bytes_grown: after
-            .retained_payload_bytes_grown
-            .saturating_sub(before.retained_payload_bytes_grown),
     }
 }
 
@@ -429,8 +358,6 @@ impl IncrementalPath {
 
 struct IncrementalSample {
     priming_elapsed: Duration,
-    #[cfg(feature = "profiling")]
-    priming_state_hash: StateHashMeasurement,
     steps: Vec<IncrementalStep>,
 }
 
@@ -515,8 +442,6 @@ fn run_cold_memo_policy(
         .map_err(|error| error.to_string())?;
     let mut last_pages = 0;
     let mut last_memo = PureMemoStats::default();
-    #[cfg(feature = "profiling")]
-    let mut last_state_hash = StateHashMeasurement::default();
     for run in 0..total_runs {
         let mut session = incremental_session(
             template,
@@ -526,8 +451,6 @@ fn run_cold_memo_policy(
             recording,
         )?;
         let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
-        #[cfg(feature = "profiling")]
-        let state_hash_before = state_hash_measurement();
         let started = Instant::now();
         let accepted = session
             .cold_with_resolvers(&mut resolvers)
@@ -543,12 +466,8 @@ fn run_cold_memo_policy(
         if run >= options.warmups {
             durations.push(elapsed);
         }
-        last_pages = accepted.artifacts.len();
+        last_pages = accepted.pages().len();
         last_memo = session.pure_memo_stats();
-        #[cfg(feature = "profiling")]
-        {
-            last_state_hash = state_hash_delta(state_hash_measurement(), state_hash_before);
-        }
         let _ = black_box(last_pages);
         let _ = black_box(dvi.len());
     }
@@ -568,16 +487,6 @@ fn run_cold_memo_policy(
         reference_dvi.len(),
         last_memo.retained_bytes,
     );
-    #[cfg(feature = "profiling")]
-    {
-        println!(
-            "gentle-profile isolated cold state hash: calls={} journal_entries={} changed_cells={} peak_changed_scratch_bytes={}",
-            last_state_hash.calls,
-            last_state_hash.journal_entries,
-            last_state_hash.changed_cells,
-            last_state_hash.peak_changed_cell_scratch_bytes,
-        );
-    }
     Ok(())
 }
 
@@ -950,7 +859,9 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
     let mut paired_total_millis = Vec::with_capacity(options.iterations);
     let mut last_disabled = None;
     let mut last_enabled = None;
-    let mut cold_reference = vec![None; edit_count];
+    let mut cold_reference = std::iter::repeat_with(|| None)
+        .take(edit_count)
+        .collect::<Vec<_>>();
     for iteration in 0..options.iterations {
         let order = if iteration % 2 == 0 {
             [false, true]
@@ -1206,19 +1117,6 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
                 stats.mean, stats.median, stats.min, stats.max,
             );
         }
-    }
-    #[cfg(feature = "profiling")]
-    for (name, sample) in [
-        (baseline_name, &disabled_sample),
-        (candidate_name, &enabled_sample),
-    ] {
-        println!(
-            "gentle-profile priming state hash journal: {name}: calls={} journal_entries={} changed_cells={} peak_changed_scratch_bytes={}",
-            sample.priming_state_hash.calls,
-            sample.priming_state_hash.journal_entries,
-            sample.priming_state_hash.changed_cells,
-            sample.priming_state_hash.peak_changed_cell_scratch_bytes,
-        );
     }
     for index in 0..edit_count {
         let disabled_stats = duration_stats(&disabled[index]);
@@ -1611,21 +1509,14 @@ fn incremental_fixture(repo_root: &Path) -> Result<IncrementalFixture, String> {
 }
 
 fn incremental_session(
-    template: &World,
+    _template: &World,
     source: &str,
     revision: RevisionId,
-    memo: bool,
-    recording: PureMemoRecordingPolicy,
+    _memo: bool,
+    _recording: PureMemoRecordingPolicy,
 ) -> Result<Session, String> {
-    let mut stores = Universe::with_world(template.clone());
-    if memo {
-        stores.enable_pure_memo(PureMemoConfig {
-            recording,
-            ..PureMemoConfig::default()
-        });
-    }
     Session::start_with_source_path(
-        stores,
+        (),
         "gentle-profile",
         Path::new(JOB_DIR).join(JOB_FILE).to_string_lossy(),
         revision,
@@ -1651,15 +1542,11 @@ fn execute_incremental_sample(
         recording,
     )?;
     let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
-    #[cfg(feature = "profiling")]
-    let priming_state_hash_before = state_hash_measurement();
     let priming_started = Instant::now();
     session
         .cold_with_resolvers(&mut resolvers)
         .map_err(|error| format!("prepare incremental baseline: {error}"))?;
     let priming_elapsed = priming_started.elapsed();
-    #[cfg(feature = "profiling")]
-    let priming_state_hash = state_hash_delta(state_hash_measurement(), priming_state_hash_before);
     let mut steps = Vec::with_capacity(fixture.edits.len());
     for (index, edit) in fixture.edits.iter().enumerate() {
         let previous_memo = session.pure_memo_stats();
@@ -1677,12 +1564,12 @@ fn execute_incremental_sample(
         let dvi_started = Instant::now();
         let dvi = accepted.dvi_bytes().map_err(|error| error.to_string())?;
         let dvi_latency = dvi_started.elapsed();
-        let _ = black_box(accepted.artifacts.len());
+        let _ = black_box(accepted.pages().len());
         steps.push(IncrementalStep {
             elapsed,
             dvi_latency,
             dvi,
-            pages: accepted.artifacts.len(),
+            pages: accepted.pages().len(),
             reuse: accepted.reuse,
             history: session
                 .history()
@@ -1701,42 +1588,8 @@ fn execute_incremental_sample(
     }
     Ok(IncrementalSample {
         priming_elapsed,
-        #[cfg(feature = "profiling")]
-        priming_state_hash,
         steps,
     })
-}
-
-#[cfg(feature = "profiling")]
-fn state_hash_delta(
-    after: StateHashMeasurement,
-    before: StateHashMeasurement,
-) -> StateHashMeasurement {
-    StateHashMeasurement {
-        calls: after.calls.saturating_sub(before.calls),
-        journal_entries: after.journal_entries.saturating_sub(before.journal_entries),
-        changed_cells: after.changed_cells.saturating_sub(before.changed_cells),
-        node_frames: after.node_frames.saturating_sub(before.node_frames),
-        owned_node_bytes: after
-            .owned_node_bytes
-            .saturating_sub(before.owned_node_bytes),
-        owned_font_keys: after.owned_font_keys.saturating_sub(before.owned_font_keys),
-        peak_changed_cell_scratch_bytes: after.peak_changed_cell_scratch_bytes,
-        peak_node_scratch_bytes: after.peak_node_scratch_bytes,
-        components: core::array::from_fn(|index| {
-            tex_state::measurement::StateHashComponentMeasurement {
-                calls: after.components[index]
-                    .calls
-                    .saturating_sub(before.components[index].calls),
-                visits: after.components[index]
-                    .visits
-                    .saturating_sub(before.components[index].visits),
-                nanos: after.components[index]
-                    .nanos
-                    .saturating_sub(before.components[index].nanos),
-            }
-        }),
-    }
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side benchmark timer; no engine fact observes it.
@@ -1759,7 +1612,7 @@ fn execute_cold_sample(
         .cold_with_resolvers(&mut resolvers)
         .map_err(|error| format!("compile cold edited document: {error}"))?;
     let elapsed = started.elapsed();
-    let _ = black_box(accepted.artifacts.len());
+    let _ = black_box(accepted.pages().len());
     Ok((elapsed, accepted))
 }
 
@@ -1869,7 +1722,7 @@ fn execute_once(template: &World, capture_checkpoints: bool) -> Result<RunOutput
             expansion_stats: _expansion_stats,
         })
     })
-    .map_err(|error| error.to_string())?
+    .map_err(|error| format!("{error:?}"))?
 }
 
 fn print_summary(options: &Options, output: &RunOutput, elapsed: Duration) {

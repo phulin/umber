@@ -854,7 +854,13 @@ pub fn with_format_destination<R>(
     ) -> Result<R, FormatError>,
 ) -> Result<R, FormatError> {
     with_generation(|generation| {
-        let core = StateCore::new(generation).map_err(|_| FormatError::AllocationFailed)?;
+        let core = {
+            #[cfg(feature = "profiling")]
+            let _allocation_scope = crate::measurement::hot_core_allocation_scope(
+                crate::measurement::HotCoreAllocationOwner::GenerationBoundary,
+            );
+            StateCore::new(generation).map_err(|_| FormatError::AllocationFailed)?
+        };
         let identity = NEXT_DESTINATION
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
                 next.checked_add(1)
@@ -882,6 +888,10 @@ pub fn with_materialized_format<R>(
     use_universe: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
 ) -> Result<R, FormatError> {
     with_format_destination(budget, world, |destination| {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = crate::measurement::hot_core_allocation_scope(
+            crate::measurement::HotCoreAllocationOwner::ColdMaterialization,
+        );
         let staging = destination.stage(image)?;
         destination
             .materialize(staging, use_universe)

@@ -370,6 +370,7 @@ pub(crate) struct AttemptArena<G> {
     argument_words: Vec<AttemptTokenListId>,
     argument_records: Vec<AttemptRow<AttemptRange>>,
     token_buffers: Vec<AttemptRow<Vec<TracedTokenWord>>>,
+    recycled_token_buffers: Vec<Vec<TracedTokenWord>>,
     #[cfg(test)]
     name_bytes: Vec<u8>,
     #[cfg(test)]
@@ -393,6 +394,7 @@ impl<G> Default for AttemptArena<G> {
             argument_words: Vec::new(),
             argument_records: Vec::new(),
             token_buffers: Vec::new(),
+            recycled_token_buffers: Vec::new(),
             #[cfg(test)]
             name_bytes: Vec::new(),
             #[cfg(test)]
@@ -606,7 +608,15 @@ impl<G> AttemptArena<G> {
         self.argument_records
             .truncate(mark.argument_records as usize);
         self.argument_words.truncate(mark.argument_words as usize);
-        self.token_buffers.truncate(mark.token_buffers as usize);
+        while self.token_buffers.len() > mark.token_buffers as usize {
+            let mut buffer = self
+                .token_buffers
+                .pop()
+                .expect("attempt token-buffer suffix is nonempty")
+                .value;
+            buffer.clear();
+            self.recycled_token_buffers.push(buffer);
+        }
         self.definitions.truncate(mark.definitions as usize);
         self.glue_values.truncate(mark.glue_values as usize);
         self.token_lists.truncate(mark.token_lists as usize);
@@ -621,6 +631,10 @@ impl<G> AttemptArena<G> {
     }
 
     pub(crate) fn begin_token_list(&mut self) -> Result<AttemptTokenBuilder, AttemptError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+        );
         let builder = AttemptTokenBuilder {
             key: self.key.0,
             start: u32::try_from(self.token_scratch.len())
@@ -666,6 +680,10 @@ impl<G> AttemptArena<G> {
         word: TracedTokenWord,
         origin: Option<AttemptProvenanceId>,
     ) -> Result<(), AttemptError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+        );
         self.validate_key(builder.key)?;
         if self.token_builders.last() != Some(&builder)
             || builder.start as usize > self.token_scratch.len()
@@ -687,6 +705,10 @@ impl<G> AttemptArena<G> {
         &mut self,
         builder: AttemptTokenBuilder,
     ) -> Result<AttemptTokenListId, AttemptError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+        );
         self.validate_key(builder.key)?;
         if self.token_builders.last() != Some(&builder) {
             return Err(AttemptError::InvalidCoordinate);
@@ -846,6 +868,10 @@ impl<G> AttemptArena<G> {
         parameter_text: AttemptTokenListId,
         replacement_text: AttemptTokenListId,
     ) -> Result<AttemptDefinitionId, AttemptError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+        );
         self.token_words(parameter_text)?;
         self.token_words(replacement_text)?;
         let id = AttemptDefinitionId::new(self.key, self.definitions.len())?;
@@ -867,6 +893,10 @@ impl<G> AttemptArena<G> {
         &mut self,
         arguments: &[AttemptTokenListId],
     ) -> Result<AttemptArgumentRecordId, AttemptError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+        );
         if arguments.len() > 9 {
             return Err(AttemptError::InvalidCoordinate);
         }
@@ -891,13 +921,17 @@ impl<G> AttemptArena<G> {
 
     /// Allocates one mutable scanner buffer owned by this attempt.
     pub(crate) fn allocate_token_buffer(&mut self) -> Result<AttemptTokenBufferId, AttemptError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+        );
         let id = AttemptTokenBufferId::new(self.key, self.token_buffers.len())?;
         self.token_buffers
             .try_reserve(1)
             .map_err(|_| AttemptError::AllocationFailed)?;
         self.token_buffers.push(AttemptRow {
             serial: id.serial,
-            value: Vec::new(),
+            value: self.recycled_token_buffers.pop().unwrap_or_default(),
         });
         Ok(id)
     }
@@ -931,6 +965,10 @@ impl<G> AttemptArena<G> {
         id: AttemptTokenBufferId,
         word: TracedTokenWord,
     ) -> Result<(), AttemptError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+        );
         self.token_buffer_mut(id)?
             .try_reserve(1)
             .map_err(|_| AttemptError::AllocationFailed)?;
@@ -966,8 +1004,21 @@ impl<G> AttemptArena<G> {
         &mut self,
         id: AttemptTokenBufferId,
     ) -> Result<AttemptTokenListId, AttemptError> {
-        let words = self.token_buffer(id)?.to_vec();
-        self.allocate_token_list(words)
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+        );
+        self.validate_key(id.key)?;
+        let row = self
+            .token_buffers
+            .get_mut(id.index())
+            .filter(|row| row.serial == id.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        let mut words = core::mem::take(&mut row.value);
+        let result = self.allocate_token_list(words.iter().copied());
+        words.clear();
+        self.token_buffers[id.index()].value = words;
+        result
     }
 
     pub(crate) fn arguments(

@@ -135,121 +135,42 @@ fn lex_dump_generation<G>(stores: &mut Universe<G>, content: FileContent) -> Res
 }
 
 #[cfg(feature = "profiling")]
-struct MainMemoryProjectionReport {
+struct HotCoreProfilingReport {
     enabled: bool,
-    before: tex_state::measurement::MainMemoryProjectionMeasurement,
-    provenance_before: tex_state::measurement::ProvenanceLifecycleMeasurement,
-    format_restore_before: tex_state::measurement::FormatRestoreMeasurement,
     hot_core_before: tex_state::measurement::HotCoreCensus,
+    retained_generations_before: tex_state::measurement::RetainedGenerationCensus,
 }
 
 #[cfg(feature = "profiling")]
-impl MainMemoryProjectionReport {
+impl HotCoreProfilingReport {
     fn new(enabled: bool) -> Self {
         Self {
             enabled,
-            before: tex_state::measurement::main_memory_projection_measurement(),
-            provenance_before: tex_state::measurement::provenance_lifecycle_measurement(),
-            format_restore_before: tex_state::measurement::format_restore_measurement(),
             hot_core_before: tex_state::measurement::hot_core_census(),
+            retained_generations_before: tex_state::measurement::retained_generation_census(),
         }
     }
 }
 
 #[cfg(feature = "profiling")]
-impl Drop for MainMemoryProjectionReport {
+impl Drop for HotCoreProfilingReport {
     fn drop(&mut self) {
         if !self.enabled {
             return;
         }
-        let after = tex_state::measurement::main_memory_projection_measurement();
-        let before = self.before;
-        let delta = tex_state::measurement::MainMemoryProjectionMeasurement {
-            dynamic_observations: after
-                .dynamic_observations
-                .saturating_sub(before.dynamic_observations),
-            base_requests: after.base_requests.saturating_sub(before.base_requests),
-            base_reuses: after.base_reuses.saturating_sub(before.base_reuses),
-            full_rebuilds: after.full_rebuilds.saturating_sub(before.full_rebuilds),
-            operation_boundaries: after
-                .operation_boundaries
-                .saturating_sub(before.operation_boundaries),
-            operation_boundaries_retained: after
-                .operation_boundaries_retained
-                .saturating_sub(before.operation_boundaries_retained),
-            cell_root_updates: after
-                .cell_root_updates
-                .saturating_sub(before.cell_root_updates),
-            cell_root_updates_retained: after
-                .cell_root_updates_retained
-                .saturating_sub(before.cell_root_updates_retained),
-            box_root_updates: after
-                .box_root_updates
-                .saturating_sub(before.box_root_updates),
-            box_root_updates_retained: after
-                .box_root_updates_retained
-                .saturating_sub(before.box_root_updates_retained),
-            cache_losses: core::array::from_fn(|index| {
-                after.cache_losses[index].saturating_sub(before.cache_losses[index])
-            }),
-        };
-        eprintln!(
-            "MAIN_MEMORY_PROJECTION dynamic_observations={} base_requests={} base_reuses={} full_rebuilds={} operation_boundaries={} operation_boundaries_retained={} cell_root_updates={} cell_root_updates_retained={} box_root_updates={} box_root_updates_retained={}",
-            delta.dynamic_observations,
-            delta.base_requests,
-            delta.base_reuses,
-            delta.full_rebuilds,
-            delta.operation_boundaries,
-            delta.operation_boundaries_retained,
-            delta.cell_root_updates,
-            delta.cell_root_updates_retained,
-            delta.box_root_updates,
-            delta.box_root_updates_retained,
-        );
-        for (owner, count) in delta.named_cache_losses() {
-            eprintln!("MAIN_MEMORY_PROJECTION_CACHE_LOSS owner={owner} count={count}");
-        }
-        let provenance = tex_state::measurement::provenance_lifecycle_measurement()
-            .saturating_sub(self.provenance_before);
-        eprintln!(
-            "PROVENANCE_LIFECYCLE atom_intern_calls={} atom_hits={} atom_misses={} atom_allocations={} frame_intern_calls={} frame_hits={} frame_misses={} frame_allocations={} list_intern_calls={} list_hits={} list_misses={} list_allocations={} atom_retains={} atom_releases={} frame_retains={} frame_releases={} origin_resolutions={} list_resolutions={} list_resolution_comparisons={}",
-            provenance.atom_intern_calls,
-            provenance.atom_intern_hits,
-            provenance.atom_intern_misses,
-            provenance.atom_allocations,
-            provenance.frame_intern_calls,
-            provenance.frame_intern_hits,
-            provenance.frame_intern_misses,
-            provenance.frame_allocations,
-            provenance.list_intern_calls,
-            provenance.list_intern_hits,
-            provenance.list_intern_misses,
-            provenance.list_allocations,
-            provenance.atom_retains,
-            provenance.atom_releases,
-            provenance.frame_retains,
-            provenance.frame_releases,
-            provenance.origin_resolutions,
-            provenance.list_resolutions,
-            provenance.list_resolution_comparisons,
-        );
-        let format_restore = tex_state::measurement::format_restore_measurement()
-            .saturating_sub(self.format_restore_before);
-        eprintln!(
-            "FORMAT_RESTORE calls={} bytes_decoded={} token_entries={} macro_entries={} glue_entries={} node_entries={} validation_passes={} copies={} allocations={}",
-            format_restore.calls,
-            format_restore.bytes_decoded,
-            format_restore.token_entries_restored,
-            format_restore.macro_entries_restored,
-            format_restore.glue_entries_restored,
-            format_restore.node_entries_restored,
-            format_restore.validation_passes,
-            format_restore.copies,
-            format_restore.allocations,
-        );
         let hot_core =
             tex_state::measurement::hot_core_census().saturating_sub(self.hot_core_before);
         eprintln!("HOT_CORE_CENSUS {}", hot_core_census_json(&hot_core));
+        let generations = tex_state::measurement::retained_generation_census()
+            .saturating_sub(self.retained_generations_before);
+        eprintln!(
+            "RETAINED_GENERATION_CENSUS created={} dropped={} live={} peak_live={} retired_explicitly={}",
+            generations.created,
+            generations.dropped,
+            generations.live,
+            generations.peak_live,
+            generations.retired_explicitly,
+        );
     }
 }
 
@@ -295,33 +216,7 @@ fn hot_core_census_json(census: &tex_state::measurement::HotCoreCensus) -> Strin
         separator(&mut output, &mut first);
         write!(output, "\"{name}\":{count}").expect("writing to a String cannot fail");
     }
-    write!(
-        output,
-        "}},\"clones\":{{\"command_state\":{{\"calls\":{},\"nanos\":{},\"logical_bytes\":{}}},\"step_snapshot\":{{\"calls\":{},\"nanos\":{},\"logical_bytes\":{}}}}},",
-        census.command_state_clones.calls,
-        census.command_state_clones.nanos,
-        census.command_state_clones.logical_bytes,
-        census.step_snapshot_clones.calls,
-        census.step_snapshot_clones.nanos,
-        census.step_snapshot_clones.logical_bytes,
-    )
-    .expect("writing to a String cannot fail");
-    write!(
-        output,
-        "\"weak_graph\":{{\"arc_retains\":{},\"weak_retains\":{},\"upgrade_calls\":{},\"upgrade_hits\":{}}},\"weak_index\":{{\"calls\":{},\"candidate_entries\":{},\"exact_comparisons\":{},\"content_hash_calls\":{}}},\"provenance_materialization\":{{\"calls\":{},\"hits\":{}}},",
-        census.weak_graph.arc_retains,
-        census.weak_graph.weak_retains,
-        census.weak_graph.weak_upgrade_calls,
-        census.weak_graph.weak_upgrade_hits,
-        census.weak_index.calls,
-        census.weak_index.candidate_entries,
-        census.weak_index.exact_comparisons,
-        census.weak_index.content_hash_calls,
-        census.provenance_materialization_calls,
-        census.provenance_materialization_hits,
-    )
-    .expect("writing to a String cannot fail");
-    output.push_str("\"command_families\":{");
+    output.push_str("},\"command_families\":{");
     first = true;
     for (name, count) in tex_state::measurement::HotCoreCommandFamily::NAMES
         .into_iter()
@@ -390,7 +285,7 @@ fn hot_core_census_json(census: &tex_state::measurement::HotCoreCensus) -> Strin
 #[allow(clippy::disallowed_methods)] // Process telemetry; TeX state never observes it.
 fn run_tex(opts: &RunCliOptions) -> Result<(), CliError> {
     #[cfg(feature = "profiling")]
-    let _main_memory_projection_report = MainMemoryProjectionReport::new(opts.profiling_stats);
+    let _hot_core_profiling_report = HotCoreProfilingReport::new(opts.profiling_stats);
     let run_started = std::time::Instant::now();
     let mut outputs = if opts.dvi.is_some() {
         umber::OutputCapabilitySet::DVI
@@ -571,70 +466,6 @@ fn finalize_run(
             stats.builder_append_nanos,
             stats.builder_append_timer_samples,
             stats.attributed_nanos(),
-        );
-    }
-    #[cfg(feature = "profiling")]
-    if opts.profiling_stats {
-        if let Some(peak) = tex_state::node_arena::peak_node_storage_measurement() {
-            eprintln!(
-                "NODE_STORAGE_PEAK logical_bytes={} retained_payload_bytes={}",
-                peak.logical_bytes, peak.retained_payload_bytes
-            );
-            for column in peak.columns {
-                eprintln!(
-                    "NODE_STORAGE_PEAK_COLUMN {} len={} capacity={} element_bytes={} logical_bytes={} retained_payload_bytes={}",
-                    column.name,
-                    column.len,
-                    column.capacity,
-                    column.element_bytes,
-                    column.logical_bytes,
-                    column.retained_payload_bytes
-                );
-            }
-        }
-        let append = tex_state::measurement::node_append_measurement();
-        eprintln!(
-            "ALLOC_NODE_APPEND calls={} words={} sidecar_rows={:?} growth_events={} grown_bytes={}",
-            append.calls,
-            append.words,
-            append.sidecar_rows,
-            append.capacity_growth_events,
-            append.retained_payload_bytes_grown,
-        );
-        let hash = tex_state::measurement::state_hash_measurement();
-        eprintln!(
-            "ALLOC_STATE_HASH calls={} journal_entries={} changed_cells={} node_frames={} owned_node_bytes={} owned_font_keys={} peak_changed_scratch_bytes={} peak_node_scratch_bytes={}",
-            hash.calls,
-            hash.journal_entries,
-            hash.changed_cells,
-            hash.node_frames,
-            hash.owned_node_bytes,
-            hash.owned_font_keys,
-            hash.peak_changed_cell_scratch_bytes,
-            hash.peak_node_scratch_bytes,
-        );
-        for (component, measurement) in hash.named_components() {
-            eprintln!(
-                "STATE_HASH_COMPONENT {component} calls={} visits={} nanos={}",
-                measurement.calls, measurement.visits, measurement.nanos
-            );
-        }
-        let traced = tex_state::measurement::traced_list_measurement();
-        eprintln!(
-            "ALLOC_TRACED_LIST finishes={} tokens={} token_builder_bytes={} origin_builder_bytes={}",
-            traced.finishes,
-            traced.tokens,
-            traced.token_builder_retained_bytes,
-            traced.origin_builder_retained_bytes,
-        );
-        let token_store = tex_state::measurement::token_store_measurement();
-        eprintln!(
-            "ALLOC_TOKEN_STORE calls={} hits={} misses={} requested_tokens={} arena_grown_bytes={}",
-            token_store.intern_calls,
-            token_store.hits,
-            token_store.misses,
-            token_store.requested_tokens,
-            token_store.arena_capacity_bytes_grown,
         );
     }
     let mut driver_files = Vec::new();

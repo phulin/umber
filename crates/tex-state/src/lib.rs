@@ -79,6 +79,8 @@ pub(crate) mod journal;
 pub mod macro_definition;
 pub mod math;
 pub mod meaning;
+#[cfg(feature = "profiling")]
+pub mod measurement;
 pub mod memo;
 pub mod node;
 pub mod node_arena;

@@ -137,6 +137,8 @@ pub struct RetainedStateGeneration {
     epoch: SessionInternerEpoch,
     universe: Universe<PhysicalGenerationCoordinate>,
     attachments: Vec<Option<Box<dyn Any + Send>>>,
+    #[cfg(feature = "profiling")]
+    _profiling_lifetime: crate::measurement::RetainedGenerationLifetime,
 }
 
 impl core::fmt::Debug for RetainedStateGeneration {
@@ -151,6 +153,10 @@ impl core::fmt::Debug for RetainedStateGeneration {
 impl RetainedStateGeneration {
     /// Allocates a fresh physical revision generation under one session epoch.
     pub fn new(epoch: &SessionInternerEpoch, world: World) -> Result<Self, SessionEpochError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = crate::measurement::hot_core_allocation_scope(
+            crate::measurement::HotCoreAllocationOwner::GenerationBoundary,
+        );
         let interner = epoch.lease()?;
         let generation = Generation::<PhysicalGenerationCoordinate>::new();
         let core = StateCore::new(generation).map_err(|_| SessionEpochError::Retired)?;
@@ -162,6 +168,8 @@ impl RetainedStateGeneration {
             epoch: epoch.clone(),
             universe,
             attachments: Vec::new(),
+            #[cfg(feature = "profiling")]
+            _profiling_lifetime: crate::measurement::RetainedGenerationLifetime::begin(),
         })
     }
 
@@ -172,6 +180,10 @@ impl RetainedStateGeneration {
         world: World,
         image: &DetachedFormatImage,
     ) -> Result<Self, FormatError> {
+        #[cfg(feature = "profiling")]
+        let _allocation_scope = crate::measurement::hot_core_allocation_scope(
+            crate::measurement::HotCoreAllocationOwner::ColdMaterialization,
+        );
         let interner = epoch.lease().map_err(|error| {
             FormatError::InvalidState(format!("session epoch is not available: {error:?}"))
         })?;
@@ -184,6 +196,8 @@ impl RetainedStateGeneration {
             epoch: epoch.clone(),
             universe,
             attachments: Vec::new(),
+            #[cfg(feature = "profiling")]
+            _profiling_lifetime: crate::measurement::RetainedGenerationLifetime::begin(),
         })
     }
 
@@ -228,6 +242,8 @@ impl RetainedStateGeneration {
         self.universe.admit_session_epoch(interner);
         let retired = self.universe.retire_generation()?;
         drop(self.universe.release_session_epoch());
+        #[cfg(feature = "profiling")]
+        crate::measurement::record_retained_generation_retirement();
         Ok(RetainedStateRetirement {
             definitions: retired.generation.definitions,
             token_lists: retired.generation.token_lists,

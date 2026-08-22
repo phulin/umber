@@ -6,12 +6,14 @@ use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 use tex_command::{
     AlignmentIdentity, CommandHostCapabilities, CommandHostContext, CommandObservation,
     CommandObserver, CommandProcessor, CommandState, PrintCommand, RegisteredSourceKind,
-    SourceRegistration, append_print_cmd_chr_text,
+    SourceRegistration, append_print_cmd_chr_text, install_tex82_expandable_primitives,
+    install_tex82_unexpandable_primitives,
 };
-use tex_state::Universe;
-use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::env::AssignmentScope;
+use tex_state::interner::InternerBudget;
+use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord, UnexpandablePrimitive};
+use tex_state::token::{Catcode, Token, TokenWord};
+use tex_state::{TokenListId, Universe};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
@@ -115,21 +117,15 @@ impl CommandObserver for CountingObserver {
     }
 }
 
-struct ProcessorCase {
-    universe: Universe,
-    command: CommandState,
+struct ProcessorCase<G> {
+    command: CommandState<G>,
     capabilities: CommandHostCapabilities,
-    replay: Option<tex_state::TracedTokenList>,
+    diagnostic_effects: tex_state::diagnostic::DiagnosticEffects,
+    replay: Option<TokenListId<G>>,
 }
 
-enum Case {
-    Processor(Box<ProcessorCase>),
-    Rendering(Box<RenderingCase>),
-}
-
-struct RenderingCase {
-    universe: Universe,
-    command: PrintCommand,
+struct RenderingCase<G> {
+    command: PrintCommand<G>,
     text: String,
 }
 
@@ -150,26 +146,174 @@ fn main() {
 }
 
 fn measure(workload: Workload, configuration: Configuration, perturb: bool) -> Stats {
-    for _ in 0..3 {
-        let mut warm = build_case(workload);
-        run_case(workload, configuration, &mut warm, false);
+    with_universe(|universe| {
+        install_tex82_expandable_primitives(universe);
+        install_tex82_unexpandable_primitives(universe);
+        for _ in 0..3 {
+            run_one(universe, workload, configuration, false);
+        }
+        let mut measured = None;
+        for _ in 0..OPERATIONS {
+            let stats = run_one(universe, workload, configuration, perturb);
+            measured = Some((stats.allocations, stats.bytes_allocated));
+        }
+        let (allocations, bytes_allocated) = measured.expect("at least one measured operation");
+        Stats {
+            allocations,
+            bytes_allocated,
+            ..Stats::default()
+        }
+    })
+}
+
+fn run_one<G>(
+    universe: &mut Universe<G>,
+    workload: Workload,
+    configuration: Configuration,
+    perturb: bool,
+) -> Stats {
+    if matches!(workload, Workload::CommandTextRendering) {
+        let mut case = rendering_case(universe);
+        let region = Region::new(GLOBAL);
+        perturb_if_requested(perturb);
+        case.text.clear();
+        let context = universe.command_context().expect("command context");
+        append_print_cmd_chr_text(&context, case.command, &mut case.text);
+        black_box(&case.text);
+        return region.change();
     }
 
-    let mut cases = (0..OPERATIONS)
-        .map(|_| build_case(workload))
-        .collect::<Vec<_>>();
-    let mut measured = None;
-    for case in &mut cases {
-        let region = Region::new(GLOBAL);
-        run_case(workload, configuration, case, perturb);
-        let stats = region.change();
-        measured = Some((stats.allocations, stats.bytes_allocated));
+    let mut case = processor_case(universe, workload);
+    let region = Region::new(GLOBAL);
+    perturb_if_requested(perturb);
+    let mut observer = CountingObserver::default();
+    let processor = CommandProcessor::new(
+        &mut case.command,
+        universe.command_context().expect("command context"),
+        CommandHostContext::new(&mut case.capabilities),
+        &mut case.diagnostic_effects,
+    );
+    let mut processor = match configuration {
+        Configuration::ExternalObserver => processor.with_observer(&mut observer),
+        Configuration::Unobserved => processor,
+    };
+    match workload {
+        Workload::SingleTokenBackup => {
+            let command = processor
+                .get_next()
+                .expect("backup token delivers")
+                .expect("backup token is present");
+            processor
+                .back_input(command)
+                .expect("single token backs up");
+        }
+        Workload::MacroArgumentMatching => {
+            black_box(
+                processor
+                    .get_x_token()
+                    .expect("macro arguments match")
+                    .expect("macro replacement is present"),
+            );
+        }
+        Workload::ScanToksAbsorption => {
+            black_box(
+                processor
+                    .scan_balanced_text(false)
+                    .expect("scan_toks succeeds"),
+            );
+        }
+        Workload::KeywordScanning => {
+            let scanned = processor.scan_keyword("dimension").expect("keyword scans");
+            assert!(scanned.value);
+            black_box(scanned);
+        }
+        Workload::DimensionScanning => {
+            black_box(processor.scan_dimension().expect("dimension scans"));
+        }
+        Workload::AlignmentPreambleScanning => {
+            black_box(
+                processor
+                    .scan_alignment_preamble_opening()
+                    .expect("alignment opener scans"),
+            );
+            processor
+                .begin_alignment_preamble_scan(None)
+                .expect("alignment preamble scans");
+        }
+        Workload::TwoTokenOffSaveRecovery => {
+            let command = processor
+                .get_next()
+                .expect("off-save command delivers")
+                .expect("off-save command is present");
+            processor
+                .recover_off_save(
+                    command,
+                    &[
+                        Token::Char {
+                            ch: 'R',
+                            cat: Catcode::Other,
+                        },
+                        Token::Char {
+                            ch: '.',
+                            cat: Catcode::Other,
+                        },
+                    ],
+                )
+                .expect("two-token off-save recovery installs");
+        }
+        Workload::RenderedTokenInstallation => {
+            black_box(
+                processor
+                    .get_x_token()
+                    .expect("rendered expansion succeeds")
+                    .expect("rendered expansion produces a token"),
+            );
+        }
+        Workload::TokenListIteration => {
+            while let Some(command) = processor.get_token().expect("token list iterates") {
+                black_box(command);
+            }
+        }
+        Workload::ShiftCase => processor.shift_case(true).expect("case shift completes"),
+        Workload::MacroDefinition => {
+            black_box(
+                processor
+                    .scan_macro_definition(false)
+                    .expect("macro definition scans"),
+            );
+        }
+        Workload::ReadTokenCollection => {
+            black_box(
+                processor
+                    .scan_input_stream_request(UnexpandablePrimitive::Read, false)
+                    .expect("read token collection succeeds"),
+            );
+        }
+        Workload::OutputReplayExpansion => {
+            black_box(
+                processor
+                    .expand_output_replay(case.replay.expect("replay fixture is present"))
+                    .expect("output replay expands"),
+            );
+        }
+        Workload::InlineControlSequenceTokenization
+        | Workload::SpilledControlSequenceTokenization => {
+            black_box(
+                processor
+                    .get_token()
+                    .expect("control sequence tokenizes")
+                    .expect("control sequence is present"),
+            );
+        }
+        Workload::CommandTextRendering => unreachable!("rendering has its own case"),
     }
-    let (allocations, bytes_allocated) = measured.expect("at least one operation is measured");
-    Stats {
-        allocations,
-        bytes_allocated,
-        ..Stats::default()
+    black_box(observer.0);
+    region.change()
+}
+
+fn perturb_if_requested(perturb: bool) {
+    if perturb {
+        black_box(vec![0_u8; PERTURBATION_BYTES]);
     }
 }
 
@@ -183,156 +327,14 @@ fn print_stats(workload: Workload, configuration: Configuration, stats: Stats) {
     );
 }
 
-fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, perturb: bool) {
-    if perturb {
-        black_box(vec![0_u8; PERTURBATION_BYTES]);
-    }
-    match case {
-        Case::Rendering(case) => {
-            case.text.clear();
-            append_print_cmd_chr_text(
-                &case.universe.command_context(),
-                case.command,
-                &mut case.text,
-            );
-            black_box(&case.text);
-        }
-        Case::Processor(case) => {
-            let mut observer = CountingObserver::default();
-            let processor = CommandProcessor::new(
-                &mut case.command,
-                case.universe.command_context(),
-                CommandHostContext::new(&mut case.capabilities),
-            );
-            let mut processor = match configuration {
-                Configuration::ExternalObserver => processor.with_observer(&mut observer),
-                Configuration::Unobserved => processor,
-            };
-            match workload {
-                Workload::SingleTokenBackup => {
-                    let command = processor
-                        .get_next()
-                        .expect("backup token delivers")
-                        .expect("backup token is present");
-                    processor
-                        .back_input(command)
-                        .expect("single token backs up");
-                }
-                Workload::MacroArgumentMatching => {
-                    black_box(
-                        processor
-                            .get_x_token()
-                            .expect("macro arguments match")
-                            .expect("macro replacement is present"),
-                    );
-                }
-                Workload::ScanToksAbsorption => {
-                    black_box(
-                        processor
-                            .scan_balanced_text(false)
-                            .expect("scan_toks succeeds"),
-                    );
-                }
-                Workload::KeywordScanning => {
-                    let scanned = processor.scan_keyword("dimension").expect("keyword scans");
-                    assert!(scanned.value);
-                    black_box(scanned);
-                }
-                Workload::DimensionScanning => {
-                    black_box(processor.scan_dimension().expect("dimension scans"));
-                }
-                Workload::AlignmentPreambleScanning => {
-                    black_box(
-                        processor
-                            .scan_alignment_preamble_opening()
-                            .expect("alignment opener scans"),
-                    );
-                    processor
-                        .begin_alignment_preamble_scan(None)
-                        .expect("alignment preamble scans");
-                }
-                Workload::TwoTokenOffSaveRecovery => {
-                    let command = processor
-                        .get_next()
-                        .expect("off-save command delivers")
-                        .expect("off-save command is present");
-                    processor
-                        .recover_off_save(
-                            command,
-                            &[
-                                Token::Char {
-                                    ch: 'R',
-                                    cat: Catcode::Other,
-                                },
-                                Token::Char {
-                                    ch: '.',
-                                    cat: Catcode::Other,
-                                },
-                            ],
-                        )
-                        .expect("two-token off-save recovery installs");
-                }
-                Workload::RenderedTokenInstallation => {
-                    black_box(
-                        processor
-                            .get_x_token()
-                            .expect("rendered expansion succeeds")
-                            .expect("rendered expansion produces a token"),
-                    );
-                }
-                Workload::TokenListIteration => {
-                    while let Some(command) = processor.get_token().expect("token list iterates") {
-                        black_box(command);
-                    }
-                }
-                Workload::ShiftCase => {
-                    processor.shift_case(true).expect("case shift completes");
-                }
-                Workload::MacroDefinition => {
-                    black_box(
-                        processor
-                            .scan_macro_definition(false)
-                            .expect("macro definition scans"),
-                    );
-                }
-                Workload::ReadTokenCollection => {
-                    black_box(
-                        processor
-                            .scan_input_stream_request(UnexpandablePrimitive::Read, false)
-                            .expect("read token collection succeeds"),
-                    );
-                }
-                Workload::OutputReplayExpansion => {
-                    black_box(
-                        processor
-                            .expand_output_replay(
-                                case.replay.clone().expect("replay fixture is present"),
-                            )
-                            .expect("output replay expands"),
-                    );
-                }
-                Workload::InlineControlSequenceTokenization
-                | Workload::SpilledControlSequenceTokenization => {
-                    black_box(
-                        processor
-                            .get_token()
-                            .expect("control sequence tokenizes")
-                            .expect("control sequence is present"),
-                    );
-                }
-                Workload::CommandTextRendering => unreachable!("rendering has its own case"),
-            }
-            black_box(observer.0);
-        }
-    }
+fn with_universe<R>(
+    benchmark: impl for<'id> FnOnce(&mut Universe<tex_state::GenerationBrand<'id>>) -> R,
+) -> R {
+    let budget = InternerBudget::new(65_536, 65_536, 8 << 20).expect("benchmark interner budget");
+    tex_state::with_universe(budget, benchmark).expect("benchmark universe")
 }
 
-fn build_case(workload: Workload) -> Case {
-    if matches!(workload, Workload::CommandTextRendering) {
-        return rendering_case();
-    }
-
-    let mut universe = Universe::new_with_plain_catcodes();
+fn processor_case<G>(universe: &mut Universe<G>, workload: Workload) -> ProcessorCase<G> {
     let source = match workload {
         Workload::SingleTokenBackup => "x",
         Workload::MacroArgumentMatching => {
@@ -355,27 +357,12 @@ fn build_case(workload: Workload) -> Case {
         }
         Workload::CommandTextRendering => unreachable!(),
     };
-
     let mut command = CommandState::default();
-    let capabilities = CommandHostCapabilities::default();
-
     if matches!(workload, Workload::MacroArgumentMatching) {
-        install_macro(&mut universe);
+        install_macro(universe);
     }
     if matches!(workload, Workload::AlignmentPreambleScanning) {
-        let cr = universe.intern("cr").symbol();
-        universe.set_meaning(
-            cr,
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr),
-        );
         command.begin_alignment(AlignmentIdentity::new(1));
-    }
-    if matches!(workload, Workload::RenderedTokenInstallation) {
-        let number = universe.intern("number").symbol();
-        universe.set_meaning(
-            number,
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
-        );
     }
     if matches!(workload, Workload::ReadTokenCollection) {
         universe.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
@@ -388,44 +375,40 @@ fn build_case(workload: Workload) -> Case {
         workload,
         Workload::InlineControlSequenceTokenization | Workload::SpilledControlSequenceTokenization
     ) {
-        universe.intern(match workload {
-            Workload::InlineControlSequenceTokenization => INLINE_CONTROL_SEQUENCE,
-            Workload::SpilledControlSequenceTokenization => SPILLED_CONTROL_SEQUENCE,
-            _ => unreachable!(),
-        });
+        universe
+            .intern(match workload {
+                Workload::InlineControlSequenceTokenization => INLINE_CONTROL_SEQUENCE,
+                Workload::SpilledControlSequenceTokenization => SPILLED_CONTROL_SEQUENCE,
+                _ => unreachable!(),
+            })
+            .expect("control sequence is interned");
     }
 
-    let replay = if matches!(workload, Workload::OutputReplayExpansion) {
-        let traced = "abcdefghijklmnop"
+    let replay = matches!(workload, Workload::OutputReplayExpansion).then(|| {
+        let words = "abcdefghijklmnop"
             .chars()
             .map(|ch| {
-                TracedTokenWord::pack(
-                    Token::Char {
-                        ch,
-                        cat: Catcode::Letter,
-                    },
-                    OriginId::UNKNOWN,
-                )
+                TokenWord::pack(Token::Char {
+                    ch,
+                    cat: Catcode::Letter,
+                })
             })
             .collect::<Vec<_>>();
-        Some(universe.finish_traced_token_list(&traced))
-    } else {
-        None
-    };
+        universe.allocate_token_list(&words).expect("replay tokens")
+    });
 
     if matches!(workload, Workload::TokenListIteration) {
-        let tokens = (0..16)
-            .map(|index| Token::Char {
-                ch: char::from(b'a' + index),
-                cat: Catcode::Letter,
+        let words = (0..16)
+            .map(|index| {
+                TokenWord::pack(Token::Char {
+                    ch: char::from(b'a' + index),
+                    cat: Catcode::Letter,
+                })
             })
             .collect::<Vec<_>>();
-        let traced = tokens
-            .into_iter()
-            .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
-            .collect::<Vec<_>>();
-        let tokens = universe.finish_traced_token_list(&traced);
-        command.push_everyjob(&universe.command_context(), tokens);
+        let tokens = universe.allocate_token_list(&words).expect("stored tokens");
+        let context = universe.command_context().expect("command context");
+        command.push_everyjob(&context, tokens);
     } else {
         let registered = command
             .register_source(SourceRegistration::new(
@@ -439,16 +422,17 @@ fn build_case(workload: Workload) -> Case {
     }
 
     let mut case = ProcessorCase {
-        universe,
         command,
-        capabilities,
+        capabilities: CommandHostCapabilities::default(),
+        diagnostic_effects: tex_state::diagnostic::DiagnosticEffects::new(),
         replay,
     };
     if matches!(workload, Workload::MacroArgumentMatching) {
         let mut processor = CommandProcessor::new(
             &mut case.command,
-            case.universe.command_context(),
+            universe.command_context().expect("command context"),
             CommandHostContext::new(&mut case.capabilities),
+            &mut case.diagnostic_effects,
         );
         for _ in 0..32 {
             black_box(
@@ -466,31 +450,37 @@ fn build_case(workload: Workload) -> Case {
             .back_input(pending)
             .expect("warmed macro call backs up");
     }
-    Case::Processor(Box::new(case))
+    case
 }
 
-fn install_macro(universe: &mut Universe) {
-    let name = universe.intern("m").symbol();
-    let parameters = universe.intern_token_list_ref(&[Token::param(1)]);
-    let replacement = universe.intern_token_list_ref(&[Token::param(1)]);
-    let definition = universe.intern_macro(MacroMeaning::new(
-        MeaningFlags::EMPTY,
-        parameters.id(),
-        replacement.id(),
-    ));
-    universe.set_meaning(
-        name,
-        Meaning::Macro {
-            flags: MeaningFlags::EMPTY,
-            definition: definition.id(),
-        },
-    );
+fn install_macro<G>(universe: &mut Universe<G>) {
+    let name = universe.intern("m").expect("macro name");
+    let definition = universe
+        .allocate_definition(
+            &[TokenWord::pack(Token::param(1))],
+            &[TokenWord::pack(Token::param(1))],
+        )
+        .expect("macro definition");
+    universe
+        .assign_meaning(
+            name,
+            MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+            AssignmentScope::Global,
+        )
+        .expect("macro meaning");
 }
 
-fn rendering_case() -> Case {
-    let mut universe = Universe::new_with_plain_catcodes();
-    let symbol = universe.intern("allocationbaseline").symbol();
-    universe.set_meaning(symbol, Meaning::Relax);
+fn rendering_case<G>(universe: &mut Universe<G>) -> RenderingCase<G> {
+    let symbol = universe
+        .intern("allocationbaseline")
+        .expect("render symbol");
+    universe
+        .assign_meaning(
+            symbol,
+            MeaningWord::from_static(Meaning::Relax),
+            AssignmentScope::Global,
+        )
+        .expect("render meaning");
     let mut command = CommandState::default();
     let registered = command
         .register_source(SourceRegistration::new(
@@ -502,17 +492,18 @@ fn rendering_case() -> Case {
         .open_registered_source(registered)
         .expect("rendering source opens");
     let mut capabilities = CommandHostCapabilities::default();
+    let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
     let current = CommandProcessor::new(
         &mut command,
-        universe.command_context(),
+        universe.command_context().expect("command context"),
         CommandHostContext::new(&mut capabilities),
+        &mut diagnostic_effects,
     )
     .get_next()
     .expect("rendering command delivers")
     .expect("rendering command is present");
-    Case::Rendering(Box::new(RenderingCase {
-        universe,
+    RenderingCase {
         command: PrintCommand::from_current(&current),
         text: String::with_capacity(32),
-    }))
+    }
 }
