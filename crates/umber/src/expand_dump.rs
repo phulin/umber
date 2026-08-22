@@ -131,7 +131,7 @@ pub enum ExpandDumpError {
 impl std::fmt::Display for ExpandDumpError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::State(error) => error.fmt(formatter),
+            Self::State(error) => write!(formatter, "{error:?}"),
             Self::World(error) => error.fmt(formatter),
             Self::Session(error) => error.fmt(formatter),
             Self::Rendered(message) => formatter.write_str(message),

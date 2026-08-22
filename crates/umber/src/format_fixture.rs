@@ -724,14 +724,27 @@ fn capture_loaded_projection<G>(
     let channels = if demand.channels {
         let source = universe.world();
         if completion == tex_exec::RootCompletionPolicy::RequireTeXEnd {
-            let records = source.effect_journal().materialized_records();
+            let records = source.effect_records().to_vec();
             let mut destination = tex_state::World::memory_with_clock(source.job_clock());
             destination
                 .publish_detached_effect_records(&records)
                 .map_err(|error| {
                     FormatFixtureError::Format(format!("channel publication: {error:?}"))
                 })?;
-            Some(detach_loaded_channels(&destination, Vec::new()))
+            let mut outputs = loaded_format_outputs(source);
+            for output in loaded_format_outputs(&destination) {
+                if let Some(existing) = outputs.iter_mut().find(|item| item.path == output.path) {
+                    *existing = output;
+                } else {
+                    outputs.push(output);
+                }
+            }
+            Some(LoadedFormatChannels {
+                terminal: source.memory_terminal_output().unwrap_or_default().to_vec(),
+                log: source.memory_log_output().unwrap_or_default().to_vec(),
+                pending_effects: records,
+                outputs,
+            })
         } else {
             Some(detach_loaded_channels(
                 source,
@@ -757,16 +770,20 @@ fn detach_loaded_channels(
         terminal: world.memory_terminal_output().unwrap_or_default().to_vec(),
         log: world.memory_log_output().unwrap_or_default().to_vec(),
         pending_effects,
-        outputs: world
-            .memory_outputs()
-            .into_iter()
-            .flatten()
-            .map(|output| LoadedFormatOutput {
-                path: output.path().to_path_buf(),
-                bytes: output.bytes().to_vec(),
-            })
-            .collect(),
+        outputs: loaded_format_outputs(world),
     }
+}
+
+fn loaded_format_outputs(world: &tex_state::World) -> Vec<LoadedFormatOutput> {
+    world
+        .memory_outputs()
+        .into_iter()
+        .flatten()
+        .map(|output| LoadedFormatOutput {
+            path: output.path().to_path_buf(),
+            bytes: output.bytes().to_vec(),
+        })
+        .collect()
 }
 
 fn push_detached_node_outline<G>(

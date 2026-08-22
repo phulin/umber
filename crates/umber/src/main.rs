@@ -9,9 +9,8 @@ use tex_command::{
     SourceControlSequenceKind, SourceRegistration, SourceToken, SourceTokenizationStep,
 };
 use tex_state::env::banks::IntParam;
-use tex_state::print::PrintSink;
 use tex_state::token::Token;
-use tex_state::{FormatError, Universe, World, WorldError};
+use tex_state::{FormatError, PrintSink, Universe, World, WorldError};
 use umber::EngineMode as RunEngine;
 use umber::{DriverFile, PlannedFinalization};
 
@@ -128,7 +127,7 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
         }
         Ok(())
     })
-    .map_err(|error| CliError::Lex(error.to_string()))?
+    .map_err(|error| CliError::Lex(format!("{error:?}")))?
 }
 
 #[cfg(feature = "profiling")]
@@ -708,7 +707,9 @@ fn finalize_run(
         ));
     }
     let materialize_started = std::time::Instant::now();
-    let publication = completion.into_publication()?;
+    let publication = completion
+        .into_publication()
+        .map_err(umber::FinalizationError::from)?;
     let finalization = PlannedFinalization::new(publication, driver_files)?;
     if opts.show_fixtures {
         print!("{}", String::from_utf8_lossy(&output.terminal));
