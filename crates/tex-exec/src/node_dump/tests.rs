@@ -82,7 +82,7 @@ fn fraction_dump_renders_the_packed_delimiter_field() {
             ),
         ] {
             let mut out = String::new();
-            dump_fraction_header(&context, FractionThickness::Default, left, right, &mut out);
+            dump_fraction_header(context, FractionThickness::Default, left, right, &mut out);
             assert_eq!(out, expected);
         }
     });
@@ -136,8 +136,8 @@ fn noad_dump_renders_the_packed_delimiter_field() {
 
         assert_eq!(
             dump_page_list(
-                &context,
-                list.clone(),
+                context,
+                list,
                 DumpConfig {
                     breadth: 10,
                     depth: 10,
@@ -174,7 +174,7 @@ fn deferred_write_dump_uses_show_token_list_control_word_separator() {
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &[write],
                 DumpConfig {
                     breadth: 10,
@@ -199,7 +199,7 @@ fn whatsit_dump_uses_live_escape_character() {
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &[write],
                 DumpConfig {
                     breadth: 10,
@@ -222,7 +222,7 @@ fn special_dump_prints_eight_bit_payload_as_tex_character_strings() {
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &[special],
                 DumpConfig {
                     breadth: 10,
@@ -251,7 +251,7 @@ fn ligature_dump_includes_original_character_list() {
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &[ligature],
                 DumpConfig {
                     breadth: 10,
@@ -289,13 +289,13 @@ fn node_dump_honors_live_newline_character_in_ligature_components() {
         };
 
         assert_eq!(
-            dump_node_slice(&context, std::slice::from_ref(&ligature), config()),
+            dump_node_slice(context, std::slice::from_ref(&ligature), config()),
             "\\f - (ligature [\n])\n",
         );
 
         assign_int(context, IntParam::NEWLINE_CHAR, -1);
         assert_eq!(
-            dump_node_slice(&context, &[ligature], config()),
+            dump_node_slice(context, &[ligature], config()),
             "\\f - (ligature [^^J])\n",
         );
     });
@@ -322,7 +322,7 @@ fn physical_character_nodes_use_tex_eight_bit_print_ascii_spelling() {
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &[character, ligature],
                 DumpConfig {
                     breadth: 10,
@@ -373,7 +373,7 @@ fn ligature_dump_marks_left_and_right_boundaries() {
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &[ligature],
                 DumpConfig {
                     breadth: 10,
@@ -417,7 +417,7 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
             ..GlueSpec::ZERO
         };
         let empty = PageListId::empty();
-        let leader = LeaderPayload::HList(zero_sized_hbox(empty.clone()));
+        let leader = LeaderPayload::HList(zero_sized_hbox(empty));
         let adjustment = context.publish_page_nodes(vec![
             Node::Kern {
                 amount: Scaled::from_raw(Scaled::UNITY),
@@ -429,7 +429,7 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
             Node::Glue {
                 spec: leader_glue,
                 kind: GlueKind::Cleaders,
-                leader: Some(leader.clone()),
+                leader: Some(leader),
             },
             Node::Glue {
                 spec: leader_glue,
@@ -457,12 +457,12 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
             Node::MathOn(Scaled::from_raw(3 * Scaled::UNITY)),
             Node::MathOff(Scaled::from_raw(-3 * Scaled::UNITY)),
             Node::Penalty(-10000),
-            Node::Adjust(AdjustNode::ordinary(adjustment.clone())),
+            Node::Adjust(AdjustNode::ordinary(adjustment)),
         ];
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &nodes,
                 DumpConfig {
                     breadth: 100,
@@ -493,7 +493,7 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
         assert_eq!(leader_glue.width, Scaled::from_raw(2 * Scaled::UNITY));
         assert!(empty.is_empty());
         assert!(matches!(
-            page_vec(&context, adjustment).as_slice(),
+            page_vec(context, adjustment).as_slice(),
             [Node::Kern { .. }, Node::Penalty(10000)]
         ));
     });
@@ -551,7 +551,7 @@ fn kern_subtype_dump_matrix_preserves_canonical_spacing_and_annotations() {
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &nodes,
                 DumpConfig {
                     breadth: 100,
@@ -582,7 +582,7 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
             ..GlueSpec::ZERO
         };
         let empty = PageListId::empty();
-        let leader = LeaderPayload::HList(zero_sized_hbox(empty.clone()));
+        let leader = LeaderPayload::HList(zero_sized_hbox(empty));
         let cases = [
             (GlueKind::Normal, None, "\\glue 1.0\n"),
             (GlueKind::SpaceSkip, None, "\\glue(\\spaceskip) 1.0\n"),
@@ -618,12 +618,12 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
             ),
             (
                 GlueKind::Leaders,
-                Some(leader.clone()),
+                Some(leader),
                 "\\leaders 1.0\n.\\hbox(0.0+0.0)x0.0\n",
             ),
             (
                 GlueKind::Cleaders,
-                Some(leader.clone()),
+                Some(leader),
                 "\\cleaders 1.0\n.\\hbox(0.0+0.0)x0.0\n",
             ),
             (
@@ -646,7 +646,7 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
             };
             assert_eq!(
                 dump_node_slice(
-                    &context,
+                    context,
                     &[node],
                     DumpConfig {
                         breadth: 10,
@@ -683,7 +683,7 @@ fn zero_glue_dump_distinguishes_nonscript_sentinel_from_printed_specs() {
         for (kind, payload, expected) in cases {
             assert_eq!(
                 dump_node_slice(
-                    &context,
+                    context,
                     &[Node::Glue {
                         spec: zero,
                         kind,
@@ -702,7 +702,7 @@ fn zero_glue_dump_distinguishes_nonscript_sentinel_from_printed_specs() {
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &[
                     Node::Glue {
                         spec: zero,
@@ -776,7 +776,7 @@ fn glue_unit_order_and_sign_matrix_is_exact_and_immutable() {
                 };
                 assert_eq!(
                     dump_node_slice(
-                        &context,
+                        context,
                         &[node],
                         DumpConfig {
                             breadth: 10,
@@ -881,11 +881,11 @@ fn box_lr_projects_profile_specific_canonical_node_dump_evidence() {
                 glue_set: GlueSetRatio::ZERO,
                 glue_sign: Sign::Normal,
                 glue_order: Order::Normal,
-                children: empty.clone(),
+                children: empty,
             }))]);
-            let config = DumpConfig::read(&context);
+            let config = DumpConfig::read(context);
             assert_eq!(
-                dump_page_list(&context, list, config),
+                dump_page_list(context, list, config),
                 format!("\\hbox(0.0+0.0)x0.0{suffix}\n"),
             );
         }
@@ -901,9 +901,9 @@ fn box_lr_projects_profile_specific_canonical_node_dump_evidence() {
             glue_order: Order::Normal,
             children: empty,
         }))]);
-        let config = DumpConfig::read(&context).for_profile(tex_command::CommandProfile::ETEX26);
+        let config = DumpConfig::read(context).for_profile(tex_command::CommandProfile::ETEX26);
         assert_eq!(
-            dump_page_list(&context, display, config),
+            dump_page_list(context, display, config),
             "\\hbox(0.0+0.0)x0.0, display\n",
         );
     });
@@ -939,9 +939,9 @@ fn shifted_display_box_and_parametric_glue_project_independently() {
             },
         ]);
 
-        let config = DumpConfig::read(&context);
+        let config = DumpConfig::read(context);
         assert_eq!(
-            dump_page_list(&context, list, config),
+            dump_page_list(context, list, config),
             "\\hbox(0.0+0.0)x0.0, shifted 50.0\n\\glue(\\baselineskip) 10.0 plus 41.0\n",
         );
     });
@@ -965,9 +965,9 @@ fn stretching_box_dump_preserves_negative_glue_set_ratio() {
             children: empty,
         }))]);
 
-        let config = DumpConfig::read(&context);
+        let config = DumpConfig::read(context);
         assert_eq!(
-            dump_page_list(&context, list, config),
+            dump_page_list(context, list, config),
             "\\hbox(0.0+0.0)x0.0, glue set -2.0\n"
         );
     });
@@ -987,8 +987,8 @@ fn default_show_box_breadth_renders_top_level_box_instead_of_etc() {
         assert_eq!(context.int_param(IntParam::SHOW_BOX_DEPTH), 0);
 
         let list = hbox_with_one_point_kern(context);
-        let config = DumpConfig::read(&context);
-        let text = dump_page_list(&context, list, config);
+        let config = DumpConfig::read(context);
+        let text = dump_page_list(context, list, config);
 
         // Real pdftex 1.40.29 writes exactly this line for `\showbox0` after
         // `\setbox0=\hbox{\kern1pt}` (confirmed against the pinned oracle).
@@ -1004,9 +1004,9 @@ fn negative_show_box_breadth_also_falls_back_to_five() {
     with_context(|context| {
         assign_int(context, IntParam::SHOW_BOX_BREADTH, -3);
         let list = hbox_with_one_point_kern(context);
-        let config = DumpConfig::read(&context);
+        let config = DumpConfig::read(context);
         assert_eq!(config.breadth, 5);
-        let text = dump_page_list(&context, list, config);
+        let text = dump_page_list(context, list, config);
         assert_eq!(text, "\\hbox(0.0+0.0)x1.0 []\n");
     });
 }
@@ -1032,7 +1032,7 @@ fn explicit_positive_breadth_still_truncates_with_etc() {
             depth: 0,
             profile: tex_command::CommandProfile::TEX82,
         };
-        let text = dump_page_list(&context, list, config);
+        let text = dump_page_list(context, list, config);
         assert_eq!(text, "\\kern 1.0\n\\kern 2.0\netc.\n");
     });
 }
@@ -1059,18 +1059,18 @@ fn unset_box_prints_encoded_column_count_and_glue_fields() {
                 stretch_order: Order::Fil,
                 shrink: Scaled::from_raw(3 * Scaled::UNITY),
                 shrink_order: Order::Normal,
-                children: children.clone(),
+                children,
             }))
         };
         let source = [unset(0), unset(1), unset(2)];
         let list = context.publish_page_nodes(source.to_vec());
         let before_source = source.clone();
-        let before_children = page_vec(&context, children);
+        let before_children = page_vec(context, children);
 
         assert_eq!(
             dump_page_list(
-                &context,
-                list.clone(),
+                context,
+                list,
                 DumpConfig {
                     breadth: 100,
                     depth: 100,
@@ -1086,12 +1086,12 @@ fn unset_box_prints_encoded_column_count_and_glue_fields() {
                 ".\\kern 1.0\n",
             ),
         );
-        assert_eq!(page_vec(&context, list), before_source);
-        assert_eq!(page_vec(&context, children), before_children);
+        assert_eq!(page_vec(context, list), before_source);
+        assert_eq!(page_vec(context, children), before_children);
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &source[1..2],
                 DumpConfig {
                     breadth: 100,
@@ -1101,8 +1101,8 @@ fn unset_box_prints_encoded_column_count_and_glue_fields() {
             ),
             "\\unsetbox(5.0+6.0)x4.0 (2 columns), stretch 2.0fil, shrink 3.0 []\n",
         );
-        assert_eq!(page_vec(&context, list), before_source);
-        assert_eq!(page_vec(&context, children), before_children);
+        assert_eq!(page_vec(context, list), before_source);
+        assert_eq!(page_vec(context, children), before_children);
     });
 }
 
@@ -1132,9 +1132,9 @@ fn showbox_depth_limits_nested_boxes_at_exact_thresholds() {
             kind: KernKind::Explicit,
         };
         let inner_children = context.publish_page_nodes(vec![kern.clone()]);
-        let inner = Node::HList(zero_sized_hbox(inner_children.clone()));
+        let inner = Node::HList(zero_sized_hbox(inner_children));
         let outer_children = context.publish_page_nodes(vec![inner.clone()]);
-        let outer = Node::HList(zero_sized_hbox(outer_children.clone()));
+        let outer = Node::HList(zero_sized_hbox(outer_children));
         let root = context.publish_page_nodes(vec![outer.clone()]);
 
         let before_root = vec![outer];
@@ -1142,8 +1142,8 @@ fn showbox_depth_limits_nested_boxes_at_exact_thresholds() {
         let before_inner = vec![kern];
         let render = |depth| {
             dump_page_list(
-                &context,
-                root.clone(),
+                context,
+                root,
                 DumpConfig {
                     breadth: 5,
                     depth,
@@ -1163,9 +1163,9 @@ fn showbox_depth_limits_nested_boxes_at_exact_thresholds() {
                 "..\\kern 1.0\n",
             )
         );
-        assert_eq!(page_vec(&context, root), before_root);
-        assert_eq!(page_vec(&context, outer_children), before_outer);
-        assert_eq!(page_vec(&context, inner_children), before_inner);
+        assert_eq!(page_vec(context, root), before_root);
+        assert_eq!(page_vec(context, outer_children), before_outer);
+        assert_eq!(page_vec(context, inner_children), before_inner);
     });
 }
 
@@ -1184,24 +1184,24 @@ fn showbox_limits_side_lists_leaders_and_discretionaries_without_mutation() {
         let empty = PageListId::empty();
         let glue = tex_state::glue::GlueSpec::ZERO;
 
-        let adjust = Node::Adjust(AdjustNode::ordinary(two_kerns.clone()));
+        let adjust = Node::Adjust(AdjustNode::ordinary(two_kerns));
         let leader = Node::Glue {
             spec: glue,
             kind: GlueKind::Leaders,
-            leader: Some(LeaderPayload::HList(zero_sized_hbox(two_kerns.clone()))),
+            leader: Some(LeaderPayload::HList(zero_sized_hbox(two_kerns))),
         };
         let disc = Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: two_kerns.clone(),
-            post: two_kerns.clone(),
-            replace: two_kerns.clone(),
+            pre: two_kerns,
+            post: two_kerns,
+            replace: two_kerns,
             physical_replace_count: 2,
         };
         let source = [adjust, leader, disc];
-        let before = page_vec(&context, two_kerns);
+        let before = page_vec(context, two_kerns);
         let render = |node: &Node| {
             dump_node_slice(
-                &context,
+                context,
                 std::slice::from_ref(node),
                 DumpConfig {
                     breadth: 1,
@@ -1232,7 +1232,7 @@ fn showbox_limits_side_lists_leaders_and_discretionaries_without_mutation() {
             )
         );
         assert_eq!(
-            page_vec(&context, two_kerns),
+            page_vec(context, two_kerns),
             before,
             "dumping must be read-only"
         );
@@ -1252,15 +1252,15 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
         let replace = context.publish_page_nodes(vec![kern(3)]);
         let disc = Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: pre.clone(),
-            post: post.clone(),
-            replace: replace.clone(),
+            pre,
+            post,
+            replace,
             physical_replace_count: 1,
         };
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 std::slice::from_ref(&disc),
                 DumpConfig {
                     breadth: 10,
@@ -1270,9 +1270,9 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
             ),
             "\\discretionary replacing 1\n.\\kern 1.0\n|\\kern 2.0\n|\\kern 4.0\n",
         );
-        assert_eq!(page_vec(&context, pre), [kern(1)]);
-        assert_eq!(page_vec(&context, post), [kern(2), kern(4)]);
-        assert_eq!(page_vec(&context, replace), [kern(3)]);
+        assert_eq!(page_vec(context, pre), [kern(1)]);
+        assert_eq!(page_vec(context, post), [kern(2), kern(4)]);
+        assert_eq!(page_vec(context, replace), [kern(3)]);
         assert!(matches!(
              disc,
              Node::Disc {
@@ -1292,15 +1292,15 @@ fn discretionary_dump_uses_live_escape_character() {
         let empty = PageListId::empty();
         let disc = Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty.clone(),
-            post: empty.clone(),
+            pre: empty,
+            post: empty,
             replace: empty,
             physical_replace_count: 0,
         };
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &[disc],
                 DumpConfig {
                     breadth: 10,
@@ -1321,8 +1321,8 @@ fn discretionary_dump_retains_the_physical_replacement_span() {
         let nodes = [
             Node::Disc {
                 kind: DiscKind::AutomaticHyphen,
-                pre: empty.clone(),
-                post: empty.clone(),
+                pre: empty,
+                post: empty,
                 replace: structured_replace,
                 physical_replace_count: 2,
             },
@@ -1336,7 +1336,7 @@ fn discretionary_dump_retains_the_physical_replacement_span() {
         box_node.diagnostic_children = Some(diagnostic_children);
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &[Node::HList(box_node)],
                 DumpConfig {
                     breadth: 10,
@@ -1380,15 +1380,15 @@ fn diagnostic_box_reorders_boundary_disc_and_retains_multi_disc_spans() {
             Node::Disc {
                 kind: DiscKind::AutomaticHyphen,
                 pre,
-                post: empty.clone(),
+                post: empty,
                 replace: boundary_replace,
                 physical_replace_count: 2,
             },
             boundary_kern,
             Node::Disc {
                 kind: DiscKind::AutomaticHyphen,
-                pre: empty.clone(),
-                post: empty.clone(),
+                pre: empty,
+                post: empty,
                 replace: ligature_replace,
                 physical_replace_count: 3,
             },
@@ -1400,7 +1400,7 @@ fn diagnostic_box_reorders_boundary_disc_and_retains_multi_disc_spans() {
 
         assert_eq!(
             dump_node_slice(
-                &context,
+                context,
                 &[Node::HList(box_node)],
                 DumpConfig {
                     breadth: 10,
@@ -1436,7 +1436,7 @@ fn etex_mlr_boundaries_dump_with_exact_identity() {
         ]);
         assert_eq!(
             dump_page_list(
-                &context,
+                context,
                 list,
                 DumpConfig {
                     breadth: 10,
@@ -1498,8 +1498,8 @@ fn pdftex_insertion_and_numbered_mark_dump_exact_identity_in_source_order() {
             depth: 100,
             profile: tex_command::CommandProfile::TEX82,
         };
-        assert_eq!(dump_page_list(&context, source.clone(), config), expected);
-        assert_eq!(page_vec(&context, source), nodes, "dumping is immutable");
+        assert_eq!(dump_page_list(context, source, config), expected);
+        assert_eq!(page_vec(context, source), nodes, "dumping is immutable");
     });
 }
 
@@ -1536,8 +1536,8 @@ fn mark_dump_prints_token_list_once() {
 
         assert_eq!(
             dump_page_list(
-                &context,
-                source.clone(),
+                context,
+                source,
                 DumpConfig {
                     breadth: 100,
                     depth: 100,
@@ -1546,7 +1546,7 @@ fn mark_dump_prints_token_list_once() {
             ),
             "\\mark{A}\n\\mark{\\foo}\n\\mark{}\n"
         );
-        assert_eq!(page_vec(&context, source), nodes);
+        assert_eq!(page_vec(context, source), nodes);
         let [
             Node::Mark {
                 tokens: literal, ..
@@ -1589,14 +1589,14 @@ fn insertion_node_dump_prints_all_web_fields() {
             split_top_skip,
             split_max_depth: Scaled::from_raw(4 * Scaled::UNITY),
             floating_penalty: 100,
-            content: content.clone(),
+            content,
         };
         let source = context.publish_page_nodes(vec![insertion.clone()]);
 
         assert_eq!(
             dump_page_list(
-                &context,
-                source.clone(),
+                context,
+                source,
                 DumpConfig {
                     breadth: 100,
                     depth: 100,
@@ -1609,9 +1609,9 @@ fn insertion_node_dump_prints_all_web_fields() {
                 ".\\penalty 23\n",
             ),
         );
-        let source_after = page_vec(&context, source);
+        let source_after = page_vec(context, source);
         assert_eq!(source_after, std::slice::from_ref(&insertion));
-        assert_eq!(page_vec(&context, content), children);
+        assert_eq!(page_vec(context, content), children);
         let [
             Node::Ins {
                 content: attached_content,
@@ -1650,7 +1650,7 @@ fn etex_numbered_mark_dump_renders_dense_and_sparse_boundary_classes_exactly() {
 
         assert_eq!(
             dump_page_list(
-                &context,
+                context,
                 list,
                 DumpConfig {
                     breadth: 100,
@@ -1736,7 +1736,7 @@ fn showlists_renders_all_math_noad_variants_and_empty_fields() {
 
         assert_eq!(
             dump_page_list(
-                &context,
+                context,
                 list,
                 DumpConfig {
                     breadth: 100,
@@ -1789,7 +1789,7 @@ fn showlists_depth_cutoff_prints_nonempty_math_field_marker() {
 
         assert_eq!(
             dump_page_list(
-                &context,
+                context,
                 list,
                 DumpConfig {
                     breadth: 100,
@@ -1822,7 +1822,7 @@ fn math_dump_distinguishes_empty_submlist() {
 
         assert_eq!(
             dump_page_list(
-                &context,
+                context,
                 list,
                 DumpConfig {
                     breadth: 100,
@@ -1857,26 +1857,20 @@ fn subsidiary_math_field_matrix_preserves_empty_tags_and_indentation() {
             (MathField::Empty, ""),
             (MathField::MathChar(math_char(2, 'x')), "...\\fam2 x\n"),
             (MathField::MathTextChar(math_char(2, 'x')), "...\\fam2 x\n"),
-            (MathField::SubBox(empty.clone()), ""),
-            (
-                MathField::SubBox(child.clone()),
-                "...\\mathord\n....\\fam2 x\n",
-            ),
-            (MathField::SubMlist(empty.clone()), "...{}\n"),
-            (
-                MathField::SubMlist(child.clone()),
-                "...\\mathord\n....\\fam2 x\n",
-            ),
+            (MathField::SubBox(empty), ""),
+            (MathField::SubBox(child), "...\\mathord\n....\\fam2 x\n"),
+            (MathField::SubMlist(empty), "...{}\n"),
+            (MathField::SubMlist(child), "...\\mathord\n....\\fam2 x\n"),
         ] {
             let mut out = String::new();
-            dump_math_field(&context, &field, &config, 2, '.', &mut out);
+            dump_math_field(context, &field, &config, 2, '.', &mut out);
             assert_eq!(out, expected, "field={field:?}");
         }
 
         for (numerator, denominator, expected) in [
             (
-                empty.clone(),
-                child.clone(),
+                empty,
+                child,
                 "\\fraction, thickness = default\n\\{}\n/\\mathord\n/.\\fam2 x\n",
             ),
             (
@@ -1893,7 +1887,7 @@ fn subsidiary_math_field_matrix_preserves_empty_tags_and_indentation() {
                 right_delimiter: None,
             };
             let mut out = String::new();
-            dump_fraction(&context, &fraction, &config, -1, &mut out);
+            dump_fraction(context, &fraction, &config, -1, &mut out);
             assert_eq!(out, expected);
         }
     });
@@ -1925,12 +1919,12 @@ fn subsidiary_markers_propagate_through_nested_boxes_and_adjacent_noads() {
             kind: NoadKind::Normal(NoadClass::Ord),
             nucleus: MathField::Empty,
             superscript: MathField::SubBox(sub_box),
-            subscript: MathField::SubMlist(sub_mlist.clone()),
+            subscript: MathField::SubMlist(sub_mlist),
         })]);
 
         assert_eq!(
             dump_page_list(
-                &context,
+                context,
                 list,
                 DumpConfig {
                     breadth: 100,
@@ -1951,7 +1945,7 @@ fn subsidiary_markers_propagate_through_nested_boxes_and_adjacent_noads() {
 
         let mut nested = String::new();
         dump_math_field(
-            &context,
+            context,
             &MathField::SubMlist(sub_mlist),
             &DumpConfig {
                 breadth: 100,
@@ -1993,7 +1987,7 @@ fn math_dump_depth_and_choice_arms() {
 
         assert_eq!(
             dump_page_list(
-                &context,
+                context,
                 list,
                 DumpConfig {
                     breadth: 100,

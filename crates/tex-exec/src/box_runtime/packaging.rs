@@ -139,7 +139,7 @@ pub(crate) fn hpack_with_overfull_rule<G>(
     // material in `replace` so semantic list traversal cannot count it twice;
     // retain the physical projection separately for §182's diagnostic walk.
     if let Some(diagnostic_children) =
-        physical_discretionary_projection(stores, packed.node.children.clone())
+        physical_discretionary_projection(stores, packed.node.children)
     {
         packed.node.diagnostic_children = Some(diagnostic_children);
     }
@@ -259,10 +259,10 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
         packed.node.diagnostic_children = Some(diagnostic_children);
         tex_state::node::BoxNode {
             children,
-            ..packed.node.clone()
+            ..packed.node
         }
     } else {
-        packed.node.clone()
+        packed.node
     };
     crate::pack_report::report_pack_diagnostics(
         stores,
@@ -270,7 +270,7 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
         context,
         crate::pack_report::PackedDirection::Horizontal,
         &packed.diagnostics,
-        &Node::HList(diagnostic_box.clone()),
+        &Node::HList(diagnostic_box),
         diagnostic_list_layout,
     );
     if let Some((missing, extra)) = lr_problems {
@@ -280,7 +280,7 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
             context,
             missing,
             extra,
-            &Node::HList(diagnostic_box.clone()),
+            &Node::HList(diagnostic_box),
             diagnostic_list_layout,
         );
     }
@@ -289,7 +289,7 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
 
 pub(crate) fn project_short_diagnostic_discs(physical: &[Node], semantic: &[Node]) -> Vec<Node> {
     let mut semantic_discs = semantic.iter().filter_map(|node| match node {
-        Node::Disc { pre, post, .. } => Some((pre.clone(), post.clone())),
+        Node::Disc { pre, post, .. } => Some((*pre, *post)),
         _ => None,
     });
     physical
@@ -302,14 +302,12 @@ pub(crate) fn project_short_diagnostic_discs(physical: &[Node], semantic: &[Node
                 replace,
                 physical_replace_count,
             } => {
-                let (pre, post) = semantic_discs
-                    .next()
-                    .unwrap_or_else(|| (pre.clone(), post.clone()));
+                let (pre, post) = semantic_discs.next().unwrap_or((*pre, *post));
                 Node::Disc {
                     kind: *kind,
                     pre,
                     post,
-                    replace: replace.clone(),
+                    replace: *replace,
                     physical_replace_count: *physical_replace_count,
                 }
             }

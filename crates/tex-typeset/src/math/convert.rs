@@ -70,7 +70,7 @@ fn build_math_layout(
         recovered: Cell::new(false),
         scratch: ConversionScratch::default(),
     };
-    prepare_nested_mlists(&mut ctx, input.clone(), style);
+    prepare_nested_mlists(&mut ctx, input, style);
     let root = convert_mlist_uncached(&mut ctx, input, style, penalties);
     let recovered = ctx.recovered.get();
     let root = if recovered { ctx.layout.empty() } else { root };
@@ -343,7 +343,7 @@ fn first_pass<S: MathTypesetState>(
                 out.push(WorkItem::Node(MathNode::Glue {
                     spec,
                     kind,
-                    leader: leader.clone(),
+                    leader: *leader,
                 }));
             }
             Node::Kern { amount, kind } => {
@@ -555,7 +555,7 @@ fn prepare_nested_mlists<S: MathTypesetState>(
     let root = (root, root_style);
     let mut visiting = AHashSet::new();
     let mut completed = AHashSet::new();
-    let mut stack = vec![(root.clone(), false)];
+    let mut stack = vec![(root, false)];
     let mut postorder = Vec::new();
     let mut requests = Vec::new();
     let mut request_seen = AHashSet::new();
@@ -563,7 +563,7 @@ fn prepare_nested_mlists<S: MathTypesetState>(
     while let Some((list, expanded)) = stack.pop() {
         if expanded {
             visiting.remove(&list);
-            completed.insert(list.clone());
+            completed.insert(list);
             postorder.push(list);
             continue;
         }
@@ -571,20 +571,20 @@ fn prepare_nested_mlists<S: MathTypesetState>(
             continue;
         }
         assert!(
-            visiting.insert(list.clone()),
+            visiting.insert(list),
             "math source lists must not contain structural cycles"
         );
-        stack.push((list.clone(), true));
+        stack.push((list, true));
         nested_mlist_requests(
             ctx.state,
-            list.0.clone(),
+            list.0,
             list.1,
             &mut request_view,
             &mut requests,
             &mut request_seen,
         );
         for dependency in requests.iter().rev() {
-            stack.push((dependency.clone(), false));
+            stack.push((*dependency, false));
         }
     }
     request_view.clear();
@@ -596,7 +596,7 @@ fn prepare_nested_mlists<S: MathTypesetState>(
         ctx.capture_replay = true;
         debug_assert!(ctx.pack_replays.is_empty());
         debug_assert!(ctx.event_replays.borrow().is_empty());
-        let converted = convert_mlist_uncached(ctx, list.clone(), style, false);
+        let converted = convert_mlist_uncached(ctx, list, style, false);
         ctx.capture_replay = false;
         let direct_pack_observations = ctx.layout.take_pack_observations_since(observation_start);
         let pack_observations = captured_replay(
@@ -636,8 +636,8 @@ fn nested_mlist_requests(
         seen: &mut AHashSet<(PageListId, Style)>,
     ) {
         if let MathField::SubMlist(list) = field {
-            let request = (list.clone(), style);
-            if seen.insert(request.clone()) {
+            let request = (*list, style);
+            if seen.insert(request) {
                 out.push(request);
             }
         }
@@ -685,13 +685,13 @@ fn nested_mlist_requests(
             }
             Node::FractionNoad(fraction) => {
                 add_field(
-                    &MathField::SubMlist(fraction.numerator.clone()),
+                    &MathField::SubMlist(fraction.numerator),
                     style.num_style(),
                     out,
                     seen,
                 );
                 add_field(
-                    &MathField::SubMlist(fraction.denominator.clone()),
+                    &MathField::SubMlist(fraction.denominator),
                     style.denom_style(),
                     out,
                     seen,
@@ -748,13 +748,13 @@ fn translate_noad<S: MathTypesetState>(
             // The source box crossed TeX82 §1086's package seam when it was
             // built. Appendix G reuses that completed box here; it does not
             // publish the historical hpack a second time.
-            source_list(ctx, list.clone())
+            source_list(ctx, *list)
         }
         (_, MathField::SubMlist(list)) => {
             // TeX82's mlist2 branch always hpacks a sub-mlist nucleus. This
             // structural box is distinct from clean_box's later reuse of a
             // sole unshifted box around the completed field.
-            let list = convert_mlist(ctx, list.clone(), ctx.style, false);
+            let list = convert_mlist(ctx, *list, ctx.style, false);
             let boxed = ctx.layout.hpack(list);
             ctx.layout.hlist([MathNode::HList(boxed)])
         }
@@ -922,11 +922,11 @@ pub(crate) fn clean_box(
             }
         }
         MathField::SubBox(list) => {
-            let list = source_list(ctx, list.clone());
+            let list = source_list(ctx, *list);
             clean_hlist(ctx, list)
         }
         MathField::SubMlist(list) => {
-            let list = convert_mlist(ctx, list.clone(), style, false);
+            let list = convert_mlist(ctx, *list, style, false);
             clean_hlist(ctx, list)
         }
     }
@@ -1082,14 +1082,14 @@ fn convert_source_list(
     list: PageListId,
     role: SourceListRole,
 ) -> FrozenHList {
-    if let Some(converted) = ctx.source_lists.get(&(list.clone(), role)) {
+    if let Some(converted) = ctx.source_lists.get(&(list, role)) {
         return *converted;
     }
 
-    let mut stack = vec![(list.clone(), role, false)];
+    let mut stack = vec![(list, role, false)];
     let mut visiting = AHashSet::new();
     while let Some((current, current_role, expanded)) = stack.pop() {
-        let key = (current.clone(), current_role);
+        let key = (current, current_role);
         if ctx.source_lists.contains_key(&key) {
             continue;
         }
@@ -1110,10 +1110,10 @@ fn convert_source_list(
             continue;
         }
         assert!(
-            visiting.insert(key.clone()),
+            visiting.insert(key),
             "source box lists must not contain structural cycles"
         );
-        stack.push((current.clone(), current_role, true));
+        stack.push((current, current_role, true));
         let mut children = ctx
             .state
             .page_nodes(current)

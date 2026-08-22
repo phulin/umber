@@ -361,7 +361,7 @@ fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
         },
     ];
     let post = PostLineBreakParams {
-        empty_list: empty.clone(),
+        empty_list: empty,
         left_skip: zero,
         right_skip: zero,
         interline_penalty: 99,
@@ -406,7 +406,7 @@ fn etex_display_widow_selector_survives_to_post_line_break() {
         })
         .collect::<Vec<_>>();
     let mut params = PostLineBreakParams {
-        empty_list: empty.clone(),
+        empty_list: empty,
         left_skip: zero,
         right_skip: zero,
         interline_penalty: 7,
@@ -621,8 +621,8 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
                 Node::Disc {
                     kind: DiscKind::ExplicitHyphen,
                     pre,
-                    post: empty.clone(),
-                    replace: empty.clone(),
+                    post: empty,
+                    replace: empty,
                     physical_replace_count: 0,
                 },
                 microtype_char(first, 'B'),
@@ -1246,16 +1246,16 @@ fn tracing_display_retains_structural_successors_after_discretionary_cluster() {
         rule(1),
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: first_replace.clone(),
+            pre: empty,
+            post: empty,
+            replace: first_replace,
             physical_replace_count: 0,
         },
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: second_replace.clone(),
+            pre: empty,
+            post: empty,
+            replace: second_replace,
             physical_replace_count: 2,
         },
         kern(1),
@@ -1294,16 +1294,16 @@ fn tracing_display_does_not_repeat_successors_rendered_with_a_discretionary_clus
         rule(1),
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: first_replace.clone(),
+            pre: empty,
+            post: empty,
+            replace: first_replace,
             physical_replace_count: 1,
         },
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: second_replace.clone(),
+            pre: empty,
+            post: empty,
+            replace: second_replace,
             physical_replace_count: 2,
         },
         kern(1),
@@ -1345,9 +1345,9 @@ fn tracing_display_includes_automatic_discretionary_replacement_after_font_kern(
         },
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: replace.clone(),
+            pre: empty,
+            post: empty,
+            replace: replace,
             physical_replace_count: 1,
         },
         Node::Kern {
@@ -1442,7 +1442,7 @@ fn consecutive_discardable_breakpoints_do_not_form_a_backwards_chain() {
         &nodes,
         &result.breaks,
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -1671,8 +1671,8 @@ fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
     let disc = |pre| Node::Disc {
         kind: DiscKind::ExplicitHyphen,
         pre,
-        post: empty.clone(),
-        replace: empty.clone(),
+        post: empty,
+        replace: empty,
         physical_replace_count: 0,
     };
     // This is the equal-demerit shape used by TRIP's line-breaking test.
@@ -1680,15 +1680,15 @@ fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
     // position, selecting the early (2, 6) route rather than (6, 13).
     let nodes = vec![
         kern(0),
-        disc(nonempty.clone()),
+        disc(nonempty),
         kern(0),
         rule(0),
-        disc(empty.clone()),
-        disc(nonempty.clone()),
+        disc(empty),
+        disc(nonempty),
         kern(0),
         rule(0),
         rule(0),
-        disc(empty.clone()),
+        disc(empty),
         kern(0),
         rule(0),
         disc(nonempty),
@@ -1994,9 +1994,9 @@ fn looseness_can_select_empty_line_after_terminal_discretionary() {
         rule(20),
         Node::Disc {
             kind: DiscKind::ExplicitHyphen,
-            pre: hyphen.clone(),
-            post: empty.clone(),
-            replace: empty.clone(),
+            pre: hyphen,
+            post: empty,
+            replace: empty,
             physical_replace_count: 0,
         },
         Node::Penalty(10_000),
@@ -2028,9 +2028,9 @@ fn equal_demerit_easy_line_champion_uses_terminal_discretionary_route() {
     let nodes = vec![
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: empty.clone(),
+            pre: empty,
+            post: empty,
+            replace: empty,
             physical_replace_count: 0,
         },
         Node::Penalty(INF_PENALTY),
@@ -2160,7 +2160,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -2323,8 +2323,8 @@ fn discretionary_penalty_depends_on_pre_break_text() {
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
             pre,
-            post: empty.clone(),
-            replace: empty.clone(),
+            post: empty,
+            replace: empty,
             physical_replace_count: 0,
         },
         kern(20),
@@ -2337,9 +2337,9 @@ fn discretionary_penalty_depends_on_pre_break_text() {
         kern(20),
         Node::Disc {
             kind: DiscKind::ExplicitHyphen,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: empty.clone(),
+            pre: empty,
+            post: empty,
+            replace: empty,
             physical_replace_count: 0,
         },
         kern(20),
@@ -2384,8 +2384,8 @@ fn existing_discretionary_is_available_on_the_pretolerance_pass() {
         Node::Disc {
             kind: DiscKind::ExplicitHyphen,
             pre,
-            post: empty.clone(),
-            replace: empty.clone(),
+            post: empty,
+            replace: empty,
             physical_replace_count: 0,
         },
         rule(20),
@@ -2412,9 +2412,9 @@ fn final_hyphen_demerits_apply_to_penultimate_hyphenated_line() {
         kern(20),
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: empty.clone(),
+            pre: empty,
+            post: empty,
+            replace: empty,
             physical_replace_count: 0,
         },
         rule(20),
@@ -2510,9 +2510,7 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
             class: 0,
             tokens: mark_tokens.clone(),
         },
-        Node::Adjust(tex_state::node::AdjustNode::ordinary(
-            adjust_content.clone(),
-        )),
+        Node::Adjust(tex_state::node::AdjustNode::ordinary(adjust_content)),
         Node::Penalty(-10_000),
         rule(10),
         Node::Penalty(10_000),
@@ -2534,7 +2532,7 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: empty_glue,
             right_skip: empty_glue,
             interline_penalty: 0,
@@ -2577,7 +2575,7 @@ fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
             kind: DiscKind::ExplicitHyphen,
             pre,
             post,
-            replace: replacement.clone(),
+            replace: replacement,
             physical_replace_count: 1,
         },
         rule(2),
@@ -2601,7 +2599,7 @@ fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -2744,7 +2742,7 @@ fn next_line_discards_all_discardables_but_retains_font_kern() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -2789,7 +2787,7 @@ fn two_line_penalty_after_combines_club_widow_and_broken_penalties() {
         },
     ];
     let params = PostLineBreakParams {
-        empty_list: empty.clone(),
+        empty_list: empty,
         left_skip: zero,
         right_skip: zero,
         interline_penalty: 11,
@@ -2841,7 +2839,7 @@ fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -2878,9 +2876,9 @@ fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count
         rule(3),
         Node::Disc {
             kind: DiscKind::AutomaticHyphen,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: replacement.clone(),
+            pre: empty,
+            post: empty,
+            replace: replacement,
             physical_replace_count: 1,
         },
         Node::Penalty(10_000),
@@ -2896,7 +2894,7 @@ fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -2944,7 +2942,7 @@ fn line_materializer_reuses_the_returned_line_buffer() {
         nodes,
         breaks,
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -3000,7 +2998,7 @@ fn post_line_break_omits_only_zero_leftskip() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -3032,7 +3030,7 @@ fn post_line_break_omits_only_zero_leftskip() {
         &nodes,
         &breaks,
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: nonzero,
             right_skip: zero,
             interline_penalty: 0,
@@ -3099,18 +3097,18 @@ fn paragraph_tape_analyzes_twenty_thousand_nested_replacements_iteratively() {
     for _ in 0..20_000 {
         replacement = universe.publish_page_nodes(&[Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: replacement.clone(),
+            pre: empty,
+            post: empty,
+            replace: replacement,
             physical_replace_count: 0,
         }]);
     }
     let nodes = vec![
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: replacement.clone(),
+            pre: empty,
+            post: empty,
+            replace: replacement,
             physical_replace_count: 0,
         },
         Node::Penalty(-10_000),
@@ -3157,7 +3155,7 @@ fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
         tape,
         breaks,
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,
@@ -3203,8 +3201,8 @@ fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() 
     };
     let disc = |replace| Node::Disc {
         kind: DiscKind::AutomaticHyphen,
-        pre: empty.clone(),
-        post: empty.clone(),
+        pre: empty,
+        post: empty,
         replace,
         physical_replace_count: 1,
     };
@@ -3222,7 +3220,7 @@ fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() 
             hyphenated: false,
         }],
         PostLineBreakParams {
-            empty_list: empty.clone(),
+            empty_list: empty,
             left_skip: zero,
             right_skip: zero,
             interline_penalty: 0,

@@ -88,7 +88,7 @@ pub(crate) fn make_unset_node<G>(
         &packed.node.children,
         kind,
     );
-    let children = packed.node.children.clone();
+    let children = packed.node.children;
     Ok(Node::Unset(UnsetNode::new(UnsetNodeFields {
         kind,
         width: packed.node.width,

@@ -204,7 +204,7 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                 } => scratch.push(Node::Char {
                     font: *font,
                     ch: *ch,
-                    origin: origin.clone(),
+                    origin: *origin,
                 }),
                 MathNode::Kern { amount, kind } => scratch.push(Node::Kern {
                     amount: *amount,
@@ -222,7 +222,7 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
                     scratch.push(Node::Glue {
                         spec: value,
                         kind: lower_math_glue_kind(*kind),
-                        leader: leader.clone(),
+                        leader: *leader,
                     });
                 }
                 MathNode::Penalty(penalty) => scratch.push(Node::Penalty(*penalty)),

@@ -157,9 +157,9 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
         },
         Node::Disc {
             kind: tex_state::node::DiscKind::Discretionary,
-            pre: empty.clone(),
-            post: empty.clone(),
-            replace: empty.clone(),
+            pre: empty,
+            post: empty,
+            replace: empty,
             physical_replace_count: 0,
         },
     ];

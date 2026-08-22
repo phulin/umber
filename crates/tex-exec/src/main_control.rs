@@ -3422,7 +3422,7 @@ impl<G> MainControl<G> {
         self.modes.current_list_mutation().push(Node::Disc {
             kind: DiscKind::ExplicitHyphen,
             pre,
-            post: empty.clone(),
+            post: empty,
             replace: empty,
             physical_replace_count: 0,
         });
@@ -3760,7 +3760,7 @@ impl<G> MainControl<G> {
         self.captured_fatal_origin = match &error {
             ExecError::Captured { site, frozen, .. } if fatal != FatalError::TooManyErrors => {
                 Some((
-                    site.clone(),
+                    *site,
                     frozen
                         .as_deref()
                         .and_then(|evidence| evidence.origin.clone()),
@@ -4010,19 +4010,19 @@ impl<G> MainControl<G> {
                 let retry_command = match &preflight.delivery {
                     OperationDelivery::<G>::Replay(Some(command)) => {
                         Some(PendingPreflightCommand::<G>::Settled {
-                            command: command.clone(),
+                            command: *command,
                             cursor: None,
                         })
                     }
                     OperationDelivery::<G>::Settled { command, cursor } => {
                         Some(PendingPreflightCommand::<G>::Settled {
-                            command: command.clone(),
+                            command: *command,
                             cursor: *cursor,
                         })
                     }
                     OperationDelivery::<G>::Raw { command, cursor } => {
                         Some(PendingPreflightCommand::<G>::Raw {
-                            command: command.clone(),
+                            command: *command,
                             cursor: *cursor,
                         })
                     }
@@ -4031,7 +4031,7 @@ impl<G> MainControl<G> {
                         main_loop,
                         cursor,
                     } => Some(PendingPreflightCommand::<G>::Expanding {
-                        command: command.clone(),
+                        command: *command,
                         main_loop: *main_loop,
                         cursor: *cursor,
                     }),
@@ -4190,19 +4190,19 @@ impl<G> MainControl<G> {
                 let mut retry_command = match &preflight.delivery {
                     OperationDelivery::<G>::Replay(Some(command)) => {
                         Some(PendingPreflightCommand::<G>::Settled {
-                            command: command.clone(),
+                            command: *command,
                             cursor: None,
                         })
                     }
                     OperationDelivery::<G>::Settled { command, cursor } => {
                         Some(PendingPreflightCommand::<G>::Settled {
-                            command: command.clone(),
+                            command: *command,
                             cursor: *cursor,
                         })
                     }
                     OperationDelivery::<G>::Raw { command, cursor } => {
                         Some(PendingPreflightCommand::<G>::Raw {
-                            command: command.clone(),
+                            command: *command,
                             cursor: *cursor,
                         })
                     }
@@ -4211,7 +4211,7 @@ impl<G> MainControl<G> {
                         main_loop,
                         cursor,
                     } => Some(PendingPreflightCommand::<G>::Expanding {
-                        command: command.clone(),
+                        command: *command,
                         main_loop: *main_loop,
                         cursor: *cursor,
                     }),
@@ -4431,19 +4431,19 @@ impl<G> MainControl<G> {
             let retry_command = match &preflight.delivery {
                 OperationDelivery::<G>::Replay(Some(command)) => {
                     Some(PendingPreflightCommand::<G>::Settled {
-                        command: command.clone(),
+                        command: *command,
                         cursor: None,
                     })
                 }
                 OperationDelivery::<G>::Settled { command, cursor } => {
                     Some(PendingPreflightCommand::<G>::Settled {
-                        command: command.clone(),
+                        command: *command,
                         cursor: *cursor,
                     })
                 }
                 OperationDelivery::<G>::Raw { command, cursor } => {
                     Some(PendingPreflightCommand::<G>::Raw {
-                        command: command.clone(),
+                        command: *command,
                         cursor: *cursor,
                     })
                 }
@@ -4452,7 +4452,7 @@ impl<G> MainControl<G> {
                     main_loop,
                     cursor,
                 } => Some(PendingPreflightCommand::<G>::Expanding {
-                    command: command.clone(),
+                    command: *command,
                     main_loop: *main_loop,
                     cursor: *cursor,
                 }),
@@ -4821,7 +4821,7 @@ impl<G> MainControl<G> {
                 attempt,
             }) => {
                 operation_mark.attempt = attempt;
-                let retry = (command.clone(), cursor);
+                let retry = (command, cursor);
                 Some((
                     OperationDelivery::<G>::Settled {
                         command,
@@ -4880,7 +4880,7 @@ impl<G> MainControl<G> {
                     self.commit_direct_operation(stores, operation_mark);
                     return Ok(DiagnosticStepResult::Progress(step));
                 }
-                let retry = (command.clone(), cursor);
+                let retry = (command, cursor);
                 Some((
                     OperationDelivery::<G>::Settled {
                         command,
@@ -5984,9 +5984,10 @@ impl<G> MainControl<G> {
                 });
             let extended = context.int_param(IntParam::ETEX_EXTENDED_MODE) > 0;
             let prototype = if extended {
-                paragraph.last_line.as_ref().map(|line| {
-                    crate::math::display::display_line_prototype(&mut context, line.clone())
-                })
+                paragraph
+                    .last_line
+                    .as_ref()
+                    .map(|line| crate::math::display::display_line_prototype(&mut context, *line))
             } else {
                 None
             };
@@ -8643,7 +8644,7 @@ fn finish_math_list<G>(
             (Vec::new(), numerator_nodes)
         };
         let numerator = if prefix.is_empty() {
-            fraction.numerator.clone()
+            fraction.numerator
         } else {
             stores.publish_page_nodes(numerator_nodes)
         };
@@ -8679,7 +8680,7 @@ fn collapse_singleton_math_group<G>(
         && matches!(noad.subscript, MathField::Empty)
         && matches!(noad.superscript, MathField::Empty)
     {
-        return noad.nucleus.clone();
+        return noad.nucleus;
     }
     MathField::SubMlist(list)
 }
@@ -9723,7 +9724,7 @@ fn dispatch_main_control_command_inner<G>(
         };
         return Ok(ColdOperation::<G>::Leaders {
             kind: *kind,
-            payload: payload.clone(),
+            payload: *payload,
             glue,
         }
         .into());

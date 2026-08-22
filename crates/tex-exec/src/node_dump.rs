@@ -1439,7 +1439,7 @@ mod unset_diagnostic_tests {
 
             assert_eq!(
                 dump_node_slice(
-                    &context,
+                    context,
                     &[Node::Glue {
                         spec,
                         kind: GlueKind::LineSkip,
@@ -1479,7 +1479,7 @@ mod unset_diagnostic_tests {
 
             set_escape(context, i32::from(b'|'));
             assert_eq!(
-                dump_node_slice(context, &nodes, config.clone()),
+                dump_node_slice(context, &nodes, config),
                 "|kern2.0\n|mkern3.0mu\n"
             );
             set_escape(context, -1);
@@ -1516,7 +1516,7 @@ mod unset_diagnostic_tests {
 
             assert_eq!(
                 dump_node_slice(
-                    &context,
+                    context,
                     &nodes,
                     DumpConfig {
                         breadth: 5,
@@ -1547,7 +1547,7 @@ mod unset_diagnostic_tests {
             set_escape(context, -1);
             assert_eq!(
                 dump_node_slice(
-                    &context,
+                    context,
                     &nodes,
                     DumpConfig {
                         breadth: 5,
@@ -1585,7 +1585,7 @@ mod unset_diagnostic_tests {
             set_escape(context, -1);
             assert_eq!(
                 dump_node_slice(
-                    &context,
+                    context,
                     &nodes,
                     DumpConfig {
                         breadth: 5,
@@ -1615,7 +1615,7 @@ mod unset_diagnostic_tests {
 
             set_escape(context, i32::from(b'|'));
             assert_eq!(
-                dump_node_slice(context, &nodes, config.clone()),
+                dump_node_slice(context, &nodes, config),
                 "|mathon\n|mathoff, surrounded 3.0\n"
             );
             set_escape(context, -1);
@@ -1639,7 +1639,7 @@ mod unset_diagnostic_tests {
 
             assert_eq!(
                 dump_page_list(
-                    &context,
+                    context,
                     list,
                     DumpConfig {
                         breadth: 5,
@@ -1667,15 +1667,15 @@ mod unset_diagnostic_tests {
                 }),
             ))]);
             let list = context.publish_page_nodes(vec![Node::MathChoice(MathChoice {
-                display: arm.clone(),
-                text: arm.clone(),
-                script: arm.clone(),
+                display: arm,
+                text: arm,
+                script: arm,
                 script_script: arm,
             })]);
 
             assert_eq!(
                 dump_page_list(
-                    &context,
+                    context,
                     list,
                     DumpConfig {
                         breadth: 100,
@@ -1702,22 +1702,22 @@ mod unset_diagnostic_tests {
             set_escape(context, i32::from(b'|'));
             let empty = PageListId::empty();
             let fraction = context.publish_page_nodes(vec![Node::FractionNoad(MathFraction {
-                numerator: empty.clone(),
-                denominator: empty.clone(),
+                numerator: empty,
+                denominator: empty,
                 thickness: FractionThickness::Default,
                 left_delimiter: None,
                 right_delimiter: None,
             })]);
             let list = context.publish_page_nodes(vec![Node::MathChoice(MathChoice {
-                display: empty.clone(),
-                text: empty.clone(),
+                display: empty,
+                text: empty,
                 script: fraction,
                 script_script: empty,
             })]);
 
             assert_eq!(
                 dump_page_list(
-                    &context,
+                    context,
                     list,
                     DumpConfig {
                         breadth: 100,

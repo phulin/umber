@@ -219,11 +219,11 @@ fn page_vec<G>(stores: &Universe<G>, root: tex_state::node_arena::PageListId) ->
 
 #[test]
 fn private_box_construction_retains_only_committed_lists() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\setbox0=\hbox{\kern1pt}");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let boxed = stores
             .copy_box_to_page(0)
@@ -245,12 +245,12 @@ fn private_box_construction_retains_only_committed_lists() {
 
 #[test]
 fn tracked_advance_records_command_and_execution_reads_after_commit() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\count0=17");
 
         let tracked = control
-            .advance_with_tracked_region(&mut stores)
+            .advance_with_tracked_region(stores)
             .expect("tracked operation executes");
 
         assert_eq!(
@@ -278,12 +278,12 @@ fn tracked_advance_records_command_and_execution_reads_after_commit() {
 
 #[test]
 fn tracked_advance_abandons_before_resource_suspension_rollback() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\font\missing=not-installed");
 
         let tracked = control
-            .advance_with_tracked_region(&mut stores)
+            .advance_with_tracked_region(stores)
             .expect("resource suspension is a step result");
 
         assert!(matches!(
@@ -297,12 +297,12 @@ fn tracked_advance_abandons_before_resource_suspension_rollback() {
 
 #[test]
 fn tracked_group_exit_fails_closed_at_the_journal_timeline_barrier() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\begingroup\endgroup");
 
         let entered = control
-            .advance_with_tracked_region(&mut stores)
+            .advance_with_tracked_region(stores)
             .expect("group entry executes");
         assert!(
             matches!(entered.region, Some(Ok(_))),
@@ -310,7 +310,7 @@ fn tracked_group_exit_fails_closed_at_the_journal_timeline_barrier() {
             entered.region
         );
         let exited = control
-            .advance_with_tracked_region(&mut stores)
+            .advance_with_tracked_region(stores)
             .expect("group exit executes");
 
         assert!(matches!(
@@ -601,17 +601,17 @@ fn tracingcommands_reports_only_big_switch_commands_with_live_selector_and_mode(
     // prefixes and the target are fetched within `prefixed_command`. The
     // `\tracingonline` trace is log-only because that assignment has not yet
     // executed, while the prefix uses the newly live terminal-and-log selector.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\tracingcommands=1\\tracingonline=1\\global\\global\\escapechar=64\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = pending_sink_text(&stores, true);
-        let log = pending_sink_text(&stores, false);
+        let terminal = pending_sink_text(stores, true);
+        let log = pending_sink_text(stores, false);
         assert!(!terminal.contains("tracingonline"));
         assert!(log.contains("{vertical mode: \\tracingonline}"));
         assert!(terminal.contains("{\\global}\n{@end}"), "{terminal:?}");
@@ -625,16 +625,16 @@ fn tracingcommands_reports_only_big_switch_commands_with_live_selector_and_mode(
 fn setbox_rejects_non_box_command_with_assignment_context_diagnostic() {
     // TeX82 §1084: genuine `scan_box` missing-box recovery backs the
     // rejected command for execution.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\nonstopmode\setbox0=\count0=7 \count1=9\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(terminal.contains("Improper \\setbox"), "{terminal}");
         assert!(
             !terminal.contains("A <box> was supposed to be here"),
@@ -652,16 +652,16 @@ fn forbidden_setbox_reports_before_reading_the_following_command() {
     // assignment loop runs. The register and optional equals are consumed,
     // but the following command is still to be read when `error` renders the
     // context; it subsequently executes once and the destination stays void.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\nonstopmode\accent65\setbox0=\count0=7 X\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(terminal.contains("Improper \\setbox"), "{terminal}");
         assert!(stores.copy_box_to_page(0).is_none());
         assert_eq!(stores.count(0).expect("count register"), 7);
@@ -675,15 +675,15 @@ fn accent_assignment_dispatches_backed_up_font_without_redelivery() {
     // expanded current command in place. Its backup level retires before the
     // following base character is fetched; the assignment must not synthesize
     // a second expanded delivery for the same command.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             br#"\font\f=cmr10 \font\accentfont=cmr10 \f\accent"7F\accentfont o\end"#,
         );
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         let deliveries: Vec<_> = observations
             .0
@@ -741,11 +741,11 @@ fn ordinary_font_selection_keeps_its_expanded_delivery() {
     // Negative control: only §1270's already-settled handoff suppresses a
     // duplicate observation. An ordinary §1030 `big_switch` font command is
     // still one raw plus one expanded delivery.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\nullfont\end");
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         let deliveries: Vec<_> = observations
             .0
@@ -775,17 +775,17 @@ fn tracingcommands_two_traces_nonmacro_expansion_before_big_switch_result() {
     // TeX82 §§299/366--367/1030: non-macro expansion traces inside `expand`,
     // then the settled unexpandable command traces at `reswitch`. The first
     // trace consumes the mode prefix; the second must not repeat it.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\tracingcommands=2\\tracingonline=1\\romannumeral0\\relax\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = pending_sink_text(&stores, true);
-        let log = pending_sink_text(&stores, false);
+        let terminal = pending_sink_text(stores, true);
+        let log = pending_sink_text(stores, false);
         assert!(
             log.contains("{vertical mode: \\tracingonline}\n{\\romannumeral}\n{\\relax}\n{\\end}"),
             "terminal={terminal:?} log={log:?}"
@@ -800,9 +800,9 @@ fn tracingcommands_preserves_shown_mode_across_expansion_diagnostic_barrier() {
     // the mode prefix before §370 reports its recoverable error. Resuming the
     // settled command after that report must retain `shown_mode` rather than
     // print the restricted-horizontal prefix a second time.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         let undefined = stores.intern("undefined").expect("undefined symbol");
         assign_static_meaning(stores, undefined, Meaning::Undefined);
         register_source(
@@ -810,9 +810,9 @@ fn tracingcommands_preserves_shown_mode_across_expansion_diagnostic_barrier() {
             b"\\tracingcommands=2\\tracingonline=1\\hbox{\\undefined\\relax}\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let log = terminal_text(&stores);
+        let log = terminal_text(stores);
         assert!(
             log.contains("{restricted horizontal mode: undefined}"),
             "{log}"
@@ -832,17 +832,17 @@ fn tracingcommands_expansion_after_eqno_reports_restored_display_mode() {
     // ordinary math mode, then `fin_mlist` restores the enclosing display
     // before `get_x_token` expands the next command. Section 367 must compare
     // that restored mode with `shown_mode` and print the new mode prefix.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         register_source(
             &mut control,
             br"\def\s{{\tracingcommands=0\showlists}}\tracingcommands=2\tracingrestores=2\tracingonline=1 $$x\eqno y\s$\expandafter$\csname!\endcsname\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let log = terminal_text(&stores);
+        let log = terminal_text(stores);
         let restore = log
             .find("{restoring \\tracingcommands=2}")
             .unwrap_or_else(|| panic!("nested diagnostic group restores tracing: {log}"));
@@ -866,17 +866,17 @@ fn tracingcommands_aftergroup_expansion_reports_resumed_horizontal_mode() {
     // optional space. This is a distinct nested expansion boundary from
     // §1197's display-mode second-$ probe above, and consumes the new mode
     // prefix exactly once.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         register_source(
             &mut control,
             br"\tracingcommands=2\tracingonline=1 $$x\aftergroup\expandafter\eqno y$\expandafter$\csname!\endcsname\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let log = terminal_text(&stores);
+        let log = terminal_text(stores);
         let display = log
             .find("{display math mode: \\expandafter}")
             .unwrap_or_else(|| panic!("display probe owns its prefix: {log}"));
@@ -895,17 +895,17 @@ fn tracingcommands_omits_characters_retired_inside_main_loop() {
     // TeX82 §§1034/1038: after the first character enters `main_loop`,
     // adjacent characters are retired by its raw lookahead and never reach
     // §1030's `reswitch` trace boundary.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
         &mut control,
         br"\font\f=cmr10 \f\chardef\bee=66 \tracingcommands=1\tracingonline=1\setbox0=\hbox{AA\bee\char67}\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let log = pending_sink_text(&stores, false);
+        let log = pending_sink_text(stores, false);
         assert_eq!(log.matches("the letter A").count(), 1, "{log}");
         assert!(!log.contains("the letter B"), "{log}");
         assert!(!log.contains(r"{\char"), "{log}");
@@ -918,9 +918,9 @@ fn trip_valign_row_uses_raw_main_loop_lookahead_before_assignment() {
     // TeX82 §§785/1034/1038: an alignment cell body is ordinary main
     // control. Once `7` enters `main_loop`, adjacent `A` is fetched by bare
     // `get_next`; only the following assignment returns to `x_token`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             // Reduced from trip.tex:76--77. Keep the negative glue scan before
@@ -931,7 +931,7 @@ fn trip_valign_row_uses_raw_main_loop_lookahead_before_assignment() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(&mut stores, &mut observations)
+                .step_with_observer(stores, &mut observations)
                 .expect("source-fed valign executes")
             {
                 MainControlStep::End | MainControlStep::EndOfInput => break,
@@ -990,16 +990,16 @@ fn trip_valign_row_uses_raw_main_loop_lookahead_before_assignment() {
 
 #[test]
 fn tracingcommands_precedes_recovery_reported_while_scanning_the_command() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\tracingcommands=1 \\tracingonline=1 \\openout-1=trace.out\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         let trace = output
             .find("{\\openout}")
             .unwrap_or_else(|| panic!("§1030 command trace: {output:?}"));
@@ -1013,16 +1013,16 @@ fn tracingcommands_caret_renders_a_nonprintable_live_escapechar() {
     // TeX82 §§58--59/63/298: `print_cmd_chr` reaches `print_esc`, whose
     // escape prefix is printed as a one-character string rather than by the
     // raw `print_char` primitive.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\tracingcommands=1\\tracingonline=1\\escapechar=127\\global\\count0=1\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = pending_sink_text(&stores, true);
+        let terminal = pending_sink_text(stores, true);
         assert!(terminal.contains("{^^?global}\n{^^?end}"), "{terminal:?}");
         assert!(!terminal.contains("count"), "{terminal:?}");
         assert!(!terminal.as_bytes().contains(&127), "{terminal:?}");
@@ -1033,17 +1033,17 @@ fn tracingcommands_caret_renders_a_nonprintable_live_escapechar() {
 fn global_escapechar_survives_off_save_inserted_group_recovery() {
     // TeX82 §§1064/1214: a globally assigned integer parameter remains live
     // while `off_save` backs up the offending command and inserts the closer.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\scrollmode\\tracingonline=1\\hbox{\\escapechar=127\\global\\escapechar=256\\end}",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.int_param(IntParam::ESCAPE_CHAR), 256);
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(terminal.contains("! Missing } inserted."), "{terminal:?}");
     });
 }
@@ -1053,16 +1053,16 @@ fn tracingcommands_traces_reswitch_but_not_prefixed_command_internal_fetches() {
     // TeX82 §§1030/1045/1211: `reswitch` precedes the diagnostic boundary, so
     // the command fetched by `\ignorespaces` is traced. A later prefix and
     // its target are fetched inside `prefixed_command` and remain untraced.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         b"\\tracingcommands=1\\tracingonline=1\\global\\global\\count0=1\\ignorespaces\\relax\\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = pending_sink_text(&stores, true);
+        let terminal = pending_sink_text(stores, true);
         assert!(
             terminal.contains("{\\global}\n{\\ignorespaces}\n{\\relax}\n{\\end}"),
             "{terminal:?}"
@@ -1073,14 +1073,14 @@ fn tracingcommands_traces_reswitch_but_not_prefixed_command_internal_fetches() {
 
 #[test]
 fn disabled_tracingcommands_emits_no_command_diagnostic() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, b"\\tracingonline=1\\escapechar=64\\end");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        assert!(!pending_sink_text(&stores, true).contains("vertical mode:"));
-        assert!(!pending_sink_text(&stores, false).contains("vertical mode:"));
+        assert!(!pending_sink_text(stores, true).contains("vertical mode:"));
+        assert!(!pending_sink_text(stores, false).contains("vertical mode:"));
     });
 }
 
@@ -1090,8 +1090,8 @@ fn tracingcommands_does_not_trace_constructed_leader_glue_internal_fetch() {
     // operand inside the leader case, without returning to `big_switch`'s
     // `show_cur_cmd_chr`. A later ordinary `\hskip` remains a main-control
     // command and is the negative control.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\tracingcommands=1\tracingonline=1
@@ -1099,9 +1099,9 @@ fn tracingcommands_does_not_trace_constructed_leader_glue_internal_fetch() {
 \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = pending_sink_text(&stores, true);
+        let terminal = pending_sink_text(stores, true);
         assert!(terminal.contains("\\leaders}"), "{terminal:?}");
         assert_eq!(
             terminal.matches("{\\hskip}").count(),
@@ -1117,8 +1117,8 @@ fn leaders_skip_section_404_filler_and_preserve_non_glue_recovery() {
     // non-blank, non-relax loop. Cover rule, constructed-box, and register
     // payloads; soul terminates its rule specification with exactly this
     // explicit `\relax` before `\hskip`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\nonstopmode
@@ -1130,9 +1130,9 @@ fn leaders_skip_section_404_filler_and_preserve_non_glue_recovery() {
 \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let children = box_child_nodes(&mut stores, 0);
+        let children = box_child_nodes(stores, 0);
         assert_eq!(
             children
                 .iter()
@@ -1148,22 +1148,22 @@ fn leaders_skip_section_404_filler_and_preserve_non_glue_recovery() {
             "all leader payload forms retain their glue: {children:?}"
         );
         assert!(
-            !pending_sink_text(&stores, true).contains("Leaders not followed"),
+            !pending_sink_text(stores, true).contains("Leaders not followed"),
             "valid §1078 filler is silent"
         );
 
-        crate::test_harness::with_nonstop_plain_universe(|mut recovery_stores| {
-            let mut recovery = MainControl::tex82_initex(&mut recovery_stores);
+        crate::test_harness::with_nonstop_plain_universe(|recovery_stores| {
+            let mut recovery = MainControl::tex82_initex(recovery_stores);
             register_source(
                 &mut recovery,
                 br"\nonstopmode\setbox0=\hbox{\leaders\hbox{} \relax\kern2pt}\end",
             );
 
-            run_to_end(&mut recovery, &mut recovery_stores);
+            run_to_end(&mut recovery, recovery_stores);
 
-            let recovered = box_child_nodes(&mut recovery_stores, 0);
+            let recovered = box_child_nodes(recovery_stores, 0);
             assert_eq!(
-                pending_sink_text(&recovery_stores, true)
+                pending_sink_text(recovery_stores, true)
                     .matches("Leaders not followed by proper glue")
                     .count(),
                 1
@@ -1181,9 +1181,9 @@ fn tracingcommands_does_not_trace_output_routine_scanner_brace() {
     // TeX82 §§1025/1030: `scan_left_brace` consumes the output routine's
     // opening brace before `big_switch`. The first body command therefore
     // receives the internal-vertical-mode prefix instead of the brace.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\tracingcommands=1\tracingonline=1
@@ -1191,9 +1191,9 @@ fn tracingcommands_does_not_trace_output_routine_scanner_brace() {
 \topskip=0pt\setbox0=\vbox to1pt{}\copy0\penalty-10000\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(
             terminal.contains("{internal vertical mode: \\dimen}"),
             "{terminal:?}"
@@ -1207,8 +1207,8 @@ fn output_routine_unsave_replays_aftergroup_before_source_resumes() {
     // TeX82 §§1026/282: closing output_group runs unsave, which backs each
     // insert_token into input before main control reads the following source.
     for (aftergroup, expected) in [("\\aftergroup\\aftermark", 1), ("", 0)] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             register_source(
                 &mut control,
                 format!(
@@ -1219,7 +1219,7 @@ fn output_routine_unsave_replays_aftergroup_before_source_resumes() {
                 .as_bytes(),
             );
 
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
             assert_eq!(
                 stores.count(0).expect("count register"),
@@ -1235,9 +1235,9 @@ fn tracingmacros_two_traces_the_named_output_token_list() {
     // TeX82 §§323/1025: `begin_token_list(output_routine,output_text)` traces
     // the named token-list parameter only at the stronger tracing level.
     for (level, expected) in [(1, false), (2, true)] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-            let mut control = MainControl::tex82_initex(&mut stores);
+            let mut control = MainControl::tex82_initex(stores);
             register_source(
             &mut control,
             format!(
@@ -1246,9 +1246,9 @@ fn tracingmacros_two_traces_the_named_output_token_list() {
             .as_bytes(),
         );
 
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
-            let terminal = terminal_text(&stores);
+            let terminal = terminal_text(stores);
             assert_eq!(
                 terminal.contains("\\output->{\\dimen 0=1pt}"),
                 expected,
@@ -1267,17 +1267,17 @@ fn named_output_token_list_trace_uses_live_escape_character() {
     // TeX82 §§63/323: `begin_token_list(output_routine,output_text)` names
     // `output` through `print_esc`, so an out-of-range escape character emits
     // no prefix.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         b"\\tracingmacros=2\\tracingonline=1\\maxdeadcycles=1\\output={\\dimen0=1pt}\\escapechar=256\\topskip=0pt\\setbox0=\\vbox to1pt{}\\copy0\\penalty-10000\\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(terminal.contains("output->{dimen 0=1pt}"), "{terminal:?}");
         assert!(!terminal.contains("\\output->"), "{terminal:?}");
     });
@@ -1288,16 +1288,16 @@ fn tracingcommands_does_not_trace_shipout_box_constructor() {
     // TeX82 §§1030/1075/1084: `\shipout` calls `scan_box` inside its already
     // traced main-control case. Its constructor is scanner-owned, while a
     // later standalone constructor returns normally through `reswitch`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\tracingcommands=1\tracingonline=1\shipout\hbox{}\hbox{}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(terminal.contains("{\\shipout}"), "{terminal:?}");
         assert_eq!(terminal.matches("\\hbox}").count(), 1, "{terminal:?}");
     });
@@ -1307,34 +1307,34 @@ fn tracingcommands_does_not_trace_shipout_box_constructor() {
 fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
     // TeX82 §§389/400 and §245: the invocation line precedes completed
     // arguments and the live selector controls both routed copies.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\def\\pair#1#2{}\\tracingmacros=1 \\tracingonline=1 \\pair CD\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = pending_sink_text(&stores, true);
-        let log = pending_sink_text(&stores, false);
+        let terminal = pending_sink_text(stores, true);
+        let log = pending_sink_text(stores, false);
         let expected = "\n\\pair #1#2->\n#1<-C\n#2<-D\n";
         assert_eq!(terminal, expected);
         assert_eq!(log, expected);
 
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             register_source(
                 &mut control,
                 b"\\def\\pair#1#2{}\\tracingmacros=1 \\pair AB\\end",
             );
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
             assert_eq!(
-                pending_sink_text(&stores, true),
+                pending_sink_text(stores, true),
                 "(see the transcript file for additional information)"
             );
             assert_eq!(
-                pending_sink_text(&stores, false),
+                pending_sink_text(stores, false),
                 "\n\\pair #1#2->\n#1<-A\n#2<-B\n"
             );
         });
@@ -1346,17 +1346,17 @@ fn tracingmacros_precedes_condition_result_during_operand_expansion() {
     // TeX82 §§389/400/498: `macro_call` prints the complete definition
     // before matching arguments. A macro expanded while `conditional` scans
     // an operand therefore precedes both its argument trace and the result.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\def\t#1{#1pt}\tracingcommands=2\tracingmacros=1\tracingonline=1
 \ifdim\t1=1pt\relax\fi\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         let invocation = terminal
             .find("\\t #1->#1pt")
             .expect("macro definition trace");
@@ -1368,36 +1368,33 @@ fn tracingmacros_precedes_condition_result_during_operand_expansion() {
 
 #[test]
 fn disabled_tracingmacros_emits_no_macro_diagnostic() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\def\\pair#1#2{}\\tracingonline=1\\pair AB\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        assert_eq!(pending_sink_text(&stores, true), "");
-        assert_eq!(pending_sink_text(&stores, false), "");
+        assert_eq!(pending_sink_text(stores, true), "");
+        assert_eq!(pending_sink_text(stores, false), "");
     });
 }
 
 #[test]
 fn tracingrestores_reports_exact_restoration_through_the_live_selector() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\tracingrestores=1\\tracingonline=1{\\count0=7}\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        assert_eq!(pending_sink_text(&stores, true), "{restoring \\count0=0}\n");
-        assert_eq!(
-            pending_sink_text(&stores, false),
-            "{restoring \\count0=0}\n"
-        );
+        assert_eq!(pending_sink_text(stores, true), "{restoring \\count0=0}\n");
+        assert_eq!(pending_sink_text(stores, false), "{restoring \\count0=0}\n");
     });
 }
 
@@ -1406,25 +1403,25 @@ fn tracingrestores_uses_the_restored_gate_for_its_own_save_entry() {
     // TeX82 §283 restores the word before consulting `tracing_restores`.
     // The count entry is still suppressed while the local zero is live, then
     // restoring `\tracingrestores` to one makes that entry report itself.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\tracingrestores=1\tracingonline=1{\tracingrestores=0\count0=7}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let expected = "{restoring \\tracingrestores=1}\n";
-        assert_eq!(pending_sink_text(&stores, true), expected);
-        assert_eq!(pending_sink_text(&stores, false), expected);
+        assert_eq!(pending_sink_text(stores, true), expected);
+        assert_eq!(pending_sink_text(stores, false), expected);
     });
 }
 
 #[test]
 fn tracingrestores_preserves_nested_reverse_save_order_and_retained_values() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\tracingrestores=1\tracingonline=1
@@ -1434,7 +1431,7 @@ fn tracingrestores_preserves_nested_reverse_save_order_and_retained_values() {
 \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let expected = concat!(
             "{restoring \\foo=macro:->outer}\n",
@@ -1446,24 +1443,24 @@ fn tracingrestores_preserves_nested_reverse_save_order_and_retained_values() {
             "{restoring \\skip0=0.0pt}\n",
             "{retaining \\count0=4}\n",
         );
-        assert_eq!(pending_sink_text(&stores, true), expected);
-        assert_eq!(pending_sink_text(&stores, false), expected);
+        assert_eq!(pending_sink_text(stores, true), expected);
+        assert_eq!(pending_sink_text(stores, false), expected);
     });
 }
 
 #[test]
 fn tracingrestores_reports_dimension_register_restoration() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\tracingrestores=1\\tracingonline=1{\\dimen9=1.25pt}\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             "{restoring \\dimen9=0.0pt}\n"
         );
     });
@@ -1481,14 +1478,14 @@ fn tracingrestores_reports_code_table_restoration_and_retained_globals() {
             "{retaining \\sfcode66=777}\n",
         ),
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             register_source(&mut control, source);
 
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
-            assert_eq!(pending_sink_text(&stores, true), expected);
-            assert_eq!(pending_sink_text(&stores, false), expected);
+            assert_eq!(pending_sink_text(stores, true), expected);
+            assert_eq!(pending_sink_text(stores, false), expected);
         });
     }
 }
@@ -1498,22 +1495,22 @@ fn tracingrestores_reports_current_font_selector_restoration() {
     // TeX82 §§252/283: `cur_font_loc` has the unescaped label `current font`,
     // followed by the restored font's frozen identifier, not the selector
     // token used to choose it. Loading a format also exercises frozen symbols.
-    crate::test_harness::with_nonstop_plain_universe(|mut initialized| {
-        let mut initex = MainControl::tex82_initex(&mut initialized);
-        register_cmr10_as(&mut initex, &mut initialized, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|initialized| {
+        let mut initex = MainControl::tex82_initex(initialized);
+        register_cmr10_as(&mut initex, initialized, "cmr10.tfm");
         register_source(&mut initex, br"\font\f=cmr10 \font\g=cmr10 at 9pt \f\end");
-        run_to_end(&mut initex, &mut initialized);
-        let mut stores = initialized;
+        run_to_end(&mut initex, initialized);
+        let stores = initialized;
         let mut control = MainControl::with_profile(CommandProfile::TEX82);
         register_source(
             &mut control,
             br"\let\alias=\g\tracingrestores=1\tracingonline=1{\alias}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             "{restoring current font=\\f}\n"
         );
     });
@@ -1523,38 +1520,35 @@ fn tracingrestores_reports_current_font_selector_restoration() {
 fn tracingrestores_spells_active_character_names_without_an_escape() {
     // TeX82 §§252/263: region-1 `show_eqtb` uses `sprint_cs`, under which
     // an active-character control sequence prints as the bare character.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\catcode`\?=13 \tracingrestores=1\tracingonline=1{\def?{x}}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        assert_eq!(
-            pending_sink_text(&stores, true),
-            "{restoring ?=undefined}\n"
-        );
+        assert_eq!(pending_sink_text(stores, true), "{restoring ?=undefined}\n");
     });
 }
 
 #[test]
 fn tracingrestores_reports_math_family_font_restoration() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
         &mut control,
         br"\font\small=cmr10 \scriptfont2=\small \tracingrestores=1\tracingonline=1{\scriptfont2=\small}\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let expected = "{restoring \\scriptfont2=\\small}\n";
-        let terminal = pending_sink_text(&stores, true);
-        let log = pending_sink_text(&stores, false);
+        let terminal = pending_sink_text(stores, true);
+        let log = pending_sink_text(stores, false);
         assert!(
             terminal.contains(expected) && log.contains(expected),
             "terminal={terminal:?} log={log:?}"
@@ -1566,17 +1560,17 @@ fn tracingrestores_reports_math_family_font_restoration() {
 fn output_routine_box255_error_reports_live_command_context() {
     // TeX82 §§1026/1028 reach §82's error after retiring the output token
     // list, while the command-owned source level beneath it remains live.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         b"\\maxdeadcycles=2\\output={\\relax}\\topskip=0pt\\setbox0=\\hbox{}\\copy0\\penalty-10000\\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         let report = concat!(
             "! Output routine didn't use all of \\box255.\n",
             "<to be read again> \n",
@@ -1597,17 +1591,17 @@ fn output_routine_box255_error_reports_live_command_context() {
 fn vsplit_infinite_shrink_reports_the_scanner_owned_live_context() {
     // TeX82 §§976/82: `vert_break` runs synchronously inside `\vsplit`, so
     // its error sees the backed-up command following the completed dimension.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\setbox0=\vbox{\vskip0pt minus 1fil}\setbox1=\vsplit0 to 1pt\count0=23\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         let error = output
             .find("! Infinite glue shrinkage found in box being split.")
             .expect("vsplit reports infinite shrink");
@@ -1623,17 +1617,17 @@ fn vsplit_infinite_shrink_reports_the_scanner_owned_live_context() {
 
 #[test]
 fn tracingrestores_reports_restored_box_register_value() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\tracingrestores=1\\tracingonline=1\\setbox7=\\hbox{}{\\setbox7=\\vbox{}}\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             "{restoring \\box7=\n\\hbox(0.0+0.0)x0.0}\n"
         );
     });
@@ -1641,17 +1635,17 @@ fn tracingrestores_reports_restored_box_register_value() {
 
 #[test]
 fn tracingrestores_prints_restored_void_box_inline() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\tracingrestores=1\\tracingonline=1{\\setbox254=\\hbox{}}\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             "{restoring \\box254=void}\n"
         );
     });
@@ -1659,17 +1653,17 @@ fn tracingrestores_prints_restored_void_box_inline() {
 
 #[test]
 fn consuming_current_group_box_preserves_original_void_restore() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\tracingrestores=1\\tracingonline=1{\\setbox2=\\hbox to2pt{}\\setbox3=\\box2}\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             "{restoring \\box3=void}\n{restoring \\box2=void}\n"
         );
         assert!(stores.copy_box_to_page(2).is_none());
@@ -1680,17 +1674,17 @@ fn consuming_current_group_box_preserves_original_void_restore() {
 fn tracingrestores_reports_value_before_first_local_box_assignment() {
     // TeX82 §§275/283 save a box only on its first local assignment at the
     // current level, then display that restored value after `unsave`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         b"\\tracingrestores=1\\tracingonline=1\\setbox7=\\hbox{}{\\setbox7=\\vbox{}\\setbox7=\\hbox{X}}\\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             "{restoring \\box7=\n\\hbox(0.0+0.0)x0.0}\n"
         );
     });
@@ -1701,17 +1695,17 @@ fn etex_sparse_box_restore_reports_value_before_first_local_assignment() {
     // e-TeX [47.1077] sends box registers above 255 through [53a]'s
     // `sa_def_box`; repeated local assignments save only the original value,
     // and `sa_restore` displays that value when the group ends.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
         &mut control,
         b"\\tracingrestores=1\\tracingonline=1{\\setbox32106=\\vbox{}\\setbox32106=\\hbox{X}}\\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             "{restoring \\box32106=void}\n"
         );
     });
@@ -1721,17 +1715,17 @@ fn etex_sparse_box_restore_reports_value_before_first_local_assignment() {
 fn tracingrestores_reports_retained_box_after_global_assignment() {
     // TeX82 §283 retains and displays a global value instead of reinstalling
     // the value saved by an earlier local assignment in the same group.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         b"\\tracingrestores=1\\tracingonline=1\\setbox7=\\vbox{}{\\setbox7=\\hbox{}\\global\\setbox7=\\hbox{X}}\\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             "{retaining \\box7=\n\\hbox(0.0+0.0)x0.0}\n"
         );
     });
@@ -1743,17 +1737,17 @@ fn tracingrestores_uses_live_value_after_refiling_a_global_box_save() {
     // The global save record refiled into the outer group also carries an
     // internal `old` redo word whose box has been retired with the inner
     // group's local assignment; that word is not a TeX save-stack value.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         b"\\tracingrestores=1\\tracingonline=1{{\\setbox7=\\vbox{}\\global\\setbox7=\\hbox{X}}}\\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             "{retaining \\box7=\n\\hbox(0.0+0.0)x0.0}\n"
         );
     });
@@ -1761,21 +1755,21 @@ fn tracingrestores_uses_live_value_after_refiling_a_global_box_save() {
 
 #[test]
 fn tracingrestores_reports_retained_globals_and_obeys_routing_and_zero_suppression() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         b"{\\count0=7\\global\\count0=8}\\tracingrestores=1{\\count1=9\\global\\count1=10}{\\count2=11}\\tracingrestores=0{\\count3=12}\\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             "(see the transcript file for additional information)"
         );
         assert_eq!(
-            pending_sink_text(&stores, false),
+            pending_sink_text(stores, false),
             "{retaining \\count1=10}\n{restoring \\count2=0}\n"
         );
     });
@@ -1785,17 +1779,17 @@ fn tracingrestores_reports_retained_globals_and_obeys_routing_and_zero_suppressi
 fn tracingrestores_reports_retained_integer_parameter_with_live_escapechar() {
     // TeX82 §283 calls `restore_trace` for both retained and restored eqtb
     // words; §252's `show_eqtb` names integer parameters through `print_esc`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\tracingrestores=1\\tracingonline=1{\\escapechar=127\\global\\escapechar=256}\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             "{retaining escapechar=256}\n"
         );
     });
@@ -1807,19 +1801,19 @@ fn tracingrestores_reports_named_glue_parameters_with_exact_specs() {
     // names and `print_spec` value, for both restored and globally retained
     // save-stack entries. The retained infinite-order component is the
     // negative control against formatting every component as ordinary `pt`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\tracingrestores=1\tracingonline=1{\lineskip=1pt plus 2fil minus 3pt}{\baselineskip=1pt\global\baselineskip=4pt plus 5fill}\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let expected =
             "{restoring \\lineskip=0.0pt}\n{retaining \\baselineskip=4.0pt plus 5.0fill}\n";
-        assert_eq!(pending_sink_text(&stores, true), expected);
-        assert_eq!(pending_sink_text(&stores, false), expected);
+        assert_eq!(pending_sink_text(stores, true), expected);
+        assert_eq!(pending_sink_text(stores, false), expected);
     });
 }
 
@@ -1829,22 +1823,22 @@ fn tracingassigns_global_glue_arithmetic_keeps_the_displaced_spec_live() {
     // destroys it and the post-image after the write. A global assignment has
     // no save-stack root, so the combined Umber boundary must retain the old
     // glue spec operation-locally while rendering both observations.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             br"\skip0=1pt\tracingonline=1\tracingassigns=1\global\advance\skip0 by 2pt\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let expected = concat!(
             "{into \\tracingassigns=1}\n",
             "{globally changing \\skip0=1.0pt}\n",
             "{into \\skip0=3.0pt}\n",
         );
-        assert_eq!(pending_sink_text(&stores, true), expected);
-        assert_eq!(pending_sink_text(&stores, false), expected);
+        assert_eq!(pending_sink_text(stores, true), expected);
+        assert_eq!(pending_sink_text(stores, false), expected);
     });
 }
 
@@ -1854,17 +1848,17 @@ fn etex_identical_sparse_pointer_assignments_do_not_create_restore_entries() {
     // `reassigning`, destroys the scanned reference, and never calls
     // `sa_save`. The sparse mutation remains observable, but §283 therefore
     // has no register entry to restore before the ordinary parameter entry.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
         &mut control,
         br"\tracingrestores=1\tracingonline=1{\tracingassigns=1\muskip2000=0mu\toks2000={}}\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             concat!(
                 "{into \\tracingassigns=1}\n",
                 "{reassigning \\muskip2000=0.0mu}\n",
@@ -1883,37 +1877,37 @@ fn etex_sparse_toks_restore_tracing_decodes_register_words_without_parameter_off
     // likewise show the just-restored value. The preceding nonempty list
     // detects an erroneous optional-parameter offset, while the empty
     // `\toks2200` restoration is the zero-word negative control.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
         &mut control,
         br"\toks2001={a b c}\toks2002={d e f}\tracingrestores=1\tracingonline=1{\toks2002=\toks2001\toks2200=\toks2001}\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let expected = concat!(
             "{restoring \\toks2200=}\n",
             "{restoring \\toks2002=d e f}\n",
         );
-        assert_eq!(pending_sink_text(&stores, true), expected);
-        assert_eq!(pending_sink_text(&stores, false), expected);
+        assert_eq!(pending_sink_text(stores, true), expected);
+        assert_eq!(pending_sink_text(stores, false), expected);
     });
 }
 
 #[test]
 fn tracingrestores_coalesces_same_level_writes_and_renders_parameter_banks() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\tracingrestores=1\tracingonline=1\everypar={aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}{\vsize=1pt\global\vsize=2pt\everypar={B}\splitmaxdepth=3pt\count15=1\count15=2}\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            pending_sink_text(&stores, true),
+            pending_sink_text(stores, true),
             concat!(
                 "{restoring \\count15=0}\n",
                 "{restoring \\splitmaxdepth=0.0pt}\n",
@@ -1929,21 +1923,18 @@ fn tracingrestores_reports_primitive_meaning_through_an_alias() {
     // TeX82 §§252/283 render the restored meaning, not the target control
     // sequence twice. An alias is the negative control: `\foo` must be named
     // on the left while primitive `\box` is selected on the right.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\let\foo=\box\tracingrestores=1\tracingonline=1{\let\foo=\relax}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
+        assert_eq!(pending_sink_text(stores, true), "{restoring \\foo=\\box}\n");
         assert_eq!(
-            pending_sink_text(&stores, true),
-            "{restoring \\foo=\\box}\n"
-        );
-        assert_eq!(
-            pending_sink_text(&stores, false),
+            pending_sink_text(stores, false),
             "{restoring \\foo=\\box}\n"
         );
     });
@@ -1956,15 +1947,15 @@ fn tracingrestores_reports_loaded_mathchar_meanings_in_unsave_order() {
     // operands and frozen symbol identities survive serialization; the three
     // target spellings prove this is the region-one meaning path, while
     // `\fam` pins reverse save-stack publication order from the TRIP case.
-    crate::test_harness::with_nonstop_plain_universe(|mut initialized| {
-        let mut initex = MainControl::tex82_initex(&mut initialized);
+    crate::test_harness::with_nonstop_plain_universe(|initialized| {
+        let mut initex = MainControl::tex82_initex(initialized);
         register_source(
             &mut initex,
             br#"\mathchardef\minus="232D \mathchardef\+="1234
             \catcode`\?=13 \mathchardef?="4567 \end"#,
         );
-        run_to_end(&mut initex, &mut initialized);
-        let mut stores = initialized;
+        run_to_end(&mut initex, initialized);
+        let stores = initialized;
         let mut control = MainControl::with_profile(CommandProfile::TEX82);
         register_source(
             &mut control,
@@ -1973,7 +1964,7 @@ fn tracingrestores_reports_loaded_mathchar_meanings_in_unsave_order() {
              \mathchardef?="5670}\end"#,
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let expected = concat!(
             "{restoring ?=\\mathchar\"4567}\n",
@@ -1981,8 +1972,8 @@ fn tracingrestores_reports_loaded_mathchar_meanings_in_unsave_order() {
             "{restoring \\minus=\\mathchar\"232D}\n",
             "{restoring \\fam=0}\n",
         );
-        assert_eq!(pending_sink_text(&stores, true), expected);
-        assert_eq!(pending_sink_text(&stores, false), expected);
+        assert_eq!(pending_sink_text(stores, true), expected);
+        assert_eq!(pending_sink_text(stores, false), expected);
         for (name, code) in [("minus", 0x232D), ("+", 0x1234)] {
             let symbol = stores.intern(name).expect("mathchar name").symbol();
             assert_eq!(
@@ -1997,42 +1988,42 @@ fn tracingrestores_reports_loaded_mathchar_meanings_in_unsave_order() {
 fn tracingrestores_reports_macro_old_value() {
     // TeX82 §§252/283 show the restored macro's saved body after copying the
     // saved eqtb word back, with §262's breadth bound.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\def\foo{abcdefghijklmnopqrstuvwx}\tracingrestores=1\tracingonline=1{\def\foo{X}}\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let expected = "{restoring \\foo=macro:->abcdefghijklmnopqrstuvwx}\n";
-        assert_eq!(pending_sink_text(&stores, true), expected);
-        assert_eq!(pending_sink_text(&stores, false), expected);
+        assert_eq!(pending_sink_text(stores, true), expected);
+        assert_eq!(pending_sink_text(stores, false), expected);
     });
 }
 
 #[test]
 fn tracingassigns_reports_setbox_change_and_committed_box() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let _initialized = MainControl::tex82_initex(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let _initialized = MainControl::tex82_initex(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::with_profile(CommandProfile::ETEX26);
         register_source(
             &mut control,
             br"\tracingonline=1\tracingassigns=1\setbox25=\hbox{}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let trace = concat!(
             "{changing \\box25=void}\n",
             "{into \\box25=\n",
             "\\hbox(0.0+0.0)x0.0}\n",
         );
-        let terminal = pending_sink_text(&stores, true);
-        let log = pending_sink_text(&stores, false);
+        let terminal = pending_sink_text(stores, true);
+        let log = pending_sink_text(stores, false);
         assert!(terminal.contains(trace), "{terminal:?}");
         assert!(log.contains(trace), "{log:?}");
     });
@@ -2040,18 +2031,18 @@ fn tracingassigns_reports_setbox_change_and_committed_box() {
 
 #[test]
 fn tracingparagraphs_reports_exact_first_pass_break_sequence() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         b"\\tracingparagraphs=1\\tracingonline=1\\linepenalty=10\\parfillskip=0pt plus 1fil\\indent\\par\\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let expected =
             "@firstpass\n[] \n@\\par via @@0 b=0 p=-10000 d=100\n@@1: line 1.2- t=100 -> @@0\n";
-        assert!(terminal_text(&stores).starts_with(expected));
+        assert!(terminal_text(stores).starts_with(expected));
         let log = String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default());
         assert!(log.starts_with(expected));
     });
@@ -2066,7 +2057,7 @@ fn etex_lastlinefit_traces_saved_shortfall_glue_and_final_adjustment() {
         br"\def\z{\hbox to30pt{}\hskip5pt plus20pt minus4pt }\tracingparagraphs=1\tracingonline=1\hbadness=100\pretolerance=9000\parfillskip=0pt plus1fill\hsize=96pt\lastlinefit=500\setbox0=\vbox{\noindent\z\z\z\z\z}\end",
     |stores| {
 
-    let trace = terminal_text(&stores);
+    let trace = terminal_text(stores);
     for expected in [
         "@@1: line 1.0 t=137641 s=31.0 g=20.0 -> @@0",
         "@@2: line 1.2 t=144 s=-4.0 g=8.0 -> @@0",
@@ -2084,15 +2075,15 @@ fn etex_lastlinefit_traces_saved_shortfall_glue_and_final_adjustment() {
 fn paragraph_shrink_error_uses_the_live_input_context() {
     // TeX82 §§82/825 reports the `\par` source line before the paragraph
     // recovery help, while command state still owns that cursor.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\tracingparagraphs=1\tracingonline=1{\rightskip0pt plus 104pt minus 100fil \looseness5 \spaceskip4pt plus 2pt minus 1fil A B\par}\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let log = String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default());
         let error = log
@@ -2130,15 +2121,15 @@ fn etex_direction_meanings_share_valigns_vertical_mode_paragraph_entry() {
 fn etex_everyeof_assignment_is_visible_to_scantokens_during_edef() {
     // e-TeX 2.6 etex.ch §24.362 inserts a non-null \everyeof token list
     // before retiring the pseudo-file, including while \edef is defining.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             br"\everyeof={\noexpand}\edef\x{\scantokens{\begingroup}\endgroup}\end",
         );
         let mut observations = ObservationRecorder::default();
 
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         assert!(
             admitted!(stores, |context| context
@@ -2161,8 +2152,8 @@ fn etex_scantokens_warns_for_box_group_before_following_conditional() {
     // e-TeX 2.6 [23.328]: each closer warns immediately before its own
     // `unsave`/conditional pop. The two lines of one scantokens source must
     // therefore report the hbox group before the enclosing ifcase.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             br"\let\egroup=}\tracingonline=1\tracingnesting=1
@@ -2171,9 +2162,9 @@ fn etex_scantokens_warns_for_box_group_before_following_conditional() {
            \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         let group = output
             .find("Warning: end of hbox group")
             .unwrap_or_else(|| panic!("box group warning is rendered: {output:?}"));
@@ -2190,7 +2181,7 @@ fn etex_fire_up_distinguishes_empty_class_zero_and_sparse_botmarks() {
     // `top_mark`, while e-TeX 2.6 `etex.ch` [26.1396] discards an empty old
     // sparse `botmarks` pointer. Only the later `topmarks0` enquiry therefore
     // installs and retires a `mark_text` input level.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         // Stage the exact post-fire-up state proved by page_output.rs's white-box
         // regression, then cross the command processor's enquiry boundary.
         admitted!(stores, |context| context.set_page_mark_class(
@@ -2198,14 +2189,14 @@ fn etex_fire_up_distinguishes_empty_class_zero_and_sparse_botmarks() {
             0,
             tex_state::node::NodeTokenList::default(),
         ));
-        let mut control = etex_initex(&mut stores);
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             include_bytes!("../fixtures/etex-empty-botmark-fire-up.tex"),
         );
         let mut observations = ObservationRecorder::default();
 
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         assert_eq!(
             observations
@@ -2227,7 +2218,7 @@ fn write_prints_a_control_character_equal_to_newlinechar_as_a_physical_newline()
     // TeX82 §§262 and 1370: `token_show` prints character tokens through
     // `print`, whose stream selector recognizes `newlinechar` before the
     // non-printable-character `^^` rendering used for diagnostic strings.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::NEWLINE_CHAR,
@@ -2266,17 +2257,17 @@ fn terminal_write_uses_live_line_width_and_breaks_after_message() {
     // wraps at the process-selected width, and its leading `print_nl("")`
     // closes a preceding newline-less `\message`. This is the e-TRIP
     // `\typeout`/current-if transition in bounded form.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_error_context_widths(
             tex_state::print::ErrorContextWidths::default()
                 .with_max_print_line(72)
                 .expect("e-TRIP line width is valid"),
         );
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+        tex_command::install_tex82_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         register_source(
         &mut control,
         br"\nonstopmode
@@ -2286,11 +2277,11 @@ fn terminal_write_uses_live_line_width_and_breaks_after_message() {
 \end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let expected = "Checking \\showifs, \\currentiftype, \\currentiflevel, and \\currentifbranch\n:\ncurrent branch OK\ncurrent if level: 0\n";
-        let terminal = pending_sink_text(&stores, true);
-        let log = pending_sink_text(&stores, false);
+        let terminal = pending_sink_text(stores, true);
+        let log = pending_sink_text(stores, false);
         assert!(terminal.ends_with(expected), "{terminal:?}");
         assert!(log.ends_with(expected), "{log:?}");
     });
@@ -2301,16 +2292,16 @@ fn tracingstats_frames_consecutive_shipouts_with_live_memory_reports() {
     // TeX82 §638 snapshots allocator use around each page and closes the
     // progress marker before printing its complete report. The diagnostic is
     // per shipout; consecutive pages must not share one marker line.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\tracingstats=2\shipout\hbox{}\shipout\hbox{}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(!terminal.contains("[0] [0]"), "{terminal:?}");
         assert_eq!(terminal.lines().filter(|line| *line == "[0]").count(), 2);
         let reports = terminal
@@ -2330,20 +2321,20 @@ fn pdftex_engine_announces_deferred_openout_inside_shipout_for_tex82_profile() {
     // Web2C's `[53.1374]` change announces the successful open immediately
     // after tex.web §1374 sets `write_open[j]`. This is compiled pdfTeX
     // behavior even when the loaded format selects the TeX82 command family.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_engine_binary(crate::EngineBinaryIdentity::Pdftex14029);
-        control.begin_job(&mut stores, "openout.tex");
+        control.begin_job(stores, "openout.tex");
         register_source(
             &mut control,
             br"\shipout\hbox{\openout3=deferred\closeout3}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         let pages = control.take_prepared_dvi_pages();
         assert_eq!(pages.len(), 1);
         control.finish_job(
-            &mut stores,
+            stores,
             Some(crate::DviJobOutput {
                 file_name: "openout.dvi".into(),
                 byte_len: 0,
@@ -2354,12 +2345,12 @@ fn pdftex_engine_announces_deferred_openout_inside_shipout_for_tex82_profile() {
         let terminal = format!(
             "{}{}",
             String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default()),
-            pending_sink_text(&stores, true)
+            pending_sink_text(stores, true)
         );
         let log = format!(
             "{}{}",
             String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default()),
-            pending_sink_text(&stores, false)
+            pending_sink_text(stores, false)
         );
         let notice = "\\openout3 = `deferred.tex'.";
         assert!(!terminal.contains(notice), "{terminal:?}");
@@ -2382,7 +2373,7 @@ fn showtokens_distinguishes_newlinechar_from_other_control_bytes() {
     // TeX82 §§262 and 1297: direct `token_show` output recognizes the live
     // newline character, while another non-printable byte keeps its `^^`
     // spelling. The control-sequence separator is part of `print_cs`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::NEWLINE_CHAR,
@@ -2419,7 +2410,7 @@ fn showtokens_distinguishes_newlinechar_from_other_control_bytes() {
 
 #[test]
 fn meaning_mutation_value_projects_protected_macro_storage_marker() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let definition = stores
             .allocate_definition(&[], &[])
             .expect("empty protected macro definition");
@@ -2451,15 +2442,15 @@ fn etex_unexpanded_replays_protected_macros_as_ordinary_expandable_input() {
     // `the_toks`, whose `ins_list` result re-enters the enclosing expansion
     // loop. Protection suppresses expansion only while an expanded token
     // list is being built; it is not persistent replay metadata.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             br"\protected\def\p{\global\advance\count0 by1}\unexpanded{\p}\end",
         );
         let mut observations = ObservationRecorder::default();
 
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         let p_deliveries = observations
             .0
@@ -2480,7 +2471,7 @@ fn etex_unexpanded_replays_protected_macros_as_ordinary_expandable_input() {
             stores.count(0).expect("count register"),
             1,
             "terminal: {}",
-            terminal_text(&stores)
+            terminal_text(stores)
         );
     });
 }
@@ -2492,11 +2483,11 @@ fn etex_optimized_aftergroup_links_tokens_onto_one_backup_level() {
     // the remaining tokens onto that level. The TeX82 run is the negative
     // control for the same bounded source microfixture.
     for (profile, expected_backups) in [(CommandProfile::TEX82, 3), (CommandProfile::ETEX26, 1)] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             let mut control = if profile == CommandProfile::ETEX26 {
-                etex_initex(&mut stores)
+                etex_initex(stores)
             } else {
-                MainControl::tex82_initex(&mut stores)
+                MainControl::tex82_initex(stores)
             };
             register_source(
                 &mut control,
@@ -2504,7 +2495,7 @@ fn etex_optimized_aftergroup_links_tokens_onto_one_backup_level() {
             );
             let mut observations = ObservationRecorder::default();
 
-            run_to_end_observed(&mut control, &mut stores, &mut observations);
+            run_to_end_observed(&mut control, stores, &mut observations);
 
             let backups = observations
                 .0
@@ -2546,13 +2537,13 @@ fn hbox_group_type_respects_box_context_and_vertical_mode() {
         (br"\setbox0=\hbox{}".as_slice(), GroupKind::HBox),
         (br"\hbox{}".as_slice(), GroupKind::AdjustedHBox),
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             control.set_fuel_limit(1_000).expect("bounded fuel");
             register_source(&mut control, source);
 
             assert_eq!(
-                control.step(&mut stores).expect("prefix executes"),
+                control.step(stores).expect("prefix executes"),
                 MainControlStep::Continue
             );
             assert_eq!(
@@ -2576,8 +2567,8 @@ fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
     // layers and a conditional make any fixed body-prefetch scheme invalid;
     // the literal `\kern` is the nonmacro negative control for duplicate
     // delivery.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         stores.install_primitive_meaning(
             "currentgrouptype",
             Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentGroupType),
@@ -2594,13 +2585,13 @@ fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
           \discretionary{\layera\kern1pt}{}{}",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             stores.count(0).expect("count register"),
             10,
             "body expansion saw disc_group; terminal={}",
-            terminal_text(&stores)
+            terminal_text(stores)
         );
         let disc = control
             .modes
@@ -2615,7 +2606,7 @@ fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
             })
             .expect("completed discretionary node");
         assert_eq!(
-            page_vec(&stores, disc.0)
+            page_vec(stores, disc.0)
                 .iter()
                 .filter(|node| matches!(
                     node,
@@ -2645,8 +2636,8 @@ fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
     // ordinary nested group inside the second part. The inner discretionary
     // simultaneously proves that ActiveDiscretionary is a proper stack, then
     // §1121 rejects it as a forbidden node in the outer discretionary list.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(10_000).expect("bounded fuel");
         register_source(
             &mut control,
@@ -2657,7 +2648,7 @@ fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
           }{\kern2pt}}{\kern3pt}",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let [
             Node::Disc {
@@ -2676,16 +2667,16 @@ fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
             "the forbidden nested discretionary and its suffix were pruned"
         );
         assert!(matches!(
-            page_vec(&stores, *post).as_slice(),
+            page_vec(stores, *post).as_slice(),
             [Node::Kern { .. }]
         ));
         assert!(matches!(
-            page_vec(&stores, *replace).as_slice(),
+            page_vec(stores, *replace).as_slice(),
             [Node::Kern { .. }]
         ));
-        assert!(terminal_text(&stores).contains("Improper discretionary list"));
+        assert!(terminal_text(stores).contains("Improper discretionary list"));
         assert!(
-            !terminal_text(&stores).contains("Missing { inserted"),
+            !terminal_text(stores).contains("Missing { inserted"),
             "aftergroup token supplied the next part opener"
         );
         assert!(control.active_discretionaries.is_empty());
@@ -2702,11 +2693,11 @@ fn discretionary_nest_overflow_leaves_group_and_active_stack_untouched() {
     // Fatal overflow is committed rather than rolled back, so the
     // discretionary opener must not install disc_group or its executor frame
     // until that bounded push has succeeded.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\noindent\discretionary{}{}{}");
         assert_eq!(
-            control.step(&mut stores).expect("paragraph starts"),
+            control.step(stores).expect("paragraph starts"),
             MainControlStep::Continue
         );
         while control.modes.depth() < 41 {
@@ -2717,7 +2708,7 @@ fn discretionary_nest_overflow_leaves_group_and_active_stack_untouched() {
         }
 
         assert_eq!(
-            control.step(&mut stores).expect("fatal overflow succumbs"),
+            control.step(stores).expect("fatal overflow succumbs"),
             MainControlStep::End
         );
         assert_eq!(control.modes.depth(), 41);
@@ -2735,8 +2726,8 @@ fn vtop_resets_inherited_parshape_before_display_line_measurement() {
     // The display therefore uses the box-local 100pt hsize, not the inherited
     // 12pt second `\parshape` line. The empty display's centered reference
     // point therefore extends the vtop's exact natural width to 50pt.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(10_000).expect("bounded fuel");
         register_source(
             &mut control,
@@ -2747,12 +2738,12 @@ fn vtop_resets_inherited_parshape_before_display_line_measurement() {
           \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let root = stores
             .copy_box_to_page(0)
             .expect("vtop is assigned to box 0");
-        let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
+        let Some(Node::VList(boxed)) = first_published_node(stores, root) else {
             panic!("box 0 holds a vlist");
         };
         assert_eq!(boxed.width.raw(), 3_276_800);
@@ -2765,8 +2756,8 @@ fn preamble_span_expands_one_token_and_preserves_later_template_meaning() {
     // Here \A is \relax while the preamble is scanned, then becomes a 3pt
     // kern before the spanned column template executes. The template must
     // retain \A itself and resolve its later meaning, producing exactly 3pt.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(20_000).expect("bounded fuel");
         register_source(
             &mut control,
@@ -2777,10 +2768,10 @@ fn preamble_span_expands_one_token_and_preserves_later_template_meaning() {
           \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let root = stores.copy_box_to_page(0).expect("vbox is assigned");
-        let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
+        let Some(Node::VList(boxed)) = first_published_node(stores, root) else {
             panic!("box 0 holds a vlist");
         };
         assert_eq!(boxed.width.raw(), 3 * Scaled::UNITY);
@@ -2794,10 +2785,10 @@ fn span_delimiter_ends_the_pending_ligkern_run() {
     // list open, the characters on opposite sides of `\span` are therefore
     // distinct lig/kern runs. CMR10 kerns `bc` by 0.27779pt, so this fixture
     // detects an accidental run carried across either span boundary.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(20_000).expect("bounded fuel");
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             br"\font\f=cmr10 \f
@@ -2806,16 +2797,16 @@ fn span_delimiter_ends_the_pending_ligkern_run() {
           \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let root = stores.copy_box_to_page(0).expect("vbox is assigned");
-        let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
+        let Some(Node::VList(boxed)) = first_published_node(stores, root) else {
             panic!("box 0 holds a vlist");
         };
         assert_eq!(boxed.width.raw(), 983_042, "natural width is 15.00003pt");
-        let children = box_child_nodes(&mut stores, 0);
+        let children = box_child_nodes(stores, 0);
         assert_eq!(
-            alignment_node_projection(&stores, &children),
+            alignment_node_projection(stores, &children),
             vec![AlignmentNodeProjection::Box {
                 shift: 0,
                 kerns: Vec::new(),
@@ -2829,10 +2820,10 @@ fn alignment_v_template_continues_the_pending_ligkern_run() {
     // TeX82 §§1034--1038: `main_loop_lookahead` crosses the §342 alignment
     // interception into the v-template. CMR10's `fi` ligature therefore
     // combines a final body character with the template's first character.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(20_000).expect("bounded fuel");
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             br"\font\f=cmr10 \f
@@ -2840,7 +2831,7 @@ fn alignment_v_template_continues_the_pending_ligkern_run() {
           \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         fn collect_ligatures<G>(
             stores: &Universe<G>,
@@ -2864,7 +2855,7 @@ fn alignment_v_template_continues_the_pending_ligkern_run() {
 
         let root = stores.copy_box_to_page(0).expect("vbox is assigned");
         let mut ligatures = Vec::new();
-        collect_ligatures(&stores, root, &mut ligatures);
+        collect_ligatures(stores, root, &mut ligatures);
         assert_eq!(ligatures, [vec!['f', 'i']]);
     });
 }
@@ -2875,8 +2866,8 @@ fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
     // splice. The two row widths therefore total exactly 5pt in the enclosing
     // `\halign` cell; routing them through §679 would insert 12pt baselineskip
     // and make the cell spuriously 17pt wide.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(20_000).expect("bounded fuel");
         register_source(
             &mut control,
@@ -2886,10 +2877,10 @@ fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
           \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let root = stores.copy_box_to_page(0).expect("outer vbox is assigned");
-        let Some(Node::VList(boxed)) = first_published_node(&stores, root) else {
+        let Some(Node::VList(boxed)) = first_published_node(stores, root) else {
             panic!("box 0 holds a vlist");
         };
         assert_eq!(boxed.width.raw(), 5 * Scaled::UNITY);
@@ -2902,8 +2893,8 @@ fn display_alignment_tail_runs_assignments_before_main_control() {
     // before checking for the closing `$$`. Its §404 fetch suppresses the
     // separating blank, so the malformed postdisplaypenalty assignment must
     // diagnose before any later display-mode command trace.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(20_000).expect("bounded fuel");
         register_source(
             &mut control,
@@ -2911,9 +2902,9 @@ fn display_alignment_tail_runs_assignments_before_main_control() {
               \noindent$$\halign{#\cr\cr} \global\postdisplaypenalty=*$$\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(
             terminal.contains("Missing number, treated as zero"),
             "assignment reports its missing integer: {terminal}"
@@ -2930,16 +2921,16 @@ fn display_alignment_finish_replays_missing_double_math_shift_offender() {
     // TeX82 §§1206--1207: a command other than the required closing math
     // shift reports the display-math delimiter error, is backed up, and
     // executes once after the alignment has restored its enclosing mode.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\nonstopmode\noindent$$\halign{#\cr\cr}\global\count0=17\par\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert_eq!(
             terminal.matches("Missing $$ inserted.").count(),
             1,
@@ -2955,8 +2946,8 @@ fn align_peek_full_branch_prefix_recovery_and_nesting_matrix() {
     // TeX82 §785: the expanded row probe owns blanks/macros, repeated
     // `\crcr`, `\noalign` (including its recovered opener), the closing
     // right brace, and the backed-up first command of an ordinary row.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(30_000).expect("bounded fuel");
         register_source(
             &mut control,
@@ -2976,7 +2967,7 @@ fn align_peek_full_branch_prefix_recovery_and_nesting_matrix() {
         );
         let mut observations = ObservationRecorder::default();
 
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         assert_eq!(
             stores.count(0).expect("count register"),
@@ -2993,7 +2984,7 @@ fn align_peek_full_branch_prefix_recovery_and_nesting_matrix() {
             2,
             "valid and recovered noalign bodies run once"
         );
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert_eq!(
             terminal.matches("Missing { inserted").count(),
             1,
@@ -3040,11 +3031,11 @@ fn align_peek_full_branch_prefix_recovery_and_nesting_matrix() {
         // The direct-operation counters above cannot prove §785's ordering. Isolate an
         // ordinary row opener and project the command-owned reset, backup, and
         // u-template input events in the order they committed.
-        crate::test_harness::with_nonstop_plain_universe(|mut ordered_stores| {
-            let mut ordered = MainControl::tex82_initex(&mut ordered_stores);
+        crate::test_harness::with_nonstop_plain_universe(|ordered_stores| {
+            let mut ordered = MainControl::tex82_initex(ordered_stores);
             register_source(&mut ordered, br"\setbox0=\vbox{\halign{#\cr x\cr}}\end");
             let mut ordered_observations = ObservationRecorder::default();
-            run_to_end_observed(&mut ordered, &mut ordered_stores, &mut ordered_observations);
+            run_to_end_observed(&mut ordered, ordered_stores, &mut ordered_observations);
             let reset = ordered_observations
                 .0
                 .iter()
@@ -3094,14 +3085,14 @@ fn align_peek_full_branch_prefix_recovery_and_nesting_matrix() {
             // Every restart caused by `\crcr` resets the sentinel, while noalign and
             // the closing right brace consume their own lookahead and create no
             // backed-up input level.
-            crate::test_harness::with_nonstop_plain_universe(|mut branch_stores| {
-                let mut branches = MainControl::tex82_initex(&mut branch_stores);
+            crate::test_harness::with_nonstop_plain_universe(|branch_stores| {
+                let mut branches = MainControl::tex82_initex(branch_stores);
                 register_source(
                     &mut branches,
                     br"\setbox0=\vbox{\halign{#\cr\crcr\crcr\noalign{}\crcr}}\end",
                 );
                 let mut branch_observations = ObservationRecorder::default();
-                run_to_end_observed(&mut branches, &mut branch_stores, &mut branch_observations);
+                run_to_end_observed(&mut branches, branch_stores, &mut branch_observations);
                 assert_eq!(
                     branch_observations
                         .0
@@ -3169,14 +3160,14 @@ fn ignorespaces_surfaces_an_alignment_delimiter_before_fin_col() {
     // the scalar helper consume it can dispatch frozen `\endv` in the same
     // operation and lose this canonical boundary.
     fn column_at_v_template(source: &[u8]) -> usize {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             register_source(&mut control, source);
             let mut observations = ObservationRecorder::default();
             loop {
                 let before = observations.0.len();
                 match control
-                    .step_with_observer(&mut stores, &mut observations)
+                    .step_with_observer(stores, &mut observations)
                     .expect("alignment operation executes")
                 {
                     MainControlStep::Continue => {}
@@ -3194,11 +3185,11 @@ fn ignorespaces_surfaces_an_alignment_delimiter_before_fin_col() {
                     let column = active_alignment_runtime_snapshot(&control)
                         .expect("fin_col has not advanced the active entry")
                         .column;
-                    run_to_end_observed(&mut control, &mut stores, &mut observations);
+                    run_to_end_observed(&mut control, stores, &mut observations);
                     assert!(
-                        terminal_text(&stores).is_empty(),
+                        terminal_text(stores).is_empty(),
                         "{}",
-                        terminal_text(&stores)
+                        terminal_text(stores)
                     );
                     return column;
                 }
@@ -3224,8 +3215,8 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
     // TeX82 §786: first and later rows use one fresh semantic row/cell
     // level, the leading tabskip, the selected first alignrecord, and the
     // canonical h/v cell mode and auxiliary initialization.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(30_000).expect("bounded fuel");
         register_source(
             &mut control,
@@ -3244,7 +3235,7 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
         );
         let mut observations = ObservationRecorder::default();
 
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         assert_eq!(
             stores.count(0).expect("count register"),
@@ -3257,7 +3248,7 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
             "valign first/later rows reset paragraph aux in internal vmode"
         );
         for register in [0, 1] {
-            let rows = box_child_nodes(&mut stores, register);
+            let rows = box_child_nodes(stores, register);
             let boxed_rows = rows
                 .iter()
                 .filter_map(|node| match node {
@@ -3267,7 +3258,7 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
                 .collect::<Vec<_>>();
             assert_eq!(boxed_rows.len(), 2, "register {register}: {rows:?}");
             for row in boxed_rows {
-                let first = page_vec(&stores, row.children).into_iter().next();
+                let first = page_vec(stores, row.children).into_iter().next();
                 let Some(Node::Glue { spec, kind, .. }) = first else {
                     panic!("row begins with tabskip glue: {rows:?}");
                 };
@@ -3315,13 +3306,13 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
                 Some(crate::mode::IGNORE_DEPTH.raw()),
             ),
         ] {
-            crate::test_harness::with_nonstop_plain_universe(|mut snapshot_stores| {
-                let mut snapshot_control = MainControl::tex82_initex(&mut snapshot_stores);
+            crate::test_harness::with_nonstop_plain_universe(|snapshot_stores| {
+                let mut snapshot_control = MainControl::tex82_initex(snapshot_stores);
                 register_source(&mut snapshot_control, source);
                 let mut snapshot_observations = ObservationRecorder::default();
                 let first = step_until_alignment_snapshot(
                     &mut snapshot_control,
-                    &mut snapshot_stores,
+                    snapshot_stores,
                     &mut snapshot_observations,
                     |snapshot| snapshot.rows == 1,
                 );
@@ -3344,7 +3335,7 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
                 );
                 let later = step_until_alignment_snapshot(
                     &mut snapshot_control,
-                    &mut snapshot_stores,
+                    snapshot_stores,
                     &mut snapshot_observations,
                     |snapshot| snapshot.rows == 2,
                 );
@@ -3361,14 +3352,14 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
                 assert_eq!(later.cell_prev_depth, cell_prev_depth);
                 run_to_end_observed(
                     &mut snapshot_control,
-                    &mut snapshot_stores,
+                    snapshot_stores,
                     &mut snapshot_observations,
                 );
             });
         }
 
-        crate::test_harness::with_nonstop_plain_universe(|mut span_stores| {
-            let mut span_control = MainControl::tex82_initex(&mut span_stores);
+        crate::test_harness::with_nonstop_plain_universe(|span_stores| {
+            let mut span_control = MainControl::tex82_initex(span_stores);
             register_source(
                 &mut span_control,
                 br"\setbox0=\vbox{\halign{#&#\cr x\span y\cr\omit z&z\cr}}\end",
@@ -3376,7 +3367,7 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
             let mut span_observations = ObservationRecorder::default();
             let spanned = step_until_alignment_snapshot(
                 &mut span_control,
-                &mut span_stores,
+                span_stores,
                 &mut span_observations,
                 |snapshot| snapshot.column == 1 && snapshot.cell_span == 2,
             );
@@ -3384,7 +3375,7 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
                 spanned.captured_cells, 0,
                 "span keeps the first cell list open"
             );
-            run_to_end_observed(&mut span_control, &mut span_stores, &mut span_observations);
+            run_to_end_observed(&mut span_control, span_stores, &mut span_observations);
             assert!(span_observations.0.iter().any(|observation| matches!(
                 observation,
                 CommandObservation::Alignment(record) if record.transition == "omit_template_push"
@@ -3393,16 +3384,16 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
             // An exhausted preamble is scanner recovery, not permission for init_row
             // to manufacture a first alignrecord. The fragment boundary keeps this
             // deliberately incomplete input bounded without appending `\end`.
-            crate::test_harness::with_nonstop_plain_universe(|mut exhausted_stores| {
+            crate::test_harness::with_nonstop_plain_universe(|exhausted_stores| {
                 exhausted_stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-                let mut exhausted = MainControl::tex82_initex(&mut exhausted_stores);
+                let mut exhausted = MainControl::tex82_initex(exhausted_stores);
                 exhausted.set_root_completion_policy(RootCompletionPolicy::StopAtRootEof);
                 exhausted.set_fuel_limit(2_000).expect("bounded fuel");
                 register_source(&mut exhausted, br"\halign{");
                 let mut exhausted_observations = ObservationRecorder::default();
                 run_to_end_observed(
                     &mut exhausted,
-                    &mut exhausted_stores,
+                    exhausted_stores,
                     &mut exhausted_observations,
                 );
                 assert!(!exhausted_observations.0.iter().any(|observation| matches!(
@@ -3410,7 +3401,7 @@ fn init_row_halign_valign_leading_tabskip_template_span_and_aux_matrix() {
                     CommandObservation::Alignment(record) if record.transition == "u_template_push"
                 )));
                 assert!(
-                    terminal_text(&exhausted_stores).contains("File ended while scanning"),
+                    terminal_text(exhausted_stores).contains("File ended while scanning"),
                     "exhausted preamble reports before row initialization"
                 );
             });
@@ -3429,13 +3420,13 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
         let source = format!(
             "\\nonstopmode\\setbox0=\\vbox{{\\halign{{#\\cr \\hskip1pt{delimiter}\\hskip2pt\\cr}}}}\\end"
         );
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             control.set_fuel_limit(20_000).expect("bounded fuel");
             register_source(&mut control, source.as_bytes());
             let mut observations = ObservationRecorder::default();
-            run_to_end_observed(&mut control, &mut stores, &mut observations);
-            let terminal = terminal_text(&stores);
+            run_to_end_observed(&mut control, stores, &mut observations);
+            let terminal = terminal_text(stores);
             assert_eq!(
                 terminal
                     .matches("Extra alignment tab has been changed to \\cr")
@@ -3458,8 +3449,8 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
         });
     }
 
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(40_000).expect("bounded fuel");
         register_source(
             &mut control,
@@ -3476,7 +3467,7 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
           \end",
         );
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         assert_eq!(
             stores.count(0).expect("count register"),
@@ -3489,8 +3480,8 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
             "periodic v-template selection is exact"
         );
         let mut widths = Vec::new();
-        let children = box_child_nodes(&mut stores, 0);
-        tabskip_widths(&stores, &children, &mut widths);
+        let children = box_child_nodes(stores, 0);
+        tabskip_widths(stores, &children, &mut widths);
         widths.sort_unstable();
         assert_eq!(
             widths,
@@ -3506,13 +3497,13 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
             ],
             "periodic copies retain the repeated column's following tabskip"
         );
-        let halign_rows = box_child_nodes(&mut stores, 0)
+        let halign_rows = box_child_nodes(stores, 0)
             .into_iter()
             .filter(|node| matches!(node, Node::HList(_)))
             .collect::<Vec<_>>();
         assert_eq!(halign_rows.len(), 2);
         assert_eq!(
-            packaged_row_projection(&stores, &halign_rows[0]),
+            packaged_row_projection(stores, &halign_rows[0]),
             vec![
                 PackagedRowItem::TabSkip(Scaled::UNITY),
                 PackagedRowItem::HorizontalCell(vec![Scaled::UNITY]),
@@ -3527,7 +3518,7 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
             "each packaged cell retains the tabskip associated with its ending column; the span material is one cell followed by its resolved empty column"
         );
         assert_eq!(
-            packaged_row_projection(&stores, &halign_rows[1]),
+            packaged_row_projection(stores, &halign_rows[1]),
             vec![
                 PackagedRowItem::TabSkip(Scaled::UNITY),
                 PackagedRowItem::HorizontalCell(vec![Scaled::UNITY]),
@@ -3537,13 +3528,13 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
             ],
             "brace-depth recovery still packages the corrected tab branch as a complete row"
         );
-        let valign_rows = box_child_nodes(&mut stores, 1)
+        let valign_rows = box_child_nodes(stores, 1)
             .into_iter()
             .filter(|node| matches!(node, Node::VList(_)))
             .collect::<Vec<_>>();
         assert_eq!(valign_rows.len(), 2);
         assert_eq!(
-            packaged_row_projection(&stores, &valign_rows[0]),
+            packaged_row_projection(stores, &valign_rows[0]),
             vec![
                 PackagedRowItem::TabSkip(Scaled::UNITY),
                 PackagedRowItem::VerticalCell(vec![Scaled::UNITY]),
@@ -3553,7 +3544,7 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
             ]
         );
         assert_eq!(
-            packaged_row_projection(&stores, &valign_rows[1]),
+            packaged_row_projection(stores, &valign_rows[1]),
             vec![
                 PackagedRowItem::TabSkip(Scaled::UNITY),
                 PackagedRowItem::VerticalCell(vec![Scaled::UNITY, 2 * Scaled::UNITY]),
@@ -3563,7 +3554,7 @@ fn fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix() {
             ],
             "the omit/span branch packages one two-column vertical cell and one resolved empty column"
         );
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert_eq!(
             terminal.matches("Missing } inserted").count(),
             1,
@@ -3610,20 +3601,20 @@ fn display_alignment_finish_complete_content_delimiter_and_spacing_matrix() {
              \\noindent$$\\displayindent=7pt\\halign{{#&#\\cr {body}}}
              \\global\\advance\\count0 by1 $$\\hbox{{\\kern13pt}}}}\\end"
         );
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             control.set_fuel_limit(30_000).expect("bounded fuel");
             register_source(&mut control, source.as_bytes());
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
             assert_eq!(
                 stores.count(0).expect("count register"),
                 1,
                 "post-alignment assignment executes first"
             );
-            let terminal = terminal_text(&stores);
+            let terminal = terminal_text(stores);
             assert!(!terminal.contains("Display math should end"), "{terminal}");
-            let nodes = box_child_nodes(&mut stores, 0);
-            let projection = alignment_node_projection(&stores, &nodes);
+            let nodes = box_child_nodes(stores, 0);
+            let projection = alignment_node_projection(stores, &nodes);
             let pre = projection
                 .iter()
                 .position(|node| *node == AlignmentNodeProjection::Penalty(111))
@@ -3687,13 +3678,13 @@ fn display_alignment_finish_complete_content_delimiter_and_spacing_matrix() {
         let source = format!(
             "\\nonstopmode\\setbox0=\\vbox{{\\noindent$$\\halign{{#\\cr\\cr}}{tail}}}\\end"
         );
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             control.set_fuel_limit(20_000).expect("bounded fuel");
             register_source(&mut control, source.as_bytes());
             let mut recovery_observations = ObservationRecorder::default();
-            run_to_end_observed(&mut control, &mut stores, &mut recovery_observations);
-            let terminal = terminal_text(&stores);
+            run_to_end_observed(&mut control, stores, &mut recovery_observations);
+            let terminal = terminal_text(stores);
             assert_eq!(terminal.matches(diagnostic).count(), 1, "{terminal}");
             assert_eq!(
                 stores.count(0).expect("count register"),
@@ -3740,15 +3731,15 @@ fn vsplit_kernel_separates_result_remainder_and_split_marks() {
     // TeX82 §§977--979: the chosen prefix becomes a separately packed box,
     // the source register is replaced by its pruned remainder, and the split
     // marks describe only the extracted prefix.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\setbox0=\vbox{\mark{first}\hrule height10pt\penalty-10000\mark{second}\hrule height10pt}
            \setbox1=\vsplit0 to10pt\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let split = stores
             .copy_box_to_page(1)
@@ -3761,11 +3752,11 @@ fn vsplit_kernel_separates_result_remainder_and_split_marks() {
             "prefix and remainder have distinct ownership"
         );
         assert!(matches!(
-            first_published_node(&stores, split),
+            first_published_node(stores, split),
             Some(Node::VList(_))
         ));
         assert!(matches!(
-            first_published_node(&stores, remainder),
+            first_published_node(stores, remainder),
             Some(Node::VList(_))
         ));
         for mark in [PageMark::SplitFirst, PageMark::SplitBot] {
@@ -3805,9 +3796,9 @@ fn text_material_preserves_ligature_space_factor_and_font_glue() {
     // TeX82 §§1033--1042: the pending character run applies the font's
     // ligature program before the following space is selected and scaled by
     // the live space factor.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             br"\font\f=cmr10 \f
@@ -3815,9 +3806,9 @@ fn text_material_preserves_ligature_space_factor_and_font_glue() {
            \setbox1=\hbox{A\spacefactor=3000\relax{} X}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let ordinary = box_child_nodes(&mut stores, 0);
+        let ordinary = box_child_nodes(stores, 0);
         assert!(matches!(
             ordinary.as_slice(),
             [
@@ -3828,7 +3819,7 @@ fn text_material_preserves_ligature_space_factor_and_font_glue() {
                 Node::Char { ch: 'B', .. },
             ] if orig.as_slice() == ['f', 'i']
         ));
-        let sentence = box_child_nodes(&mut stores, 1);
+        let sentence = box_child_nodes(stores, 1);
         let [
             Node::Char { ch: 'A', .. },
             Node::Glue { spec, .. },
@@ -3848,16 +3839,16 @@ fn text_material_preserves_ligature_space_factor_and_font_glue() {
 fn direct_material_appends_typed_nodes_in_source_order() {
     // TeX82 §§1055--1061: each completed typed operand is appended exactly
     // once and preserves its distinct node kind and numeric value.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\setbox0=\hbox{\kern1pt\hskip2pt\vrule width3pt height4pt depth5pt}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let nodes = box_child_nodes(&mut stores, 0);
+        let nodes = box_child_nodes(stores, 0);
         let [
             Node::Kern { amount, kind },
             Node::Glue { spec, .. },
@@ -3884,8 +3875,8 @@ fn paragraph_boundaries_run_everypar_in_outer_and_internal_vertical_modes() {
     // TeX82 §§1088--1096: both outer and internal vertical paragraph entry
     // run `everypar`, and both completed paragraphs return to their enclosing
     // vertical mode without losing the body material.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\everypar{\global\advance\count0 by1}
@@ -3893,7 +3884,7 @@ fn paragraph_boundaries_run_everypar_in_outer_and_internal_vertical_modes() {
            \setbox0=\vbox{\noindent\kern2pt\par}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 2);
         assert_eq!(control.current_mode(), Mode::Vertical);
@@ -3907,8 +3898,8 @@ fn base_whatsits_preserve_scan_timing_normalization_and_payload_ownership() {
     // TeX82 §§1349--1361: write text remains unexpanded, ordinary special
     // text expands immediately, and normalized closeout fallback slots do not
     // pretend to own a numbered output file.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\def\payload{early}
@@ -3916,9 +3907,9 @@ fn base_whatsits_preserve_scan_timing_normalization_and_payload_ownership() {
            \def\payload{late}\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let nodes = box_child_nodes(&mut stores, 0);
+        let nodes = box_child_nodes(stores, 0);
         let [
             Node::Whatsit(tex_state::node::Whatsit::OpenOut { slot, path }),
             Node::Whatsit(tex_state::node::Whatsit::DeferredWrite { sink, tokens }),
@@ -3951,8 +3942,8 @@ fn base_whatsits_preserve_scan_timing_normalization_and_payload_ownership() {
 fn deferred_write_expands_at_shipout_once() {
     // TeX82 §§1362--1374: hlist traversal reaches the retained write once and
     // `write_out` expands its text only when the enclosing box is shipped.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\def\payload{early}
@@ -3960,7 +3951,7 @@ fn deferred_write_expands_at_shipout_once() {
            \def\payload{late}\shipout\box0\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let pages = control.take_prepared_dvi_pages();
         let [page] = pages.as_slice() else {
@@ -3979,7 +3970,7 @@ fn deferred_write_expands_at_shipout_once() {
             })
             .collect::<String>();
         assert_eq!(committed_write, "\nlate\n");
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert_eq!(terminal.matches("late").count(), 1, "{terminal:?}");
         assert!(!terminal.contains("early"), "{terminal:?}");
     });
@@ -4005,16 +3996,16 @@ fn pdftex_initex<G>(stores: &mut Universe<G>) -> MainControl<G> {
 
 #[test]
 fn immediate_openout_applies_one_print_nl_after_an_open_log_line() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = pdftex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
         register_source(
             &mut control,
             br"\message{prefix}\immediate\openout0=zero\immediate\closeout0\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let log = pending_sink_text(&stores, false);
+        let log = pending_sink_text(stores, false);
         assert!(
             log.contains("prefix\n\\openout0 = `zero.tex'.\n\n"),
             "{log:?}"
@@ -4030,8 +4021,8 @@ fn pdftex_partokencontext_replays_par_at_numbered_boundaries() {
     // §§1100/1130/1133's insertion, valign-item, and no-align boundaries.
     // Redefining \par distinguishes a real inserted-token replay from merely
     // calling the paragraph-ending implementation directly.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = pdftex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
         register_source(
             &mut control,
             br"\let\endgraf=\par
@@ -4046,7 +4037,7 @@ fn pdftex_partokencontext_replays_par_at_numbered_boundaries() {
                \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             stores.count(1).expect("count register"),
@@ -4094,12 +4085,12 @@ fn etex_showtokens_uses_recursive_general_text() {
     // the recursive absorbing scope is not a TeX82 scan_toks episode. The
     // following \message is the negative control that still publishes the
     // ordinary §473 absorbing transition.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         control.set_fuel_limit(10_000).expect("bounded fuel");
         register_source(&mut control, br"\showtokens\expandafter{X}\message{Y}\end");
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         let expandafter = observations
             .0
@@ -4144,16 +4135,16 @@ fn show_macro_body_honors_newlinechar() {
     // active-selector `token_show`, so character 10 becomes a line break when
     // `\newlinechar=10`. The adjacent control byte proves generated caret
     // notation is not subsequently rescanned as diagnostic input.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         control.set_fuel_limit(10_000).expect("bounded fuel");
         register_source(
             &mut control,
             br"\nonstopmode\newlinechar=10\def\shown{A^^JB^^AC}\show\shown\end",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert!(
             output.contains("> \\shown=macro:\n->A\nB^^AC."),
             "{output:?}"
@@ -4177,14 +4168,14 @@ fn etex_raw_font_character_enquiries_are_forbidden_without_scanning_in_every_mod
         br"\nonstopmode $\fontcharwd a\fontcharht b\fontchardp c\fontcharic d$\end",
         br"\nonstopmode $$\fontcharwd a\fontcharht b\fontchardp c\fontcharic d$$\end",
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = etex_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = etex_initex(stores);
             control.set_fuel_limit(10_000).expect("bounded fuel");
             register_source(&mut control, source);
 
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
-            let output = terminal_text(&stores);
+            let output = terminal_text(stores);
             for primitive in ["fontcharwd", "fontcharht", "fontchardp", "fontcharic"] {
                 assert!(
                     output.contains(&format!("You can't use `\\{primitive}' in ")),
@@ -4200,17 +4191,17 @@ fn standalone_internal_integer_shows_live_context_before_scrolled_help() {
     // TeX82 §§82, 90, 1048, and 1111: a standalone `last_item` reaches
     // `report_illegal_case`; `error` shows the live line before routing help
     // off the terminal in nonstop mode.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(1_000).expect("bounded fuel");
         register_source(
             &mut control,
             b"\\nonstopmode\n\\hyphenpenalty 89 \\badness\n\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = pending_sink_text(&stores, true);
+        let terminal = pending_sink_text(stores, true);
         assert!(
             terminal.contains(
                 "! You can't use `\\badness' in vertical mode.\n\
@@ -4222,7 +4213,7 @@ fn standalone_internal_integer_shows_live_context_before_scrolled_help() {
             !terminal.contains("Sorry, but I'm not programmed"),
             "{terminal}"
         );
-        let log = pending_sink_text(&stores, false);
+        let log = pending_sink_text(stores, false);
         assert!(
             log.contains("Sorry, but I'm not programmed to handle this case;"),
             "{log}"
@@ -4240,12 +4231,12 @@ fn hundredth_standalone_internal_integer_error_terminates_before_later_command()
     }
     source.push_str("\\count0=23\\end");
 
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(10_000).expect("bounded fuel");
         register_source(&mut control, source.as_bytes());
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(control.fatal_error(), Some(FatalError::TooManyErrors));
         assert_eq!(stores.world().error_channel().error_count(), 100);
@@ -4259,7 +4250,7 @@ fn hundredth_standalone_internal_integer_error_terminates_before_later_command()
             "fatal exit skips the later assignment"
         );
         assert!(
-            pending_sink_text(&stores, true).contains("(That makes 100 errors; please try again.)")
+            pending_sink_text(stores, true).contains("(That makes 100 errors; please try again.)")
         );
     });
 }
@@ -4268,18 +4259,18 @@ fn hundredth_standalone_internal_integer_error_terminates_before_later_command()
 fn errorstop_standalone_internal_integer_prompts_after_live_context_and_resumes() {
     // TeX82 §§82, 90, 1048, and 1111: `report_illegal_case` reaches the
     // interactive advice path after showing context, then resumes on `s`.
-    crate::test_harness::with_plain_universe(|mut stores| {
+    crate::test_harness::with_plain_universe(|stores| {
         stores
             .world_mut()
             .push_memory_terminal_line("s")
             .expect("memory terminal accepts the error response");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         control.set_fuel_limit(1_000).expect("bounded fuel");
         register_source(&mut control, b"\\badness \\count0=23\\end");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = pending_sink_text(&stores, true);
+        let terminal = pending_sink_text(stores, true);
         let context = terminal.find("l.1 \\badness").expect("live context");
         let prompt = terminal.find("? ").expect("interactive prompt");
         assert!(context < prompt, "{terminal:?}");
@@ -4298,45 +4289,41 @@ fn etex_raw_font_character_enquiry_checkpoint_retry_is_atomic() {
     // The `last_item` command identity is serialized in an e-TeX format.
     // Restoring a quiescent checkpoint must restore both the diagnostic
     // effect and the unconsumed operand so a retry takes the identical path.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         control.set_fuel_limit(1_000).expect("bounded fuel");
         register_source(&mut control, br"\nonstopmode \fontcharwd a\end");
         assert_eq!(
-            control
-                .step(&mut stores)
-                .expect("interaction mode executes"),
+            control.step(stores).expect("interaction mode executes"),
             MainControlStep::Continue
         );
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("raw font enquiry checkpoints");
 
         assert_eq!(
-            control
-                .step(&mut stores)
-                .expect("raw font enquiry recovers"),
+            control.step(stores).expect("raw font enquiry recovers"),
             MainControlStep::Continue
         );
         let first_hash = stores.journal_cursor().expect("state cursor");
-        let first_output = terminal_text(&stores);
+        let first_output = terminal_text(stores);
         assert!(first_output.contains("You can't use `\\fontcharwd' in vertical mode"));
 
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("raw font enquiry state restores");
         assert_eq!(
             control
-                .step(&mut stores)
+                .step(stores)
                 .expect("raw font enquiry retry recovers"),
             MainControlStep::Continue
         );
         assert_eq!(stores.journal_cursor().expect("state cursor"), first_hash);
-        assert_eq!(terminal_text(&stores), first_output);
+        assert_eq!(terminal_text(stores), first_output);
     });
 }
 
@@ -4353,14 +4340,14 @@ fn etex_raw_parshape_enquiries_are_forbidden_without_scanning_in_every_mode() {
         br"\nonstopmode $\parshapelength1\parshapeindent2\parshapedimen3$\end",
         br"\nonstopmode $$\parshapelength1\parshapeindent2\parshapedimen3$$\end",
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = etex_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = etex_initex(stores);
             control.set_fuel_limit(10_000).expect("bounded fuel");
             register_source(&mut control, source);
 
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
-            let output = terminal_text(&stores);
+            let output = terminal_text(stores);
             for primitive in ["parshapelength", "parshapeindent", "parshapedimen"] {
                 assert!(
                     output.contains(&format!("You can't use `\\{primitive}' in ")),
@@ -4373,45 +4360,41 @@ fn etex_raw_parshape_enquiries_are_forbidden_without_scanning_in_every_mode() {
 
 #[test]
 fn etex_parshape_enquiry_checkpoint_retry_is_atomic() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         control.set_fuel_limit(1_000).expect("bounded fuel");
         register_source(&mut control, br"\nonstopmode \parshapelength1\end");
         assert_eq!(
-            control
-                .step(&mut stores)
-                .expect("interaction mode executes"),
+            control.step(stores).expect("interaction mode executes"),
             MainControlStep::Continue
         );
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("raw parshape enquiry checkpoints");
 
         assert_eq!(
-            control
-                .step(&mut stores)
-                .expect("raw parshape enquiry recovers"),
+            control.step(stores).expect("raw parshape enquiry recovers"),
             MainControlStep::Continue
         );
         let first_hash = stores.journal_cursor().expect("state cursor");
-        let first_output = terminal_text(&stores);
+        let first_output = terminal_text(stores);
         assert!(first_output.contains("You can't use `\\parshapelength' in vertical mode"));
 
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("raw parshape enquiry state restores");
         assert_eq!(
             control
-                .step(&mut stores)
+                .step(stores)
                 .expect("raw parshape enquiry retry recovers"),
             MainControlStep::Continue
         );
         assert_eq!(stores.journal_cursor().expect("state cursor"), first_hash);
-        assert_eq!(terminal_text(&stores), first_output);
+        assert_eq!(terminal_text(stores), first_output);
     });
 }
 
@@ -4419,17 +4402,17 @@ fn etex_parshape_enquiry_checkpoint_retry_is_atomic() {
 fn empty_equation_number_checks_math_fonts_on_both_sides() {
     // TeX82 §1194 checks the equation-number mlist and then the saved display
     // mlist independently, even though neither one contains a math noad.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         control.set_fuel_limit(10_000).expect("bounded fuel");
         register_source(
             &mut control,
             br"\tracingrestores=1\tracingonline=1$$\eqno^{}$\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert_eq!(
             terminal
                 .matches("Math formula deleted: Insufficient symbol fonts")
@@ -4460,16 +4443,16 @@ fn tex82_display_parameters_are_local_to_the_math_shift_group() {
     // TeX82 §§1145/1194/283: display parameters are defined after
     // `push_math(math_shift_group)` and restored in reverse assignment order.
     // e-TeX's `\predisplaydirection` extension is absent in TeX82 mode.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\tracingrestores=1\tracingonline=1\noindent $$x$$\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         let display_indent = terminal
             .find("{restoring \\displayindent=0.0pt}")
             .expect("display indent restore");
@@ -4495,8 +4478,8 @@ fn noalign_body_dispatches_nested_math_braces_by_save_stack_group() {
     // runs through ordinary main control. Only a right brace delivered while
     // that group is current ends `\noalign`; braces belonging to nested math
     // groups must close those groups first.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         control.set_fuel_limit(10_000).expect("bounded fuel");
         register_source(
             &mut control,
@@ -4504,10 +4487,7 @@ fn noalign_body_dispatches_nested_math_braces_by_save_stack_group() {
         );
 
         for _ in 0..256 {
-            match control
-                .step(&mut stores)
-                .expect("nested noalign math executes")
-            {
+            match control.step(stores).expect("nested noalign math executes") {
                 MainControlStep::End | MainControlStep::EndOfInput => return,
                 MainControlStep::Continue => {}
             }
@@ -4521,16 +4501,16 @@ fn invalid_middle_and_right_report_missing_delimiter_before_extra_command() {
     // TeX82 §§1160-1161 scan and recover the delimiter before §1192 tests
     // whether the boundary has a matching `\left`. The rejected `\par` is
     // therefore named by both errors, in that order, for each command.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             br"\nonstopmode\tracingonline=1\setbox0=\vbox{\middle \par \right \par}\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let log = pending_sink_text(&stores, false);
+        let log = pending_sink_text(stores, false);
         let first_missing = log
             .find("! Missing delimiter (. inserted).")
             .expect("first missing delimiter");
@@ -4634,7 +4614,7 @@ fn misplaced_alignment_commands_route_exact_help_and_continue() {
     let delimiter_help = cases[1].2;
 
     for &(command, primary, help) in cases {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             stores
                 .world_mut()
                 .push_memory_terminal_line("h")
@@ -4643,19 +4623,19 @@ fn misplaced_alignment_commands_route_exact_help_and_continue() {
                 .world_mut()
                 .push_memory_terminal_line("s")
                 .expect("memory terminal accepts the continuation request");
-            let mut control = MainControl::tex82_initex(&mut stores);
+            let mut control = MainControl::tex82_initex(stores);
             let mut source = command.to_vec();
             source.extend_from_slice(br"\count0=17\end");
             register_source(&mut control, &source);
 
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
             assert_eq!(
                 stores.count(0).expect("count register"),
                 17,
                 "recovery did not continue for {primary}"
             );
-            let output = terminal_text(&stores);
+            let output = terminal_text(stores);
             assert!(output.contains(&format!("! {primary}")), "{output}");
             let expected_help = if help.is_empty() {
                 delimiter_help
@@ -4673,15 +4653,15 @@ fn misplaced_alignment_commands_route_exact_help_and_continue() {
 
 #[test]
 fn misplaced_category_five_character_routes_car_ret_help() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, b"\\catcode90=5 Z\n\\global\\count0=17\\end");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 17);
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert!(
             output.contains("! Misplaced end of line character Z."),
             "{output}"
@@ -4750,11 +4730,11 @@ fn etex_identical_local_let_is_a_reassignment_but_global_let_is_not() {
     // e-TeX change [19.277] returns before local `eq_define` when both the
     // command type and equivalent are identical. A global definition still
     // commits, so the two controls distinguish the shortcut from filtering.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
         register_source(
             &mut control,
@@ -4763,7 +4743,7 @@ fn etex_identical_local_let_is_a_reassignment_but_global_let_is_not() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(&mut stores, &mut observations)
+                .step_with_observer(stores, &mut observations)
                 .expect("e-TeX meaning reassignments execute")
             {
                 MainControlStep::End | MainControlStep::EndOfInput => break,
@@ -4812,20 +4792,20 @@ fn hot_definition_group_and_catcode_apply_is_observation_neutral() {
         \end";
 
     with_etex(SOURCE, |unobserved| {
-        let unobserved_terminal = terminal_text(&unobserved);
-        let unobserved_log = pending_sink_text(&unobserved, false);
-        crate::test_harness::with_nonstop_plain_universe(|mut observed| {
-            tex_command::install_tex82_expandable_primitives(&mut observed);
-            tex_command::install_etex_expandable_primitives(&mut observed);
-            crate::install_unexpandable_primitives(&mut observed);
-            crate::install_etex_unexpandable_primitives(&mut observed);
+        let unobserved_terminal = terminal_text(unobserved);
+        let unobserved_log = pending_sink_text(unobserved, false);
+        crate::test_harness::with_nonstop_plain_universe(|observed| {
+            tex_command::install_tex82_expandable_primitives(observed);
+            tex_command::install_etex_expandable_primitives(observed);
+            crate::install_unexpandable_primitives(observed);
+            crate::install_etex_unexpandable_primitives(observed);
             let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
             register_source(&mut control, SOURCE);
             let mut observations = ObservationRecorder::default();
-            run_to_end_observed(&mut control, &mut observed, &mut observations);
+            run_to_end_observed(&mut control, observed, &mut observations);
 
-            assert_eq!(terminal_text(&observed), unobserved_terminal);
-            assert_eq!(pending_sink_text(&observed, false), unobserved_log);
+            assert_eq!(terminal_text(observed), unobserved_terminal);
+            assert_eq!(pending_sink_text(observed, false), unobserved_log);
             assert_eq!(observed.catcode('@'), Catcode::Other);
             assert!(admitted!(observed, |context| {
                 context.symbol("local").is_none_or(|symbol| {
@@ -4846,8 +4826,8 @@ fn hot_definition_group_and_catcode_apply_is_observation_neutral() {
 #[test]
 fn bare_macro_parameter_reports_illegal_case_and_continues_in_every_mode() {
     // TeX82 §1045: `any_mode(mac_param): report_illegal_case`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\nonstopmode
@@ -4861,9 +4841,9 @@ fn bare_macro_parameter_reports_illegal_case_and_continues_in_every_mode() {
           \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         for mode in [
             "vertical",
             "horizontal",
@@ -4896,35 +4876,35 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
     // `\errorstopmode`: §1045's report is routed to the terminal either way,
     // and errorstop would send §82 into §83's dialog, which this harness's
     // terminal cannot answer and §71 ends the job over.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"#\input child\end");
 
         assert!(matches!(
-            control.advance(&mut stores).expect("parameter recovers"),
+            control.advance(stores).expect("parameter recovers"),
             StepResult::Progress(ReplayStep::Continue)
         ));
-        let committed = terminal_text(&stores);
+        let committed = terminal_text(stores);
         assert_eq!(committed.matches("macro parameter character #").count(), 1);
 
         for _ in 0..3 {
             assert!(matches!(
-                control.advance(&mut stores).expect("missing input suspends"),
+                control.advance(stores).expect("missing input suspends"),
                 StepResult::Suspended(ResourceNeed::Input {
                     name,
                     original_name,
                 }) if name == "child.tex" && original_name == "child"
             ));
-            assert_eq!(terminal_text(&stores), committed);
+            assert_eq!(terminal_text(stores), committed);
         }
 
         control.capabilities_mut().register_input(
             "child.tex",
             SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(
-            terminal_text(&stores)
+            terminal_text(stores)
                 .matches("macro parameter character #")
                 .count(),
             1
@@ -4934,14 +4914,12 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
 
 #[test]
 fn production_batch_commits_ordinary_prefix_before_terminal_transaction() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\count0=11 \count1=22 \end");
 
         assert_eq!(
-            control
-                .advance_episode(&mut stores)
-                .expect("batch completes"),
+            control.advance_episode(stores).expect("batch completes"),
             StepResult::Progress(ReplayStep::End)
         );
         assert_eq!(stores.count(0).expect("count register"), 11);
@@ -4953,15 +4931,15 @@ fn production_batch_commits_ordinary_prefix_before_terminal_transaction() {
 
 #[test]
 fn ranked_assignments_use_one_processor_borrow_each() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\def\a{A}\let\b=\a\catcode65=11 ");
 
         for operation in 0..3 {
             let before = control.command.lifecycle_stats();
             assert_eq!(
                 control
-                    .advance(&mut stores)
+                    .advance(stores)
                     .expect("ranked assignment completes"),
                 StepResult::Progress(ReplayStep::Continue)
             );
@@ -4989,13 +4967,11 @@ fn ranked_assignments_use_one_processor_borrow_each() {
 
 #[test]
 fn production_batch_keeps_ordinary_prefix_on_resource_need() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\count0=11 \input child\end");
 
-        let batch_step = control
-            .advance_episode(&mut stores)
-            .expect("batch suspends");
+        let batch_step = control.advance_episode(stores).expect("batch suspends");
         assert!(
             matches!(
                 batch_step,
@@ -5023,13 +4999,13 @@ fn production_batch_keeps_ordinary_prefix_on_resource_need() {
             "child.tex",
             SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..])),
         );
-        let mut retried = control.advance_episode(&mut stores).expect("retry resumes");
+        let mut retried = control.advance_episode(stores).expect("retry resumes");
         for _ in 0..8 {
             if retried == StepResult::Progress(ReplayStep::End) {
                 break;
             }
             retried = control
-                .advance_episode(&mut stores)
+                .advance_episode(stores)
                 .expect("effect-bounded retry continues");
         }
         assert_eq!(retried, StepResult::Progress(ReplayStep::End));
@@ -5082,10 +5058,10 @@ fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
     );
 
     let run = |preloaded: bool| {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             if preloaded {
-                register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+                register_cmr10_as(&mut control, stores, "cmr10.tfm");
                 control
                     .capabilities_mut()
                     .register_input("child.tex", child.clone());
@@ -5096,16 +5072,16 @@ fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
             register_source(&mut control, source);
             if !preloaded {
                 assert!(matches!(
-                    control.advance_episode(&mut stores).expect("font suspends"),
+                    control.advance_episode(stores).expect("font suspends"),
                     StepResult::Suspended(ResourceNeed::Font { .. })
                 ));
-                register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
-                let mut child_probe = control.advance_episode(&mut stores).expect("probe step");
+                register_cmr10_as(&mut control, stores, "cmr10.tfm");
+                let mut child_probe = control.advance_episode(stores).expect("probe step");
                 for _ in 0..8 {
                     if matches!(child_probe, StepResult::Suspended(_)) {
                         break;
                     }
-                    child_probe = control.advance_episode(&mut stores).expect("probe step");
+                    child_probe = control.advance_episode(stores).expect("probe step");
                 }
                 assert!(matches!(
                     child_probe,
@@ -5115,16 +5091,12 @@ fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
                 control
                     .capabilities_mut()
                     .register_input("child.tex", child.clone());
-                let mut second_probe = control
-                    .advance_episode(&mut stores)
-                    .expect("second probe step");
+                let mut second_probe = control.advance_episode(stores).expect("second probe step");
                 for _ in 0..8 {
                     if matches!(second_probe, StepResult::Suspended(_)) {
                         break;
                     }
-                    second_probe = control
-                        .advance_episode(&mut stores)
-                        .expect("second probe step");
+                    second_probe = control.advance_episode(stores).expect("second probe step");
                 }
                 assert!(
                     matches!(
@@ -5138,12 +5110,12 @@ fn prepared_openin_probe_resumes_after_the_blocked_macro_command() {
                     .capabilities_mut()
                     .register_input("second.tex", second.clone());
             }
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
             (
                 stores.count(0).expect("count register"),
                 stores.count(1).expect("count register"),
                 stores.count(2).expect("count register"),
-                terminal_text(&stores),
+                terminal_text(stores),
             )
         })
     };
@@ -5173,8 +5145,8 @@ fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
     );
 
     let run = |source: &[u8], preloaded: bool| {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = pdftex_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_initex(stores);
             if preloaded {
                 control.capabilities_mut().register_input_probe(
                     "child",
@@ -5184,7 +5156,7 @@ fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
             register_source(&mut control, source);
             if !preloaded {
                 let need = loop {
-                    match control.advance_episode(&mut stores).expect("probe step") {
+                    match control.advance_episode(stores).expect("probe step") {
                         StepResult::Suspended(ResourceNeed::InputProbe { request }) => {
                             break request;
                         }
@@ -5198,8 +5170,8 @@ fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
                     tex_command::FileEnquiryResource::new(child.clone(), None),
                 );
             }
-            run_to_end(&mut control, &mut stores);
-            terminal_text(&stores)
+            run_to_end(&mut control, stores);
+            terminal_text(stores)
         })
     };
 
@@ -5237,9 +5209,9 @@ fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
 
 #[test]
 fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             include_bytes!("../../../../tests/corpus/stabilization/latex-references/source.tex"),
@@ -5250,7 +5222,7 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
         let cancellation = crate::Cancellation::new();
         let mut terminal_step = None;
         for _ in 0..512 {
-            let result = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
                 .step(&mut checkpoints, &cancellation);
             match result {
                 crate::CanonicalStepResult::ResourceNeed(ResourceNeed::InputProbe { request }) => {
@@ -5334,8 +5306,8 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
 
 #[test]
 fn unavailable_input_probe_releases_its_diagnostic_site_before_terminal_close() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = pdftex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
         register_source(
             &mut control,
             br"\message{[\pdffilesize{missing-resource}]}\end",
@@ -5344,7 +5316,7 @@ fn unavailable_input_probe_releases_its_diagnostic_site_before_terminal_close() 
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
         let terminal = loop {
-            match crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+            match crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
                 .step(&mut checkpoints, &cancellation)
             {
                 crate::CanonicalStepResult::ResourceNeed(
@@ -5372,15 +5344,15 @@ fn named_boundary_queue_publishes_literal_and_macro_paragraphs_before_the_next_c
         br"\count0=1 A\par\count0=2\end".as_slice(),
         br"\count0=1\def\finish{A\par}\finish\count0=2\end".as_slice(),
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
-            register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_cmr10_as(&mut control, stores, "cmr10.tfm");
             register_source(&mut control, source);
             let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
             let mut checkpoints = Vec::new();
             let cancellation = crate::Cancellation::new();
 
-            let committed = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+            let committed = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
                 .step(&mut checkpoints, &cancellation);
             assert!(
                 matches!(committed, crate::CanonicalStepResult::Committed(_)),
@@ -5399,7 +5371,7 @@ fn named_boundary_queue_publishes_literal_and_macro_paragraphs_before_the_next_c
 
             for _ in 0..32 {
                 if matches!(
-                    crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger,)
+                    crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger,)
                         .step(&mut checkpoints, &cancellation),
                     crate::CanonicalStepResult::Completed(_)
                 ) {
@@ -5423,9 +5395,9 @@ fn named_boundary_queue_publishes_literal_and_macro_paragraphs_before_the_next_c
 
 #[test]
 fn named_boundary_queue_waits_for_a_live_macro_argument_record() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             br"\def\finish#1{A\par#1}\finish{\count0=2}\end",
@@ -5434,7 +5406,7 @@ fn named_boundary_queue_waits_for_a_live_macro_argument_record() {
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
 
-        let committed = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+        let committed = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
             .step(&mut checkpoints, &cancellation);
         assert!(
             matches!(committed, crate::CanonicalStepResult::Committed(_)),
@@ -5459,9 +5431,9 @@ fn named_boundary_queue_waits_for_a_live_macro_argument_record() {
 
 #[test]
 fn named_boundary_queue_does_not_cross_a_resource_suspension() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             br"\def\finish{A\par\input child}\finish\count0=2\end",
@@ -5470,7 +5442,7 @@ fn named_boundary_queue_does_not_cross_a_resource_suspension() {
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
 
-        let need = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+        let need = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
             .step(&mut checkpoints, &cancellation);
         let need = match need {
             crate::CanonicalStepResult::ResourceNeed(need @ ResourceNeed::Input { .. }) => need,
@@ -5496,7 +5468,7 @@ fn named_boundary_queue_does_not_cross_a_resource_suspension() {
             .expect("input fulfillment matches");
 
         for _ in 0..32 {
-            let result = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
                 .step(&mut checkpoints, &cancellation);
             if matches!(result, crate::CanonicalStepResult::Committed(_)) {
                 break;
@@ -5521,16 +5493,16 @@ fn named_boundary_queue_does_not_cross_a_resource_suspension() {
 
 #[test]
 fn named_boundary_queue_drains_two_macro_paragraphs_in_order() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(&mut control, br"\def\two{A\par B\par}\two\count0=3\end");
         let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
 
         for expected in 1..=2 {
-            let result = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
                 .step(&mut checkpoints, &cancellation);
             assert!(
                 matches!(result, crate::CanonicalStepResult::Committed(_)),
@@ -5552,9 +5524,9 @@ fn named_boundary_queue_drains_two_macro_paragraphs_in_order() {
 
 #[test]
 fn named_boundary_queue_waits_for_macro_wrapped_shipout_content() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             br"\def\toc{A\par}\def\send{\shipout\vbox{\toc}}\send\count0=4\end",
@@ -5564,7 +5536,7 @@ fn named_boundary_queue_waits_for_macro_wrapped_shipout_content() {
         let cancellation = crate::Cancellation::new();
 
         for _ in 0..32 {
-            let result = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
                 .step(&mut checkpoints, &cancellation);
             assert!(
                 !matches!(result, crate::CanonicalStepResult::Failed(_)),
@@ -5592,9 +5564,9 @@ fn named_boundary_queue_waits_for_macro_wrapped_shipout_content() {
 
 #[test]
 fn named_boundary_queue_drains_mixed_intents_in_producer_order() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             br"\def\mixed{A\par\shipout\vbox{B\par}}\mixed\count0=5\end",
@@ -5604,7 +5576,7 @@ fn named_boundary_queue_drains_mixed_intents_in_producer_order() {
         let cancellation = crate::Cancellation::new();
 
         for _ in 0..32 {
-            let result = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+            let result = crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
                 .step(&mut checkpoints, &cancellation);
             assert!(
                 !matches!(result, crate::CanonicalStepResult::Failed(_)),
@@ -5634,13 +5606,13 @@ fn observed_resource_retry_moves_the_unpublished_prefix_exactly_once() {
     let child =
         SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(&b""[..]));
 
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, source);
         let mut retried = ObservationRecorder::default();
         assert!(matches!(
             control
-                .advance_with_observer(&mut stores, &mut retried)
+                .advance_with_observer(stores, &mut retried)
                 .expect("missing input suspends"),
             StepResult::Suspended(ResourceNeed::Input { ref name, .. }) if name == "child.tex"
         ));
@@ -5651,14 +5623,14 @@ fn observed_resource_retry_moves_the_unpublished_prefix_exactly_once() {
         control
             .capabilities_mut()
             .register_input("child.tex", child.clone());
-        run_to_end_observed(&mut control, &mut stores, &mut retried);
+        run_to_end_observed(&mut control, stores, &mut retried);
 
-        crate::test_harness::with_nonstop_plain_universe(|mut direct_stores| {
-            let mut direct = MainControl::tex82_initex(&mut direct_stores);
+        crate::test_harness::with_nonstop_plain_universe(|direct_stores| {
+            let mut direct = MainControl::tex82_initex(direct_stores);
             direct.capabilities_mut().register_input("child.tex", child);
             register_source(&mut direct, source);
             let mut direct_observations = ObservationRecorder::default();
-            run_to_end_observed(&mut direct, &mut direct_stores, &mut direct_observations);
+            run_to_end_observed(&mut direct, direct_stores, &mut direct_observations);
 
             assert_eq!(retried.0, direct_observations.0);
         });
@@ -5673,14 +5645,14 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
         Arc::<[u8]>::from(&br"X\endinput"[..]),
     );
 
-    crate::test_harness::with_nonstop_plain_universe(|mut retried_stores| {
-        let mut retried_control = MainControl::tex82_initex(&mut retried_stores);
+    crate::test_harness::with_nonstop_plain_universe(|retried_stores| {
+        let mut retried_control = MainControl::tex82_initex(retried_stores);
         register_source(&mut retried_control, source);
         let mut retried = ObservationRecorder::default();
         loop {
             if matches!(
                 retried_control
-                    .advance_with_observer(&mut retried_stores, &mut retried)
+                    .advance_with_observer(retried_stores, &mut retried)
                     .expect("alignment advances to its resource"),
                 StepResult::Suspended(ResourceNeed::Input { ref name, .. })
                     if name == "child.tex"
@@ -5691,16 +5663,16 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
         retried_control
             .capabilities_mut()
             .register_input("child.tex", child.clone());
-        run_to_end_observed(&mut retried_control, &mut retried_stores, &mut retried);
+        run_to_end_observed(&mut retried_control, retried_stores, &mut retried);
 
-        crate::test_harness::with_nonstop_plain_universe(|mut direct_stores| {
-            let mut direct_control = MainControl::tex82_initex(&mut direct_stores);
+        crate::test_harness::with_nonstop_plain_universe(|direct_stores| {
+            let mut direct_control = MainControl::tex82_initex(direct_stores);
             direct_control
                 .capabilities_mut()
                 .register_input("child.tex", child);
             register_source(&mut direct_control, source);
             let mut direct = ObservationRecorder::default();
-            run_to_end_observed(&mut direct_control, &mut direct_stores, &mut direct);
+            run_to_end_observed(&mut direct_control, direct_stores, &mut direct);
 
             assert_eq!(retried.0, direct.0);
             assert_eq!(
@@ -5713,12 +5685,12 @@ fn observed_alignment_resource_retry_resumes_the_exact_delivery_once() {
 
 #[test]
 fn ordinary_assignment_opens_no_aggregate_savepoint() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\count0=11");
 
         assert_eq!(
-            control.advance(&mut stores).expect("assignment commits"),
+            control.advance(stores).expect("assignment commits"),
             StepResult::Progress(ReplayStep::Continue)
         );
         assert_eq!(stores.count(0).expect("count register"), 11);
@@ -5730,14 +5702,12 @@ fn ordinary_assignment_opens_no_aggregate_savepoint() {
 
 #[test]
 fn committed_token_scanner_attempt_is_discarded_before_named_checkpoint() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\toks0={A}");
 
         assert_eq!(
-            control
-                .advance(&mut stores)
-                .expect("token assignment commits"),
+            control.advance(stores).expect("token assignment commits"),
             StepResult::Progress(ReplayStep::Continue)
         );
         let stored = admitted!(stores, |context| {
@@ -5757,7 +5727,7 @@ fn committed_token_scanner_attempt_is_discarded_before_named_checkpoint() {
         control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("committed scanner attempt no longer blocks a named checkpoint");
@@ -5766,12 +5736,12 @@ fn committed_token_scanner_attempt_is_discarded_before_named_checkpoint() {
 
 #[test]
 fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::JobStart,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("quiescent diagnostic control captures a checkpoint");
@@ -5779,7 +5749,7 @@ fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
 
         assert!(matches!(
             control
-                .diagnostic_expand_step(&mut stores)
+                .diagnostic_expand_step(stores)
                 .expect("font request suspends"),
             DiagnosticStepResult::Suspended(ResourceNeed::Font { .. })
         ));
@@ -5787,13 +5757,13 @@ fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
         assert!(matches!(
             control.capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             ),
             Err(tex_command::CommandSummaryError::AttemptSuspended)
         ));
         assert!(matches!(
-            control.restore_checkpoint(&checkpoint, &mut stores),
+            control.restore_checkpoint(&checkpoint, stores),
             Err(crate::CheckpointRestoreError::AttemptSuspended)
         ));
         assert_eq!(
@@ -5801,16 +5771,16 @@ fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
             state_before,
             "checkpoint rejection must not mutate the suspended operation"
         );
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         assert_eq!(
             control
-                .diagnostic_expand_step(&mut stores)
+                .diagnostic_expand_step(stores)
                 .expect("font assignment resumes"),
             DiagnosticStepResult::Progress(DiagnosticStep::Assignment)
         );
         assert!(matches!(
             control
-                .diagnostic_expand_step(&mut stores)
+                .diagnostic_expand_step(stores)
                 .expect("following token is delivered once"),
             DiagnosticStepResult::Progress(DiagnosticStep::Token {
                 spelling,
@@ -5827,20 +5797,18 @@ fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
 
 #[test]
 fn group_entry_local_restore_and_exit_open_no_aggregate_savepoint() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"{\count0=11}");
 
-        control.advance(&mut stores).expect("group enters");
+        control.advance(stores).expect("group enters");
         assert_eq!(
             admitted!(stores, |context| context.execution_group_depth()),
             1
         );
-        control
-            .advance(&mut stores)
-            .expect("local assignment commits");
+        control.advance(stores).expect("local assignment commits");
         assert_eq!(stores.count(0).expect("count register"), 11);
-        control.advance(&mut stores).expect("group exits");
+        control.advance(stores).expect("group exits");
         assert_eq!(
             admitted!(stores, |context| context.execution_group_depth()),
             0
@@ -5852,18 +5820,18 @@ fn group_entry_local_restore_and_exit_open_no_aggregate_savepoint() {
 
 #[test]
 fn deferred_effect_and_ordinary_pdf_commands_open_no_aggregate_savepoint() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\openout0=deferred");
 
         assert_eq!(
-            control.advance(&mut stores).expect("deferred open commits"),
+            control.advance(stores).expect("deferred open commits"),
             StepResult::Progress(ReplayStep::Continue)
         );
         assert_eq!(control.advance_telemetry().maximum_live_savepoints, 0);
 
-        crate::test_harness::with_nonstop_plain_universe(|mut pdf_stores| {
-            let mut pdf_control = pdftex_graphics_control(&mut pdf_stores);
+        crate::test_harness::with_nonstop_plain_universe(|pdf_stores| {
+            let mut pdf_control = pdftex_graphics_control(pdf_stores);
             crate::test_harness::assign_int_param(
                 pdf_stores,
                 IntParam::PDF_OUTPUT,
@@ -5875,7 +5843,7 @@ fn deferred_effect_and_ordinary_pdf_commands_open_no_aggregate_savepoint() {
 
             assert_eq!(
                 pdf_control
-                    .advance(&mut pdf_stores)
+                    .advance(pdf_stores)
                     .expect("ordinary PDF node commits"),
                 StepResult::Progress(ReplayStep::Continue)
             );
@@ -5886,14 +5854,12 @@ fn deferred_effect_and_ordinary_pdf_commands_open_no_aggregate_savepoint() {
 
 #[test]
 fn production_batch_returns_after_a_world_effect() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\message{effect}\count0=11 \end");
 
         assert_eq!(
-            control
-                .advance_episode(&mut stores)
-                .expect("effect commits"),
+            control.advance_episode(stores).expect("effect commits"),
             StepResult::Progress(ReplayStep::Continue)
         );
         assert_eq!(
@@ -5917,8 +5883,8 @@ fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode
         Mode::DisplayMath,
     ] {
         let run = |observed: bool| {
-            crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-                let mut control = MainControl::tex82_initex(&mut stores);
+            crate::test_harness::with_nonstop_plain_universe(|stores| {
+                let mut control = MainControl::tex82_initex(stores);
                 control.set_fuel_limit(128).expect("bounded command fuel");
                 if mode != Mode::Vertical {
                     control.modes.push(mode).expect("test mode push");
@@ -5928,18 +5894,18 @@ fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode
                     let mut observations = ObservationRecorder::default();
                     for _ in 0..2 {
                         control
-                            .step_with_observer(&mut stores, &mut observations)
+                            .step_with_observer(stores, &mut observations)
                             .expect("observed stray endcsname continues");
                     }
                 } else {
                     for _ in 0..2 {
                         control
-                            .step(&mut stores)
+                            .step(stores)
                             .expect("unobserved stray endcsname continues");
                     }
                 }
                 (
-                    terminal_text(&stores),
+                    terminal_text(stores),
                     stores.count(0).expect("count register"),
                     control.fuel_burned(),
                 )
@@ -5973,10 +5939,10 @@ fn stray_endv_outside_math_runs_off_save_once_and_continues_in_every_mode() {
         Mode::Horizontal,
         Mode::RestrictedHorizontal,
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             let endv = stores.intern("forcedendv").expect("symbol interning");
             assign_static_meaning(stores, endv, Meaning::EndV);
-            let mut control = MainControl::tex82_initex(&mut stores);
+            let mut control = MainControl::tex82_initex(stores);
             control.set_fuel_limit(128).expect("bounded command fuel");
             if mode != Mode::Vertical {
                 control.modes.push(mode).expect("test mode push");
@@ -5984,22 +5950,20 @@ fn stray_endv_outside_math_runs_off_save_once_and_continues_in_every_mode() {
             register_source(&mut control, br"\forcedendv\count0=23");
 
             assert_eq!(
-                control.step(&mut stores).expect("stray end-v recovers"),
+                control.step(stores).expect("stray end-v recovers"),
                 MainControlStep::Continue
             );
             // §62's `print_nl` emits no newline at offset 0, so the headline opens
             // the terminal. What follows it is §§310-318's context and the §1131
             // help, whose exact bytes the minifixture channel corpus pins; this
             // test's claim is the diagnosis, not the transcript rendering.
-            let terminal = terminal_text(&stores);
+            let terminal = terminal_text(stores);
             assert!(
                 terminal.starts_with("! Extra \\forcedendv.\n"),
                 "mode {mode:?}: {terminal}"
             );
             assert_eq!(
-                control
-                    .step(&mut stores)
-                    .expect("following command executes"),
+                control.step(stores).expect("following command executes"),
                 MainControlStep::Continue
             );
             assert_eq!(
@@ -6020,10 +5984,10 @@ fn stray_endv_in_math_inserts_shift_then_replays_for_off_save() {
         (br"$".as_slice(), "math"),
         (br"$$".as_slice(), "display math"),
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             let endv = stores.intern("forcedendv").expect("symbol interning");
             assign_static_meaning(stores, endv, Meaning::EndV);
-            let mut control = MainControl::tex82_initex(&mut stores);
+            let mut control = MainControl::tex82_initex(stores);
             control.set_fuel_limit(256).expect("bounded command fuel");
             let mut source = opening.to_vec();
             source.extend_from_slice(br"\forcedendv\par\count0=29");
@@ -6031,13 +5995,13 @@ fn stray_endv_in_math_inserts_shift_then_replays_for_off_save() {
 
             for _ in 0..16 {
                 control
-                    .step(&mut stores)
+                    .step(stores)
                     .expect("math end-v recovery remains finite");
                 if stores.count(0).expect("count register") == 29 {
                     break;
                 }
             }
-            let terminal = terminal_text(&stores);
+            let terminal = terminal_text(stores);
             assert_eq!(
                 terminal.matches("Missing $ inserted").count(),
                 1,
@@ -6138,7 +6102,7 @@ fn recursive_test_box<G>(stores: &mut Universe<G>) -> tex_state::node_arena::Pag
         Node::Glue {
             spec: glue,
             kind: GlueKind::Leaders,
-            leader: Some(LeaderPayload::HList(box_node(leaf.clone()))),
+            leader: Some(LeaderPayload::HList(box_node(leaf))),
         },
         Node::Ins {
             class: 7,
@@ -6150,7 +6114,7 @@ fn recursive_test_box<G>(stores: &mut Universe<G>) -> tex_state::node_arena::Pag
         },
         Node::Mark { class: 9, tokens },
         Node::Adjust(AdjustNode {
-            content: post.clone(),
+            content: post,
             pre: true,
         }),
         Node::MathOn(Scaled::from_raw(601)),
@@ -6166,9 +6130,9 @@ fn recursive_test_box<G>(stores: &mut Universe<G>) -> tex_state::node_arena::Pag
         },
         Node::Disc {
             kind: DiscKind::Discretionary,
-            pre: pre.clone(),
-            post: post.clone(),
-            replace: replace.clone(),
+            pre,
+            post,
+            replace,
             physical_replace_count: 1,
         },
         Node::HList(box_node(pre)),
@@ -6298,32 +6262,32 @@ fn recursive_owned_node_signature<G>(
 
 #[test]
 fn copy_preserves_every_recursive_node_payload_and_source_register() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let graph = recursive_test_box(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let graph = recursive_test_box(stores);
         stores.assign_page_box_local(0, graph);
         let source = stores.copy_box_to_page(0).expect("promoted source graph");
 
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\setbox1=\copy0");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         let source_after_copy = stores.copy_box_to_page(0).expect("copy retains its source");
         assert_eq!(
-            recursive_node_signature(&stores, &source_after_copy),
-            recursive_node_signature(&stores, &source)
+            recursive_node_signature(stores, &source_after_copy),
+            recursive_node_signature(stores, &source)
         );
 
         let copied = stores.copy_box_to_page(1).expect("copied register");
-        let expected = recursive_node_signature(&stores, &copied);
+        let expected = recursive_node_signature(stores, &copied);
         assert_eq!(
-            recursive_node_signature(&stores, &source),
+            recursive_node_signature(stores, &source),
             expected,
             "copy retains the exact recursive structure"
         );
-        let copied_nodes = page_vec(&stores, copied);
+        let copied_nodes = page_vec(stores, copied);
         let [Node::HList(root)] = copied_nodes.as_slice() else {
             panic!("fixture root should be an hbox")
         };
-        let children = page_vec(&stores, root.children);
+        let children = page_vec(stores, root.children);
         assert_eq!(children.len(), 13, "every payload remains in child order");
         assert!(
             matches!(&children[1], Node::Glue { spec, leader: Some(_), .. } if spec.width.raw() == 301)
@@ -6335,9 +6299,9 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
             ])
         );
 
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\setbox2=\box0");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert!(
             stores.copy_box_to_page(0).is_none(),
             "box consumes its source"
@@ -6345,10 +6309,10 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
         let surviving_copy = stores
             .copy_box_to_page(1)
             .expect("copy survives source release");
-        assert_eq!(recursive_node_signature(&stores, &surviving_copy), expected);
+        assert_eq!(recursive_node_signature(stores, &surviving_copy), expected);
         let consumed = stores.copy_box_to_page(2).expect("consumed destination");
         assert_eq!(
-            recursive_node_signature(&stores, &consumed),
+            recursive_node_signature(stores, &consumed),
             expected,
             "consumption preserves graph"
         );
@@ -6357,20 +6321,20 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
 
 #[test]
 fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\setbox0=\vbox{\hbox{\kern1pt}}\setbox1=\vbox{\noindent\kern2pt\unvbox0}",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let box1 = stores.copy_box_to_page(1).expect("outer vbox exists");
-        let box1_nodes = page_vec(&stores, box1);
+        let box1_nodes = page_vec(stores, box1);
         let [tex_state::node::Node::VList(outer)] = box1_nodes.as_slice() else {
             panic!("register 1 should hold a vbox");
         };
-        let children = page_vec(&stores, outer.children);
+        let children = page_vec(stores, outer.children);
         assert!(
             children
                 .iter()
@@ -6388,20 +6352,20 @@ fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
 
 #[test]
 fn destructive_unbox_transfers_nested_structural_children() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\setbox0=\hbox{\hbox{\kern1pt}}\setbox1=\vbox{\vbox{\kern2pt}}",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\setbox2=\hbox{\unhbox0}\setbox3=\vbox{\unvbox1}",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert!(stores.copy_box_to_page(0).is_none());
         assert!(stores.copy_box_to_page(1).is_none());
@@ -6412,10 +6376,10 @@ fn destructive_unbox_transfers_nested_structural_children() {
 
 #[test]
 fn grouped_copy_keeps_structural_children() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"{\setbox0\hbox{X}\copy0}");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.copy_box_to_page(0), None);
     });
@@ -6423,60 +6387,60 @@ fn grouped_copy_keeps_structural_children() {
 
 #[test]
 fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\setbox0=\vbox{\hbox{}}\setbox1=\hbox{\kern1pt}",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         let vbox_root = stores
             .copy_box_to_page(0)
             .expect("vbox register is nonvoid");
         let hbox_root = stores
             .copy_box_to_page(1)
             .expect("hbox register is nonvoid");
-        let vbox = recursive_node_signature(&stores, &vbox_root);
-        let hbox = recursive_node_signature(&stores, &hbox_root);
+        let vbox = recursive_node_signature(stores, &vbox_root);
+        let hbox = recursive_node_signature(stores, &hbox_root);
         let source = "\\unhbox0\\par\\unhcopy0\\par\\unvbox1\\unvcopy1";
 
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, source.as_bytes());
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("incompatible unbox source checkpoints");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         let current_vbox = stores.copy_box_to_page(0).expect("vbox remains nonvoid");
         let current_hbox = stores.copy_box_to_page(1).expect("hbox remains nonvoid");
-        assert_eq!(recursive_node_signature(&stores, &current_vbox), vbox);
-        assert_eq!(recursive_node_signature(&stores, &current_hbox), hbox);
-        let first_output = terminal_text(&stores);
+        assert_eq!(recursive_node_signature(stores, &current_vbox), vbox);
+        assert_eq!(recursive_node_signature(stores, &current_hbox), hbox);
+        let first_output = terminal_text(stores);
 
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("incompatible unbox source restores");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         let replayed_vbox = stores.copy_box_to_page(0).expect("vbox remains nonvoid");
         let replayed_hbox = stores.copy_box_to_page(1).expect("hbox remains nonvoid");
-        assert_eq!(recursive_node_signature(&stores, &replayed_vbox), vbox);
-        assert_eq!(recursive_node_signature(&stores, &replayed_hbox), hbox);
-        assert_eq!(terminal_text(&stores), first_output);
+        assert_eq!(recursive_node_signature(stores, &replayed_vbox), vbox);
+        assert_eq!(recursive_node_signature(stores, &replayed_hbox), hbox);
+        assert_eq!(terminal_text(stores), first_output);
     });
 }
 
 #[test]
 fn unvbox_splices_vertical_nodes_without_inserting_baseline_glue() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\vsize=1000pt \setbox0=\vbox{\hrule\hbox{}}\unvbox0",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert!(
             !admitted!(stores, |context| context
@@ -6499,7 +6463,7 @@ fn unvbox_splices_vertical_nodes_without_inserting_baseline_glue() {
 fn badness_reads_most_recent_pack_and_is_not_assignable() {
     // TeX82 §§422--424 reads `\badness` from `last_badness`; §§644/660
     // initializes and updates that same cell during horizontal packing.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let initial = admitted!(stores, |context| (
             context.int_param(IntParam::LAST_BADNESS),
             context
@@ -6508,12 +6472,12 @@ fn badness_reads_most_recent_pack_and_is_not_assignable() {
         ));
         assert_eq!(initial, (0, 0), "badness is zero before the first pack");
 
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"{\setbox0=\hbox to 10pt{\hskip0pt plus1pt}}\count0=\badness\edef\x{\the\badness}",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             stores.count(0).expect("count register"),
@@ -6535,10 +6499,10 @@ fn badness_reads_most_recent_pack_and_is_not_assignable() {
             .collect();
         assert_eq!(rendered, "10000");
 
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\badness=0");
-        run_to_end(&mut control, &mut stores);
-        assert!(terminal_text(&stores).contains("You can't use `\\badness'"));
+        run_to_end(&mut control, stores);
+        assert!(terminal_text(stores).contains("You can't use `\\badness'"));
     });
 }
 
@@ -6546,13 +6510,13 @@ fn badness_reads_most_recent_pack_and_is_not_assignable() {
 fn vbox_sets_overfull_badness_when_the_box_cannot_shrink() {
     // TeX82 §§668/674 initializes and updates `last_badness` during
     // vertical packing; §§422--424 exposes the resulting value as `\badness`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\setbox0=\vbox to10pt{\hrule height20pt}\count0=\badness",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             stores.count(0).expect("count register"),
@@ -6565,11 +6529,11 @@ fn vbox_sets_overfull_badness_when_the_box_cannot_shrink() {
 fn etex_lastnodetype_reads_each_live_mode_tail_without_mutation() {
     // e-TeX 2.6 `etex.ch` [26.424]: `find_effective_tail` returns -1 for an
     // empty list, otherwise the e-TRIP node code of the real current tail.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
         register_source(
             &mut control,
@@ -6582,7 +6546,7 @@ fn etex_lastnodetype_reads_each_live_mode_tail_without_mutation() {
           \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         for (name, expected) in [
             ("outerempty", "-1"),
@@ -6604,13 +6568,13 @@ fn etex_lastnodetype_covers_every_node_code() {
     // interval.  Each enquiry is made while its node is still the live tail;
     // the alignment row is observed from `\noalign`, where it is an unset
     // node until `fin_align` resolves it.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             br"\font\f=cmr10 \f
@@ -6630,7 +6594,7 @@ fn etex_lastnodetype_covers_every_node_code() {
           \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         for (name, expected) in [
             ("nzero", "0"),
@@ -6655,18 +6619,18 @@ fn etex_lastnodetype_covers_every_node_code() {
 
 #[test]
 fn etex_lastnodetype_code_seven_after_unboxing_ligature() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
         &mut control,
         br"\font\f=cmr10 \f\hbox{\setbox0=\hbox{ff}\unhbox0\xdef\result{\the\lastnodetype}}\end",
     );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(macro_character_text(stores, "result"), "7");
     });
 }
@@ -6677,13 +6641,13 @@ fn outer_vertical_kern_joins_contributions_without_running_page_builder() {
     // unlike `append_penalty`, does not call `build_page`. Canonical outer
     // vertical material lives in the page contribution queue rather than the
     // otherwise-empty root mode list.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::TEX82);
         register_source(&mut control, br"\kern-50pt");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert!(control.modes.current_list().nodes().is_empty());
         assert!(matches!(
@@ -6704,11 +6668,11 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
     // e-TeX 2.6 `etex.ch` [26.424]: `make_mark` scans an extended register
     // number before TeX82 §1101's expanded mark text and appends the node in
     // every mode. Invalid selectors recover to class zero before the text.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
         register_source(
             &mut control,
@@ -6720,7 +6684,7 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
           $\marks9{math}1$",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let nodes = admitted!(stores, |context| context
             .current_page_nodes()
@@ -6757,16 +6721,16 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
             })
             .expect("class 32767 mark");
         assert_eq!(expanded, "expanded");
-        assert!(terminal_text(&stores).contains("Bad register code"));
-        assert!(terminal_text(&stores).contains("You can't use a prefix with"));
-        assert!(!terminal_text(&stores).contains("Unimplemented primitive"));
+        assert!(terminal_text(stores).contains("Bad register code"));
+        assert!(terminal_text(stores).contains("You can't use a prefix with"));
+        assert!(!terminal_text(stores).contains("Unimplemented primitive"));
     });
 }
 
 #[test]
 fn tex82_profile_leaves_numbered_marks_undefined() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let _control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let _control = MainControl::tex82_initex(stores);
         admitted!(stores, |context| {
             let marks = context.intern_control_sequence("marks");
             assert_eq!(
@@ -6780,16 +6744,16 @@ fn tex82_profile_leaves_numbered_marks_undefined() {
 
 #[test]
 fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
-    crate::test_harness::with_nonstop_universe(|mut stores| {
-        let _initialized = MainControl::tex82_initex(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_universe(|stores| {
+        let _initialized = MainControl::tex82_initex(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::with_profile(tex_command::CommandProfile::ETEX26);
         register_source(
         &mut control,
         b"\\nonstopmode\n\\tracingonline=1\n\\showgroups\n\\begingroup\\showgroups\\endgroup\n\\global\\showgroups\\count0=7\n\\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let mut modes = ModeNest::new();
         let mut boxes = ReplayBoxes::default();
@@ -6885,7 +6849,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         stores
             .world_mut()
             .publish_diagnostic_effects(diagnostic_effects);
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         for expected in [
             "### bottom level",
             "### semi simple group (level 1) entered at line 4 (\\begingroup)",
@@ -6987,9 +6951,9 @@ fn pdftex_font_action_control<G>(stores: &mut Universe<G>) -> MainControl<G> {
 fn pdftex_font_actions_route_through_command_expansion_and_font_state() {
     // pdftex.web §§1601--1607, 1680--1682: general text is expanded before
     // the action mutates the selected font or the global map/ToUnicode state.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        crate::install_unexpandable_primitives(&mut stores);
-        tex_command::install_tex82_expandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        crate::install_unexpandable_primitives(stores);
+        tex_command::install_tex82_expandable_primitives(stores);
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -6997,8 +6961,8 @@ fn pdftex_font_actions_route_through_command_expansion_and_font_state() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_font_action_control(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+        let mut control = pdftex_font_action_control(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
             &mut control,
             concat!(
@@ -7012,7 +6976,7 @@ fn pdftex_font_actions_route_through_command_expansion_and_font_state() {
             .as_bytes(),
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         let base = admitted!(stores, |context| {
             let symbol = context.intern_control_sequence("base");
             match context.meaning(symbol) {
@@ -7048,23 +7012,23 @@ fn pdftex_font_actions_preserve_exact_dvi_mode_gate_and_tounicode_exceptions() {
         ("pdfmapfile", b"\\pdfmapfile{}".as_slice()),
         ("pdfmapline", b"\\pdfmapline{}".as_slice()),
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = pdftex_font_action_control(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_font_action_control(stores);
             register_source(&mut control, source);
             assert!(matches!(
-                control.step(&mut stores),
+                control.step(stores),
                 Err(ExecError::PdfExtensionInDviMode(actual)) if actual == name
             ));
         });
     }
 
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = pdftex_font_action_control(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_font_action_control(stores);
         register_source(
             &mut control,
             b"\\pdffontexpand\\nullfont 10 5 1 autoexpand\\end",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(
             admitted!(stores, |context| context
                 .font_expansion(tex_state::font::NULL_FONT)),
@@ -7076,13 +7040,13 @@ fn pdftex_font_actions_preserve_exact_dvi_mode_gate_and_tounicode_exceptions() {
             })
         );
 
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = pdftex_font_action_control(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_font_action_control(stores);
             register_source(
                 &mut control,
                 b"\\pdfglyphtounicode{A}{0041}\\pdfnobuiltintounicode\\nullfont\\end",
             );
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
             assert!(control.fatal_error().is_none());
         });
     });
@@ -7137,13 +7101,13 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
             "color",
         ),
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = pdftex_graphics_control(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_graphics_control(stores);
             register_source(&mut control, source);
             let state_before = stores.journal_cursor().expect("state cursor");
 
             assert!(matches!(
-                control.step(&mut stores),
+                control.step(stores),
                 Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive
             ));
             assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
@@ -7157,7 +7121,7 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
             )
             .expect("integer parameter assignment");
             assert_eq!(
-                control.step(&mut stores).expect("graphics command retries"),
+                control.step(stores).expect("graphics command retries"),
                 MainControlStep::Continue
             );
             let [node] = control.modes.current_list().nodes() else {
@@ -7171,9 +7135,7 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
                     || matches!((expected, node), ("color", Node::Whatsit(Whatsit::PdfColorStack { id: 0, action: tex_state::PdfColorStackAction::Push(payload) })) if payload == b"0 g")
             );
             assert_eq!(
-                control
-                    .step(&mut stores)
-                    .expect("following command remains"),
+                control.step(stores).expect("following command remains"),
                 MainControlStep::Continue
             );
             assert!(matches!(
@@ -7188,11 +7150,11 @@ fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
 fn pdfsavepos_remains_available_in_dvi_mode() {
     // pdftex.web §1563 deliberately excludes `\pdfsavepos` from the PDF
     // output preflight used by the neighboring graphics extensions.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = pdftex_graphics_control(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_graphics_control(stores);
         register_source(&mut control, br"\pdfsavepos");
         assert_eq!(
-            control.step(&mut stores).expect("DVI save position"),
+            control.step(stores).expect("DVI save position"),
             MainControlStep::Continue
         );
         assert!(matches!(
@@ -7219,7 +7181,7 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
             "Allocate and initialize a color stack with \\pdfcolorstackinit.",
         ),
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
             crate::test_harness::assign_int_param(
                 stores,
@@ -7228,21 +7190,21 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
                 tex_state::AssignmentScope::Global,
             )
             .expect("integer parameter assignment");
-            let mut control = pdftex_graphics_control(&mut stores);
+            let mut control = pdftex_graphics_control(stores);
             register_source(&mut control, source);
-            let _ = control.step(&mut stores).expect("recoverable bad stack id");
+            let _ = control.step(stores).expect("recoverable bad stack id");
             assert!(matches!(
                 control.modes.current_list().nodes(),
                 [Node::Whatsit(Whatsit::PdfColorStack { id: 0, .. })]
             ));
-            let terminal = terminal_text(&stores);
+            let terminal = terminal_text(stores);
             assert!(terminal.contains(diagnostic));
             assert!(terminal.contains(help));
             assert!(terminal.contains("Proceed, with fingers crossed."));
         });
     }
 
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
         crate::test_harness::assign_int_param(
             stores,
@@ -7251,20 +7213,18 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_graphics_control(&mut stores);
+        let mut control = pdftex_graphics_control(stores);
         register_source(&mut control, br"\pdfcolorstack0\pdfsave");
-        let _ = control
-            .step(&mut stores)
-            .expect("missing action is recoverable");
+        let _ = control.step(stores).expect("missing action is recoverable");
         assert!(control.modes.current_list().nodes().is_empty());
         let _ = control
-            .step(&mut stores)
+            .step(stores)
             .expect("following command remains available");
         assert!(matches!(
             control.modes.current_list().nodes(),
             [Node::Whatsit(Whatsit::PdfSave)]
         ));
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(terminal.contains("Color stack action is missing"));
         assert!(terminal.contains("set, push, pop, current"));
         assert!(terminal.contains("I'll ignore the color stack command."));
@@ -7403,11 +7363,11 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
     // pdftex.web §§1535 and 1542 call `check_pdfoutput` before the complete
     // `reserveobjnum`/`useobjnum`, integer, stream/attr/file, body, and
     // allocation paths. Aggregate retry must therefore see the whole command.
-    crate::test_harness::with_nonstop_plain_universe(|mut reserve_stores| {
-        let mut reserve_control = pdftex_object_control(&mut reserve_stores);
+    crate::test_harness::with_nonstop_plain_universe(|reserve_stores| {
+        let mut reserve_control = pdftex_object_control(reserve_stores);
         register_source(&mut reserve_control, br"\pdfobj reserveobjnum");
         assert!(matches!(
-            reserve_control.step(&mut reserve_stores),
+            reserve_control.step(reserve_stores),
             Err(ExecError::PdfExtensionInDviMode("pdfobj"))
         ));
         assert!(admitted!(reserve_stores, |context| context.pdf_raw_object(1)).is_none());
@@ -7427,7 +7387,7 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
         .expect("integer parameter assignment");
         assert_eq!(
             reserve_control
-                .step(&mut reserve_stores)
+                .step(reserve_stores)
                 .expect("reserveobjnum retry preserves the complete command"),
             MainControlStep::Continue
         );
@@ -7442,11 +7402,11 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
                 .is_none()
         );
 
-        crate::test_harness::with_nonstop_plain_universe(|mut ordinary_stores| {
-            let mut ordinary_control = pdftex_object_control(&mut ordinary_stores);
+        crate::test_harness::with_nonstop_plain_universe(|ordinary_stores| {
+            let mut ordinary_control = pdftex_object_control(ordinary_stores);
             register_source(&mut ordinary_control, br"\pdfobj{ordinary}");
             assert!(matches!(
-                ordinary_control.step(&mut ordinary_stores),
+                ordinary_control.step(ordinary_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfobj"))
             ));
             assert!(admitted!(ordinary_stores, |context| context.pdf_raw_object(1)).is_none());
@@ -7460,7 +7420,7 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
             .expect("integer parameter assignment");
             assert_eq!(
                 ordinary_control
-                    .step(&mut ordinary_stores)
+                    .step(ordinary_stores)
                     .expect("ordinary-object retry preserves its body"),
                 MainControlStep::Continue
             );
@@ -7475,14 +7435,14 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
                 "ordinary"
             );
 
-            crate::test_harness::with_nonstop_plain_universe(|mut define_stores| {
-                let mut define_control = pdftex_object_control(&mut define_stores);
+            crate::test_harness::with_nonstop_plain_universe(|define_stores| {
+                let mut define_control = pdftex_object_control(define_stores);
                 register_source(
                     &mut define_control,
                     br"\pdfobj useobjnum 37 stream attr{/Subtype /XML} file{payload}",
                 );
                 assert!(matches!(
-                    define_control.step(&mut define_stores),
+                    define_control.step(define_stores),
                     Err(ExecError::PdfExtensionInDviMode("pdfobj"))
                 ));
                 assert!(admitted!(define_stores, |context| context.pdf_raw_object(1)).is_none());
@@ -7492,7 +7452,7 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
                         .expect("PDF integer")),
                     0
                 );
-                assert!(terminal_text(&define_stores).is_empty());
+                assert!(terminal_text(define_stores).is_empty());
 
                 crate::test_harness::assign_int_param(
                     define_stores,
@@ -7503,7 +7463,7 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
                 .expect("integer parameter assignment");
                 assert_eq!(
                     define_control
-                        .step(&mut define_stores)
+                        .step(define_stores)
                         .expect("definition retry preserves every option and operand"),
                     MainControlStep::Continue
                 );
@@ -7514,7 +7474,7 @@ fn pdf_object_rejects_dvi_before_every_option_operand_and_allocation() {
                     -1
                 );
                 assert!(
-                    terminal_text(&define_stores).contains("invalid object number being ignored")
+                    terminal_text(define_stores).contains("invalid object number being ignored")
                 );
                 let record = &admitted!(define_stores, |context| context.pdf_raw_object(1))
                     .expect("PDF object 1");
@@ -7539,11 +7499,11 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
     // pdftex.web §1621 expands the command after `\immediate`, then invokes
     // §1542's complete `\pdfobj` case. Its DVI check therefore wins over the
     // immediate-reserved-object error and every operand remains retryable.
-    crate::test_harness::with_nonstop_plain_universe(|mut reserve_stores| {
-        let mut reserve_control = pdftex_object_control(&mut reserve_stores);
+    crate::test_harness::with_nonstop_plain_universe(|reserve_stores| {
+        let mut reserve_control = pdftex_object_control(reserve_stores);
         register_source(&mut reserve_control, br"\immediate\pdfobj reserveobjnum");
         assert!(matches!(
-            reserve_control.step(&mut reserve_stores),
+            reserve_control.step(reserve_stores),
             Err(ExecError::PdfExtensionInDviMode("pdfobj"))
         ));
         assert!(admitted!(reserve_stores, |context| context.pdf_raw_object(1)).is_none());
@@ -7556,19 +7516,19 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
         )
         .expect("integer parameter assignment");
         assert!(matches!(
-            reserve_control.step(&mut reserve_stores),
+            reserve_control.step(reserve_stores),
             Err(ExecError::PdfImmediateReservedObject)
         ));
         assert!(admitted!(reserve_stores, |context| context.pdf_raw_object(1)).is_none());
 
-        crate::test_harness::with_nonstop_plain_universe(|mut define_stores| {
-            let mut define_control = pdftex_object_control(&mut define_stores);
+        crate::test_harness::with_nonstop_plain_universe(|define_stores| {
+            let mut define_control = pdftex_object_control(define_stores);
             register_source(
                 &mut define_control,
                 br"\immediate\pdfobj useobjnum 41 stream attr{/Type /Metadata} file{retry.dat}",
             );
             assert!(matches!(
-                define_control.step(&mut define_stores),
+                define_control.step(define_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfobj"))
             ));
             assert!(admitted!(define_stores, |context| context.pdf_raw_object(1)).is_none());
@@ -7588,7 +7548,7 @@ fn immediate_pdf_object_rejects_dvi_after_lookahead_before_operand_scan() {
             .expect("integer parameter assignment");
             assert_eq!(
                 define_control
-                    .step(&mut define_stores)
+                    .step(define_stores)
                     .expect("immediate retry preserves every option and operand"),
                 MainControlStep::Continue
             );
@@ -7625,16 +7585,16 @@ fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
     // `pdf_check_obj`, `new_whatsit`, and object-number assignment. A DVI
     // failure must therefore preserve the integer and every aggregate owner
     // for transactional retry under the pdfTeX profile.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let object = admitted!(stores, |context| context.reserve_pdf_raw_object())
             .expect("reserve reference target");
         assert_eq!(object.raw(), 1);
-        let mut control = pdftex_object_control(&mut stores);
+        let mut control = pdftex_object_control(stores);
         register_source(&mut control, br"\pdfrefobj 1");
         let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            control.step(&mut stores),
+            control.step(stores),
             Err(ExecError::PdfExtensionInDviMode("pdfrefobj"))
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
@@ -7653,7 +7613,7 @@ fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
         .expect("integer parameter assignment");
         assert_eq!(
             control
-                .step(&mut stores)
+                .step(stores)
                 .expect("PDF retry preserves the integer operand"),
             MainControlStep::Continue
         );
@@ -7672,13 +7632,13 @@ fn pdf_reference_object_dvi_error_precedes_invalid_object_validation() {
     // pdftex.web §1544 checks DVI mode before scanning or calling
     // `pdf_check_obj`; the missing-object error is reached only on a PDF-mode
     // retry of the same intact operand.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = pdftex_object_control(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_object_control(stores);
         register_source(&mut control, br"\pdfrefobj 99");
         let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            control.step(&mut stores),
+            control.step(stores),
             Err(ExecError::PdfExtensionInDviMode("pdfrefobj"))
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
@@ -7693,7 +7653,7 @@ fn pdf_reference_object_dvi_error_precedes_invalid_object_validation() {
         )
         .expect("integer parameter assignment");
         assert!(matches!(
-            control.step(&mut stores),
+            control.step(stores),
             Err(ExecError::PdfReferencedObjectNotFound)
         ));
         assert!(admitted!(stores, |context| context.pdf_raw_object(1)).is_none());
@@ -7707,9 +7667,9 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
     // `\pdfxform` therefore preserves attr/resources/the register and its box,
     // while `\pdfrefxform` preserves its integer before lookup and whatsit
     // insertion. The two commands are one PDF-output-preflight family.
-    crate::test_harness::with_nonstop_plain_universe(|mut create_stores| {
-        install_test_hbox(&mut create_stores, 7, Scaled::from_raw(17));
-        let mut create = pdftex_form_control(&mut create_stores);
+    crate::test_harness::with_nonstop_plain_universe(|create_stores| {
+        install_test_hbox(create_stores, 7, Scaled::from_raw(17));
+        let mut create = pdftex_form_control(create_stores);
         register_source(
             &mut create,
             br"\pdfxform attr{/Subtype /Form} resources{/ProcSet [/PDF]} 7",
@@ -7717,7 +7677,7 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
         let state_before = create_stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            create.step(&mut create_stores),
+            create.step(create_stores),
             Err(ExecError::PdfExtensionInDviMode("pdfxform"))
         ));
         assert_eq!(
@@ -7743,7 +7703,7 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
         .expect("integer parameter assignment");
         assert_eq!(
             create
-                .step(&mut create_stores)
+                .step(create_stores)
                 .expect("PDF retry preserves all form options and the register"),
             MainControlStep::Continue
         );
@@ -7766,15 +7726,15 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
             "/ProcSet [/PDF]"
         );
 
-        crate::test_harness::with_nonstop_plain_universe(|mut reference_stores| {
-            install_test_form(&mut reference_stores);
-            let mut reference = pdftex_form_control(&mut reference_stores);
+        crate::test_harness::with_nonstop_plain_universe(|reference_stores| {
+            install_test_form(reference_stores);
+            let mut reference = pdftex_form_control(reference_stores);
             reference.modes.push(Mode::Math).expect("test mode push");
             register_source(&mut reference, br"\pdfrefxform 1");
             let state_before = reference_stores.journal_cursor().expect("state cursor");
 
             assert!(matches!(
-                reference.step(&mut reference_stores),
+                reference.step(reference_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfrefxform"))
             ));
             assert_eq!(
@@ -7792,7 +7752,7 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
             .expect("integer parameter assignment");
             assert_eq!(
                 reference
-                    .step(&mut reference_stores)
+                    .step(reference_stores)
                     .expect("PDF retry preserves the reference operand in math mode"),
                 MainControlStep::Continue
             );
@@ -7808,9 +7768,9 @@ fn pdf_form_family_rejects_dvi_before_operands_allocation_and_list_mutation() {
 fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
     // pdftex.web §§1548 and 1623 perform `\immediate` lookahead, then enter
     // the same `\pdfxform` case whose first operation is `check_pdfoutput`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        install_test_hbox(&mut stores, 9, Scaled::from_raw(19));
-        let mut control = pdftex_form_control(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        install_test_hbox(stores, 9, Scaled::from_raw(19));
+        let mut control = pdftex_form_control(stores);
         register_source(
             &mut control,
             br"\immediate\pdfxform attr{/A 1} resources{/R 2} 9",
@@ -7818,7 +7778,7 @@ fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
         let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            control.step(&mut stores),
+            control.step(stores),
             Err(ExecError::PdfExtensionInDviMode("pdfxform"))
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
@@ -7834,7 +7794,7 @@ fn immediate_pdf_form_rejects_dvi_before_options_or_allocation() {
         .expect("integer parameter assignment");
         assert_eq!(
             control
-                .step(&mut stores)
+                .step(stores)
                 .expect("immediate PDF retry preserves every form operand"),
             MainControlStep::Continue
         );
@@ -7852,15 +7812,15 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
     // e-TeX's `scan_register_num` recovers an invalid selector to zero before
     // §1548 allocates the form and diagnoses the resulting void box; §1549
     // scans an integer and then diagnoses a missing form object.
-    crate::test_harness::with_nonstop_plain_universe(|mut invalid_register_stores| {
-        let mut invalid_register = pdftex_form_control(&mut invalid_register_stores);
+    crate::test_harness::with_nonstop_plain_universe(|invalid_register_stores| {
+        let mut invalid_register = pdftex_form_control(invalid_register_stores);
         register_source(&mut invalid_register, br"\pdfxform 40000");
         let state_before = invalid_register_stores
             .journal_cursor()
             .expect("state cursor");
 
         assert!(matches!(
-            invalid_register.step(&mut invalid_register_stores),
+            invalid_register.step(invalid_register_stores),
             Err(ExecError::PdfExtensionInDviMode("pdfxform"))
         ));
         assert_eq!(
@@ -7869,7 +7829,7 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
                 .expect("state cursor"),
             state_before
         );
-        assert!(terminal_text(&invalid_register_stores).is_empty());
+        assert!(terminal_text(invalid_register_stores).is_empty());
         assert!(admitted!(invalid_register_stores, |context| context.pdf_form(1)).is_none());
 
         crate::test_harness::assign_int_param(
@@ -7880,16 +7840,16 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
         )
         .expect("integer parameter assignment");
         assert!(matches!(
-            invalid_register.step(&mut invalid_register_stores),
+            invalid_register.step(invalid_register_stores),
             Err(ExecError::PdfXFormVoidBox)
         ));
         assert!(admitted!(invalid_register_stores, |context| context.pdf_form(1)).is_none());
 
-        crate::test_harness::with_nonstop_plain_universe(|mut void_stores| {
-            let mut void = pdftex_form_control(&mut void_stores);
+        crate::test_harness::with_nonstop_plain_universe(|void_stores| {
+            let mut void = pdftex_form_control(void_stores);
             register_source(&mut void, br"\pdfxform 12");
             assert!(matches!(
-                void.step(&mut void_stores),
+                void.step(void_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfxform"))
             ));
             crate::test_harness::assign_int_param(
@@ -7900,19 +7860,19 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
             )
             .expect("integer parameter assignment");
             assert!(matches!(
-                void.step(&mut void_stores),
+                void.step(void_stores),
                 Err(ExecError::PdfXFormVoidBox)
             ));
 
-            crate::test_harness::with_nonstop_plain_universe(|mut missing_stores| {
-                let mut missing = pdftex_form_control(&mut missing_stores);
+            crate::test_harness::with_nonstop_plain_universe(|missing_stores| {
+                let mut missing = pdftex_form_control(missing_stores);
                 missing
                     .modes
                     .push(Mode::RestrictedHorizontal)
                     .expect("test mode push");
                 register_source(&mut missing, br"\pdfrefxform 99");
                 assert!(matches!(
-                    missing.step(&mut missing_stores),
+                    missing.step(missing_stores),
                     Err(ExecError::PdfExtensionInDviMode("pdfrefxform"))
                 ));
                 assert!(missing.modes.current_list().nodes().is_empty());
@@ -7924,7 +7884,7 @@ fn pdf_form_dvi_error_precedes_invalid_register_void_box_and_missing_object() {
                 )
                 .expect("integer parameter assignment");
                 assert!(matches!(
-                    missing.step(&mut missing_stores),
+                    missing.step(missing_stores),
                     Err(ExecError::PdfReferencedObjectNotFound)
                 ));
                 assert!(missing.modes.current_list().nodes().is_empty());
@@ -7939,8 +7899,8 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
     // image-object allocation, `scan_image`, and `read_image`. A failed
     // aggregate operation therefore preserves every supported rule, attr,
     // page, page-box, and filename operand for exact resource retry.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = pdftex_image_control(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_image_control(stores);
         register_source(
         &mut control,
         br"\pdfximage width 10pt height 20pt depth 3pt attr{/Interpolate true} page 2 mediabox {image.pdf}",
@@ -7948,7 +7908,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
         let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            control.advance(&mut stores),
+            control.advance(stores),
             Err(ExecError::Captured { error, .. })
                 if matches!(*error, ExecError::PdfExtensionInDviMode("pdfximage"))
         ));
@@ -7969,10 +7929,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
         )
         .expect("integer parameter assignment");
         let pdf_state_before = stores.journal_cursor().expect("state cursor");
-        let request = match control
-            .advance(&mut stores)
-            .expect("PDF image request suspends")
-        {
+        let request = match control.advance(stores).expect("PDF image request suspends") {
             StepResult::Suspended(ResourceNeed::PdfImage { request }) => request,
             other => panic!("expected image suspension, got {other:?}"),
         };
@@ -7997,7 +7954,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
         assert!(matches!(
             control.capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             ),
             Err(tex_command::CommandSummaryError::AttemptSuspended)
@@ -8009,7 +7966,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
         );
         assert_eq!(
             control
-                .advance(&mut stores)
+                .advance(stores)
                 .expect("fulfilled retry preserves and consumes the complete request"),
             StepResult::Progress(MainControlStep::Continue)
         );
@@ -8039,7 +7996,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
         control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("fulfilled retry discards the exact retained attempt suffix");
@@ -8052,8 +8009,8 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
     // §1551's complete `\pdfximage` case. Its output check precedes every
     // image operand and the recursive call performs the allocation only
     // after resource lookup succeeds.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = pdftex_image_control(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_image_control(stores);
         register_source(
         &mut control,
         br"\immediate\pdfximage width 7pt height 8pt depth 2pt attr{/Intent /RelativeColorimetric} page 3 cropbox {immediate.pdf}",
@@ -8061,7 +8018,7 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
         let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            control.advance(&mut stores),
+            control.advance(stores),
             Err(ExecError::PdfExtensionInDviMode("pdfximage"))
         ));
         assert_eq!(stores.journal_cursor().expect("state cursor"), state_before);
@@ -8081,10 +8038,7 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
         )
         .expect("integer parameter assignment");
         let pdf_state_before = stores.journal_cursor().expect("state cursor");
-        let request = match control
-            .advance(&mut stores)
-            .expect("immediate image suspends")
-        {
+        let request = match control.advance(stores).expect("immediate image suspends") {
             StepResult::Suspended(ResourceNeed::PdfImage { request }) => request,
             other => panic!("expected immediate image suspension, got {other:?}"),
         };
@@ -8106,7 +8060,7 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
         );
         assert_eq!(
             control
-                .advance(&mut stores)
+                .advance(stores)
                 .expect("immediate image retry allocates in the same operation"),
             StepResult::Progress(MainControlStep::Continue)
         );
@@ -8136,8 +8090,8 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
         Mode::Math,
         Mode::DisplayMath,
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = pdftex_image_control(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_image_control(stores);
             if mode != Mode::Vertical {
                 control.modes.push(mode).expect("test mode push");
             }
@@ -8146,7 +8100,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
 
             assert!(
                 matches!(
-                    control.advance(&mut stores),
+                    control.advance(stores),
                     Err(ExecError::Captured { error, .. })
                         if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefximage"))
                 ),
@@ -8158,11 +8112,11 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
                 "mode {mode:?}"
             );
             assert!(control.modes.current_list().nodes().is_empty());
-            assert!(terminal_text(&stores).is_empty());
+            assert!(terminal_text(stores).is_empty());
         });
     }
 
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let source = test_pdf_image_source();
         let image = admitted!(stores, |context| context.allocate_pdf_external_image(
             source,
@@ -8175,13 +8129,13 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
         ))
         .expect("reference target image");
         assert_eq!(image.id().raw(), 1);
-        let mut control = pdftex_image_control(&mut stores);
+        let mut control = pdftex_image_control(stores);
         control.modes.push(Mode::Math).expect("test mode push");
         register_source(&mut control, br"\pdfrefximage 1");
         let state_before = stores.journal_cursor().expect("state cursor");
 
         assert!(matches!(
-            control.advance(&mut stores),
+            control.advance(stores),
             Err(ExecError::Captured { error, .. })
                 if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefximage"))
         ));
@@ -8197,7 +8151,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
         .expect("integer parameter assignment");
         assert_eq!(
             control
-                .advance(&mut stores)
+                .advance(stores)
                 .expect("PDF retry preserves the reference integer"),
             StepResult::Progress(MainControlStep::Continue)
         );
@@ -8213,11 +8167,11 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
                 && *depth == Scaled::from_raw(13)
         ));
 
-        crate::test_harness::with_nonstop_plain_universe(|mut missing_stores| {
-            let mut missing = pdftex_image_control(&mut missing_stores);
+        crate::test_harness::with_nonstop_plain_universe(|missing_stores| {
+            let mut missing = pdftex_image_control(missing_stores);
             register_source(&mut missing, br"\pdfrefximage 99");
             assert!(matches!(
-                missing.advance(&mut missing_stores),
+                missing.advance(missing_stores),
                 Err(ExecError::Captured { error, .. })
                     if matches!(*error, ExecError::PdfExtensionInDviMode("pdfrefximage"))
             ));
@@ -8229,7 +8183,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
             )
             .expect("integer parameter assignment");
             assert!(matches!(
-                missing.advance(&mut missing_stores),
+                missing.advance(missing_stores),
                 Err(ExecError::PdfReferencedObjectNotFound)
             ));
             assert!(missing.modes.current_list().nodes().is_empty());
@@ -8265,12 +8219,12 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
             "pdfstartlink",
         ),
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = pdftex_annotation_control(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_annotation_control(stores);
         control.modes.push(Mode::Horizontal).expect("test mode push");
         register_source(&mut control, source);
         assert!(
-            matches!(control.step(&mut stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
+            matches!(control.step(stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
         );
         assert!(control.modes.current_list().nodes().is_empty());
 
@@ -8289,7 +8243,7 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
         .expect("integer parameter assignment");
         assert_eq!(
             control
-                .step(&mut stores)
+                .step(stores)
                 .expect("PDF retry preserves the complete command"),
             MainControlStep::Continue
         );
@@ -8300,11 +8254,11 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
     // The source orders the PDF-output check before the vertical-mode check
     // for both link commands.
     for primitive in ["pdfstartlink", "pdfendlink"] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = pdftex_annotation_control(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_annotation_control(stores);
             register_source(&mut control, format!("\\{primitive}").as_bytes());
             assert!(
-                matches!(control.step(&mut stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
+                matches!(control.step(stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
             );
             assert!(control.modes.current_list().nodes().is_empty());
         });
@@ -8317,7 +8271,7 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
     // therefore before the rule, attributes, and action.  The deliberately
     // malformed action must not mask the mode diagnostic, consume its
     // following token, allocate a link, or append a node.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -8325,7 +8279,7 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_annotation_control(&mut stores);
+        let mut control = pdftex_annotation_control(stores);
         register_source(
             &mut control,
             br"\pdfstartlink width 5pt definitely-not-an-action\relax",
@@ -8333,7 +8287,7 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
         let state_before = stores.journal_cursor().expect("state cursor");
 
         let error = control
-            .step(&mut stores)
+            .step(stores)
             .expect_err("vertical link start is rejected before its operands");
         assert!(matches!(
             error,
@@ -8350,7 +8304,7 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
             .modes
             .push(Mode::Horizontal)
             .expect("test mode push");
-        let action_error = control.step(&mut stores);
+        let action_error = control.step(stores);
         assert!(
             matches!(
                 action_error,
@@ -8360,7 +8314,7 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
             ),
             "unexpected action error: {action_error:?}"
         );
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(terminal.contains("! pdfTeX error (ext1): action type missing."));
         assert!(terminal.contains("Fatal error occurred, no output PDF file produced!"));
         assert_eq!(
@@ -8375,7 +8329,7 @@ fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
 fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
     // pdftex.web §1561 rejects DVI mode before appending the end whatsit. The
     // open-link stack and the unconsumed command both survive for retry.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -8383,7 +8337,7 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_annotation_control(&mut stores);
+        let mut control = pdftex_annotation_control(stores);
         control
             .modes
             .push(Mode::Horizontal)
@@ -8393,7 +8347,7 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
             br"\pdfstartlink height 4pt user{/Subtype /Link}\pdfendlink",
         );
         assert_eq!(
-            control.step(&mut stores).expect("start link"),
+            control.step(stores).expect("start link"),
             MainControlStep::Continue
         );
         assert_eq!(control.modes.current_list().nodes().len(), 1);
@@ -8406,7 +8360,7 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
         )
         .expect("integer parameter assignment");
         assert!(matches!(
-            control.step(&mut stores),
+            control.step(stores),
             Err(ExecError::PdfExtensionInDviMode("pdfendlink"))
         ));
         assert_eq!(control.modes.current_list().nodes().len(), 1);
@@ -8419,7 +8373,7 @@ fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
         )
         .expect("integer parameter assignment");
         assert_eq!(
-            control.step(&mut stores).expect("end-link retry"),
+            control.step(stores).expect("end-link retry"),
             MainControlStep::Continue
         );
         assert!(matches!(
@@ -8446,11 +8400,11 @@ fn pdf_thread_family_rejects_dvi_before_operand_scan() {
         ),
         (br"\pdfendthread".as_slice(), "pdfendthread"),
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = pdftex_thread_control(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = pdftex_thread_control(stores);
             register_source(&mut control, source);
             assert!(
-                matches!(control.step(&mut stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
+                matches!(control.step(stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
             );
             assert!(control.modes.current_list().nodes().is_empty());
             crate::test_harness::assign_int_param(
@@ -8461,9 +8415,7 @@ fn pdf_thread_family_rejects_dvi_before_operand_scan() {
             )
             .expect("integer parameter assignment");
             assert_eq!(
-                control
-                    .step(&mut stores)
-                    .expect("retry preserves every operand"),
+                control.step(stores).expect("retry preserves every operand"),
                 MainControlStep::Continue
             );
             assert_eq!(control.modes.current_list().nodes().len(), 1);
@@ -8494,7 +8446,7 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
         Mode::DisplayMath,
     ];
     for mode in MODES {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             crate::test_harness::assign_int_param(
                 stores,
                 IntParam::PDF_OUTPUT,
@@ -8502,7 +8454,7 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
                 tex_state::AssignmentScope::Global,
             )
             .expect("integer parameter assignment");
-            let mut control = pdftex_destination_control(&mut stores);
+            let mut control = pdftex_destination_control(stores);
             if mode != Mode::Vertical {
                 control.modes.push(mode).expect("test mode push");
             }
@@ -8511,7 +8463,7 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
                 br"\pdfdest struct 9 name{target} fitr width 2pt height 3pt depth 4pt",
             );
             assert_eq!(
-                control.step(&mut stores).expect("destination command"),
+                control.step(stores).expect("destination command"),
                 MainControlStep::Continue
             );
             let [Node::Whatsit(Whatsit::PdfDestination(destination))] =
@@ -8542,7 +8494,7 @@ fn pdf_destination_is_any_mode_ordered_typed_material() {
 fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
     // pdftex.web §1565 calls `check_pdfoutput` before allocating the whatsit
     // or scanning `struct`, the identifier, the kind, or the rule dimensions.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -8556,30 +8508,28 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
             global,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
         );
-        let mut control = pdftex_destination_control(&mut stores);
+        let mut control = pdftex_destination_control(stores);
         register_source(&mut control, br"\global\pdfdest name{prefixed} fit");
         assert_eq!(
-            control.step(&mut stores).expect("prefix recovery"),
+            control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
         assert!(control.modes.current_list().nodes().is_empty());
-        assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+        assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control
-                .step(&mut stores)
-                .expect("replayed destination command"),
+            control.step(stores).expect("replayed destination command"),
             MainControlStep::Continue
         );
         assert_eq!(control.modes.current_list().nodes().len(), 1);
 
-        crate::test_harness::with_nonstop_plain_universe(|mut dvi_stores| {
-            let mut dvi = pdftex_destination_control(&mut dvi_stores);
+        crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
+            let mut dvi = pdftex_destination_control(dvi_stores);
             register_source(
                 &mut dvi,
                 br"\pdfdest struct 7 name{retry} fitr width 5pt height 6pt depth 7pt",
             );
             assert!(matches!(
-                dvi.step(&mut dvi_stores),
+                dvi.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfdest"))
             ));
             assert!(dvi.modes.current_list().nodes().is_empty());
@@ -8591,7 +8541,7 @@ fn pdf_destination_rejects_prefixes_and_dvi_before_operand_scan() {
             )
             .expect("integer parameter assignment");
             assert_eq!(
-                dvi.step(&mut dvi_stores)
+                dvi.step(dvi_stores)
                     .expect("failed destination retries with every operand intact"),
                 MainControlStep::Continue
             );
@@ -8617,7 +8567,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
     // pdftex.web §1565 appends a whatsit, not an eqtb assignment: ordinary
     // grouping does not undo it, while an engine checkpoint restores both the
     // current list and the unconsumed source for deterministic retry.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -8625,18 +8575,18 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_destination_control(&mut stores);
+        let mut control = pdftex_destination_control(stores);
         register_source(&mut control, br"{\pdfdest num 23 xyz zoom -40}");
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("destination state checkpoints");
         for label in ["open group", "destination", "close group"] {
             assert_eq!(
-                control.step(&mut stores).expect(label),
+                control.step(stores).expect(label),
                 MainControlStep::Continue
             );
         }
@@ -8655,7 +8605,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
         ));
 
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("destination state restores");
         assert!(control.modes.current_list().nodes().is_empty());
         for label in [
@@ -8664,7 +8614,7 @@ fn pdf_destination_grouping_and_checkpoint_restore_preserve_node_ownership() {
             "retried close group",
         ] {
             assert_eq!(
-                control.step(&mut stores).expect(label),
+                control.step(stores).expect(label),
                 MainControlStep::Continue
             );
         }
@@ -8691,7 +8641,7 @@ fn pdf_outline_is_immediate_any_mode_document_state() {
         Mode::DisplayMath,
     ];
     for mode in MODES {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             crate::test_harness::assign_int_param(
                 stores,
                 IntParam::PDF_OUTPUT,
@@ -8699,7 +8649,7 @@ fn pdf_outline_is_immediate_any_mode_document_state() {
                 tex_state::AssignmentScope::Global,
             )
             .expect("integer parameter assignment");
-            let mut control = pdftex_outline_control(&mut stores);
+            let mut control = pdftex_outline_control(stores);
             if mode != Mode::Vertical {
                 control.modes.push(mode).expect("test mode push");
             }
@@ -8708,7 +8658,7 @@ fn pdf_outline_is_immediate_any_mode_document_state() {
                 br"\pdfoutline attr{/C [1 0 0]} goto name{later} count -2 {(Title)}",
             );
             assert_eq!(
-                control.step(&mut stores).expect("outline command"),
+                control.step(stores).expect("outline command"),
                 MainControlStep::Continue
             );
             assert!(
@@ -8721,7 +8671,7 @@ fn pdf_outline_is_immediate_any_mode_document_state() {
 
 #[test]
 fn pdf_outline_rejects_prefixes_and_dvi_before_operand_scan() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -8735,23 +8685,23 @@ fn pdf_outline_rejects_prefixes_and_dvi_before_operand_scan() {
             global,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
         );
-        let mut control = pdftex_outline_control(&mut stores);
+        let mut control = pdftex_outline_control(stores);
         register_source(&mut control, br"\global\pdfoutline user{/S /URI}{Title}");
         assert_eq!(
-            control.step(&mut stores).expect("prefix recovery"),
+            control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
-        assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+        assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control.step(&mut stores).expect("replayed outline"),
+            control.step(stores).expect("replayed outline"),
             MainControlStep::Continue
         );
 
-        crate::test_harness::with_nonstop_plain_universe(|mut dvi_stores| {
-            let mut dvi = pdftex_outline_control(&mut dvi_stores);
+        crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
+            let mut dvi = pdftex_outline_control(dvi_stores);
             register_source(&mut dvi, br"\pdfoutline user{/S /URI}{Title}");
             assert!(matches!(
-                dvi.step(&mut dvi_stores),
+                dvi.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfoutline"))
             ));
             crate::test_harness::assign_int_param(
@@ -8762,7 +8712,7 @@ fn pdf_outline_rejects_prefixes_and_dvi_before_operand_scan() {
             )
             .expect("integer parameter assignment");
             assert_eq!(
-                dvi.step(&mut dvi_stores)
+                dvi.step(dvi_stores)
                     .expect("failed command retries with every operand intact"),
                 MainControlStep::Continue
             );
@@ -8772,7 +8722,7 @@ fn pdf_outline_rejects_prefixes_and_dvi_before_operand_scan() {
 
 #[test]
 fn pdf_outline_is_not_restored_by_ordinary_grouping() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -8780,14 +8730,14 @@ fn pdf_outline_is_not_restored_by_ordinary_grouping() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_outline_control(&mut stores);
+        let mut control = pdftex_outline_control(stores);
         register_source(
             &mut control,
             br"{\pdfoutline goto name{later} count 1 {Title}}",
         );
         for label in ["open group", "outline", "close group"] {
             assert_eq!(
-                control.step(&mut stores).expect(label),
+                control.step(stores).expect(label),
                 MainControlStep::Continue
             );
         }
@@ -8800,7 +8750,7 @@ fn pdf_outline_is_not_restored_by_ordinary_grouping() {
 
 #[test]
 fn pdf_outline_checkpoint_restore_replays_identical_ledger_state() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -8808,7 +8758,7 @@ fn pdf_outline_checkpoint_restore_replays_identical_ledger_state() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_outline_control(&mut stores);
+        let mut control = pdftex_outline_control(stores);
         register_source(
             &mut control,
             br"\pdfoutline goto name{later} count 1 {Title}",
@@ -8816,20 +8766,20 @@ fn pdf_outline_checkpoint_restore_replays_identical_ledger_state() {
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("outline state checkpoints");
         assert_eq!(
-            control.step(&mut stores).expect("outline command"),
+            control.step(stores).expect("outline command"),
             MainControlStep::Continue
         );
         let first_hash = stores.journal_cursor().expect("state cursor");
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("outline state restores");
         assert_eq!(
-            control.step(&mut stores).expect("retried outline"),
+            control.step(stores).expect("retried outline"),
             MainControlStep::Continue
         );
         assert_eq!(stores.journal_cursor().expect("state cursor"), first_hash);
@@ -8847,7 +8797,7 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
         Mode::DisplayMath,
     ];
     for mode in MODES {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             crate::test_harness::assign_int_param(
                 stores,
                 IntParam::PDF_OUTPUT,
@@ -8855,7 +8805,7 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
                 tex_state::AssignmentScope::Global,
             )
             .expect("integer parameter assignment");
-            let mut control = pdftex_snapping_control(&mut stores);
+            let mut control = pdftex_snapping_control(stores);
             if mode != Mode::Vertical {
                 control.modes.push(mode).expect("test mode push");
             }
@@ -8865,7 +8815,7 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
             );
             for _ in 0..3 {
                 assert_eq!(
-                    control.step(&mut stores).expect("snapping command"),
+                    control.step(stores).expect("snapping command"),
                     MainControlStep::Continue
                 );
             }
@@ -8892,7 +8842,7 @@ fn pdf_snapping_is_any_mode_ordered_typed_material() {
 
 #[test]
 fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -8906,18 +8856,16 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
             global,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
         );
-        let mut control = pdftex_snapping_control(&mut stores);
+        let mut control = pdftex_snapping_control(stores);
         register_source(&mut control, br"\global\pdfsnaprefpoint");
         assert_eq!(
-            control.step(&mut stores).expect("prefix recovery"),
+            control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
         assert!(control.modes.current_list().nodes().is_empty());
-        assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+        assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control
-                .step(&mut stores)
-                .expect("replayed snapping command"),
+            control.step(stores).expect("replayed snapping command"),
             MainControlStep::Continue
         );
         assert!(matches!(
@@ -8925,11 +8873,11 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
             [Node::Whatsit(Whatsit::PdfSnapRefPoint)]
         ));
 
-        crate::test_harness::with_nonstop_plain_universe(|mut dvi_stores| {
-            let mut dvi = pdftex_snapping_control(&mut dvi_stores);
+        crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
+            let mut dvi = pdftex_snapping_control(dvi_stores);
             register_source(&mut dvi, br"\pdfsnapy 7pt");
             assert!(matches!(
-                dvi.step(&mut dvi_stores),
+                dvi.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfsnapy"))
             ));
             assert!(dvi.modes.current_list().nodes().is_empty());
@@ -8941,7 +8889,7 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
             )
             .expect("integer parameter assignment");
             assert_eq!(
-                dvi.step(&mut dvi_stores)
+                dvi.step(dvi_stores)
                     .expect("failed command retries with its operand intact"),
                 MainControlStep::Continue
             );
@@ -8955,7 +8903,7 @@ fn pdf_snapping_rejects_prefixes_and_dvi_before_operand_scan() {
 
 #[test]
 fn pdfsnapy_rejects_negative_width_after_consuming_the_complete_glue() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -8963,10 +8911,10 @@ fn pdfsnapy_rejects_negative_width_after_consuming_the_complete_glue() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_snapping_control(&mut stores);
+        let mut control = pdftex_snapping_control(stores);
         register_source(&mut control, br"\pdfsnapy -1pt plus 2fil");
         assert!(matches!(
-            control.step(&mut stores),
+            control.step(stores),
             Err(ExecError::PdfNavigation(
                 "pdfTeX error (ext1): negative snap glue"
             ))
@@ -8977,7 +8925,7 @@ fn pdfsnapy_rejects_negative_width_after_consuming_the_complete_glue() {
 
 #[test]
 fn pdf_snapping_checkpoint_restore_retries_without_duplicate_nodes() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -8985,41 +8933,39 @@ fn pdf_snapping_checkpoint_restore_retries_without_duplicate_nodes() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_snapping_control(&mut stores);
+        let mut control = pdftex_snapping_control(stores);
         register_source(
             &mut control,
             br"\pdfsnaprefpoint\pdfsnapy 3pt\pdfsnapycomp 500",
         );
         assert_eq!(
-            control.step(&mut stores).expect("reference point"),
+            control.step(stores).expect("reference point"),
             MainControlStep::Continue
         );
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("snapping state checkpoints");
         assert_eq!(
-            control.step(&mut stores).expect("snap glue"),
+            control.step(stores).expect("snap glue"),
             MainControlStep::Continue
         );
         assert_eq!(
-            control.step(&mut stores).expect("snap compensation"),
+            control.step(stores).expect("snap compensation"),
             MainControlStep::Continue
         );
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("snapping state restores");
         assert_eq!(
-            control.step(&mut stores).expect("retried snap glue"),
+            control.step(stores).expect("retried snap glue"),
             MainControlStep::Continue
         );
         assert_eq!(
-            control
-                .step(&mut stores)
-                .expect("retried snap compensation"),
+            control.step(stores).expect("retried snap compensation"),
             MainControlStep::Continue
         );
         assert!(matches!(
@@ -9045,19 +8991,19 @@ fn step_until_pdf_seed<G>(control: &mut MainControl<G>, stores: &mut Universe<G>
 
 #[test]
 fn pdfsetrandomseed_is_an_ungrouped_signed_job_state_replacement() {
-    crate::test_harness::with_nonstop_universe(|mut stores| {
-        let mut control = pdftex_random_control(&mut stores);
+    crate::test_harness::with_nonstop_universe(|stores| {
+        let mut control = pdftex_random_control(stores);
         register_source(
             &mut control,
             br"{\pdfsetrandomseed -1 }\pdfsetrandomseed 23 ",
         );
 
-        step_until_pdf_seed(&mut control, &mut stores, 1);
+        step_until_pdf_seed(&mut control, stores, 1);
         assert_eq!(stores.world().pdf_random_seed(), 1);
         assert_eq!(stores.world_mut().pdf_uniform_deviate(10), 7);
 
         assert_eq!(
-            control.step(&mut stores).expect("end group"),
+            control.step(stores).expect("end group"),
             MainControlStep::Continue
         );
         assert_eq!(
@@ -9065,31 +9011,29 @@ fn pdfsetrandomseed_is_an_ungrouped_signed_job_state_replacement() {
             1,
             "the extension state is not restored when a TeX group closes"
         );
-        step_until_pdf_seed(&mut control, &mut stores, 23);
+        step_until_pdf_seed(&mut control, stores, 23);
         assert_eq!(stores.world().pdf_random_seed(), 23);
     });
 }
 
 #[test]
 fn pdfsetrandomseed_uses_the_ordinary_integer_scanner_and_preserves_lookahead() {
-    crate::test_harness::with_nonstop_universe(|mut stores| {
+    crate::test_harness::with_nonstop_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = pdftex_random_control(&mut stores);
+        let mut control = pdftex_random_control(stores);
         register_source(
             &mut control,
             br"\pdfsetrandomseed 999999999999\pdfsetrandomseed 6 ",
         );
 
         assert_eq!(
-            control.step(&mut stores).expect("bounded seed scan"),
+            control.step(stores).expect("bounded seed scan"),
             MainControlStep::Continue
         );
         assert_eq!(stores.world().pdf_random_seed(), i32::MAX);
 
         assert_eq!(
-            control
-                .step(&mut stores)
-                .expect("backed-up following command"),
+            control.step(stores).expect("backed-up following command"),
             MainControlStep::Continue
         );
         assert_eq!(stores.world().pdf_random_seed(), 6);
@@ -9098,28 +9042,28 @@ fn pdfsetrandomseed_uses_the_ordinary_integer_scanner_and_preserves_lookahead() 
 
 #[test]
 fn pdfsetrandomseed_rejects_assignment_prefixes_then_replays_the_command() {
-    crate::test_harness::with_nonstop_universe(|mut stores| {
+    crate::test_harness::with_nonstop_universe(|stores| {
         let global = stores.intern("global").expect("symbol interning");
         assign_static_meaning(
             stores,
             global,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
         );
-        let mut control = pdftex_random_control(&mut stores);
+        let mut control = pdftex_random_control(stores);
         register_source(&mut control, br"\global\pdfsetrandomseed 9 ");
 
         assert_eq!(
-            control.step(&mut stores).expect("reject prefix"),
+            control.step(stores).expect("reject prefix"),
             MainControlStep::Continue
         );
         assert_eq!(stores.world().pdf_random_seed(), 0);
         assert!(
-            terminal_text(&stores).contains("You can't use a prefix with"),
+            terminal_text(stores).contains("You can't use a prefix with"),
             "the extension is below max_non_prefixed_command"
         );
 
         assert_eq!(
-            control.step(&mut stores).expect("replayed seed command"),
+            control.step(stores).expect("replayed seed command"),
             MainControlStep::Continue
         );
         assert_eq!(stores.world().pdf_random_seed(), 9);
@@ -9128,17 +9072,17 @@ fn pdfsetrandomseed_rejects_assignment_prefixes_then_replays_the_command() {
 
 #[test]
 fn pdfresettimer_is_no_operand_any_mode_ungrouped_job_state() {
-    crate::test_harness::with_nonstop_universe(|mut stores| {
+    crate::test_harness::with_nonstop_universe(|stores| {
         stores.world_mut().set_pdf_time_micros(1_250_000);
-        let mut control = pdftex_timer_control(&mut stores);
+        let mut control = pdftex_timer_control(stores);
         register_source(&mut control, br"{\pdfresettimer X}");
 
         assert_eq!(
-            control.step(&mut stores).expect("begin group"),
+            control.step(stores).expect("begin group"),
             MainControlStep::Continue
         );
         for _ in 0..3 {
-            control.step(&mut stores).expect("timer reset");
+            control.step(stores).expect("timer reset");
             if stores.world().pdf_elapsed_time() == 0 {
                 break;
             }
@@ -9146,7 +9090,7 @@ fn pdfresettimer_is_no_operand_any_mode_ungrouped_job_state() {
         assert_eq!(stores.world().pdf_elapsed_time(), 0);
 
         stores.world_mut().set_pdf_time_micros(2_250_000);
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(
             stores.world().pdf_elapsed_time(),
             65_536,
@@ -9157,7 +9101,7 @@ fn pdfresettimer_is_no_operand_any_mode_ungrouped_job_state() {
 
 #[test]
 fn pdfresettimer_rejects_assignment_prefixes_then_replays_the_command() {
-    crate::test_harness::with_nonstop_universe(|mut stores| {
+    crate::test_harness::with_nonstop_universe(|stores| {
         stores.world_mut().set_pdf_time_micros(1_250_000);
         let global = stores.intern("global").expect("symbol interning");
         assign_static_meaning(
@@ -9165,18 +9109,18 @@ fn pdfresettimer_rejects_assignment_prefixes_then_replays_the_command() {
             global,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
         );
-        let mut control = pdftex_timer_control(&mut stores);
+        let mut control = pdftex_timer_control(stores);
         register_source(&mut control, br"\global\pdfresettimer ");
 
         assert_eq!(
-            control.step(&mut stores).expect("reject prefix"),
+            control.step(stores).expect("reject prefix"),
             MainControlStep::Continue
         );
         assert_eq!(stores.world().pdf_elapsed_time(), 81_920);
-        assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+        assert!(terminal_text(stores).contains("You can't use a prefix with"));
 
         assert_eq!(
-            control.step(&mut stores).expect("replayed timer reset"),
+            control.step(stores).expect("replayed timer reset"),
             MainControlStep::Continue
         );
         assert_eq!(stores.world().pdf_elapsed_time(), 0);
@@ -9195,7 +9139,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
     ];
 
     for mode in MODES {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             crate::test_harness::assign_int_param(
                 stores,
                 IntParam::PDF_OUTPUT,
@@ -9203,7 +9147,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
                 tex_state::AssignmentScope::Global,
             )
             .expect("integer parameter assignment");
-            let mut control = pdftex_interword_control(&mut stores);
+            let mut control = pdftex_interword_control(stores);
             if mode != Mode::Vertical {
                 control.modes.push(mode).expect("test mode push");
             }
@@ -9211,7 +9155,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
                 &mut control,
                 br"\pdfinterwordspaceon\pdffakespace\pdfinterwordspaceoff",
             );
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
             let controls: Vec<_> = control
                 .modes
@@ -9235,7 +9179,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
         });
     }
 
-    crate::test_harness::with_nonstop_plain_universe(|mut grouped_stores| {
+    crate::test_harness::with_nonstop_plain_universe(|grouped_stores| {
         crate::test_harness::assign_int_param(
             grouped_stores,
             IntParam::PDF_OUTPUT,
@@ -9243,9 +9187,9 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut grouped = pdftex_interword_control(&mut grouped_stores);
+        let mut grouped = pdftex_interword_control(grouped_stores);
         register_source(&mut grouped, br"{\pdffakespace}");
-        run_to_end(&mut grouped, &mut grouped_stores);
+        run_to_end(&mut grouped, grouped_stores);
         assert!(matches!(
             grouped.modes.current_list().nodes(),
             [Node::Whatsit(Whatsit::PdfAccessibility(
@@ -9257,7 +9201,7 @@ fn pdfinterwordspace_controls_are_operand_free_any_mode_ordered_whatsits() {
 
 #[test]
 fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -9271,17 +9215,17 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
             global,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
         );
-        let mut control = pdftex_interword_control(&mut stores);
+        let mut control = pdftex_interword_control(stores);
         register_source(&mut control, br"\global\pdfinterwordspaceon");
 
         assert_eq!(
-            control.step(&mut stores).expect("prefix recovery"),
+            control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
         assert!(control.modes.current_list().nodes().is_empty());
-        assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+        assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control.step(&mut stores).expect("replayed extension"),
+            control.step(stores).expect("replayed extension"),
             MainControlStep::Continue
         );
         assert!(matches!(
@@ -9291,11 +9235,11 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
             ))]
         ));
 
-        crate::test_harness::with_nonstop_plain_universe(|mut dvi_stores| {
-            let mut dvi_control = pdftex_interword_control(&mut dvi_stores);
+        crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
+            let mut dvi_control = pdftex_interword_control(dvi_stores);
             register_source(&mut dvi_control, br"\pdffakespace");
             assert!(matches!(
-                dvi_control.step(&mut dvi_stores),
+                dvi_control.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdffakespace"))
             ));
             assert!(dvi_control.modes.current_list().nodes().is_empty());
@@ -9305,7 +9249,7 @@ fn pdfinterwordspace_rejects_prefixes_and_dvi_mode_before_appending() {
 
 #[test]
 fn pdfinterwordspace_checkpoint_restore_retries_without_duplicate_effects() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -9313,29 +9257,29 @@ fn pdfinterwordspace_checkpoint_restore_retries_without_duplicate_effects() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_interword_control(&mut stores);
+        let mut control = pdftex_interword_control(stores);
         register_source(&mut control, br"\pdfinterwordspaceon\pdfinterwordspaceoff");
 
         assert_eq!(
-            control.step(&mut stores).expect("first toggle"),
+            control.step(stores).expect("first toggle"),
             MainControlStep::Continue
         );
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("quiescent toggle state checkpoints");
         assert_eq!(
-            control.step(&mut stores).expect("second toggle"),
+            control.step(stores).expect("second toggle"),
             MainControlStep::Continue
         );
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("toggle state restores");
         assert_eq!(
-            control.step(&mut stores).expect("second toggle retries"),
+            control.step(stores).expect("second toggle retries"),
             MainControlStep::Continue
         );
 
@@ -9371,7 +9315,7 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
     ];
 
     for mode in MODES {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             crate::test_harness::assign_int_param(
                 stores,
                 IntParam::PDF_OUTPUT,
@@ -9379,12 +9323,12 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
                 tex_state::AssignmentScope::Global,
             )
             .expect("integer parameter assignment");
-            let mut control = pdftex_interword_control(&mut stores);
+            let mut control = pdftex_interword_control(stores);
             if mode != Mode::Vertical {
                 control.modes.push(mode).expect("test mode push");
             }
             register_source(&mut control, br"\pdfrunninglinkoff\pdfrunninglinkon");
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
             let toggles = control
                 .modes
@@ -9404,7 +9348,7 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
         });
     }
 
-    crate::test_harness::with_nonstop_plain_universe(|mut grouped_stores| {
+    crate::test_harness::with_nonstop_plain_universe(|grouped_stores| {
         crate::test_harness::assign_int_param(
             grouped_stores,
             IntParam::PDF_OUTPUT,
@@ -9412,9 +9356,9 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut grouped = pdftex_interword_control(&mut grouped_stores);
+        let mut grouped = pdftex_interword_control(grouped_stores);
         register_source(&mut grouped, br"{\pdfrunninglinkoff\pdfrunninglinkon}");
-        run_to_end(&mut grouped, &mut grouped_stores);
+        run_to_end(&mut grouped, grouped_stores);
         assert!(matches!(
             grouped.modes.current_list().nodes(),
             [
@@ -9427,7 +9371,7 @@ fn pdfrunninglink_controls_are_operand_free_any_mode_ordered_whatsits() {
 
 #[test]
 fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -9441,17 +9385,17 @@ fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
             global,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
         );
-        let mut control = pdftex_interword_control(&mut stores);
+        let mut control = pdftex_interword_control(stores);
         register_source(&mut control, br"\global\pdfrunninglinkoff");
 
         assert_eq!(
-            control.step(&mut stores).expect("prefix recovery"),
+            control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
         assert!(control.modes.current_list().nodes().is_empty());
-        assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+        assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control.step(&mut stores).expect("replayed extension"),
+            control.step(stores).expect("replayed extension"),
             MainControlStep::Continue
         );
         assert!(matches!(
@@ -9459,11 +9403,11 @@ fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
             [Node::Whatsit(Whatsit::PdfRunningLink(false))]
         ));
 
-        crate::test_harness::with_nonstop_plain_universe(|mut dvi_stores| {
-            let mut dvi_control = pdftex_interword_control(&mut dvi_stores);
+        crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
+            let mut dvi_control = pdftex_interword_control(dvi_stores);
             register_source(&mut dvi_control, br"\pdfrunninglinkon");
             assert!(matches!(
-                dvi_control.step(&mut dvi_stores),
+                dvi_control.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfrunninglinkon"))
             ));
             assert!(dvi_control.modes.current_list().nodes().is_empty());
@@ -9473,7 +9417,7 @@ fn pdfrunninglink_rejects_prefixes_and_dvi_mode_before_appending() {
 
 #[test]
 fn pdfrunninglink_checkpoint_restore_retries_without_duplicate_whatsits() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -9481,29 +9425,29 @@ fn pdfrunninglink_checkpoint_restore_retries_without_duplicate_whatsits() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_interword_control(&mut stores);
+        let mut control = pdftex_interword_control(stores);
         register_source(&mut control, br"\pdfrunninglinkoff\pdfrunninglinkon");
 
         assert_eq!(
-            control.step(&mut stores).expect("first toggle"),
+            control.step(stores).expect("first toggle"),
             MainControlStep::Continue
         );
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("running-link toggle checkpoints");
         assert_eq!(
-            control.step(&mut stores).expect("second toggle"),
+            control.step(stores).expect("second toggle"),
             MainControlStep::Continue
         );
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("running-link toggle restores");
         assert_eq!(
-            control.step(&mut stores).expect("second toggle retries"),
+            control.step(stores).expect("second toggle retries"),
             MainControlStep::Continue
         );
 
@@ -9533,7 +9477,7 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
     ];
 
     for mode in MODES {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             crate::test_harness::assign_int_param(
                 stores,
                 IntParam::PDF_OUTPUT,
@@ -9564,7 +9508,7 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
                     tex_state::AssignmentScope::Global,
                 )
                 .expect("fixture macro assignment"));
-            let mut control = pdftex_interword_control(&mut stores);
+            let mut control = pdftex_interword_control(stores);
             // These synthetic open modes exercise only the assignment. They
             // are an authored fragment, so stop at root EOF without inventing
             // a mode-specific final-cleanup sequence or silently adding `\end`.
@@ -9573,7 +9517,7 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
                 control.modes.push(mode).expect("test mode push");
             }
             register_source(&mut control, br"{\pdfspacefont{\n-space}}X");
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
             assert!(control.fatal_error().is_none(), "mode {mode:?}");
         });
@@ -9582,7 +9526,7 @@ fn pdfspacefont_scans_expanded_balanced_text_globally_in_every_mode() {
 
 #[test]
 fn pdfspacefont_rejects_prefixes_and_dvi_mode_before_scanning() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -9596,24 +9540,24 @@ fn pdfspacefont_rejects_prefixes_and_dvi_mode_before_scanning() {
             global,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Global),
         );
-        let mut control = pdftex_interword_control(&mut stores);
+        let mut control = pdftex_interword_control(stores);
         register_source(&mut control, br"\global\pdfspacefont{selected}");
 
         assert_eq!(
-            control.step(&mut stores).expect("prefix recovery"),
+            control.step(stores).expect("prefix recovery"),
             MainControlStep::Continue
         );
-        assert!(terminal_text(&stores).contains("You can't use a prefix with"));
+        assert!(terminal_text(stores).contains("You can't use a prefix with"));
         assert_eq!(
-            control.step(&mut stores).expect("replayed extension"),
+            control.step(stores).expect("replayed extension"),
             MainControlStep::Continue
         );
 
-        crate::test_harness::with_nonstop_plain_universe(|mut dvi_stores| {
-            let mut dvi_control = pdftex_interword_control(&mut dvi_stores);
+        crate::test_harness::with_nonstop_plain_universe(|dvi_stores| {
+            let mut dvi_control = pdftex_interword_control(dvi_stores);
             register_source(&mut dvi_control, br"\pdfspacefont{unscanned}");
             assert!(matches!(
-                dvi_control.step(&mut dvi_stores),
+                dvi_control.step(dvi_stores),
                 Err(ExecError::PdfExtensionInDviMode("pdfspacefont"))
             ));
         });
@@ -9622,7 +9566,7 @@ fn pdfspacefont_rejects_prefixes_and_dvi_mode_before_scanning() {
 
 #[test]
 fn pdfspacefont_checkpoint_restore_retries_the_global_selection_atomically() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::PDF_OUTPUT,
@@ -9630,31 +9574,31 @@ fn pdfspacefont_checkpoint_restore_retries_the_global_selection_atomically() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = pdftex_interword_control(&mut stores);
+        let mut control = pdftex_interword_control(stores);
         register_source(&mut control, br"\pdfspacefont{first}\pdfspacefont{second}");
 
         assert_eq!(
-            control.step(&mut stores).expect("first selection"),
+            control.step(stores).expect("first selection"),
             MainControlStep::Continue
         );
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("space-font state checkpoints");
         assert_eq!(
-            control.step(&mut stores).expect("second selection"),
+            control.step(stores).expect("second selection"),
             MainControlStep::Continue
         );
         let selected = stores.journal_cursor().expect("selected state cursor");
 
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("space-font state restores");
         assert_eq!(
-            control.step(&mut stores).expect("second selection retries"),
+            control.step(stores).expect("second selection retries"),
             MainControlStep::Continue
         );
         assert_eq!(
@@ -9730,11 +9674,11 @@ fn macro_parameter_errors_have_distinct_tex82_diagnostics_and_commit_scope() {
     ];
 
     for case in cases {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             register_source(&mut control, case.source);
-            run_to_end(&mut control, &mut stores);
-            let output = terminal_text(&stores);
+            run_to_end(&mut control, stores);
+            let output = terminal_text(stores);
             for line in case.required {
                 assert!(
                     output.contains(line),
@@ -9775,16 +9719,16 @@ fn macro_tenth_parameter_reports_exact_limit_error() {
     // reports the fixed limit diagnostic, and continues scanning the
     // definition. The resulting macro therefore still has exactly the nine
     // legal parameters and can be called normally.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\nonstopmode\def\nine#1#2#3#4#5#6#7#8#9#0{[#1#9]}\message{RESULT:\nine abcdefghi}\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         for exact_line in [
             "! You already have nine parameters.",
             "I'm going to ignore the # sign you just used,",
@@ -9851,13 +9795,13 @@ fn observed_box_packaging_commits_geometry_at_the_operation_boundary() {
     // dimensions. The observer sees those transitions only after each
     // enclosing command operation commits; no Universe-owned queue is
     // involved.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\setbox0=\hbox{}\setbox1=\vbox{}\end");
         let mut observations = GeometryObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(&mut stores, &mut observations)
+                .step_with_observer(stores, &mut observations)
                 .expect("box packaging executes")
             {
                 MainControlStep::End | MainControlStep::EndOfInput => break,
@@ -9911,11 +9855,11 @@ fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
     // e-TeX §275: `eq_word_define` returns immediately when extended mode
     // locally assigns the value already present. The negative controls pin
     // that a changed local value and an identical global value still commit.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
         register_source(
             &mut control,
@@ -9924,7 +9868,7 @@ fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(&mut stores, &mut observations)
+                .step_with_observer(stores, &mut observations)
                 .expect("e-TeX integer-parameter reassignments execute")
             {
                 MainControlStep::End | MainControlStep::EndOfInput => break,
@@ -9968,18 +9912,18 @@ fn etex_sparse_word_reassignment_retains_its_observed_boundary() {
     // `sa_w_def`, not §§277-278's dense `eq_word_define`. The canonical
     // oracle observes the sparse assignment boundary even when its value is
     // the default; dense identical assignments retain their shortcut.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
         register_source(
             &mut control,
             br"{\count0=0 \dimen0=0pt \count300=0 \dimen301=0pt}\end",
         );
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         let mutations: Vec<_> = observations
             .0
@@ -10020,11 +9964,11 @@ fn etex_sparse_register_reads_keep_the_extended_index_after_group_exit() {
     // `scan_register_num`. Keep the real sparse value and the independently
     // chosen register-zero sentinel distinct so an eight-bit recovery cannot
     // masquerade as a state-restoration failure.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
         register_source(
             &mut control,
@@ -10032,7 +9976,7 @@ fn etex_sparse_register_reads_keep_the_extended_index_after_group_exit() {
            \begingroup{\tracingassigns=1\count2000=0}\count2001=5
            \ifnum\count2000=0 \global\count0=17\fi\endgroup\end",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             stores.int_param(IntParam::ETEX_EXTENDED_MODE),
@@ -10052,11 +9996,11 @@ fn etex_sparse_register_reads_keep_the_extended_index_after_group_exit() {
 fn etex_toks_assignment_and_rhs_keep_sparse_register_indices() {
     // e-TeX 2.6 [49.1226--1227] uses `scan_register_num` for both the direct
     // token-register assignment target and a direct token-register RHS.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(&mut control, br"\toks2000={a b c} \toks2001=\toks2000 \end");
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         let mutations = observations
             .0
@@ -10104,11 +10048,11 @@ fn etex_dense_token_list_reassignments_use_eq_define_shortcut() {
     // retains its independently observed assignment boundary.
     let source = br"{\toks20={} \everypar={} \toks300={}
                       \global\toks20={} \global\everypar={}}\end";
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(&mut control, source);
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         let mutations = observations
             .0
@@ -10132,11 +10076,11 @@ fn etex_dense_token_list_reassignments_use_eq_define_shortcut() {
             ]
         );
 
-        crate::test_harness::with_nonstop_plain_universe(|mut tex82| {
-            let mut tex82_control = MainControl::tex82_initex(&mut tex82);
+        crate::test_harness::with_nonstop_plain_universe(|tex82| {
+            let mut tex82_control = MainControl::tex82_initex(tex82);
             register_source(&mut tex82_control, br"\toks20={} \everypar={} \end");
             let mut tex82_observations = ObservationRecorder::default();
-            run_to_end_observed(&mut tex82_control, &mut tex82, &mut tex82_observations);
+            run_to_end_observed(&mut tex82_control, tex82, &mut tex82_observations);
             assert_eq!(
                 tex82_observations
                     .0
@@ -10155,12 +10099,12 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
     // TeX82 §1226 maps a braced scan with `link(def_ref)=null` to
     // `undefined_cs,null`, while a nonempty scan installs `call,def_ref`.
     // Sections 275--283 then restore the exact outer pointer at group exit.
-    crate::test_harness::with_nonstop_plain_universe(|mut empty_stores| {
-        let mut empty_control = MainControl::tex82_initex(&mut empty_stores);
+    crate::test_harness::with_nonstop_plain_universe(|empty_stores| {
+        let mut empty_control = MainControl::tex82_initex(empty_stores);
         register_source(&mut empty_control, br"\everypar={}\end");
         assert_eq!(
             empty_control
-                .step(&mut empty_stores)
+                .step(empty_stores)
                 .expect("empty assignment executes"),
             MainControlStep::Continue
         );
@@ -10172,13 +10116,11 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
             "a braced empty assignment must store TeX's null pointer"
         );
 
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             register_source(&mut control, br"\everypar={A}{\everypar={}}\end");
             assert_eq!(
-                control
-                    .step(&mut stores)
-                    .expect("nonempty assignment executes"),
+                control.step(stores).expect("nonempty assignment executes"),
                 MainControlStep::Continue
             );
             let outer = admitted!(stores, |context| context
@@ -10193,12 +10135,12 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
                 })]
             );
             assert_eq!(
-                control.step(&mut stores).expect("group opens"),
+                control.step(stores).expect("group opens"),
                 MainControlStep::Continue
             );
             assert_eq!(
                 control
-                    .step(&mut stores)
+                    .step(stores)
                     .expect("scoped empty assignment executes"),
                 MainControlStep::Continue
             );
@@ -10209,7 +10151,7 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
                 None
             );
             assert_eq!(
-                control.step(&mut stores).expect("group closes"),
+                control.step(stores).expect("group closes"),
                 MainControlStep::Continue
             );
             assert_eq!(
@@ -10228,15 +10170,15 @@ fn etex_sparse_setbox_observes_delayed_and_immediate_commits() {
     // unsaved. e-TeX 2.6 [47.1077] sends targets above 255 through [53a]'s
     // `sa_def_box`, so those delayed writes (and immediate void operands) are
     // sparse mutation boundaries; the dense `eq_define` target stays silent.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             br"{\setbox20=\hbox{} \setbox300=\hbox{}
              \global\setbox301=\vbox{} \setbox302=\box0}\end",
         );
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         let mutations = observations
             .0
@@ -10273,8 +10215,8 @@ fn etex_sparse_setbox_observes_delayed_and_immediate_commits() {
 fn etex_sparse_copy_keeps_a_nested_constructed_source_box() {
     // TeX82 §§1079--1081 make `\copy` a non-destructive read. e-TeX 2.6
     // [47.1077] extends the same operation to sparse box registers.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             br"\nonstopmode
@@ -10283,7 +10225,7 @@ fn etex_sparse_copy_keeps_a_nested_constructed_source_box() {
            \setbox32103=\copy32101 \end",
         );
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         let mutations = observations
             .0
@@ -10308,15 +10250,15 @@ fn etex_sparse_box_dimension_assignment_is_visible_to_internal_scans() {
     // e-TeX 2.6 [49.1247] widens `alter_box_dimen` with
     // `scan_register_num`; [26.420] uses the same sparse fetch when `\ht`
     // is subsequently scanned as an internal dimension.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             br"\setbox32101=\hbox{} \ht32101=2pt
            \ifdim\ht32101=2pt \count0=1\fi \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             admitted!(stores, |context| context
@@ -10333,17 +10275,17 @@ fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     // fullword eqtb location, including the code tables. The nested identical
     // assignment must not create a save-stack entry that can roll back over
     // the later global assignment.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
         register_source(&mut control, br"{\lccode`A=`a \global\lccode`A=`z}\end");
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(&mut stores, &mut observations)
+                .step_with_observer(stores, &mut observations)
                 .expect("e-TeX code-table reassignments execute")
             {
                 MainControlStep::End | MainControlStep::EndOfInput => break,
@@ -10385,11 +10327,11 @@ fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
     // specification to the shared `zero_glue` pointer before that test.
     // Separately scanned equal nonzero literals remain distinct pointers and
     // are the negative control.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
         register_source(
             &mut control,
@@ -10398,7 +10340,7 @@ fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(&mut stores, &mut observations)
+                .step_with_observer(stores, &mut observations)
                 .expect("e-TeX glue-parameter reassignments execute")
             {
                 MainControlStep::End | MainControlStep::EndOfInput => break,
@@ -10439,11 +10381,11 @@ fn etex_glue_expression_reassignment_retains_source_pointer_identity() {
     // reassignment. An equal literal, an expression that applies an operator,
     // and a global assignment are controls: all allocate or define and remain
     // observable.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
         register_source(
         &mut control,
@@ -10452,7 +10394,7 @@ fn etex_glue_expression_reassignment_retains_source_pointer_identity() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(&mut stores, &mut observations)
+                .step_with_observer(stores, &mut observations)
                 .expect("e-TeX glue-expression reassignments execute")
             {
                 MainControlStep::End | MainControlStep::EndOfInput => break,
@@ -10482,18 +10424,18 @@ fn etex_sparse_skip_reassignment_keeps_sa_def_mutation_boundary() {
     // Its identical-pointer branch avoids saving or rewriting the element but
     // still completes the sparse assignment boundary, unlike §§277-278's
     // dense `eq_define` shortcut.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
         register_source(
             &mut control,
             br"\skipdef\alias=32767 \alias=1pt \alias=\glueexpr\alias\relax \end",
         );
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         let mutations = observations
             .0
@@ -10542,8 +10484,8 @@ fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_va
 
     for (name, kind) in ARRAYS {
         for mode in MODES {
-            crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-                let mut control = etex_initex(&mut stores);
+            crate::test_harness::with_nonstop_plain_universe(|stores| {
+                let mut control = etex_initex(stores);
                 if mode != Mode::Vertical {
                     control.modes.push(mode).expect("test mode push");
                 }
@@ -10551,7 +10493,7 @@ fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_va
                 register_source(&mut control, source.as_bytes());
 
                 assert_eq!(
-                    control.step(&mut stores).expect("penalty array assignment"),
+                    control.step(stores).expect("penalty array assignment"),
                     MainControlStep::Continue,
                     "selector {name}, mode {mode:?}"
                 );
@@ -10567,7 +10509,7 @@ fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_va
                 assert_eq!(control.current_mode(), mode);
 
                 assert_eq!(
-                    control.step(&mut stores).expect("following assignment"),
+                    control.step(stores).expect("following assignment"),
                     MainControlStep::Continue,
                     "selector {name}, mode {mode:?}"
                 );
@@ -10585,8 +10527,8 @@ fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_va
 fn etex_penalty_array_mutations_use_their_extended_token_register_slots() {
     // e-TeX 2.6 [17.230] inserts these eqtb entries after the 256 dense token
     // registers, and [49.1248] assigns each with `define`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             br"\interlinepenalties=1 10
@@ -10595,7 +10537,7 @@ fn etex_penalty_array_mutations_use_their_extended_token_register_slots() {
            \global\displaywidowpenalties=1 40 \end",
         );
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         let mutations = observations
             .0
@@ -10631,12 +10573,12 @@ fn etex_vertical_box_normal_paragraph_observes_interline_penalty_reset() {
     // the interline-penalty array. TeX82 §§1070/1085 invoke it for vertical
     // boxes, while an hbox must leave the array alone.
     for (box_command, expected_mutations) in [("vbox", 2), ("vtop", 2), ("hbox", 1)] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = etex_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = etex_initex(stores);
             let source = format!(r"\interlinepenalties=1 10 \setbox0=\{box_command}{{}} \end");
             register_source(&mut control, source.as_bytes());
             let mut observations = ObservationRecorder::default();
-            run_to_end_observed(&mut control, &mut stores, &mut observations);
+            run_to_end_observed(&mut control, stores, &mut observations);
 
             let mutations = observations
                 .0
@@ -10659,8 +10601,8 @@ fn etex_vertical_box_normal_paragraph_observes_interline_penalty_reset() {
 
 #[test]
 fn etex_nonpositive_penalty_array_counts_clear_without_consuming_following_tokens() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             br"\interlinepenalties=1 11 \interlinepenalties=0
@@ -10670,7 +10612,7 @@ fn etex_nonpositive_penalty_array_counts_clear_without_consuming_following_token
            \count0=19 \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         for kind in [
             PenaltyArrayKind::InterLine,
@@ -10693,8 +10635,8 @@ fn etex_nonpositive_penalty_array_counts_clear_without_consuming_following_token
 
 #[test]
 fn etex_penalty_array_scope_enquiries_and_afterassignment_match_set_shape() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(
             &mut control,
             br"\clubpenalties=2 200 100
@@ -10709,7 +10651,7 @@ fn etex_penalty_array_scope_enquiries_and_afterassignment_match_set_shape() {
            \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             admitted!(stores, |context| context
@@ -10756,19 +10698,19 @@ fn etex_penalty_array_scope_enquiries_and_afterassignment_match_set_shape() {
 
 #[test]
 fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         register_source(&mut control, br"\clubpenalties=2 7 5 \count0=23 \end");
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("penalty array state checkpoints");
 
         assert_eq!(
-            control.step(&mut stores).expect("first assignment"),
+            control.step(stores).expect("first assignment"),
             MainControlStep::Continue
         );
         assert_eq!(
@@ -10779,7 +10721,7 @@ fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
         let assigned_hash = stores.journal_cursor().expect("state cursor");
 
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("penalty array state restores");
         assert!(
             admitted!(stores, |context| context
@@ -10789,7 +10731,7 @@ fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
         assert_eq!(stores.count(0).expect("count register"), 0);
 
         assert_eq!(
-            control.step(&mut stores).expect("retried assignment"),
+            control.step(stores).expect("retried assignment"),
             MainControlStep::Continue
         );
         assert_eq!(
@@ -10802,7 +10744,7 @@ fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
             vec![7, 5]
         );
         assert_eq!(
-            control.step(&mut stores).expect("following assignment"),
+            control.step(stores).expect("following assignment"),
             MainControlStep::Continue
         );
         assert_eq!(stores.count(0).expect("count register"), 23);
@@ -10821,8 +10763,8 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
     ];
 
     for mode in MODES {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             if mode != Mode::Vertical {
                 control.modes.push(mode).expect("test mode push");
             }
@@ -10831,7 +10773,7 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
             let mut observations = ObservationRecorder::default();
             assert_eq!(
                 control
-                    .step_with_observer(&mut stores, &mut observations)
+                    .step_with_observer(stores, &mut observations)
                     .expect("mode-independent assignment dispatches"),
                 MainControlStep::Continue,
                 "mode {mode:?}"
@@ -10863,7 +10805,7 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
             observations.0.clear();
             assert_eq!(
                 control
-                    .step_with_observer(&mut stores, &mut observations)
+                    .step_with_observer(stores, &mut observations)
                     .expect("following command remains available"),
                 MainControlStep::Continue,
                 "mode {mode:?}"
@@ -10894,25 +10836,25 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
 
 #[test]
 fn main_control_error_privilege_and_stop_paths_are_finite() {
-    crate::test_harness::with_nonstop_plain_universe(|mut internal_stores| {
-        let mut internal = MainControl::tex82_initex(&mut internal_stores);
+    crate::test_harness::with_nonstop_plain_universe(|internal_stores| {
+        let mut internal = MainControl::tex82_initex(internal_stores);
         internal
             .modes
             .push(Mode::InternalVertical)
             .expect("test mode push");
         register_source(&mut internal, br"\end\count0=9");
-        run_to_end(&mut internal, &mut internal_stores);
+        run_to_end(&mut internal, internal_stores);
         assert_eq!(internal_stores.count(0).expect("count register"), 9);
         assert_eq!(internal.current_mode(), Mode::InternalVertical);
-        assert!(terminal_text(&internal_stores).contains("can't use `\\end'"));
+        assert!(terminal_text(internal_stores).contains("can't use `\\end'"));
 
-        crate::test_harness::with_nonstop_plain_universe(|mut page_stores| {
-            let mut page = MainControl::tex82_initex(&mut page_stores);
+        crate::test_harness::with_nonstop_plain_universe(|page_stores| {
+            let mut page = MainControl::tex82_initex(page_stores);
             register_source(&mut page, br"\hrule\end");
             let mut observations = ObservationRecorder::default();
             for _ in 0..32 {
                 if matches!(
-                    page.step_with_observer(&mut page_stores, &mut observations)
+                    page.step_with_observer(page_stores, &mut observations)
                         .expect("page stop remains finite"),
                     MainControlStep::End | MainControlStep::EndOfInput
                 ) {
@@ -10933,16 +10875,16 @@ fn illegal_case_command_spelling_uses_live_escapechar() {
     // TeX82 §§63, 298, and 1049: `you_cant` renders the rejected command
     // through `print_cmd_chr`; its primitive cases use `print_esc`, whose
     // escape prefix is omitted when `\escapechar` is outside 0..255.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control
             .modes
             .push(Mode::InternalVertical)
             .expect("test mode push");
         register_source(&mut control, br"\escapechar=256\end");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(
             terminal.contains("You can't use `end' in internal vertical mode"),
             "{terminal:?}"
@@ -10956,9 +10898,9 @@ fn openin_closein_replace_stream_state_and_apply_filename_rules() {
     // TeX82 §§1272--1275 close an existing stream before replacement, retain
     // an explicit extension, supply `.tex` only when the extension is empty,
     // and make `\closein` restore the stream's closed/EOF state.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         for (name, bytes) in [("first.tex", &b"one"[..]), ("second.dat", &b"two"[..])] {
             control.capabilities_mut().register_input(
                 name,
@@ -10969,7 +10911,7 @@ fn openin_closein_replace_stream_state_and_apply_filename_rules() {
             &mut control,
             br"\openin3=first \read3 to \first \openin3=second.dat \read3 to \second \closein3\end",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(
             macro_semantic_tokens(stores, "first")[0],
             Token::Char {
@@ -10999,7 +10941,7 @@ fn openin_closein_replace_stream_state_and_apply_filename_rules() {
 /// `end_match`.
 #[test]
 fn a_macro_context_level_names_the_macro_and_shows_its_parameter_text() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             tex_state::env::banks::IntParam::new(54),
@@ -11007,10 +10949,10 @@ fn a_macro_context_level_names_the_macro_and_shows_its_parameter_text() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\def\a#1{ x #1 \undefinedthing y}\a{Q}\end");
-        run_to_end(&mut control, &mut stores);
-        let terminal = terminal_text(&stores);
+        run_to_end(&mut control, stores);
+        let terminal = terminal_text(stores);
         assert!(
             terminal.contains("\\a #1-> x #1 \\undefinedthing \n"),
             "{terminal}"
@@ -11028,21 +10970,21 @@ fn readline_assignment_trace_precedes_the_next_command_trace() {
     // TeX82 §1225 calls `define(p,call,cur_val)` as soon as `read_toks`
     // returns. e-TeX [17.687-750] therefore renders both halves of that eqtb
     // write before §299 can trace the following command.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
         stores
             .world_mut()
             .push_memory_terminal_line("replacement")
             .expect("terminal line queues");
-        let mut control = etex_initex(&mut stores);
+        let mut control = etex_initex(stores);
         register_source(
         &mut control,
         br"\def\line{\begingroup\scantokens{\message{level=\the\currentgrouplevel}}}\tracingassigns=1\tracingcommands=2\readline16to\line\endlinechar=-1\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let log = pending_sink_text(&stores, false);
+        let log = pending_sink_text(stores, false);
         let changing = log
             .find("{changing \\line =macro:->\\begingroup \\scantokens {\\message \\ETC.}")
             .unwrap_or_else(|| panic!("missing read target pre-image: {log:?}"));
@@ -11058,11 +11000,11 @@ fn readline_assignment_trace_precedes_the_next_command_trace() {
 
 #[test]
 fn a_stray_right_brace_names_the_group_opener_it_replaced() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\hbox{$x}$}\begingroup}\end");
-        run_to_end(&mut control, &mut stores);
-        let terminal = terminal_text(&stores);
+        run_to_end(&mut control, stores);
+        let terminal = terminal_text(stores);
         assert!(
             terminal.contains("! Extra }, or forgotten $."),
             "{terminal}"
@@ -11081,11 +11023,11 @@ fn extra_right_brace_in_an_argument_names_the_macro() {
     // `\\par` is inserted, and `ins_error` reports "Argument of \\a has an
     // extra }" -- `sprint_cs(warning_index)`, the macro whose argument was
     // being matched, not a placeholder.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\def\a#1{[#1]}\a}\end");
-        run_to_end(&mut control, &mut stores);
-        let terminal = terminal_text(&stores);
+        run_to_end(&mut control, stores);
+        let terminal = terminal_text(stores);
         assert!(
             terminal.contains(
                 "! Argument of \\a has an extra }.\n<inserted text> \n                \\par "
@@ -11108,19 +11050,19 @@ fn out_of_range_read_selector_reaches_the_terminal_without_a_report() {
     // the never-open stream whose §483 branch is the terminal. Stream 16 is
     // therefore an ordinary terminal read, not a recovered zero, and nothing
     // is reported.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
         stores
             .world_mut()
             .push_memory_terminal_line("recovered")
             .expect("terminal line queues");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\read16 to \line\end");
         let mut observations = ObservationRecorder::default();
         for _ in 0..64 {
             if matches!(
                 control
-                    .step_with_observer(&mut stores, &mut observations)
+                    .step_with_observer(stores, &mut observations)
                     .expect("recovered read remains executable"),
                 MainControlStep::End | MainControlStep::EndOfInput
             ) {
@@ -11135,7 +11077,7 @@ fn out_of_range_read_selector_reaches_the_terminal_without_a_report() {
                 cat: Catcode::Letter,
             }
         );
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert!(!terminal.contains("Bad number"), "{terminal}");
         let integer = observations
             .0
@@ -11169,7 +11111,7 @@ fn read_to_definition_preserves_effective_scope_and_replay() {
     // TeX82 §§1214/1225 select scope before `read_toks`, then install its
     // parameterless macro after collection. Exercise explicit prefixes and
     // both `\globaldefs` overrides through ordinary replay.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         // `\read-1` first reports §433's out-of-range stream number. Keep this
         // scope/replay test in scroll mode so §82's error-stop dialog does not
         // canonically consume the terminal lines intended for the reads.
@@ -11180,12 +11122,12 @@ fn read_to_definition_preserves_effective_scope_and_replay() {
                 .push_memory_terminal_line(line)
                 .expect("memory terminal accepts a line");
         }
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\def\local{old}{\read-1to\local}\def\explicit{old}{\global\read-1to\explicit}\globaldefs=1\def\forcedglobal{old}{\read-1to\forcedglobal}\globaldefs=-1\gdef\forcedlocal{old}{\global\read-1to\forcedlocal}\globaldefs=0\end",
     );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             macro_semantic_tokens(stores, "local")[0],
@@ -11222,13 +11164,13 @@ fn read_to_definition_preserves_effective_scope_and_replay() {
 fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() {
     // TeX82 §1225 commits `define(p,call,cur_val)` before §1211 reaches
     // §1269's `done:` and backs up the saved afterassignment token.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
         stores
             .world_mut()
             .push_memory_terminal_line("alpha")
             .expect("memory terminal accepts a line");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\def\target{old}\afterassignment\relax\global\read-1to\target\end",
@@ -11237,7 +11179,7 @@ fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() 
         loop {
             if matches!(
                 control
-                    .step_with_observer(&mut stores, &mut observations)
+                    .step_with_observer(stores, &mut observations)
                     .expect("read and its replay execute"),
                 MainControlStep::End | MainControlStep::EndOfInput
             ) {
@@ -11293,14 +11235,14 @@ fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() 
 
 #[test]
 fn message_expands_balanced_text_and_applies_terminal_line_spacing() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\def\value{expanded}\message{left {\value} right}\count0=7\end",
         );
-        run_to_end(&mut control, &mut stores);
-        assert_eq!(terminal_text(&stores), "left {expanded} right");
+        run_to_end(&mut control, stores);
+        assert_eq!(terminal_text(stores), "left {expanded} right");
         assert_eq!(
             stores.count(0).expect("count register"),
             7,
@@ -11313,27 +11255,27 @@ fn message_expands_balanced_text_and_applies_terminal_line_spacing() {
 fn message_slow_prints_nonprintable_character_tokens() {
     // tex.web §§59, 1279: message text is a string, so character 13 uses the
     // one-character string spelling rather than §58's raw `print_char` path.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\newlinechar=10\message{READLINE:[macro:->Alpha ^^M]}\end",
         );
-        run_to_end(&mut control, &mut stores);
-        assert_eq!(terminal_text(&stores), "READLINE:[macro:->Alpha ^^M]");
+        run_to_end(&mut control, stores);
+        assert_eq!(terminal_text(stores), "READLINE:[macro:->Alpha ^^M]");
     });
 }
 
 #[test]
 fn errmessage_selects_user_or_once_only_builtin_help_and_clears_flag() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\def\value{expanded}\errmessage{bad \value}\count0=8\end",
         );
-        run_to_end(&mut control, &mut stores);
-        let output = terminal_text(&stores);
+        run_to_end(&mut control, stores);
+        let output = terminal_text(stores);
         assert_eq!(output.matches("! bad expanded.").count(), 1, "{output}");
         assert_eq!(
             stores.count(0).expect("count register"),
@@ -11348,13 +11290,13 @@ fn case_shift_preserves_raw_token_structure_at_code_table_boundaries() {
     // TeX82 §§1285--1289 scan unexpanded general text. §1288 substitutes
     // only character-token codes, preserving their command/category; zero
     // table entries and control-sequence tokens remain byte-for-byte tokens.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\uccode`!=`Z\lccode`?=`y\catcode126=13\uccode126=88\uppercase{\gdef\up{!\relax}}\lowercase{\gdef\down{?\relax}}\uppercase{\gdef\active{~}}\uppercase{\gdef\zero{@}}\end",
     );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert!(matches!(
             macro_semantic_tokens(stores, "up").as_slice(),
             [
@@ -11391,14 +11333,14 @@ fn case_shift_preserves_raw_token_structure_at_code_table_boundaries() {
 
 #[test]
 fn show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\def\shown{expanded}\show\shown\count0=17\showthe\count0\setbox0=\hbox{}\showbox0\end",
     );
-        run_to_end(&mut control, &mut stores);
-        let output = terminal_text(&stores);
+        run_to_end(&mut control, stores);
+        let output = terminal_text(stores);
         // §296's `print_meaning` breaks the line after a macro's `:`, so the
         // replacement text starts its own line under `\show` (but not under
         // `\meaning`, which runs the same routine at §471's `new_string`
@@ -11421,7 +11363,7 @@ fn show_uses_print_nl_at_closed_terminal_and_log_selector_boundaries() {
         tex_state::InteractionMode::Scroll,
         tex_state::InteractionMode::ErrorStop,
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             stores.set_interaction_mode(mode);
             crate::test_harness::assign_int_param(
                 stores,
@@ -11437,13 +11379,13 @@ fn show_uses_print_nl_at_closed_terminal_and_log_selector_boundaries() {
                     .expect("memory terminal accepts the show response");
             }
             stores.printer().print("\\show\\errorstopmode").print_ln();
-            let mut control = MainControl::tex82_initex(&mut stores);
+            let mut control = MainControl::tex82_initex(stores);
             stores.set_interaction_mode(mode);
             register_source(&mut control, br"\show\errorstopmode\end");
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
-            let terminal = pending_sink_text(&stores, true);
-            let log = pending_sink_text(&stores, false);
+            let terminal = pending_sink_text(stores, true);
+            let log = pending_sink_text(stores, false);
             let expected = "\\show\\errorstopmode\n> \\errorstopmode=\\errorstopmode.";
             if mode == tex_state::InteractionMode::Batch {
                 assert_eq!(terminal, "", "batch mode wrote terminal records");
@@ -11465,17 +11407,17 @@ fn show_uses_print_nl_at_closed_terminal_and_log_selector_boundaries() {
 fn errorstop_show_reports_live_source_context_before_prompting_and_resumes() {
     // TeX82 §§82/1293: every show common ending calls `error`, and `error`
     // shows the still-live input cursor before asking for terminal advice.
-    crate::test_harness::with_plain_universe(|mut stores| {
+    crate::test_harness::with_plain_universe(|stores| {
         stores
             .world_mut()
             .push_memory_terminal_line("s")
             .expect("memory terminal accepts the show response");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\show\errorstopmode\count0=23\end");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert!(
             output.contains("l.1 \\show\\errorstopmode\n                       \\count0=23\\end"),
             "{output:?}"
@@ -11502,7 +11444,7 @@ fn errorstop_show_reports_live_source_context_before_prompting_and_resumes() {
 fn error_stop_deletes_requested_tokens_before_retry() {
     // TeX82 §§84--85: a one- or two-digit response consumes that many
     // unexpanded tokens, displays the resulting context, and prompts again.
-    crate::test_harness::with_plain_universe(|mut stores| {
+    crate::test_harness::with_plain_universe(|stores| {
         stores
             .world_mut()
             .push_memory_terminal_line("2")
@@ -11511,17 +11453,17 @@ fn error_stop_deletes_requested_tokens_before_retry() {
             .world_mut()
             .push_memory_terminal_line("")
             .expect("retry response queues");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\show\errorstopmode ab\count0=17\end");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             stores.count(0).expect("count register"),
             17,
             "only the two ignored letters disappear"
         );
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert_eq!(terminal.matches("? ").count(), 2, "{terminal:?}");
     });
 }
@@ -11530,7 +11472,7 @@ fn error_stop_deletes_requested_tokens_before_retry() {
 fn error_stop_inserts_replacement_line_before_suspended_input_once() {
     // TeX82 §87 opens the typed replacement as a new terminal source level;
     // it retires once, then the exact suspended source resumes underneath it.
-    crate::test_harness::with_plain_universe(|mut stores| {
+    crate::test_harness::with_plain_universe(|stores| {
         stores
             .world_mut()
             .push_memory_terminal_line("I")
@@ -11539,17 +11481,17 @@ fn error_stop_inserts_replacement_line_before_suspended_input_once() {
             .world_mut()
             .push_memory_terminal_line("\\count0=17")
             .expect("replacement line queues");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\show\errorstopmode\advance\count1 by 23\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 17);
         assert_eq!(stores.count(1).expect("count register"), 23);
-        let log = pending_sink_text(&stores, false);
+        let log = pending_sink_text(stores, false);
         assert_eq!(log.matches("\\count0=17").count(), 1, "{log:?}");
         assert!(log.contains("insert> \\count0=17\n"), "{log:?}");
     });
@@ -11560,14 +11502,14 @@ fn display_content_preserves_future_multiple_leading_newlines() {
     // The structured scanner never produces this malformed/future content.
     // If that contract expands, replay must still pass the content verbatim
     // to §62 rather than broadly deleting payload newlines.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         admitted!(stores, |context| {
             context.printer().print("closed").print_ln();
             print_display_content(context, "\n\nfuture");
         });
 
-        assert_eq!(pending_sink_text(&stores, true), "closed\n\n\nfuture");
-        assert_eq!(pending_sink_text(&stores, false), "closed\n\n\nfuture");
+        assert_eq!(pending_sink_text(stores, true), "closed\n\n\nfuture");
+        assert_eq!(pending_sink_text(stores, false), "closed\n\n\nfuture");
     });
 }
 
@@ -11575,15 +11517,15 @@ fn display_content_preserves_future_multiple_leading_newlines() {
 fn consecutive_shows_and_following_error_preserve_only_canonical_separators() {
     // TeX82 §§82/90/1293 leave one blank separator after each noninteractive
     // show completion. The following `print_nl` must not add another.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\nonstopmode\show\errorstopmode\show\scrollmode\undefined\end",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         // §82's `show_context` sits between each report's own line and the
         // separator, so the separator is what these check, not adjacency.
         assert!(
@@ -11612,13 +11554,13 @@ fn showlists_is_a_diagnostic_without_a_canonical_effect_event() {
     // The schema-v1 command stream has no detached effect for that report;
     // only actual engine effects such as messages, writes, and termination
     // are published as effect observations.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\showlists\end");
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(&mut stores, &mut observations)
+                .step_with_observer(stores, &mut observations)
                 .expect("showlists executes")
             {
                 MainControlStep::End | MainControlStep::EndOfInput => break,
@@ -11626,7 +11568,7 @@ fn showlists_is_a_diagnostic_without_a_canonical_effect_event() {
             }
         }
 
-        assert!(terminal_text(&stores).contains("### vertical mode"));
+        assert!(terminal_text(stores).contains("### vertical mode"));
         assert!(observations.0.iter().all(|observation| {
             !matches!(observation, CommandObservation::Effect(effect)
             if effect.kind != ObservationEffectKind::Terminate)
@@ -11636,14 +11578,14 @@ fn showlists_is_a_diagnostic_without_a_canonical_effect_event() {
 
 #[test]
 fn show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\def\macro{body}\show\undefined\show\relax\show\macro\end",
         );
-        run_to_end(&mut control, &mut stores);
-        let output = terminal_text(&stores);
+        run_to_end(&mut control, stores);
+        let output = terminal_text(stores);
         assert!(output.contains("> \\undefined=undefined."), "{output}");
         assert!(output.contains("> \\relax=\\relax."), "{output}");
         assert!(output.contains("> \\macro=macro:\n->body."), "{output}");
@@ -11715,11 +11657,11 @@ fn show_meaning_prints_all_named_glue_and_register_symbols() {
         \showthe\skip0\showthe\muskip0\end";
 
     for extended in [false, true] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             let mut control = if extended {
-                etex_initex(&mut stores)
+                etex_initex(stores)
             } else {
-                MainControl::tex82_initex(&mut stores)
+                MainControl::tex82_initex(stores)
             };
             register_source(&mut control, SOURCE);
 
@@ -11727,7 +11669,7 @@ fn show_meaning_prints_all_named_glue_and_register_symbols() {
             // command, assignments, and symbolic register aliases have committed.
             while stores.count(255).expect("count register") == 0 {
                 assert_eq!(
-                    control.step(&mut stores).expect("setup command executes"),
+                    control.step(stores).expect("setup command executes"),
                     MainControlStep::Continue
                 );
             }
@@ -11740,8 +11682,8 @@ fn show_meaning_prints_all_named_glue_and_register_symbols() {
                 .expect("assigned skip"));
             let muskip = admitted!(stores, |context| context.muskip(0));
 
-            run_to_end(&mut control, &mut stores);
-            let output = terminal_text(&stores);
+            run_to_end(&mut control, stores);
+            let output = terminal_text(stores);
 
             for name in GLUE_PARAMETERS {
                 assert!(
@@ -11801,14 +11743,14 @@ fn show_meaning_prints_all_named_glue_and_register_symbols() {
 
 #[test]
 fn showbox_scans_register_and_distinguishes_void_from_box_contents() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\showboxbreadth=10\showboxdepth=10\setbox0=\hbox{\kern1pt}\setbox255=\hbox{}\showbox0\showbox255\showbox1\end",
     );
-        run_to_end(&mut control, &mut stores);
-        let output = terminal_text(&stores);
+        run_to_end(&mut control, stores);
+        let output = terminal_text(stores);
         assert!(output.contains("> \\box0="), "{output}");
         assert!(output.contains("\\kern 1.0"), "{output}");
         assert!(output.contains("> \\box255="), "{output}");
@@ -11821,17 +11763,17 @@ fn showbox_scans_register_and_distinguishes_void_from_box_contents() {
 fn showbox_retains_the_node_after_a_discretionary_replacement() {
     // TeX82 §§115/162 links replacement nodes after the discretionary,
     // and §182 resumes its outer diagnostic traversal after that span.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
         &mut control,
         br"\font\f=cmr10 \f\showboxbreadth=10\showboxdepth=10\setbox0=\hbox{a\discretionary{b}{c}{d}e}\showbox0\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert!(
             output
                 .contains(".\\f a\n.\\discretionary replacing 1\n..\\f b\n.|\\f c\n.\\f d\n.\\f e"),
@@ -11845,21 +11787,21 @@ fn etex_showbox_invalid_register_checkpoint_retry_recovers_to_zero() {
     // e-TeX 2.6 etex.ch [49.1296] replaces TeX82's `scan_eight_bit_int`
     // with `scan_register_num`, whose restricted scan diagnoses -1, recovers
     // it to zero, and leaves the following token for the next command.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = etex_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
         control.set_fuel_limit(1_000).expect("bounded fuel");
         register_source(&mut control, br"\showbox-1\count0=23\end");
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("showbox checkpoints");
 
         assert_eq!(
             control
-                .step(&mut stores)
+                .step(stores)
                 .expect("invalid showbox register recovers"),
             MainControlStep::Continue
         );
@@ -11869,7 +11811,7 @@ fn etex_showbox_invalid_register_checkpoint_retry_recovers_to_zero() {
             "following assignment remains unread"
         );
         let first_hash = stores.journal_cursor().expect("state cursor");
-        let first_output = terminal_text(&stores);
+        let first_output = terminal_text(stores);
         assert!(
             first_output.contains("Bad register code (-1)"),
             "{first_output}"
@@ -11877,18 +11819,18 @@ fn etex_showbox_invalid_register_checkpoint_retry_recovers_to_zero() {
         assert!(first_output.contains("> \\box0="), "{first_output}");
 
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("showbox state restores");
         assert_eq!(
             control
-                .step(&mut stores)
+                .step(stores)
                 .expect("invalid showbox register retries identically"),
             MainControlStep::Continue
         );
         assert_eq!(stores.journal_cursor().expect("state cursor"), first_hash);
-        assert_eq!(terminal_text(&stores), first_output);
+        assert_eq!(terminal_text(stores), first_output);
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(
             stores.count(0).expect("count register"),
             23,
@@ -11902,17 +11844,17 @@ fn etex_showbox_invalid_register_checkpoint_retry_recovers_to_zero() {
 fn showthe_uses_the_toks_for_each_internal_value_family_and_releases_output() {
     // TeX82 §§262/1297: the font identifier becomes a token shown through
     // `print_cs`, whose control-word delimiter precedes the display period.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let nullfont = stores.intern("nullfont").expect("symbol interning");
         admitted!(stores, |context| context
             .set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont,));
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\count0=17\skip0=1pt plus 2fil\toks0={abc}\showthe\count0\showthe\skip0\showthe\font\showthe\toks0\end",
     );
-        run_to_end(&mut control, &mut stores);
-        let output = terminal_text(&stores);
+        run_to_end(&mut control, stores);
+        let output = terminal_text(stores);
         assert!(output.contains("> 17."), "{output}");
         assert!(output.contains("> 1.0pt plus 2.0fil."), "{output}");
         assert!(output.contains("> \\nullfont ."), "{output}");
@@ -11925,31 +11867,31 @@ fn showthe_token_lists_use_print_cs_separator_rules() {
     // TeX82 §§262/1297: `\showthe` applies `token_show`, not `\string`, to
     // token-list values. Hash-table control words always gain a separator;
     // direct-address control symbols and active characters do not.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\catcode`\~=13 \toks0={A\count1\!B\?C~D\relax\!}\showthe\toks0\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert!(
-            terminal_text(&stores).contains("> A\\count 1\\!B\\?C~D\\relax \\!."),
+            terminal_text(stores).contains("> A\\count 1\\!B\\?C~D\\relax \\!."),
             "{}",
-            terminal_text(&stores)
+            terminal_text(stores)
         );
     });
 }
 
 #[test]
 fn show_completion_routes_transcript_and_adjusts_error_count_by_interaction() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\showthe\count0\count1=9\end");
-        run_to_end(&mut control, &mut stores);
-        assert!(terminal_text(&stores).contains("> 0."));
+        run_to_end(&mut control, stores);
+        assert!(terminal_text(stores).contains("> 0."));
         assert_eq!(
             stores.count(1).expect("count register"),
             9,
@@ -11960,14 +11902,14 @@ fn show_completion_routes_transcript_and_adjusts_error_count_by_interaction() {
 
 #[test]
 fn final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\def\stop{\end}\stop");
         let mut observations = ObservationRecorder::default();
         loop {
             if matches!(
                 control
-                    .step_with_observer(&mut stores, &mut observations)
+                    .step_with_observer(stores, &mut observations)
                     .expect("final cleanup"),
                 MainControlStep::End | MainControlStep::EndOfInput
             ) {
@@ -11994,13 +11936,13 @@ fn end_and_dump_run_profile_specific_cleanup_in_observable_order() {
     // defers its announcement until the host confirms publication.
     for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
         for dump in [false, true] {
-            crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+            crate::test_harness::with_nonstop_plain_universe(|stores| {
                 let mut control = if profile == CommandProfile::ETEX26 {
-                    etex_initex(&mut stores)
+                    etex_initex(stores)
                 } else {
-                    MainControl::tex82_initex(&mut stores)
+                    MainControl::tex82_initex(stores)
                 };
-                control.begin_job(&mut stores, "lifecycle.tex");
+                control.begin_job(stores, "lifecycle.tex");
                 register_source(
                     &mut control,
                     if dump {
@@ -12011,7 +11953,7 @@ fn end_and_dump_run_profile_specific_cleanup_in_observable_order() {
                 );
 
                 let mut observations = ObservationRecorder::default();
-                run_to_end_observed(&mut control, &mut stores, &mut observations);
+                run_to_end_observed(&mut control, stores, &mut observations);
                 let ordered: Vec<_> = observations
                     .0
                     .iter()
@@ -12045,7 +11987,7 @@ fn end_and_dump_run_profile_specific_cleanup_in_observable_order() {
                 assert!(!ordered[..close].is_empty());
                 assert_eq!(&ordered[close..], ["close", "terminate"]);
 
-                let terminal = terminal_text(&stores);
+                let terminal = terminal_text(stores);
                 assert_eq!(
                     terminal.contains("entering extended mode"),
                     profile == CommandProfile::ETEX26
@@ -12054,13 +11996,9 @@ fn end_and_dump_run_profile_specific_cleanup_in_observable_order() {
                 assert!(!terminal.contains("Beginning to dump on file"));
                 if dump {
                     let mut receipt = control.format_dump_receipt().expect("dump receipt").clone();
-                    crate::confirm_format_dump_publication(
-                        &mut stores,
-                        &mut receipt,
-                        "lifecycle.fmt",
-                    );
+                    crate::confirm_format_dump_publication(stores, &mut receipt, "lifecycle.fmt");
                     assert!(
-                        terminal_text(&stores).contains("Beginning to dump on file lifecycle.fmt")
+                        terminal_text(stores).contains("Beginning to dump on file lifecycle.fmt")
                     );
                 }
             });
@@ -12070,7 +12008,7 @@ fn end_and_dump_run_profile_specific_cleanup_in_observable_order() {
 
 #[test]
 fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             IntParam::YEAR,
@@ -12092,17 +12030,17 @@ fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
             tex_state::AssignmentScope::Global,
         )
         .expect("integer parameter assignment");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         control
             .capabilities_mut()
             .set_startup_job_name("bounded-dump.tex");
         register_source(&mut control, br"\dump");
         let before = admitted!(stores, |context| context.detach_engine_usage_statistics());
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert!(control.dumped_format());
-        assert_eq!(terminal_text(&stores), "");
+        assert_eq!(terminal_text(stores), "");
         let mut receipt = control.format_dump_receipt().expect("dump receipt").clone();
         assert_eq!(receipt.format_ident.format_name, "bounded-dump");
         let retained = admitted!(stores, |context| context.detach_engine_usage_statistics());
@@ -12111,9 +12049,9 @@ fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
             retained.string_characters - before.string_characters,
             receipt.pool_string().len()
         );
-        crate::confirm_format_dump_publication(&mut stores, &mut receipt, "alternate-name.fmt");
+        crate::confirm_format_dump_publication(stores, &mut receipt, "alternate-name.fmt");
         assert_eq!(
-            terminal_text(&stores),
+            terminal_text(stores),
             "Beginning to dump on file alternate-name.fmt\n (preloaded format=bounded-dump 2026.7.9)"
         );
         assert_eq!(
@@ -12122,14 +12060,14 @@ fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
         );
 
         let detached = control
-            .take_format_dump(&stores)
+            .take_format_dump(stores)
             .expect("quiescent dump capture")
             .expect("successful INITEX dump");
         assert_eq!(detached.receipt.format_ident.format_name, "bounded-dump");
         assert!(!detached.image.as_bytes().is_empty());
         assert!(
             control
-                .take_format_dump(&stores)
+                .take_format_dump(stores)
                 .expect("exact-once follow-up")
                 .is_none()
         );
@@ -12138,17 +12076,17 @@ fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
 
 #[test]
 fn initex_dump_discards_unread_terminal_command_state_after_image_capture() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control
             .capabilities_mut()
             .set_startup_job_name("trailing-dump.tex");
         register_source(&mut control, br"\dump\relax");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let detached = control
-            .take_format_dump(&stores)
+            .take_format_dump(stores)
             .expect("terminal unread input is discardable")
             .expect("successful INITEX dump");
         assert!(!detached.image.as_bytes().is_empty());
@@ -12158,8 +12096,8 @@ fn initex_dump_discards_unread_terminal_command_state_after_image_capture() {
 
 #[test]
 fn valign_cell_endv_closes_an_open_paragraph_before_fin_col() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\catcode`\#=6 \catcode`\&=4
@@ -12168,7 +12106,7 @@ fn valign_cell_endv_closes_an_open_paragraph_before_fin_col() {
            \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         // TeX82 §1131 runs `end_graf` before `fin_col`. The paragraph opened by
         // `x` is therefore closed before the valign cell, row, alignment, and
@@ -12180,14 +12118,14 @@ fn valign_cell_endv_closes_an_open_paragraph_before_fin_col() {
 
 #[test]
 fn final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, b"\\iftrue\n\\ifcase0\n\\ifnum1=1\n\\end");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
-            terminal_text(&stores),
+            terminal_text(stores),
             "(\\end occurred when \\ifnum on line 3 was incomplete)\
 \n(\\end occurred when \\ifcase on line 2 was incomplete)\
 \n(\\end occurred when \\iftrue on line 1 was incomplete)"
@@ -12218,8 +12156,8 @@ fn language_whatsits<G>(stores: &mut Universe<G>) -> Vec<(u8, u8, u8)> {
 
 #[test]
 fn language_normalization_and_same_language_append_boundaries_match_tex82() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         // TeX82 §1377 normalizes `cur_val` in both out-of-range directions to
         // language zero, and §1091's `norm_min` clamps each hyphen minimum into
         // `1..=63`. The exact 255/256 boundary proves that 255 is retained while
@@ -12230,9 +12168,9 @@ fn language_normalization_and_same_language_append_boundaries_match_tex82() {
         &mut control,
         br"\lefthyphenmin=2 \righthyphenmin=99 \setbox0=\hbox{\setlanguage7\setlanguage7\setlanguage255\setlanguage256\setlanguage-1}\end",
     );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(
-            language_whatsits(&mut stores),
+            language_whatsits(stores),
             vec![(7, 2, 63), (7, 2, 63), (255, 2, 63), (0, 2, 63), (0, 2, 63)]
         );
     });
@@ -12240,8 +12178,8 @@ fn language_normalization_and_same_language_append_boundaries_match_tex82() {
 
 #[test]
 fn paragraph_entry_snapshots_language_before_first_character() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         // TeX82 §1091 runs `set_cur_lang; clang:=cur_lang` on each `new_graf`.
         // Thus §1376 appends one language whatsit when the first paragraph changes
         // 7 -> 0 before its first character, while the second paragraph's
@@ -12252,18 +12190,18 @@ fn paragraph_entry_snapshots_language_before_first_character() {
            \setbox0=\vbox{\noindent\language=0 a\hskip1pt\par
                            \noindent a\hskip1pt\par}\end",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let outer = stores
             .copy_box_to_page(0)
             .expect("box 0 holds the paragraph vbox");
-        let Some(Node::VList(vbox)) = first_published_node(&stores, outer) else {
+        let Some(Node::VList(vbox)) = first_published_node(stores, outer) else {
             panic!("box 0 holds a vlist");
         };
-        let lines = page_vec(&stores, vbox.children)
+        let lines = page_vec(stores, vbox.children)
             .iter()
             .filter_map(|node| match node {
-                Node::HList(line) => Some(line.clone()),
+                Node::HList(line) => Some(*line),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -12271,7 +12209,7 @@ fn paragraph_entry_snapshots_language_before_first_character() {
         let languages = lines
             .iter()
             .map(|line| {
-                page_vec(&stores, line.children)
+                page_vec(stores, line.children)
                     .iter()
                     .filter_map(|node| match node {
                         Node::Whatsit(tex_state::node::Whatsit::Language {
@@ -12290,8 +12228,8 @@ fn paragraph_entry_snapshots_language_before_first_character() {
 
 #[test]
 fn setlanguage_illegal_mode_recovers_without_scan_or_append() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         // TeX82 §1377 tests `abs(mode)<>hmode` before `new_whatsit` and before
         // `scan_int`, so the operand is never consumed: the following assignment
         // is the very next command main control sees.
@@ -12299,9 +12237,9 @@ fn setlanguage_illegal_mode_recovers_without_scan_or_append() {
             &mut control,
             br"\setbox0=\vbox{\setlanguage\global\count0=5}\end",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(stores.count(0).expect("count register"), 5);
-        let text = terminal_text(&stores);
+        let text = terminal_text(stores);
         assert!(
             text.contains("You can't use `\\setlanguage' in internal vertical mode"),
             "{text}"
@@ -12309,11 +12247,11 @@ fn setlanguage_illegal_mode_recovers_without_scan_or_append() {
         let outer = stores
             .copy_box_to_page(0)
             .expect("box 0 holds the constructed vbox");
-        let Some(Node::VList(boxed)) = first_published_node(&stores, outer) else {
+        let Some(Node::VList(boxed)) = first_published_node(stores, outer) else {
             panic!("box 0 holds a vlist");
         };
         assert!(
-            !page_vec(&stores, boxed.children)
+            !page_vec(stores, boxed.children)
                 .iter()
                 .any(|node| matches!(node, Node::Whatsit(_))),
             "no whatsit is appended when the mode test fails"
@@ -12349,8 +12287,8 @@ fn spanning_alignment_source(spans: &str) -> Vec<u8> {
 
 #[test]
 fn two_hundred_fifty_five_span_steps_stay_within_section_798s_bound() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         // 128+64+32+16+8+4+2+1 = 255 `\span` delimiters, so §798's `n` is exactly
         // `max_quarterword` and the guard `n>max_quarterword` does not fire.
         register_source(
@@ -12358,7 +12296,7 @@ fn two_hundred_fifty_five_span_steps_stay_within_section_798s_bound() {
             &spanning_alignment_source(r"\h\g\f\e\d\c\b\a"),
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(control.fatal_error(), None);
         assert_eq!(
@@ -12371,13 +12309,13 @@ fn two_hundred_fifty_five_span_steps_stay_within_section_798s_bound() {
 
 #[test]
 fn two_hundred_fifty_six_span_steps_succumb_to_section_798s_confusion() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         // `\i` is 2^8 = 256 `\span` delimiters, so §798's `n` is 256 and
         // `if n>max_quarterword then confusion("256 spans")` fires.
         register_source(&mut control, &spanning_alignment_source(r"\i"));
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             control.fatal_error(),
@@ -12390,18 +12328,16 @@ fn two_hundred_fifty_six_span_steps_succumb_to_section_798s_confusion() {
 
 #[test]
 fn a_succumbed_session_stays_terminal_without_delivering_another_command() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, &spanning_alignment_source(r"\i"));
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         let fatal = control.fatal_error();
 
         for _ in 0..4 {
             assert_eq!(
-                control
-                    .step(&mut stores)
-                    .expect("a terminal session reports"),
+                control.step(stores).expect("a terminal session reports"),
                 MainControlStep::End,
             );
         }
@@ -12412,14 +12348,14 @@ fn a_succumbed_session_stays_terminal_without_delivering_another_command() {
 
 #[test]
 fn succumbing_commits_fatal_diagnostic_then_engine_termination() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, &spanning_alignment_source(r"\i"));
 
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(&mut stores, &mut observations)
+                .step_with_observer(stores, &mut observations)
                 .expect("a fatal error is a terminal state, never an Err")
             {
                 MainControlStep::End | MainControlStep::EndOfInput => break,
@@ -12436,8 +12372,8 @@ fn succumbing_commits_fatal_diagnostic_then_engine_termination() {
                     && effect.kind == ObservationEffectKind::Terminate
                     && effect.channel == "engine"
         ));
-        let terminal = pending_sink_text(&stores, true);
-        let log = pending_sink_text(&stores, false);
+        let terminal = pending_sink_text(stores, true);
+        let log = pending_sink_text(stores, false);
         for output in [&terminal, &log] {
             assert!(
                 output.contains("! This can't happen (256 spans)."),
@@ -12461,13 +12397,13 @@ fn setbox_scope_is_globaldefs_adjusted_before_the_box_is_scanned() {
     // TeX82 §1214's `<Adjust for the setting of \globaldefs>` runs inside
     // `prefixed_command`, so a positive `\globaldefs` makes an unprefixed
     // `\setbox` global and a negative one makes `\global\setbox` local.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\globaldefs=1 {\setbox0=\hbox{\kern1pt}}\globaldefs=-1 {\global\setbox1=\hbox{\kern1pt}}\globaldefs=0 \end",
     );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert!(
             stores.copy_box_to_page(0).is_some(),
@@ -12485,8 +12421,8 @@ fn effective_scope_is_shared_by_provisional_and_committed_meaning_mutations() {
     // TeX82 §§1211/1214 resolve the assignment scope before §1224/§1257
     // install their provisional meanings. §§277-279 then expose that same
     // resolved choice for both provisional and final definitions.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"{\globaldefs=1\chardef\forcedchar=65\countdef\forcedregister=2}{\globaldefs=-1\global\chardef\localchar=66\global\countdef\localregister=3}\globaldefs=0\end",
@@ -12495,7 +12431,7 @@ fn effective_scope_is_shared_by_provisional_and_committed_meaning_mutations() {
         loop {
             if matches!(
                 control
-                    .step_with_observer(&mut stores, &mut observations)
+                    .step_with_observer(stores, &mut observations)
                     .expect("scope matrix executes"),
                 MainControlStep::End | MainControlStep::EndOfInput
             ) {
@@ -12556,13 +12492,13 @@ fn every_non_eqtb_assignment_family_fires_afterassignment_once() {
     // TeX82 §1210 includes all ten families below in prefixed_command, and
     // §1269 reaches `done` after each completed assignment. The saved token
     // must enter through ordinary §325 back_input exactly once.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\def\mark{\global\advance\count0 by1}\afterassignment\mark\nullfont\afterassignment\mark\textfont0=\nullfont\afterassignment\mark\setbox0=\hbox{}\afterassignment\mark\prevdepth=0pt x\afterassignment\mark\spacefactor=1000\par\afterassignment\mark\prevgraf=0\afterassignment\mark\pagegoal=1pt\afterassignment\mark\deadcycles=0\afterassignment\mark\hyphenation{word}\afterassignment\mark\nonstopmode\end",
     );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 10);
     });
@@ -12571,14 +12507,14 @@ fn every_non_eqtb_assignment_family_fires_afterassignment_once() {
 #[test]
 fn openin_supplies_the_default_tex_extension() {
     // TeX82 §1275's `if cur_ext="" then cur_ext:=".tex"; pack_cur_name`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         control.capabilities_mut().register_input(
             "child.tex",
             SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"body"[..])),
         );
         register_source(&mut control, br"\openin1=child \read1 to \line\end");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let text = admitted!(stores, |context| {
             let line = context.intern_control_sequence("line");
@@ -12606,10 +12542,10 @@ fn openin_supplies_the_default_tex_extension() {
 fn fontdimen_reports_an_unusable_parameter_number_and_leaves_the_font_alone() {
     // TeX82 §578 resolves `n<=0` to the scratch `fmem_ptr`; §579 reports it
     // and §1253 still consumes `=<dimen>`, so the next command runs.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\fontdimen0\nullfont=1pt \count0=1\end");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(
@@ -12618,7 +12554,7 @@ fn fontdimen_reports_an_unusable_parameter_number_and_leaves_the_font_alone() {
             Vec::<usize>::new(),
             "§963 diagnoses the duplicate before replacing it with a2b"
         );
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert!(
             output.contains("! Font \\nullfont has only 7 fontdimen parameters."),
             "{output}"
@@ -12663,16 +12599,16 @@ fn fontdimen_identifier_and_bound_recovery_matrix_is_exact() {
             8,
         ),
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
             let original: Vec<_> = (1..=7)
                 .map(|number| {
                     admitted!(stores, |context| context
                         .font_parameter(tex_state::font::NULL_FONT, number))
                 })
                 .collect();
-            let mut control = MainControl::tex82_initex(&mut stores);
+            let mut control = MainControl::tex82_initex(stores);
             register_source(&mut control, source);
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
             assert_eq!(
                 stores.count(0).expect("count register"),
@@ -12699,7 +12635,7 @@ fn fontdimen_identifier_and_bound_recovery_matrix_is_exact() {
                     Scaled::from_raw(Scaled::UNITY)
                 );
             }
-            let output = terminal_text(&stores);
+            let output = terminal_text(stores);
             assert_eq!(
                 output.matches("! Missing font identifier.").count(),
                 missing_identifier,
@@ -12721,14 +12657,14 @@ fn font_definition_size_boundaries_use_exact_replacements() {
     // TeX82 §§1258--1259 accept scaled 1..32768 and at sizes whose scaled
     // value is 1..(2048pt-1sp); each adjacent invalid value becomes 1000 or
     // 10pt respectively before §1257 interns the font.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         register_source(
         &mut control,
         br"\font\slo=cmr10 scaled 1 \font\shi=cmr10 scaled 32768 \font\szero=cmr10 scaled 0 \font\sover=cmr10 scaled 32769 \font\alo=cmr10 at 0.00002pt \font\ahi=cmr10 at 2047.99998pt \font\azero=cmr10 at 0pt \font\aover=cmr10 at 2048pt \end",
     );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let size = |stores: &mut Universe<_>, name: &str| {
             let font = font_by_name(stores, name);
@@ -12742,7 +12678,7 @@ fn font_definition_size_boundaries_use_exact_replacements() {
         assert_eq!(size(stores, "ahi"), 134_217_727);
         assert_eq!(size(stores, "azero"), 655_360);
         assert_eq!(size(stores, "aover"), 655_360);
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert_eq!(
             output
                 .matches("! Illegal magnification has been changed to 1000 (")
@@ -12763,9 +12699,9 @@ fn malformed_tfm_recovers_to_nullfont_with_assignment_scope() {
     // TeX82 §564 reports malformed metrics without interning a partial font.
     // A local failed definition must roll back at group end, while a global
     // failed definition leaves the selector bound to nullfont.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
         stores
             .world_mut()
             .set_memory_file("broken.tfm", b"not a TFM".to_vec())
@@ -12787,14 +12723,14 @@ fn malformed_tfm_recovers_to_nullfont_with_assignment_scope() {
             br"\font\local=cmr10 {\font\local=broken }\global\font\globalbad=broken \end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_ne!(font_by_name(stores, "local"), tex_state::font::NULL_FONT);
         assert_eq!(
             font_by_name(stores, "globalbad"),
             tex_state::font::NULL_FONT
         );
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert_eq!(
             output
                 .matches("not loadable: Bad metric (TFM) file")
@@ -12836,7 +12772,7 @@ fn opentype_only_math_family_rejection_precedes_state_mutation() {
     .expect("OpenType fixture parses");
     let selection = font;
     let size = Scaled::from_raw(10 * Scaled::UNITY);
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let unsupported = admitted!(stores, |context| context.intern_font(
             tex_fonts::LoadedFont::new_opentype(
                 "cmu-serif-roman",
@@ -12881,15 +12817,15 @@ fn opentype_only_math_family_rejection_precedes_state_mutation() {
 fn font_definition_identity_is_case_sensitive_and_tracks_newest_identifier() {
     // TeX82 §1257 compares the case-sensitive name and size when reusing a
     // font, then assigns font_id_text(f):=u even on the reuse path.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
-        register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
-        register_cmr10_as(&mut control, &mut stores, "CMR10.tfm");
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_cmr10_as(&mut control, stores, "CMR10.tfm");
         register_source(
             &mut control,
             br"\font\first=cmr10 \font\upper=CMR10 \font\newest=cmr10 \end",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let first = font_by_name(stores, "first");
         let upper = font_by_name(stores, "upper");
@@ -12925,20 +12861,20 @@ fn dimension_advance_accepts_the_negative_max_dimen_boundary() {
     // §1238 applies `advance` with a plain sum. Thus `-max_dimen-1sp`
     // commits the representable `-2^30sp` value instead of setting
     // `arith_error`. This is the e-TRIP line-781 boundary case.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\dimen44=-1073741823sp \advance\dimen44 by-1sp \end",
         );
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         assert_eq!(
             admitted!(stores, |context| context.dimen(44)),
             Scaled::from_raw(-1_073_741_824)
         );
-        assert!(!terminal_text(&stores).contains("Arithmetic overflow"));
+        assert!(!terminal_text(stores).contains("Arithmetic overflow"));
         assert!(observations.0.iter().any(|observation| {
             matches!(
                 observation,
@@ -12955,18 +12891,18 @@ fn dimension_advance_accepts_the_negative_max_dimen_boundary() {
 #[test]
 fn arithmetic_overflow_reports_and_leaves_the_target_unchanged() {
     // TeX82 §1236 returns before `word_define` when `arith_error` is set.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\count0=2000000000 \multiply\count0 by2 \count1=7 \divide\count1 by0 \count2=1\end",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 2_000_000_000);
         assert_eq!(stores.count(1).expect("count register"), 7);
         assert_eq!(stores.count(2).expect("count register"), 1);
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert_eq!(
             output.matches("! Arithmetic overflow.").count(),
             2,
@@ -12979,13 +12915,13 @@ fn arithmetic_overflow_reports_and_leaves_the_target_unchanged() {
 fn invalid_arithmetic_target_recovers_and_fires_afterassignment() {
     // TeX82 §1236 consumes an invalid target, reports the error, and returns
     // through §1269's common path, which still replays `\afterassignment`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         br"\prevdepth=2pt \def\mark{\global\count0=7}\afterassignment\mark\advance\prevdepth \count1=9\end",
     );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             stores.count(0).expect("count register"),
@@ -13001,7 +12937,7 @@ fn invalid_arithmetic_target_recovers_and_fires_afterassignment() {
             control.modes.current_list().prev_depth(),
             Some(Scaled::from_raw(2 * 65_536))
         );
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert!(
             output.contains("! You can't use `\\prevdepth' after \\advance."),
             "{output}"
@@ -13015,8 +12951,8 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
     // scanning an operand. Restoring the command checkpoint must restore both
     // the live frozen page values and the rejected target for an identical
     // retry through §1269's recovery path.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\nonstopmode \topskip=0pt \setbox0=\hbox{}\copy0
@@ -13032,20 +12968,20 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
                 != 4
         {
             assert_eq!(
-                control.step(&mut stores).expect("setup executes"),
+                control.step(stores).expect("setup executes"),
                 MainControlStep::Continue
             );
         }
         let checkpoint = control
             .capture_checkpoint(
                 crate::EngineBoundary::OuterParagraphEnd,
-                &mut stores,
+                stores,
                 crate::ExecutionBudgetCounters::default(),
             )
             .expect("frozen page checkpoint captures");
 
-        run_to_end(&mut control, &mut stores);
-        let first_output = terminal_text(&stores);
+        run_to_end(&mut control, stores);
+        let first_output = terminal_text(stores);
         let first_snapshot = macro_semantic_tokens(stores, "snapshot").to_vec();
         assert_eq!(
             admitted!(stores, |context| context
@@ -13056,9 +12992,9 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
         assert!(first_output.contains("You can't use `\\pagegoal' after \\advance"));
 
         control
-            .restore_checkpoint(&checkpoint, &mut stores)
+            .restore_checkpoint(&checkpoint, stores)
             .expect("frozen page checkpoint restores");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(
             admitted!(stores, |context| context
                 .page_dimension(PageDimension::Goal))
@@ -13071,7 +13007,7 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
             4
         );
         assert_eq!(macro_semantic_tokens(stores, "snapshot"), first_snapshot);
-        assert_eq!(terminal_text(&stores), first_output);
+        assert_eq!(terminal_text(stores), first_output);
     });
 }
 
@@ -13079,7 +13015,7 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
 fn invalid_arithmetic_target_uses_live_escapechar_for_operator() {
     // TeX82 §§63/298/1236: both commands in the diagnostic are printed via
     // `print_cmd_chr`/`print_esc`, so neither spelling hardcodes a backslash.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         crate::test_harness::assign_int_param(
             stores,
             tex_state::env::banks::IntParam::ESCAPE_CHAR,
@@ -13087,11 +13023,11 @@ fn invalid_arithmetic_target_uses_live_escapechar_for_operator() {
             tex_state::AssignmentScope::Global,
         )
         .expect("escape character assignment");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\advance\prevdepth\end");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert!(
             output.contains("! You can't use `|prevdepth' after |advance."),
             "{output}"
@@ -13104,8 +13040,8 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
     // TeX82 §§298 and 1236 print the rejected command class, scan no operand,
     // and return through §1269 once. Prefix scope is therefore immaterial,
     // including both \globaldefs overrides.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\def\mark{\global\advance\count0 by1}
@@ -13118,7 +13054,7 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
            \count1=19\end",
         );
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         assert_eq!(
             stores.count(0).expect("count register"),
@@ -13138,7 +13074,7 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
             "observer exercised the surrounding valid assignments"
         );
 
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         let expected = [
             "! You can't use `the letter x' after \\advance.",
             "! You can't use `the character 7' after \\multiply.",
@@ -13153,12 +13089,12 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
             "diagnostic order changed: {output:?}"
         );
 
-        crate::test_harness::with_nonstop_plain_universe(|mut isolated_stores| {
-            let mut isolated = MainControl::tex82_initex(&mut isolated_stores);
+        crate::test_harness::with_nonstop_plain_universe(|isolated_stores| {
+            let mut isolated = MainControl::tex82_initex(isolated_stores);
             register_source(&mut isolated, br"\advance x");
             let mut isolated_observations = ObservationRecorder::default();
             isolated
-                .step_with_observer(&mut isolated_stores, &mut isolated_observations)
+                .step_with_observer(isolated_stores, &mut isolated_observations)
                 .expect("observed invalid target recovers");
             assert!(
                 !isolated_observations
@@ -13176,8 +13112,8 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
 fn invalid_arithmetic_target_commit_survives_later_resource_retry() {
     // The §1236 recovery and §1269 afterassignment replay are a committed
     // operation. A later missing-resource rollback cannot duplicate either.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\def\mark{\global\advance\count0 by1}
@@ -13190,24 +13126,24 @@ fn invalid_arithmetic_target_commit_survives_later_resource_retry() {
                 break;
             }
             assert!(matches!(
-                control.advance(&mut stores).expect("setup executes"),
+                control.advance(stores).expect("setup executes"),
                 StepResult::Progress(ReplayStep::Continue)
             ));
         }
         assert_eq!(stores.count(0).expect("count register"), 1);
-        let committed = terminal_text(&stores);
+        let committed = terminal_text(stores);
         assert_eq!(committed.matches("the letter x").count(), 1);
 
         for _ in 0..3 {
             assert!(matches!(
-                control.advance(&mut stores).expect("missing input suspends"),
+                control.advance(stores).expect("missing input suspends"),
                 StepResult::Suspended(ResourceNeed::Input {
                     name,
                     original_name,
                 }) if name == "child.tex" && original_name == "child"
             ));
             assert_eq!(stores.count(0).expect("count register"), 1);
-            assert_eq!(terminal_text(&stores), committed);
+            assert_eq!(terminal_text(stores), committed);
         }
     });
 }
@@ -13216,15 +13152,15 @@ fn invalid_arithmetic_target_commit_survives_later_resource_retry() {
 fn message_spacing_follows_the_texweb_1280_offset_rule() {
     // TeX82 §1280 separates consecutive `\message` texts with one space when
     // a line is already open.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\message{a}\message{b}\end");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert!(
-            terminal_text(&stores).contains("a b"),
+            terminal_text(stores).contains("a b"),
             "{}",
-            terminal_text(&stores)
+            terminal_text(stores)
         );
     });
 }
@@ -13233,16 +13169,16 @@ fn message_spacing_follows_the_texweb_1280_offset_rule() {
 fn errmessage_prefers_errhelp_over_the_builtin_help() {
     // TeX82 §1283: `if err_help<>null then use_err_help:=true`, and §90 shows
     // it on the transcript.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\nonstopmode\errhelp={user help}\errmessage{bad}\count0=1\end",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 1);
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert!(output.contains("! bad."), "{output}");
         assert!(output.contains("user help"), "{output}");
         assert!(!output.contains("Hercule Poirot"), "{output}");
@@ -13252,16 +13188,16 @@ fn errmessage_prefers_errhelp_over_the_builtin_help() {
 #[test]
 fn patterns_and_dump_are_initex_only_and_reported_in_a_production_session() {
     // TeX82 §1252 and §1335 are both `init`-guarded.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let _initex = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let _initex = MainControl::tex82_initex(stores);
         let mut control = MainControl::new();
         register_source(&mut control, br"\patterns{a1b}\count0=1\dump");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert!(!control.dumped_format());
         assert!(control.format_dump_receipt().is_none());
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         // §1252's production branch, which is a different rejection from §960's
         // "Too late" one and carries no help lines.
         assert!(
@@ -13282,15 +13218,15 @@ fn initex_late_patterns_absorbs_its_discarded_group() {
     // initializes the trie. §960's later `\patterns` recovery is
     // `scan_toks(false,false)`, so §473 enters absorbing status before §403
     // reads the group's left brace.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         admitted!(stores, |context| context.close_hyphenation_patterns());
         register_source(
             &mut control,
             br"\nonstopmode\patterns{toolate}\count0=1\end",
         );
         let mut observations = ObservationRecorder::default();
-        run_to_end_observed(&mut control, &mut stores, &mut observations);
+        run_to_end_observed(&mut control, stores, &mut observations);
 
         assert_eq!(stores.count(0).expect("count register"), 1);
         let absorbing = observations
@@ -13324,9 +13260,9 @@ fn initex_late_patterns_absorbs_its_discarded_group() {
             .expect("late pattern group has an opening brace");
         assert!(absorbing < opening, "{:?}", observations.0);
         assert!(
-            terminal_text(&stores).contains("! Too late for \\patterns."),
+            terminal_text(stores).contains("! Too late for \\patterns."),
             "{}",
-            terminal_text(&stores)
+            terminal_text(stores)
         );
     });
 }
@@ -13336,23 +13272,23 @@ fn initex_late_patterns_prompts_at_the_pre_scan_section_960_context() {
     // TeX82 §960 calls §82's `error` before §473 scans and discards the
     // braced group. A deferred executor report must therefore carry the
     // source cursor immediately after `\patterns`, not the post-group cursor.
-    crate::test_harness::with_plain_universe(|mut stores| {
+    crate::test_harness::with_plain_universe(|stores| {
         stores
             .world_mut()
             .push_memory_terminal_line("s")
             .expect("memory terminal accepts the error response");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         admitted!(stores, |context| context.close_hyphenation_patterns());
         register_source(&mut control, b"\\patterns{toolate}\\count0=1\\end");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             stores.count(0).expect("count register"),
             1,
             "interactive recovery resumes input"
         );
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         let context = output
             .find("! Too late for \\patterns.\nl.1 \\patterns\n")
             .expect("§960 reports at the pre-scan source cursor");
@@ -13368,8 +13304,8 @@ fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
     // a duplicate is diagnosed after its replacement has been installed.
     // The schema-v1 TeX82 instrumentation publishes no diagnostic event for
     // either the scanner or apply sites.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             br"\nonstopmode
@@ -13380,7 +13316,7 @@ fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
         let mut observations = ObservationRecorder::default();
         loop {
             match control
-                .step_with_observer(&mut stores, &mut observations)
+                .step_with_observer(stores, &mut observations)
                 .expect("program executes")
             {
                 MainControlStep::End | MainControlStep::EndOfInput => break,
@@ -13396,7 +13332,7 @@ fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
                 .any(|event| matches!(event, CommandObservation::Diagnostic(_))),
             "§§936/961/963/966 have no schema-v1 diagnostic observation"
         );
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         for expected in [
             "! Improper \\hyphenation will be flushed.",
             "! Not a letter.",
@@ -13430,14 +13366,14 @@ fn nonletter_zero_pattern_uses_the_edge_sentinel() {
     // zero. It therefore anchors AA1b3 at the word edge. The duplicate bb/bb1
     // and overlapping 0B2B0 patterns are negative controls for max-level
     // resolution: only the maximal odd positions survive.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
         &mut control,
         b"\\nonstopmode \\lccode`A=1 \\chardef\\?=`b \\patterns{\\?50AA1b3 bb bb1 0B2B0 b1c}\\end",
     );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         let word = "\u{1}\u{1}bbbbc\u{1}c\u{1}";
         assert_eq!(
@@ -13445,7 +13381,7 @@ fn nonletter_zero_pattern_uses_the_edge_sentinel() {
                 .hyphen_positions_for_language(0, word, 2, 3)),
             [2, 3, 6],
             "{}",
-            terminal_text(&stores)
+            terminal_text(stores)
         );
     });
 }
@@ -13455,16 +13391,16 @@ fn bad_patterns_reports_the_live_section_961_source_context() {
     // TeX82 §961 calls §82's `error` immediately after `get_x_token`
     // classifies the offending command. The context cursor is therefore
     // immediately after `\relax`, before scanning resumes.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\nonstopmode\n\\patterns{ab\\relax cd}\n\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert!(
             output.contains(
                 "! Bad \\patterns.\nl.2 \\patterns{ab\\relax\n                       cd}"
@@ -13480,22 +13416,22 @@ fn pattern_nonletter_prompts_at_the_live_section_962_source_context() {
     // the nonletter and the source cursor immediately after it are live.
     // Delaying this report until the whole group has scanned makes the
     // interaction consume its response after unrelated pattern input.
-    crate::test_harness::with_plain_universe(|mut stores| {
+    crate::test_harness::with_plain_universe(|stores| {
         stores
             .world_mut()
             .push_memory_terminal_line("s")
             .expect("memory terminal accepts the error response");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, b"\\patterns{ab!cd ef1gh}\\count0=1\\end");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             stores.count(0).expect("count register"),
             1,
             "interactive recovery resumes input"
         );
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         let context = output
             .find("! Nonletter.\nl.1 \\patterns{ab!\n")
             .expect("§962 reports the live nonletter context");
@@ -13514,22 +13450,22 @@ fn duplicate_pattern_prompts_at_the_live_section_963_separator_context() {
     // TeX82 §963 tests trie_o[q] and calls §82 before the §961 loop asks for
     // another token. The separator is therefore still current, and an
     // interactive response must not be consumed from later source input.
-    crate::test_harness::with_plain_universe(|mut stores| {
+    crate::test_harness::with_plain_universe(|stores| {
         stores
             .world_mut()
             .push_memory_terminal_line("s")
             .expect("memory terminal accepts the error response");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, b"\\patterns{a1b a2b next}\\count0=1\\end");
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             stores.count(0).expect("count register"),
             1,
             "interactive recovery resumes input"
         );
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         let context = output
             .find("! Duplicate pattern.\nl.1 \\patterns{a1b a2b ")
             .expect("§963 reports at the live separator");
@@ -13545,18 +13481,18 @@ fn duplicate_pattern_prompts_at_the_live_section_963_separator_context() {
 
 #[test]
 fn distinct_pattern_paths_do_not_report_section_963_duplicate() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\nonstopmode\\patterns{a1b a2c}\\count0=1\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert!(
-            !terminal_text(&stores).contains("! Duplicate pattern."),
+            !terminal_text(stores).contains("! Duplicate pattern."),
             "different trie paths are the negative control"
         );
     });
@@ -13573,18 +13509,18 @@ fn pending_pattern_duplicate_view_follows_section_963_replacement_order() {
         ("b1b b2b", 1),    // real -> real
         ("bb bb bb", 0),   // repeated operationless
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             register_source(
                 &mut control,
                 format!("\\nonstopmode\\patterns{{{patterns}}}\\count0=1\\end").as_bytes(),
             );
 
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
             assert_eq!(stores.count(0).expect("count register"), 1, "{patterns}");
             assert_eq!(
-                terminal_text(&stores)
+                terminal_text(stores)
                     .matches("! Duplicate pattern.")
                     .count(),
                 expected_duplicates,
@@ -13596,18 +13532,18 @@ fn pending_pattern_duplicate_view_follows_section_963_replacement_order() {
 
 #[test]
 fn operationless_pattern_path_is_not_a_section_963_duplicate() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\nonstopmode\\patterns{bb bb1 b2b}\\count0=1\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(
-            terminal_text(&stores)
+            terminal_text(stores)
                 .matches("! Duplicate pattern.")
                 .count(),
             1,
@@ -13618,18 +13554,18 @@ fn operationless_pattern_path_is_not_a_section_963_duplicate() {
 
 #[test]
 fn pattern_duplicate_paths_are_partitioned_by_language() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\nonstopmode\\language=1\\patterns{b1b}\\language=2\\patterns{b2b}\\count0=1\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(
-            terminal_text(&stores)
+            terminal_text(stores)
                 .matches("! Duplicate pattern.")
                 .count(),
             0
@@ -13639,7 +13575,7 @@ fn pattern_duplicate_paths_are_partitioned_by_language() {
 
 #[test]
 fn committed_and_pending_pattern_paths_share_replacement_order() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         assert!(
             !admitted!(stores, |context| context
                 .add_hyphenation_pattern_for_language(
@@ -13651,17 +13587,17 @@ fn committed_and_pending_pattern_paths_share_replacement_order() {
                 ))
             .expect("pattern fits the default trie capacity")
         );
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\nonstopmode\\patterns{bb b2b}\\count0=1\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert_eq!(
-            terminal_text(&stores)
+            terminal_text(stores)
                 .matches("! Duplicate pattern.")
                 .count(),
             1,
@@ -13674,18 +13610,18 @@ fn committed_and_pending_pattern_paths_share_replacement_order() {
 fn first_pattern_digit_is_a_level_not_a_section_962_nonletter() {
     // TeX82 §962's `digit_sensed=false` branch treats the first ASCII digit
     // as a hyphen level and therefore never consults its zero `\lccode`.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
             b"\\nonstopmode\\patterns{ab1cd}\\count0=1\\end",
         );
 
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(0).expect("count register"), 1);
         assert!(
-            !terminal_text(&stores).contains("! Nonletter."),
+            !terminal_text(stores).contains("! Nonletter."),
             "a hyphen-level digit is the negative control"
         );
     });
@@ -13704,15 +13640,15 @@ fn pattern_length_bound_preserves_section_962_digit_state() {
         (2, "11", 1),
         (2, "1a", 0),
     ] {
-        crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-            let mut control = MainControl::tex82_initex(&mut stores);
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
             let source = format!(
                 "\\nonstopmode\\patterns{{{}{suffix}}}\\count0=1\\end",
                 "a".repeat(letters)
             );
             register_source(&mut control, source.as_bytes());
 
-            run_to_end(&mut control, &mut stores);
+            run_to_end(&mut control, stores);
 
             assert_eq!(
                 stores.count(0).expect("count register"),
@@ -13720,10 +13656,10 @@ fn pattern_length_bound_preserves_section_962_digit_state() {
                 "letters={letters}, suffix={suffix}"
             );
             assert_eq!(
-                terminal_text(&stores).matches("! Nonletter.").count(),
+                terminal_text(stores).matches("! Nonletter.").count(),
                 expected_nonletters,
                 "letters={letters}, suffix={suffix}: {}",
-                terminal_text(&stores)
+                terminal_text(stores)
             );
         });
     }
@@ -13733,17 +13669,17 @@ fn pattern_length_bound_preserves_section_962_digit_state() {
 fn show_completion_prompts_in_error_stop_mode_and_honors_the_answer() {
     // TeX82 §1293's `common_ending: ...; error`, whose §83 dialog prompts
     // `?␣` and whose §86 `S` answer switches to scroll mode.
-    crate::test_harness::with_plain_universe(|mut stores| {
+    crate::test_harness::with_plain_universe(|stores| {
         stores
             .world_mut()
             .push_memory_terminal_line("s")
             .expect("memory terminal accepts a line");
-        let mut control = MainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\showthe\count0 \count1=1\end");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(stores.count(1).expect("count register"), 1);
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert!(output.contains("> 0."), "{output}");
         assert!(output.contains("? "), "{output}");
         assert_eq!(
@@ -13755,17 +13691,17 @@ fn show_completion_prompts_in_error_stop_mode_and_honors_the_answer() {
 
 #[test]
 fn undefined_control_sequence_reports_once_and_drops_only_its_token() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\nonstopmode\missing\count0=17\end");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(
             stores.count(0).expect("count register"),
             17,
             "the following command remains live"
         );
         assert_eq!(stores.world().error_channel().error_count(), 1);
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert_eq!(
             output.matches("! Undefined control sequence.").count(),
             1,
@@ -13784,11 +13720,11 @@ fn undefined_control_sequence_reports_once_and_drops_only_its_token() {
 
 #[test]
 fn batch_undefined_recovery_keeps_the_log_only_selector() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         stores.set_interaction_mode(tex_state::InteractionMode::Batch);
         register_source(&mut control, br"\missing\count0=23\end");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
 
         assert_eq!(
             stores.count(0).expect("count register"),
@@ -13797,11 +13733,11 @@ fn batch_undefined_recovery_keeps_the_log_only_selector() {
         );
         assert_eq!(stores.world().error_channel().error_count(), 1);
         assert!(
-            !pending_sink_text(&stores, true).contains("Undefined control sequence"),
+            !pending_sink_text(stores, true).contains("Undefined control sequence"),
             "batch errors must not escape the log-only selector"
         );
         assert!(
-            pending_sink_text(&stores, false).contains("Undefined control sequence"),
+            pending_sink_text(stores, false).contains("Undefined control sequence"),
             "batch errors remain in the transcript log"
         );
     });
@@ -13809,17 +13745,17 @@ fn batch_undefined_recovery_keeps_the_log_only_selector() {
 
 #[test]
 fn misplaced_tab_reports_once_and_drops_only_the_delimiter() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\nonstopmode&\count0=19\end");
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(
             stores.count(0).expect("count register"),
             19,
             "the delimiter was not backed up"
         );
         assert_eq!(stores.world().error_channel().error_count(), 1);
-        let output = terminal_text(&stores);
+        let output = terminal_text(stores);
         assert_eq!(
             output
                 .matches("! Misplaced alignment tab character &.")
@@ -13836,7 +13772,7 @@ fn misplaced_tab_reports_once_and_drops_only_the_delimiter() {
 
 #[test]
 fn math_group_collapses_only_one_undecorated_ord_nucleus() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
         let empty_list = tex_state::node_arena::PageListId::empty();
         let ch = MathChar {
             family: 0,
@@ -13846,12 +13782,12 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
         for nucleus in [
             MathField::Empty,
             MathField::MathChar(ch),
-            MathField::SubBox(empty_list.clone()),
+            MathField::SubBox(empty_list),
             MathField::SubMlist(empty_list),
         ] {
             let list = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
-                nucleus.clone(),
+                nucleus,
             ))]);
             assert_eq!(
                 collapse_singleton_math_group(
@@ -13886,7 +13822,7 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
             assert_eq!(
                 collapse_singleton_math_group(
                     &stores.command_context().expect("live generation"),
-                    list.clone(),
+                    list,
                 ),
                 MathField::SubMlist(list)
             );
@@ -13920,15 +13856,15 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
     // The host-visible ShipoutComplete checkpoint is its own step between the
     // ejection and the backed-up stop; assert that boundary explicitly rather
     // than counting it as a second TeX command.
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\hbox{A\end");
 
         let mut terminal_step = None;
         let mut artifact_counts = Vec::new();
         for step_index in 1..=16 {
             let step = control
-                .step(&mut stores)
+                .step(stores)
                 .expect("unterminated-box recovery executes");
             artifact_counts.push(stores.world().artifact_commits().len());
             assert!(
@@ -13962,7 +13898,7 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
         );
         assert_eq!(control.current_mode(), Mode::Vertical);
         assert!(control.fatal_error().is_none());
-        let terminal = terminal_text(&stores);
+        let terminal = terminal_text(stores);
         assert_eq!(terminal.matches("! Missing } inserted.").count(), 1);
         assert!(!terminal.contains("That makes 100 errors"), "{terminal}");
     });
@@ -14074,11 +14010,11 @@ fn etex_penalty_arrays_assign_query_restore_and_reset_interline_at_par() {
 
 #[test]
 fn long_prefix_on_let_reports_tex_prefix_error() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        let mut control = MainControl::tex82_initex(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
         register_source(&mut control, br"\nonstopmode\long\let\a=b");
-        run_to_end(&mut control, &mut stores);
-        assert!(terminal_text(&stores).contains("You can't use `\\long'"));
+        run_to_end(&mut control, stores);
+        assert!(terminal_text(stores).contains("You can't use `\\long'"));
         assert_eq!(
             admitted!(stores, |context| {
                 let a = context.intern_control_sequence("a");
@@ -14108,20 +14044,20 @@ fn interactionmode_reads_and_assigns_globally() {
 
 #[test]
 fn interactionmode_rejects_out_of_range_values_without_changing_mode() {
-    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
-        tex_command::install_tex82_expandable_primitives(&mut stores);
-        tex_command::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        tex_command::install_tex82_expandable_primitives(stores);
+        tex_command::install_etex_expandable_primitives(stores);
+        crate::install_unexpandable_primitives(stores);
+        crate::install_etex_unexpandable_primitives(stores);
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
         register_source(
             &mut control,
             br"\interactionmode=-1\edef\result{\the\interactionmode}",
         );
-        run_to_end(&mut control, &mut stores);
+        run_to_end(&mut control, stores);
         assert_eq!(macro_character_text(stores, "result"), "1");
-        assert!(terminal_text(&stores).contains("Bad interaction mode (-1)"));
+        assert!(terminal_text(stores).contains("Bad interaction mode (-1)"));
     });
 }
 
@@ -14130,7 +14066,7 @@ fn etex_showgroups_and_showifs_render_live_nested_stacks() {
     with_etex(
         br"\nonstopmode\begingroup\iftrue\showgroups\showifs\fi\endgroup",
         |stores| {
-            let output = terminal_text(&stores);
+            let output = terminal_text(stores);
             assert!(
                 output.contains("### semi simple group (level 1) entered at line 1 (\\begingroup)"),
                 "{output}"
@@ -14145,7 +14081,7 @@ fn etex_showgroups_and_showifs_render_live_nested_stacks() {
 fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
     with_etex(
         br"\let\bgroup={\protected\def\two{}\let\three=\two\protected\unexpanded\bgroup\two\protected\three\protected\def\one{\two}}",
-        |mut stores| {
+        |stores| {
             admitted!(stores, |context| {
                 let one = context.intern_control_sequence("one");
                 let ResolvedMeaning::Macro { definition, flags } = context.meaning(one) else {
@@ -14154,7 +14090,7 @@ fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
                 assert!(flags.contains(tex_state::meaning::MeaningFlags::PROTECTED));
                 assert_eq!(context.definition(definition).replacement_text().len(), 1);
             });
-            assert!(!terminal_text(&stores).contains("You can't use a prefix"));
+            assert!(!terminal_text(stores).contains("You can't use a prefix"));
         },
     );
 }
@@ -14163,7 +14099,7 @@ fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
 fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
     with_etex(
         br"\let\flag\iftrue\def\setfalse{\let\flag\iffalse}\begingroup\global\unexpanded{\setfalse}\endgroup",
-        |mut stores| {
+        |stores| {
             assert_eq!(
                 admitted!(stores, |context| {
                     let flag = context.intern_control_sequence("flag");
@@ -14173,7 +14109,7 @@ fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
                     tex_state::meaning::ExpandablePrimitive::IfFalse,
                 ))
             );
-            assert!(!terminal_text(&stores).contains("You can't use a prefix"));
+            assert!(!terminal_text(stores).contains("You can't use a prefix"));
         },
     );
 }

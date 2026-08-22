@@ -130,7 +130,7 @@ pub(crate) fn break_current_paragraph<G>(
         decisions.tape.replace_last_par_fill(spec);
     }
     let empty_list = tex_state::node_arena::PageListId::empty();
-    let post_params = post_line_break_params(&params, widow_penalty_selector, empty_list.clone());
+    let post_params = post_line_break_params(&params, widow_penalty_selector, empty_list);
     let mut line_count = 0i32;
     let mut last_line = None;
     let total_lines = decisions.breaks.len();
@@ -186,7 +186,7 @@ pub(crate) fn break_current_paragraph<G>(
         };
         for node in &mut broken.nodes {
             if let Node::Disc { replace, .. } = node {
-                *replace = empty_list.clone();
+                *replace = empty_list;
             }
         }
         let line = hpack_owned_with_overfull_rule(
@@ -205,7 +205,7 @@ pub(crate) fn break_current_paragraph<G>(
         line_count = line_count
             .checked_add(1)
             .expect("paragraph line count exceeds i32");
-        last_line = Some(line.clone());
+        last_line = Some(line);
         for node in pre_migrated.drain(..) {
             append_migrated_contribution(nest, stores, node);
         }
@@ -260,13 +260,7 @@ fn discretionary_diagnostics_differ<G>(
             post,
             replace,
             physical_replace_count,
-        } => Some((
-            *kind,
-            pre.clone(),
-            post.clone(),
-            replace.clone(),
-            *physical_replace_count,
-        )),
+        } => Some((*kind, *pre, *post, *replace, *physical_replace_count)),
         _ => None,
     });
     for node in physical {
@@ -282,17 +276,10 @@ fn discretionary_diagnostics_differ<G>(
         };
         if usize::from(*physical_replace_count)
             != stores
-                .page_node_list(replace.clone())
+                .page_node_list(*replace)
                 .expect("discretionary replacement belongs to the live page arena")
                 .len()
-            || semantic.next()
-                != Some((
-                    *kind,
-                    pre.clone(),
-                    post.clone(),
-                    replace.clone(),
-                    *physical_replace_count,
-                ))
+            || semantic.next() != Some((*kind, *pre, *post, *replace, *physical_replace_count))
         {
             return true;
         }
@@ -618,9 +605,9 @@ fn report_line_break_trace<G>(
                 ..
             } if !display.is_empty() => (
                 Some(short_display.render_nodes(stores, &nodes[display.clone()])),
-                display_suffix.as_ref().map(|suffix| {
-                    short_display.render_line_break_trace_suffix(stores, suffix.clone())
-                }),
+                display_suffix
+                    .as_ref()
+                    .map(|suffix| short_display.render_line_break_trace_suffix(stores, *suffix)),
             ),
             _ => (None, None),
         })

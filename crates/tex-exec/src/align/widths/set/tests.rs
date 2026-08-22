@@ -83,9 +83,9 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
                 ],
             },
             &Prototype {
-                box_node: box_node(11, 13, empty.clone()),
+                box_node: box_node(11, 13, empty),
             },
-            empty.clone(),
+            empty,
             Scaled::from_raw(0),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
@@ -121,9 +121,9 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
                 ],
             },
             &Prototype {
-                box_node: box_node(11, 13, empty.clone()),
+                box_node: box_node(11, 13, empty),
             },
-            empty.clone(),
+            empty,
             Scaled::from_raw(0),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
@@ -158,9 +158,9 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
                 ],
             },
             &Prototype {
-                box_node: box_node(11, 13, empty.clone()),
+                box_node: box_node(11, 13, empty),
             },
-            empty.clone(),
+            empty,
             sp(5),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
@@ -213,7 +213,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
                 shrink: 0,
                 shrink_order: Order::Normal,
             },
-            empty.clone(),
+            empty,
         );
         let row_children = stores.publish_page_nodes(vec![
             tabskip_node(tex_state::glue::GlueSpec::ZERO),
@@ -241,7 +241,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
             ],
         };
         let prototype = Prototype {
-            box_node: box_node(10, 2, empty.clone()),
+            box_node: box_node(10, 2, empty),
         };
 
         let set = set_alignment_nodes(
@@ -249,7 +249,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
             &[row],
             &resolved,
             &prototype,
-            empty.clone(),
+            empty,
             sp(5),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
@@ -314,7 +314,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
                 shrink: 0,
                 shrink_order: Order::Normal,
             },
-            empty.clone(),
+            empty,
         ));
         let children = stores.publish_page_nodes(vec![
             tabskip_node(tex_state::glue::GlueSpec::ZERO),
@@ -351,9 +351,9 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
                 tabskips: vec![tex_state::glue::GlueSpec::ZERO; 2],
             },
             &Prototype {
-                box_node: box_node(9, 2, empty.clone()),
+                box_node: box_node(9, 2, empty),
             },
-            empty.clone(),
+            empty,
             Scaled::from_raw(0),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
@@ -380,7 +380,7 @@ fn convert_unset_cell_computes_tex82_glue_ratio_matrix() {
             shrink: 2,
             shrink_order: Order::Normal,
         },
-        empty.clone(),
+        empty,
     );
 
     assert_eq!(

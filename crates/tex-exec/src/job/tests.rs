@@ -732,7 +732,7 @@ fn tex_and_etex_profiles_never_render_a_pdf_finalization_report() {
 
 #[test]
 fn pdf_navigation_finalization_reports_only_unresolved_objects_in_source_order() {
-    use tex_state::PdfDestinationIdentity::{Name, Number};
+    use tex_state::PdfDestinationIdentity::Name;
 
     crate::test_harness::with_nonstop_universe(|universe| {
         let missing = [

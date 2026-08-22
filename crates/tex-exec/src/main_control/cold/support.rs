@@ -798,7 +798,7 @@ pub(in crate::main_control) fn read_box_register<G>(
     index: u16,
     copy: bool,
     stores: &mut tex_state::CommandContext<'_, G>,
-    command: &CommandMachine<'_, G>,
+    _command: &CommandMachine<'_, G>,
 ) -> Option<tex_state::node_arena::PageListId> {
     if !copy {
         return stores.take_box_to_page(index);
@@ -875,7 +875,7 @@ pub(in crate::main_control) fn commit_set_box_target<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) {
-    let traced_box = boxed.clone();
+    let traced_box = boxed;
     let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects).box_register(
         target.index,
         traced_box.as_ref(),
@@ -1298,7 +1298,7 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         command.diagnostic_effects,
         &mut geometry,
         &diagnostic_context,
-        content.clone(),
+        content,
         PackSpec::Natural,
         params,
     );

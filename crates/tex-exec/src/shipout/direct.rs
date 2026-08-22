@@ -303,7 +303,7 @@ pub(crate) fn stage_shipout<G>(
     // Phase A is the only mutable pass. It executes deferred effects, freezes
     // math substitutions, and records the rare direction permutations.
     let overlay = normalize_page(
-        children.clone(),
+        children,
         (vertical, root_box_lr),
         (pending_effects, output_open_context, announce_openout),
         stores,
@@ -1189,7 +1189,7 @@ fn math_substitution(overlay: &PageOverlay, list: &PageListId, index: usize) -> 
         .math
         .iter()
         .find(|entry| &entry.list == list && entry.index == index)
-        .map(|entry| entry.replacement.clone())
+        .map(|entry| entry.replacement)
 }
 
 fn omitted_whatsit(overlay: &PageOverlay, list: &PageListId, index: usize) -> bool {

@@ -86,14 +86,10 @@ fn span_width_list_orders_counts_and_keeps_maximum() {
         let rows = [
             row(
                 &mut stores,
-                &[
-                    cell(empty.clone(), 2, 1),
-                    cell(empty.clone(), 3, 1),
-                    cell(empty.clone(), 4, 1),
-                ],
+                &[cell(empty, 2, 1), cell(empty, 3, 1), cell(empty, 4, 1)],
             ),
-            row(&mut stores, &[cell(empty.clone(), 10, 2)]),
-            row(&mut stores, &[cell(empty.clone(), 8, 2)]),
+            row(&mut stores, &[cell(empty, 10, 2)]),
+            row(&mut stores, &[cell(empty, 8, 2)]),
             row(&mut stores, &[cell(empty, 20, 3)]),
         ];
 
@@ -129,11 +125,8 @@ fn resolve_alignment_widths_applies_tex82_recurrence() {
         );
         let empty = PageListId::empty();
         let rows = [
-            row(
-                &mut stores,
-                &[cell(empty.clone(), 4, 1), cell(empty.clone(), 3, 1)],
-            ),
-            row(&mut stores, &[cell(empty.clone(), 10, 2)]),
+            row(&mut stores, &[cell(empty, 4, 1), cell(empty, 3, 1)]),
+            row(&mut stores, &[cell(empty, 10, 2)]),
         ];
 
         let resolved = resolve_widths(&state, &rows, &stores).expect("span recurrence resolves");
@@ -187,10 +180,10 @@ fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
         );
         let empty = PageListId::empty();
         let rows = [
-            row(&mut stores, &[cell(empty.clone(), 10, 1)]),
-            row(&mut stores, &[cell(empty.clone(), 5, 2)]),
-            row(&mut stores, &[cell(empty.clone(), 18, 2)]),
-            row(&mut stores, &[cell(empty.clone(), 25, 3)]),
+            row(&mut stores, &[cell(empty, 10, 1)]),
+            row(&mut stores, &[cell(empty, 5, 2)]),
+            row(&mut stores, &[cell(empty, 18, 2)]),
+            row(&mut stores, &[cell(empty, 25, 3)]),
         ];
 
         let resolved =

@@ -125,7 +125,7 @@ pub(crate) fn finish_display_math<G>(
         diagnostic_effects,
         geometry,
         diagnostic_context,
-        display_list.clone(),
+        display_list,
         PackSpec::Natural,
         hpack_params(stores),
     )
@@ -445,7 +445,7 @@ struct ShrinkTotals {
     filll: Scaled,
 }
 
-fn hlist_shrink<G>(stores: &CommandContext<'_, G>, nodes: &[Node]) -> ShrinkTotals {
+fn hlist_shrink<G>(_stores: &CommandContext<'_, G>, nodes: &[Node]) -> ShrinkTotals {
     let mut totals = [Scaled::from_raw(0); 4];
     for node in nodes {
         if let Node::Glue { spec, .. } = node {

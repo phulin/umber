@@ -136,7 +136,7 @@ fn normalize_split_infinite_shrink<G>(
         nodes[index] = Node::Glue {
             spec: finite,
             kind: *kind,
-            leader: leader.clone(),
+            leader: *leader,
         };
     }
     Ok(())

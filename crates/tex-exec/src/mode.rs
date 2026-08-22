@@ -1040,7 +1040,7 @@ fn hash_mode_list<G>(
             match &interrupt.prototype {
                 Some(prototype) => {
                     projection.bool(true);
-                    projection.nodes(&[Node::HList(prototype.clone())]);
+                    projection.nodes(&[Node::HList(*prototype)]);
                 }
                 None => projection.bool(false),
             }

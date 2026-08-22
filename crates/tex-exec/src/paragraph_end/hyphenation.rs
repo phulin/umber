@@ -198,7 +198,7 @@ fn project_physical_pre_break_spans<G>(
         }
 
         let (font, chars, origins) = match &nodes[index - 1] {
-            Node::Char { font, ch, origin } => (*font, vec![*ch], vec![origin.clone()]),
+            Node::Char { font, ch, origin } => (*font, vec![*ch], vec![*origin]),
             Node::Lig {
                 font,
                 orig,
@@ -386,7 +386,7 @@ fn find_hyphenation_candidate<G>(
                     font,
                     ch: *ch,
                     lower,
-                    origin: origin.clone(),
+                    origin: *origin,
                 });
                 index += 1;
             }
@@ -684,7 +684,7 @@ fn discretionary_through_node<G>(
         pre_pending.push(PendingHChar {
             font,
             ch,
-            origin: word[position - 1].origin.clone(),
+            origin: word[position - 1].origin,
         });
     }
     let pre = crate::box_runtime::hmode::reconstitute_with_fuel(
@@ -871,7 +871,7 @@ fn discretionary_hyphen<G>(
 ) -> Node {
     let empty = tex_state::node_arena::PageListId::empty();
     let pre = automatic_hyphen_char(stores, font, node_index, missing_hyphens).map_or_else(
-        || empty.clone(),
+        || empty,
         |ch| {
             stores.publish_page_nodes(vec![Node::Char {
                 font,
@@ -881,7 +881,7 @@ fn discretionary_hyphen<G>(
         },
     );
     let replace = replacement.as_ref().map_or_else(
-        || empty.clone(),
+        || empty,
         |node| stores.publish_page_nodes(vec![node.clone()]),
     );
     Node::Disc {
@@ -940,7 +940,7 @@ impl WordChar {
         PendingHChar {
             font: self.font,
             ch: self.ch,
-            origin: self.origin.clone(),
+            origin: self.origin,
         }
     }
 }

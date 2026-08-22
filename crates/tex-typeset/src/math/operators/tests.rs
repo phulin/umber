@@ -108,7 +108,7 @@ fn displayed_limits_use_shared_rebox_completion() {
     ))]);
     let mut op = MathNoad::new(
         NoadKind::Operator(LimitType::Limits),
-        MathField::SubBox(script.clone()),
+        MathField::SubBox(script),
     );
     op.superscript = MathField::MathChar(math_char('o'));
     let input = stores.publish_page_nodes(&[Node::MathNoad(op)]);
@@ -141,7 +141,7 @@ fn boxed_operator_nucleus_is_not_character_axis_centered() {
     for limit_type in [LimitType::NoLimits, LimitType::Limits] {
         let input = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
             NoadKind::Operator(limit_type),
-            MathField::SubBox(source_box.clone()),
+            MathField::SubBox(source_box),
         ))]);
         let layout = mlist_to_hlist(&stores, input, Style::TEXT, false, &params);
         assert!(
@@ -352,8 +352,8 @@ fn fraction_rule_delimiter_style_and_rebox_matrix() {
                 let delimiter =
                     delimiters.then_some(super::super::tests::delimiter_code(1, b'(', 1, b'|'));
                 let fraction = MathFraction {
-                    numerator: numerator.clone(),
-                    denominator: denominator.clone(),
+                    numerator: numerator,
+                    denominator: denominator,
                     thickness,
                     left_delimiter: delimiter,
                     right_delimiter: delimiter,

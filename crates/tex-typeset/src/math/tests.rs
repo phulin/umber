@@ -302,7 +302,7 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
         )),
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubBox(tall.clone()),
+            MathField::SubBox(tall),
         )),
         Node::MathNoad(MathNoad::new(
             NoadKind::RightDelimiter { delimiter },
@@ -329,7 +329,7 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
         NoadKind::Accent {
             accent: math_char('⏞'),
         },
-        MathField::SubMlist(wide_base.clone()),
+        MathField::SubMlist(wide_base),
     ))]);
     let accent = mlist_to_hlist(&universe, wide_accent, Style::DISPLAY, false, &params);
     assert!(all_math_glyphs(&accent).len() > 20);
@@ -463,10 +463,10 @@ fn deeply_nested_math_choices_use_an_explicit_work_stack() {
     let mut selected = universe.publish_page_nodes(&[]);
     for _ in 0..20_000 {
         selected = universe.publish_page_nodes(&[Node::MathChoice(MathChoice {
-            display: selected.clone(),
-            text: selected.clone(),
-            script: selected.clone(),
-            script_script: selected.clone(),
+            display: selected,
+            text: selected,
+            script: selected,
+            script_script: selected,
         })]);
     }
     let params = MathParams::read(&universe);
@@ -483,7 +483,7 @@ fn deeply_nested_sub_mlists_use_an_explicit_work_stack() {
     for _ in 0..20_000 {
         nested = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubMlist(nested.clone()),
+            MathField::SubMlist(nested),
         ))]);
     }
     let params = MathParams::read(&universe);
@@ -506,7 +506,7 @@ fn nested_sub_mlist_transaction_storage_is_linear_in_depth() {
         for _ in 0..depth {
             nested = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
-                MathField::SubMlist(nested.clone()),
+                MathField::SubMlist(nested),
             ))]);
         }
         let params = MathParams::read(&universe);
@@ -542,7 +542,7 @@ fn deeply_nested_sub_boxes_use_an_explicit_work_stack() {
     }
     let input = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
-        MathField::SubBox(children.clone()),
+        MathField::SubBox(children),
     ))]);
     let params = MathParams::read(&universe);
 
@@ -558,10 +558,10 @@ fn math_choice_preserves_the_full_cramped_style() {
     scripted.superscript = MathField::MathChar(math_char('c'));
     let selected = universe.publish_page_nodes(&[Node::MathNoad(scripted)]);
     let choice = universe.publish_page_nodes(&[Node::MathChoice(MathChoice {
-        display: selected.clone(),
-        text: selected.clone(),
-        script: selected.clone(),
-        script_script: selected.clone(),
+        display: selected,
+        text: selected,
+        script: selected,
+        script_script: selected,
     })]);
     let params = MathParams::read(&universe);
     let cramped = Style::new(StyleFamily::Text, true);
@@ -580,19 +580,19 @@ fn structural_dependency_order_is_deterministic() {
     let input = universe.publish_page_nodes(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubMlist(left.clone()),
+            MathField::SubMlist(left),
         )),
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubMlist(right.clone()),
+            MathField::SubMlist(right),
         )),
     ]);
     let params = MathParams::read(&universe);
-    let expected = mlist_to_hlist(&universe, input.clone(), Style::TEXT, false, &params);
+    let expected = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
 
     for _ in 0..32 {
         assert_eq!(
-            mlist_to_hlist(&universe, input.clone(), Style::TEXT, false, &params),
+            mlist_to_hlist(&universe, input, Style::TEXT, false, &params),
             expected
         );
     }
@@ -608,9 +608,9 @@ fn delimiter_noad_ignores_structural_fields_during_planning() {
     ))]);
     let malformed = universe.publish_page_nodes(&[Node::MathNoad(MathNoad {
         kind: NoadKind::LeftDelimiter { delimiter: 0 },
-        nucleus: MathField::SubMlist(unused.clone()),
-        subscript: MathField::SubMlist(unused.clone()),
-        superscript: MathField::SubMlist(unused.clone()),
+        nucleus: MathField::SubMlist(unused),
+        subscript: MathField::SubMlist(unused),
+        superscript: MathField::SubMlist(unused),
     })]);
     let params = MathParams::read(&universe);
 
@@ -1421,10 +1421,10 @@ fn fraction_reuses_single_explicit_numerator_box() {
         children,
     }));
     let explicit_list = universe.publish_page_nodes(&[explicit]);
-    let field = MathField::SubBox(explicit_list.clone());
+    let field = MathField::SubBox(explicit_list);
     let numerator = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
-        field.clone(),
+        field,
     ))]);
     let denominator = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
@@ -1474,7 +1474,7 @@ fn direct_sub_box_nucleus_does_not_republish_its_source_pack() {
     }))]);
     let input = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
-        MathField::SubBox(explicit.clone()),
+        MathField::SubBox(explicit),
     ))]);
     let params = MathParams::read(&universe);
 
@@ -1512,7 +1512,7 @@ fn nested_sub_mlist_records_its_structural_hpack() {
     let nested = universe.publish_page_nodes(&[]);
     let input = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
-        MathField::SubMlist(nested.clone()),
+        MathField::SubMlist(nested),
     ))]);
     let params = MathParams::read(&universe);
 
@@ -1544,16 +1544,16 @@ fn shared_nested_sub_mlist_replays_hpack_observations_per_occurrence() {
     let empty = universe.publish_page_nodes(&[]);
     let shared = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
-        MathField::SubMlist(empty.clone()),
+        MathField::SubMlist(empty),
     ))]);
     let input = universe.publish_page_nodes(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubMlist(shared.clone()),
+            MathField::SubMlist(shared),
         )),
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubMlist(shared.clone()),
+            MathField::SubMlist(shared),
         )),
     ]);
     let params = MathParams::read(&universe);
@@ -1581,11 +1581,11 @@ fn shared_nested_sub_mlist_replays_conversion_events_per_occurrence() {
     let input = universe.publish_page_nodes(&[
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubMlist(shared.clone()),
+            MathField::SubMlist(shared),
         )),
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubMlist(shared.clone()),
+            MathField::SubMlist(shared),
         )),
     ]);
     let params = MathParams::read(&universe);
@@ -1628,12 +1628,12 @@ fn fraction_retains_box_around_nested_sub_mlist_nucleus() {
     let explicit_list = universe.publish_page_nodes(&[explicit]);
     let nested = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
-        MathField::SubBox(explicit_list.clone()),
+        MathField::SubBox(explicit_list),
     ))]);
-    let field = MathField::SubMlist(nested.clone());
+    let field = MathField::SubMlist(nested);
     let numerator = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
-        field.clone(),
+        field,
     ))]);
     let denominator = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
@@ -1688,7 +1688,7 @@ fn left_right_delimiters_size_to_enclosed_list() {
         )),
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubBox(tall_box.clone()),
+            MathField::SubBox(tall_box),
         )),
         Node::MathNoad(MathNoad::new(
             NoadKind::RightDelimiter { delimiter },
@@ -1730,7 +1730,7 @@ fn middle_delimiter_uses_common_extent_and_boundary_spacing() {
         )),
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubBox(tall_box.clone()),
+            MathField::SubBox(tall_box),
         )),
         Node::MathNoad(MathNoad::new(
             NoadKind::MiddleDelimiter { delimiter },
@@ -1738,7 +1738,7 @@ fn middle_delimiter_uses_common_extent_and_boundary_spacing() {
         )),
         Node::MathNoad(MathNoad::new(
             NoadKind::Normal(NoadClass::Ord),
-            MathField::SubBox(tall_box.clone()),
+            MathField::SubBox(tall_box),
         )),
         Node::MathNoad(MathNoad::new(
             NoadKind::RightDelimiter { delimiter },
@@ -1753,7 +1753,7 @@ fn middle_delimiter_uses_common_extent_and_boundary_spacing() {
         Style::SCRIPT,
         Style::SCRIPT_SCRIPT,
     ] {
-        let hlist = mlist_to_hlist(&universe, input.clone(), style, false, &params);
+        let hlist = mlist_to_hlist(&universe, input, style, false, &params);
         let nodes = root_nodes(&hlist);
 
         assert_eq!(
@@ -1791,7 +1791,7 @@ fn ordinary_sub_box_nucleus_is_not_repacked() {
     let sub_box = universe.publish_page_nodes(&[sub_box]);
     let input = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
-        MathField::SubBox(sub_box.clone()),
+        MathField::SubBox(sub_box),
     ))]);
     let params = MathParams::read(&universe);
 
@@ -1821,7 +1821,7 @@ fn vcenter_preserves_prepacked_vertical_payload_without_horizontal_remeasurement
         glue_set: GlueSetRatio::from_raw(0),
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: empty.clone(),
+        children: empty,
     }));
     let vertical_payload =
         universe.publish_page_nodes(&[wide_box.clone(), wide_box.clone(), wide_box]);
@@ -1834,12 +1834,12 @@ fn vcenter_preserves_prepacked_vertical_payload_without_horizontal_remeasurement
         glue_set: GlueSetRatio::from_raw(0),
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: vertical_payload.clone(),
+        children: vertical_payload,
     }));
     let source_vbox = universe.publish_page_nodes(&[source_vbox]);
     let input = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::VCenter,
-        MathField::SubBox(source_vbox.clone()),
+        MathField::SubBox(source_vbox),
     ))]);
     let params = MathParams::read(&universe);
 
@@ -1896,7 +1896,7 @@ fn display_limits_does_not_rewrap_clean_compound_operator() {
     ]);
     let op = MathNoad::new(
         NoadKind::Operator(LimitType::Limits),
-        MathField::SubMlist(nucleus.clone()),
+        MathField::SubMlist(nucleus),
     );
     let input = universe.publish_page_nodes(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
@@ -1942,7 +1942,7 @@ fn display_limits_preserve_same_width_source_vbox_axis() {
         NoadKind::Operator(LimitType::Limits),
         MathField::MathChar(math_char('o')),
     );
-    op.superscript = MathField::SubBox(source_vbox.clone());
+    op.superscript = MathField::SubBox(source_vbox);
     let input = universe.publish_page_nodes(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
 
@@ -2046,7 +2046,7 @@ fn nolimits_operator_does_not_center_compound_nucleus() {
     ]);
     let op = MathNoad::new(
         NoadKind::Operator(LimitType::NoLimits),
-        MathField::SubMlist(nucleus.clone()),
+        MathField::SubMlist(nucleus),
     );
     let input = universe.publish_page_nodes(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
@@ -2072,7 +2072,7 @@ fn nolimits_operator_hpacks_a_single_box_sub_mlist_nucleus() {
     ))]);
     let op = MathNoad::new(
         NoadKind::Operator(LimitType::NoLimits),
-        MathField::SubMlist(inner.clone()),
+        MathField::SubMlist(inner),
     );
     let input = universe.publish_page_nodes(&[Node::MathNoad(op)]);
     let params = MathParams::read(&universe);
@@ -2124,7 +2124,7 @@ fn radical_clearance_uses_display_and_nondisplay_formulas() {
     let input = universe.publish_page_nodes(&[Node::MathNoad(noad)]);
     let params = MathParams::read(&universe);
 
-    let display = mlist_to_hlist(&universe, input.clone(), Style::DISPLAY, false, &params);
+    let display = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
     let text = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
 
     assert_radical_clearance(&display, sc(14));
@@ -2216,7 +2216,7 @@ fn missing_math_accent_preserves_a_nonempty_nucleus_box() {
                 origin: tex_state::token::OriginId::UNKNOWN,
             },
         },
-        MathField::SubBox(empty.clone()),
+        MathField::SubBox(empty),
     );
     let input = universe.publish_page_nodes(&[Node::MathNoad(noad)]);
     let params = MathParams::read(&universe);
@@ -2242,7 +2242,7 @@ fn nested_math_accent_preserves_the_inner_vertical_box() {
         NoadKind::Accent {
             accent: math_char('^'),
         },
-        MathField::SubMlist(inner.clone()),
+        MathField::SubMlist(inner),
     ))]);
     let params = MathParams::read(&universe);
 
@@ -2265,11 +2265,11 @@ fn nested_under_overline_retains_inner_vertical_box() {
     ]);
     let overline = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Overline,
-        MathField::SubMlist(sum.clone()),
+        MathField::SubMlist(sum),
     ))]);
     let input = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
         NoadKind::Underline,
-        MathField::SubMlist(overline.clone()),
+        MathField::SubMlist(overline),
     ))]);
     let params = MathParams::read(&universe);
 

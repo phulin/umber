@@ -646,7 +646,7 @@ pub(crate) fn trace_box_write<G>(
     }
     let old = stores.copy_box_to_page(index);
     let name = escaped(stores, &format!("box{index}"));
-    let old_text = stores.box_assignment_trace_text(old.clone());
+    let old_text = stores.box_assignment_trace_text(old);
     write(stores);
     let new_text = stores.box_assignment_trace_text(new.cloned());
     let changed = old.as_ref() != new;

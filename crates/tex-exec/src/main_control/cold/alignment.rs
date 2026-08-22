@@ -371,7 +371,7 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
         .ok_or(ExecError::MissingToken {
             context: "active replay alignment row",
         })?
-        .push(material.clone());
+        .push(material);
     let cell = crate::align::packaging::make_unset_node(
         stores,
         diagnostic_effects,

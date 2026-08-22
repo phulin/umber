@@ -44,7 +44,7 @@ fn package_unset_cell_records_natural_extent_and_glue_orders() {
                 leader: None,
             },
         ]);
-        let children_ref = children.clone();
+        let children_ref = children;
 
         for (alignment, kind) in [
             (AlignmentKind::HAlign, UnsetKind::HBox),
@@ -60,7 +60,7 @@ fn package_unset_cell_records_natural_extent_and_glue_orders() {
                 &mut tex_state::diagnostic::DiagnosticEffects::new(),
                 &mut geometry,
                 &diagnostic_context,
-                children.clone(),
+                children,
                 kind,
                 3,
                 UnsetPackContext::Row,
@@ -105,7 +105,7 @@ fn span_record_256_limit_and_merge_fields() {
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
             &mut geometry,
             &diagnostic_context,
-            children.clone(),
+            children,
             UnsetKind::HBox,
             256,
             UnsetPackContext::Cell,

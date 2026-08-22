@@ -19,7 +19,7 @@ pub(crate) fn prune_page_top<G>(
 }
 
 pub(crate) fn prune_page_top_with_discards<G>(
-    stores: &mut CommandContext<'_, G>,
+    _stores: &mut CommandContext<'_, G>,
     nodes: Vec<Node>,
     split_top_skip: GlueSpec,
 ) -> (Vec<Node>, Vec<Node>) {

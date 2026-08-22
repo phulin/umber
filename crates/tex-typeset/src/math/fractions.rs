@@ -20,16 +20,8 @@ pub(super) fn make_fraction(
     };
     let num_style = ctx.style.num_style();
     let denom_style = ctx.style.denom_style();
-    let mut numerator = clean_box(
-        ctx,
-        &MathField::SubMlist(fraction.numerator.clone()),
-        num_style,
-    );
-    let mut denominator = clean_box(
-        ctx,
-        &MathField::SubMlist(fraction.denominator.clone()),
-        denom_style,
-    );
+    let mut numerator = clean_box(ctx, &MathField::SubMlist(fraction.numerator), num_style);
+    let mut denominator = clean_box(ctx, &MathField::SubMlist(fraction.denominator), denom_style);
     // AppG rule 15a
     if numerator.width < denominator.width {
         rebox(ctx, &mut numerator, denominator.width);

@@ -115,7 +115,7 @@ fn operator_nucleus(
     effective_limits: LimitType,
     delta: &mut Scaled,
 ) -> MathBox {
-    let mut field = noad.nucleus.clone();
+    let mut field = noad.nucleus;
     if let MathField::MathChar(mut ch) = field
         && ctx.style.is_display()
         && let Some(fetched) = fetch(ctx, ch, ctx.style)

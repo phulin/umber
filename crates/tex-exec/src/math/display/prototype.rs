@@ -77,7 +77,7 @@ pub(super) fn package_directed_display_line<G>(
     };
 
     let mut payload = if display_line.box_lr == BoxLr::DList {
-        vec![Node::HList(display_line.clone())]
+        vec![Node::HList(display_line)]
     } else {
         let mut children = stores
             .page_node_list(display_line.children)
@@ -190,7 +190,7 @@ pub(super) fn package_directed_display_line<G>(
 }
 
 fn cancel_display_skip<G>(
-    stores: &mut CommandContext<'_, G>,
+    _stores: &mut CommandContext<'_, G>,
     original: &tex_state::glue::GlueSpec,
     kind: GlueKind,
     displacement: Scaled,

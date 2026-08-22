@@ -137,7 +137,7 @@ fn set_row<G>(
             glue_set: config.prototype.box_node.glue_set,
             glue_sign: config.prototype.box_node.glue_sign,
             glue_order: config.prototype.box_node.glue_order,
-            children: children.clone(),
+            children,
         },
         AlignmentKind::VAlign => BoxNodeFields {
             width: row.width,
@@ -179,7 +179,7 @@ fn set_row_children<G>(
                     out.push(empty_column_box(
                         config.kind,
                         config.resolved.columns[spanned_column],
-                        config.empty.clone(),
+                        config.empty,
                     ));
                 }
                 column += span;
@@ -236,7 +236,7 @@ fn spanned_target<G>(
     span: usize,
     resolved: &ResolvedWidths,
     prototype: &Prototype,
-    stores: &CommandContext<'_, G>,
+    _stores: &CommandContext<'_, G>,
 ) -> Result<Scaled, ExecError> {
     let mut target = resolved.columns[column];
     for offset in 1..span {

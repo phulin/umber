@@ -363,7 +363,7 @@ fn normalize_index<G>(
                 location,
             )?;
             if anchored && overlay.effects.len() == effect_count {
-                overlay.omitted_whatsits.push((list.clone(), index));
+                overlay.omitted_whatsits.push((list, index));
             }
         }
         NormalizeNode::Math(math) => {
@@ -383,9 +383,9 @@ fn normalize_index<G>(
             };
             let replacement = stores.publish_page_nodes_owned(&mut nodes);
             overlay.math.push(MathSubstitution {
-                list: list.clone(),
+                list,
                 index,
-                replacement: replacement.clone(),
+                replacement,
             });
             normalize_list(
                 stores,

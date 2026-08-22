@@ -71,10 +71,10 @@ fn mlist_passes_cover_all_styles_bins_nonscript_spacing_and_penalties() {
     let arms = ['a', 'b', 'c', '+']
         .map(|ch| stores.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, ch))]));
     let choice = stores.publish_page_nodes(&[Node::MathChoice(MathChoice {
-        display: arms[0].clone(),
-        text: arms[1].clone(),
-        script: arms[2].clone(),
-        script_script: arms[3].clone(),
+        display: arms[0],
+        text: arms[1],
+        script: arms[2],
+        script_script: arms[3],
     })]);
     let params = MathParams::read(&stores);
     for (style, expected) in [
@@ -87,7 +87,7 @@ fn mlist_passes_cover_all_styles_bins_nonscript_spacing_and_penalties() {
         (Style::SCRIPT_SCRIPT, '+'),
         (Style::SCRIPT_SCRIPT.cramped_style(), '+'),
     ] {
-        let layout = mlist_to_hlist(&stores, choice.clone(), style, false, &params);
+        let layout = mlist_to_hlist(&stores, choice, style, false, &params);
         let selected = root_nodes(&layout).into_iter().find_map(|node| match node {
             MathNode::Char { ch, .. } => Some(*ch),
             _ => None,
@@ -137,7 +137,7 @@ fn mlist_passes_cover_all_styles_bins_nonscript_spacing_and_penalties() {
         Style::SCRIPT_SCRIPT,
         Style::SCRIPT_SCRIPT.cramped_style(),
     ] {
-        let layout = mlist_to_hlist(&stores, nonscript.clone(), style, false, &params);
+        let layout = mlist_to_hlist(&stores, nonscript, style, false, &params);
         let has_kern = root_nodes(&layout).iter().any(|node| {
             matches!(
                 node,
@@ -183,10 +183,10 @@ fn middle_and_right_restore_base_style_before_nested_math_choices() {
     let arms = ['a', 'b', 'c', '+']
         .map(|ch| stores.publish_page_nodes(&[Node::MathNoad(noad(NoadClass::Ord, ch))]));
     let choice = MathChoice {
-        display: arms[0].clone(),
-        text: arms[1].clone(),
-        script: arms[2].clone(),
-        script_script: arms[3].clone(),
+        display: arms[0],
+        text: arms[1],
+        script: arms[2],
+        script_script: arms[3],
     };
     let params = MathParams::read(&stores);
     let selected_char = |layout: &MathLayout| {
@@ -216,11 +216,11 @@ fn middle_and_right_restore_base_style_before_nested_math_choices() {
             let nested = stores.publish_page_nodes(&[
                 Node::MathStyle(tex_state::math::MathStyle::ScriptScript),
                 Node::MathNoad(MathNoad::new(boundary.clone(), MathField::Empty)),
-                Node::MathChoice(choice.clone()),
+                Node::MathChoice(choice),
             ]);
             let input = stores.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
                 NoadKind::Normal(NoadClass::Ord),
-                MathField::SubMlist(nested.clone()),
+                MathField::SubMlist(nested),
             ))]);
             let layout = mlist_to_hlist(&stores, input, base, false, &params);
             let selected = selected_char(&layout);

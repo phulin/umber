@@ -353,7 +353,7 @@ fn report_huge_page_deleted_box<G>(
     if tracing_output > 0 {
         return;
     }
-    let mut command = stores.command_context().expect("live generation");
+    let command = stores.command_context().expect("live generation");
     let dump = crate::node_dump::dump_page_list(
         &command,
         page_root,

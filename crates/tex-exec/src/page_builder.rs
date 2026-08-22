@@ -213,7 +213,7 @@ fn prepare_insertion<G>(
                     &mut insertion,
                     current_index,
                     node,
-                    content.clone(),
+                    *content,
                     *split_max_depth,
                     diagnostic_context,
                 )?;
@@ -539,7 +539,7 @@ fn update_glue_or_kern<G>(
             replacement = Some(Node::Glue {
                 spec,
                 kind: *kind,
-                leader: leader.clone(),
+                leader: *leader,
             });
             add_glue_stretch(stores, spec)?;
             let shrink = add(stores.page_dimension(PageDimension::Shrink), spec.shrink)?;
@@ -601,7 +601,7 @@ fn normalize_insert_content_shrink<G>(
         content_nodes[index] = Node::Glue {
             spec: finite,
             kind: *kind,
-            leader: leader.clone(),
+            leader: *leader,
         };
         changed = true;
     }

@@ -31,7 +31,7 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
         NoadClass::Inner,
     ];
     for class in classes {
-        let noad = MathNoad::new(NoadKind::Normal(class), nucleus.clone());
+        let noad = MathNoad::new(NoadKind::Normal(class), nucleus);
         assert_eq!(noad.kind, NoadKind::Normal(class));
         assert_eq!(noad.nucleus, nucleus);
         assert_eq!(noad.subscript, MathField::Empty);
@@ -56,7 +56,7 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
         NoadKind::VCenter,
     ];
     for kind in special {
-        let noad = MathNoad::new(kind.clone(), nucleus.clone());
+        let noad = MathNoad::new(kind.clone(), nucleus);
         assert_eq!(noad.kind, kind);
         assert_eq!(noad.subscript, MathField::Empty);
         assert_eq!(noad.superscript, MathField::Empty);
@@ -65,10 +65,10 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
     let mut stores = TestState::new();
     let arms = [1, 2, 3, 4].map(|penalty| stores.publish_page_nodes(&[Node::Penalty(penalty)]));
     let choice = MathChoice {
-        display: arms[0].clone(),
-        text: arms[1].clone(),
-        script: arms[2].clone(),
-        script_script: arms[3].clone(),
+        display: arms[0],
+        text: arms[1],
+        script: arms[2],
+        script_script: arms[3],
     };
     let values = |root| {
         stores
@@ -83,8 +83,8 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
     assert_eq!(values(choice.script_script), [Node::Penalty(4)]);
 
     let fraction = MathFraction {
-        numerator: arms[0].clone(),
-        denominator: arms[1].clone(),
+        numerator: arms[0],
+        denominator: arms[1],
         thickness: FractionThickness::Explicit(Scaled::from_raw(-1)),
         left_delimiter: Some(0),
         right_delimiter: Some(0x07ff_ffff),

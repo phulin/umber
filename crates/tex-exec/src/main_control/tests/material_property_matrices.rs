@@ -481,22 +481,22 @@ fn vsplit_void_nonvbox_pruning_marks_and_packaging_matrix() {
     // TeX82 §§977--979: exercise both no-op exits, prefix ownership, all
     // split-mark transitions, top pruning, exact/oversized packing, and the
     // source-register replacement contract through ordered node projections.
-    with_run(br"\setbox1=\vsplit0 to5pt", false, |_, mut void| {
-        assert_eq!(register_shapes(&mut void, 0), None);
-        assert_eq!(register_shapes(&mut void, 1), None);
+    with_run(br"\setbox1=\vsplit0 to5pt", false, |_, void| {
+        assert_eq!(register_shapes(void, 0), None);
+        assert_eq!(register_shapes(void, 1), None);
     });
 
     with_run(
         br"\nonstopmode\setbox0=\hbox{\kern7pt}\setbox1=\vsplit0 to5pt",
         false,
-        |_, mut wrong| {
+        |_, wrong| {
             assert!(matches!(
-                register_shapes(&mut wrong, 0).as_deref(),
+                register_shapes(wrong, 0).as_deref(),
                 Some([Shape::HBox { children, .. }])
                     if children.as_slice() == [Shape::Kern(7 * Scaled::UNITY, KernKind::Explicit)]
             ));
-            assert_eq!(register_shapes(&mut wrong, 1), None);
-            assert!(terminal(&wrong).contains("vbox"), "{}", terminal(&wrong));
+            assert_eq!(register_shapes(wrong, 1), None);
+            assert!(terminal(wrong).contains("vbox"), "{}", terminal(wrong));
         },
     );
 
@@ -506,9 +506,9 @@ fn vsplit_void_nonvbox_pruning_marks_and_packaging_matrix() {
                            \kern2pt\mark{c}\hrule height6pt}
           \setbox1=\vsplit0 to4pt",
         false,
-        |_, mut split| {
-            let prefix = register_shapes(&mut split, 1).expect("split prefix");
-            let remainder = register_shapes(&mut split, 0).expect("split remainder");
+        |_, split| {
+            let prefix = register_shapes(split, 1).expect("split prefix");
+            let remainder = register_shapes(split, 0).expect("split remainder");
             assert!(
                 matches!(prefix.as_slice(), [Shape::VBox { children, .. }]
         if children.as_slice() == [Shape::Mark(0, "a".into()), Shape::Rule(None, Some(4 * Scaled::UNITY), Some(0)), Shape::Mark(0, "b".into())]),
@@ -520,7 +520,7 @@ fn vsplit_void_nonvbox_pruning_marks_and_packaging_matrix() {
             );
             for mark in [PageMark::SplitFirst, PageMark::SplitBot] {
                 assert_eq!(
-                    page_mark_text(&mut split, mark),
+                    page_mark_text(split, mark),
                     if mark == PageMark::SplitFirst {
                         "a"
                     } else {
@@ -534,10 +534,10 @@ fn vsplit_void_nonvbox_pruning_marks_and_packaging_matrix() {
     with_run(
         br"\setbox0=\vbox{\hrule height3pt}\setbox1=\vsplit0 to30pt",
         false,
-        |_, mut complete| {
-            assert_eq!(register_shapes(&mut complete, 0), None);
+        |_, complete| {
+            assert_eq!(register_shapes(complete, 0), None);
             assert!(
-                matches!(register_shapes(&mut complete, 1).as_deref(), Some([Shape::VBox { height, children, .. }]) if *height == 30 * Scaled::UNITY && matches!(children.as_slice(), [Shape::Rule(_, Some(h), _) ] if *h == 3 * Scaled::UNITY))
+                matches!(register_shapes(complete, 1).as_deref(), Some([Shape::VBox { height, children, .. }]) if *height == 30 * Scaled::UNITY && matches!(children.as_slice(), [Shape::Rule(_, Some(h), _) ] if *h == 3 * Scaled::UNITY))
             );
         },
     );
@@ -554,17 +554,17 @@ fn vsplit_breakpoint_mark_scope_and_complete_ownership_matrix() {
           \setbox1=\vsplit0 to1pt
           \setbox0=\vbox{\hrule height1pt}\setbox2=\vsplit0 to2pt",
         false,
-        |_, mut cleared| {
-            assert!(page_mark_is_none(&mut cleared, PageMark::SplitFirst));
-            assert!(page_mark_is_none(&mut cleared, PageMark::SplitBot));
+        |_, cleared| {
+            assert!(page_mark_is_none(cleared, PageMark::SplitFirst));
+            assert!(page_mark_is_none(cleared, PageMark::SplitBot));
 
             with_run(
                 br"\setbox0=\vbox{\penalty-10000\mark{tail}\hrule height2pt}
           \setbox1=\vsplit0 to0pt",
                 false,
-                |_, mut first| {
+                |_, first| {
                     assert_eq!(
-                        register_shapes(&mut first, 1),
+                        register_shapes(first, 1),
                         Some(vec![Shape::VBox {
                             width: 0,
                             height: 0,
@@ -574,7 +574,7 @@ fn vsplit_breakpoint_mark_scope_and_complete_ownership_matrix() {
                         }])
                     );
                     assert!(matches!(
-                        register_shapes(&mut first, 0).as_deref(),
+                        register_shapes(first, 0).as_deref(),
                         Some([Shape::VBox { children, .. }])
                             if matches!(children.as_slice(), [Shape::Mark(0, mark), Shape::Glue { kind: GlueKind::SplitTopSkip, .. }, Shape::Rule(_, Some(height), _) ] if mark == "tail" && *height == 2 * Scaled::UNITY)
                     ));
@@ -585,9 +585,9 @@ fn vsplit_breakpoint_mark_scope_and_complete_ownership_matrix() {
                            \penalty-10000\kern3pt\mark{tail}\hrule height4pt}
           \setbox1=\vsplit0 to2pt",
                         false,
-                        |_, mut middle| {
+                        |_, middle| {
                             assert!(matches!(
-                                register_shapes(&mut middle, 1).as_deref(),
+                                register_shapes(middle, 1).as_deref(),
                                 Some([Shape::VBox { children, .. }])
                                     if children.as_slice() == [
                                         Shape::Mark(0, "first".into()),
@@ -596,7 +596,7 @@ fn vsplit_breakpoint_mark_scope_and_complete_ownership_matrix() {
                                     ]
                             ));
                             assert!(matches!(
-                                register_shapes(&mut middle, 0).as_deref(),
+                                register_shapes(middle, 0).as_deref(),
                                 Some([Shape::VBox { children, .. }])
                                     if children.as_slice() == [
                                         Shape::Mark(0, "tail".into()),
@@ -612,28 +612,28 @@ fn vsplit_breakpoint_mark_scope_and_complete_ownership_matrix() {
                                         Shape::Rule(None, Some(4 * Scaled::UNITY), Some(0)),
                                     ]
                             ));
-                            assert_eq!(page_mark_text(&mut middle, PageMark::SplitFirst), "first");
-                            assert_eq!(page_mark_text(&mut middle, PageMark::SplitBot), "middle");
+                            assert_eq!(page_mark_text(middle, PageMark::SplitFirst), "first");
+                            assert_eq!(page_mark_text(middle, PageMark::SplitBot), "middle");
 
                             with_run(
                                 br"\setbox0=\vbox{\hrule height1pt\penalty-10000\penalty-9999
                            \hrule height2pt}
           \setbox1=\vsplit0 to1pt",
                                 false,
-                                |_, mut penalty_first| {
+                                |_, penalty_first| {
                                     assert!(matches!(
-                                        register_shapes(&mut penalty_first, 1).as_deref(),
+                                        register_shapes(penalty_first, 1).as_deref(),
                                         Some([Shape::VBox { children, .. }])
                                             if children.as_slice() == [Shape::Rule(None, Some(Scaled::UNITY), Some(0))]
                                     ));
                                     assert!(
                                         matches!(
-                                            register_shapes(&mut penalty_first, 0).as_deref(),
+                                            register_shapes(penalty_first, 0).as_deref(),
                                             Some([Shape::VBox { children, .. }])
                                                 if matches!(children.as_slice(), [Shape::Glue { kind: GlueKind::SplitTopSkip, .. }, Shape::Rule(_, Some(height), _)] if *height == 2 * Scaled::UNITY)
                                         ),
                                         "{:?}",
-                                        register_shapes(&mut penalty_first, 0)
+                                        register_shapes(penalty_first, 0)
                                     );
 
                                     with_run(
@@ -641,9 +641,9 @@ fn vsplit_breakpoint_mark_scope_and_complete_ownership_matrix() {
                                   \hrule height1pt}
                            \penalty-10000\mark{outer-tail}\hrule height3pt}
           \setbox1=\vsplit0 to2pt",
-        false, |_, mut nested| {
+        false, |_, nested| {
     assert!(matches!(
-        register_shapes(&mut nested, 1).as_deref(),
+        register_shapes(nested, 1).as_deref(),
         Some([Shape::VBox { children, .. }])
             if matches!(children.as_slice(), [Shape::VBox { children: inner, .. }]
                 if inner.as_slice() == [
@@ -653,10 +653,10 @@ fn vsplit_breakpoint_mark_scope_and_complete_ownership_matrix() {
                     Shape::Rule(None, Some(Scaled::UNITY), Some(0)),
                 ])
     ));
-    assert!(page_mark_is_none(&mut nested, PageMark::SplitFirst));
-    assert!(page_mark_is_none(&mut nested, PageMark::SplitBot));
+    assert!(page_mark_is_none(nested, PageMark::SplitFirst));
+    assert!(page_mark_is_none(nested, PageMark::SplitBot));
     assert!(matches!(
-        register_shapes(&mut nested, 0).as_deref(),
+        register_shapes(nested, 0).as_deref(),
         Some([Shape::VBox { children, .. }])
             if matches!(children.as_slice(), [Shape::Mark(0, mark), Shape::Glue { kind: GlueKind::SplitTopSkip, .. }, Shape::Rule(_, Some(height), _)] if mark == "outer-tail" && *height == 3 * Scaled::UNITY)
     ));
@@ -667,19 +667,19 @@ fn vsplit_breakpoint_mark_scope_and_complete_ownership_matrix() {
                             \kern3pt\hrule height4pt}
            \global\setbox2=\vsplit0 to2pt
            \setbox1=\copy0}",
-        false, |_, mut scoped| {
+        false, |_, scoped| {
     assert!(matches!(
-        register_shapes(&mut scoped, 0).as_deref(),
+        register_shapes(scoped, 0).as_deref(),
         Some([Shape::VBox { children, .. }])
             if children.as_slice() == [Shape::Rule(None, Some(8 * Scaled::UNITY), Some(0))]
     ));
     assert!(matches!(
-        register_shapes(&mut scoped, 1).as_deref(),
+        register_shapes(scoped, 1).as_deref(),
         Some([Shape::VBox { children, .. }])
             if children.as_slice() == [Shape::Kern(9 * Scaled::UNITY, KernKind::Explicit)]
     ));
     assert!(matches!(
-        register_shapes(&mut scoped, 2).as_deref(),
+        register_shapes(scoped, 2).as_deref(),
         Some([Shape::VBox { children, .. }])
             if children.as_slice() == [
                 Shape::Mark(0, "local".into()),
@@ -723,57 +723,57 @@ fn text_material_character_ligkern_space_language_and_vertical_replay_matrix() {
           \setbox4=\vbox{A\par}
           \tracinglostchars=1\nullfont\setbox5=\hbox{A\kern1pt}",
         true,
-        |_, mut universe| {
+        |_, universe| {
             assert_eq!(
-                register_shapes(&mut universe, 0),
+                register_shapes(universe, 0),
                 Some(vec![Shape::HBox {
-                    width: register_box_width(&mut universe, 0),
-                    height: register_box_height(&mut universe, 0),
-                    depth: register_box_depth(&mut universe, 0),
+                    width: register_box_width(universe, 0),
+                    height: register_box_height(universe, 0),
+                    depth: register_box_depth(universe, 0),
                     shift: 0,
                     children: vec![Shape::Char('A'), Shape::Char('B'), Shape::Char('C')],
                 }])
             );
-            let ligkern = register_shapes(&mut universe, 1).expect("lig/kern box");
+            let ligkern = register_shapes(universe, 1).expect("lig/kern box");
             assert!(
                 matches!(ligkern.as_slice(), [Shape::HBox { children, .. }]
         if matches!(children.as_slice(), [Shape::Lig(first), Shape::Glue { leader: false, .. }, Shape::Char('A'), Shape::Kern(_, KernKind::Font), Shape::Char('V'), Shape::Glue { leader: false, .. }, Shape::Char('f'), Shape::Char('i')] if first == &['f', 'i'])),
                 "{ligkern:?}"
             );
-            assert_eq!(macro_text(&mut universe, "sfzero"), "1000");
-            assert_eq!(macro_text(&mut universe, "sflow"), "500");
-            assert_eq!(macro_text(&mut universe, "sfnormal"), "1000");
-            assert_eq!(macro_text(&mut universe, "sfhigh"), "3000");
+            assert_eq!(macro_text(universe, "sfzero"), "1000");
+            assert_eq!(macro_text(universe, "sflow"), "500");
+            assert_eq!(macro_text(universe, "sfnormal"), "1000");
+            assert_eq!(macro_text(universe, "sfhigh"), "3000");
             assert!(
-                matches!(register_shapes(&mut universe, 10).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 10).as_deref(), Some([Shape::HBox { children, .. }])
         if children.as_slice() == [Shape::Char('f'), Shape::Char('i')])
             );
             assert!(
-                matches!(register_shapes(&mut universe, 2).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 2).as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Char('A'), Shape::Glue { width, leader: false, .. }, Shape::Char('X')] if *width == 4 * Scaled::UNITY)),
                 "{:?}",
-                register_shapes(&mut universe, 2)
+                register_shapes(universe, 2)
             );
             assert!(
-                matches!(register_shapes(&mut universe, 13).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 13).as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Char('A'), Shape::Glue { width, leader: false, .. }, Shape::Char('X')] if *width == 9 * Scaled::UNITY)),
                 "{:?}",
-                register_shapes(&mut universe, 13)
+                register_shapes(universe, 13)
             );
             assert!(
-                matches!(register_shapes(&mut universe, 3).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 3).as_deref(), Some([Shape::HBox { children, .. }])
         if children.as_slice() == [Shape::Language(7, 2, 3), Shape::Language(7, 2, 3)])
             );
-            assert_eq!(count_register(&mut universe, 0), 1);
+            assert_eq!(count_register(universe, 0), 1);
             assert!(
-                matches!(register_shapes(&mut universe, 4).as_deref(), Some([Shape::VBox { children, .. }])
+                matches!(register_shapes(universe, 4).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { children: line, .. }] if line.contains(&Shape::Char('A'))))
             );
             assert!(
-                matches!(register_shapes(&mut universe, 5).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 5).as_deref(), Some([Shape::HBox { children, .. }])
         if children.as_slice() == [Shape::Kern(Scaled::UNITY, KernKind::Explicit)])
             );
-            assert!(terminal(&universe).contains("Missing character"));
+            assert!(terminal(universe).contains("Missing character"));
         },
     );
 }
@@ -800,14 +800,14 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
           \fontdimen2\f=6pt\setbox9=\hbox{A X}
           \font\g=cmr10b \g\setbox10=\hbox{A X}",
         true,
-        |_, mut universe| {
+        |_, universe| {
             assert!(matches!(
-                register_shapes(&mut universe, 0).as_deref(),
+                register_shapes(universe, 0).as_deref(),
                 Some([Shape::HBox { children, .. }])
                     if children.as_slice() == [Shape::Lig(vec!['f', 'i'])]
             ));
             assert!(matches!(
-                register_shapes(&mut universe, 1).as_deref(),
+                register_shapes(universe, 1).as_deref(),
                 Some([Shape::HBox { children, .. }])
                     if children.as_slice() == [Shape::Char('f'), Shape::Char('i')]
             ));
@@ -820,7 +820,7 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
             for (register, (width, stretch, shrink)) in (2_u16..=4).zip(expected_font) {
                 assert!(
                     matches!(
-                        register_shapes(&mut universe, register).as_deref(),
+                        register_shapes(universe, register).as_deref(),
                         Some([Shape::HBox { children, .. }])
                             if matches!(children.as_slice(), [
                                 Shape::Char('A'), Shape::Glue {
@@ -835,7 +835,7 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
                                 if *actual_width == width && *actual_stretch == stretch && *actual_shrink == shrink)
                     ),
                     "register {register}: {:?}",
-                    register_shapes(&mut universe, register)
+                    register_shapes(universe, register)
                 );
             }
             for (register, width, stretch, stretch_order, shrink, shrink_order, kind) in [
@@ -845,7 +845,7 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
             ] {
                 assert!(
                     matches!(
-                        register_shapes(&mut universe, register).as_deref(),
+                        register_shapes(universe, register).as_deref(),
                         Some([Shape::HBox { children, .. }])
                             if matches!(children.as_slice(), [
                                 Shape::Char('A'), Shape::Glue {
@@ -865,10 +865,10 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
                                 && *actual_kind == kind)
                     ),
                     "register {register}: {:?}",
-                    register_shapes(&mut universe, register)
+                    register_shapes(universe, register)
                 );
             }
-            let cached = boxed_children(&mut universe, 8);
+            let cached = boxed_children(universe, 8);
             let [
                 Node::Char { ch: 'A', .. },
                 Node::Glue { spec: first, .. },
@@ -900,7 +900,7 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
                 },
                 "uppercase X's sfcode 999 selects a distinct cached scaling variant"
             );
-            let low_box = boxed_children(&mut universe, 2);
+            let low_box = boxed_children(universe, 2);
             let [
                 Node::Char { .. },
                 Node::Glue { spec: low, .. },
@@ -909,7 +909,7 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
             else {
                 panic!("low-factor box has one glue")
             };
-            let normal_box = boxed_children(&mut universe, 3);
+            let normal_box = boxed_children(universe, 3);
             let [
                 Node::Char { .. },
                 Node::Glue { spec: normal, .. },
@@ -920,12 +920,12 @@ fn text_boundary_font_glue_scaling_and_cache_matrix() {
             };
             assert_ne!(low, normal, "different scaled specs do not alias");
             assert!(matches!(
-                register_shapes(&mut universe, 9).as_deref(),
+                register_shapes(universe, 9).as_deref(),
                 Some([Shape::HBox { children, .. }])
                     if matches!(children.as_slice(), [Shape::Char('A'), Shape::Glue { width, .. }, Shape::Char('X')] if *width == 6 * Scaled::UNITY)
             ));
             assert!(matches!(
-                register_shapes(&mut universe, 10).as_deref(),
+                register_shapes(universe, 10).as_deref(),
                 Some([Shape::HBox { children, .. }])
                     if matches!(children.as_slice(), [Shape::Char('A'), Shape::Glue { width, .. }, Shape::Char('X')] if *width == 218_453)
             ));
@@ -949,25 +949,25 @@ fn text_outer_vertical_math_illegal_meaning_and_trigger_provenance_matrix() {
           $#$\par
           \xdef\noboundarymeaning{\meaning\noboundary}\count0=7",
         true,
-        |control, mut modes| {
+        |control, modes| {
             assert_eq!(
-                count_register(&mut modes, 1),
+                count_register(modes, 1),
                 3,
                 "character, vertical no-boundary, and math shift each start a paragraph"
             );
             assert_eq!(control.current_mode(), crate::mode::Mode::Vertical);
             assert!(
                 matches!(
-                    register_shapes(&mut modes, 0).as_deref(),
+                    register_shapes(modes, 0).as_deref(),
                     Some([Shape::HBox { children, .. }])
                         if children.as_slice() == [Shape::MathOn(0), Shape::MathOff(0)]
                 ),
                 "{:?}",
-                register_shapes(&mut modes, 0)
+                register_shapes(modes, 0)
             );
-            assert_eq!(count_register(&mut modes, 0), 7);
-            assert_eq!(macro_text(&mut modes, "noboundarymeaning"), r"\noboundary");
-            let terminal = terminal(&modes);
+            assert_eq!(count_register(modes, 0), 7);
+            assert_eq!(macro_text(modes, "noboundarymeaning"), r"\noboundary");
+            let terminal = terminal(modes);
             assert_eq!(
                 terminal
                     .matches("macro parameter character #' in vertical mode")
@@ -985,8 +985,8 @@ fn text_outer_vertical_math_illegal_meaning_and_trigger_provenance_matrix() {
             assert_eq!(terminal.matches("noboundary' in").count(), 0, "{terminal}");
 
             let source = br"\def\emit{\noboundary}\everypar{\global\advance\count0 by1}\emit\par";
-            with_run_observed(source, false, |control, mut universe, observations| {
-                assert_eq!(count_register(&mut universe, 0), 1);
+            with_run_observed(source, false, |control, universe, observations| {
+                assert_eq!(count_register(universe, 0), 1);
                 assert_eq!(control.current_mode(), crate::mode::Mode::Vertical);
                 #[derive(Debug, Eq, PartialEq)]
                 enum TriggerEvent {
@@ -1131,7 +1131,7 @@ fn register_box<G>(universe: &mut Universe<G>, register: u16) -> tex_state::node
         let root = context.copy_box_to_page(register).expect("box register");
         let nodes = page_vec_context(context, root);
         match nodes.as_slice() {
-            [Node::HList(boxed) | Node::VList(boxed)] => boxed.clone(),
+            [Node::HList(boxed) | Node::VList(boxed)] => *boxed,
             other => panic!("register {register} root: {other:?}"),
         }
     })
@@ -1162,13 +1162,13 @@ fn direct_material_modes_operands_page_boundary_and_group_clear_matrix() {
           {\parshape=1 2pt 8pt \hangindent=6pt \hangafter=4}
           \par",
         false,
-        |_, mut universe| {
+        |_, universe| {
             assert!(
-                matches!(register_shapes(&mut universe, 0).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 0).as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Kern(k, KernKind::Explicit), Shape::Glue { width, kind: GlueKind::Normal, leader: false, .. }, Shape::Rule(Some(rw), Some(rh), Some(rd)), Shape::Glue { kind: GlueKind::Normal, leader: false, .. }]
             if *k == -Scaled::UNITY && *width == 2 * Scaled::UNITY && *rw == 2 * Scaled::UNITY && *rh == 5 * Scaled::UNITY && *rd == -Scaled::UNITY))
             );
-            let vertical = register_shapes(&mut universe, 1);
+            let vertical = register_shapes(universe, 1);
             assert!(
                 matches!(vertical.as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Kern(k, KernKind::Explicit), Shape::Glue { width, kind: GlueKind::Normal, leader: false, .. }, Shape::Rule(Some(rw), Some(rh), None)]
@@ -1178,15 +1178,14 @@ fn direct_material_modes_operands_page_boundary_and_group_clear_matrix() {
                 if *k == -2 * Scaled::UNITY && *width == 3 * Scaled::UNITY && *rw == 4 * Scaled::UNITY && *rh == 5 * Scaled::UNITY)),
                 "{vertical:?}"
             );
-            assert!(crate::test_harness::with_admitted(
-                &mut universe,
-                |context| context.paragraph_shape().is_empty()
-            ));
+            assert!(crate::test_harness::with_admitted(universe, |context| {
+                context.paragraph_shape().is_empty()
+            }));
             assert_eq!(
-                dimen_parameter(&mut universe, DimenParam::HANG_INDENT),
+                dimen_parameter(universe, DimenParam::HANG_INDENT),
                 Scaled::from_raw(0)
             );
-            assert_eq!(int_parameter(&mut universe, IntParam::HANG_AFTER), 1);
+            assert_eq!(int_parameter(universe, IntParam::HANG_AFTER), 1);
 
             with_run(
                 br"\vsize=1pt\topskip=0pt\hrule height2pt\penalty-10000\end",
@@ -1197,9 +1196,9 @@ fn direct_material_modes_operands_page_boundary_and_group_clear_matrix() {
                     with_run(
                         br"\setbox0=\hbox{\vrule width1pt X\kern2pt}",
                         false,
-                        |_, mut recovery| {
+                        |_, recovery| {
                             assert!(
-                                matches!(register_shapes(&mut recovery, 0).as_deref(), Some([Shape::HBox { children, .. }])
+                                matches!(register_shapes(recovery, 0).as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Rule(Some(w), _, _), Shape::Kern(k, KernKind::Explicit)] if *w == Scaled::UNITY && *k == 2 * Scaled::UNITY))
                             );
                         },
@@ -1226,7 +1225,7 @@ fn direct_material_full_mode_named_glue_and_math_routing_matrix() {
           \setbox12=\vbox{\vskip0pt plus1fil minus1fil}\setbox13=\vbox{\vss}
           \setbox14=\vbox{\vskip0pt plus-1fil}\setbox15=\vbox{\vfilneg}",
         false,
-        |_, mut named| {
+        |_, named| {
             for (explicit, fixed) in [
                 (0, 1),
                 (2, 3),
@@ -1238,8 +1237,8 @@ fn direct_material_full_mode_named_glue_and_math_routing_matrix() {
                 (14, 15),
             ] {
                 assert_eq!(
-                    register_shapes(&mut named, explicit),
-                    register_shapes(&mut named, fixed),
+                    register_shapes(named, explicit),
+                    register_shapes(named, fixed),
                     "registers {explicit}/{fixed} are named/explicit equivalents"
                 );
             }
@@ -1255,7 +1254,7 @@ fn direct_material_full_mode_named_glue_and_math_routing_matrix() {
             ] {
                 assert!(
                     matches!(
-                        register_shapes(&mut named, register).as_deref(),
+                        register_shapes(named, register).as_deref(),
                         Some([Shape::HBox { children, .. } | Shape::VBox { children, .. }])
                             if matches!(children.as_slice(), [Shape::Glue {
                                 width: 0,
@@ -1271,7 +1270,7 @@ fn direct_material_full_mode_named_glue_and_math_routing_matrix() {
                                 && *actual_shrink_order == shrink_order)
                     ),
                     "register {register}: {:?}",
-                    register_shapes(&mut named, register)
+                    register_shapes(named, register)
                 );
             }
 
@@ -1286,7 +1285,7 @@ fn direct_material_full_mode_named_glue_and_math_routing_matrix() {
           \setbox2=\hbox{$\kern1pt\hskip2pt plus3fil minus4fill
                            \vrule width5pt height6pt depth7pt\penalty8$}",
                 true,
-                |_, mut modes| {
+                |_, modes| {
                     let direct = [
                         Shape::Kern(Scaled::UNITY, KernKind::Explicit),
                         Shape::Glue {
@@ -1306,11 +1305,11 @@ fn direct_material_full_mode_named_glue_and_math_routing_matrix() {
                         Shape::Penalty(8),
                     ];
                     assert!(matches!(
-                        register_shapes(&mut modes, 0).as_deref(),
+                        register_shapes(modes, 0).as_deref(),
                         Some([Shape::HBox { children, .. }]) if children.as_slice() == direct
                     ));
                     assert!(matches!(
-                        register_shapes(&mut modes, 1).as_deref(),
+                        register_shapes(modes, 1).as_deref(),
                         Some([Shape::VBox { children, .. }])
                             if children.as_slice() == [
                                 Shape::Kern(-Scaled::UNITY, KernKind::Explicit),
@@ -1329,7 +1328,7 @@ fn direct_material_full_mode_named_glue_and_math_routing_matrix() {
                     ));
                     assert!(
                         matches!(
-                            register_shapes(&mut modes, 2).as_deref(),
+                            register_shapes(modes, 2).as_deref(),
                             Some([Shape::HBox { children, .. }])
                                 if children.as_slice() == [
                                     Shape::MathOn(0),
@@ -1341,8 +1340,8 @@ fn direct_material_full_mode_named_glue_and_math_routing_matrix() {
                                 ]
                         ),
                         "{:?}; terminal={}",
-                        register_shapes(&mut modes, 2),
-                        terminal(&modes)
+                        register_shapes(modes, 2),
+                        terminal(modes)
                     );
 
                     with_run(
@@ -1353,13 +1352,13 @@ fn direct_material_full_mode_named_glue_and_math_routing_matrix() {
           \hskip1pt\par\xdef\afterhskip{\the\count0}
           \vrule width1pt\par\xdef\aftervrule{\the\count0}",
                         false,
-                        |control, mut outer| {
+                        |control, outer| {
                             assert_eq!(control.current_mode(), crate::mode::Mode::Vertical);
-                            assert_eq!(macro_text(&mut outer, "aftervskip"), "0");
-                            assert_eq!(macro_text(&mut outer, "afterhrule"), "0");
-                            assert_eq!(macro_text(&mut outer, "afterkern"), "0");
-                            assert_eq!(macro_text(&mut outer, "afterhskip"), "1");
-                            assert_eq!(macro_text(&mut outer, "aftervrule"), "2");
+                            assert_eq!(macro_text(outer, "aftervskip"), "0");
+                            assert_eq!(macro_text(outer, "afterhrule"), "0");
+                            assert_eq!(macro_text(outer, "afterkern"), "0");
+                            assert_eq!(macro_text(outer, "afterhskip"), "1");
+                            assert_eq!(macro_text(outer, "aftervrule"), "2");
                         },
                     );
                 },
@@ -1378,9 +1377,9 @@ fn direct_material_math_recovery_and_failed_keyword_token_ownership_matrix() {
     with_run(
         br"\nonstopmode\setbox0=\hbox{$\hrule\kern2pt}",
         false,
-        |_, mut hrule| {
+        |_, hrule| {
             assert_eq!(
-                register_shapes(&mut hrule, 0),
+                register_shapes(hrule, 0),
                 Some(vec![Shape::HBox {
                     width: 2 * Scaled::UNITY,
                     height: 0,
@@ -1393,7 +1392,7 @@ fn direct_material_math_recovery_and_failed_keyword_token_ownership_matrix() {
                     ],
                 }])
             );
-            let hrule_terminal = terminal(&hrule);
+            let hrule_terminal = terminal(hrule);
             let missing_shift = hrule_terminal
                 .find("Missing $ inserted")
                 .expect("math recovery");
@@ -1405,16 +1404,16 @@ fn direct_material_math_recovery_and_failed_keyword_token_ownership_matrix() {
             with_run(
                 br"\nonstopmode\noindent$\vskip1pt\global\count0=7\par",
                 false,
-                |control, mut vskip| {
-                    assert_eq!(count_register(&mut vskip, 0), 7);
+                |control, vskip| {
+                    assert_eq!(count_register(vskip, 0), 7);
                     assert_eq!(control.current_mode(), crate::mode::Mode::Vertical);
-                    assert_eq!(terminal(&vskip).matches("Missing $ inserted").count(), 1);
+                    assert_eq!(terminal(vskip).matches("Missing $ inserted").count(), 1);
 
                     let source =
         br"\nonstopmode\tracinglostchars=1\nullfont\setbox0=\hbox{\vrule width1pt X\kern2pt}";
-                    with_run_observed(source, false, |_, mut universe, observations| {
+                    with_run_observed(source, false, |_, universe, observations| {
                         assert_eq!(
-                            register_shapes(&mut universe, 0),
+                            register_shapes(universe, 0),
                             Some(vec![Shape::HBox {
                                 width: 3 * Scaled::UNITY,
                                 height: 0,
@@ -1427,7 +1426,7 @@ fn direct_material_math_recovery_and_failed_keyword_token_ownership_matrix() {
                             }])
                         );
                         assert_eq!(
-                            terminal(&universe)
+                            terminal(universe)
                                 .matches("Missing character: There is no X")
                                 .count(),
                             1
@@ -1546,39 +1545,36 @@ fn box_construction_targets_specs_hooks_shifts_leaders_and_register_matrix() {
           \setbox12=\vbox{\moveright3pt\vbox{\kern1pt}}
           \shipout\hbox{}\end",
         false,
-        |_, mut universe| {
+        |_, universe| {
             assert_eq!(
-                count_register(&mut universe, 0),
+                count_register(universe, 0),
                 11,
                 "all eleven hbox constructors run everyhbox"
             );
             assert_eq!(
-                count_register(&mut universe, 1),
+                count_register(universe, 1),
                 4,
                 "four vbox/vtop constructors run everyvbox"
             );
-            assert_eq!(register_box_width(&mut universe, 1), 10 * Scaled::UNITY);
-            assert_eq!(register_box_width(&mut universe, 2), 2 * Scaled::UNITY);
-            assert_eq!(register_box_height(&mut universe, 4), 3 * Scaled::UNITY);
-            assert!(register_shapes(&mut universe, 5).is_some());
-            assert_eq!(register_shapes(&mut universe, 6), None);
-            assert_eq!(register_shapes(&mut universe, 0), None);
-            assert_eq!(
-                register_shapes(&mut universe, 7),
-                register_shapes(&mut universe, 8)
+            assert_eq!(register_box_width(universe, 1), 10 * Scaled::UNITY);
+            assert_eq!(register_box_width(universe, 2), 2 * Scaled::UNITY);
+            assert_eq!(register_box_height(universe, 4), 3 * Scaled::UNITY);
+            assert!(register_shapes(universe, 5).is_some());
+            assert_eq!(register_shapes(universe, 6), None);
+            assert_eq!(register_shapes(universe, 0), None);
+            assert_eq!(register_shapes(universe, 7), register_shapes(universe, 8));
+            assert!(
+                matches!(register_shapes(universe, 9).as_deref(), Some([Shape::HBox { children, .. }]) if children.is_empty())
             );
             assert!(
-                matches!(register_shapes(&mut universe, 9).as_deref(), Some([Shape::HBox { children, .. }]) if children.is_empty())
+                matches!(register_shapes(universe, 10).as_deref(), Some([Shape::HBox { children, .. }]) if matches!(children.as_slice(), [Shape::Kern(k, KernKind::Explicit)] if *k == 4 * Scaled::UNITY))
             );
             assert!(
-                matches!(register_shapes(&mut universe, 10).as_deref(), Some([Shape::HBox { children, .. }]) if matches!(children.as_slice(), [Shape::Kern(k, KernKind::Explicit)] if *k == 4 * Scaled::UNITY))
-            );
-            assert!(
-                matches!(register_shapes(&mut universe, 11).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 11).as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { shift, .. }, Shape::Glue { leader: true, .. }] if *shift == -2 * Scaled::UNITY))
             );
             assert!(
-                matches!(register_shapes(&mut universe, 12).as_deref(), Some([Shape::VBox { children, .. }])
+                matches!(register_shapes(universe, 12).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::VBox { shift, .. }] if *shift == 3 * Scaled::UNITY))
             );
             assert_eq!(universe.world().artifact_commits().len(), 1);
@@ -1586,11 +1582,11 @@ fn box_construction_targets_specs_hooks_shifts_leaders_and_register_matrix() {
             with_run(
                 br"\nonstopmode\setbox0=\hbox\kern2pt}\setbox1=\count0=7\setbox2=\hbox{}",
                 false,
-                |_, mut recovery| {
-                    assert_eq!(count_register(&mut recovery, 0), 7);
-                    assert!(register_shapes(&mut recovery, 2).is_some());
-                    assert!(terminal(&recovery).contains("Missing { inserted"));
-                    assert!(terminal(&recovery).contains("Improper \\setbox"));
+                |_, recovery| {
+                    assert_eq!(count_register(recovery, 0), 7);
+                    assert!(register_shapes(recovery, 2).is_some());
+                    assert!(terminal(recovery).contains("Missing { inserted"));
+                    assert!(terminal(recovery).contains("Improper \\setbox"));
                 },
             );
         },
@@ -1613,30 +1609,30 @@ fn paragraph_entry_endings_migration_depth_and_recovery_matrix() {
           \setbox5=\vbox{{\noindent E}}
           \noindent F\par\end",
         true,
-        |_, mut universe| {
-            assert_eq!(count_register(&mut universe, 0), 7);
-            let indented = register_shapes(&mut universe, 0);
+        |_, universe| {
+            assert_eq!(count_register(universe, 0), 7);
+            let indented = register_shapes(universe, 0);
             assert!(
                 matches!(indented.as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { children: line, .. }]
             if matches!(line.as_slice(), [Shape::HBox { children: indent, .. }, Shape::Kern(k, KernKind::Explicit), Shape::Char('A'), Shape::Penalty(10_000), Shape::Glue { kind: GlueKind::ParFillSkip, leader: false, .. }, Shape::Glue { kind: GlueKind::RightSkip, leader: false, .. }] if indent.is_empty() && *k == Scaled::UNITY))),
                 "{indented:?}"
             );
-            let noindent = register_shapes(&mut universe, 1);
+            let noindent = register_shapes(universe, 1);
             assert!(
                 matches!(noindent.as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { children: line, .. }]
             if matches!(line.as_slice(), [Shape::Kern(k, KernKind::Explicit), Shape::Char('B'), Shape::Penalty(10_000), Shape::Glue { kind: GlueKind::ParFillSkip, leader: false, .. }, Shape::Glue { kind: GlueKind::RightSkip, leader: false, .. }] if *k == Scaled::UNITY))),
                 "{noindent:?}"
             );
-            let implicit = register_shapes(&mut universe, 2);
+            let implicit = register_shapes(universe, 2);
             assert!(
                 matches!(implicit.as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { children: line, .. }]
             if matches!(line.as_slice(), [Shape::HBox { children: indent, .. }, Shape::Kern(k, KernKind::Explicit), Shape::Char('C'), Shape::Penalty(10_000), Shape::Glue { kind: GlueKind::ParFillSkip, leader: false, .. }, Shape::Glue { kind: GlueKind::RightSkip, leader: false, .. }] if indent.is_empty() && *k == Scaled::UNITY))),
                 "{implicit:?}"
             );
-            let discardable = register_shapes(&mut universe, 3);
+            let discardable = register_shapes(universe, 3);
             assert!(
                 matches!(discardable.as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { children: line, .. }]
@@ -1644,16 +1640,16 @@ fn paragraph_entry_endings_migration_depth_and_recovery_matrix() {
                 "{discardable:?}"
             );
             assert!(
-                matches!(register_shapes(&mut universe, 4).as_deref(), Some([Shape::VBox { children, .. }])
+                matches!(register_shapes(universe, 4).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { .. }, Shape::Mark(0, mark), Shape::Kern(k, KernKind::Explicit), Shape::Glue { width, leader: false, .. }] if mark == "m" && *k == 2 * Scaled::UNITY && *width == 3 * Scaled::UNITY))
             );
             assert!(
-                matches!(register_shapes(&mut universe, 5).as_deref(), Some([Shape::VBox { children, .. }])
+                matches!(register_shapes(universe, 5).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { children: line, .. }] if line.contains(&Shape::Char('E'))))
             );
             assert_eq!(universe.world().artifact_commits().len(), 1);
-            assert!(!terminal(&universe).contains("Missing \\par inserted"));
-            assert!(!terminal(&universe).contains("Emergency stop"));
+            assert!(!terminal(universe).contains("Missing \\par inserted"));
+            assert!(!terminal(universe).contains("Emergency stop"));
         },
     );
 }
@@ -1666,28 +1662,28 @@ fn structured_material_legal_mode_and_source_order_matrix() {
     with_run(
         br"\vsize=1000pt\insert2{\kern2pt}\mark{outer}\penalty10000",
         false,
-        |_, mut outer| {
-            let outer_nodes = outer_vertical_shapes(&mut outer);
+        |_, outer| {
+            let outer_nodes = outer_vertical_shapes(outer);
             assert!(
                 matches!(outer_nodes.as_slice(), [Shape::Insert { class: 2, content, .. }, Shape::Mark(0, mark)]
             if content == &[Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit)] && mark == "outer"),
                 "{outer_nodes:?}"
             );
-            assert_eq!(page_last_penalty(&mut outer), 10_000);
+            assert_eq!(page_last_penalty(outer), 10_000);
 
             with_run(
                 br"\setbox0=\hbox{\insert3{\kern3pt}\mark{horizontal}\penalty51}
           \setbox1=\vbox{\insert4{\kern4pt}\mark{vertical}\penalty52}",
                 false,
-                |_, mut nested| {
-                    let horizontal = register_shapes(&mut nested, 0);
+                |_, nested| {
+                    let horizontal = register_shapes(nested, 0);
                     assert!(
                         matches!(horizontal.as_deref(), Some([Shape::HBox { children, .. }])
             if matches!(children.as_slice(), [Shape::Insert { class: 3, content, .. }, Shape::Mark(0, mark), Shape::Penalty(51)]
                 if content == &[Shape::Kern(3 * Scaled::UNITY, KernKind::Explicit)] && mark == "horizontal")),
                         "{horizontal:?}"
                     );
-                    let vertical = register_shapes(&mut nested, 1);
+                    let vertical = register_shapes(nested, 1);
                     assert!(
                         matches!(vertical.as_deref(), Some([Shape::VBox { children, .. }])
             if matches!(children.as_slice(), [Shape::Insert { class: 4, content, .. }, Shape::Mark(0, mark), Shape::Penalty(52)]
@@ -1697,9 +1693,9 @@ fn structured_material_legal_mode_and_source_order_matrix() {
                     with_run_until_count(
                         br"\noindent$\insert5{\kern5pt}\mark{math}\penalty53\global\count0=1",
                         1,
-                        |math_control, mut math_stores| {
+                        |math_control, math_stores| {
                             let math =
-                                shapes(&mut math_stores, math_control.modes.current_list().nodes());
+                                shapes(math_stores, math_control.modes.current_list().nodes());
                             assert!(
                                 matches!(math.as_slice(), [Shape::Insert { class: 5, content, .. }, Shape::Mark(0, mark), Shape::Penalty(53)]
             if content == &[Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit)] && mark == "math"),
@@ -1722,20 +1718,20 @@ fn insert_closure_snapshots_parameters_and_migrates_owned_nodes_in_order() {
         br"\font\f=cmr10 \f\splittopskip=1pt\splitmaxdepth=2pt\floatingpenalty=3
           \setbox0=\vbox{\hbox{A\insert7{\splittopskip=11pt\splitmaxdepth=12pt\floatingpenalty=13\kern2pt}\mark{boxed}\vadjust{\kern3pt}B}}
           \setbox1=\vbox{\noindent C\insert8{\splittopskip=21pt\splitmaxdepth=22pt\floatingpenalty=23\kern4pt}\mark{paragraph}\vadjust{\kern5pt}D\par}",
-        true, |_, mut universe| {
+        true, |_, universe| {
     assert_eq!(
-        glue_parameter(&mut universe, GlueParam::SPLIT_TOP_SKIP)
+        glue_parameter(universe, GlueParam::SPLIT_TOP_SKIP)
             .width
             .raw(),
         Scaled::UNITY
     );
     assert_eq!(
-        dimen_parameter(&mut universe, DimenParam::SPLIT_MAX_DEPTH).raw(),
+        dimen_parameter(universe, DimenParam::SPLIT_MAX_DEPTH).raw(),
         2 * Scaled::UNITY
     );
-    assert_eq!(int_parameter(&mut universe, IntParam::FLOATING_PENALTY), 3);
+    assert_eq!(int_parameter(universe, IntParam::FLOATING_PENALTY), 3);
 
-    let boxed = register_shapes(&mut universe, 0);
+    let boxed = register_shapes(universe, 0);
     assert!(
         matches!(boxed.as_deref(), Some([Shape::VBox { children, .. }])
             if matches!(children.as_slice(), [Shape::HBox { children: retained, .. }, Shape::Insert { class: 7, size, split_top_skip, split_max_depth, floating_penalty: 13, content, .. }, Shape::Mark(0, mark), Shape::Kern(adjust, KernKind::Explicit)]
@@ -1748,7 +1744,7 @@ fn insert_closure_snapshots_parameters_and_migrates_owned_nodes_in_order() {
                     && *adjust == 3 * Scaled::UNITY)),
         "{boxed:?}"
     );
-    let paragraph = register_shapes(&mut universe, 1);
+    let paragraph = register_shapes(universe, 1);
     assert!(
         matches!(paragraph.as_deref(), Some([Shape::VBox { children, .. }])
             if matches!(children.as_slice(), [Shape::HBox { children: retained, .. }, Shape::Insert { class: 8, size, split_top_skip, split_max_depth, floating_penalty: 23, content, .. }, Shape::Mark(0, mark), Shape::Kern(adjust, KernKind::Explicit)]
@@ -1790,8 +1786,8 @@ fn unbox_copy_move_void_wrong_kind_and_math_ownership_matrix() {
           \setbox8=\hbox{\kern8pt\hskip9pt\penalty10}
           \setbox9=\hbox{\unhcopy8\kern11pt\global\setbox10=\copy8\unhbox8}",
         false,
-        |_, mut universe| {
-            let moved = register_shapes(&mut universe, 1);
+        |_, universe| {
+            let moved = register_shapes(universe, 1);
             assert!(
                 matches!(moved.as_deref(), Some([Shape::VBox { children, .. }])
                 if children.as_slice() == [
@@ -1805,8 +1801,8 @@ fn unbox_copy_move_void_wrong_kind_and_math_ownership_matrix() {
                 ]),
                 "{moved:?}"
             );
-            assert_eq!(register_shapes(&mut universe, 0), None, "unvbox moves");
-            let horizontal = register_shapes(&mut universe, 9);
+            assert_eq!(register_shapes(universe, 0), None, "unvbox moves");
+            let horizontal = register_shapes(universe, 9);
             assert!(
                 matches!(horizontal.as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [
@@ -1825,7 +1821,7 @@ fn unbox_copy_move_void_wrong_kind_and_math_ownership_matrix() {
                 "{horizontal:?}"
             );
             assert!(
-                matches!(register_shapes(&mut universe, 10).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 10).as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [
             Shape::Kern(kern, KernKind::Explicit),
             Shape::Glue { width, kind: GlueKind::Normal, leader: false, .. },
@@ -1833,36 +1829,36 @@ fn unbox_copy_move_void_wrong_kind_and_math_ownership_matrix() {
         ] if *kern == 8 * Scaled::UNITY && *width == 9 * Scaled::UNITY)),
                 "unhcopy preserves the source before the matching move"
             );
-            assert_eq!(register_shapes(&mut universe, 8), None, "unhbox moves");
+            assert_eq!(register_shapes(universe, 8), None, "unhbox moves");
             assert!(
-                register_shapes(&mut universe, 2).is_some(),
+                register_shapes(universe, 2).is_some(),
                 "wrong v-unbox preserves hbox"
             );
             assert!(
-                register_shapes(&mut universe, 4).is_some(),
+                register_shapes(universe, 4).is_some(),
                 "wrong h-unbox preserves vbox"
             );
             assert!(
-                register_shapes(&mut universe, 6).is_some(),
+                register_shapes(universe, 6).is_some(),
                 "math unbox preserves hbox"
             );
             assert!(
-                matches!(register_shapes(&mut universe, 3).as_deref(), Some([Shape::VBox { children, .. }]) if children.is_empty())
+                matches!(register_shapes(universe, 3).as_deref(), Some([Shape::VBox { children, .. }]) if children.is_empty())
             );
             assert!(
-                matches!(register_shapes(&mut universe, 5).as_deref(), Some([Shape::HBox { children, .. }]) if children.is_empty())
+                matches!(register_shapes(universe, 5).as_deref(), Some([Shape::HBox { children, .. }]) if children.is_empty())
             );
             assert!(
-                matches!(register_shapes(&mut universe, 7).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 7).as_deref(), Some([Shape::HBox { children, .. }])
         if children.as_slice() == [Shape::MathOn(0), Shape::MathOff(0)])
             );
             assert_eq!(
-                count_register(&mut universe, 0),
+                count_register(universe, 0),
                 10,
                 "all following assignments execute"
             );
             assert_eq!(
-                terminal(&universe)
+                terminal(universe)
                     .matches("Incompatible list can't be unboxed")
                     .count(),
                 6
@@ -1883,19 +1879,19 @@ fn delete_last_matches_only_the_live_tail_in_h_v_and_math_modes() {
                            \vskip7pt\unskip\penalty8\unpenalty\hrule\unkern}
           ",
         true,
-        |_, mut universe| {
+        |_, universe| {
             assert!(
-                matches!(register_shapes(&mut universe, 0).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 0).as_deref(), Some([Shape::HBox { children, .. }])
         if children.as_slice() == [Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit), Shape::Char('A')])
             );
             assert!(
-                matches!(register_shapes(&mut universe, 1).as_deref(), Some([Shape::VBox { children, .. }])
+                matches!(register_shapes(universe, 1).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Kern(k, KernKind::Explicit), Shape::Rule(_, _, _)] if *k == 6 * Scaled::UNITY))
             );
             with_run_until_count(
         br"\noindent$\unpenalty\kern9pt\unkern\kern10pt\unskip\mskip11mu\unskip\penalty12\unpenalty\global\count0=1",
-        1, |math_control, mut math_stores| {
-    let math = shapes(&mut math_stores, math_control.modes.current_list().nodes());
+        1, |math_control, math_stores| {
+    let math = shapes(math_stores, math_control.modes.current_list().nodes());
     assert!(
         math.as_slice() == [Shape::Kern(10 * Scaled::UNITY, KernKind::Explicit)],
         "{math:?}"
@@ -1923,22 +1919,22 @@ fn outer_vertical_delete_recovery_preserves_page_and_following_input() {
             "unkern",
         ),
     ] {
-        with_run(baseline_source, false, |_, mut baseline| {
-            with_run(source, false, |_, mut universe| {
+        with_run(baseline_source, false, |_, baseline| {
+            with_run(source, false, |_, universe| {
                 assert_eq!(
-                    count_register(&mut universe, 0),
+                    count_register(universe, 0),
                     11,
                     "{command} lost following input"
                 );
                 assert!(
-                    terminal(&universe)
+                    terminal(universe)
                         .contains(&format!("You can't use `\\{command}' in vertical mode")),
                     "{command}: {}",
-                    terminal(&universe)
+                    terminal(universe)
                 );
                 assert_eq!(
-                    outer_vertical_shapes(&mut universe),
-                    outer_vertical_shapes(&mut baseline),
+                    outer_vertical_shapes(universe),
+                    outer_vertical_shapes(baseline),
                     "{command} changed page ownership"
                 );
             });
@@ -1948,27 +1944,27 @@ fn outer_vertical_delete_recovery_preserves_page_and_following_input() {
     with_run(
         br"\hrule height1pt\penalty10000",
         false,
-        |_, mut nonglue_baseline| {
+        |_, nonglue_baseline| {
             with_run(
                 br"\nonstopmode\hrule height1pt\penalty10000\unskip\global\count0=11",
                 false,
-                |_, mut nonglue| {
-                    assert_eq!(count_register(&mut nonglue, 0), 11);
+                |_, nonglue| {
+                    assert_eq!(count_register(nonglue, 0), 11);
                     assert_eq!(
-                        outer_vertical_shapes(&mut nonglue),
-                        outer_vertical_shapes(&mut nonglue_baseline)
+                        outer_vertical_shapes(nonglue),
+                        outer_vertical_shapes(nonglue_baseline)
                     );
-                    assert!(!terminal(&nonglue).contains("You can't use `\\unskip'"));
+                    assert!(!terminal(nonglue).contains("You can't use `\\unskip'"));
 
-                    with_run(br"\hrule height1pt", false, |_, mut matching_baseline| {
+                    with_run(br"\hrule height1pt", false, |_, matching_baseline| {
                         with_run(
                             br"\hrule height1pt\vskip2pt\unskip\global\count0=11",
                             false,
-                            |_, mut matching| {
-                                assert_eq!(count_register(&mut matching, 0), 11);
+                            |_, matching| {
+                                assert_eq!(count_register(matching, 0), 11);
                                 assert_eq!(
-                                    outer_vertical_shapes(&mut matching),
-                                    outer_vertical_shapes(&mut matching_baseline),
+                                    outer_vertical_shapes(matching),
+                                    outer_vertical_shapes(matching_baseline),
                                     "outer unskip removes only the matching contribution tail"
                                 );
                             },
@@ -1993,24 +1989,24 @@ fn italic_correction_uses_font_tail_math_zero_and_forbidden_recovery() {
           \/\global\advance\count0 by1
           \setbox4=\vbox{\/\global\advance\count0 by1}",
         true,
-        |_, mut universe| {
+        |_, universe| {
             assert!(
-                matches!(register_shapes(&mut universe, 0).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 0).as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Char('f'), Shape::Kern(amount, KernKind::Explicit)] if *amount > 0))
             );
             assert!(
-                matches!(register_shapes(&mut universe, 1).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 1).as_deref(), Some([Shape::HBox { children, .. }])
         if children.as_slice() == [Shape::Char('A'), Shape::Kern(0, KernKind::Explicit)])
             );
             assert!(
-                matches!(register_shapes(&mut universe, 2).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 2).as_deref(), Some([Shape::HBox { children, .. }])
         if children.as_slice() == [Shape::Char('f'), Shape::Kern(Scaled::UNITY, KernKind::Explicit)])
             );
             with_run_until_count(
                 br"\noindent$\kern1pt\/\global\count0=1",
                 1,
-                |math_control, mut math_stores| {
-                    let math = shapes(&mut math_stores, math_control.modes.current_list().nodes());
+                |math_control, math_stores| {
+                    let math = shapes(math_stores, math_control.modes.current_list().nodes());
                     assert!(
                         math.as_slice()
                             == [
@@ -2019,15 +2015,12 @@ fn italic_correction_uses_font_tail_math_zero_and_forbidden_recovery() {
                             ],
                         "{math:?}"
                     );
-                    assert_eq!(count_register(&mut universe, 0), 2);
-                    assert!(outer_vertical_shapes(&mut universe).is_empty());
+                    assert_eq!(count_register(universe, 0), 2);
+                    assert!(outer_vertical_shapes(universe).is_empty());
                     assert!(
-                        matches!(register_shapes(&mut universe, 4).as_deref(), Some([Shape::VBox { children, .. }]) if children.is_empty())
+                        matches!(register_shapes(universe, 4).as_deref(), Some([Shape::VBox { children, .. }]) if children.is_empty())
                     );
-                    assert_eq!(
-                        terminal(&universe).matches("You can't use `\\/'").count(),
-                        2
-                    );
+                    assert_eq!(terminal(universe).matches("You can't use `\\/'").count(), 2);
                 },
             );
         },
@@ -2046,8 +2039,8 @@ fn insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input() {
                            \vadjust\global\advance\count0 by1}
           \setbox1=\hbox{\kern5pt\vadjust{\kern6pt}\kern7pt}",
         false,
-        |_, mut universe| {
-            let classes = register_shapes(&mut universe, 0);
+        |_, universe| {
+            let classes = register_shapes(universe, 0);
             assert!(
                 matches!(classes.as_deref(), Some([Shape::VBox { children, .. }])
             if matches!(children.as_slice(), [
@@ -2062,7 +2055,7 @@ fn insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input() {
                 "{classes:?}"
             );
             assert!(
-                matches!(register_shapes(&mut universe, 1).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 1).as_deref(), Some([Shape::HBox { children, .. }])
                 if children.as_slice() == [
                     Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit),
                     Shape::Adjust(vec![Shape::Kern(6 * Scaled::UNITY, KernKind::Explicit)]),
@@ -2072,8 +2065,8 @@ fn insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input() {
             with_run_until_count(
                 br"\noindent$\vadjust{\kern8pt}\global\count0=1",
                 1,
-                |math_control, mut math_stores| {
-                    let math = shapes(&mut math_stores, math_control.modes.current_list().nodes());
+                |math_control, math_stores| {
+                    let math = shapes(math_stores, math_control.modes.current_list().nodes());
                     assert!(
                         math.as_slice()
                             == [Shape::Adjust(vec![Shape::Kern(
@@ -2083,11 +2076,11 @@ fn insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input() {
                         "{math:?}"
                     );
                     assert_eq!(
-                        count_register(&mut universe, 0),
+                        count_register(universe, 0),
                         1,
                         "forbidden vadjust consumes no following token"
                     );
-                    let errors = terminal(&universe);
+                    let errors = terminal(universe);
                     assert!(errors.contains("You can't \\insert255"), "{errors}");
                     assert!(errors.contains("Bad register code"), "{errors}");
                     assert_eq!(errors.matches("You can't use `\\vadjust'").count(), 1);
@@ -2095,11 +2088,11 @@ fn insert_class_and_forbidden_vadjust_recovery_preserve_state_and_input() {
                     with_run(
                         br"\nonstopmode\vadjust\global\advance\count0 by1",
                         false,
-                        |_, mut outer| {
-                            assert_eq!(count_register(&mut outer, 0), 1);
-                            assert!(outer_vertical_shapes(&mut outer).is_empty());
+                        |_, outer| {
+                            assert_eq!(count_register(outer, 0), 1);
+                            assert!(outer_vertical_shapes(outer).is_empty());
                             assert!(
-                                terminal(&outer)
+                                terminal(outer)
                                     .contains("You can't use `\\vadjust' in vertical mode")
                             );
                         },
@@ -2129,37 +2122,37 @@ fn box_brace_hook_scope_and_aftergroup_order_matrix() {
           \setbox8=\vbox\bgroup\vbox\bgroup\kern4pt\egroup\egroup
           \global\multiply\count0 by10",
         false,
-        |_, mut universe| {
+        |_, universe| {
             assert_eq!(
-                count_register(&mut universe, 0),
+                count_register(universe, 0),
                 30,
                 "local restoration precedes aftergroup"
             );
             assert_eq!(
-                count_register(&mut universe, 1),
+                count_register(universe, 1),
                 2,
                 "outer and nested hbox hooks run once"
             );
             assert_eq!(
-                count_register(&mut universe, 6),
+                count_register(universe, 6),
                 2,
                 "outer and nested vbox hooks run once"
             );
             assert!(
-                matches!(register_shapes(&mut universe, 0).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 0).as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Kern(outer, KernKind::Explicit), Shape::HBox { children: inner, .. }]
             if *outer == Scaled::UNITY
                 && inner.as_slice() == [Shape::Kern(Scaled::UNITY, KernKind::Explicit), Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit)])),
                 "{:?}",
-                register_shapes(&mut universe, 0)
+                register_shapes(universe, 0)
             );
             assert!(
-                matches!(register_shapes(&mut universe, 8).as_deref(), Some([Shape::VBox { children, .. }])
+                matches!(register_shapes(universe, 8).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Kern(outer, KernKind::Explicit), Shape::VBox { children: inner, .. }]
             if *outer == 3 * Scaled::UNITY
                 && inner.as_slice() == [Shape::Kern(3 * Scaled::UNITY, KernKind::Explicit), Shape::Kern(4 * Scaled::UNITY, KernKind::Explicit)])),
                 "{:?}",
-                register_shapes(&mut universe, 8)
+                register_shapes(universe, 8)
             );
         },
     );
@@ -2170,7 +2163,7 @@ fn box_void_vtop_box255_and_zero_shift_matrix() {
     // TeX82 §§1077--1087: void copy/take operands stay void, box255 obeys
     // the same destructive distinction, vtop's first-item rule is exact at
     // empty and leading-glue boundaries, and zero shifts remain typed boxes.
-    with_run(br"\setbox255=\hbox{\kern1pt}", false, |_, mut original| {
+    with_run(br"\setbox255=\hbox{\kern1pt}", false, |_, original| {
         let expected_box255 = vec![Shape::HBox {
             width: Scaled::UNITY,
             height: 0,
@@ -2179,7 +2172,7 @@ fn box_void_vtop_box255_and_zero_shift_matrix() {
             children: vec![Shape::Kern(Scaled::UNITY, KernKind::Explicit)],
         }];
         assert_eq!(
-            register_shapes(&mut original, 255),
+            register_shapes(original, 255),
             Some(expected_box255.clone()),
             "box255 starts as the exact non-void 1pt hbox"
         );
@@ -2192,28 +2185,26 @@ fn box_void_vtop_box255_and_zero_shift_matrix() {
           \setbox6=\hbox{\raise0pt\hbox{\kern4pt}\lower0pt\vbox{\kern5pt}}
           \setbox7=\vbox{\moveleft0pt\hbox{\kern6pt}\moveright0pt\vbox{\kern7pt}}",
             false,
-            |_, mut universe| {
-                assert_eq!(register_shapes(&mut universe, 0), None);
-                assert_eq!(register_shapes(&mut universe, 1), None);
-                let copied =
-                    register_shapes(&mut universe, 2).expect("copy255 destination is non-void");
-                let moved =
-                    register_shapes(&mut universe, 3).expect("box255 destination is non-void");
+            |_, universe| {
+                assert_eq!(register_shapes(universe, 0), None);
+                assert_eq!(register_shapes(universe, 1), None);
+                let copied = register_shapes(universe, 2).expect("copy255 destination is non-void");
+                let moved = register_shapes(universe, 3).expect("box255 destination is non-void");
                 assert_eq!(copied, expected_box255);
                 assert_eq!(moved, copied);
-                assert_eq!(register_shapes(&mut universe, 255), None);
-                assert_eq!(register_box_height(&mut universe, 4), 0);
-                assert_eq!(register_box_depth(&mut universe, 4), 0);
-                assert_eq!(register_box_height(&mut universe, 5), 0);
-                assert_eq!(register_box_depth(&mut universe, 5), 5 * Scaled::UNITY);
+                assert_eq!(register_shapes(universe, 255), None);
+                assert_eq!(register_box_height(universe, 4), 0);
+                assert_eq!(register_box_depth(universe, 4), 0);
+                assert_eq!(register_box_height(universe, 5), 0);
+                assert_eq!(register_box_depth(universe, 5), 5 * Scaled::UNITY);
                 assert!(
-                    matches!(register_shapes(&mut universe, 6).as_deref(), Some([Shape::HBox { children, .. }])
+                    matches!(register_shapes(universe, 6).as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { shift: 0, children: raised, .. }, Shape::VBox { shift: 0, children: lowered, .. }]
             if raised.as_slice() == [Shape::Kern(4 * Scaled::UNITY, KernKind::Explicit)]
                 && lowered.as_slice() == [Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit)]))
                 );
                 assert!(
-                    matches!(register_shapes(&mut universe, 7).as_deref(), Some([Shape::VBox { children, .. }])
+                    matches!(register_shapes(universe, 7).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { shift: 0, children: left, .. }, Shape::Glue { leader: false, .. }, Shape::VBox { shift: 0, children: right, .. }]
             if left.as_slice() == [Shape::Kern(6 * Scaled::UNITY, KernKind::Explicit)]
                 && right.as_slice() == [Shape::Kern(7 * Scaled::UNITY, KernKind::Explicit)]))
@@ -2234,9 +2225,9 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
           \setbox8=\vbox{\insert1{\kern1pt\aftergroup A}B\par}
           \setbox9=\vbox{\noindent A\vadjust{\kern4pt\aftergroup B}C\par}",
         true,
-        |_, mut universe| {
-            let insert_box = register_box(&mut universe, 8);
-            let insert_children = page_vec(&mut universe, insert_box.children);
+        |_, universe| {
+            let insert_box = register_box(universe, 8);
+            let insert_children = page_vec(universe, insert_box.children);
             let [
                 Node::Ins { content, .. },
                 Node::Glue {
@@ -2248,18 +2239,18 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
             else {
                 panic!(
                     "insert aftergroup closure: {:?}",
-                    shapes(&mut universe, &insert_children)
+                    shapes(universe, &insert_children)
                 );
             };
-            let insertion_content = page_vec(&mut universe, *content);
+            let insertion_content = page_vec(universe, *content);
             assert_eq!(
-                shapes(&mut universe, &insertion_content),
+                shapes(universe, &insertion_content),
                 vec![Shape::Kern(Scaled::UNITY, KernKind::Explicit)]
             );
-            let insert_chars = page_vec(&mut universe, insert_line.children)
+            let insert_chars = page_vec(universe, insert_line.children)
                 .iter()
                 .filter_map(|node| match node {
-                    Node::Char { ch, origin, .. } => Some((*ch, origin.clone())),
+                    Node::Char { ch, origin, .. } => Some((*ch, *origin)),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -2268,8 +2259,8 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
                 "AB"
             );
 
-            let adjust_box = register_box(&mut universe, 9);
-            let adjust_children = page_vec(&mut universe, adjust_box.children);
+            let adjust_box = register_box(universe, 9);
+            let adjust_children = page_vec(universe, adjust_box.children);
             let [
                 Node::HList(line),
                 Node::Kern {
@@ -2280,14 +2271,14 @@ fn insert_and_vadjust_aftergroup_closure_provenance_order_and_once() {
             else {
                 panic!(
                     "vadjust paragraph closure: {:?}",
-                    shapes(&mut universe, &adjust_children)
+                    shapes(universe, &adjust_children)
                 );
             };
             assert_eq!(*amount, Scaled::from_raw(4 * Scaled::UNITY));
-            let line_chars = page_vec(&mut universe, line.children)
+            let line_chars = page_vec(universe, line.children)
                 .iter()
                 .filter_map(|node| match node {
-                    Node::Char { ch, origin, .. } => Some((*ch, origin.clone())),
+                    Node::Char { ch, origin, .. } => Some((*ch, *origin)),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -2314,29 +2305,23 @@ fn box_forbidden_shift_lastbox_vsplit_and_recovery_ownership_matrix() {
           \setbox3=\hbox{\kern7pt}\setbox4=\vsplit3 to5pt
           \global\count3=14",
         false,
-        |_, mut forbidden| {
+        |_, forbidden| {
             assert_eq!(
-                (
-                    count_register(&mut forbidden, 0),
-                    count_register(&mut forbidden, 1)
-                ),
+                (count_register(forbidden, 0), count_register(forbidden, 1)),
                 (11, 12)
             );
             assert_eq!(
-                (
-                    count_register(&mut forbidden, 2),
-                    count_register(&mut forbidden, 3)
-                ),
+                (count_register(forbidden, 2), count_register(forbidden, 3)),
                 (13, 14)
             );
-            assert_eq!(register_shapes(&mut forbidden, 0), None);
+            assert_eq!(register_shapes(forbidden, 0), None);
             assert!(matches!(
-                register_shapes(&mut forbidden, 3).as_deref(),
+                register_shapes(forbidden, 3).as_deref(),
                 Some([Shape::HBox { children, .. }])
                     if children.as_slice() == [Shape::Kern(7 * Scaled::UNITY, KernKind::Explicit)]
             ));
-            assert_eq!(register_shapes(&mut forbidden, 4), None);
-            let errors = terminal(&forbidden);
+            assert_eq!(register_shapes(forbidden, 4), None);
+            let errors = terminal(forbidden);
             assert_eq!(errors.matches("You can't use").count(), 3, "{errors}");
             assert!(errors.contains("\\vsplit needs a \\vbox"), "{errors}");
 
@@ -2346,19 +2331,19 @@ fn box_forbidden_shift_lastbox_vsplit_and_recovery_ownership_matrix() {
           \setbox6=\global\count4=15
           \setbox7=\hbox{\kern3pt}",
                 false,
-                |_, mut recovery| {
+                |_, recovery| {
                     assert!(matches!(
-                        register_shapes(&mut recovery, 5).as_deref(),
+                        register_shapes(recovery, 5).as_deref(),
                         Some([Shape::HBox { children, .. }])
                             if children.as_slice() == [Shape::Kern(2 * Scaled::UNITY, KernKind::Explicit)]
                     ));
-                    assert_eq!(count_register(&mut recovery, 4), 15);
+                    assert_eq!(count_register(recovery, 4), 15);
                     assert!(matches!(
-                        register_shapes(&mut recovery, 7).as_deref(),
+                        register_shapes(recovery, 7).as_deref(),
                         Some([Shape::HBox { children, .. }])
                             if children.as_slice() == [Shape::Kern(3 * Scaled::UNITY, KernKind::Explicit)]
                     ));
-                    let errors = terminal(&recovery);
+                    let errors = terminal(recovery);
                     assert_eq!(errors.matches("Missing { inserted").count(), 1, "{errors}");
                     assert_eq!(errors.matches("Improper \\setbox").count(), 1, "{errors}");
                 },
@@ -2383,14 +2368,14 @@ fn paragraph_empty_discardable_display_and_insert_matrix() {
           \setbox2=\vbox{\noindent A$$$$}
           \setbox3=\vbox{\noindent B\insert4{\kern5pt}C\par}",
         true,
-        |_, mut universe| {
+        |_, universe| {
             assert!(
-                matches!(register_shapes(&mut universe, 0).as_deref(), Some([Shape::VBox { children, .. }]) if children.is_empty()),
+                matches!(register_shapes(universe, 0).as_deref(), Some([Shape::VBox { children, .. }]) if children.is_empty()),
                 "{:?}",
-                register_shapes(&mut universe, 0)
+                register_shapes(universe, 0)
             );
             assert!(
-                matches!(register_shapes(&mut universe, 1).as_deref(), Some([Shape::VBox { children, .. }])
+                matches!(register_shapes(universe, 1).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { children: line, .. }]
             if matches!(line.as_slice(), [
                 Shape::Glue { width: left, kind: GlueKind::Normal, leader: false, .. },
@@ -2401,10 +2386,10 @@ fn paragraph_empty_discardable_display_and_insert_matrix() {
                 Shape::Glue { width: right, kind: GlueKind::RightSkip, leader: false, .. },
             ] if *left == Scaled::UNITY && *kern == 2 * Scaled::UNITY && *par_fill == 0 && *right == 0))),
                 "{:?}",
-                register_shapes(&mut universe, 1)
+                register_shapes(universe, 1)
             );
-            let display = register_shapes(&mut universe, 2)
-                .unwrap_or_else(|| panic!("display vbox; terminal={}", terminal(&universe)));
+            let display = register_shapes(universe, 2)
+                .unwrap_or_else(|| panic!("display vbox; terminal={}", terminal(universe)));
             let [
                 Shape::VBox {
                     children: display_children,
@@ -2426,12 +2411,12 @@ fn paragraph_empty_discardable_display_and_insert_matrix() {
                 "{display:?}"
             );
             assert!(
-                matches!(register_shapes(&mut universe, 3).as_deref(), Some([Shape::VBox { children, .. }])
+                matches!(register_shapes(universe, 3).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { children: line, .. }, Shape::Insert { class: 4, content: insertion, .. }]
             if line.contains(&Shape::Char('B')) && line.contains(&Shape::Char('C'))
                 && insertion.as_slice() == [Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit)])),
                 "{:?}",
-                register_shapes(&mut universe, 3)
+                register_shapes(universe, 3)
             );
         },
     );
@@ -2448,75 +2433,69 @@ fn paragraph_prev_graf_depth_off_save_and_replay_provenance_matrix() {
           \setbox0=\vbox{\noindent g\par
             \global\count0=\prevgraf\global\dimen0=\prevdepth}",
         true,
-        |_, mut state| {
-            assert_eq!(count_register(&mut state, 0), 1);
-            let line_depth = match register_shapes(&mut state, 0).as_deref() {
+        |_, state| {
+            assert_eq!(count_register(state, 0), 1);
+            let line_depth = match register_shapes(state, 0).as_deref() {
                 Some([Shape::VBox { children, .. }]) => match children.as_slice() {
                     [Shape::HBox { depth, .. }] => *depth,
                     other => panic!("paragraph vlist: {other:?}"),
                 },
                 other => panic!("paragraph box: {other:?}"),
             };
-            assert_eq!(dimen_register(&mut state, 0).raw(), line_depth);
+            assert_eq!(dimen_register(state, 0).raw(), line_depth);
 
             with_run(
                 br"\hsize=100pt\maxdepth=10pt
           \noindent\vrule height0pt depth4pt width1pt\par
           \dimen1=\pagedepth",
                 false,
-                |_, mut page| {
-                    let page_probe = detach_page_probe(&mut page);
+                |_, page| {
+                    let page_probe = detach_page_probe(page);
                     assert_eq!(
-                        dimen_register(&mut page, 1).raw(),
+                        dimen_register(page, 1).raw(),
                         4 * Scaled::UNITY,
                         "outer page depth is the rule's exact 4pt depth: contents={:?} contributions={:?} depth={:?}",
                         page_probe.contents,
                         page_probe.contributions,
                         page_probe.depth
                     );
-                    assert_eq!(dimen_register(&mut page, 1), page_probe.depth);
+                    assert_eq!(dimen_register(page, 1), page_probe.depth);
 
                     with_run(
                         br"\nonstopmode\setbox1=\hbox{\vskip\global\count1=21}\global\count2=22",
                         false,
-                        |_, mut restricted| {
+                        |_, restricted| {
                             assert_eq!(
-                                (
-                                    count_register(&mut restricted, 1),
-                                    count_register(&mut restricted, 2)
-                                ),
+                                (count_register(restricted, 1), count_register(restricted, 2)),
                                 (21, 22)
                             );
                             assert!(
-                                matches!(register_shapes(&mut restricted, 1).as_deref(), Some([Shape::HBox { children, .. }]) if children.is_empty()),
+                                matches!(register_shapes(restricted, 1).as_deref(), Some([Shape::HBox { children, .. }]) if children.is_empty()),
                                 "{:?}",
-                                register_shapes(&mut restricted, 1)
+                                register_shapes(restricted, 1)
                             );
-                            let errors = terminal(&restricted);
+                            let errors = terminal(restricted);
                             assert_eq!(errors.matches("Missing } inserted").count(), 1, "{errors}");
 
                             with_run(
                                 br"\nonstopmode\everypar{\global\advance\count3 by1\kern1pt}
           \setbox2=\vbox{\unhbox300\kern2pt\par}\global\count5=25",
                                 false,
-                                |_, mut replay| {
+                                |_, replay| {
                                     assert_eq!(
-                                        (
-                                            count_register(&mut replay, 3),
-                                            count_register(&mut replay, 5)
-                                        ),
+                                        (count_register(replay, 3), count_register(replay, 5)),
                                         (1, 25)
                                     );
                                     assert!(
-                                        matches!(register_shapes(&mut replay, 2).as_deref(), Some([Shape::VBox { children, .. }])
+                                        matches!(register_shapes(replay, 2).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { children: line, .. }]
             if matches!(line.as_slice(), [Shape::HBox { children: indent, .. }, Shape::Kern(first, KernKind::Explicit), Shape::Kern(second, KernKind::Explicit), ..]
                 if indent.is_empty()
                     && *first == Scaled::UNITY && *second == 2 * Scaled::UNITY))),
                                         "{:?}",
-                                        register_shapes(&mut replay, 2)
+                                        register_shapes(replay, 2)
                                     );
-                                    let errors = terminal(&replay);
+                                    let errors = terminal(replay);
                                     assert_eq!(
                                         errors.matches("Bad register code").count(),
                                         1,
@@ -2551,34 +2530,34 @@ fn structured_material_lifecycle_delete_unbox_italic_and_recovery_matrix() {
           \nonstopmode\setbox6=\vbox{\/\global\count0=11
             \unskip\unkern\unpenalty\hbox{\unhbox7}\vadjust{\kern1pt}}",
         true,
-        |_, mut universe| {
-            let horizontal = register_shapes(&mut universe, 0);
+        |_, universe| {
+            let horizontal = register_shapes(universe, 0);
             assert!(
                 matches!(horizontal.as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Char('f'), Shape::Kern(k, KernKind::Explicit), Shape::Mark(0, mark), Shape::Penalty(7)] if *k > 0 && mark == "h")),
                 "{horizontal:?}"
             );
             assert!(
-                matches!(register_shapes(&mut universe, 1).as_deref(), Some([Shape::VBox { children, .. }])
+                matches!(register_shapes(universe, 1).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Insert { class: 3, content, .. }, Shape::Mark(0, mark), Shape::Penalty(8)]
             if matches!(content.as_slice(), [Shape::Rule(_, Some(h), _) ] if *h == 2 * Scaled::UNITY) && mark == "v"))
             );
             assert!(
-                matches!(register_shapes(&mut universe, 2).as_deref(), Some([Shape::VBox { children, .. }])
+                matches!(register_shapes(universe, 2).as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [Shape::HBox { .. }, Shape::Kern(k, KernKind::Explicit)] if *k == 4 * Scaled::UNITY))
             );
             assert!(
-                matches!(register_shapes(&mut universe, 3).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 3).as_deref(), Some([Shape::HBox { children, .. }])
         if matches!(children.as_slice(), [Shape::Rule(Some(w), _, _)] if *w == 3 * Scaled::UNITY))
             );
             assert!(
-                matches!(register_shapes(&mut universe, 5).as_deref(), Some([Shape::HBox { children, .. }])
+                matches!(register_shapes(universe, 5).as_deref(), Some([Shape::HBox { children, .. }])
         if children.as_slice() == [Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit), Shape::Kern(5 * Scaled::UNITY, KernKind::Explicit)])
             );
-            assert_eq!(register_shapes(&mut universe, 4), None);
-            assert!(register_shapes(&mut universe, 7).is_some());
-            assert_eq!(count_register(&mut universe, 0), 11);
-            let errors = terminal(&universe);
+            assert_eq!(register_shapes(universe, 4), None);
+            assert!(register_shapes(universe, 7).is_some());
+            assert_eq!(count_register(universe, 0), 11);
+            let errors = terminal(universe);
             assert!(errors.contains("You can't use `\\/' in internal vertical mode"));
             assert!(
                 errors.contains("Incompatible list can't be unboxed"),
@@ -2593,8 +2572,8 @@ fn structured_material_lifecycle_delete_unbox_italic_and_recovery_matrix() {
           \setbox0=\vbox{\insert0{\kern1pt}\insert254{\kern2pt}\insert255{\kern3pt}\insert256{\kern4pt}}
           \setbox2=\hbox{\kern1pt\/}\end",
         true,
-        |_, mut boundaries| {
-    let classes = register_shapes(&mut boundaries, 0);
+        |_, boundaries| {
+    let classes = register_shapes(boundaries, 0);
     assert!(
         matches!(classes.as_deref(), Some([Shape::VBox { children, .. }])
         if matches!(children.as_slice(), [
@@ -2610,10 +2589,10 @@ fn structured_material_lifecycle_delete_unbox_italic_and_recovery_matrix() {
         "{classes:?}"
     );
     assert!(
-        matches!(register_shapes(&mut boundaries, 2).as_deref(), Some([Shape::HBox { children, .. }])
+        matches!(register_shapes(boundaries, 2).as_deref(), Some([Shape::HBox { children, .. }])
         if children.as_slice() == [Shape::Kern(Scaled::UNITY, KernKind::Explicit)])
     );
-    let boundary_errors = terminal(&boundaries);
+    let boundary_errors = terminal(boundaries);
     assert!(
         boundary_errors.contains("You can't \\insert255"),
         "{boundary_errors}"

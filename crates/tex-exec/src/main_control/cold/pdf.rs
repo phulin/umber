@@ -615,7 +615,7 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
                     depth: form.depth(),
                 },
             )?;
-            return Ok(None);
+            Ok(None)
         }
         RootedPdfFormRequest::Create {
             attr,
@@ -650,7 +650,7 @@ pub(in crate::main_control) fn apply_pdf_form_request<G>(
                     immediate,
                 )
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
-            return Ok(immediate.then_some(form));
+            Ok(immediate.then_some(form))
         }
     }
 }

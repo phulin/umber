@@ -336,9 +336,9 @@ fn push_owned_line_segment<S: TypesetState>(
                 // pre-break material.
                 out.push(Node::Disc {
                     kind,
-                    pre: empty_list.clone(),
-                    post: empty_list.clone(),
-                    replace: empty_list.clone(),
+                    pre: *empty_list,
+                    post: *empty_list,
+                    replace: *empty_list,
                     physical_replace_count: 0,
                 });
                 out.extend(state.page_nodes(pre).to_vec());
@@ -361,7 +361,7 @@ fn push_owned_line_segment<S: TypesetState>(
                     kind,
                     pre,
                     post,
-                    replace: replace.clone(),
+                    replace,
                     physical_replace_count,
                 });
                 out.extend(state.page_nodes(replace).to_vec());
@@ -409,7 +409,7 @@ fn frozen_high_cell_lineages<S: TypesetState>(
                 _ => 0,
             };
             (0..count).map(move |unit| DirectHighCellLineage::Frozen {
-                list: list.clone(),
+                list: *list,
                 row: u32::try_from(row).expect("frozen node list exceeds u32 rows"),
                 unit: u32::try_from(unit).expect("ligature source exceeds u32 cells"),
                 role,

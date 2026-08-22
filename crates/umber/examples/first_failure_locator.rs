@@ -151,7 +151,7 @@ fn run_locator<G>(stores: &mut Universe<G>, source: &str) -> ExitCode {
             ExitCode::FAILURE
         }
         Err(panic) => {
-            report_panic(&source, &session, panic.as_ref());
+            report_panic(source, &session, panic.as_ref());
             ExitCode::FAILURE
         }
     }

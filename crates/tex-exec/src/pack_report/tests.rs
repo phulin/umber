@@ -78,8 +78,8 @@ fn short_display_skips_the_physical_discretionary_replacement_count() {
         nodes.extend([
             Node::Disc {
                 kind: DiscKind::Discretionary,
-                pre: empty.clone(),
-                post: empty.clone(),
+                pre: empty,
+                post: empty,
                 replace: replacement,
                 physical_replace_count: 1,
             },
@@ -137,8 +137,8 @@ fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
         nodes.extend([
             Node::Disc {
                 kind: DiscKind::Discretionary,
-                pre: empty.clone(),
-                post: empty.clone(),
+                pre: empty,
+                post: empty,
                 replace: replacement,
                 physical_replace_count: 0,
             },
@@ -168,8 +168,8 @@ fn short_display_physical_count_is_independent_of_empty_side_list() {
         let nodes = [
             Node::Disc {
                 kind: DiscKind::Discretionary,
-                pre: empty.clone(),
-                post: empty.clone(),
+                pre: empty,
+                post: empty,
                 replace: empty,
                 physical_replace_count: 1,
             },
@@ -213,7 +213,7 @@ fn line_trace_projection_renders_detached_replacement_content() {
         let mut nodes = vec![Node::Disc {
             kind: DiscKind::Discretionary,
             pre,
-            post: empty.clone(),
+            post: empty,
             replace: empty,
             physical_replace_count: 3,
         }];
@@ -311,7 +311,7 @@ fn short_display_maps_all_node_classes() {
                 tokens: mark_tokens,
             },
             Node::Adjust(AdjustNode {
-                content: empty.clone(),
+                content: empty,
                 pre: false,
             }),
             Node::Disc {

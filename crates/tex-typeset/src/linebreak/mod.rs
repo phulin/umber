@@ -825,7 +825,7 @@ fn run_pass<S: TypesetState>(
                             // discretionaries (their pre/post lists), even though
                             // width accounting stops before those nodes.
                             display: displayed_through..trace_span.display_end,
-                            display_suffix: trace_span.display_suffix.clone(),
+                            display_suffix: trace_span.display_suffix,
                             breakpoint: trace_span.breakpoint,
                             via: active_candidate.passive.map_or(0, |id| passive[id].serial),
                             badness: (b <= INF_BAD).then_some(b),
@@ -1014,7 +1014,7 @@ fn trace_display_suffix(nodes: &[Node], bp: Breakpoint) -> Option<PageListId> {
     else {
         return None;
     };
-    Some(replace.clone())
+    Some(*replace)
 }
 
 fn trace_display_end(state: &impl TypesetState, nodes: &[Node], bp: Breakpoint) -> usize {

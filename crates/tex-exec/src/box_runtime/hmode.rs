@@ -514,20 +514,16 @@ pub(crate) fn append_pending_hchar<G>(
         if is_strong_script(script) {
             pending.script = script;
         }
-        pending.source.push(crate::mode::PendingHChar {
-            font,
-            ch,
-            origin: origin.clone(),
-        });
+        pending
+            .source
+            .push(crate::mode::PendingHChar { font, ch, origin });
         pending.current = PendingHRunChar::new(font, ch, origin);
         list.set_pending_hchars(pending);
         return;
     }
-    pending.source.push(crate::mode::PendingHChar {
-        font,
-        ch,
-        origin: origin.clone(),
-    });
+    pending
+        .source
+        .push(crate::mode::PendingHChar { font, ch, origin });
     pending.current = PendingHRunChar::new(font, ch, origin);
     list.set_pending_hchars(pending);
 }
@@ -628,7 +624,7 @@ pub(crate) fn shape_open_type_chars<G>(
         nodes.push(Node::Char {
             font: entry.font,
             ch: entry.ch,
-            origin: entry.origin.clone(),
+            origin: entry.origin,
         });
         if adjustment.raw() != 0 {
             nodes.push(Node::Kern {
@@ -661,7 +657,7 @@ pub(crate) fn reshape_open_type_runs<G>(stores: &CommandContext<'_, G>, nodes: &
         let mut chars = vec![crate::mode::PendingHChar {
             font: *font,
             ch: *ch,
-            origin: origin.clone(),
+            origin: *origin,
         }];
         let mut script = tex_fonts::character_script(*ch);
         let start = index;
@@ -686,7 +682,7 @@ pub(crate) fn reshape_open_type_runs<G>(stores: &CommandContext<'_, G>, nodes: &
                     chars.push(crate::mode::PendingHChar {
                         font: *font,
                         ch: *next_ch,
-                        origin: next_origin.clone(),
+                        origin: *next_origin,
                     });
                     index += 1;
                 }
@@ -857,7 +853,7 @@ pub(crate) fn run_tfm_ligature_machine<G>(
         work.push_back(LigatureWorkItem::Glyph(PendingHRunChar::new(
             entry.font,
             entry.ch,
-            entry.origin.clone(),
+            entry.origin,
         )));
     }
     if !suppress_right_boundary {
@@ -1222,8 +1218,8 @@ pub(crate) fn literal_hyphen_disc<G>(
     let empty = tex_state::node_arena::PageListId::empty();
     Some(Node::Disc {
         kind: DiscKind::ExplicitHyphen,
-        pre: empty.clone(),
-        post: empty.clone(),
+        pre: empty,
+        post: empty,
         replace: empty,
         physical_replace_count: 0,
     })

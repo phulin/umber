@@ -120,7 +120,7 @@ pub(crate) fn report_lr_problems<G>(
     let mut headline = format!("\n\\endL or \\endR problem ({missing} missing, {extra} extra");
     headline.push_str(&origin_text(context));
     headline.push('\n');
-    headline.push_str(&short_display(stores, boxed.children.clone(), list_layout));
+    headline.push_str(&short_display(stores, boxed.children, list_layout));
     headline.push('\n');
     stores.printer().print_rendered(&headline);
 
@@ -144,7 +144,7 @@ fn report_one<G>(
     list_layout: DiagnosticListLayout,
 ) {
     let children = match packed {
-        Node::HList(node) | Node::VList(node) => node.children.clone(),
+        Node::HList(node) | Node::VList(node) => node.children,
         _ => unreachable!("hpack and vpack produce an hlist or a vlist"),
     };
     // §660 and §674 both open with `print_ln`, closing whatever partial line
@@ -400,14 +400,14 @@ fn append_short_display_nodes<G>(
             } => {
                 append_short_display(
                     stores,
-                    pre.clone(),
+                    *pre,
                     DiagnosticListLayout::FrozenList,
                     font_in_short_display,
                     out,
                 );
                 append_short_display(
                     stores,
-                    post.clone(),
+                    *post,
                     DiagnosticListLayout::FrozenList,
                     font_in_short_display,
                     out,
@@ -419,7 +419,7 @@ fn append_short_display_nodes<G>(
                 // immutable replacement side list.
                 let replacement_count = match disc_layout {
                     DiscReplacementLayout::DetachedProjection => stores
-                        .page_node_list(replace.clone())
+                        .page_node_list(*replace)
                         .expect("discretionary replacement belongs to the live page arena")
                         .len(),
                     DiscReplacementLayout::FrozenList => usize::from(*physical_replace_count),

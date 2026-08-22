@@ -127,7 +127,7 @@ fn prototype_nodes(
     let mut nodes = Vec::with_capacity(capacity);
     nodes.push(tabskip_node(resolved.tabskips[0]));
     for (column, width) in resolved.columns.iter().copied().enumerate() {
-        nodes.push(prototype_column(kind, width, empty.clone()));
+        nodes.push(prototype_column(kind, width, *empty));
         nodes.push(tabskip_node(resolved.tabskips[column + 1]));
     }
     nodes
@@ -191,7 +191,7 @@ fn empty_column_box(kind: AlignmentKind, size: Scaled, empty: PageListId) -> Nod
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: tex_state::glue::Order::Normal,
-            children: empty.clone(),
+            children: empty,
         },
         AlignmentKind::VAlign => BoxNodeFields {
             width: Scaled::from_raw(0),

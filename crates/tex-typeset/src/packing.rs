@@ -223,7 +223,7 @@ pub fn vtop(
     params: VpackParams,
 ) -> PackedBox {
     let mut packed = vpack(state, list, spec, params);
-    let children = packed.node.children.clone();
+    let children = packed.node.children;
     readjust_vtop(state, &children, &mut packed);
     packed
 }

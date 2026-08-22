@@ -173,7 +173,7 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
             overfull_rule: sp(0),
         };
         let spec = PackSpec::Natural;
-        let decoded = plan_hpack_nodes(&universe, &nodes, spec, params).finish(id.clone());
+        let decoded = plan_hpack_nodes(&universe, &nodes, spec, params).finish(id);
         let compact = hpack(&universe, id, spec, params);
         assert_eq!(fast.width, scalar.width, "width case {case}");
         assert_eq!(fast.height, scalar.height, "height case {case}");
@@ -339,7 +339,7 @@ fn spread_target_and_highest_glue_order() {
         overfull_rule: sp(0),
     };
 
-    let stretched = hpack(&universe, list.clone(), PackSpec::Spread(sp(10)), params);
+    let stretched = hpack(&universe, list, PackSpec::Spread(sp(10)), params);
     assert_eq!(stretched.node.width, sp(14));
     assert_eq!(stretched.node.glue_sign, Sign::Stretching);
     assert_eq!(stretched.node.glue_order, Order::Filll);
@@ -382,7 +382,7 @@ fn hpack_infinite_shrink_has_zero_badness_and_no_diagnostic() {
 
     let packed = hpack(
         &universe,
-        list.clone(),
+        list,
         PackSpec::Exactly(sp(0)),
         HpackParams {
             hbadness: 0,
@@ -417,7 +417,7 @@ fn leader_glue_participates_in_packing_like_ordinary_glue() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: empty.clone(),
+        children: empty,
     }));
     let hlist = universe.publish_page_nodes(&[Node::Glue {
         spec: glue,
@@ -593,7 +593,7 @@ fn hpack_measures_shifted_child_boxes() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: child.clone(),
+        children: child,
     }));
     let lowered = Node::HList(BoxNode::new(BoxNodeFields {
         width: sp(5),
@@ -604,7 +604,7 @@ fn hpack_measures_shifted_child_boxes() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: child.clone(),
+        children: child,
     }));
     let list = universe.publish_page_nodes(&[raised, lowered]);
 
@@ -636,7 +636,7 @@ fn vpack_measures_shifted_child_width() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: child.clone(),
+        children: child,
     }))]);
 
     let packed = vpack(
@@ -681,7 +681,7 @@ fn pdf_image_reference_contributes_its_declared_box_dimensions() {
     let list = universe.publish_page_nodes(&[image]);
     let hbox = hpack(
         &universe,
-        list.clone(),
+        list,
         PackSpec::Natural,
         HpackParams {
             hbadness: INF_BAD,
@@ -723,7 +723,7 @@ fn vpack_clamps_depth_to_box_max_depth() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: child.clone(),
+        children: child,
     }))]);
     let packed = vpack(
         &universe,
@@ -762,7 +762,7 @@ fn vtop_with_leading_glue_has_zero_height() {
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-            children: child.clone(),
+            children: child,
         })),
     ]);
 
@@ -794,7 +794,7 @@ fn vtop_preserves_total_size_when_first_box_exceeds_target() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: child.clone(),
+        children: child,
     }))]);
 
     let packed = vtop(
@@ -832,7 +832,7 @@ fn vertical_spacing_consumes_previous_depth() {
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
-        children: child.clone(),
+        children: child,
     }));
     let list = universe.publish_page_nodes(&[
         hbox.clone(),

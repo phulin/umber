@@ -94,7 +94,7 @@ pub(crate) fn report_hpack<G>(
         context,
         PackedDirection::Horizontal,
         &packed.diagnostics,
-        &tex_state::node::Node::HList(packed.node.clone()),
+        &tex_state::node::Node::HList(packed.node),
         DiagnosticListLayout::FrozenList,
     );
     if let Some((missing, extra)) = lr_problems {
@@ -104,7 +104,7 @@ pub(crate) fn report_hpack<G>(
             context,
             missing,
             extra,
-            &Node::HList(packed.node.clone()),
+            &Node::HList(packed.node),
             DiagnosticListLayout::FrozenList,
         );
     }
@@ -169,7 +169,7 @@ pub(crate) fn vpack<G>(
         context,
         PackedDirection::Vertical,
         &packed.diagnostics,
-        &tex_state::node::Node::VList(packed.node.clone()),
+        &tex_state::node::Node::VList(packed.node),
         DiagnosticListLayout::FrozenList,
     );
     packed
@@ -195,7 +195,7 @@ pub(crate) fn vtop<G>(
         spec,
         params,
     );
-    let children = packed.node.children.clone();
+    let children = packed.node.children;
     tex_typeset::readjust_vtop(
         &crate::typeset_context::TypesetContext::new(stores),
         &children,

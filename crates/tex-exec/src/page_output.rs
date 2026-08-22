@@ -307,7 +307,7 @@ fn distribute_insertions<G>(
                     split_top_skip,
                     split_max_depth,
                     floating_penalty,
-                    content: content.clone(),
+                    content,
                 });
                 if let Some(queue) = queues.get_mut(&class)
                     && queue.accepting
@@ -440,7 +440,7 @@ fn split_insertion_remainder<G>(
         diagnostic_effects,
         geometry,
         diagnostic_context,
-        content.clone(),
+        content,
     )?;
     Ok(Some(Node::Ins {
         class: context.class,
