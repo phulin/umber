@@ -463,11 +463,7 @@
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/filename/tests.rs",
-          "test": "filename_components_split_area_name_and_extension_canonically"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/filename/tests.rs",
-          "test": "filename_component_terminators_and_string_overflow_follow_tex82"
+          "test": "filename_scan_stops_at_space_and_keeps_area_name_and_extension"
         }
       ],
       "status": "covered",
@@ -508,11 +504,18 @@
       "coverage": [
         {
           "path": "crates/tex-command/src/scanners/filename/tests.rs",
-          "test": "filename_scan_expands_characters_and_backs_up_first_noncharacter"
+          "test": "filename_scan_stops_at_space_and_keeps_area_name_and_extension"
         },
         {
-          "path": "crates/tex-command/src/scanners/filename/tests.rs",
-          "test": "filename_scan_recursion_guard_and_retry_modes_follow_tex82"
+          "path": "crates/tex-exec/src/main_control/tests.rs",
+          "test": "openin_closein_replace_stream_state_and_apply_filename_rules"
+        },
+        {
+          "path": "tools/tex-command-stream/tests/it/repository_comparison.rs",
+          "test": "committed_tex82_command_traces_are_clean",
+          "cases": [
+            "command-transitions-v1"
+          ]
         }
       ],
       "status": "covered",
@@ -1371,14 +1374,6 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-command/src/command/tests.rs",
-          "test": "extension_primitives_preserve_tex82_selectors_and_any_mode_dispatch"
-        },
-        {
-          "path": "crates/tex-command/src/command/tests.rs",
-          "test": "unknown_extension_selector_fails_loudly_at_dispatch"
-        },
-        {
           "path": "crates/tex-exec/src/main_control/tests/tex82_whatsit_evidence.rs",
           "test": "extension_dispatch_executes_every_selector_in_every_tex82_mode"
         }
@@ -1429,10 +1424,6 @@
         {
           "path": "crates/tex-exec/src/main_control/tests/tex82_whatsit_evidence.rs",
           "test": "base_whatsit_construction_projects_fields_display_size_and_ownership"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "write_stream_scan_normalizes_out_of_range_stream_numbers"
         },
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",

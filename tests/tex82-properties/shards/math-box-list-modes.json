@@ -1038,10 +1038,6 @@
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "outer_vertical_kern_joins_contributions_without_running_page_builder"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "rule_spec_scans_expanded_keywords_and_dimensions"
         }
       ],
       "status": "covered",
@@ -1353,14 +1349,6 @@
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "accent_scanner_separates_the_accent_code_from_the_base_lookahead"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "accent_base_lookahead_replays_a_command_that_is_neither_base_nor_assignment"
         }
       ],
       "status": "covered",
@@ -1453,14 +1441,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "math_field_brace_opens_group_without_absorbing_its_body"
-        },
-        {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "math_given_field_preserves_every_non_ord_code_without_input_events"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -1505,10 +1485,6 @@
       "semantic_owner": "tex-exec::math",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "math_delimiter_and_mu_requests_recover_and_consume_units"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -1643,10 +1619,6 @@
       "semantic_owner": "tex-exec::math",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "generalized_fraction_delimiters_read_delimiter_codes_not_integers"
-        },
         {
           "path": "crates/tex-typeset/src/math/tests.rs",
           "test": "make_fraction_uses_default_rule_and_delimiter_target"

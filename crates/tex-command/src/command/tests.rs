@@ -1,5 +1,8 @@
 use tex_state::env::AssignmentScope;
-use tex_state::meaning::{Meaning, MeaningFlags, MeaningWord, ResolvedMeaning};
+use tex_state::meaning::{
+    ExpandablePrimitive, InternalInteger, Meaning, MeaningFlags, MeaningWord, ResolvedMeaning,
+    UnexpandablePrimitive,
+};
 use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
 
 use super::{CurrentCommand, DeliveryStamp};
@@ -123,5 +126,90 @@ fn frozen_endwrite_delivery_retains_its_outer_macro_command() {
             crate::observation::canonical_current_command_identity(&command),
             ("outer_call".to_owned(), None)
         );
+    });
+}
+
+#[test]
+fn command_code_partition_classifies_character_internal_unexpandable_and_expandable_ranges() {
+    crate::test_harness::with_universe(|universe| {
+        let cases = [
+            (
+                Meaning::CharToken {
+                    ch: 'x',
+                    cat: Catcode::Letter,
+                },
+                "character",
+                false,
+            ),
+            (
+                Meaning::InternalInteger(InternalInteger::Badness),
+                "internal",
+                false,
+            ),
+            (
+                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Def),
+                "unexpandable",
+                false,
+            ),
+            (
+                Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
+                "expandable",
+                true,
+            ),
+        ];
+
+        for (index, (meaning, expected_partition, expected_expandable)) in
+            cases.into_iter().enumerate()
+        {
+            let symbol = universe
+                .intern(&format!("partition{index}"))
+                .expect("partition name");
+            universe
+                .assign_meaning(
+                    symbol,
+                    MeaningWord::from_static(meaning),
+                    AssignmentScope::Global,
+                )
+                .expect("partition meaning");
+            let command = resolved(universe, Token::Cs(symbol.symbol()));
+            let actual_partition = match command.meaning() {
+                ResolvedMeaning::Static(Meaning::CharToken { .. } | Meaning::CharGiven(_)) => {
+                    "character"
+                }
+                ResolvedMeaning::Static(
+                    Meaning::InternalInteger(_)
+                    | Meaning::CountRegister(_)
+                    | Meaning::DimenRegister(_)
+                    | Meaning::SkipRegister(_)
+                    | Meaning::MuskipRegister(_)
+                    | Meaning::ToksRegister(_)
+                    | Meaning::IntParam(_)
+                    | Meaning::DimenParam(_)
+                    | Meaning::GlueParam(_)
+                    | Meaning::MuGlueParam(_)
+                    | Meaning::TokParam(_)
+                    | Meaning::PageDimension(_)
+                    | Meaning::PageInteger(_)
+                    | Meaning::Font(_),
+                ) => "internal",
+                ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(_) | Meaning::EndV) => {
+                    "unexpandable"
+                }
+                ResolvedMeaning::Static(Meaning::ExpandablePrimitive(_))
+                | ResolvedMeaning::Macro { .. } => "expandable",
+                _ => "other",
+            };
+            assert_eq!(actual_partition, expected_partition, "case {index}");
+            assert_eq!(
+                crate::processor::expand::is_expandable_command(&command),
+                expected_expandable,
+                "case {index} expansion boundary"
+            );
+        }
+
+        assert_eq!(Catcode::Escape as u8, 0);
+        assert_eq!(Catcode::Invalid as u8, 15);
+        assert_eq!(UnexpandablePrimitive::Def.operand(), 0);
+        assert_eq!(ExpandablePrimitive::ExpandAfter.operand(), 0);
     });
 }

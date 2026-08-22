@@ -450,7 +450,7 @@
       "coverage": [
         {
           "path": "crates/tex-command/src/processor/alignment/tests.rs",
-          "test": "push_pop_alignment_restores_all_tex82_fields"
+          "test": "nested_alignment_suspension_restores_the_exact_outer_identity"
         }
       ],
       "status": "covered",
@@ -488,8 +488,12 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "alignment_preamble_opening_scans_the_scan_spec_clause"
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "display-prevdepth",
+            "vertical-prevdepth"
+          ]
         }
       ],
       "status": "covered",
@@ -530,8 +534,13 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "alignment_preamble_tabskip_assignment_preserves_the_prior_boundary"
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "preamble-globaldefs",
+            "preamble-tabskip",
+            "preamble-global-prefix"
+          ]
         }
       ],
       "status": "covered",
@@ -568,8 +577,11 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-command/src/scanners/structured/tests.rs",
-          "test": "alignment_preamble_discards_leading_spaces_from_each_u_template_only"
+          "path": "tools/tex-command-stream/tests/it/repository_comparison.rs",
+          "test": "committed_tex82_command_traces_are_clean",
+          "cases": [
+            "alignment-delivery.tex"
+          ]
         }
       ],
       "status": "covered",
@@ -725,8 +737,11 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-command/src/processor/alignment/tests.rs",
-          "test": "cell_template_delivery_matrix"
+          "path": "tools/tex-command-stream/tests/it/repository_comparison.rs",
+          "test": "committed_tex82_command_traces_are_clean",
+          "cases": [
+            "alignment-delivery.tex"
+          ]
         }
       ],
       "status": "covered",
@@ -768,10 +783,6 @@
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "fin_col_delimiter_periodic_extra_tab_and_brace_depth_matrix"
-        },
-        {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "fin_col_endv_stack_accepts_exhausted_frames_and_rejects_interwoven_states"
         }
       ],
       "status": "covered",
@@ -1232,8 +1243,11 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-command/src/processor/alignment/tests.rs",
-          "test": "alignment_misplaced_command_recovery_matrix"
+          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
+          "test": "declared_command_semantic_cases_match",
+          "cases": [
+            "misplaced-delimiter-recovery"
+          ]
         }
       ],
       "status": "covered",
@@ -1302,12 +1316,11 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-command/src/processor/alignment/tests.rs",
-          "test": "alignment_close_inserts_frozen_cr_before_brace_replay"
-        },
-        {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "align_group_closing_brace_recovery_backs_up_before_frozen_cr"
+          "path": "tools/tex-command-stream/tests/it/repository_comparison.rs",
+          "test": "committed_tex82_command_traces_are_clean",
+          "cases": [
+            "alignment-delivery.tex"
+          ]
         }
       ],
       "status": "covered",

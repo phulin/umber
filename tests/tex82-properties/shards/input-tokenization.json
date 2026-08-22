@@ -521,18 +521,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/command/tests.rs",
-          "test": "lookup_reuses_existing_identity_and_guarded_miss_does_not_intern"
-        },
-        {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "raw_delivery_never_enters_a_new_multiletter_name_in_the_hash_table"
-        },
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "csname_expands_characters_then_injects_a_relaxed_named_control_sequence"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -569,8 +557,8 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-command/src/command/tests.rs",
-          "test": "primitive_installation_binds_spelling_command_operand_and_level"
+          "path": "crates/tex-command/src/primitives/generated/tests.rs",
+          "test": "profile_registration_views_preserve_source_order_and_policy"
         }
       ],
       "status": "covered",
@@ -609,18 +597,6 @@
         {
           "path": "crates/tex-command/src/observation/canonical_names/tests.rs",
           "test": "observed_tokens_use_tex_webs_289_token_vocabulary"
-        },
-        {
-          "path": "crates/tex-command/src/macro_call/tests.rs",
-          "test": "replacement_parameter_forms_remain_compact_and_distinct"
-        },
-        {
-          "path": "crates/tex-command/src/input/levels/tests.rs",
-          "test": "stored_token_encoding_partitions_characters_controls_and_macro_forms"
-        },
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "stored_token_reference_lifetime_survives_redefinition_and_replay"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
@@ -685,28 +661,7 @@
       ],
       "semantic_owner": "tex-command::input",
       "test_level": "planned-rust-unit+strict-semantic-xfail",
-      "coverage": [
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "parameter_replay_uses_nearest_macro_body_param_start"
-        },
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "parameter_level_replays_out_parameter_tokens_literally"
-        },
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "source_level_begin_end_restore_line_and_terminal_state"
-        },
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "token_list_kind_reference_and_parameter_stack_lifecycle_matrix"
-        },
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "backup_inserted_and_macro_levels_retire_in_canonical_order"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.245"
     },
@@ -738,23 +693,23 @@
       "coverage": [
         {
           "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "each_popped_level_retires_exactly_once_with_its_trace"
+          "test": "one_exhausted_token_level_retires_once_with_its_semantic_reason"
         },
         {
           "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "macro_body_retirement_releases_exactly_its_activation_and_arguments"
+          "test": "retirement_rejects_a_stale_level_identity_before_mutation"
         },
         {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "macro_body_retirement_rejects_activation_mismatch_transactionally"
+          "path": "crates/tex-command/src/macro_call/tests.rs",
+          "test": "activation_retirement_drops_only_the_current_macro_frame"
         },
         {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "input_level_retirement_covers_source_token_parameter_and_reference_actions"
-        },
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "source_level_begin_end_restore_line_and_terminal_state"
+          "path": "tools/tex-command-stream/tests/it/repository_comparison.rs",
+          "test": "committed_tex82_command_traces_are_clean",
+          "cases": [
+            "input-recovery.tex",
+            "expansion-macros.tex"
+          ]
         }
       ],
       "status": "covered",
@@ -793,18 +748,6 @@
       "semantic_owner": "tex-command::delivery",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "observer_preserves_active_control_sequence_identity_at_raw_delivery"
-        },
-        {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "main_control_delivery_surfaces_top_level_delimiters_and_backup_replays_them"
-        },
-        {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "alignment_delimiter_waits_for_literal_brace_depth"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -845,18 +788,6 @@
       "semantic_owner": "tex-command::delivery",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "runaway_recovery_inserts_the_status_specific_canonical_tokens"
-        },
-        {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "outer_macro_is_backed_up_and_current_delivery_becomes_a_space"
-        },
-        {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "outer_recovery_is_bounded_and_snapshot_rollback_replays_the_episode"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -944,26 +875,6 @@
           "test": "all_canonical_dialects_share_the_exact_byte_state_machine"
         },
         {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "stored_replay_delivers_once_then_restarts_to_the_underlying_source"
-        },
-        {
-          "path": "crates/tex-command/src/input/stack/tests.rs",
-          "test": "parameter_replay_uses_nearest_macro_body_param_start"
-        },
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "endinput_keeps_its_line_but_retires_nested_source_before_the_next_line"
-        },
-        {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "raw_delivery_never_enters_a_new_multiletter_name_in_the_hash_table"
-        },
-        {
-          "path": "crates/tex-command/src/processor/next.rs",
-          "test": "get_token_enters_a_new_multiletter_name_a_later_raw_scan_then_finds"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -1023,32 +934,7 @@
       ],
       "semantic_owner": "tex-command::expansion",
       "test_level": "planned-rust-unit+strict-semantic-xfail",
-      "coverage": [
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "expandafter_and_noexpand_preserve_canonical_raw_order"
-        },
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "csname_expands_characters_interns_once_and_requires_endcsname"
-        },
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "backup_replays_the_exact_delivered_token_above_expansion"
-        },
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "ordinary_loop_expands_macro_body_on_the_canonical_raw_path"
-        },
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "input_uses_only_capability_registered_backing_and_returns_to_parent"
-        },
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "endinput_keeps_its_line_but_retires_nested_source_before_the_next_line"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.252"
     },
@@ -1100,31 +986,26 @@
       "coverage": [
         {
           "path": "crates/tex-command/src/macro_call/tests.rs",
-          "test": "successful_call_activates_canonical_replacement_and_replays_parameter_range"
+          "test": "arguments_are_completed_in_tex_parameter_order_and_live_in_the_attempt"
         },
         {
           "path": "crates/tex-command/src/macro_call/tests.rs",
-          "test": "delimited_argument_retries_a_mismatch_as_an_overlapping_prefix"
+          "test": "parameter_escape_distinguishes_substitution_from_a_literal_hash"
         },
         {
           "path": "crates/tex-command/src/macro_call/tests.rs",
-          "test": "delimiter_inside_literal_braces_remains_argument_material"
+          "test": "delimited_argument_stops_at_its_literal_delimiter"
         },
         {
           "path": "crates/tex-command/src/macro_call/tests.rs",
-          "test": "delimited_argument_strips_one_complete_outer_group"
+          "test": "delimited_argument_ignores_delimiters_inside_literal_braces"
         },
         {
-          "path": "crates/tex-command/src/macro_call/tests.rs",
-          "test": "macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports"
-        },
-        {
-          "path": "crates/tex-command/src/macro_call/tests.rs",
-          "test": "delimiter_opening_brace_does_not_leave_literal_brace_accounting"
-        },
-        {
-          "path": "crates/tex-command/src/macro_call/tests.rs",
-          "test": "nested_calls_keep_out_parameter_ownership_and_invocation_provenance"
+          "path": "tools/tex-command-stream/tests/it/repository_comparison.rs",
+          "test": "committed_tex82_command_traces_are_clean",
+          "cases": [
+            "expansion-macros.tex"
+          ]
         }
       ],
       "status": "covered",
@@ -1175,28 +1056,7 @@
       ],
       "semantic_owner": "tex-command::expansion",
       "test_level": "planned-rust-unit+strict-semantic-xfail",
-      "coverage": [
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "converted_token_lists_classify_spaces_copy_tokens_and_resume_expansion"
-        },
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "conversion_rendering_publishes_recovery_input_before_its_first_token"
-        },
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "the_toks_pushes_immutable_stored_input_without_reading_beyond_target"
-        },
-        {
-          "path": "crates/tex-command/src/processor/expand/tests.rs",
-          "test": "string_reads_its_target_with_normal_scanner_status_then_restores_definition"
-        },
-        {
-          "path": "crates/tex-command/src/scan_toks/tests.rs",
-          "test": "direct_the_toks_splice_is_unexpanded_and_does_not_balance_the_collector"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.254"
     },
@@ -1234,18 +1094,6 @@
       "semantic_owner": "tex-command::scan-toks",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-command/src/scan_toks/tests.rs",
-          "test": "read_toks_collects_balanced_multiline_input_and_appends_one_eof_line"
-        },
-        {
-          "path": "crates/tex-command/src/scan_toks/tests.rs",
-          "test": "read_toks_reads_the_terminal_for_a_closed_or_out_of_range_stream"
-        },
-        {
-          "path": "crates/tex-command/src/scan_toks/tests.rs",
-          "test": "read_toks_disables_alignment_delimiters_and_restores_scanner_state"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"

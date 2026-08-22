@@ -1018,10 +1018,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/scanners/hyphenation/tests.rs",
-          "test": "othercases_print_errors_without_inventing_events_and_preserve_the_partial_word"
-        },
-        {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order"
         },
@@ -1477,10 +1473,6 @@
       "semantic_owner": "tex-exec::main-control",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "final_cleanup_drains_nested_kinds_in_current_first_order_with_saved_lines"
-        },
         {
           "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly"

@@ -182,18 +182,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/observation/mod.rs",
-          "test": "tex82_conditionals_use_shared_if_test_identity"
-        },
-        {
-          "path": "crates/tex-command/src/observation/mod.rs",
-          "test": "tex82_conditional_delimiters_use_shared_fi_or_else_identity"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "tex82_predicate_aliases_preserve_classification"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -235,18 +223,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "condition_identity_updates_outer_frame_after_nested_push"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "true_ifx_fi_observes_branch_before_popping_its_frame"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "condition_stack_preserves_lines_limits_and_input_independence"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -287,14 +263,6 @@
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "pass_text_uses_get_next_and_skips_nested_conditionals"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "pass_text_does_not_expand_or_execute_skipped_tokens"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -338,30 +306,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "boolean_condition_skips_false_limb_and_else_skips_true_remainder"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "numeric_and_ifcase_selection_use_the_same_skip_machine"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "selected_ifcase_limb_skips_remaining_limbs_without_extra_delimiter_errors"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "redundant_else_inside_a_selected_true_limb_is_skipped_silently"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifcase_zero_negative_else_and_fi_boundaries"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "conditional_delimiter_legality_matrix"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -402,18 +346,6 @@
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "mode_and_box_predicates_use_host_and_aggregate_queries"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "predicate_dispatch_covers_all_seventeen_kinds_and_state_queries"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -456,18 +388,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "numeric_and_ifcase_selection_use_the_same_skip_machine"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifdim_uses_typed_units_and_internal_dimensions"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifnum_ifdim_relation_and_missing_equals_matrix"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -509,10 +429,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifodd_signed_parity_and_scanner_recovery_matrix"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -552,16 +468,7 @@
       ],
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+strict-semantic-xfail",
-      "coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "mode_and_box_predicates_use_host_and_aggregate_queries"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifvoid_ifhbox_ifvbox_register_kind_matrix"
-        }
-      ],
+      "coverage": [],
       "planned_coverage": [
         {
           "path": "crates/tex-command/src/conditionals/tests.rs",
@@ -617,26 +524,6 @@
       "semantic_owner": "tex-command::conditionals",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifx_reads_unexpanded_operands_through_get_token"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "ifx_compares_macro_flags_and_raw_definition_tokens_not_storage_identity"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "character_and_category_tests_normalize_non_character_operands"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "noexpand_before_an_active_character_compares_as_that_character"
-        },
-        {
-          "path": "crates/tex-command/src/conditionals/tests.rs",
-          "test": "if_ifcat_and_ifx_complete_operand_matrix"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
