@@ -51,6 +51,50 @@ fn command_episode_admits_session_and_generation_once() {
     .expect("universe allocation");
 }
 
+#[test]
+fn csname_relaxes_previously_interned_undefined_control_sequence_only() {
+    with_universe(budget(), |universe| {
+        let undefined = universe.intern("latent").expect("intern undefined symbol");
+        let defined = universe.intern("defined").expect("intern defined symbol");
+        universe
+            .assign_meaning(
+                defined,
+                MeaningWord::from_static(Meaning::IntParam(IntParam::MAG.raw())),
+                AssignmentScope::Global,
+            )
+            .expect("assign defined meaning");
+
+        let mut context = universe.command_context().expect("admit episode");
+        context.begin_group(GroupKind::Simple, 1).expect("group");
+
+        assert_eq!(
+            context.intern_relaxed_control_sequence("latent"),
+            undefined.symbol()
+        );
+        assert_eq!(
+            context.meaning(undefined.symbol()),
+            ResolvedMeaning::Static(Meaning::Relax)
+        );
+        assert_eq!(
+            context.intern_relaxed_control_sequence("defined"),
+            defined.symbol()
+        );
+        assert_eq!(
+            context.meaning(defined.symbol()),
+            ResolvedMeaning::Static(Meaning::IntParam(IntParam::MAG.raw()))
+        );
+
+        context
+            .end_group(GroupKind::Simple)
+            .expect("restore local implicit relaxation");
+        assert_eq!(
+            context.meaning(undefined.symbol()),
+            ResolvedMeaning::Static(Meaning::Undefined)
+        );
+    })
+    .expect("universe allocation");
+}
+
 /// TeX82 §288: `mag_set` freezes the first prepared magnification, corrects
 /// an incompatible later assignment globally, and belongs to the checkpointed
 /// job session rather than to a reusable format image.

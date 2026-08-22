@@ -3286,18 +3286,22 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn intern_relaxed_control_sequence(&mut self, name: &str) -> Symbol {
-        if let Some(symbol) = self.symbol(name) {
-            return symbol;
+        let symbol = self
+            .symbol(name)
+            .unwrap_or_else(|| self.intern_control_sequence(name));
+        if matches!(
+            self.meaning(symbol),
+            ResolvedMeaning::Static(Meaning::Undefined)
+        ) {
+            self.admitted
+                .state()
+                .assign_meaning(
+                    symbol,
+                    MeaningWord::from_static(Meaning::Relax),
+                    crate::AssignmentScope::Local,
+                )
+                .expect("undefined control sequence is admitted");
         }
-        let symbol = self.intern_control_sequence(name);
-        self.admitted
-            .state()
-            .assign_meaning(
-                symbol,
-                MeaningWord::from_static(Meaning::Relax),
-                crate::AssignmentScope::Local,
-            )
-            .expect("new control sequence is admitted");
         symbol
     }
 

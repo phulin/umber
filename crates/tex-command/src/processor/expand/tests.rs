@@ -113,3 +113,47 @@ fn noexpand_suppresses_exactly_one_expandable_delivery() {
         );
     });
 }
+
+#[test]
+fn csname_relaxes_an_already_interned_undefined_name() {
+    crate::test_harness::with_universe(|universe| {
+        let csname = install_static(
+            universe,
+            "csname",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::CsName),
+        );
+        let endcsname = install_static(
+            universe,
+            "endcsname",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndCsName),
+        );
+        let latent = universe.intern("latent").expect("pre-intern name");
+        let mut input = vec![csname];
+        input.extend("latent".chars().map(|ch| Token::Char {
+            ch,
+            cat: Catcode::Letter,
+        }));
+        input.push(endcsname);
+        let mut command = CommandState::default();
+        crate::test_harness::push(&mut command, input);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+
+        let expanded = processor
+            .get_x_token()
+            .expect("csname expansion")
+            .expect("named control sequence");
+        assert_eq!(
+            expanded.spelling().semantic_token(),
+            Token::Cs(latent.symbol())
+        );
+        assert_eq!(expanded.meaning(), Meaning::Relax);
+        assert!(processor.get_x_token().expect("end").is_none());
+    });
+}
