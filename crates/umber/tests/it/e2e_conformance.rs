@@ -12,8 +12,10 @@ use parity_harness::{
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
 use tex_command::RegisteredSourceKind;
-use tex_command_stream::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
-use tex_observe::{GeometryEvidenceProfile, SemanticEvidenceProfile};
+use tex_observe::{
+    GeometryEvidenceProfile, LiveSessionOutcome, LiveSessionStreams, LiveSessionTranslator,
+    LiveSource, SemanticEvidenceProfile,
+};
 use tex_oracle::{ObservationStream, SchemaVersion};
 use tex_state::provenance::MacroInvocationProvenanceStats;
 use tex_state::provenance::ProvenanceStats;
@@ -22,8 +24,9 @@ use tex_state::{JobClock, Universe, World};
 
 use umber::FormatCacheStore;
 use umber::{
-    EngineMode, FormatGenerationGuards, FormatRecipe, FormatResource, LoadedFormatResource,
-    OutputCapability, PreparedFormatJob, PreparedFormatProvider, dvi_from_page_plans,
+    EngineMode, FormatGenerationGuards, FormatRecipe, FormatResource, LoadedFormatProjectionDemand,
+    LoadedFormatResource, OutputCapability, PreparedFormatJob, PreparedFormatProvider,
+    dvi_from_page_plans,
 };
 
 #[path = "e2e_conformance/assets.rs"]
@@ -67,14 +70,14 @@ impl PhaseCapture {
         command_stream_for_fixture_phase(fixture_name, phase, self.streams(oracle))
     }
 
-    fn streams(&self, oracle: &[u8]) -> tex_command_stream::LiveSessionStreams {
+    fn streams(&self, oracle: &[u8]) -> LiveSessionStreams {
         match self {
             Self::Live(capture) => capture.streams(oracle),
             Self::Detached(evidence) => {
                 let diagnostic =
                     tex_oracle::canonical_bundle_json_lines(&evidence.semantic, oracle)
                         .expect("construction semantic evidence encodes under oracle header");
-                tex_command_stream::LiveSessionStreams {
+                LiveSessionStreams {
                     diagnostic: diagnostic.clone(),
                     stable: diagnostic,
                 }
@@ -265,7 +268,7 @@ fn trip_geometry_profile(schema: SchemaVersion) -> GeometryEvidenceProfile {
 fn command_stream_for_fixture_phase(
     fixture_name: &str,
     phase: &str,
-    streams: tex_command_stream::LiveSessionStreams,
+    streams: LiveSessionStreams,
 ) -> Vec<u8> {
     if fixture_name == "trip" && phase == "format-loaded" {
         streams.stable
@@ -275,7 +278,7 @@ fn command_stream_for_fixture_phase(
 }
 
 impl LiveCapture {
-    fn streams(&self, oracle: &[u8]) -> tex_command_stream::LiveSessionStreams {
+    fn streams(&self, oracle: &[u8]) -> LiveSessionStreams {
         let header = ObservationStream::from_canonical_json_lines(oracle)
             .expect("oracle stream validates")
             .header;
@@ -411,7 +414,7 @@ fn trip_observer_profile_selection_includes_fixture_and_phase_identity() {
         let selected = command_stream_for_fixture_phase(
             fixture_name,
             phase,
-            tex_command_stream::LiveSessionStreams {
+            LiveSessionStreams {
                 diagnostic: DIAGNOSTIC.to_vec(),
                 stable: STABLE.to_vec(),
             },
@@ -733,6 +736,7 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
                             },
                         ],
                         terminal_input: Vec::new(),
+                        projection: LoadedFormatProjectionDemand::default(),
                         observer: &mut observer,
                     },
                 )
@@ -911,6 +915,7 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
                 source: source.clone(),
                 resources: input.resources,
                 terminal_input: Vec::new(),
+                projection: LoadedFormatProjectionDemand::default(),
                 observer: &mut observers,
             },
         )
@@ -1010,6 +1015,7 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
                 source: source.clone(),
                 resources,
                 terminal_input: Vec::new(),
+                projection: LoadedFormatProjectionDemand::default(),
                 observer: &mut observers,
             },
         )
@@ -1341,6 +1347,7 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
                     source: source.to_vec(),
                     resources: Vec::new(),
                     terminal_input: Vec::new(),
+                    projection: LoadedFormatProjectionDemand::default(),
                     observer: &mut observer,
                 },
             )
@@ -1370,6 +1377,7 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
                     source: b"\\def\\x{a}\\x\\end\n".to_vec(),
                     resources: Vec::new(),
                     terminal_input: Vec::new(),
+                    projection: LoadedFormatProjectionDemand::default(),
                     observer: &mut observer,
                 },
             )
@@ -2091,6 +2099,7 @@ fn run_two_phase_fixture(
                 source: source_bytes,
                 resources,
                 terminal_input: Vec::new(),
+                projection: LoadedFormatProjectionDemand::default(),
                 observer: &mut observers,
             },
         )
@@ -2934,6 +2943,7 @@ fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, TripObservers)
                     },
                 ],
                 terminal_input: Vec::new(),
+                projection: LoadedFormatProjectionDemand::default(),
                 observer: &mut observer,
             },
         )

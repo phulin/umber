@@ -8,8 +8,8 @@ use tex_state::{InteractionMode, JobClock, ProvenanceDemand, World};
 use crate::format_fixture::LoadedRunConfiguration;
 use crate::{
     EngineMode, FormatCacheStore, FormatFixture, FormatFixtureError, FormatGenerationGuards,
-    FormatRecipe, FormatWorkerLauncher, LoadedFormatResource, LoadedFormatRun, OutputCapability,
-    ensure_format,
+    FormatRecipe, FormatWorkerLauncher, LoadedFormatProjectionDemand, LoadedFormatResource,
+    LoadedFormatRun, OutputCapability, ensure_format,
 };
 
 /// One explicit, job-local execution episode for an authenticated format.
@@ -36,6 +36,9 @@ pub struct PreparedFormatJob<'a> {
     pub source: Vec<u8>,
     pub resources: Vec<LoadedFormatResource>,
     pub terminal_input: Vec<String>,
+    /// Sparse terminal state and channels to detach before the loaded
+    /// generation is retired.
+    pub projection: LoadedFormatProjectionDemand,
     pub observer: &'a mut dyn CommandObserver,
 }
 
@@ -146,6 +149,7 @@ impl PreparedFormatProvider {
                 engine_binary: job.engine_binary,
                 startup_line: job.startup_line,
                 completion,
+                projection: job.projection,
             },
             job.observer,
         )

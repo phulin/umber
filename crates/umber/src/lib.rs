@@ -65,8 +65,10 @@ pub use format_cache::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use format_fixture::{
-    FormatFixture, FormatFixtureError, FormatGenerationGuards, FormatRecipe, FormatResource,
-    LoadedFormatFixture, LoadedFormatResource, LoadedFormatRun, ensure_format,
+    DetachedBoxOutline, DetachedNodeOutlineEntry, FormatFixture, FormatFixtureError,
+    FormatGenerationGuards, FormatRecipe, FormatResource, LoadedBoxOutlineDemand,
+    LoadedFormatChannels, LoadedFormatFixture, LoadedFormatOutput, LoadedFormatProjection,
+    LoadedFormatProjectionDemand, LoadedFormatResource, LoadedFormatRun, ensure_format,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use format_worker::{FormatWorkerLauncher, dispatch_format_worker, run_format_worker};

@@ -66,6 +66,7 @@ fn job<'a>(source: &'static [u8], observer: &'a mut dyn CommandObserver) -> Prep
         source: source.to_vec(),
         resources: Vec::new(),
         terminal_input: Vec::new(),
+        projection: LoadedFormatProjectionDemand::default(),
         observer,
     }
 }

@@ -2,7 +2,7 @@
 
 use std::cell::Cell;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -95,6 +95,63 @@ pub enum LoadedFormatResource {
         logical_name: String,
         bytes: Vec<u8>,
     },
+}
+
+/// One box register selected for handle-free terminal projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LoadedBoxOutlineDemand {
+    pub register: u16,
+    pub depth: u8,
+}
+
+/// Explicit terminal projection selected by a loaded-format caller.
+///
+/// Empty demand is intentionally free: ordinary format users do not walk
+/// register banks, node arenas, or output channels merely because a job ends.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LoadedFormatProjectionDemand {
+    pub count_registers: Vec<u16>,
+    pub box_outlines: Vec<LoadedBoxOutlineDemand>,
+    pub channels: bool,
+}
+
+/// One source-independent node in a detached box outline.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DetachedNodeOutlineEntry {
+    pub path: Vec<usize>,
+    pub kind: tex_state::node::NodeKind,
+}
+
+/// One requested box register after the loaded generation has quiesced.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DetachedBoxOutline {
+    pub register: u16,
+    pub nodes: Option<Vec<DetachedNodeOutlineEntry>>,
+}
+
+/// One materialized numbered-stream output owned by the loaded run.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadedFormatOutput {
+    pub path: PathBuf,
+    pub bytes: Vec<u8>,
+}
+
+/// Exact memory-world channels captured before the loaded generation drops.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LoadedFormatChannels {
+    pub terminal: Vec<u8>,
+    pub log: Vec<u8>,
+    /// Unpublished printable suffix captured before final stream publication.
+    pub pending_effects: Vec<tex_state::EffectRecord>,
+    pub outputs: Vec<LoadedFormatOutput>,
+}
+
+/// Sparse, handle-free projection of explicitly requested terminal state.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LoadedFormatProjection {
+    pub counts: Vec<(u16, i32)>,
+    pub boxes: Vec<DetachedBoxOutline>,
+    pub channels: Option<LoadedFormatChannels>,
 }
 
 /// Complete host-independent recipe for one generated format.
@@ -321,6 +378,7 @@ pub(crate) struct LoadedRunConfiguration {
     pub engine_binary: tex_exec::EngineBinaryIdentity,
     pub startup_line: String,
     pub completion: tex_exec::RootCompletionPolicy,
+    pub projection: LoadedFormatProjectionDemand,
 }
 
 impl LoadedFormatFixture {
@@ -368,6 +426,7 @@ impl LoadedFormatFixture {
                 engine_binary,
                 startup_line: source_name.to_owned(),
                 completion: tex_exec::RootCompletionPolicy::RequireTeXEnd,
+                projection: LoadedFormatProjectionDemand::default(),
             },
             observer,
         )
@@ -440,7 +499,10 @@ impl LoadedFormatFixture {
                         observer,
                     );
                     let result = finish_guarded_run(result, &checkpoints)?;
-                    Ok(LoadedFormatRun { result })
+                    drop(session);
+                    let projection =
+                        capture_loaded_projection(universe, &config.projection, config.completion)?;
+                    Ok(LoadedFormatRun { result, projection })
                 })
                 .map_err(|error| {
                     tex_state::FormatError::InvalidState(format!(
@@ -623,8 +685,119 @@ impl ResourceHost for LoadedResourceHost<'_> {
     }
 }
 
+fn capture_loaded_projection<G>(
+    universe: &mut tex_state::Universe<G>,
+    demand: &LoadedFormatProjectionDemand,
+    completion: tex_exec::RootCompletionPolicy,
+) -> Result<LoadedFormatProjection, FormatFixtureError> {
+    let mut counts = Vec::with_capacity(demand.count_registers.len());
+    for &register in &demand.count_registers {
+        let value = universe
+            .count(register)
+            .map_err(|error| FormatFixtureError::Format(format!("count projection: {error:?}")))?;
+        counts.push((register, value));
+    }
+
+    let mut boxes = Vec::with_capacity(demand.box_outlines.len());
+    for request in &demand.box_outlines {
+        let nodes = universe
+            .box_register(request.register)
+            .map_err(|error| FormatFixtureError::Format(format!("box projection: {error:?}")))?
+            .map(|root| {
+                let mut output = Vec::new();
+                push_detached_node_outline(
+                    universe,
+                    root,
+                    &mut Vec::new(),
+                    request.depth,
+                    &mut output,
+                )?;
+                Ok::<_, FormatFixtureError>(output)
+            })
+            .transpose()?;
+        boxes.push(DetachedBoxOutline {
+            register: request.register,
+            nodes,
+        });
+    }
+
+    let channels = if demand.channels {
+        let source = universe.world();
+        if completion == tex_exec::RootCompletionPolicy::RequireTeXEnd {
+            let records = source.effect_journal().materialized_records();
+            let mut destination = tex_state::World::memory_with_clock(source.job_clock());
+            destination
+                .publish_detached_effect_records(&records)
+                .map_err(|error| {
+                    FormatFixtureError::Format(format!("channel publication: {error:?}"))
+                })?;
+            Some(detach_loaded_channels(&destination, Vec::new()))
+        } else {
+            Some(detach_loaded_channels(
+                source,
+                source.effect_records().to_vec(),
+            ))
+        }
+    } else {
+        None
+    };
+
+    Ok(LoadedFormatProjection {
+        counts,
+        boxes,
+        channels,
+    })
+}
+
+fn detach_loaded_channels(
+    world: &tex_state::World,
+    pending_effects: Vec<tex_state::EffectRecord>,
+) -> LoadedFormatChannels {
+    LoadedFormatChannels {
+        terminal: world.memory_terminal_output().unwrap_or_default().to_vec(),
+        log: world.memory_log_output().unwrap_or_default().to_vec(),
+        pending_effects,
+        outputs: world
+            .memory_outputs()
+            .into_iter()
+            .flatten()
+            .map(|output| LoadedFormatOutput {
+                path: output.path().to_path_buf(),
+                bytes: output.bytes().to_vec(),
+            })
+            .collect(),
+    }
+}
+
+fn push_detached_node_outline<G>(
+    universe: &tex_state::Universe<G>,
+    root: tex_state::node_arena::DurableListId<G>,
+    path: &mut Vec<usize>,
+    depth: u8,
+    output: &mut Vec<DetachedNodeOutlineEntry>,
+) -> Result<(), FormatFixtureError> {
+    let list = universe
+        .node_list(root)
+        .map_err(|error| FormatFixtureError::Format(format!("box outline root: {error:?}")))?;
+    for (index, node) in list.nodes().iter().enumerate() {
+        path.push(index);
+        output.push(DetachedNodeOutlineEntry {
+            path: path.clone(),
+            kind: node.kind(),
+        });
+        if depth > 0
+            && let tex_state::node::Node::HList(boxed) | tex_state::node::Node::VList(boxed) = node
+        {
+            push_detached_node_outline(universe, boxed.children, path, depth - 1, output)?;
+        }
+        path.pop();
+    }
+    Ok(())
+}
+
 pub struct LoadedFormatRun {
     pub result: RunResult,
+    pub projection: LoadedFormatProjection,
 }
 
 /// Ensures one recipe image exists in the validated content-addressed cache.
