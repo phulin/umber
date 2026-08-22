@@ -63,7 +63,7 @@ impl DetachedDiagnosticEffect {
 /// This is deliberately operation-local rather than state stored in
 /// `Universe`. Moving it to World publishes every completed diagnostic in
 /// canonical order; dropping it makes a rollback publish none of them.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq)]
 pub struct DiagnosticEffects {
     effects: Vec<DetachedDiagnosticEffect>,
 }
