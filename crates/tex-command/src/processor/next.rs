@@ -1550,7 +1550,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 delivery_stamp,
                 source_provenance,
                 direct_source,
-                &mut self.state,
+                &self.state,
             );
             self.record_token_frame(!matches!(
                 self.command.scanner.status(),
@@ -2593,9 +2593,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn observe_raw_delivery(&mut self, command: &CurrentCommand<G>) {
         observe!(self, {
             #[cfg(test)]
-            {
-                self.observation_payloads_built += 1;
-            }
+            {}
             let (command_name, command_operand) =
                 crate::observation::canonical_current_command_identity_for_profile(
                     self.command.profile(),

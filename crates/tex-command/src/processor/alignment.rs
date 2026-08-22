@@ -666,14 +666,6 @@ impl<G> AlignmentDeliveryState<G> {
         Ok((!cell.omit).then_some(cell.templates.v_template))
     }
 
-    /// Whether the active cell installed tex.web §789's constant
-    /// `omit_template` in place of the column's ⟨v_j⟩ part.
-    pub(crate) fn active_cell_is_omit(&self, alignment: AlignmentIdentity) -> bool {
-        self.active_cell
-            .as_ref()
-            .is_some_and(|cell| cell.alignment == alignment && cell.omit)
-    }
-
     pub(crate) fn active_v_template_level(
         &self,
         alignment: AlignmentIdentity,

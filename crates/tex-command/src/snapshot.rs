@@ -199,33 +199,6 @@ pub struct CommandStackCursors {
 
 impl CommandStackCursors {
     #[must_use]
-    pub const fn new(
-        input_depth: u32,
-        parameter_depth: u32,
-        condition_depth: u32,
-        alignment_depth: u32,
-        replay_depth: u32,
-        diagnostic_count: u32,
-        framing_event_count: u32,
-        group_payload_depth: u32,
-        aftergroup_payload_count: u32,
-        afterassignment_present: bool,
-    ) -> Self {
-        Self {
-            input_depth,
-            parameter_depth,
-            condition_depth,
-            alignment_depth,
-            replay_depth,
-            diagnostic_count,
-            framing_event_count,
-            group_payload_depth,
-            aftergroup_payload_count,
-            afterassignment_present,
-        }
-    }
-
-    #[must_use]
     pub const fn input_depth(self) -> u32 {
         self.input_depth
     }
@@ -369,11 +342,6 @@ impl<G, Owner> CommandStateSnapshot<G, Owner> {
     pub(crate) const fn generation(&self) -> &Owner {
         &self.generation
     }
-
-    #[must_use]
-    pub(crate) fn into_parts(self) -> (Owner, CommandSnapshotCursor) {
-        (self.generation, self.cursor)
-    }
 }
 
 impl<G> CommandStateSnapshot<G> {
@@ -464,6 +432,7 @@ impl<G, Owner> CommandSummary<G, Owner> {
         &self.generation
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn into_parts(self) -> (Owner, CommandSnapshotCursor, u64, Option<u64>) {
         (
@@ -606,26 +575,26 @@ impl<G> CommandState<G> {
                 count.checked_add(group_count)
             })
             .ok_or(CommandSummaryError::TimelineCapacity)?;
-        Ok(CommandStackCursors::new(
-            u32::try_from(self.input.levels.len())
+        Ok(CommandStackCursors {
+            input_depth: u32::try_from(self.input.levels.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            u32::try_from(self.parameters.activations.len())
+            parameter_depth: u32::try_from(self.parameters.activations.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            u32::try_from(self.conditions.frames.len())
+            condition_depth: u32::try_from(self.conditions.frames.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            u32::try_from(self.alignment.align_stack.len())
+            alignment_depth: u32::try_from(self.alignment.align_stack.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            u32::try_from(self.replay_completions.len())
+            replay_depth: u32::try_from(self.replay_completions.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            u32::try_from(self.semantic_diagnostics.len())
+            diagnostic_count: u32::try_from(self.semantic_diagnostics.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            u32::try_from(self.file_framing_events.len())
+            framing_event_count: u32::try_from(self.file_framing_events.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
-            u32::try_from(self.group_payloads.len())
+            group_payload_depth: u32::try_from(self.group_payloads.len())
                 .map_err(|_| CommandSummaryError::TimelineCapacity)?,
             aftergroup_payload_count,
-            self.afterassignment.is_some(),
-        ))
+            afterassignment_present: self.afterassignment.is_some(),
+        })
     }
 
     fn validate_summary_quiescence(&self) -> Result<(), CommandSummaryError> {

@@ -246,7 +246,7 @@ const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Option<Meaning> {
 /// interpreter; the profiling materialization counter records only that
 /// explicit fallback boundary.
 #[inline(always)]
-#[cfg(any(feature = "profiling", test))]
+#[cfg(feature = "profiling")]
 const fn is_ranked_fused_expansion<G>(meaning: ResolvedMeaning<G>) -> bool {
     matches!(
         meaning,
@@ -450,7 +450,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         );
         let stamp = DeliveryStamp::new(0, 0, self.next_delivery_sequence);
         self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-        let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, &mut self.state);
+        let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, &self.state);
         let Some(settled) = self.get_x_token_from(Some(command), ExpandedFetch::XToken)? else {
             return Ok(());
         };
@@ -963,9 +963,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn observe_expanded_delivery(&mut self, command: &CurrentCommand<G>) {
         observe!(self, {
             #[cfg(test)]
-            {
-                self.observation_payloads_built += 1;
-            }
+            {}
             let (command_name, command_operand) =
                 crate::observation::canonical_current_command_identity_for_profile(
                     self.command.profile(),
@@ -2779,19 +2777,6 @@ fn append_meaning_text_with_token_selector<G>(
     }
 }
 
-fn append_meaning_token_list<G>(
-    state: &tex_state::CommandContext<'_, G>,
-    tokens: tex_state::TokenListId<G>,
-    active_selector: bool,
-    text: &mut String,
-) {
-    if active_selector {
-        append_selector_token_list_text(state, tokens, text);
-    } else {
-        append_token_list_text(state, tokens, text);
-    }
-}
-
 fn append_meaning_token_words<G>(
     state: &tex_state::CommandContext<'_, G>,
     tokens: &[tex_state::token::TokenWord],
@@ -3105,64 +3090,6 @@ pub fn append_command_token_text<G>(
     }
 }
 
-pub(crate) fn append_token_list_text<G>(
-    state: &tex_state::CommandContext<'_, G>,
-    tokens: tex_state::TokenListId<G>,
-    text: &mut String,
-) {
-    let tokens = state.token_list(tokens);
-    let mut index = 0;
-    while index < tokens.len() {
-        if let Token::Char {
-            ch,
-            cat: Catcode::Parameter,
-        } = tokens[index].token().expect("durable token word is valid")
-            && let Some(Token::Param(slot)) = tokens.get(index + 1).and_then(|word| word.token())
-        {
-            text.push(ch);
-            text.push(char::from(b'0' + slot));
-            index += 2;
-            continue;
-        }
-        append_token_list_token_text(
-            state,
-            tokens[index].token().expect("durable token word is valid"),
-            text,
-        );
-        index += 1;
-    }
-}
-
-/// TeX82 §262's `show_token_list` through an active print selector.
-fn append_selector_token_list_text<G>(
-    state: &tex_state::CommandContext<'_, G>,
-    tokens: tex_state::TokenListId<G>,
-    text: &mut String,
-) {
-    let tokens = state.token_list(tokens);
-    let mut index = 0;
-    while index < tokens.len() {
-        if let Token::Char {
-            ch,
-            cat: Catcode::Parameter,
-        } = tokens[index].token().expect("durable token word is valid")
-            && let Some(Token::Param(slot)) = tokens.get(index + 1).and_then(|word| word.token())
-        {
-            let raw = [ch, char::from(b'0' + slot)]
-                .into_iter()
-                .collect::<String>();
-            state.append_selector_string_text(&raw, text);
-            index += 2;
-            continue;
-        }
-        state.append_token_selector_text(
-            tokens[index].token().expect("durable token word is valid"),
-            text,
-        );
-        index += 1;
-    }
-}
-
 /// The string pdfTeX builds by selecting `new_string` around `show_token_list`.
 ///
 /// Character tokens remain raw (with parameter characters doubled), while
@@ -3177,22 +3104,6 @@ pub(crate) fn token_slice_string_text<G>(
     let mut text = String::new();
     let _ = state.int_param(IntParam::ESCAPE_CHAR);
     for &token in tokens {
-        state.append_token_string_text(token, &mut text);
-    }
-    text
-}
-
-pub(crate) fn stored_token_list_string_text<G>(
-    state: &mut tex_state::CommandContext<'_, G>,
-    tokens: tex_state::TokenListId<G>,
-) -> String {
-    let mut text = String::new();
-    let _ = state.int_param(IntParam::ESCAPE_CHAR);
-    let token_count = state.token_list(tokens).len();
-    for index in 0..token_count {
-        let token = state.token_list(tokens)[index]
-            .token()
-            .expect("durable token word is valid");
         state.append_token_string_text(token, &mut text);
     }
     text
@@ -3249,19 +3160,6 @@ pub(crate) fn append_token_list_token_text<G>(
         (Some(character), None) if state.untracked_catcode(character) != Catcode::Letter => {}
         _ => text.push(' '),
     }
-}
-
-fn pdftex_stored_token_list_bytes<G>(
-    state: &mut tex_state::CommandContext<'_, G>,
-    tokens: tex_state::TokenListId<G>,
-) -> Vec<u8> {
-    stored_token_list_string_text(state, tokens)
-        .chars()
-        .map(|ch| {
-            u8::try_from(u32::from(ch))
-                .expect("pdfTeX profile expanded strings contain only byte characters")
-        })
-        .collect()
 }
 
 fn pdftex_c_string(mut bytes: Vec<u8>) -> Vec<u8> {

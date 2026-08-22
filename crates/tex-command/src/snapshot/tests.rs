@@ -37,18 +37,18 @@ fn cursor(seed: u32) -> CommandSnapshotCursor {
     CommandSnapshotCursor::new(
         seed,
         CommandArenaCursors::new(seed + 1, seed + 2, seed + 3, seed + 4, seed + 5),
-        CommandStackCursors::new(
-            seed + 6,
-            seed + 7,
-            seed + 8,
-            seed + 9,
-            seed + 10,
-            seed + 11,
-            seed + 12,
-            seed + 13,
-            seed + 14,
-            seed % 2 == 0,
-        ),
+        CommandStackCursors {
+            input_depth: seed + 6,
+            parameter_depth: seed + 7,
+            condition_depth: seed + 8,
+            alignment_depth: seed + 9,
+            replay_depth: seed + 10,
+            diagnostic_count: seed + 11,
+            framing_event_count: seed + 12,
+            group_payload_depth: seed + 13,
+            aftergroup_payload_count: seed + 14,
+            afterassignment_present: seed.is_multiple_of(2),
+        },
     )
 }
 
@@ -160,18 +160,18 @@ fn invalid_summary_cursor_leaves_live_command_state_unchanged() {
         summary.cursor = CommandSnapshotCursor::new(
             captured.command_journal(),
             captured.arenas(),
-            CommandStackCursors::new(
-                stacks.input_depth(),
-                stacks.parameter_depth(),
-                stacks.condition_depth(),
-                stacks.alignment_depth(),
-                stacks.replay_depth(),
-                stacks.diagnostic_count() + 1,
-                stacks.framing_event_count(),
-                stacks.group_payload_depth(),
-                stacks.aftergroup_payload_count(),
-                stacks.afterassignment_present(),
-            ),
+            CommandStackCursors {
+                input_depth: stacks.input_depth(),
+                parameter_depth: stacks.parameter_depth(),
+                condition_depth: stacks.condition_depth(),
+                alignment_depth: stacks.alignment_depth(),
+                replay_depth: stacks.replay_depth(),
+                diagnostic_count: stacks.diagnostic_count() + 1,
+                framing_event_count: stacks.framing_event_count(),
+                group_payload_depth: stacks.group_payload_depth(),
+                aftergroup_payload_count: stacks.aftergroup_payload_count(),
+                afterassignment_present: stacks.afterassignment_present(),
+            },
         );
         command.begin_file_name().expect("filename guard opens");
 
@@ -393,18 +393,18 @@ fn invalid_payload_cursor_leaves_live_payloads_unchanged() {
         summary.cursor = CommandSnapshotCursor::new(
             captured.command_journal(),
             captured.arenas(),
-            CommandStackCursors::new(
-                stacks.input_depth(),
-                stacks.parameter_depth(),
-                stacks.condition_depth(),
-                stacks.alignment_depth(),
-                stacks.replay_depth(),
-                stacks.diagnostic_count(),
-                stacks.framing_event_count(),
-                stacks.group_payload_depth(),
-                stacks.aftergroup_payload_count() + 1,
-                stacks.afterassignment_present(),
-            ),
+            CommandStackCursors {
+                input_depth: stacks.input_depth(),
+                parameter_depth: stacks.parameter_depth(),
+                condition_depth: stacks.condition_depth(),
+                alignment_depth: stacks.alignment_depth(),
+                replay_depth: stacks.replay_depth(),
+                diagnostic_count: stacks.diagnostic_count(),
+                framing_event_count: stacks.framing_event_count(),
+                group_payload_depth: stacks.group_payload_depth(),
+                aftergroup_payload_count: stacks.aftergroup_payload_count() + 1,
+                afterassignment_present: stacks.afterassignment_present(),
+            },
         );
         {
             let state = universe.command_context().expect("admitted state");

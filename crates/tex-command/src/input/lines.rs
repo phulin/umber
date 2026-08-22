@@ -200,42 +200,9 @@ pub struct PhysicalLine {
 }
 
 impl PhysicalLine {
-    pub(crate) const fn from_detached_parts(
-        source: SourceId,
-        number: u64,
-        content: SourceRange,
-        terminator: SourceRange,
-        terminator_kind: LineTerminator,
-    ) -> Self {
-        Self {
-            source,
-            number,
-            content,
-            terminator,
-            terminator_kind,
-        }
-    }
-
     pub(crate) const fn with_number(mut self, number: u64) -> Self {
         self.number = number;
         self
-    }
-
-    pub(crate) fn rehome(
-        &mut self,
-        source: SourceId,
-        byte_delta: i64,
-        line_delta: i64,
-    ) -> Option<()> {
-        self.source = source;
-        self.number = self.number.checked_add_signed(line_delta)?;
-        self.content.source = source;
-        self.content.start = self.content.start.checked_add_signed(byte_delta)?;
-        self.content.end = self.content.end.checked_add_signed(byte_delta)?;
-        self.terminator.source = source;
-        self.terminator.start = self.terminator.start.checked_add_signed(byte_delta)?;
-        self.terminator.end = self.terminator.end.checked_add_signed(byte_delta)?;
-        Some(())
     }
 
     /// One-based physical line number within this registered source.
@@ -325,50 +292,6 @@ pub(crate) struct ReducedSourceSpelling {
 }
 
 impl SourceLineState {
-    /// Rebinds a loaded TeX82 §362 buffer front onto an edited root.
-    ///
-    /// A same-line prefix edit changes the physical line's true start and the
-    /// scalar position even though every future byte from `byte_cursor` is
-    /// unchanged. Recomputing both from the revised backing keeps checkpoint
-    /// replay equal to a freshly delivered front without accepting an edit
-    /// that overlaps the retained input front.
-    pub(crate) fn rehome_edited_backing(
-        &mut self,
-        source: SourceId,
-        new: &[u8],
-        mode: CharacterMode,
-        byte_delta: i64,
-        line_delta: i64,
-    ) -> Option<()> {
-        let new_cursor = self.byte_cursor.checked_add_signed(byte_delta)?;
-        let new_cursor_index = usize::try_from(new_cursor).ok()?;
-        let new_start = new
-            .get(..new_cursor_index)?
-            .iter()
-            .rposition(|byte| matches!(*byte, b'\r' | b'\n'))
-            .map_or(0, |index| index + 1);
-        self.physical.rehome(source, byte_delta, line_delta)?;
-        self.physical.content.start = u64::try_from(new_start).ok()?;
-        self.retained_end = self.retained_end.checked_add_signed(byte_delta)?;
-        self.byte_cursor = new_cursor;
-        for spelling in &mut self.reduced_spellings {
-            spelling.range.source = source;
-            spelling.range.start = spelling.range.start.checked_add_signed(byte_delta)?;
-            spelling.range.end = spelling.range.end.checked_add_signed(byte_delta)?;
-        }
-        self.scalar_cursor = match mode {
-            CharacterMode::EightBitExact => u64::try_from(new_cursor_index - new_start).ok()?,
-            CharacterMode::UnicodeExtended => u64::try_from(
-                std::str::from_utf8(new.get(new_start..new_cursor_index)?)
-                    .ok()?
-                    .chars()
-                    .count(),
-            )
-            .ok()?,
-        };
-        Some(())
-    }
-
     pub(crate) fn next_character(
         &mut self,
         mode: CharacterMode,

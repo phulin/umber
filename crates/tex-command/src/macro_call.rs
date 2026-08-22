@@ -186,7 +186,6 @@ impl MacroArgumentBuilder {
     }
 
     /// Freezes the single shared argument allocation for one activation.
-    #[must_use]
     pub(crate) fn finish<G>(
         self,
         attempt: &mut crate::attempt::AttemptArena<G>,

@@ -3,9 +3,6 @@
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
 
-#[cfg(test)]
-use std::cell::Cell;
-
 mod levels;
 mod lines;
 mod source;
@@ -20,10 +17,8 @@ pub(crate) use levels::{
     RetirementBehavior, SourceLevel, SourceOpenDepths, SourceRetirement, StoredReplayReason,
     TokenBehavior, TokenCursor, TokenPayload, packed_token_frame,
 };
-pub(crate) use lines::{ReducedSourceSpelling, SourceLineState};
 pub(crate) use source::{
-    DetachedRegisteredSourceParts, LineBackingRegistry, RegisteredSource, SourceCursor,
-    source_line_buffer_high_water,
+    LineBackingRegistry, RegisteredSource, SourceCursor, source_line_buffer_high_water,
 };
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues
 pub(crate) use stack::{
@@ -93,56 +88,6 @@ impl<G> Default for InputState<G> {
             force_eof: false,
         }
     }
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct TokenContextProjectionStats {
-    pub(crate) visited_tokens: usize,
-    pub(crate) peak_temporary_string_capacity: usize,
-}
-
-#[cfg(test)]
-thread_local! {
-    static TOKEN_CONTEXT_PROJECTION_STATS: Cell<TokenContextProjectionStats> =
-        const { Cell::new(TokenContextProjectionStats {
-            visited_tokens: 0,
-            peak_temporary_string_capacity: 0,
-        }) };
-}
-
-#[cfg(test)]
-fn note_token_context_projection(raw: &String, rendered: &String) {
-    TOKEN_CONTEXT_PROJECTION_STATS.with(|stats| {
-        let mut current = stats.get();
-        current.visited_tokens = current.visited_tokens.saturating_add(1);
-        current.peak_temporary_string_capacity = current
-            .peak_temporary_string_capacity
-            .max(raw.capacity())
-            .max(rendered.capacity());
-        stats.set(current);
-    });
-}
-
-#[cfg(test)]
-fn note_token_context_capacity(capacity: usize) {
-    TOKEN_CONTEXT_PROJECTION_STATS.with(|stats| {
-        let mut current = stats.get();
-        current.peak_temporary_string_capacity =
-            current.peak_temporary_string_capacity.max(capacity);
-        stats.set(current);
-    });
-}
-
-#[cfg(test)]
-pub(crate) fn reset_token_context_projection_stats() {
-    TOKEN_CONTEXT_PROJECTION_STATS.set(TokenContextProjectionStats::default());
-}
-
-#[cfg(test)]
-#[must_use]
-pub(crate) fn token_context_projection_stats() -> TokenContextProjectionStats {
-    TOKEN_CONTEXT_PROJECTION_STATS.get()
 }
 
 struct ContextTail {
@@ -921,8 +866,6 @@ impl<G> InputState<G> {
             rendered.clear();
             crate::processor::expand::append_token_list_token_text(stores, token, raw);
             stores.append_selector_string_text(raw, rendered);
-            #[cfg(test)]
-            note_token_context_projection(raw, rendered);
         }
 
         fn render_selector_text<G>(
@@ -1090,14 +1033,6 @@ impl<G> InputState<G> {
         } else {
             label
         };
-        #[cfg(test)]
-        note_token_context_capacity(
-            before
-                .capacity()
-                .max(after.capacity())
-                .max(raw.capacity())
-                .max(rendered.capacity()),
-        );
         Some(
             tex_state::print::ErrorContextLevel::from_bounded_projection(
                 label,

@@ -122,7 +122,6 @@ pub(super) enum DeliveryEvent<G> {
     ReplayCompleted(crate::CommandReplayEpisode),
     Alignment(AlignmentDeliveryEvent<G>),
 }
-pub(crate) use status::ConditionId;
 pub(crate) use status::{ScannerState, ScannerStatus};
 
 /// Borrow-only capability facade for one bounded executor operation.
@@ -185,8 +184,6 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     command_trace_mode_prefix: Option<String>,
     command_trace_printed: bool,
     command_trace_count: usize,
-    #[cfg(test)]
-    observation_payloads_built: usize,
 }
 
 /// Opaque observation-order cursor retained when executor preflight suspends
@@ -523,14 +520,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             command_trace_mode_prefix: None,
             command_trace_printed: false,
             command_trace_count: 0,
-            #[cfg(test)]
-            observation_payloads_built: 0,
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn observation_payloads_built(&self) -> usize {
-        self.observation_payloads_built
     }
 
     /// Lends a run-owned monotonic ledger to this processor episode.

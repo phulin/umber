@@ -4,8 +4,10 @@ use super::{
 
 #[test]
 fn alignment_lifecycle_restores_the_running_outer_brace_state() {
-    let mut state = AlignmentDeliveryState::<()>::default();
-    state.align_state = TOP_LEVEL_ALIGN_STATE + 7;
+    let mut state = AlignmentDeliveryState::<()> {
+        align_state: TOP_LEVEL_ALIGN_STATE + 7,
+        ..AlignmentDeliveryState::default()
+    };
     let alignment = AlignmentIdentity::new(1);
     state.begin_alignment(alignment);
     assert_eq!(state.align_state, PREAMBLE_ALIGN_STATE);

@@ -370,39 +370,8 @@ pub(crate) struct RegisteredSource {
     descriptor: Arc<SourceDescriptor>,
 }
 
-pub(crate) struct DetachedRegisteredSourceParts {
-    pub(crate) id: SourceId,
-    pub(crate) kind: RegisteredSourceKind,
-    pub(crate) mode: CharacterMode,
-    pub(crate) bytes: Arc<[u8]>,
-    pub(crate) name: Option<Arc<str>>,
-    pub(crate) framing_name: Option<Arc<str>>,
-    pub(crate) framing: SourceFramingPolicy,
-    pub(crate) descriptor: SourceDescriptor,
-}
-
 impl RegisteredSource {
-    pub(crate) fn from_detached_parts(
-        parts: DetachedRegisteredSourceParts,
-    ) -> Result<Self, SourceRegistrationError> {
-        if parts.descriptor.byte_len()
-            != u64::try_from(parts.bytes.len())
-                .map_err(|_| SourceRegistrationError::BackingTooLarge)?
-        {
-            return Err(SourceRegistrationError::BackingTooLarge);
-        }
-        Ok(Self {
-            id: parts.id,
-            kind: parts.kind,
-            mode: parts.mode,
-            bytes: parts.bytes,
-            name: parts.name,
-            framing_name: parts.framing_name,
-            framing: parts.framing,
-            descriptor: Arc::new(parts.descriptor),
-        })
-    }
-
+    #[cfg(test)]
     pub(crate) fn rebind_generated(
         &self,
         id: SourceId,

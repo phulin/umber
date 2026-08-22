@@ -90,7 +90,7 @@ pub(crate) enum InputLevel<G> {
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceLevel<G> {
     pub(crate) frame: PackedInputFrame,
-    pub(crate) cursor: SourceCursor,
+    pub(crate) cursor: Box<SourceCursor>,
     /// tex.web §303's `name` classification for this level. A token-list
     /// level has no counterpart: §307 reuses `name` there as the eqtb address
     /// of the macro being expanded, which is why this lives on `SourceLevel`
@@ -438,7 +438,7 @@ impl<G> TokenPayload<G> {
                     provenance.push(token.source_provenance);
                 }
                 words.append(&mut chunk.words);
-                provenance.extend(chunk.source_provenance.drain(..));
+                provenance.append(&mut chunk.source_provenance);
                 chunk.words = words;
                 chunk.source_provenance = provenance;
             }

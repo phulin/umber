@@ -46,6 +46,16 @@ macro_rules! attempt_id {
         }
 
         impl $name {
+            const fn index(self) -> usize {
+                self.row as usize
+            }
+        }
+    };
+}
+
+macro_rules! attempt_id_constructor {
+    ($name:ident) => {
+        impl $name {
             fn new(key: AttemptKey, row: usize) -> Result<Self, AttemptError> {
                 Ok(Self {
                     key: key.0,
@@ -53,10 +63,6 @@ macro_rules! attempt_id {
                     serial: NonZeroU64::new(NEXT_ATTEMPT_SERIAL.fetch_add(1, Ordering::Relaxed))
                         .ok_or(AttemptError::CapacityOverflow)?,
                 })
-            }
-
-            const fn index(self) -> usize {
-                self.row as usize
             }
         }
     };
@@ -67,8 +73,25 @@ attempt_id!(AttemptGlueId);
 attempt_id!(AttemptDefinitionId);
 attempt_id!(AttemptArgumentRecordId);
 attempt_id!(AttemptTokenBufferId);
-attempt_id!(AttemptNameId);
 attempt_id!(AttemptProvenanceId);
+
+attempt_id_constructor!(AttemptTokenListId);
+attempt_id_constructor!(AttemptDefinitionId);
+attempt_id_constructor!(AttemptArgumentRecordId);
+attempt_id_constructor!(AttemptTokenBufferId);
+
+#[cfg(test)]
+attempt_id_constructor!(AttemptGlueId);
+#[cfg(test)]
+attempt_id_constructor!(AttemptProvenanceId);
+
+/// Reserved coordinate vocabulary for future attempt-local source names.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct AttemptNameId {
+    key: NonZeroU64,
+    row: u32,
+    serial: NonZeroU64,
+}
 
 /// Attempt-local roots selected for one atomic durable promotion.
 ///
@@ -118,6 +141,7 @@ pub struct AttemptPromotionReceipt<G> {
 
 /// Provenance beside one attempt token: either an already-admitted compact
 /// origin or a typed row owned by this attempt.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AttemptOrigin {
     Admitted(tex_state::token::OriginId),
@@ -148,8 +172,6 @@ pub(crate) struct AttemptMark {
     argument_words: u32,
     argument_records: u32,
     token_buffers: u32,
-    name_bytes: u32,
-    names: u32,
     provenance: u32,
 }
 
@@ -168,8 +190,6 @@ impl AttemptMark {
             argument_words: 0,
             argument_records: 0,
             token_buffers: 0,
-            name_bytes: 0,
-            names: 0,
             provenance: 0,
         }
     }
@@ -186,8 +206,6 @@ impl AttemptMark {
             && self.argument_words == 0
             && self.argument_records == 0
             && self.token_buffers == 0
-            && self.name_bytes == 0
-            && self.names == 0
             && self.provenance == 0
     }
 
@@ -204,8 +222,6 @@ impl AttemptMark {
             self.argument_words,
             self.argument_records,
             self.token_buffers,
-            self.name_bytes,
-            self.names,
             self.provenance,
         ];
         let mut index = 0;
@@ -308,8 +324,6 @@ pub(crate) struct AttemptArena<G> {
     argument_words: Vec<AttemptTokenListId>,
     argument_records: Vec<AttemptRow<AttemptRange>>,
     token_buffers: Vec<AttemptRow<Vec<TracedTokenWord>>>,
-    name_bytes: Vec<u8>,
-    names: Vec<AttemptRow<AttemptRange>>,
     provenance: Vec<AttemptRow<OriginRecord>>,
     _generation: PhantomData<fn(&G) -> &G>,
 }
@@ -329,8 +343,6 @@ impl<G> Default for AttemptArena<G> {
             argument_words: Vec::new(),
             argument_records: Vec::new(),
             token_buffers: Vec::new(),
-            name_bytes: Vec::new(),
-            names: Vec::new(),
             provenance: Vec::new(),
             _generation: PhantomData,
         }
@@ -361,8 +373,6 @@ impl<G> AttemptArena<G> {
         live.argument_words = live.argument_words.max(mark.argument_words);
         live.argument_records = live.argument_records.max(mark.argument_records);
         live.token_buffers = live.token_buffers.max(mark.token_buffers);
-        live.name_bytes = live.name_bytes.max(mark.name_bytes);
-        live.names = live.names.max(mark.names);
         live.provenance = live.provenance.max(mark.provenance);
         Ok(())
     }
@@ -487,9 +497,6 @@ impl<G> AttemptArena<G> {
                 .expect("attempt argument-record length is bounded"),
             token_buffers: u32::try_from(self.token_buffers.len())
                 .expect("attempt token-buffer length is bounded"),
-            name_bytes: u32::try_from(self.name_bytes.len())
-                .expect("attempt name-byte length is bounded"),
-            names: u32::try_from(self.names.len()).expect("attempt name length is bounded"),
             provenance: u32::try_from(self.provenance.len())
                 .expect("attempt provenance length is bounded"),
         }
@@ -511,8 +518,6 @@ impl<G> AttemptArena<G> {
             (mark.argument_words as usize, self.argument_words.len()),
             (mark.argument_records as usize, self.argument_records.len()),
             (mark.token_buffers as usize, self.token_buffers.len()),
-            (mark.name_bytes as usize, self.name_bytes.len()),
-            (mark.names as usize, self.names.len()),
             (mark.provenance as usize, self.provenance.len()),
         ];
         if lengths.iter().any(|(mark, live)| mark > live) {
@@ -525,7 +530,6 @@ impl<G> AttemptArena<G> {
     pub(crate) fn truncate(&mut self, mark: AttemptMark) -> Result<(), AttemptError> {
         self.validate_mark(mark)?;
         // Child coordinates disappear before their backing suffixes.
-        self.names.truncate(mark.names as usize);
         self.provenance.truncate(mark.provenance as usize);
         self.argument_records
             .truncate(mark.argument_records as usize);
@@ -539,11 +543,9 @@ impl<G> AttemptArena<G> {
         self.origin_scratch.truncate(mark.origin_scratch as usize);
         self.traced_words.truncate(mark.traced_words as usize);
         self.traced_origins.truncate(mark.traced_origins as usize);
-        self.name_bytes.truncate(mark.name_bytes as usize);
         Ok(())
     }
 
-    #[must_use]
     pub(crate) fn begin_token_list(&mut self) -> Result<AttemptTokenBuilder, AttemptError> {
         let builder = AttemptTokenBuilder {
             key: self.key.0,
@@ -569,6 +571,7 @@ impl<G> AttemptArena<G> {
         self.push_token_parts(builder, word, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn push_token_with_local_origin(
         &mut self,
         builder: AttemptTokenBuilder,
@@ -689,6 +692,7 @@ impl<G> AttemptArena<G> {
             .ok_or(AttemptError::InvalidCoordinate)
     }
 
+    #[cfg(test)]
     pub(crate) fn allocate_glue(&mut self, value: GlueSpec) -> Result<AttemptGlueId, AttemptError> {
         let id = AttemptGlueId::new(self.key, self.glue_values.len())?;
         self.glue_values
@@ -701,6 +705,7 @@ impl<G> AttemptArena<G> {
         Ok(id)
     }
 
+    #[cfg(test)]
     pub(crate) fn allocate_provenance(
         &mut self,
         value: OriginRecord,
@@ -726,6 +731,7 @@ impl<G> AttemptArena<G> {
             .ok_or(AttemptError::InvalidCoordinate)
     }
 
+    #[cfg(test)]
     pub(crate) fn token_origin(
         &self,
         id: AttemptTokenListId,
@@ -913,35 +919,6 @@ impl<G> AttemptArena<G> {
             return Err(AttemptError::InvalidCoordinate);
         }
         Ok(self.arguments(id)?.get(usize::from(slot - 1)).copied())
-    }
-
-    pub(crate) fn allocate_name(&mut self, name: &str) -> Result<AttemptNameId, AttemptError> {
-        let range = AttemptRange::checked(self.name_bytes.len(), name.len())?;
-        let id = AttemptNameId::new(self.key, self.names.len())?;
-        self.name_bytes
-            .try_reserve(name.len())
-            .map_err(|_| AttemptError::AllocationFailed)?;
-        self.names
-            .try_reserve(1)
-            .map_err(|_| AttemptError::AllocationFailed)?;
-        self.name_bytes.extend_from_slice(name.as_bytes());
-        self.names.push(AttemptRow {
-            serial: id.serial,
-            value: range,
-        });
-        Ok(id)
-    }
-
-    pub(crate) fn name(&self, id: AttemptNameId) -> Result<&str, AttemptError> {
-        self.validate_key(id.key)?;
-        let row = self
-            .names
-            .get(id.index())
-            .copied()
-            .filter(|row| row.serial == id.serial)
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        let bytes = row.value.resolve(&self.name_bytes)?;
-        std::str::from_utf8(bytes).map_err(|_| AttemptError::InvalidCoordinate)
     }
 
     /// Copies only declared roots and schema-declared definition children.
@@ -1200,7 +1177,7 @@ pub struct AttemptResumePoint {
 /// the package, validates both the coarse generation and opening mark, drops
 /// that extra owner, and only then re-borrows live storage through `Universe`.
 pub struct PendingCommandAttempt<G, R> {
-    attempt: CommandAttempt<G>,
+    attempt: Box<CommandAttempt<G>>,
     generation: GenerationOwner<G>,
     opening: CommandAttemptMark,
     resume: AttemptResumePoint,
@@ -1209,6 +1186,7 @@ pub struct PendingCommandAttempt<G, R> {
 
 impl<G, R> PendingCommandAttempt<G, R> {
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn new(
         attempt: CommandAttempt<G>,
         generation: GenerationOwner<G>,
@@ -1217,7 +1195,7 @@ impl<G, R> PendingCommandAttempt<G, R> {
     ) -> Self {
         let opening = CommandAttemptMark::new(attempt.arena().mark());
         Self {
-            attempt,
+            attempt: Box::new(attempt),
             generation,
             opening,
             resume,
@@ -1240,7 +1218,7 @@ impl<G, R> PendingCommandAttempt<G, R> {
             "a pending attempt may retain only its own validated opening cursor"
         );
         Self {
-            attempt,
+            attempt: Box::new(attempt),
             generation,
             opening,
             resume,
@@ -1269,6 +1247,6 @@ impl<G, R> PendingCommandAttempt<G, R> {
             pending,
         } = self;
         drop(generation);
-        Ok((attempt, opening, resume, pending))
+        Ok((*attempt, opening, resume, pending))
     }
 }

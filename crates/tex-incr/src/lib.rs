@@ -540,7 +540,7 @@ impl RevisionCandidate {
                     .advance_calls
                     .saturating_add(completion.delivered_commands as u64);
                 self.cumulative_fuel = self.cumulative_fuel.saturating_add(fuel);
-                self.completed = Some(completion);
+                self.completed = Some(*completion);
                 Ok(RevisionCandidateResult::Complete)
             }
         }
@@ -630,7 +630,7 @@ impl RevisionCandidate {
 
 enum PlanExecution {
     Suspended(ResourceNeed),
-    Complete(CandidateCompletion, u64),
+    Complete(Box<CandidateCompletion>, u64),
 }
 
 struct LiveHistorySink<G> {
@@ -816,13 +816,13 @@ fn execute_plan<G>(
                         ),
                     )?;
                     return Ok(PlanExecution::Complete(
-                        CandidateCompletion {
+                        Box::new(CandidateCompletion {
                             completion,
                             history: sink.records,
                             dependencies,
                             delivered_commands,
                             format_dump,
-                        },
+                        }),
                         control.fuel_burned(),
                     ));
                 }
@@ -1534,17 +1534,17 @@ impl Session {
             .completed
             .take()
             .ok_or(SessionError::CandidateNotComplete)?;
-        let reuse = compare_histories(
-            candidate.plan.execution_path,
-            &candidate.plan.old_history,
-            &completion.history,
-            candidate.plan.base_content_hash
+        let reuse = compare_histories(HistoryComparison {
+            execution_path: candidate.plan.execution_path,
+            old: &candidate.plan.old_history,
+            new: &completion.history,
+            unchanged_content: candidate.plan.base_content_hash
                 == ContentHash::from_bytes(candidate.plan.source.as_bytes()),
-            candidate.plan.source.len(),
-            completion.delivered_commands,
-            candidate.plan.revision_setup_latency,
-            completion.completion.pages().len(),
-        );
+            source_len: candidate.plan.source.len(),
+            delivered_commands: completion.delivered_commands,
+            revision_setup_latency: candidate.plan.revision_setup_latency,
+            pages_retyped: completion.completion.pages().len(),
+        });
         Ok(RevisionTransaction {
             session_output_id: candidate.session_output_id,
             base_revision: candidate.plan.base_revision,
@@ -1813,16 +1813,28 @@ impl Session {
     }
 }
 
-fn compare_histories(
+struct HistoryComparison<'a> {
     execution_path: RevisionExecutionPath,
-    old: &[BoundaryRecord],
-    new: &[BoundaryRecord],
+    old: &'a [BoundaryRecord],
+    new: &'a [BoundaryRecord],
     unchanged_content: bool,
     source_len: usize,
     delivered_commands: usize,
     revision_setup_latency: Duration,
     pages_retyped: usize,
-) -> ReuseMetrics {
+}
+
+fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetrics {
+    let HistoryComparison {
+        execution_path,
+        old,
+        new,
+        unchanged_content,
+        source_len,
+        delivered_commands,
+        revision_setup_latency,
+        pages_retyped,
+    } = comparison;
     if execution_path == RevisionExecutionPath::Cold || old.is_empty() {
         return ReuseMetrics {
             execution_path,

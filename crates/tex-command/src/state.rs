@@ -1978,13 +1978,17 @@ impl<G> CommandState<G> {
     /// identity against this value.
     #[must_use]
     pub fn new(profile: CommandProfile) -> Self {
-        let mut state = Self::default();
-        state.engine_semantics = CommandEngineSemantics::for_profile(profile);
-        state.expansion = ExpansionState {
-            profile,
-            ..ExpansionState::default()
-        };
-        state
+        Self {
+            roots: Arc::new(CommandStateRoots {
+                engine_semantics: CommandEngineSemantics::for_profile(profile),
+                expansion: ExpansionState {
+                    profile,
+                    ..ExpansionState::default()
+                },
+                ..CommandStateRoots::default()
+            }),
+            ..Self::default()
+        }
     }
 
     /// Selects the canonical compiled implementation executing this job.
@@ -2248,7 +2252,7 @@ impl<G> CommandState<G> {
         }
         self.input.levels.push(InputLevel::Source(SourceLevel {
             frame: crate::input::PackedInputFrame::source(identity.0, registered.id),
-            cursor: SourceCursor::new(registered),
+            cursor: Box::new(SourceCursor::new(registered)),
             name_class,
             retirement,
             every_eof,
@@ -2602,7 +2606,7 @@ impl<G> CommandState<G> {
             name_class,
         };
         let cursor = match input.levels.last_mut() {
-            Some(InputLevel::Source(level)) => Some(&mut level.cursor),
+            Some(InputLevel::Source(level)) => Some(level.cursor.as_mut()),
             _ => None,
         };
         (cursor, lines)

@@ -205,7 +205,7 @@ enum PendingScanToksPhase<G> {
         hash_brace: Option<TracedTokenWord>,
         primary: OriginId,
         malformed_parameter: bool,
-        progress: ReplacementProgress<G>,
+        progress: Box<ReplacementProgress<G>>,
     },
 }
 
@@ -286,19 +286,19 @@ enum CollectorExpansionRoute {
 
 struct ScanToksFailure<G> {
     error: CommandError,
-    continuation: PendingScanToksPhase<G>,
+    continuation: Box<PendingScanToksPhase<G>>,
 }
 
 struct ReplacementFailure<G> {
     error: CommandError,
-    progress: ReplacementProgress<G>,
+    progress: Box<ReplacementProgress<G>>,
 }
 
 impl<G> From<CommandError> for ScanToksFailure<G> {
     fn from(error: CommandError) -> Self {
         Self {
             error,
-            continuation: PendingScanToksPhase::Opening,
+            continuation: Box::new(PendingScanToksPhase::Opening),
         }
     }
 }
@@ -312,12 +312,12 @@ fn replacement_failure<G>(
 ) -> ReplacementFailure<G> {
     ReplacementFailure {
         error,
-        progress: ReplacementProgress {
+        progress: Box::new(ReplacementProgress {
             output,
             depth,
             pending_parameter: pending_parameter.take(),
             pending_expansion,
-        },
+        }),
     }
 }
 
@@ -573,7 +573,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     mark,
                     config,
                     episode,
-                    phase: failure.continuation,
+                    phase: *failure.continuation,
                 });
                 return Err(failure.error);
             }
@@ -645,10 +645,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         Ok(result)
     }
 
-    // The large error is returned only on failure and moves the same inline
-    // accumulator into the typed continuation without allocating a box on the
-    // successful scanner path.
-    #[allow(clippy::result_large_err)]
     fn scan_toks_inner(
         &mut self,
         config: ScanToksConfig,
@@ -682,7 +678,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 primary,
                 malformed_parameter,
                 false,
-                progress,
+                *progress,
             ),
             PendingScanToksPhase::Opening => match (config.grammar, config.opening) {
                 (ScanToksGrammar::General, ScanToksOpening::Required) => {
@@ -693,7 +689,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .scan_left_brace(true)
                         .map_err(|error| ScanToksFailure {
                             error,
-                            continuation: PendingScanToksPhase::Opening,
+                            continuation: Box::new(PendingScanToksPhase::Opening),
                         })?;
                     let primary = opening.origin();
                     let parameter_text = self.allocate_attempt_token_list([])?;
@@ -722,12 +718,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .get_token()
                         .map_err(|error| ScanToksFailure {
                             error,
-                            continuation: PendingScanToksPhase::Opening,
+                            continuation: Box::new(PendingScanToksPhase::Opening),
                         })?
                         .ok_or_else(CommandError::input_invariant)
                         .map_err(|error| ScanToksFailure {
                             error,
-                            continuation: PendingScanToksPhase::Opening,
+                            continuation: Box::new(PendingScanToksPhase::Opening),
                         })?;
                     if !matches!(
                         opening.meaning(),
@@ -738,7 +734,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     ) {
                         return Err(ScanToksFailure {
                             error: CommandError::input_invariant(),
-                            continuation: PendingScanToksPhase::Opening,
+                            continuation: Box::new(PendingScanToksPhase::Opening),
                         });
                     }
                     self.observe_expanded_delivery(&opening);
@@ -759,7 +755,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         self.scan_parameter_text()
                             .map_err(|error| ScanToksFailure {
                                 error,
-                                continuation: PendingScanToksPhase::Opening,
+                                continuation: Box::new(PendingScanToksPhase::Opening),
                             })?;
                     (
                         parameters.tokens,
@@ -793,14 +789,14 @@ impl<G> CommandProcessor<'_, '_, G> {
                 Err(failure) => {
                     return Err(ScanToksFailure {
                         error: failure.error,
-                        continuation: PendingScanToksPhase::Replacement {
+                        continuation: Box::new(PendingScanToksPhase::Replacement {
                             parameter_text,
                             macro_parameters,
                             hash_brace,
                             primary,
                             malformed_parameter,
                             progress: failure.progress,
-                        },
+                        }),
                     });
                 }
             }
@@ -1020,9 +1016,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// parameter text declared, and so the largest one a `#<digit>` may name.
     /// A body scanned for any other purpose (`\message`, `\write`, `\toks`,
     /// `\mark`, ...) stores parameter characters verbatim.
-    // Keeping the cold failure inline lets the ordinary collector reuse its
-    // warmed token buffer without a per-scan box allocation.
-    #[allow(clippy::result_large_err)]
     fn collect_replacement(
         &mut self,
         expansion: ScanToksExpansion,
@@ -1042,7 +1035,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let resumed_expansion = pending_expansion.take();
                 let command = if let Some(pending) = resumed_expansion.as_ref() {
                     self.resume_current_command(&pending.command);
-                    Some(pending.command.clone())
+                    Some(pending.command)
                 } else if expansion.is_expanded() {
                     match self.get_next() {
                         Ok(command) => command,
