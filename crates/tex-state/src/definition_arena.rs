@@ -98,6 +98,25 @@ pub(crate) struct DefinitionArena<G> {
 }
 
 impl<G> DefinitionArena<G> {
+    /// Copies every published row into independent backing storage while
+    /// preserving the dense row coordinate used by generation-local ids.
+    pub(crate) fn dense_copy(&self) -> Result<Self, DefinitionAllocationError> {
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(self.rows.len())
+            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
+        rows.extend_from_slice(&self.rows);
+        let mut words = Vec::new();
+        words
+            .try_reserve_exact(self.words.len())
+            .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
+        words.extend_from_slice(&self.words);
+        Ok(Self {
+            rows,
+            words,
+            _brand: PhantomData,
+        })
+    }
+
     pub(super) fn new(_token: ArenaToken<G, DefinitionNamespace>) -> Self {
         Self {
             rows: Vec::new(),

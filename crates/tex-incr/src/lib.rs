@@ -1226,6 +1226,7 @@ pub struct Session {
     render_maps: RefCell<RenderMapCache>,
     retained_generations: VecDeque<RetainedRevisionGeneration>,
     retired_generations: usize,
+    compacted_generations: usize,
 }
 
 impl Session {
@@ -1343,6 +1344,7 @@ impl Session {
             render_maps: RefCell::new(RenderMapCache::new(usize::MAX)),
             retained_generations: VecDeque::new(),
             retired_generations: 0,
+            compacted_generations: 0,
         })
     }
 
@@ -1473,6 +1475,13 @@ impl Session {
     #[must_use]
     pub const fn retired_generation_count(&self) -> usize {
         self.retired_generations
+    }
+
+    /// Number of old physical bundles released by successful atomic cold
+    /// compaction. This is separate from history pruning retirement.
+    #[must_use]
+    pub const fn compacted_generation_count(&self) -> usize {
+        self.compacted_generations
     }
 
     #[must_use]
@@ -1736,15 +1745,30 @@ impl Session {
                     .len()
                     .saturating_mul(std::mem::size_of::<tex_exec::RetainedCheckpointKey>()),
             );
-        while !self.retained_generations.is_empty()
-            && self
-                .retained_generations
-                .iter()
-                .map(|generation| generation.charged_bytes)
-                .sum::<usize>()
-                .saturating_add(incoming_generation_bytes)
-                > self.checkpoint_budget
+        let retained_bytes = self
+            .retained_generations
+            .iter()
+            .map(|generation| generation.charged_bytes)
+            .collect::<Vec<_>>();
+        let mut pruned_bytes = retained_bytes.iter().copied().sum::<usize>();
+        let mut prune_count = 0usize;
+        while prune_count < retained_bytes.len()
+            && pruned_bytes.saturating_add(incoming_generation_bytes) > self.checkpoint_budget
         {
+            pruned_bytes = pruned_bytes.saturating_sub(retained_bytes[prune_count]);
+            prune_count = prune_count.saturating_add(1);
+        }
+        let mut retained_checkpoint_keys = retained_checkpoint_keys;
+        let compacted = pruned_bytes.saturating_add(incoming_generation_bytes)
+            > self.checkpoint_budget
+            && !retained_checkpoint_keys.is_empty();
+        if compacted {
+            let (relocated, _retirement) = generation
+                .compact(retained_checkpoint_keys)
+                .map_err(SessionError::Compaction)?;
+            retained_checkpoint_keys = relocated;
+        }
+        for _ in 0..prune_count {
             let previous = self
                 .retained_generations
                 .pop_front()
@@ -1769,6 +1793,9 @@ impl Session {
                 checkpoint_keys: retained_checkpoint_keys,
                 charged_bytes: incoming_generation_bytes,
             });
+        self.compacted_generations = self
+            .compacted_generations
+            .saturating_add(usize::from(compacted));
         self.dependencies = transaction.dependencies;
         self.expansion_stats = transaction.expansion_stats;
         self.render_maps.borrow_mut().clear();
@@ -1781,7 +1808,9 @@ impl Session {
                 .retained_bytes()
                 .saturating_add(self.layout.retained_bytes()),
             output_bytes,
-            protected_overage_bytes: 0,
+            protected_overage_bytes: pruned_bytes
+                .saturating_add(incoming_generation_bytes)
+                .saturating_sub(self.checkpoint_budget),
         };
         self.accepted_retention = Some(retention);
         let mut reuse = transaction.reuse;
@@ -2324,6 +2353,7 @@ pub enum SessionError {
     State(tex_state::StateError),
     Epoch(tex_state::SessionEpochError),
     RetainedEngine(tex_exec::RetainedEngineAccessError),
+    Compaction(tex_exec::RetainedEngineCompactionError),
     Universe(tex_state::UniverseError),
     Fragment(tex_state::source_map::SourceMapError),
     Layout(EditorLayoutError),
@@ -2366,6 +2396,9 @@ impl fmt::Display for SessionError {
             Self::Epoch(error) => write!(f, "incremental session epoch failed: {error:?}"),
             Self::RetainedEngine(error) => {
                 write!(f, "incremental retained generation failed: {error:?}")
+            }
+            Self::Compaction(error) => {
+                write!(f, "incremental cold compaction failed: {error:?}")
             }
             Self::Universe(error) => write!(f, "incremental runtime setup failed: {error:?}"),
             Self::Fragment(error) => write!(f, "editor fragment allocation failed: {error}"),

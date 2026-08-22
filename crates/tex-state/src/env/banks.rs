@@ -529,6 +529,21 @@ pub(crate) struct DenseBank<T: Copy> {
 }
 
 impl<T: Copy> DenseBank<T> {
+    pub(crate) fn try_map<U: Copy>(
+        &self,
+        mut map: impl FnMut(T) -> U,
+    ) -> Result<DenseBank<U>, BankError> {
+        let mut cells = Vec::new();
+        cells
+            .try_reserve_exact(self.cells.len())
+            .map_err(|_| BankError::AllocationFailed)?;
+        cells.extend(self.cells.iter().copied().map(|cell| cell.map(&mut map)));
+        Ok(DenseBank {
+            cells,
+            default: map(self.default),
+        })
+    }
+
     pub(crate) fn fixed(len: usize, default: T, level: u32) -> Result<Self, BankError> {
         let mut cells = Vec::new();
         cells
@@ -600,6 +615,30 @@ pub(crate) struct PagedDenseBank<T: Copy> {
 }
 
 impl<T: Copy> PagedDenseBank<T> {
+    pub(crate) fn try_map<U: Copy>(
+        &self,
+        mut map: impl FnMut(T) -> U,
+        default: fn(u32) -> U,
+    ) -> Result<PagedDenseBank<U>, BankError> {
+        let mut pages = Vec::new();
+        pages
+            .try_reserve_exact(self.pages.len())
+            .map_err(|_| BankError::AllocationFailed)?;
+        for page in &self.pages {
+            pages.push(
+                page.as_ref().map(|values| {
+                    Box::new(core::array::from_fn(|index| values[index].map(&mut map)))
+                }),
+            );
+        }
+        Ok(PagedDenseBank {
+            pages,
+            len: self.len,
+            default,
+            default_level: self.default_level,
+        })
+    }
+
     pub(crate) fn new(
         len: u32,
         default: fn(u32) -> T,
@@ -683,6 +722,53 @@ pub(crate) struct RegisterBank<T: Copy> {
 }
 
 impl<T: Copy> RegisterBank<T> {
+    pub(crate) fn try_map_result<U: Copy, Error>(
+        &self,
+        mut map: impl FnMut(T) -> Result<U, Error>,
+        default: fn(u32) -> U,
+    ) -> Result<RegisterBank<U>, Error>
+    where
+        Error: From<BankError>,
+    {
+        let mut dense = [BankCell::level_one(default(0)); DENSE_REGISTER_COUNT];
+        for (destination, source) in dense.iter_mut().zip(self.dense) {
+            *destination = BankCell {
+                value: map(source.value)?,
+                level: source.level,
+            };
+        }
+        let mut overflow =
+            PagedDenseBank::new(self.overflow.len, default, self.overflow.default_level)
+                .map_err(Error::from)?;
+        for (page_index, page) in self.overflow.pages.iter().enumerate() {
+            let Some(page) = page else {
+                continue;
+            };
+            let mut values = core::array::from_fn(|offset| {
+                BankCell::level_one(default(page_index as u32 * PAGE_LEN as u32 + offset as u32))
+            });
+            for (destination, source) in values.iter_mut().zip(page.iter().copied()) {
+                *destination = BankCell {
+                    value: map(source.value)?,
+                    level: source.level,
+                };
+            }
+            overflow.pages[page_index] = Some(Box::new(values));
+        }
+        Ok(RegisterBank { dense, overflow })
+    }
+
+    pub(crate) fn try_map<U: Copy>(
+        &self,
+        mut map: impl FnMut(T) -> U,
+        default: fn(u32) -> U,
+    ) -> Result<RegisterBank<U>, BankError> {
+        Ok(RegisterBank {
+            dense: core::array::from_fn(|index| self.dense[index].map(&mut map)),
+            overflow: self.overflow.try_map(map, default)?,
+        })
+    }
+
     pub(crate) fn new(default: fn(u32) -> T) -> Result<Self, BankError> {
         Ok(Self {
             dense: [BankCell::level_one(default(0)); DENSE_REGISTER_COUNT],

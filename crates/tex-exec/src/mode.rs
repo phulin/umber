@@ -925,6 +925,47 @@ impl ModeNestSummary {
         &self.levels
     }
 
+    pub(crate) fn dense_copy_for_compaction<Error>(
+        &self,
+        mut relocate: impl FnMut(PageListId) -> Result<PageListId, Error>,
+    ) -> Result<Self, Error> {
+        let mut destination = self.clone();
+        for level in &mut destination.levels {
+            level.list.sequence.try_map_lists(&mut relocate)?;
+            if let Some(fraction) = &mut level.list.incomplete_fraction {
+                fraction.numerator = relocate(fraction.numerator)?;
+            }
+            if let Some(eqno) = &mut level.list.display_eq_no {
+                eqno.display = relocate(eqno.display)?;
+            }
+            if let Some(prototype) = level
+                .list
+                .display_interrupt
+                .as_mut()
+                .and_then(|interrupt| interrupt.prototype.as_mut())
+            {
+                let mut wrapper: Node = Node::HList((*prototype).clone());
+                let mut error = None;
+                wrapper.visit_node_lists_mut(|list| {
+                    if error.is_none() {
+                        match relocate(*list) {
+                            Ok(relocated) => *list = relocated,
+                            Err(found) => error = Some(found),
+                        }
+                    }
+                });
+                if let Some(error) = error {
+                    return Err(error);
+                }
+                let Node::HList(relocated) = wrapper else {
+                    unreachable!("display prototype wrapper retains its node kind")
+                };
+                *prototype = relocated;
+            }
+        }
+        Ok(destination)
+    }
+
     pub(crate) fn font_roots_are_live(&self, mut is_live: impl FnMut(FontId) -> bool) -> bool {
         self.levels.iter().all(|level| {
             let list = &level.list;

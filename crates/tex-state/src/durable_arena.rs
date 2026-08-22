@@ -134,6 +134,23 @@ pub(crate) struct TokenListArena<G> {
 }
 
 impl<G> TokenListArena<G> {
+    pub(crate) fn dense_copy(&self) -> Result<Self, DurableAllocationError> {
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(self.rows.len())
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        rows.extend_from_slice(&self.rows);
+        let mut words = Vec::new();
+        words
+            .try_reserve_exact(self.words.len())
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        words.extend_from_slice(&self.words);
+        Ok(Self {
+            rows,
+            words,
+            _brand: PhantomData,
+        })
+    }
+
     pub(super) fn new(_token: ArenaToken<G, TokenListNamespace>) -> Self {
         Self {
             rows: Vec::new(),
@@ -229,6 +246,17 @@ pub(crate) struct GlueArena<G> {
 }
 
 impl<G> GlueArena<G> {
+    pub(crate) fn dense_copy(&self) -> Result<Self, DurableAllocationError> {
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(self.rows.len())
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        rows.extend_from_slice(&self.rows);
+        Ok(Self {
+            rows,
+            _brand: PhantomData,
+        })
+    }
+
     pub(super) fn new(_token: ArenaToken<G, GlueNamespace>) -> Self {
         Self {
             rows: Vec::new(),
@@ -298,6 +326,17 @@ pub(crate) struct ProvenanceArena<G> {
 }
 
 impl<G> ProvenanceArena<G> {
+    pub(crate) fn dense_copy(&self) -> Result<Self, DurableAllocationError> {
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(self.rows.len())
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        rows.extend_from_slice(&self.rows);
+        Ok(Self {
+            rows,
+            _brand: PhantomData,
+        })
+    }
+
     pub(super) fn new(_token: ArenaToken<G, ProvenanceNamespace>) -> Self {
         Self {
             rows: Vec::new(),

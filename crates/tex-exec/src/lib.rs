@@ -98,7 +98,8 @@ pub use paragraph_end::cached_pretolerance_plan;
 pub use retained_generation::{
     AdmittedEngineGeneration, CheckpointPruningReceipt, RetainedCheckpointKey,
     RetainedCheckpointStore, RetainedEngineAccessError, RetainedEngineAttachmentKey,
-    RetainedEngineGeneration, RetainedEngineOperation, RetainedEngineRetirement,
+    RetainedEngineCompactionError, RetainedEngineGeneration, RetainedEngineOperation,
+    RetainedEngineRetirement,
 };
 pub use retained_resource::{
     ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld, canonical_font_resource_path,

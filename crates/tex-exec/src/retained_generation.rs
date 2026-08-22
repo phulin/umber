@@ -149,6 +149,18 @@ pub enum RetainedEngineAccessError {
     State(RetainedStateAccessError),
 }
 
+#[derive(Debug)]
+pub enum RetainedEngineCompactionError {
+    State(tex_state::UniverseCompactionError),
+    Universe(UniverseError),
+    Command(tex_command::CommandRestoreError),
+    Nodes(tex_state::node_arena::NodeArenaError),
+    Access(RetainedEngineAccessError),
+    LiveEpisode,
+    DuplicateCheckpoint,
+    SemanticMismatch,
+}
+
 /// Scalar evidence that optional named roots were released without touching
 /// immutable rows in their shared generation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -248,9 +260,121 @@ impl RetainedEngineGeneration {
         self.with_admitted(PruneCheckpoints { retained })?
     }
 
+    /// Cold-copies the complete physical generation and every selected named
+    /// checkpoint, then atomically swaps owners and invalidates all old keys.
+    pub fn compact(
+        &mut self,
+        retained: Vec<RetainedCheckpointKey>,
+    ) -> Result<(Vec<RetainedCheckpointKey>, RetainedEngineRetirement), RetainedEngineCompactionError>
+    {
+        let destination_generation = next_generation();
+        let (result, state) = self
+            .state
+            .compact(CompactEngineGeneration {
+                source_generation: self.generation,
+                destination_generation,
+                source_sidecars: &self.sidecars,
+                retained,
+            })
+            .map_err(|error| match error {
+                tex_state::RetainedStateCompactionError::State(error) => {
+                    RetainedEngineCompactionError::State(error)
+                }
+                tex_state::RetainedStateCompactionError::Operation(error) => error,
+                tex_state::RetainedStateCompactionError::Retirement(error) => {
+                    RetainedEngineCompactionError::Universe(error)
+                }
+            })?;
+        self.generation = destination_generation;
+        self.sidecars = result.sidecars;
+        Ok((result.checkpoints, RetainedEngineRetirement { state }))
+    }
+
     pub fn retire(self) -> Result<RetainedEngineRetirement, UniverseError> {
         Ok(RetainedEngineRetirement {
             state: self.state.retire()?,
+        })
+    }
+}
+
+struct CompactedEngineGeneration {
+    sidecars: RetainedAttachmentKey,
+    checkpoints: Vec<RetainedCheckpointKey>,
+}
+
+struct CompactEngineGeneration<'a> {
+    source_generation: u64,
+    destination_generation: u64,
+    source_sidecars: &'a RetainedAttachmentKey,
+    retained: Vec<RetainedCheckpointKey>,
+}
+
+impl tex_state::RetainedStateCompactionOperation for CompactEngineGeneration<'_> {
+    type Output = CompactedEngineGeneration;
+    type Error = RetainedEngineCompactionError;
+
+    fn run<G: 'static>(
+        self,
+        mut context: tex_state::RetainedStateCompactionContext<'_, G>,
+    ) -> Result<Self::Output, Self::Error> {
+        let source = context
+            .source_attachment::<EngineGenerationSidecars<G>>(self.source_sidecars)
+            .map_err(|error| RetainedEngineCompactionError::Access(error.into()))?;
+        if source.generation != self.source_generation {
+            return Err(RetainedEngineCompactionError::Access(
+                RetainedEngineAccessError::ForeignGeneration,
+            ));
+        }
+        if source.attachments.iter().any(Option::is_some) {
+            return Err(RetainedEngineCompactionError::LiveEpisode);
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for key in &self.retained {
+            validate_checkpoint_key(self.source_generation, key)
+                .map_err(RetainedEngineCompactionError::Access)?;
+            if !seen.insert(key.slot) {
+                return Err(RetainedEngineCompactionError::DuplicateCheckpoint);
+            }
+            if source
+                .checkpoints
+                .get(key.slot)
+                .and_then(Option::as_ref)
+                .is_none()
+            {
+                return Err(RetainedEngineCompactionError::Access(
+                    RetainedEngineAccessError::StaleCheckpoint,
+                ));
+            }
+        }
+
+        let mut checkpoints = Vec::new();
+        checkpoints
+            .try_reserve_exact(self.retained.len())
+            .map_err(|_| {
+                RetainedEngineCompactionError::State(
+                    tex_state::UniverseCompactionError::AllocationFailed,
+                )
+            })?;
+        for key in &self.retained {
+            let source_checkpoint = source.checkpoints[key.slot]
+                .as_ref()
+                .expect("complete preflight retained every selected checkpoint");
+            checkpoints.push(Some(source_checkpoint.dense_copy_for_compaction(&context)?));
+        }
+        let destination_keys = (0..checkpoints.len())
+            .map(|slot| RetainedCheckpointKey {
+                generation: self.destination_generation,
+                slot,
+            })
+            .collect();
+        let sidecars = context.attach(EngineGenerationSidecars::<G> {
+            generation: self.destination_generation,
+            checkpoints,
+            attachments: Vec::new(),
+        });
+        Ok(CompactedEngineGeneration {
+            sidecars,
+            checkpoints: destination_keys,
         })
     }
 }
@@ -411,6 +535,26 @@ mod tests {
         }
     }
 
+    struct AttachEpisode;
+
+    impl RetainedEngineOperation for AttachEpisode {
+        type Output = RetainedEngineAttachmentKey;
+
+        fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            admitted.attach(String::from("live episode"))
+        }
+    }
+
+    struct TakeEpisode(RetainedEngineAttachmentKey);
+
+    impl RetainedEngineOperation for TakeEpisode {
+        type Output = Result<String, RetainedEngineAccessError>;
+
+        fn run<G: 'static>(self, mut admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+            admitted.take_attachment(self.0)
+        }
+    }
+
     #[test]
     fn checkpoint_keys_are_owner_relative_across_live_generations() {
         let epoch = epoch();
@@ -425,6 +569,74 @@ mod tests {
         assert_eq!(
             second.with_admitted(Read(&key)),
             Ok(Err(RetainedEngineAccessError::ForeignGeneration))
+        );
+    }
+
+    #[test]
+    fn compaction_atomically_replaces_the_owner_and_preserves_checkpoint_semantics() {
+        let epoch = epoch();
+        let mut generation =
+            RetainedEngineGeneration::new(&epoch, World::default()).expect("generation");
+        let key = generation.with_admitted(Capture).expect("capture");
+        let old_key = RetainedCheckpointKey {
+            generation: key.generation,
+            slot: key.slot,
+        };
+
+        let (mut relocated, retirement) = generation.compact(vec![key]).expect("compact");
+        let relocated = relocated.pop().expect("relocated checkpoint");
+        assert_eq!(
+            generation.with_admitted(Read(&relocated)),
+            Ok(Ok(crate::EngineBoundary::JobStart))
+        );
+        assert_eq!(
+            generation.with_admitted(Read(&old_key)),
+            Ok(Err(RetainedEngineAccessError::ForeignGeneration))
+        );
+        assert_eq!(retirement.state().allocated_overflow_pages, 0);
+    }
+
+    #[test]
+    fn malformed_compaction_request_is_mutation_free() {
+        let epoch = epoch();
+        let mut generation =
+            RetainedEngineGeneration::new(&epoch, World::default()).expect("generation");
+        let key = generation.with_admitted(Capture).expect("capture");
+        let duplicate = vec![
+            RetainedCheckpointKey {
+                generation: key.generation,
+                slot: key.slot,
+            },
+            RetainedCheckpointKey {
+                generation: key.generation,
+                slot: key.slot,
+            },
+        ];
+        assert!(matches!(
+            generation.compact(duplicate),
+            Err(RetainedEngineCompactionError::DuplicateCheckpoint)
+        ));
+        assert_eq!(
+            generation.with_admitted(Read(&key)),
+            Ok(Ok(crate::EngineBoundary::JobStart))
+        );
+    }
+
+    #[test]
+    fn live_episode_rejects_compaction_without_consuming_the_episode() {
+        let epoch = epoch();
+        let mut generation =
+            RetainedEngineGeneration::new(&epoch, World::default()).expect("generation");
+        let episode = generation
+            .with_admitted(AttachEpisode)
+            .expect("attach episode");
+        assert!(matches!(
+            generation.compact(Vec::new()),
+            Err(RetainedEngineCompactionError::LiveEpisode)
+        ));
+        assert_eq!(
+            generation.with_admitted(TakeEpisode(episode)),
+            Ok(Ok(String::from("live episode")))
         );
     }
 }

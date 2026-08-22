@@ -146,6 +146,7 @@ pub use resource::{
 };
 pub use retained_generation::{
     RetainedAttachmentKey, RetainedStateAccessError, RetainedStateAdmission,
+    RetainedStateCompactionContext, RetainedStateCompactionError, RetainedStateCompactionOperation,
     RetainedStateGeneration, RetainedStateOperation, RetainedStateRetirement,
 };
 pub use session_epoch::{SessionEpochError, SessionInternerEpoch};
@@ -205,8 +206,8 @@ pub use source_fragments::{
 pub use universe::{
     DefinitionPromotion, EngineBoundaryHasher, InteractionMode, NodePromotionError, PromotionError,
     PromotionReceipt, RuntimeCheckpoint, ShipoutTransaction, StateCheckpoint, StateCheckpointMark,
-    TokenListPromotion, Universe, UniverseError, UniverseRetirement, with_universe,
-    with_universe_in_epoch,
+    TokenListPromotion, Universe, UniverseCompactionError, UniverseError, UniverseRetirement,
+    with_universe, with_universe_in_epoch,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

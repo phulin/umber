@@ -662,6 +662,7 @@ fn zero_history_budget_retires_only_complete_old_generations() {
     }
     assert_eq!(incremental.retained_generation_count(), 1);
     assert_eq!(incremental.retired_generation_count(), 3);
+    assert_eq!(incremental.compacted_generation_count(), 4);
     assert_eq!(
         incremental.retained_revision_ids().collect::<Vec<_>>(),
         vec![RevisionId::new(4)]

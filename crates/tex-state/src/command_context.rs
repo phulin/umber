@@ -155,7 +155,7 @@ impl RetainedStringAllocation {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct EngineUsageRuntime {
     retained_strings: usize,
     retained_characters: usize,

@@ -7,8 +7,8 @@ use crate::generation::{Generation, GenerationOwner, GenerationRetirement};
 use crate::glue::GlueSpec;
 use crate::node::NodeTokenList;
 use crate::node_arena::{
-    DurableListId, DurableNodeArena, NodeArenaCursor, NodeArenaError, NodeList, PageListId,
-    PageNodeArena,
+    DurableListId, DurableNodeArena, NodeArenaCursor, NodeArenaError, NodeList, NodeRelocation,
+    PageListId, PageNodeArena,
 };
 use crate::provenance::OriginRecord;
 use crate::token::TokenWord;
@@ -25,7 +25,50 @@ pub(crate) struct StateCore<G> {
     state: DenseState<G>,
 }
 
+pub(crate) struct StateCoreRelocation<G> {
+    pub(crate) durable_nodes: NodeRelocation<G, G>,
+}
+
+impl<G> StateCoreRelocation<G> {
+    pub(crate) fn durable_nodes(&self) -> &NodeRelocation<G, G> {
+        &self.durable_nodes
+    }
+}
+
 impl<G> StateCore<G> {
+    pub(crate) fn dense_copy(&self) -> Result<(Self, StateCoreRelocation<G>), StateError> {
+        let generation = self.generation.generation().dense_copy()?;
+        let (nodes, durable_nodes) = self
+            .nodes
+            .dense_copy(core::convert::identity, core::convert::identity)
+            .map_err(|_| StateError::Bank(crate::env::banks::BankError::AllocationFailed))?;
+        let state = self.state.dense_copy(&durable_nodes)?;
+        Ok((
+            Self {
+                generation: GenerationOwner::new(generation),
+                nodes,
+                state,
+            },
+            StateCoreRelocation { durable_nodes },
+        ))
+    }
+
+    pub(crate) fn relocate_journal_cursor(
+        &self,
+        source: &Self,
+        cursor: crate::journal::JournalCursor<G>,
+    ) -> Result<crate::journal::JournalCursor<G>, StateError> {
+        self.state.relocate_journal_cursor(&source.state, cursor)
+    }
+
+    pub(crate) fn relocate_durable_cursor(
+        &self,
+        relocation: &NodeRelocation<G, G>,
+        cursor: NodeArenaCursor<G>,
+    ) -> Result<NodeArenaCursor<G>, NodeArenaError> {
+        relocation.relocate_cursor(cursor, &self.nodes)
+    }
+
     pub(crate) fn capture_format_values(
         &self,
     ) -> (

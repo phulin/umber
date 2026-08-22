@@ -46,6 +46,44 @@ pub(crate) struct FontRuntimeBank {
 }
 
 impl FontRuntimeBank {
+    pub(crate) fn dense_copy(&self) -> Result<Self, BankError> {
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(self.rows.len())
+            .map_err(|_| BankError::AllocationFailed)?;
+        for source in &self.rows {
+            let mut parameters = Vec::new();
+            parameters
+                .try_reserve_exact(source.parameters.len())
+                .map_err(|_| BankError::AllocationFailed)?;
+            parameters.extend_from_slice(&source.parameters);
+            let mut pdf_codes = core::array::from_fn(|_| None);
+            for (destination, source) in pdf_codes.iter_mut().zip(&source.pdf_codes) {
+                if let Some(source) = source {
+                    let mut values = Vec::new();
+                    values
+                        .try_reserve_exact(PDF_CODE_COUNT)
+                        .map_err(|_| BankError::AllocationFailed)?;
+                    values.extend_from_slice(source.as_ref());
+                    *destination = Some(
+                        values
+                            .into_boxed_slice()
+                            .try_into()
+                            .expect("copied PDF code table retains its fixed length"),
+                    );
+                }
+            }
+            rows.push(FontRuntimeRow {
+                parameter_count: source.parameter_count,
+                parameters,
+                hyphen_char: source.hyphen_char,
+                skew_char: source.skew_char,
+                pdf_codes,
+                ligatures_disabled: source.ligatures_disabled,
+            });
+        }
+        Ok(Self { rows })
+    }
+
     pub(crate) const fn new() -> Self {
         Self { rows: Vec::new() }
     }

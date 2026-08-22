@@ -2118,6 +2118,15 @@ impl PartialEq for World {
 impl Eq for World {}
 
 impl World {
+    #[must_use]
+    pub(crate) const fn compaction_is_quiescent(&self) -> bool {
+        self.active_effect_publication.is_none()
+            && self.active_effect_output_attempt.is_none()
+            && self.active_effect_domain.is_none()
+            && self.active_terminal_publication.is_none()
+            && self.active_artifact_publication_group.is_none()
+    }
+
     /// Starts a process-local profiling timer through the `World` clock boundary.
     #[cfg(feature = "profiling")]
     #[must_use]

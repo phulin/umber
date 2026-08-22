@@ -1077,6 +1077,19 @@ impl<G> Clone for PdfStateSnapshot<G> {
     }
 }
 
+impl<G> PdfStateSnapshot<G> {
+    pub(crate) fn dense_copy(
+        &self,
+        nodes: &crate::node_arena::NodeRelocation<G, G>,
+    ) -> Result<Self, crate::node_arena::NodeArenaError> {
+        let mut destination = self.clone();
+        for form in &mut destination.forms {
+            form.box_list = nodes.relocate(form.box_list)?;
+        }
+        Ok(destination)
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PdfMatchState {
     haystack: Vec<u8>,
@@ -1147,6 +1160,72 @@ pub(crate) struct PdfState<G> {
     outline_fingerprint: StateHashFragment,
     threads: Vec<PdfThreadRecord>,
     thread_fingerprint: StateHashFragment,
+}
+
+impl<G> Clone for PdfState<G> {
+    fn clone(&self) -> Self {
+        Self {
+            enabled: self.enabled,
+            next_object: self.next_object,
+            pages: self.pages.clone(),
+            output_parameters: self.output_parameters,
+            pk_mode: self.pk_mode,
+            font_operations: self.font_operations.clone(),
+            font_resources: self.font_resources.clone(),
+            fingerprint: self.fingerprint,
+            match_state: self.match_state.clone(),
+            external_images: self.external_images.clone(),
+            external_image_fingerprint: self.external_image_fingerprint,
+            raw_objects: self.raw_objects.clone(),
+            document_fragments: self.document_fragments.clone(),
+            document_objects: self.document_objects,
+            catalog_open_action: self.catalog_open_action,
+            action_fingerprint: self.action_fingerprint,
+            page_reservations: self.page_reservations.clone(),
+            page_reservation_fingerprint: self.page_reservation_fingerprint,
+            space_font_names: self.space_font_names.clone(),
+            space_font_name_lookup: self.space_font_name_lookup.clone(),
+            current_space_font_name: self.current_space_font_name,
+            space_font_name_fingerprint: self.space_font_name_fingerprint,
+            annotations: self.annotations.clone(),
+            annotation_fingerprint: self.annotation_fingerprint,
+            links: self.links.clone(),
+            link_fingerprint: self.link_fingerprint,
+            open_links: self.open_links.clone(),
+            open_link_fingerprint: self.open_link_fingerprint,
+            color_stacks: self.color_stacks.clone(),
+            color_stack_fingerprint: self.color_stack_fingerprint,
+            last_position: self.last_position,
+            snap_reference: self.snap_reference,
+            forms: self.forms.clone(),
+            form_fingerprint: self.form_fingerprint,
+            next_form_resource: self.next_form_resource,
+            form_artifacts: self.form_artifacts.clone(),
+            form_artifact_fingerprint: self.form_artifact_fingerprint,
+            return_value: self.return_value,
+            destinations: self.destinations.clone(),
+            destination_fingerprint: self.destination_fingerprint,
+            structure_destinations: self.structure_destinations.clone(),
+            structure_destination_fingerprint: self.structure_destination_fingerprint,
+            outlines: self.outlines.clone(),
+            outline_fingerprint: self.outline_fingerprint,
+            threads: self.threads.clone(),
+            thread_fingerprint: self.thread_fingerprint,
+        }
+    }
+}
+
+impl<G> PdfState<G> {
+    pub(crate) fn dense_copy(
+        &self,
+        nodes: &crate::node_arena::NodeRelocation<G, G>,
+    ) -> Result<Self, crate::node_arena::NodeArenaError> {
+        let mut destination = self.clone();
+        for form in &mut destination.forms {
+            form.box_list = nodes.relocate(form.box_list)?;
+        }
+        Ok(destination)
+    }
 }
 
 impl<G> Default for PdfState<G> {
