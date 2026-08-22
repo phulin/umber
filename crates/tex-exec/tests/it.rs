@@ -10,7 +10,8 @@ use tex_command::{
 use tex_exec::{MainControl, MainControlStep, ResourceNeed, StepResult};
 use tex_out::dvi::{DviPagePlan, DviStreamWriter};
 use tex_state::{
-    EffectRecord, PrintSink, PureMemoConfig, PureMemoRuntime, ResolvedMeaning, Universe,
+    EffectRecord, PrintSink, PureMemoConfig, PureMemoRecordingPolicy, PureMemoRuntime,
+    ResolvedMeaning, Universe,
     env::AssignmentScope,
     meaning::{Meaning, UnexpandablePrimitive},
 };
@@ -121,7 +122,10 @@ fn fresh_and_memo_shipouts_share_canonical_artifact_dvi() {
     let source: &[u8] = br"\setbox0=\hbox{\kern1pt}\shipout\copy0\shipout\copy0\end";
     support::with_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
-        control.install_pure_memo_runtime(PureMemoRuntime::new(PureMemoConfig::default()));
+        control.install_pure_memo_runtime(PureMemoRuntime::new(PureMemoConfig {
+            recording: PureMemoRecordingPolicy::all(),
+            ..PureMemoConfig::default()
+        }));
         control.set_dvi_output(true);
         control
             .register_root_source(SourceRegistration::new(
@@ -157,7 +161,10 @@ fn dvi_disabled_fresh_and_memo_shipouts_both_omit_plans() {
     let source: &[u8] = br"\setbox0=\hbox{\kern1pt}\shipout\copy0\shipout\copy0\end";
     support::with_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
-        control.install_pure_memo_runtime(PureMemoRuntime::new(PureMemoConfig::default()));
+        control.install_pure_memo_runtime(PureMemoRuntime::new(PureMemoConfig {
+            recording: PureMemoRecordingPolicy::all(),
+            ..PureMemoConfig::default()
+        }));
         control.set_dvi_output(false);
         control
             .register_root_source(SourceRegistration::new(
@@ -370,7 +377,7 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
 
     assert!(control.contains("mod cold;"));
     assert!(control.contains("mod hot_apply;"));
-    assert_eq!(control.matches("fn command_processor<'a>(").count(), 1);
+    assert_eq!(control.matches("fn command_processor<").count(), 1);
     assert_eq!(
         interpreter.matches("CommandProcessor::borrowed(").count(),
         1
@@ -382,8 +389,8 @@ fn fused_hot_and_typed_cold_dispatch_share_one_interpreter() {
     assert!(cold.contains("mod scan;"));
     assert!(cold.contains("mod apply;"));
     assert!(cold_operation.contains("enum ColdOperation"));
-    assert!(cold_scan.contains("fn scan("));
-    assert!(cold_apply.contains("fn apply("));
+    assert!(cold_scan.contains("fn scan<"));
+    assert!(cold_apply.contains("fn apply<"));
     assert!(!hot.contains("ColdOperation::"));
     assert!(!hot.contains("PreparedColdOperation {"));
 }
@@ -767,6 +774,8 @@ fn engine_checkpoint_cannot_be_forged_by_callers() {
         "engine-checkpoint-forgery-forbidden",
         &manifest_dir.join("tests/ui/engine_checkpoint_forgery_forbidden.rs"),
         &dependencies,
-        &["cannot construct `EngineCheckpoint`", "private fields"],
+        &[
+            "cannot construct `EngineCheckpoint<_>` with struct literal syntax due to private fields",
+        ],
     );
 }
