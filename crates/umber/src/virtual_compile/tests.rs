@@ -3332,7 +3332,53 @@ fn every_engine_mode_has_source_and_schema_11_format_artifact_equivalence() {
         let CompileAttemptResult::Complete(fresh) = fresh.compile_attempt() else {
             panic!("{} fresh session did not complete", engine.name());
         };
-        assert_eq!(formatted, fresh, "{} output differs", engine.name());
+        assert_eq!(
+            formatted.outputs,
+            fresh.outputs,
+            "{} outputs differ",
+            engine.name()
+        );
+        assert_eq!(formatted.dvi, fresh.dvi, "{} DVI differs", engine.name());
+        assert_eq!(formatted.html, fresh.html, "{} HTML differs", engine.name());
+        assert_eq!(
+            formatted.html_assets,
+            fresh.html_assets,
+            "{} HTML assets differ",
+            engine.name()
+        );
+        assert_eq!(
+            formatted.files,
+            fresh.files,
+            "{} files differ",
+            engine.name()
+        );
+
+        let formatted_terminal = String::from_utf8_lossy(&formatted.terminal);
+        let fresh_terminal = String::from_utf8_lossy(&fresh.terminal);
+        assert!(
+            formatted_terminal.contains(" (no format preloaded)\n"),
+            "{} loaded startup identity: {formatted_terminal}",
+            engine.name()
+        );
+        assert!(
+            fresh_terminal.contains(" (INITEX)\n"),
+            "{} fresh startup identity: {fresh_terminal}",
+            engine.name()
+        );
+        assert_eq!(
+            formatted_terminal.split_once('\n').map(|(_, rest)| rest),
+            fresh_terminal.split_once('\n').map(|(_, rest)| rest),
+            "{} post-banner terminal differs",
+            engine.name()
+        );
+        let formatted_log = String::from_utf8_lossy(&formatted.log);
+        let fresh_log = String::from_utf8_lossy(&fresh.log);
+        assert_eq!(
+            formatted_log.split_once('\n').map(|(_, rest)| rest),
+            fresh_log.split_once('\n').map(|(_, rest)| rest),
+            "{} post-banner log differs",
+            engine.name()
+        );
         assert!(
             !formatted.dvi.is_empty(),
             "{} emitted no DVI",
