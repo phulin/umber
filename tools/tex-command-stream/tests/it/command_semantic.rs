@@ -15,7 +15,6 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 use tex_command::FatalError;
-use tex_state::Universe;
 use umber::FormatCacheStore;
 use umber::{FormatWorkerLauncher, PreparedFormatProvider};
 
@@ -220,7 +219,13 @@ fn count_write_fixture_keeps_direct_the_internal_to_scan_toks() {
         .execute(&source, &declared.case)
         .expect("count-write-and-text executes");
 
-    assert_eq!(run.observations.len(), 257);
+    assert_eq!(run.observations.len(), 258);
+    assert!(matches!(
+        run.observations.last(),
+        Some(tex_command::CommandObservation::Effect(effect))
+            if effect.kind == tex_command::ObservationEffectKind::Terminate
+                && effect.channel == "engine"
+    ));
     assert_eq!(
         run.observations
             .iter()
@@ -325,6 +330,12 @@ fn raw_tex82_loaded_uses_pdftex_invalid_unit_help() {
         .execute(&source, &declared.case)
         .expect("raw TeX82 loaded by pdfTeX executes");
 
+    assert!(matches!(
+        run.observations.last(),
+        Some(tex_command::CommandObservation::Effect(effect))
+            if effect.kind == tex_command::ObservationEffectKind::Terminate
+                && effect.channel == "engine"
+    ));
     assert_eq!(
         compare_declared_channels(declared, &run),
         [],
@@ -571,7 +582,11 @@ fn raw_tex82_loaded_reapplies_declared_job_input_with_resolved_name() {
             "manifest": "tests/tex82-oracle-manifest.txt",
             "sections": [24, 534, 536, 537]
         },
-        "projection": {"kind": "observations", "kinds": ["input"]},
+        "projection": {
+            "kind": "observations",
+            "count_registers": [0],
+            "kinds": ["input"]
+        },
         "expected": [],
         "expectation": {"kind": "pass"},
         "inputs": {"child.tex": "\\count0=37 "}
@@ -641,7 +656,13 @@ fn raw_tex82_loaded_reapplies_declared_job_tfm() {
         .expect("declared loaded-job TFM is available");
     let channels = CapturedChannels::capture(&run);
 
-    assert_eq!(channels.events, 75);
+    assert_eq!(channels.events, 76);
+    assert!(matches!(
+        run.observations.last(),
+        Some(tex_command::CommandObservation::Effect(effect))
+            if effect.kind == tex_command::ObservationEffectKind::Terminate
+                && effect.channel == "engine"
+    ));
     assert_eq!(channels.status, "clean");
     assert_eq!(
         (
@@ -676,6 +697,7 @@ fn raw_tex82_loaded_preserves_nontrivial_mode_transitions() {
         },
         "projection": {
             "kind": "execution-boundaries",
+            "count_registers": [0],
             "include_mode_transitions": true
         },
         "expected": [],
@@ -928,11 +950,15 @@ fn state_projection_emits_only_requested_final_counts() {
     let run = SemanticRun {
         observations: Vec::new(),
         counts,
-        universe: Universe::new(),
+        box_outlines: BTreeMap::new(),
         mode_transitions: Vec::new(),
         artifacts: Vec::new(),
         dvi: Vec::new(),
         fatal: None,
+        terminal: Vec::new(),
+        log: Vec::new(),
+        pending_effects: Vec::new(),
+        effect_artifacts: Vec::new(),
         complete_job_channel_streams: None,
     };
     let projection = Projection {
@@ -960,11 +986,15 @@ fn fatal_termination_precedes_every_projection_kinds_own_output() {
     let run = SemanticRun {
         observations: Vec::new(),
         counts,
-        universe: Universe::new(),
+        box_outlines: BTreeMap::new(),
         mode_transitions: Vec::new(),
         artifacts: Vec::new(),
         dvi: Vec::new(),
         fatal: Some(FatalError::confusion("256 spans")),
+        terminal: Vec::new(),
+        log: Vec::new(),
+        pending_effects: Vec::new(),
+        effect_artifacts: Vec::new(),
         complete_job_channel_streams: None,
     };
     let projection = Projection {

@@ -23,7 +23,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 use tex_oracle::CommittedFixture;
@@ -160,7 +159,7 @@ fn load_trace(directory: &Path, record: DocumentRecord) -> Result<DocumentTrace,
 /// fixture rather than declared as fixture sources because fixture contract 1
 /// models `sources` as focused `.tex` inputs whose event locations are
 /// validated; a TFM is an opaque metric resource with no source locations.
-fn load_fonts(directory: &Path) -> Result<BTreeMap<String, Arc<[u8]>>, RunnerError> {
+fn load_fonts(directory: &Path) -> Result<BTreeMap<String, Vec<u8>>, RunnerError> {
     let font_directory = directory.join(DOCUMENT_FONT_DIRECTORY);
     let mut fonts = BTreeMap::new();
     if !font_directory.is_dir() {
@@ -172,14 +171,14 @@ fn load_fonts(directory: &Path) -> Result<BTreeMap<String, Arc<[u8]>>, RunnerErr
         if !name.ends_with(".tfm") {
             continue;
         }
-        fonts.insert(name, Arc::from(read(&entry.path())?));
+        fonts.insert(name, read(&entry.path())?);
     }
     Ok(fonts)
 }
 
 /// Deterministic aggregate identity over the staged font set: one
 /// `name sha256` line per font in bytewise name order.
-fn font_set_identity(fonts: &BTreeMap<String, Arc<[u8]>>) -> String {
+fn font_set_identity(fonts: &BTreeMap<String, Vec<u8>>) -> String {
     let mut preimage = String::new();
     for (name, bytes) in fonts {
         preimage.push_str(name);
@@ -303,7 +302,6 @@ fn sha256(bytes: &[u8]) -> String {
 mod tests {
     use super::{DOCUMENT_CONTRACT_SCHEMA, font_set_identity, parse_contract};
     use std::collections::BTreeMap;
-    use std::sync::Arc;
 
     #[test]
     fn contract_requires_its_schema_and_rejects_unsafe_names() {
@@ -329,14 +327,14 @@ mod tests {
     #[test]
     fn font_set_identity_is_order_independent_and_content_sensitive() {
         let mut first = BTreeMap::new();
-        first.insert("b.tfm".to_owned(), Arc::from(&b"second"[..]));
-        first.insert("a.tfm".to_owned(), Arc::from(&b"first"[..]));
+        first.insert("b.tfm".to_owned(), b"second".to_vec());
+        first.insert("a.tfm".to_owned(), b"first".to_vec());
         let mut second = BTreeMap::new();
-        second.insert("a.tfm".to_owned(), Arc::from(&b"first"[..]));
-        second.insert("b.tfm".to_owned(), Arc::from(&b"second"[..]));
+        second.insert("a.tfm".to_owned(), b"first".to_vec());
+        second.insert("b.tfm".to_owned(), b"second".to_vec());
         assert_eq!(font_set_identity(&first), font_set_identity(&second));
 
-        second.insert("b.tfm".to_owned(), Arc::from(&b"changed"[..]));
+        second.insert("b.tfm".to_owned(), b"changed".to_vec());
         assert_ne!(font_set_identity(&first), font_set_identity(&second));
     }
 }

@@ -20,30 +20,36 @@ fn captured() -> CapturedChannels {
 }
 
 fn run_with_printable_sink_writes(committed: bool) -> SemanticRun {
-    let mut universe = tex_state::Universe::new();
-    universe
-        .world_mut()
-        .write_text_unmetered(PrintSink::Terminal, "terminal|");
-    universe
-        .world_mut()
-        .write_text_unmetered(PrintSink::Log, "log-only|");
-    universe
-        .world_mut()
-        .write_text_unmetered(PrintSink::TerminalAndLog, "both|");
-    if committed {
-        let through = universe.world().effect_pos();
-        universe
-            .commit_effects(through)
-            .expect("printable writes commit to their memory archives");
-    }
+    let writes = vec![
+        EffectRecord::StreamWrite {
+            sink: PrintSink::Terminal,
+            text: "terminal|".into(),
+        },
+        EffectRecord::StreamWrite {
+            sink: PrintSink::Log,
+            text: "log-only|".into(),
+        },
+        EffectRecord::StreamWrite {
+            sink: PrintSink::TerminalAndLog,
+            text: "both|".into(),
+        },
+    ];
     SemanticRun {
         observations: Vec::new(),
         counts: [0; super::super::COUNT_SLOTS],
-        universe,
+        box_outlines: std::collections::BTreeMap::new(),
         mode_transitions: Vec::new(),
         artifacts: Vec::new(),
         dvi: Vec::new(),
         fatal: None,
+        terminal: committed
+            .then_some(b"terminal|both|".to_vec())
+            .unwrap_or_default(),
+        log: committed
+            .then_some(b"log-only|both|".to_vec())
+            .unwrap_or_default(),
+        pending_effects: (!committed).then_some(writes).unwrap_or_default(),
+        effect_artifacts: Vec::new(),
         complete_job_channel_streams: None,
     }
 }

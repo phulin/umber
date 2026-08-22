@@ -23,10 +23,7 @@ use tex_command::{
     RecoveryKind, RegisteredSourceKind, SourceRegistration, canonical_names,
 };
 use tex_exec::{MainControl, MainControlStep, Mode};
-use tex_state::{
-    ContentHash, InputOpenState, InputReadState, Universe,
-    node_arena::{NodeListRef, NodeRef},
-};
+use tex_state::{ContentHash, InputReadState, node::NodeKind};
 
 pub mod channels;
 pub mod classify;
@@ -405,7 +402,7 @@ impl CommandObserver for Recorder {
 pub struct SemanticRun {
     pub observations: Vec<CommandObservation>,
     pub counts: [i32; COUNT_SLOTS],
-    pub universe: Universe,
+    pub box_outlines: BTreeMap<u16, Option<Vec<umber::DetachedNodeOutlineEntry>>>,
     pub mode_transitions: Vec<Mode>,
     pub artifacts: Vec<ContentHash>,
     /// The complete serialized `.dvi` file this run produced, or empty if it
@@ -424,6 +421,15 @@ pub struct SemanticRun {
     /// TeX82 terminal state and the job is over, which is an observable
     /// semantic fact that a fixture must be able to pin.
     pub fatal: Option<FatalError>,
+    /// Already materialized terminal and log prefixes, detached before the
+    /// generation retires.
+    pub terminal: Vec<u8>,
+    pub log: Vec<u8>,
+    /// Pending effect suffix needed to complete terminal/log routing for a
+    /// root-EOF fragment.
+    pub pending_effects: Vec<tex_state::EffectRecord>,
+    /// Numbered stream outputs materialized by a complete job.
+    pub effect_artifacts: Vec<EffectArtifact>,
     /// Complete-job bytes used only by the reference-derived stream-channel
     /// contract. The other fields are the authored-fragment property
     /// projection, which stops at root EOF without inventing `\end`.
@@ -1272,184 +1278,196 @@ fn execute_fresh_with_completion(
     case: &Case,
     completion: tex_exec::RootCompletionPolicy,
 ) -> Result<SemanticRun, String> {
-    let mut universe = Universe::new();
-    for line in terminal_stdin(case) {
-        universe
-            .world_mut()
-            .push_memory_terminal_line(line)
-            .map_err(|error| format!("terminal line registration: {error}"))?;
-    }
-    let mut control = match case.profile {
-        SessionProfile::Initex => MainControl::tex82_initex(&mut universe),
-        SessionProfile::EtexInitex => {
-            let _tex82_registry = MainControl::tex82_initex(&mut universe);
-            tex_command::install_etex_expandable_primitives(&mut universe);
-            tex_exec::install_etex_unexpandable_primitives(&mut universe);
-            MainControl::prepared_initex(CommandProfile::ETEX26)
+    umber::with_engine_universe(|universe| -> Result<SemanticRun, String> {
+        for line in terminal_stdin(case) {
+            universe
+                .world_mut()
+                .push_memory_terminal_line(line)
+                .map_err(|error| format!("terminal line registration: {error}"))?;
         }
-        SessionProfile::EtexLoaded => unreachable!("loaded profile handled above"),
-        SessionProfile::Production => unreachable!("loaded profile handled above"),
-        SessionProfile::RawTex82Loaded => unreachable!("loaded profile handled above"),
-    };
-    for (name, bytes) in &case.inputs {
-        // The same kpathsea `./` the root source carries, for the same
-        // reason: a bare `\input child.tex` resolves beside the job, and
-        // §537's `a_make_name_string` records -- and prints -- the resolved
-        // `./child.tex`. A declared name that already names a directory is
-        // taken as written, since kpathsea would not rewrite one.
-        let resolved = if name.contains('/') {
-            name.clone()
-        } else {
-            format!("./{name}")
+        let mut control = match case.profile {
+            SessionProfile::Initex => MainControl::tex82_initex(universe),
+            SessionProfile::EtexInitex => {
+                let _tex82_registry = MainControl::tex82_initex(universe);
+                tex_command::install_etex_expandable_primitives(universe);
+                tex_exec::install_etex_unexpandable_primitives(universe);
+                MainControl::prepared_initex(CommandProfile::ETEX26)
+            }
+            SessionProfile::EtexLoaded => unreachable!("loaded profile handled above"),
+            SessionProfile::Production => unreachable!("loaded profile handled above"),
+            SessionProfile::RawTex82Loaded => unreachable!("loaded profile handled above"),
         };
-        control.capabilities_mut().register_input(
-            name,
-            SourceRegistration::new(
-                RegisteredSourceKind::Generated,
-                Arc::<[u8]>::from(bytes.as_bytes()),
-            )
-            .with_name(resolved),
-        );
-    }
-    for (name, source) in &case.font_inputs {
-        let bytes = fs::read(repository_root().join(source))
-            .map_err(|error| format!("font fixture read: {error}"))?;
-        universe
-            .world_mut()
-            .set_memory_file(name, bytes)
-            .map_err(|error| format!("font fixture registration: {error}"))?;
-        let metrics =
-            InputReadState::read_input_file(&mut universe.input_open_context(), Path::new(name))
-                .map_err(|error| format!("font fixture parsing: {error}"))?;
-        control.capabilities_mut().register_font(
-            name,
-            FontResource::Tfm {
-                metrics,
-                opentype: None,
-            },
-        );
-    }
-
-    // The oracle this corpus is measured against runs whatever
-    // `-interaction` mode the case declares (`Case::interaction_mode`,
-    // default `scrollmode`). `scripts/run-minifixture-oracle.sh`'s
-    // "Interaction mode" comment works through why `scrollmode` is the
-    // default: it is the one mode that both tolerates the `\read`/`\pausing`
-    // cases that need `>nonstop_mode` *and* "omits error stops" (tex.web
-    // §1749) the way batch/nonstop do, so an error this simulation didn't
-    // anticipate still just prints and lets the run finish instead of
-    // demanding an unanswerable `?` prompt. A case that needs a real `?`
-    // prompt -- `main-control/show-completion` -- declares `errorstopmode`
-    // instead, with `interaction_mode_note` recording why (see
-    // [`validate_case`]). This is set on the constructed `Universe` -- after
-    // the profile match above, because `EtexLoaded`/`Production` replace
-    // `universe` with one restored from a dumped format, and a format dump
-    // carries no interaction mode.
-    universe.set_interaction_mode(case.interaction_mode.engine_mode());
-
-    // Every profile is framed. `EtexLoaded`/`Production` used to be left
-    // unframed because `begin_job` could only spell INITEX's `" (INITEX)"`
-    // and no oracle could be reproduced to check a fabricated
-    // `(preloaded format=...)` against. Both halves of that are now closed:
-    // the oracle runner does a real `\dump`/`-fmt` roundtrip
-    // (`umber2-alfh.1`), and `job::terminal_format_ident`/`log_format_ident`
-    // spell the two sinks' different renderings from a declared
-    // `PreloadedFormat` rather than guessing one (`umber2-alfh.15`).
-    // §534/§536/§61: the start-up banner and the `**` line, which must
-    // precede the root file's own `(` (see `crate::job`'s doc comment on
-    // `begin_job`). `first_line` echoes what the oracle is invoked with on
-    // its command line -- the bare source filename, e.g. `show-box.tex`.
-    control.set_engine_binary(tex_exec::EngineBinaryIdentity::Pdftex14029);
-    control.begin_job(&mut universe, &case.source);
-    control.set_root_completion_policy(completion);
-    // kpathsea resolves a same-directory file through `./`, so pdfTeX's §537
-    // `a_make_name_string` records (and prints) `./show-box.tex` rather than
-    // the bare name `begin_job` was just given. Matching that leading `./` is
-    // what makes Umber's own `(` line comparable to the oracle's.
-    let root = SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(source))
-        .with_name(format!("./{}", case.source));
-    control
-        .register_root_source(root)
-        .map_err(|error| format!("source registration: {error:?}"))?;
-    let mut recorder = Recorder::default();
-    let mut mode_transitions = vec![control.current_mode()];
-    for _ in 0..MAX_STEPS {
-        let step = control
-            .step_with_observer(&mut universe, &mut recorder)
-            .map_err(|error| {
-                let rendered = format!("{error:?}");
-                if rendered.starts_with("Command(InputInvariant(") {
-                    "main-control step: Command(InputInvariant)".into()
-                } else {
-                    format!("main-control step: {rendered}")
-                }
-            })?;
-        let mode = control.current_mode();
-        if mode_transitions.last() != Some(&mode) {
-            mode_transitions.push(mode);
+        for (name, bytes) in &case.inputs {
+            // The same kpathsea `./` the root source carries, for the same
+            // reason: a bare `\input child.tex` resolves beside the job, and
+            // §537's `a_make_name_string` records -- and prints -- the resolved
+            // `./child.tex`. A declared name that already names a directory is
+            // taken as written, since kpathsea would not rewrite one.
+            let resolved = if name.contains('/') {
+                name.clone()
+            } else {
+                format!("./{name}")
+            };
+            control.capabilities_mut().register_input(
+                name,
+                SourceRegistration::new(
+                    RegisteredSourceKind::Generated,
+                    Arc::<[u8]>::from(bytes.as_bytes()),
+                )
+                .with_name(resolved),
+            );
         }
-        match step {
-            MainControlStep::Continue => {}
-            MainControlStep::End | MainControlStep::EndOfInput => {
-                let counts = std::array::from_fn(|slot| {
-                    universe.count(
-                        u16::try_from(slot).expect("count slot fits in TeX82 register index"),
-                    )
-                });
-                let pages = control.take_prepared_dvi_pages();
-                let artifacts: Vec<ContentHash> = pages.iter().map(|page| page.hash()).collect();
-                // §1333's `close_files_and_terminate` is reached from both
-                // outcomes here, not only `\end`/`\dump`'s `End`: §93's
-                // `fatal_error` (raised for `EndOfInput` by
-                // `crate::job::print_terminal_exhausted`, TeX82 §362's `*`
-                // prompt finding no more terminal input) calls `succumb`,
-                // which calls `error` and then `jump_out`s straight past
-                // §1335's `final_cleanup` to §1333 -- skipping the paren
-                // close and history note `final_cleanup` would have printed,
-                // but not the DVI/transcript report itself. A prior
-                // `\shipout` can leave `pages` nonempty even when the job
-                // never saw `\end`, so this serializes them exactly as the
-                // `End` path does.
-                let dvi = if !pages.is_empty() {
-                    let plans: Vec<_> = pages
-                        .into_iter()
-                        .map(tex_exec::PreparedDviPage::into_plan)
-                        .collect();
-                    let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
-                    for plan in &plans {
-                        writer
-                            .write_page_plan(plan)
-                            .map_err(|error| format!("dvi page serialization: {error:?}"))?;
+        for (name, source) in &case.font_inputs {
+            let bytes = fs::read(repository_root().join(source))
+                .map_err(|error| format!("font fixture read: {error}"))?;
+            universe
+                .world_mut()
+                .set_memory_file(name, bytes)
+                .map_err(|error| format!("font fixture registration: {error}"))?;
+            let metrics = InputReadState::read_input_file(
+                &mut universe.input_open_context(),
+                Path::new(name),
+            )
+            .map_err(|error| format!("font fixture parsing: {error}"))?;
+            control.capabilities_mut().register_font(
+                name,
+                FontResource::Tfm {
+                    metrics,
+                    opentype: None,
+                },
+            );
+        }
+
+        // The oracle this corpus is measured against runs whatever
+        // `-interaction` mode the case declares (`Case::interaction_mode`,
+        // default `scrollmode`). `scripts/run-minifixture-oracle.sh`'s
+        // "Interaction mode" comment works through why `scrollmode` is the
+        // default: it is the one mode that both tolerates the `\read`/`\pausing`
+        // cases that need `>nonstop_mode` *and* "omits error stops" (tex.web
+        // §1749) the way batch/nonstop do, so an error this simulation didn't
+        // anticipate still just prints and lets the run finish instead of
+        // demanding an unanswerable `?` prompt. A case that needs a real `?`
+        // prompt -- `main-control/show-completion` -- declares `errorstopmode`
+        // instead, with `interaction_mode_note` recording why (see
+        // [`validate_case`]). The fresh execution callback configures the
+        // admitted generation here; loaded profiles use the prepared-format
+        // provider's job-local interaction setting instead.
+        universe.set_interaction_mode(case.interaction_mode.engine_mode());
+
+        // Every profile is framed. `EtexLoaded`/`Production` used to be left
+        // unframed because `begin_job` could only spell INITEX's `" (INITEX)"`
+        // and no oracle could be reproduced to check a fabricated
+        // `(preloaded format=...)` against. Both halves of that are now closed:
+        // the oracle runner does a real `\dump`/`-fmt` roundtrip
+        // (`umber2-alfh.1`), and `job::terminal_format_ident`/`log_format_ident`
+        // spell the two sinks' different renderings from a declared
+        // `PreloadedFormat` rather than guessing one (`umber2-alfh.15`).
+        // §534/§536/§61: the start-up banner and the `**` line, which must
+        // precede the root file's own `(` (see `crate::job`'s doc comment on
+        // `begin_job`). `first_line` echoes what the oracle is invoked with on
+        // its command line -- the bare source filename, e.g. `show-box.tex`.
+        control.set_engine_binary(tex_exec::EngineBinaryIdentity::Pdftex14029);
+        control.begin_job(universe, &case.source);
+        control.set_root_completion_policy(completion);
+        // kpathsea resolves a same-directory file through `./`, so pdfTeX's §537
+        // `a_make_name_string` records (and prints) `./show-box.tex` rather than
+        // the bare name `begin_job` was just given. Matching that leading `./` is
+        // what makes Umber's own `(` line comparable to the oracle's.
+        let root =
+            SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(source))
+                .with_name(format!("./{}", case.source));
+        control
+            .register_root_source(root)
+            .map_err(|error| format!("source registration: {error:?}"))?;
+        let mut recorder = Recorder::default();
+        let mut mode_transitions = vec![control.current_mode()];
+        for _ in 0..MAX_STEPS {
+            let step = control
+                .step_with_observer(universe, &mut recorder)
+                .map_err(|error| {
+                    let rendered = format!("{error:?}");
+                    if rendered.starts_with("Command(InputInvariant(") {
+                        "main-control step: Command(InputInvariant)".into()
+                    } else {
+                        format!("main-control step: {rendered}")
                     }
-                    writer
-                        .finish()
-                        .map_err(|error| format!("dvi finish: {error:?}"))?
-                } else {
-                    Vec::new()
-                };
-                // §1333's DVI/transcript report closes out the banner
-                // `begin_job` printed, so every run gets both ends.
-                let job_name = control.capabilities_mut().job_name().to_owned();
-                let dvi_output = (!dvi.is_empty()).then(|| tex_exec::DviJobOutput {
-                    file_name: format!("{job_name}.dvi"),
-                    byte_len: dvi.len() as u64,
-                });
-                control.finish_job(&mut universe, dvi_output, None);
-                materialize_complete_job_effects(&mut universe, completion)?;
-                return Ok(SemanticRun {
-                    observations: recorder.0,
-                    counts,
-                    universe,
-                    mode_transitions,
-                    artifacts,
-                    dvi,
-                    fatal: control.fatal_error(),
-                    complete_job_channel_streams: None,
-                });
+                })?;
+            let mode = control.current_mode();
+            if mode_transitions.last() != Some(&mode) {
+                mode_transitions.push(mode);
+            }
+            match step {
+                MainControlStep::Continue => {}
+                MainControlStep::End | MainControlStep::EndOfInput => {
+                    let mut counts = [0; COUNT_SLOTS];
+                    for (slot, value) in counts.iter_mut().enumerate() {
+                        *value = universe
+                            .count(u16::try_from(slot).expect("count register index"))
+                            .map_err(|error| format!("count projection: {error:?}"))?;
+                    }
+                    let pages = control.take_prepared_dvi_pages();
+                    let artifacts: Vec<ContentHash> =
+                        pages.iter().map(|page| page.hash()).collect();
+                    // §1333's `close_files_and_terminate` is reached from both
+                    // outcomes here, not only `\end`/`\dump`'s `End`: §93's
+                    // `fatal_error` (raised for `EndOfInput` by
+                    // `crate::job::print_terminal_exhausted`, TeX82 §362's `*`
+                    // prompt finding no more terminal input) calls `succumb`,
+                    // which calls `error` and then `jump_out`s straight past
+                    // §1335's `final_cleanup` to §1333 -- skipping the paren
+                    // close and history note `final_cleanup` would have printed,
+                    // but not the DVI/transcript report itself. A prior
+                    // `\shipout` can leave `pages` nonempty even when the job
+                    // never saw `\end`, so this serializes them exactly as the
+                    // `End` path does.
+                    let dvi = if !pages.is_empty() {
+                        let plans: Vec<_> = pages
+                            .into_iter()
+                            .map(tex_exec::PreparedDviPage::into_plan)
+                            .collect();
+                        let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
+                        for plan in &plans {
+                            writer
+                                .write_page_plan(plan)
+                                .map_err(|error| format!("dvi page serialization: {error:?}"))?;
+                        }
+                        writer
+                            .finish()
+                            .map_err(|error| format!("dvi finish: {error:?}"))?
+                    } else {
+                        Vec::new()
+                    };
+                    // §1333's DVI/transcript report closes out the banner
+                    // `begin_job` printed, so every run gets both ends.
+                    let job_name = control.capabilities_mut().job_name().to_owned();
+                    let dvi_output = (!dvi.is_empty()).then(|| tex_exec::DviJobOutput {
+                        file_name: format!("{job_name}.dvi"),
+                        byte_len: dvi.len() as u64,
+                    });
+                    control.finish_job(universe, dvi_output, None);
+                    let box_outlines = capture_box_outlines(universe, &case.projection)?;
+                    let (terminal, log, pending_effects, effect_artifacts) =
+                        capture_runtime_channels(universe);
+                    return Ok(SemanticRun {
+                        observations: recorder.0,
+                        counts,
+                        box_outlines,
+                        mode_transitions,
+                        artifacts,
+                        dvi,
+                        fatal: control.fatal_error(),
+                        terminal,
+                        log,
+                        pending_effects,
+                        effect_artifacts,
+                        complete_job_channel_streams: None,
+                    });
+                }
             }
         }
-    }
-    Err(format!("exceeded {MAX_STEPS} main-control steps"))
+        Err(format!("exceeded {MAX_STEPS} main-control steps"))
+    })
+    .map_err(|error| format!("fresh generation: {error:?}"))?
 }
 
 fn format_worker_launcher() -> umber::FormatWorkerLauncher {
@@ -1479,10 +1497,9 @@ fn raw_etex26_recipe() -> umber::FormatRecipe {
     // survives §1309's format-memory compaction and e-TeX change [50.1307]'s
     // reset of optional state immediately before the dump.
     recipe.construction_source_name = "etex-loaded.ini".into();
-    recipe.construction_source = Arc::from(
-        &b"\\catcode`\\{=1 \\catcode`\\}=2 \\def\\formatmacro{\\relax}\
-\\catcode`\\{=12 \\catcode`\\}=12 \\TeXXeTstate=1 \\dump\n"[..],
-    );
+    recipe.construction_source = b"\\catcode`\\{=1 \\catcode`\\}=2 \\def\\formatmacro{\\relax}\
+\\catcode`\\{=12 \\catcode`\\}=12 \\TeXXeTstate=1 \\dump\n"
+        .to_vec();
     recipe
 }
 
@@ -1570,7 +1587,7 @@ fn execute_loaded_format(
             logical_name: name.clone(),
             resolved_name,
             source_kind: RegisteredSourceKind::Generated,
-            bytes: Arc::from(bytes.as_bytes()),
+            bytes: bytes.as_bytes().to_vec(),
         });
     }
     for (name, fixture_source) in &case.font_inputs {
@@ -1578,7 +1595,7 @@ fn execute_loaded_format(
             .map_err(|error| format!("font fixture read: {error}"))?;
         resources.push(umber::LoadedFormatResource::Tfm {
             logical_name: name.clone(),
-            bytes: Arc::from(bytes),
+            bytes,
         });
     }
     let job = umber::PreparedFormatJob {
@@ -1593,9 +1610,22 @@ fn execute_loaded_format(
         startup_line: case.source.clone(),
         source_name: case.source.clone(),
         source_kind: RegisteredSourceKind::Generated,
-        source: Arc::<[u8]>::from(source),
+        source: source.to_vec(),
         resources,
         terminal_input: terminal_stdin(case),
+        projection: umber::LoadedFormatProjectionDemand {
+            count_registers: case.projection.count_registers.clone(),
+            box_outlines: case
+                .projection
+                .box_registers
+                .iter()
+                .map(|&register| umber::LoadedBoxOutlineDemand {
+                    register,
+                    depth: case.projection.node_depth.unwrap_or(3),
+                })
+                .collect(),
+            channels: completion == tex_exec::RootCompletionPolicy::RequireTeXEnd,
+        },
         observer: &mut recorder,
     };
     let loaded = match completion {
@@ -1603,16 +1633,21 @@ fn execute_loaded_format(
         tex_exec::RootCompletionPolicy::StopAtRootEof => provider.run_fragment(&fixture, job),
     }
     .map_err(|error| format!("loaded {format_label} run: {error}"))?;
-    let mut universe = loaded.universe;
-    materialize_complete_job_effects(&mut universe, completion)?;
-    let counts = std::array::from_fn(|slot| {
-        universe.count(u16::try_from(slot).expect("count register index"))
-    });
-    let artifacts = loaded.result.artifacts.clone();
+    let umber::LoadedFormatRun { result, projection } = loaded;
+    let mut counts = [0; COUNT_SLOTS];
+    for (register, value) in projection.counts {
+        counts[usize::from(register)] = value;
+    }
+    let box_outlines = projection
+        .boxes
+        .into_iter()
+        .map(|outline| (outline.register, outline.nodes))
+        .collect();
+    let artifacts = result.artifacts.clone();
     let mut dvi = Vec::new();
-    if !loaded.result.dvi_pages.is_empty() {
+    if !result.dvi_pages.is_empty() {
         let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
-        for page in &loaded.result.dvi_pages {
+        for page in &result.dvi_pages {
             writer
                 .write_page_plan(page)
                 .map_err(|error| format!("loaded DVI page: {error:?}"))?;
@@ -1621,36 +1656,122 @@ fn execute_loaded_format(
             .finish()
             .map_err(|error| format!("loaded DVI finish: {error:?}"))?;
     }
+    let (terminal, log, pending_effects, effect_artifacts) = projection.channels.map_or_else(
+        || {
+            (
+                result.terminal_text.as_bytes().to_vec(),
+                Vec::new(),
+                result.effects,
+                Vec::new(),
+            )
+        },
+        |channels| {
+            (
+                channels.terminal,
+                channels.log,
+                channels.pending_effects,
+                channels
+                    .outputs
+                    .into_iter()
+                    .map(|output| EffectArtifact {
+                        path: output.path.to_string_lossy().into_owned(),
+                        bytes: output.bytes,
+                    })
+                    .collect(),
+            )
+        },
+    );
     Ok(SemanticRun {
         observations: recorder.0,
         counts,
-        universe,
-        mode_transitions: loaded.result.mode_transitions,
+        box_outlines,
+        mode_transitions: result.mode_transitions,
         artifacts,
         dvi,
-        fatal: loaded.result.fatal,
+        fatal: result.fatal,
+        terminal,
+        log,
+        pending_effects,
+        effect_artifacts,
         complete_job_channel_streams: None,
     })
 }
 
-/// Crosses the host-effect boundary only for a complete TeX job.
-///
-/// TeX82 §§1373--1375 performs an immediate open or close synchronously,
-/// while Umber stages that host mutation until the finalization owner accepts
-/// the effect suffix. A shipped page crosses an earlier commit boundary, but
-/// a zero-page job still has to commit its final suffix before its output
-/// artifacts are captured. Fragment runs deliberately retain their suffix so
-/// their rollback-capable contract remains unchanged.
-fn materialize_complete_job_effects(
-    universe: &mut Universe,
-    completion: tex_exec::RootCompletionPolicy,
+/// Detaches only the box registers selected by the fixture projection.
+fn capture_box_outlines<G>(
+    universe: &tex_state::Universe<G>,
+    projection: &Projection,
+) -> Result<BTreeMap<u16, Option<Vec<umber::DetachedNodeOutlineEntry>>>, String> {
+    let mut outlines = BTreeMap::new();
+    for &register in &projection.box_registers {
+        let nodes = universe
+            .box_register(register)
+            .map_err(|error| format!("box projection: {error:?}"))?
+            .map(|root| {
+                let mut output = Vec::new();
+                push_live_node_outline(
+                    universe,
+                    root,
+                    &mut Vec::new(),
+                    projection.node_depth.unwrap_or(3),
+                    &mut output,
+                )?;
+                Ok::<_, String>(output)
+            })
+            .transpose()?;
+        outlines.insert(register, nodes);
+    }
+    Ok(outlines)
+}
+
+fn push_live_node_outline<G>(
+    universe: &tex_state::Universe<G>,
+    root: tex_state::node_arena::DurableListId<G>,
+    path: &mut Vec<usize>,
+    depth: u8,
+    output: &mut Vec<umber::DetachedNodeOutlineEntry>,
 ) -> Result<(), String> {
-    if completion == tex_exec::RootCompletionPolicy::RequireTeXEnd {
-        universe
-            .commit_effects(universe.world().effect_pos())
-            .map_err(|error| format!("complete-job effect commit: {error}"))?;
+    let list = universe
+        .node_list(root)
+        .map_err(|error| format!("box outline root: {error:?}"))?;
+    for (index, node) in list.nodes().iter().enumerate() {
+        path.push(index);
+        output.push(umber::DetachedNodeOutlineEntry {
+            path: path.clone(),
+            kind: node.kind(),
+        });
+        if depth > 0
+            && let tex_state::node::Node::HList(boxed) | tex_state::node::Node::VList(boxed) = node
+        {
+            push_live_node_outline(universe, boxed.children, path, depth - 1, output)?;
+        }
+        path.pop();
     }
     Ok(())
+}
+
+fn capture_runtime_channels<G>(
+    universe: &tex_state::Universe<G>,
+) -> (
+    Vec<u8>,
+    Vec<u8>,
+    Vec<tex_state::EffectRecord>,
+    Vec<EffectArtifact>,
+) {
+    let world = universe.world();
+    let terminal = world.memory_terminal_output().unwrap_or_default().to_vec();
+    let log = world.memory_log_output().unwrap_or_default().to_vec();
+    let pending_effects = world.effect_records().to_vec();
+    let effect_artifacts = world
+        .memory_outputs()
+        .into_iter()
+        .flatten()
+        .map(|output| EffectArtifact {
+            path: output.path().to_string_lossy().into_owned(),
+            bytes: output.bytes().to_vec(),
+        })
+        .collect();
+    (terminal, log, pending_effects, effect_artifacts)
 }
 
 fn validate_completion_projection_pair(
@@ -1716,52 +1837,32 @@ pub fn mode_name(mode: Mode) -> String {
     .into()
 }
 
-pub fn node_name(node: &NodeRef<'_>) -> String {
+pub fn node_name(node: NodeKind) -> &'static str {
     match node {
-        NodeRef::Char { .. } => "char",
-        NodeRef::Lig { .. } => "ligature",
-        NodeRef::Kern { .. } => "kern",
-        NodeRef::MarginKern { .. } => "margin-kern",
-        NodeRef::Glue { .. } => "glue",
-        NodeRef::Penalty(_) => "penalty",
-        NodeRef::Rule { .. } => "rule",
-        NodeRef::HList(_) => "hlist",
-        NodeRef::VList(_) => "vlist",
-        NodeRef::Unset(_) => "unset",
-        NodeRef::Disc { .. } => "discretionary",
-        NodeRef::Mark { .. } => "mark",
-        NodeRef::Ins { .. } => "insertion",
-        NodeRef::Whatsit(_) => "whatsit",
-        NodeRef::MathOn(_) => "math-on",
-        NodeRef::MathOff(_) => "math-off",
-        NodeRef::Direction(_) => "direction",
-        NodeRef::MathNoad(_) => "math-noad",
-        NodeRef::FractionNoad(_) => "fraction-noad",
-        NodeRef::MathStyle(_) => "math-style",
-        NodeRef::MathChoice(_) => "math-choice",
-        NodeRef::MathList(_) => "math-list",
-        NodeRef::Nonscript => "nonscript",
-        NodeRef::Adjust(_) => "adjust",
-    }
-    .into()
-}
-
-pub fn push_node_outline(list: &NodeListRef, prefix: &str, depth: u8, output: &mut Vec<String>) {
-    for (index, node) in list.nodes().iter().enumerate() {
-        let path = format!("{prefix}/{index}");
-        output.push(format!("{path}:{}", node_name(&node)));
-        if depth == 0 {
-            continue;
-        }
-        match &node {
-            NodeRef::HList(boxed) | NodeRef::VList(boxed) => {
-                let children = list
-                    .resolve(boxed.children)
-                    .expect("box children belong to the enclosing node-list owner");
-                push_node_outline(&children, &path, depth - 1, output);
-            }
-            _ => {}
-        }
+        NodeKind::Char => "char",
+        NodeKind::Lig => "ligature",
+        NodeKind::Kern => "kern",
+        NodeKind::MarginKern => "margin-kern",
+        NodeKind::Glue => "glue",
+        NodeKind::Penalty => "penalty",
+        NodeKind::Rule => "rule",
+        NodeKind::HList => "hlist",
+        NodeKind::VList => "vlist",
+        NodeKind::Unset => "unset",
+        NodeKind::Disc => "discretionary",
+        NodeKind::Mark => "mark",
+        NodeKind::Ins => "insertion",
+        NodeKind::Whatsit => "whatsit",
+        NodeKind::MathOn => "math-on",
+        NodeKind::MathOff => "math-off",
+        NodeKind::Direction => "direction",
+        NodeKind::MathNoad => "math-noad",
+        NodeKind::FractionNoad => "fraction-noad",
+        NodeKind::MathStyle => "math-style",
+        NodeKind::MathChoice => "math-choice",
+        NodeKind::MathList => "math-list",
+        NodeKind::Nonscript => "nonscript",
+        NodeKind::Adjust => "adjust",
     }
 }
 
@@ -1784,13 +1885,18 @@ pub fn execution_boundaries(run: &SemanticRun, projection: &Projection) -> Vec<S
         })
         .collect::<Vec<_>>();
     for register in &projection.box_registers {
-        match run.universe.box_reg_ref(*register) {
-            Some(list) => push_node_outline(
-                &list,
-                &format!("box:{register}"),
-                projection.node_depth.unwrap_or(3),
-                &mut output,
-            ),
+        match run.box_outlines.get(register).and_then(Option::as_ref) {
+            Some(entries) => output.extend(entries.iter().map(|entry| {
+                let path = entry
+                    .path
+                    .iter()
+                    .fold(format!("box:{register}"), |mut path, index| {
+                        use std::fmt::Write as _;
+                        write!(path, "/{index}").expect("writing to a String cannot fail");
+                        path
+                    });
+                format!("{path}:{}", node_name(entry.kind))
+            })),
             None => output.push(format!("box:{register}:void")),
         }
     }

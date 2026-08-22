@@ -19,7 +19,7 @@ use tex_oracle::{
     CommittedFixture, EngineDialect, Event, SchemaVersion, validate_tex82_command_trace_suite,
     validate_tex82_geometry_trace_fixture,
 };
-use tex_state::{InputOpenState, InputReadState, SourceId, Universe};
+use tex_state::InputReadState;
 
 pub mod compare;
 pub mod documents;
@@ -28,9 +28,8 @@ pub mod policy;
 pub mod report;
 pub mod semantic;
 
-pub use tex_observe::{
-    LiveSessionOutcome, LiveSessionStreams, LiveSessionTranslator, LiveSource, ObservedEvent,
-};
+use tex_observe::LiveSessionTranslator;
+pub use tex_observe::ObservedEvent;
 pub use tex_oracle::OracleBundle;
 
 type Recorder = LiveSessionTranslator;
@@ -674,7 +673,7 @@ fn replay_fixture(
 /// step, rather than through a lazy resource-host retry loop.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ReplayResources {
-    fonts: BTreeMap<String, Arc<[u8]>>,
+    fonts: BTreeMap<String, Vec<u8>>,
 }
 
 /// Observer output plus a contained, nonterminal replay failure, if one
@@ -702,11 +701,11 @@ struct ReplayOutput {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Startup {
     profile: CommandProfile,
-    terminal_filename: Arc<[u8]>,
+    terminal_filename: Vec<u8>,
     root_name: String,
-    root_bytes: Arc<[u8]>,
-    input_capabilities: BTreeMap<String, Arc<[u8]>>,
-    fonts: BTreeMap<String, Arc<[u8]>>,
+    root_bytes: Vec<u8>,
+    input_capabilities: BTreeMap<String, Vec<u8>>,
+    fonts: BTreeMap<String, Vec<u8>>,
     expected_events: usize,
     schema: SchemaVersion,
 }
@@ -715,9 +714,9 @@ impl Startup {
     fn geometry(source: Vec<u8>, expected_events: usize) -> Self {
         Self {
             profile: CommandProfile::TEX82,
-            terminal_filename: Arc::from(&b"geometry.tex "[..]),
+            terminal_filename: b"geometry.tex ".to_vec(),
             root_name: "geometry.tex".into(),
-            root_bytes: Arc::from(source),
+            root_bytes: source,
             input_capabilities: BTreeMap::new(),
             fonts: BTreeMap::new(),
             expected_events,
@@ -774,7 +773,7 @@ impl Startup {
                 )));
             }
             if input_capabilities
-                .insert(input_name.clone(), Arc::from(source_bytes))
+                .insert(input_name.clone(), source_bytes)
                 .is_some()
             {
                 return Err(RunnerError::Replay(format!(
@@ -788,9 +787,9 @@ impl Startup {
         terminal_filename.push(TERMINAL_FILENAME_TERMINATOR);
         Ok(Self {
             profile: CommandProfile::TEX82,
-            terminal_filename: Arc::from(terminal_filename),
+            terminal_filename,
             root_name: root_source.into(),
-            root_bytes: Arc::from(bytes),
+            root_bytes: bytes,
             input_capabilities,
             fonts: resources.fonts.clone(),
             expected_events: fixture.stream.events.len(),
@@ -833,7 +832,7 @@ impl Startup {
             .and_then(|count| count.checked_mul(2))
             .and_then(|count| count.checked_add(MAX_DELIVERIES_OVERHEAD))
             .ok_or_else(|| RunnerError::Replay("startup replay bound overflowed".into()))?;
-        let mut universe = Universe::new();
+        umber::with_engine_universe(|universe| -> Result<ReplayOutput, RunnerError> {
         // `scripts/build-tex82-document-traces.sh` captures every one of these
         // fixtures with `-interaction=nonstopmode`, so the replay has to run
         // the same job. tex.web §75 starts in `error_stop_mode`, and §82
@@ -842,14 +841,12 @@ impl Startup {
         // fixture would then reach §71's `fatal_error` and end the replay
         // where the oracle simply scrolled on.
         universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = MainControl::tex82_initex(&mut universe);
+        let mut control = MainControl::tex82_initex(universe);
         let command = control.command_mut();
-        // Source IDs are part of the command state's durable input identity:
-        // terminal is always 0 and the selected root is always 1.
         let terminal = command
             .register_source(SourceRegistration::new(
                 RegisteredSourceKind::Generated,
-                Arc::clone(&self.terminal_filename),
+                self.terminal_filename.clone(),
             ))
             .map_err(|error| {
                 RunnerError::Replay(format!("terminal filename cannot register: {error}"))
@@ -857,16 +854,11 @@ impl Startup {
         let root = command
             .register_source(SourceRegistration::new(
                 RegisteredSourceKind::World,
-                Arc::clone(&self.root_bytes),
+                self.root_bytes.clone(),
             ))
             .map_err(|error| {
                 RunnerError::Replay(format!("root source cannot register: {error}"))
             })?;
-        if terminal != SourceId::new(0) || root != SourceId::new(1) {
-            return Err(RunnerError::Replay(
-                "startup assigned non-deterministic source identities".into(),
-            ));
-        }
         // The `**` filename line is read from the terminal, which tex.web
         // §331 opens with `name:=0`; §537's `start_input` is what then opens
         // the root file it names.
@@ -879,7 +871,7 @@ impl Startup {
         for (name, bytes) in &self.input_capabilities {
             control.capabilities_mut().register_input(
                 name,
-                SourceRegistration::new(RegisteredSourceKind::World, Arc::clone(bytes)),
+                SourceRegistration::new(RegisteredSourceKind::World, bytes.clone()),
             );
         }
         // `resolve_font_resource` returns `MissingFont` immediately
@@ -888,7 +880,7 @@ impl Startup {
         for (name, bytes) in &self.fonts {
             let metrics = universe
                 .input_open_context()
-                .read_supplied_input_file(Path::new(name), Arc::clone(bytes))
+                .read_supplied_input_file(Path::new(name), Arc::<[u8]>::from(bytes.clone()))
                 .map_err(|error| {
                     RunnerError::Replay(format!("font metrics {name} cannot be supplied: {error}"))
                 })?;
@@ -902,7 +894,7 @@ impl Startup {
         }
         let mut recorder = Recorder::new("terminal", self.schema);
         let scanned = control
-            .scan_startup_file_name(&mut universe, &mut recorder)
+            .scan_startup_file_name(universe, &mut recorder)
             .map_err(|error| {
                 RunnerError::Replay(format!("terminal filename scan failed: {error}"))
             })?;
@@ -917,7 +909,11 @@ impl Startup {
             .open_registered_source(root)
             .map_err(|error| RunnerError::Replay(format!("root source cannot open: {error}")))?;
         recorder.record_source_open(CANONICAL_ROOT_PUSH_NAME, &self.root_name, root);
-        recorder.activate_source(self.root_name.clone(), root, Arc::clone(&self.root_bytes));
+        recorder.activate_source(
+            self.root_name.clone(),
+            root,
+            Arc::<[u8]>::from(self.root_bytes.clone()),
+        );
 
         let mut verified_prefix = 0;
         let mut retained_events = Vec::new();
@@ -945,7 +941,7 @@ impl Startup {
                     });
                 }
                 let step = catch_panic(std::panic::AssertUnwindSafe(|| {
-                    control.step_with_observer(&mut universe, &mut recorder)
+                    control.step_with_observer(universe, &mut recorder)
                 }));
                 retain_after_first_divergence(
                     &mut recorder,
@@ -984,6 +980,8 @@ impl Startup {
             events: finish_retained_events(recorder, retained_events),
             failure: None,
         })
+        })
+        .map_err(|error| RunnerError::Replay(format!("fresh generation: {error:?}")))?
     }
 }
 
@@ -1096,10 +1094,7 @@ mod tests {
         CanonicalCommand, CanonicalValue, CommandDelivery, CommandEvent, Event, InputEvent,
         InputReason, NormalizedEvent, ScannerEvent, SourceLocation,
     };
-    use tex_state::{
-        meaning::{ExpandablePrimitive, Meaning},
-        token::Token,
-    };
+    use tex_state::token::Token;
 
     fn committed_fixture() -> CommittedFixture {
         let repository = test_support::repository_root();
@@ -1161,10 +1156,10 @@ mod tests {
     fn nested_startup() -> Startup {
         Startup {
             profile: CommandProfile::TEX82,
-            terminal_filename: Arc::from(&b"transitions.tex "[..]),
+            terminal_filename: b"transitions.tex ".to_vec(),
             root_name: "transitions.tex".into(),
-            root_bytes: Arc::from(&b"a\\input child b"[..]),
-            input_capabilities: BTreeMap::from([("child.tex".into(), Arc::from(&b"c"[..]))]),
+            root_bytes: b"a\\input child b".to_vec(),
+            input_capabilities: BTreeMap::from([("child.tex".into(), b"c".to_vec())]),
             fonts: BTreeMap::new(),
             expected_events: 0,
             schema: SchemaVersion::V1,
@@ -1470,15 +1465,19 @@ mod tests {
 
     #[test]
     fn nested_input_snapshot_rollback_replays_the_same_virtual_source_stack() {
-        fn suffix(
-            command: &mut CommandState,
-            universe: &mut Universe,
+        fn suffix<G>(
+            command: &mut CommandState<G>,
+            universe: &mut tex_state::Universe<G>,
             capabilities: &mut CommandHostCapabilities,
+            diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
         ) -> Vec<(char, u64)> {
             let mut processor = CommandProcessor::new(
                 command,
-                universe.command_context(),
+                universe
+                    .command_context()
+                    .expect("admitted command context"),
                 CommandHostContext::new(capabilities),
+                diagnostic_effects,
             );
             let mut delivered = Vec::new();
             while let Some(current) = processor.get_x_token().expect("nested input replays") {
@@ -1489,65 +1488,77 @@ mod tests {
             delivered
         }
 
-        let mut command = CommandState::new(CommandProfile::TEX82);
-        let root = command
-            .register_source(SourceRegistration::new(
-                RegisteredSourceKind::World,
-                &b"x\\input child y"[..],
-            ))
-            .expect("root registers");
-        command.open_registered_source(root).expect("root opens");
-        let mut universe = Universe::new();
-        let input = universe.intern("input").symbol();
-        universe.set_meaning(
-            input,
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::Input),
-        );
-        let mut capabilities = CommandHostCapabilities::default();
-        capabilities.register_input(
-            "child.tex",
-            SourceRegistration::new(RegisteredSourceKind::World, &b"c"[..]),
-        );
-
-        {
-            let mut processor = CommandProcessor::new(
-                &mut command,
-                universe.command_context(),
-                CommandHostContext::new(&mut capabilities),
+        umber::with_engine_universe(|universe| {
+            let mut command = CommandState::new(CommandProfile::TEX82);
+            let root = command
+                .register_source(SourceRegistration::new(
+                    RegisteredSourceKind::World,
+                    &b"x\\input child y"[..],
+                ))
+                .expect("root registers");
+            command.open_registered_source(root).expect("root opens");
+            tex_command::install_tex82_expandable_primitives(universe);
+            let mut capabilities = CommandHostCapabilities::default();
+            let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::default();
+            capabilities.register_input(
+                "child.tex",
+                SourceRegistration::new(RegisteredSourceKind::World, &b"c"[..]),
             );
-            assert!(matches!(
-                processor
-                    .get_x_token()
-                    .expect("root starts")
-                    .expect("root character")
-                    .spelling()
-                    .semantic_token(),
-                Token::Char { ch: 'x', .. }
-            ));
-        }
 
-        let snapshot = command.snapshot();
-        let first = suffix(&mut command, &mut universe, &mut capabilities);
-        command
-            .rollback(snapshot)
-            .expect("matching snapshot restores");
-        let second = suffix(&mut command, &mut universe, &mut capabilities);
+            {
+                let mut processor = CommandProcessor::new(
+                    &mut command,
+                    universe
+                        .command_context()
+                        .expect("admitted command context"),
+                    CommandHostContext::new(&mut capabilities),
+                    &mut diagnostic_effects,
+                );
+                assert!(matches!(
+                    processor
+                        .get_x_token()
+                        .expect("root starts")
+                        .expect("root character")
+                        .spelling()
+                        .semantic_token(),
+                    Token::Char { ch: 'x', .. }
+                ));
+            }
 
-        assert_eq!(first, second, "rollback preserves nested source identity");
-        assert!(
-            first.iter().any(|(_, level)| *level > 0),
-            "the nested source receives a distinct input-level identity"
-        );
-        assert!(first.iter().any(|(_, level)| *level == 0));
+            let snapshot = command.snapshot(universe).expect("snapshot captures");
+            let first = suffix(
+                &mut command,
+                universe,
+                &mut capabilities,
+                &mut diagnostic_effects,
+            );
+            command
+                .rollback(&snapshot, universe)
+                .expect("matching snapshot restores");
+            let second = suffix(
+                &mut command,
+                universe,
+                &mut capabilities,
+                &mut diagnostic_effects,
+            );
+
+            assert_eq!(first, second, "rollback preserves nested source identity");
+            assert!(
+                first.iter().any(|(_, level)| *level > 0),
+                "the nested source receives a distinct input-level identity"
+            );
+            assert!(first.iter().any(|(_, level)| *level == 0));
+        })
+        .expect("fresh generation constructs");
     }
 
     #[test]
     fn startup_rejects_a_stale_root_even_if_its_bytes_are_available() {
         let startup = Startup {
             profile: CommandProfile::TEX82,
-            terminal_filename: Arc::from(&b"transitions.tex "[..]),
+            terminal_filename: b"transitions.tex ".to_vec(),
             root_name: "alignment-delivery.tex".into(),
-            root_bytes: Arc::from(&b"\\relax"[..]),
+            root_bytes: b"\\relax".to_vec(),
             input_capabilities: BTreeMap::new(),
             fonts: BTreeMap::new(),
             expected_events: 0,

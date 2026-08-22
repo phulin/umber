@@ -101,15 +101,7 @@ impl CapturedChannels {
             run.observations
                 .iter()
                 .filter_map(tex_observe::portable_effect_observation),
-            run.universe
-                .world()
-                .memory_outputs()
-                .into_iter()
-                .flatten()
-                .map(|output| EffectArtifact {
-                    path: output.path().to_string_lossy().into_owned(),
-                    bytes: output.bytes().to_vec(),
-                }),
+            run.effect_artifacts.iter().cloned(),
         );
         let streams = run.complete_job_channel_streams.clone().unwrap_or_else(|| {
             [
@@ -148,19 +140,9 @@ impl CapturedChannels {
 /// projection from accidentally treating transcript-only text as terminal
 /// evidence while preserving the independent log channel.
 pub(crate) fn captured_printable_text(run: &SemanticRun) -> (String, String) {
-    let mut terminal = run
-        .universe
-        .world()
-        .memory_terminal_output()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .unwrap_or_default();
-    let mut log = run
-        .universe
-        .world()
-        .memory_log_output()
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .unwrap_or_default();
-    for effect in run.universe.world().effect_records() {
+    let mut terminal = String::from_utf8_lossy(&run.terminal).into_owned();
+    let mut log = String::from_utf8_lossy(&run.log).into_owned();
+    for effect in &run.pending_effects {
         match effect {
             EffectRecord::StreamWrite { sink, text } => match sink {
                 PrintSink::Terminal => terminal.push_str(text),

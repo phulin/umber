@@ -1,6 +1,6 @@
 {
   "channels": {
-    "events": 200
+    "events": 201
   },
   "expected": [
     "terminal-check:! Missing number, treated as zero.=true",
