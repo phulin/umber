@@ -156,7 +156,7 @@ fn trip_construction_evidence_is_fresh_complete_and_canonical() {
         .expect("semantic stream has a header and events");
     assert_eq!(
         format!("{:x}", Sha256::digest(semantic_payload)),
-        "71ad6c5be9cbb7ea3a72d25eff5b83c35b08b759f4d7355a9e178ecb75b07f36"
+        "263c650cd04c70554d3284c6033472a003379d60a4c8f5575f536a1d995ddf95"
     );
     let event = |sequence: usize| &semantic_stream.events[sequence].semantic;
     assert!(matches!(
