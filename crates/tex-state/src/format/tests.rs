@@ -83,14 +83,15 @@ fn detached_image_roundtrips_bytes_and_rejects_corruption() {
     let mut bad_magic = bytes.clone();
     bad_magic[0] ^= 1;
     assert_eq!(
-        DetachedFormatImage::try_from_bytes(bad_magic).unwrap_err(),
+        DetachedFormatImage::try_from_bytes(bad_magic).expect_err("bad magic must be rejected"),
         FormatError::BadMagic
     );
     let mut bad_checksum = bytes;
     let last = bad_checksum.len() - 1;
     bad_checksum[last] ^= 1;
     assert_eq!(
-        DetachedFormatImage::try_from_bytes(bad_checksum).unwrap_err(),
+        DetachedFormatImage::try_from_bytes(bad_checksum)
+            .expect_err("bad checksum must be rejected"),
         FormatError::Checksum
     );
 }
@@ -265,7 +266,7 @@ fn logical_rows_roundtrip_aliases_values_codes_and_hyphenation() {
             .assign_glue_register(9, Some(glue), AssignmentScope::Global)
             .expect("glue register");
         universe
-            .assign_count(42, 867_530_9, AssignmentScope::Global)
+            .assign_count(42, 8_675_309, AssignmentScope::Global)
             .expect("count");
         universe
             .assign_code(
@@ -312,7 +313,7 @@ fn logical_rows_roundtrip_aliases_values_codes_and_hyphenation() {
                 .replacement_text(),
             [TokenWord::pack(Token::Cs(alpha.symbol()))]
         );
-        assert_eq!(universe.count(42).expect("count"), 867_530_9);
+        assert_eq!(universe.count(42).expect("count"), 8_675_309);
         let tokens = universe
             .token_register(7)
             .expect("token register")

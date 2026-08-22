@@ -51,7 +51,6 @@ impl<G> StateCore<G> {
 
     /// Validates and borrows the one matching generation bundle once per
     /// command episode. Hot reads through the returned view do no owner work.
-    #[must_use]
     pub(crate) fn admit(&self) -> AdmittedState<'_, G> {
         AdmittedState {
             generation: self.generation.generation(),
@@ -62,7 +61,6 @@ impl<G> StateCore<G> {
 
     /// Mutable episode admission. All state writes and durable publication
     /// remain behind this unique aggregate borrow.
-    #[must_use]
     pub(crate) fn admit_mut(&mut self) -> Result<AdmittedStateMut<'_, G>, StateError> {
         Ok(AdmittedStateMut {
             generation: self.generation.generation_mut(),

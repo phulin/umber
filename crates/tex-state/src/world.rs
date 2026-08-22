@@ -444,7 +444,7 @@ impl CommittedArtifact {
     /// the page effect payload and therefore its final content identity.
     pub fn with_prepared_bytes(mut self, bytes: Vec<u8>) -> Self {
         self.hash = ContentHash::for_domain(ContentDomain::Artifact, &bytes);
-        self.bytes = bytes.into();
+        self.bytes = bytes;
         self
     }
 
@@ -454,7 +454,7 @@ impl CommittedArtifact {
     /// must only be used to exercise downstream rejection paths.
     #[doc(hidden)]
     pub fn with_testing_bytes_preserving_identity(mut self, bytes: Vec<u8>) -> Self {
-        self.bytes = bytes.into();
+        self.bytes = bytes;
         self
     }
 

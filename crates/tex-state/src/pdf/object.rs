@@ -101,7 +101,7 @@ impl<G> PdfRawObjectRecord<G> {
 
     #[must_use]
     pub fn data(&self) -> Option<PdfRawObjectData<G>> {
-        self.data.clone()
+        self.data
     }
 
     #[must_use]
@@ -174,7 +174,7 @@ impl<G> PdfRawObjects<G> {
             .records
             .binary_search_by_key(&id, |record| record.id)
             .ok()
-            .map(|index| self.0.records[index].clone())
+            .map(|index| self.0.records[index])
     }
 
     pub(crate) fn reserve(&mut self, id: PdfRawObjectId) {

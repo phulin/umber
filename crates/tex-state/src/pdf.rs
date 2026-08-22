@@ -832,8 +832,8 @@ impl<G> Clone for PdfFormRecord<G> {
             width: self.width,
             height: self.height,
             depth: self.depth,
-            attr: self.attr.clone(),
-            resources: self.resources.clone(),
+            attr: self.attr,
+            resources: self.resources,
             immediate: self.immediate,
         }
     }
@@ -1773,7 +1773,7 @@ impl<G> PdfState<G> {
     ) -> Result<PdfAnnotationRecord<G>, PdfObjectCapacityError> {
         let object = self.reserve_document_object()?;
         let record = PdfAnnotationRecord::<G>::reserved(object);
-        self.annotations.push(record.clone());
+        self.annotations.push(record);
         self.annotation_fingerprint =
             append_annotation_reservation_fingerprint(self.annotation_fingerprint, object);
         Ok(record)
@@ -1800,7 +1800,7 @@ impl<G> PdfState<G> {
             dimensions,
             entries_semantic_id,
         );
-        Ok(record.clone())
+        Ok(*record)
     }
 
     #[must_use]
@@ -1982,7 +1982,7 @@ impl<G> PdfState<G> {
             semantic_ids[1],
             semantic_ids[2],
         );
-        self.outlines.push(record.clone());
+        self.outlines.push(record);
         Ok(record)
     }
 
@@ -2013,10 +2013,10 @@ impl<G> PdfState<G> {
             action_semantic_id,
         );
         self.open_links.push(PdfOpenLink {
-            record: record.clone(),
+            record,
             nesting_depth,
         });
-        self.links.push(record.clone());
+        self.links.push(record);
         self.open_link_fingerprint = open_link_fingerprint(&self.open_links);
         Ok(record)
     }
@@ -2670,14 +2670,14 @@ impl<G> PdfState<G> {
                 page_reservation_fingerprint(&self.page_reservations);
         }
         let record = PdfActionRecord::<G>::new(id, spec, target_object, structure_object);
-        self.catalog_open_action = Some(record.clone());
+        self.catalog_open_action = Some(record);
         self.action_fingerprint = fingerprint;
         Ok(record)
     }
 
     #[must_use]
     pub(crate) fn catalog_open_action(&self) -> Option<PdfActionRecord<G>> {
-        self.catalog_open_action.clone()
+        self.catalog_open_action
     }
 
     fn reserved_page_object(&self, number: u32) -> Option<u32> {
@@ -2734,7 +2734,7 @@ impl<G> PdfState<G> {
             next_object: self.next_object,
             page_count: self.pages.len(),
             output_parameters: self.output_parameters,
-            pk_mode: self.pk_mode.clone(),
+            pk_mode: self.pk_mode,
             font_operation_count: self.font_operations.len(),
             font_resource_count: self.font_resources.len(),
             fingerprint: self.fingerprint,
@@ -2743,7 +2743,7 @@ impl<G> PdfState<G> {
             raw_object_fingerprint: self.raw_objects.fingerprint(),
             document_fragment_fingerprint: self.document_fragments.fingerprint(),
             document_objects: self.document_objects,
-            catalog_open_action: self.catalog_open_action.clone(),
+            catalog_open_action: self.catalog_open_action,
             action_fingerprint: self.action_fingerprint,
             page_reservation_fingerprint: self.page_reservation_fingerprint,
             space_font_name_count: self.space_font_names.len(),

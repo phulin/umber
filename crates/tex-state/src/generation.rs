@@ -84,7 +84,6 @@ impl<G> GenerationOwner<G> {
         Arc::ptr_eq(&self.generation, &other.generation)
     }
 
-    #[must_use]
     pub(crate) fn generation(&self) -> RwLockReadGuard<'_, Generation<G>> {
         self.generation
             .read()
