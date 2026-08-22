@@ -44,6 +44,35 @@ impl HermeticFormats {
     }
 }
 
+fn geometry_signatures(run: &SemanticRun) -> Vec<(&'static str, i64, i64, i64, u32)> {
+    run.observations
+        .iter()
+        .filter_map(|observation| match observation {
+            tex_command::CommandObservation::Geometry(tex_command::GeometryRecord::Hpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+                line,
+                ..
+            }) => Some(("hpack", *width_sp, *height_sp, *depth_sp, *line)),
+            tex_command::CommandObservation::Geometry(tex_command::GeometryRecord::Vpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+                line,
+                ..
+            }) => Some(("vpack", *width_sp, *height_sp, *depth_sp, *line)),
+            tex_command::CommandObservation::Geometry(tex_command::GeometryRecord::Shipout {
+                page_width_sp,
+                page_height_sp,
+                line,
+                ..
+            }) => Some(("shipout", *page_width_sp, *page_height_sp, 0, *line)),
+            _ => None,
+        })
+        .collect()
+}
+
 fn rust_function_body<'a>(source: &'a str, name: &str) -> &'a str {
     let signature = format!("fn {name}(");
     let start = source
@@ -219,7 +248,15 @@ fn count_write_fixture_keeps_direct_the_internal_to_scan_toks() {
         .execute(&source, &declared.case)
         .expect("count-write-and-text executes");
 
-    assert_eq!(run.observations.len(), 258);
+    assert_eq!(run.observations.len(), 259);
+    assert_eq!(
+        geometry_signatures(&run),
+        [
+            ("hpack", 327_681, 422_343, 0, 6),
+            ("shipout", 327_681, 422_343, 0, 8),
+        ],
+        "TeX82's explicit box pack precedes the matching shipout geometry"
+    );
     assert!(matches!(
         run.observations.last(),
         Some(tex_command::CommandObservation::Effect(effect))
@@ -305,6 +342,24 @@ fn paragraph_line_shape_matches_canonical_projection_and_channels() {
         .expect("bounded paragraph-line-shape fixture executes");
 
     assert_eq!(
+        geometry_signatures(&run),
+        [
+            ("hpack", 1_310_720, 282_168, 0, 15),
+            ("hpack", 1_638_400, 282_168, 0, 15),
+            ("hpack", 1_179_648, 282_168, 0, 15),
+            ("hpack", 1_179_648, 282_168, 0, 15),
+            ("hpack", 1_179_648, 282_168, 0, 15),
+            ("vpack", 1_638_400, 1_410_840, 0, 15),
+            ("hpack", 2_293_760, 282_168, 0, 16),
+            ("hpack", 1_638_400, 282_168, 0, 16),
+            ("hpack", 1_638_400, 282_168, 0, 16),
+            ("hpack", 1_638_400, 282_168, 0, 16),
+            ("vpack", 2_293_760, 1_128_672, 0, 16),
+        ],
+        "line materialization commits each hpack before its enclosing vpack"
+    );
+
+    assert_eq!(
         project(&run, &declared.case.projection),
         declared.case.expected
     );
@@ -329,6 +384,17 @@ fn raw_tex82_loaded_uses_pdftex_invalid_unit_help() {
     let run = formats
         .execute(&source, &declared.case)
         .expect("raw TeX82 loaded by pdfTeX executes");
+
+    assert_eq!(
+        geometry_signatures(&run),
+        [
+            ("hpack", 0, 0, 0, 4),
+            ("hpack", 0, 0, 0, 4),
+            ("vpack", 0, 0, 0, 4),
+            ("shipout", 0, 0, 0, 4),
+        ],
+        "the empty output page commits its packs before shipout"
+    );
 
     assert!(matches!(
         run.observations.last(),
@@ -504,7 +570,7 @@ fn v2_identity_capture_policy_and_resolved_channels_match_the_migrated_corpus() 
     }
     assert_eq!(
         format!("{:x}", digest.finalize()),
-        "924acf25c4d3b931919cc8c9d56db635e307a5d7180e699faaa3ced2450b9a9d"
+        "4d40d5ed9c5840c64c25c4b197b02378af01d998472eda9ed23a1bcdc05ddd12"
     );
 }
 
@@ -656,7 +722,15 @@ fn raw_tex82_loaded_reapplies_declared_job_tfm() {
         .expect("declared loaded-job TFM is available");
     let channels = CapturedChannels::capture(&run);
 
-    assert_eq!(channels.events, 76);
+    assert_eq!(channels.events, 77);
+    assert_eq!(
+        geometry_signatures(&run),
+        [
+            ("hpack", 1_146_883, 455_111, 0, 1),
+            ("shipout", 1_146_883, 455_111, 0, 1),
+        ],
+        "the font-backed hbox commits before its matching shipout"
+    );
     assert!(matches!(
         run.observations.last(),
         Some(tex_command::CommandObservation::Effect(effect))
