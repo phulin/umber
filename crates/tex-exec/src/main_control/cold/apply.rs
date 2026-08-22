@@ -2304,7 +2304,7 @@ pub(in crate::main_control) fn apply<G>(
                             stream,
                             &target,
                         );
-                        write_immediate_text(stores, command, sink, &text);
+                        super::support::write_preframed_immediate_text(stores, command, sink, text);
                     }
                 }
                 RootedImmediateExtension::Write { stream, tokens } => {

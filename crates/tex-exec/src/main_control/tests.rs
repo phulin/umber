@@ -4004,6 +4004,26 @@ fn pdftex_initex<G>(stores: &mut Universe<G>) -> MainControl<G> {
 }
 
 #[test]
+fn immediate_openout_applies_one_print_nl_after_an_open_log_line() {
+    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        let mut control = pdftex_initex(&mut stores);
+        register_source(
+            &mut control,
+            br"\message{prefix}\immediate\openout0=zero\immediate\closeout0\end",
+        );
+
+        run_to_end(&mut control, &mut stores);
+
+        let log = pending_sink_text(&stores, false);
+        assert!(
+            log.contains("prefix\n\\openout0 = `zero.tex'.\n\n"),
+            "{log:?}"
+        );
+        assert!(!log.contains("prefix\n\n\\openout0"), "{log:?}");
+    });
+}
+
+#[test]
 fn pdftex_partokencontext_replays_par_at_numbered_boundaries() {
     // Web2C/pdfTeX partoken.ch replaces TeX82 §§1085/1096's direct end_graf
     // at vbox/vtop boundaries for context 1. Context 2 additionally covers

@@ -1,5 +1,5 @@
 use tex_state::meaning::Meaning;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::{CommandHostCapabilities, CommandState};
 
@@ -34,5 +34,27 @@ fn processor_episode_borrows_generation_and_delivers_one_current_command() {
             }
         );
         assert!(processor.get_x_token().expect("end").is_none());
+    });
+}
+
+#[test]
+fn frozen_macro_primitive_observation_retains_endwrite_identity() {
+    crate::test_harness::with_universe(|universe| {
+        crate::install_tex82_unexpandable_primitives(universe);
+        let endwrite = universe.primitive_token("endwrite").expect("write stopper");
+        let mut command = CommandState::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+
+        assert_eq!(
+            processor.observed_token(TracedTokenWord::pack(endwrite, OriginId::UNKNOWN)),
+            crate::observation::ObservedToken::FrozenPrimitive("endwrite".into())
+        );
     });
 }

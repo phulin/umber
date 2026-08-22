@@ -2539,12 +2539,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         observed_token(
             token,
             |symbol| self.state.resolve(symbol).to_owned(),
-            |frozen| {
-                self.state
-                    .frozen_primitive_meaning(frozen)
-                    .and_then(|meaning| self.state.primitive_name(meaning))
-                    .map(str::to_owned)
-            },
+            |frozen| self.state.frozen_primitive_name(frozen).map(str::to_owned),
         )
     }
 

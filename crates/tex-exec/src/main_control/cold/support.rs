@@ -143,6 +143,24 @@ pub(in crate::main_control) fn write_immediate_text<G>(
     });
 }
 
+/// Queues text whose producer has already applied TeX's `print_nl` framing.
+///
+/// `report_openout` samples the selected sinks' live offsets and owns its
+/// leading newline. Reapplying [`write_immediate_text`]'s open-line rule would
+/// turn that one canonical break into a blank line.
+pub(in crate::main_control) fn write_preframed_immediate_text<G>(
+    stores: &mut tex_state::CommandContext<'_, G>,
+    command: &mut CommandMachine<'_, G>,
+    sink: PrintSink,
+    text: String,
+) {
+    command.immediate_prints.push(ImmediatePrint {
+        sink,
+        text,
+        max_print_line: stores.printer().max_print_line(),
+    });
+}
+
 pub(in crate::main_control) fn print_display_content<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     content: &str,
