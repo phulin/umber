@@ -317,6 +317,25 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
         }
     }
 
+    /// Publishes the quiescent named-boundary suffix left by terminal cleanup.
+    ///
+    /// A terminal format capture may first discard unread command-only input
+    /// or macro replay levels. Its outer owner then calls this method before
+    /// asking the ledger for the terminal receipt, so every newly quiescent
+    /// boundary is checkpointed in canonical order.
+    pub fn publish_terminal_boundary_suffix(
+        &mut self,
+        sink: &mut dyn CheckpointSink<G>,
+    ) -> Result<(), CanonicalStepFailure> {
+        self.control
+            .publish_terminal_named_boundaries(self.universe)
+            .map_err(CanonicalStepFailure::Execution)?;
+        let boundaries = self.control.take_completed_boundaries();
+        self.ledger
+            .publish(self.control, self.universe, sink, &boundaries)
+            .map_err(CanonicalStepFailure::Checkpoint)
+    }
+
     /// Advances a complete-job session through TeX82 §81's `jump_out`.
     ///
     /// Diagnostic-oriented callers use [`Self::step`] so a captured fatal
@@ -379,6 +398,13 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
                 return CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error));
             }
         };
+        if matches!(step, MainControlStep::End | MainControlStep::EndOfInput)
+            && let Err(error) = self
+                .control
+                .publish_terminal_named_boundaries(self.universe)
+        {
+            return CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error));
+        }
         let boundaries = self.control.take_completed_boundaries().into_boxed_slice();
         if let Err(error) = self
             .ledger

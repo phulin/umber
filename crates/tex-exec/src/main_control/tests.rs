@@ -5394,6 +5394,32 @@ fn named_boundary_queue_publishes_literal_and_macro_paragraphs_before_the_next_c
 }
 
 #[test]
+fn terminal_named_boundary_drain_publishes_the_quiescent_suffix_in_order() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        control
+            .pending_named_boundaries
+            .push_back(crate::EngineBoundary::OuterParagraphEnd);
+        control
+            .pending_named_boundaries
+            .push_back(crate::EngineBoundary::ShipoutComplete);
+
+        control
+            .publish_terminal_named_boundaries(stores)
+            .expect("quiescent terminal boundaries publish");
+
+        assert!(control.pending_named_boundaries.is_empty());
+        assert_eq!(
+            control.take_completed_boundaries(),
+            [
+                crate::EngineBoundary::OuterParagraphEnd,
+                crate::EngineBoundary::ShipoutComplete,
+            ]
+        );
+    });
+}
+
+#[test]
 fn named_boundary_queue_waits_for_a_live_macro_argument_record() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);

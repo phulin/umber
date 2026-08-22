@@ -127,6 +127,20 @@ fn summary_rejection_names_suspended_attempts_separately() {
 }
 
 #[test]
+fn terminal_format_close_discards_macro_replay_without_weakening_named_boundaries() {
+    let mut command = crate::CommandState::<Brand>::default();
+    command.transient.active_expansion_depth = 1;
+
+    assert!(!command.named_boundary_is_quiescent());
+    assert!(command.format_dump_is_quiescent());
+
+    command.close_format_dump_boundary();
+
+    assert!(command.named_boundary_is_quiescent());
+    assert_eq!(command.transient.active_expansion_depth, 0);
+}
+
+#[test]
 fn retained_summary_restores_the_pre_mutation_command_root() {
     crate::test_harness::with_universe(|universe| {
         let mut command = crate::CommandState::default();

@@ -540,7 +540,7 @@ impl<G> CommandState<G> {
     /// only after aggregate image capture has succeeded.
     #[must_use]
     pub fn format_dump_is_quiescent(&self) -> bool {
-        self.validate_summary_quiescence().is_ok()
+        self.validate_format_dump_quiescence().is_ok()
     }
 
     /// Drops the command-only remainder of one successfully captured terminal
@@ -598,6 +598,21 @@ impl<G> CommandState<G> {
     }
 
     fn validate_summary_quiescence(&self) -> Result<(), CommandSummaryError> {
+        self.validate_format_dump_quiescence()?;
+        if self.transient.active_expansion_depth != 0
+            || !self.replay_completions.is_empty()
+            || !self.pending_replay_completions.is_empty()
+        {
+            return Err(CommandSummaryError::ExpansionActive);
+        }
+        Ok(())
+    }
+
+    /// Validates state that cannot be discarded even at a terminal format
+    /// boundary. Input and macro replay levels are intentionally omitted:
+    /// TeX's `\dump` may be delivered through either, and a successful format
+    /// capture closes those command-only levels rather than serializing them.
+    fn validate_format_dump_quiescence(&self) -> Result<(), CommandSummaryError> {
         match self.scanner.status() {
             ScannerStatus::Normal => {}
             ScannerStatus::Skipping { .. } => return Err(CommandSummaryError::ConditionalSkip),
@@ -621,12 +636,6 @@ impl<G> CommandState<G> {
             || !self.pending_csnames.is_empty()
         {
             return Err(CommandSummaryError::ResourceSuspension);
-        }
-        if self.transient.active_expansion_depth != 0
-            || !self.replay_completions.is_empty()
-            || !self.pending_replay_completions.is_empty()
-        {
-            return Err(CommandSummaryError::ExpansionActive);
         }
         if self.alignment.active_alignment.is_some() || self.alignment.active_cell.is_some() {
             return Err(CommandSummaryError::AlignmentTemplateActive);

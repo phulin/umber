@@ -1706,7 +1706,6 @@ impl<G> MainControl<G> {
             || self.prepared_shipout.is_some()
             || !self.prepared_dvi_pages.is_empty()
             || !self.immediate_prints.is_empty()
-            || !self.pending_named_boundaries.is_empty()
             || self.pending_resource_site.is_some()
             || self.pending_preflight_command.is_some()
             || self.pending_alignment_delivery.is_some()
@@ -3146,6 +3145,20 @@ impl<G> MainControl<G> {
         debug_assert_eq!(published, boundary);
         self.completed_boundaries.push(published);
         Ok(Some(published))
+    }
+
+    /// Publishes every named boundary that became quiescent during terminal
+    /// cleanup. Ordinary execution publishes one intent before the following
+    /// delivery; terminal cleanup has no following delivery, so the canonical
+    /// runner must drain the safe suffix before closing its output ledger.
+    pub(crate) fn publish_terminal_named_boundaries(
+        &mut self,
+        stores: &mut Universe<G>,
+    ) -> Result<(), ExecError> {
+        while !self.pending_named_boundaries.is_empty()
+            && self.publish_pending_named_boundary(stores)?.is_some()
+        {}
+        Ok(())
     }
 
     /// Enters TeX82 §1117's live `disc_group` after the command processor has

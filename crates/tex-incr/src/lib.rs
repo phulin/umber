@@ -886,11 +886,14 @@ fn execute_plan<G>(
                     ));
                 }
                 if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
-                    let terminal = ledger.terminal_receipt(control, step)?;
                     let dependencies = universe.world().input_dependencies().cloned().collect();
                     let format_dump = control
                         .take_format_dump(universe)
                         .map_err(SessionError::FormatDump)?;
+                    CanonicalStepRunner::new(control, universe, ledger)
+                        .publish_terminal_boundary_suffix(&mut sink)
+                        .map_err(map_step_failure)?;
+                    let terminal = ledger.terminal_receipt(control, step)?;
                     let completion = ledger.close_revision(
                         control,
                         universe,
