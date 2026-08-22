@@ -42,7 +42,7 @@ fn every_supported_runtime_names_its_command_owned_engine_entry() {
         (
             "incremental",
             include_str!("../../../tex-incr/src/lib.rs"),
-            "control: MainControl",
+            "candidate_control(",
         ),
         (
             "WASM",
@@ -111,11 +111,10 @@ fn session(main: &str) -> VirtualCompileSession {
 fn construct_test_format(mode: EngineMode, source: &str) -> tex_state::DetachedFormatImage {
     crate::with_engine_world(World::memory(), |stores| {
         mode.prepare_initex(stores);
-        crate::run_memory_collecting_artifacts_with_profile(
+        crate::run_memory_collecting_initex_artifacts_with_profile(
             source,
             stores,
             mode.command_profile(),
-            false,
         )
         .expect("test format construction")
         .format_dump

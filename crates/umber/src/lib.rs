@@ -1082,11 +1082,10 @@ mod primitive_mode_tests {
 
         let image = with_stores(|stores| {
             prepare_etex_run_stores(stores);
-            run_memory_collecting_artifacts_with_profile(
+            run_memory_collecting_initex_artifacts_with_profile(
                 "\\errhelp{help-format}\\everyeof{eof-format}\\dump",
                 stores,
                 CommandProfile::ETEX26,
-                false,
             )
             .expect("format parameters execute")
             .format_dump
@@ -1204,11 +1203,10 @@ mod primitive_mode_tests {
                 );
                 let symbol = source.intern(primitive);
                 source.set_meaning(symbol, Meaning::Undefined);
-                run_memory_collecting_artifacts_with_profile(
+                run_memory_collecting_initex_artifacts_with_profile(
                     "\\dump",
                     source,
                     mode.command_profile(),
-                    false,
                 )
                 .expect("dump shadowed primitive format")
                 .format_dump
@@ -1672,6 +1670,26 @@ pub fn run_memory_collecting_artifacts_with_profile<G>(
     let _ = emit_dvi;
     let mut host = FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
     let mut session = EngineSession::new(stores, profile);
+    session.project_terminal_text_to_root_body();
+    session.register_retained_fragment_with_invocation(
+        "texput",
+        "texput",
+        SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(source.as_bytes()),
+        ),
+    )?;
+    session.run(&mut host, &mut NoCheckpoints)
+}
+
+#[cfg(test)]
+pub(crate) fn run_memory_collecting_initex_artifacts_with_profile<G>(
+    source: &str,
+    stores: &mut Universe<G>,
+    profile: CommandProfile,
+) -> Result<RunResult, SessionError> {
+    let mut host = FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
+    let mut session = EngineSession::prepared_initex(stores, profile);
     session.project_terminal_text_to_root_body();
     session.register_retained_fragment_with_invocation(
         "texput",

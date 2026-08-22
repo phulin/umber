@@ -1210,7 +1210,8 @@ mod tests {
             &br"\count0=0\count1=0\count2=0\def\e#1{\advance\count0by#1\global\advance\count1by#1\ifnum#1<5\global\advance\count2by1\else\global\advance\count2by2\fi A\kern#1sp}\shipout\hbox{\e{1}\e{8}}\end"[..],
         );
         with_fresh_stores(|stores| {
-            let mut session = EngineSession::tex82_initex(stores);
+            crate::prepare_run_stores(stores);
+            let mut session = EngineSession::new(stores, CommandProfile::TEX82);
             let mut context = session.stores.command_context().expect("admit font setup");
             let font = context.intern_font(packed_episode_font());
             context
@@ -1443,16 +1444,14 @@ mod tests {
         ) -> R,
     ) -> R {
         with_fresh_stores(|stores| {
-            tex_command::install_tex82_expandable_primitives(stores);
-            tex_exec::install_unexpandable_primitives(stores);
+            crate::prepare_run_stores(stores);
             use_session(stores, Arc::from(source))
         })
     }
 
     fn tex82_format_image() -> tex_state::DetachedFormatImage {
         with_fresh_stores(|stores| {
-            tex_command::install_tex82_expandable_primitives(stores);
-            tex_exec::install_unexpandable_primitives(stores);
+            crate::prepare_run_stores(stores);
             let mut session = EngineSession::prepared_initex(stores, CommandProfile::TEX82);
             session
                 .register_authored_job("format.tex", Arc::from(&b"\\dump"[..]))
@@ -1482,8 +1481,7 @@ mod tests {
             .expect("format restores")
         } else {
             with_fresh_stores(|stores| {
-                tex_command::install_tex82_expandable_primitives(stores);
-                tex_exec::install_unexpandable_primitives(stores);
+                crate::prepare_run_stores(stores);
                 use_stores.take().expect("single fresh callback")(stores)
             })
         }
@@ -1969,8 +1967,7 @@ mod tests {
     fn etex_alphabetic_constants_preserve_control_symbol_spelling() {
         let source: Arc<[u8]> = Arc::from(&br"\endlinechar=`\^^M \newlinechar=`\^^J \end"[..]);
         with_fresh_stores(|stores| {
-            tex_command::install_tex82_expandable_primitives(stores);
-            tex_exec::install_unexpandable_primitives(stores);
+            crate::prepare_etex_run_stores(stores);
             let mut session = EngineSession::new(stores, CommandProfile::ETEX26);
             session
                 .register_authored_job("alphabetic.tex", source)
@@ -2131,7 +2128,9 @@ mod tests {
             );
 
             with_fresh_stores(|initex_stores| {
-                let mut initex = EngineSession::tex82_initex(initex_stores);
+                crate::prepare_run_stores(initex_stores);
+                let mut initex =
+                    EngineSession::prepared_initex(initex_stores, CommandProfile::TEX82);
                 initex
                     .register_authored_job("initex.tex", Arc::from(SOURCE))
                     .expect("INITEX root registers");
