@@ -1,6 +1,6 @@
 use tex_state::glue::GlueSpec;
 use tex_state::node::{Direction, GlueKind, KernKind, Node};
-use tex_state::node_sequence::{DirectHighCellLineage, FrozenListRole};
+use tex_state::node_sequence::{DirectHighCellLineage, DirectHighCellLineages, FrozenListRole};
 
 use crate::TypesetState;
 
@@ -32,7 +32,7 @@ pub struct LineMaterializer {
 
 struct ChannelCursor {
     nodes: std::vec::IntoIter<Node>,
-    high_cell_lineages: std::vec::IntoIter<Vec<DirectHighCellLineage>>,
+    high_cell_lineages: std::vec::IntoIter<DirectHighCellLineages>,
     position: usize,
     node_count: usize,
     pending_post: Vec<Node>,
@@ -165,7 +165,7 @@ impl LineMaterializer {
 }
 
 impl ChannelCursor {
-    fn new(nodes: Vec<Node>, high_cell_lineages: Vec<Vec<DirectHighCellLineage>>) -> Self {
+    fn new(nodes: Vec<Node>, high_cell_lineages: Vec<DirectHighCellLineages>) -> Self {
         let node_count = nodes.len();
         assert_eq!(node_count, high_cell_lineages.len());
         Self {
@@ -302,7 +302,7 @@ fn push_owned_line_segment<S: TypesetState>(
     state: &S,
     source: (
         &mut std::vec::IntoIter<Node>,
-        &mut std::vec::IntoIter<Vec<DirectHighCellLineage>>,
+        &mut std::vec::IntoIter<DirectHighCellLineages>,
         &mut usize,
         usize,
     ),

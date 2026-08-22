@@ -134,9 +134,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node.rs`: Storage-independent TeX node and box values with copy-only
   provenance, directly owned glue, arena-owned token payloads, and typed list
   coordinates.
-- `src/node_sequence.rs`: Paired semantic and TeX-physical operation buffers,
-  page-arena sidecar publication, TeX-cell lineage metadata, and semantic-only
-  equality.
+- `src/node_sequence.rs`: Explicit mirrored-or-distinct semantic and
+  TeX-physical operation buffers. Mirrored hot lists store one node/inline
+  lineage channel with O(1) identity projection; cold detached extraction can
+  materialize two owned channels. The module also owns page-arena sidecar
+  publication, TeX-cell lineage metadata, and semantic-only equality.
 - `src/node_arena.rs`: Scratch, page, and generation-branded durable node-list
   arenas; copy-only typed coordinates; owner-checked suffix cursors; borrowed
   resolution; and exact-root dense relocation between lifetimes.

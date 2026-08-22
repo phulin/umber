@@ -32,6 +32,44 @@ fn semantic_apply_allocations() -> tex_state::measurement::HotCoreAllocationMeas
 
 #[cfg(feature = "profiling")]
 #[test]
+fn warmed_mirrored_node_sequence_append_allocates_no_duplicate_channel_or_lineage_rows() {
+    let _serial = ALLOCATION_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut sequence = tex_state::node_sequence::NodeSequence::default();
+    for _ in 0..16_384 {
+        sequence.push_mirrored(Node::Char {
+            font: tex_state::font::NULL_FONT,
+            ch: 'a',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        });
+    }
+    sequence.truncate(0, 0);
+
+    let before = semantic_apply_allocations();
+    {
+        let _scope = tex_state::measurement::hot_core_allocation_scope(
+            tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+        );
+        for _ in 0..16_384 {
+            sequence.push_mirrored(Node::Char {
+                font: tex_state::font::NULL_FONT,
+                ch: 'a',
+                origin: tex_state::token::OriginId::UNKNOWN,
+            });
+        }
+    }
+    let after = semantic_apply_allocations();
+    assert_eq!(after.calls - before.calls, 0);
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+    assert!(std::ptr::eq(
+        sequence.semantic().as_ptr(),
+        sequence.physical().as_ptr()
+    ));
+}
+
+#[cfg(feature = "profiling")]
+#[test]
 fn warmed_mode_journal_begin_and_commit_allocate_nothing() {
     let _serial = ALLOCATION_TEST_LOCK
         .lock()

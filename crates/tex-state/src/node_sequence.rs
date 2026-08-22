@@ -2,6 +2,7 @@
 
 use crate::node::Node;
 use crate::node_arena::PageListId;
+use smallvec::SmallVec;
 
 /// Allocation identity for one direct TeX82 high-memory cell.
 ///
@@ -28,6 +29,13 @@ pub enum FrozenListRole {
     Replace,
 }
 
+/// Inline storage for the direct cells contributed by one node.
+///
+/// Ordinary character nodes contribute exactly one cell. Keeping that value
+/// inline avoids a heap allocation per character while ligatures can still
+/// spill for their uncommon multi-cell source spelling.
+pub type DirectHighCellLineages = SmallVec<[DirectHighCellLineage; 1]>;
+
 /// Counts exact direct-cell allocation identities shared by two projections.
 #[must_use]
 pub fn direct_high_cell_overlap(
@@ -51,13 +59,24 @@ pub fn direct_high_cell_overlap(
 #[derive(Clone, Debug)]
 pub struct NodeSequence {
     semantic: Vec<Node>,
-    physical: Vec<Node>,
+    projection: PhysicalProjection,
     frozen_semantic: Option<PageListId>,
     frozen_physical: Option<PageListId>,
-    physical_boundaries: Vec<usize>,
-    semantic_high_cell_lineages: Vec<Vec<DirectHighCellLineage>>,
-    physical_high_cell_lineages: Vec<Vec<DirectHighCellLineage>>,
+    semantic_high_cell_lineages: Vec<DirectHighCellLineages>,
     next_sequence_lineage_row: u32,
+}
+
+/// Explicit physical-channel state. Mirrored sequences store no duplicate
+/// nodes or lineage rows; a distinct projection is created only by a caller
+/// that supplies one, never by comparing channel content.
+#[derive(Clone, Debug)]
+enum PhysicalProjection {
+    Mirrored,
+    Distinct {
+        nodes: Vec<Node>,
+        boundaries: Vec<usize>,
+        high_cell_lineages: Vec<DirectHighCellLineages>,
+    },
 }
 
 impl Default for NodeSequence {
@@ -75,8 +94,16 @@ impl PartialEq for NodeSequence {
 impl NodeSequence {
     #[must_use]
     pub fn mirrored(nodes: Vec<Node>) -> Self {
-        let len = nodes.len();
-        Self::from_projection(nodes.clone(), nodes, (0..=len).collect())
+        let (semantic_high_cell_lineages, next_sequence_lineage_row) =
+            mirrored_high_cell_lineages(&nodes);
+        Self {
+            semantic: nodes,
+            projection: PhysicalProjection::Mirrored,
+            frozen_semantic: None,
+            frozen_physical: None,
+            semantic_high_cell_lineages,
+            next_sequence_lineage_row,
+        }
     }
 
     #[must_use]
@@ -104,12 +131,14 @@ impl NodeSequence {
             projected_high_cell_lineages(&semantic, &physical, &physical_boundaries);
         Self {
             semantic,
-            physical,
+            projection: PhysicalProjection::Distinct {
+                nodes: physical,
+                boundaries: physical_boundaries,
+                high_cell_lineages: physical_high_cell_lineages,
+            },
             frozen_semantic: None,
             frozen_physical: None,
-            physical_boundaries,
             semantic_high_cell_lineages,
-            physical_high_cell_lineages,
             next_sequence_lineage_row,
         }
     }
@@ -142,36 +171,60 @@ impl NodeSequence {
 
     #[must_use]
     pub fn physical(&self) -> &[Node] {
-        &self.physical
+        match &self.projection {
+            PhysicalProjection::Mirrored => &self.semantic,
+            PhysicalProjection::Distinct { nodes, .. } => nodes,
+        }
     }
 
     #[must_use]
     pub fn physical_boundary(&self, semantic_boundary: usize) -> Option<usize> {
-        self.physical_boundaries.get(semantic_boundary).copied()
+        match &self.projection {
+            PhysicalProjection::Mirrored => {
+                (semantic_boundary <= self.semantic.len()).then_some(semantic_boundary)
+            }
+            PhysicalProjection::Distinct { boundaries, .. } => {
+                boundaries.get(semantic_boundary).copied()
+            }
+        }
     }
 
     #[must_use]
-    pub fn semantic_high_cell_lineages(&self) -> &[Vec<DirectHighCellLineage>] {
+    pub fn semantic_high_cell_lineages(&self) -> &[DirectHighCellLineages] {
         &self.semantic_high_cell_lineages
     }
 
     #[must_use]
-    pub fn physical_high_cell_lineages(&self) -> &[Vec<DirectHighCellLineage>] {
-        &self.physical_high_cell_lineages
+    pub fn physical_high_cell_lineages(&self) -> &[DirectHighCellLineages] {
+        match &self.projection {
+            PhysicalProjection::Mirrored => &self.semantic_high_cell_lineages,
+            PhysicalProjection::Distinct {
+                high_cell_lineages, ..
+            } => high_cell_lineages,
+        }
     }
 
     pub fn take(self) -> (Vec<Node>, Vec<Node>) {
-        (self.semantic, self.physical)
+        match self.projection {
+            PhysicalProjection::Mirrored => {
+                let physical = self.semantic.clone();
+                (self.semantic, physical)
+            }
+            PhysicalProjection::Distinct { nodes, .. } => (self.semantic, nodes),
+        }
     }
 
     pub fn into_parts(self) -> (Vec<Node>, Vec<Node>, Vec<usize>) {
-        let Self {
-            semantic,
-            physical,
-            physical_boundaries,
-            ..
-        } = self;
-        (semantic, physical, physical_boundaries)
+        match self.projection {
+            PhysicalProjection::Mirrored => {
+                let physical = self.semantic.clone();
+                let boundaries = (0..=self.semantic.len()).collect();
+                (self.semantic, physical, boundaries)
+            }
+            PhysicalProjection::Distinct {
+                nodes, boundaries, ..
+            } => (self.semantic, nodes, boundaries),
+        }
     }
 
     pub fn push_mirrored(&mut self, node: Node) {
@@ -182,11 +235,23 @@ impl NodeSequence {
             .checked_add(1)
             .expect("node sequence lineage rows exceed u32");
         let lineages = direct_high_cell_lineages(&node, row);
-        self.semantic.push(node.clone());
-        self.physical.push(node);
-        self.physical_boundaries.push(self.physical.len());
-        self.semantic_high_cell_lineages.push(lineages.clone());
-        self.physical_high_cell_lineages.push(lineages);
+        match &mut self.projection {
+            PhysicalProjection::Mirrored => {
+                self.semantic.push(node);
+                self.semantic_high_cell_lineages.push(lineages);
+            }
+            PhysicalProjection::Distinct {
+                nodes,
+                boundaries,
+                high_cell_lineages,
+            } => {
+                self.semantic.push(node.clone());
+                nodes.push(node);
+                boundaries.push(nodes.len());
+                self.semantic_high_cell_lineages.push(lineages.clone());
+                high_cell_lineages.push(lineages);
+            }
+        }
     }
 
     pub fn extend_mirrored(&mut self, nodes: impl IntoIterator<Item = Node>) {
@@ -206,23 +271,33 @@ impl NodeSequence {
     pub fn mutate_semantic<R>(&mut self, mutate: impl FnOnce(&mut Vec<Node>) -> R) -> R {
         self.invalidate_frozen_sidecars();
         let result = mutate(&mut self.semantic);
-        self.physical = self.semantic.clone();
-        self.physical_boundaries = (0..=self.semantic.len()).collect();
-        let (semantic, physical, next_sequence_lineage_row) =
-            projected_high_cell_lineages(&self.semantic, &self.physical, &self.physical_boundaries);
+        self.projection = PhysicalProjection::Mirrored;
+        let (semantic, next_sequence_lineage_row) = mirrored_high_cell_lineages(&self.semantic);
         self.semantic_high_cell_lineages = semantic;
-        self.physical_high_cell_lineages = physical;
         self.next_sequence_lineage_row = next_sequence_lineage_row;
         result
     }
 
     pub fn truncate(&mut self, semantic_len: usize, physical_len: usize) {
         self.invalidate_frozen_sidecars();
+        if matches!(self.projection, PhysicalProjection::Mirrored) {
+            assert_eq!(
+                semantic_len, physical_len,
+                "mirrored channels must roll back to one common cursor"
+            );
+        }
         self.semantic.truncate(semantic_len);
-        self.physical.truncate(physical_len);
-        self.physical_boundaries.truncate(semantic_len + 1);
         self.semantic_high_cell_lineages.truncate(semantic_len);
-        self.physical_high_cell_lineages.truncate(physical_len);
+        if let PhysicalProjection::Distinct {
+            nodes,
+            boundaries,
+            high_cell_lineages,
+        } = &mut self.projection
+        {
+            nodes.truncate(physical_len);
+            boundaries.truncate(semantic_len + 1);
+            high_cell_lineages.truncate(physical_len);
+        }
     }
 
     /// Materializes immutable node/reachability/provenance sidecars at an
@@ -233,7 +308,12 @@ impl NodeSequence {
             self.frozen_semantic = Some(universe.publish_page_nodes(&self.semantic));
         }
         if self.frozen_physical.is_none() {
-            self.frozen_physical = Some(universe.publish_page_nodes(&self.physical));
+            self.frozen_physical = match &self.projection {
+                PhysicalProjection::Mirrored => self.frozen_semantic,
+                PhysicalProjection::Distinct { nodes, .. } => {
+                    Some(universe.publish_page_nodes(nodes))
+                }
+            };
         }
     }
 
@@ -253,12 +333,12 @@ fn projected_high_cell_lineages(
     physical: &[Node],
     boundaries: &[usize],
 ) -> (
-    Vec<Vec<DirectHighCellLineage>>,
-    Vec<Vec<DirectHighCellLineage>>,
+    Vec<DirectHighCellLineages>,
+    Vec<DirectHighCellLineages>,
     u32,
 ) {
     let mut semantic_lineages = Vec::with_capacity(semantic.len());
-    let mut physical_lineages = vec![Vec::new(); physical.len()];
+    let mut physical_lineages = vec![DirectHighCellLineages::new(); physical.len()];
     let mut next_unpaired_row =
         u32::try_from(semantic.len()).expect("node sequence exceeds u32 rows");
     for (semantic_row, node) in semantic.iter().enumerate() {
@@ -282,7 +362,22 @@ fn projected_high_cell_lineages(
     (semantic_lineages, physical_lineages, next_unpaired_row)
 }
 
-fn direct_high_cell_lineages(node: &Node, row: u32) -> Vec<DirectHighCellLineage> {
+fn mirrored_high_cell_lineages(nodes: &[Node]) -> (Vec<DirectHighCellLineages>, u32) {
+    let lineages = nodes
+        .iter()
+        .enumerate()
+        .map(|(row, node)| {
+            direct_high_cell_lineages(
+                node,
+                u32::try_from(row).expect("node sequence exceeds u32 rows"),
+            )
+        })
+        .collect();
+    let next = u32::try_from(nodes.len()).expect("node sequence exceeds u32 rows");
+    (lineages, next)
+}
+
+fn direct_high_cell_lineages(node: &Node, row: u32) -> DirectHighCellLineages {
     let count = match node {
         Node::Char { .. } => 1,
         Node::Lig { orig, .. } => orig.len(),
@@ -300,6 +395,7 @@ fn direct_high_cell_lineages(node: &Node, row: u32) -> Vec<DirectHighCellLineage
 mod tests {
     use super::*;
     use crate::font::NULL_FONT;
+    use crate::interner::InternerBudget;
     use crate::token::OriginId;
 
     fn char_node(ch: char) -> Node {
@@ -417,5 +513,79 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>();
         assert_eq!(direct_high_cell_overlap(&semantic, &physical), 0);
+    }
+
+    #[test]
+    fn mirrored_projection_aliases_nodes_lineages_and_identity_boundaries() {
+        let sequence = NodeSequence::mirrored(vec![char_node('A'), Node::Penalty(7)]);
+        assert!(std::ptr::eq(
+            sequence.semantic().as_ptr(),
+            sequence.physical().as_ptr()
+        ));
+        assert!(std::ptr::eq(
+            sequence.semantic_high_cell_lineages().as_ptr(),
+            sequence.physical_high_cell_lineages().as_ptr()
+        ));
+        assert_eq!(sequence.physical_boundary(0), Some(0));
+        assert_eq!(sequence.physical_boundary(2), Some(2));
+        assert_eq!(sequence.physical_boundary(3), None);
+    }
+
+    #[test]
+    fn explicit_distinct_projection_remains_distinct_after_mirrored_append() {
+        let mut sequence = NodeSequence::mirrored(vec![Node::Penalty(0)]);
+        sequence.replace_channels(vec![Node::Penalty(1)], vec![Node::Penalty(2)]);
+        sequence.push_mirrored(Node::Penalty(3));
+        assert_eq!(sequence.semantic(), &[Node::Penalty(1), Node::Penalty(3)]);
+        assert_eq!(sequence.physical(), &[Node::Penalty(2), Node::Penalty(3)]);
+        assert!(!std::ptr::eq(
+            sequence.semantic().as_ptr(),
+            sequence.physical().as_ptr()
+        ));
+    }
+
+    #[test]
+    fn mirrored_truncation_preserves_aliasing_and_lineage_rows() {
+        let mut sequence = NodeSequence::mirrored(vec![char_node('A')]);
+        sequence.push_mirrored(char_node('B'));
+        sequence.truncate(1, 1);
+        sequence.push_mirrored(char_node('C'));
+        assert!(std::ptr::eq(
+            sequence.semantic().as_ptr(),
+            sequence.physical().as_ptr()
+        ));
+        assert_eq!(
+            sequence.semantic_high_cell_lineages()[1][0],
+            DirectHighCellLineage::Sequence { row: 2, unit: 0 }
+        );
+    }
+
+    #[test]
+    fn mirrored_sidecars_share_one_published_page_list() {
+        let budget = InternerBudget::new(32, 32, 1024).expect("budget");
+        crate::with_universe(budget, |universe| {
+            let mut sequence = NodeSequence::mirrored(vec![Node::Penalty(7)]);
+            sequence.publish_sidecars(universe);
+            let (semantic, physical) = sequence.frozen_sidecars().expect("published sidecars");
+            assert_eq!(semantic, physical);
+            assert_eq!(
+                universe
+                    .page_node_list(semantic)
+                    .expect("published page list")
+                    .nodes(),
+                &[Node::Penalty(7)]
+            );
+
+            sequence.push_mirrored(Node::Penalty(8));
+            assert_eq!(sequence.frozen_sidecars(), None);
+        })
+        .expect("fresh universe");
+    }
+
+    #[test]
+    fn semantic_equality_ignores_explicit_projection_storage() {
+        let mirrored = NodeSequence::mirrored(vec![Node::Penalty(1)]);
+        let distinct = NodeSequence::from_channels(vec![Node::Penalty(1)], vec![Node::Penalty(99)]);
+        assert_eq!(mirrored, distinct);
     }
 }
