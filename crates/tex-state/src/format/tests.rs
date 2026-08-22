@@ -25,6 +25,43 @@ fn image() -> DetachedFormatImage {
     .expect("fresh universe")
 }
 
+#[test]
+fn format_capture_disables_texxet_enhancement_without_mutating_the_source() {
+    crate::with_universe(
+        crate::interner::InternerBudget::new(16, 16, 256).expect("budget"),
+        |universe| {
+            universe
+                .assign_int_param(
+                    crate::env::banks::IntParam::TEX_XET_STATE,
+                    1,
+                    crate::AssignmentScope::Global,
+                )
+                .expect("enable TeXXeT in the producing job");
+            let image = universe.capture_format_image().expect("capture format");
+            assert_eq!(
+                universe.int_param(crate::env::banks::IntParam::TEX_XET_STATE),
+                1,
+                "detached format capture must not mutate the producing job"
+            );
+
+            crate::with_materialized_format(
+                crate::interner::InternerBudget::new(16, 16, 256).expect("destination budget"),
+                crate::World::memory(),
+                &image,
+                |loaded| {
+                    assert_eq!(
+                        loaded.int_param(crate::env::banks::IntParam::TEX_XET_STATE),
+                        0,
+                        "e-TeX change 17.11 disables enhancements before dumping eqtb"
+                    );
+                },
+            )
+            .expect("materialize canonical format");
+        },
+    )
+    .expect("fresh format source");
+}
+
 fn test_font() -> LoadedFont {
     LoadedFont::new(
         "formatfont",

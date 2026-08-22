@@ -281,10 +281,24 @@ impl DetachedFormatImage {
             )
             .map_err(FormatError::InvalidState)?
             .ok_or(FormatError::NonEmptyPdfDocument)?;
-        let cells = core
+        let mut cells = core
             .state()
             .capture_format_cells(|nodes| node_lists.capture_root(nodes))
             .map_err(FormatError::InvalidState)?;
+        // e-TeX change 17.11's `Dump the e-TeX state` writes the extended-mode
+        // bit to the format header, then disables every optional enhancement
+        // before tex.web's table-of-equivalents dump. `TeXXeTstate` is the
+        // sole e-TeX state cell, so it must not enter the portable eqtb image.
+        // Filter the detached rows rather than mutating the admitted source:
+        // validation failures and allocation failures therefore remain
+        // mutation-free, as required by the format-capture boundary.
+        cells.retain(|cell| {
+            !matches!(
+                cell,
+                FormatCell::IntegerParameter(index, _)
+                    if *index == crate::env::banks::IntParam::TEX_XET_STATE.raw()
+            )
+        });
         let (cells, codes): (Vec<_>, Vec<_>) = cells
             .into_iter()
             .partition(|cell| !matches!(cell, FormatCell::Code { .. }));
