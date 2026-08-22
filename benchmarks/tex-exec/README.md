@@ -47,3 +47,9 @@ There is no admitted-root kernel, comparison adapter, coverage fallback, or
 runtime engine choice. Correctness remains owned by the repository's external
 fixtures and oracle workloads. Historical migration measurements and the final
 canonical cutover are recorded in `docs/native_batch_kernel.md`.
+
+The executable also enforces a fixed-plus-linear allocation-call ceiling. It
+deliberately reports, but does not gate, requested bytes because its timed
+region includes explicit cold page-artifact and DVI materialization; warmed
+ownership and list-mutation allocation ceilings are enforced by their focused
+profiling gates instead.

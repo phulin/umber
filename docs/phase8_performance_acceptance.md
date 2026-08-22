@@ -100,3 +100,28 @@ cargo bench --manifest-path benchmarks/tex-incr/Cargo.toml \
 
 The state script retains its established operator entry point, but now runs the
 final state/generation gate rather than the deleted snapshot-retention model.
+
+The canonical episode preflight found and removed two ordinary-operation costs:
+mode rollback cloned the complete pending horizontal run at every journal open,
+and dependency-region mode/last-node projections were hashed even when no
+region was active. The final journal records fixed field positions and lazy
+move/projection inverses in retained buffers; tracked projection hashing now
+runs only inside the active observation boundary. Focused profiling proves
+zero allocations across 16,384 warmed begin/commit cycles and 16,384 mutations
+and rollbacks of a 4,097-character pending run. The tracked and untracked paths
+retain identical committed outcomes, while an ordinary operation performs zero
+mode projection hashes.
+
+With fixed clock and locale, the standalone production workloads recorded:
+
+- 89,551 direct calls: 10.120 seconds engine time, 2,239,825 allocation calls,
+  206,700 KiB peak RSS, and exact coordinates
+  `(6000000,5820898,4119365,1791055,179102)`;
+- 179,103 direct calls: 29.672 seconds, 4,478,642 calls, 406,100 KiB peak RSS,
+  and `(12000000,11641794,8238757,3582111,358206)`;
+- 20,000 nested calls: 1.987 seconds, 481,036 calls, 51,264 KiB peak RSS, and
+  `(1380089,1340089,920019,410029,40000)`.
+
+These synthetic episode probes are standalone scaling evidence, not the
+150 MiB/20 second numerical authority; that authority remains the pinned
+`2606.12566` build above.
