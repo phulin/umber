@@ -1323,6 +1323,7 @@ dependencies = [
  "getrandom 0.3.4",
  "proptest",
  "tempfile",
+ "test-support",
  "tex-command",
  "tex-exec",
  "tex-fonts",

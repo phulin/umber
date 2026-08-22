@@ -574,6 +574,31 @@ fn incremental_terminal_values_forbid_live_and_parallel_output_owners() {
             );
         }
     }
+
+    for declaration in [
+        "pub struct RevisionTransaction {",
+        "pub struct RevisionCandidate {",
+    ] {
+        let fields = declaration_fields(source, declaration);
+        assert!(
+            !fields.contains("prior_generation"),
+            "current typestate retained the prior generation: {fields}"
+        );
+    }
+
+    let history_source = include_str!("history.rs");
+    let fields = declaration_fields(history_source, "pub struct BoundaryRecord {");
+    for forbidden in [
+        "RetainedEngineGeneration",
+        "RetainedCheckpointKey",
+        "GenerationOwner",
+        "Universe",
+    ] {
+        assert!(
+            !fields.contains(forbidden),
+            "detached history retained {forbidden}: {fields}"
+        );
+    }
 }
 
 #[test]
@@ -666,6 +691,57 @@ fn zero_history_budget_retires_only_complete_old_generations() {
         incremental.retained_revision_ids().collect::<Vec<_>>(),
         vec![RevisionId::new(4)]
     );
+}
+
+#[test]
+fn rejection_drops_only_current_and_acceptance_drops_whole_prior() {
+    let mut incremental = session(RevisionId::new(1), "\\relax\\end");
+    incremental.cold().expect("accepted prior");
+    let prior = incremental
+        .prior_generation
+        .as_ref()
+        .expect("prior generation")
+        .generation
+        .witness();
+
+    let mut rejected = incremental
+        .start_advance_candidate(RevisionId::new(2), edit(&incremental, 0..0, "\\relax "))
+        .expect("candidate");
+    drive_synchronous_candidate(&mut rejected, &mut DirectResourceHost).expect("drive candidate");
+    let rejected_generation = rejected
+        .generation
+        .as_ref()
+        .expect("current generation")
+        .witness();
+    assert!(prior.is_live());
+    assert!(rejected_generation.is_live());
+    assert_eq!(incremental.retained_generation_count(), 1);
+    drop(rejected);
+    assert!(prior.is_live(), "rejection preserves prior wholesale");
+    assert!(
+        !rejected_generation.is_live(),
+        "rejection drops current wholesale"
+    );
+
+    let mut accepted = incremental
+        .start_advance_candidate(RevisionId::new(2), edit(&incremental, 0..0, "\\relax "))
+        .expect("replacement candidate");
+    drive_synchronous_candidate(&mut accepted, &mut DirectResourceHost).expect("drive replacement");
+    let current = accepted
+        .generation
+        .as_ref()
+        .expect("current generation")
+        .witness();
+    let transaction = incremental
+        .prepare_revision_candidate(accepted)
+        .expect("prepare acceptance");
+    incremental
+        .accept_revision(transaction)
+        .expect("accept current");
+    assert!(!prior.is_live(), "acceptance drops the former prior");
+    assert!(current.is_live(), "current becomes the sole accepted prior");
+    assert_eq!(incremental.retained_generation_count(), 1);
+    assert_eq!(incremental.retired_generation_count(), 1);
 }
 
 /// Deterministic edit fuzzing is deliberately an explicit tier: it executes a

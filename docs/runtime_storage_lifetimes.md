@@ -432,33 +432,30 @@ Restore is atomic and follows this order:
 Any validation failure leaves the runtime unchanged. Reusing a physical arena
 slot requires a new generation key before another id can name it.
 
-## Incremental revisions and compaction
+## Incremental revisions and two-generation ownership
 
-Each accepted incremental revision owns its generation bundle: immutable
-definitions, durable nodes, generation-local source/provenance storage, dense
-state and journal coordinates, and any parent immutable generations named by
-its roots. A candidate revision owns its private attempt and generation
-suffixes until acceptance or rejection. Revision history retains generation
-owners only through explicit checkpoint roots.
+An incremental session has at most two live runtime generations: the prior
+accepted generation and one current candidate. They are admitted under
+distinct invariant generative brands. Prior admission is read-only; every
+revision-local allocation and mutable root belongs to current. Candidate
+execution may compare detached evidence from prior, but an accepted current
+root cannot contain a prior-generation id or owner.
 
-History pruning drops complete unreferenced revision generations. It does not
-delete individual arena rows. When retained history would otherwise violate a
-session storage budget, `tex-incr` may perform cold whole-generation
-compaction after pruning:
+Rejection drops current wholesale and leaves prior unchanged. Acceptance first
+validates current-generation locality without mutation, then consumes current,
+promotes its coarse owner to the accepted slot, and drops the complete former
+prior generation. History retains only detached semantic evidence, hashes,
+schedules, and output prefixes. It never retains a live checkpoint or
+generation owner.
 
-1. enumerate the canonical typed roots in retained dense state, journals,
-   stacks, checkpoints, and unpublished page state;
-2. allocate an entirely new generation bundle;
-3. copy the reachable rows in typed storage order while building dense
-   old-to-new relocation vectors;
-4. rewrite every retained root and child id to the new generation;
-5. validate the complete replacement and atomically publish it; and
-6. retire the old generation bundle.
-
-This is a cold, explicit root traversal, not ordinary read behavior. It never
-uses content equality to merge values. There is no in-place compaction, slot
-sliding under live ids, forwarding pointer, background object collector, or
-partially remapped visible generation.
+There is no runtime compactor, relocation map, generation graph, forwarding
+pointer, slab splice, row-level collector, or content-equality merge. Routine
+edits do not clone the prior runtime graph. The current generation rebuilds
+only the state required by execution in its own append-only arenas; explicit
+format, artifact, and detached-continuation boundaries are the only cold copy
+paths. Reclamation is the O(1) drop of a whole untracked generation. Obsolete
+rows inside the accepted current generation therefore remain until that
+generation is replaced or the session resets.
 
 ## Detached boundaries
 
@@ -510,10 +507,10 @@ node-building lifetimes, commit promotion, resource/effect barriers, shipout
 detachment, and the ordering of aggregate restore. It cannot construct state
 ids or publish partial promoted values.
 
-`tex-incr` owns revision generation bundles, named checkpoint retention,
-history pruning, candidate acceptance/rejection, convergence comparison, and
-cold whole-generation compaction. It operates through typed state roots and
-relocation APIs; it does not inspect private arena storage.
+`tex-incr` owns the prior/current generation state machine, detached named
+checkpoint evidence, history pruning, candidate acceptance/rejection, and
+convergence comparison. It never relocates runtime roots or inspects private
+arena storage.
 
 `tex-out` accepts only validated handle-free page plans, artifacts, source
 recipes, and output DTOs. It owns serialization and output-specific lowering.

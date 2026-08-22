@@ -271,8 +271,8 @@ impl AcceptedOutput {
 /// Borrowed terminal resource-discovery view.
 ///
 /// Construction is possible only after a candidate reaches terminal
-/// completion.  Every exposed value is owned by the detached completion; the
-/// runtime generation has already been dropped.
+/// completion. Every exposed value is owned by the detached completion; the
+/// current runtime generation remains private until acceptance or rejection.
 #[derive(Clone, Copy, Debug)]
 pub struct CompletionResourceDiscovery<'a> {
     output_id: RenderedOutputId,
@@ -1136,7 +1136,6 @@ struct RetainedRevisionGeneration {
     revision: RevisionId,
     generation: tex_exec::RetainedEngineGeneration,
     checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
-    charged_bytes: usize,
 }
 
 impl RenderMapCache {
@@ -1224,7 +1223,10 @@ pub struct Session {
     initex: bool,
     expansion_stats: ExpansionStats,
     render_maps: RefCell<RenderMapCache>,
-    retained_generations: VecDeque<RetainedRevisionGeneration>,
+    /// The sole accepted runtime generation. A candidate owns the only other
+    /// generation while it is being driven; detached history never enters
+    /// this slot.
+    prior_generation: Option<RetainedRevisionGeneration>,
     retired_generations: usize,
 }
 
@@ -1341,7 +1343,7 @@ impl Session {
             initex: true,
             expansion_stats: ExpansionStats::default(),
             render_maps: RefCell::new(RenderMapCache::new(usize::MAX)),
-            retained_generations: VecDeque::new(),
+            prior_generation: None,
             retired_generations: 0,
         })
     }
@@ -1477,19 +1479,19 @@ impl Session {
 
     #[must_use]
     pub fn retained_generation_count(&self) -> usize {
-        self.retained_generations.len()
+        usize::from(self.prior_generation.is_some())
     }
 
     pub fn retained_revision_ids(&self) -> impl Iterator<Item = RevisionId> + '_ {
-        self.retained_generations
+        self.prior_generation
             .iter()
             .map(|generation| generation.revision)
     }
 
     #[must_use]
     pub fn current_retained_checkpoint_count(&self) -> usize {
-        self.retained_generations
-            .back()
+        self.prior_generation
+            .as_ref()
             .map_or(0, |generation| generation.checkpoint_keys.len())
     }
 
@@ -1728,27 +1730,22 @@ impl Session {
             .collect::<Vec<_>>();
         let mut generation = transaction.generation;
         generation
+            .preflight_terminal(&retained_checkpoint_keys)
+            .map_err(SessionError::RetainedEngine)?;
+        generation
             .prune_checkpoints(&retained_checkpoint_keys)
             .map_err(SessionError::RetainedEngine)?;
-        let incoming_generation_bytes = std::mem::size_of::<RetainedRevisionGeneration>()
-            .saturating_add(
-                retained_checkpoint_keys
-                    .len()
-                    .saturating_mul(std::mem::size_of::<tex_exec::RetainedCheckpointKey>()),
-            );
-        while !self.retained_generations.is_empty()
-            && self
-                .retained_generations
-                .iter()
-                .map(|generation| generation.charged_bytes)
-                .sum::<usize>()
-                .saturating_add(incoming_generation_bytes)
-                > self.checkpoint_budget
-        {
-            let previous = self
-                .retained_generations
-                .pop_front()
-                .expect("nonempty retained history has an oldest generation");
+        // All fallible current-generation validation and root pruning happens
+        // before either accepted metadata or the prior owner changes. The
+        // current generation was constructed independently under its own
+        // HRTB brand, so its checkpoint roots cannot contain a prior id.
+        let incoming = RetainedRevisionGeneration {
+            revision: transaction.revision,
+            generation,
+            checkpoint_keys: retained_checkpoint_keys,
+        };
+        let previous = self.prior_generation.take();
+        if let Some(previous) = previous {
             previous
                 .generation
                 .retire()
@@ -1762,13 +1759,7 @@ impl Session {
         self.layout = transaction.layout;
         self.content_hash = transaction.content_hash;
         self.history = pruned.records;
-        self.retained_generations
-            .push_back(RetainedRevisionGeneration {
-                revision: transaction.revision,
-                generation,
-                checkpoint_keys: retained_checkpoint_keys,
-                charged_bytes: incoming_generation_bytes,
-            });
+        self.prior_generation = Some(incoming);
         self.dependencies = transaction.dependencies;
         self.expansion_stats = transaction.expansion_stats;
         self.render_maps.borrow_mut().clear();

@@ -140,13 +140,13 @@ pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetri
     }
 }
 
-/// Prunes observations before generation compaction is considered.
+/// Prunes detached observations without retaining runtime generations.
 ///
 /// Job start and the newest observation remain named durable roots. Paragraph
 /// checkpoints are selected first because they are the densest optional
-/// restart family. The generation owner attached to each surviving record is
-/// added by the phase-7 retained-generation boundary; this selection policy
-/// deliberately knows nothing about row-level storage.
+/// restart family. The surviving records contain semantic evidence and
+/// checkpoint descriptors only; the session's sole prior-generation owner is
+/// independent of their count and lifetime.
 pub(crate) struct PrunedHistory {
     pub(crate) records: Vec<BoundaryRecord>,
     pub(crate) retained_indices: Vec<usize>,

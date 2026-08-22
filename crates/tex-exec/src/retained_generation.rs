@@ -2,6 +2,7 @@
 
 use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
 
 use tex_state::{
     DetachedFormatImage, FormatError, RetainedAttachmentKey, RetainedStateAccessError,
@@ -146,6 +147,7 @@ pub enum RetainedEngineAccessError {
     StaleCheckpoint,
     StaleAttachment,
     AttachmentTypeMismatch,
+    LiveAttachment,
     State(RetainedStateAccessError),
 }
 
@@ -190,6 +192,19 @@ pub struct RetainedEngineGeneration {
     generation: u64,
     state: RetainedStateGeneration,
     sidecars: RetainedAttachmentKey,
+    liveness: Arc<()>,
+}
+
+/// Weak coarse-owner witness used by lifecycle tests and host diagnostics.
+/// It retains no runtime row, arena, checkpoint, or generation coordinate.
+#[derive(Clone, Debug)]
+pub struct RetainedEngineGenerationWitness(Weak<()>);
+
+impl RetainedEngineGenerationWitness {
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.0.strong_count() != 0
+    }
 }
 
 impl core::fmt::Debug for RetainedEngineGeneration {
@@ -210,6 +225,7 @@ impl RetainedEngineGeneration {
             generation,
             state,
             sidecars,
+            liveness: Arc::new(()),
         })
     }
 
@@ -225,6 +241,7 @@ impl RetainedEngineGeneration {
             generation,
             state,
             sidecars,
+            liveness: Arc::new(()),
         })
     }
 
@@ -237,6 +254,21 @@ impl RetainedEngineGeneration {
             sidecars: &self.sidecars,
             operation,
         })
+    }
+
+    #[must_use]
+    pub fn witness(&self) -> RetainedEngineGenerationWitness {
+        RetainedEngineGenerationWitness(Arc::downgrade(&self.liveness))
+    }
+
+    /// Mutation-free terminal preflight. Every retained root is statically
+    /// branded by this admitted generation; this validates the remaining
+    /// owner-relative packed keys and proves no suspended episode survives.
+    pub fn preflight_terminal(
+        &mut self,
+        retained: &[RetainedCheckpointKey],
+    ) -> Result<(), RetainedEngineAccessError> {
+        self.with_admitted(PreflightTerminal { retained })?
     }
 
     /// Drops optional checkpoint roots only after validating the complete
@@ -257,6 +289,33 @@ impl RetainedEngineGeneration {
 
 struct PruneCheckpoints<'a> {
     retained: &'a [RetainedCheckpointKey],
+}
+
+struct PreflightTerminal<'a> {
+    retained: &'a [RetainedCheckpointKey],
+}
+
+impl RetainedEngineOperation for PreflightTerminal<'_> {
+    type Output = Result<(), RetainedEngineAccessError>;
+
+    fn run<G: 'static>(self, admitted: AdmittedEngineGeneration<'_, G>) -> Self::Output {
+        if admitted.sidecars.attachments.iter().any(Option::is_some) {
+            return Err(RetainedEngineAccessError::LiveAttachment);
+        }
+        for key in self.retained {
+            validate_checkpoint_key(admitted.generation, key)?;
+            if admitted
+                .sidecars
+                .checkpoints
+                .get(key.slot)
+                .and_then(Option::as_ref)
+                .is_none()
+            {
+                return Err(RetainedEngineAccessError::StaleCheckpoint);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl RetainedEngineOperation for PruneCheckpoints<'_> {
