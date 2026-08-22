@@ -1671,7 +1671,7 @@ pub fn run_memory_collecting_artifacts_with_profile<G>(
     let mut host = FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
     let mut session = EngineSession::new(stores, profile);
     session.project_terminal_text_to_root_body();
-    session.register_retained_root_with_invocation(
+    session.register_retained_fragment_with_invocation(
         "texput",
         "texput",
         SourceRegistration::new(
