@@ -6,7 +6,9 @@ use tex_state::measurement::{
     HotCoreAllocationMeasurement, HotCoreAllocationOwner, HotCoreAllocator, hot_core_census,
     retained_generation_census,
 };
-use tex_state::node::Node;
+use tex_state::node::{Node, NodeTokenList};
+use tex_state::page::PageMark;
+use tex_state::token::{Token, TokenWord};
 use tex_state::{
     AssignmentScope, RetainedStateGeneration, SessionInternerEpoch, World, with_universe,
 };
@@ -34,14 +36,15 @@ fn main() {
     let enforce = std::env::args().any(|argument| argument == "--enforce");
     let mut failures = Vec::new();
 
-    let (reads, writes, page_queue) = hot_state_gate();
+    let (reads, writes, page_queue, mark_classes) = hot_state_gate();
     check_zero("warmed direct reads", reads, &mut failures);
     check_zero("warmed same-cell writes", writes, &mut failures);
     check_zero("warmed page queue", page_queue, &mut failures);
+    check_zero("warmed mark classes", mark_classes, &mut failures);
     generation_lifecycle_gate(&mut failures);
 
     println!(
-        "FINAL_STATE_GATE direct_reads={} reads_allocations={} reads_bytes={} warm_writes={} writes_allocations={} writes_bytes={} page_nodes={} page_allocations={} page_bytes={}",
+        "FINAL_STATE_GATE direct_reads={} reads_allocations={} reads_bytes={} warm_writes={} writes_allocations={} writes_bytes={} page_nodes={} page_allocations={} page_bytes={} mark_operations={} mark_allocations={} mark_bytes={}",
         DIRECT_READS,
         reads.calls,
         reads.requested_bytes,
@@ -51,6 +54,9 @@ fn main() {
         PAGE_QUEUE_LEN,
         page_queue.calls,
         page_queue.requested_bytes,
+        WARM_WRITES,
+        mark_classes.calls,
+        mark_classes.requested_bytes,
     );
 
     if failures.is_empty() {
@@ -68,7 +74,12 @@ fn main() {
     }
 }
 
-fn hot_state_gate() -> (AllocationDelta, AllocationDelta, AllocationDelta) {
+fn hot_state_gate() -> (
+    AllocationDelta,
+    AllocationDelta,
+    AllocationDelta,
+    AllocationDelta,
+) {
     with_universe(engine_budget(), |universe| {
         let symbol = universe
             .intern("phase-eight-direct-read")
@@ -138,7 +149,27 @@ fn hot_state_gate() -> (AllocationDelta, AllocationDelta, AllocationDelta) {
                 );
             }
         });
-        (reads, writes, page_queue)
+        let mark_words =
+            NodeTokenList::new(vec![TokenWord::pack(Token::param(1))].into_boxed_slice());
+        {
+            let mut context = universe.command_context().expect("page context");
+            context.set_page_mark_class(PageMark::Bot, 32_767, mark_words);
+        }
+        let mark_classes = measure(HotCoreAllocationOwner::SemanticApply, || {
+            let mut context = universe.command_context().expect("page context");
+            for _ in 0..WARM_WRITES {
+                black_box(
+                    context
+                        .page_mark_class_value(PageMark::Bot, 32_767)
+                        .expect("sparse mark class remains live")
+                        .words()
+                        .len(),
+                );
+                context.set_page_mark_class(PageMark::Top, 32_767, NodeTokenList::default());
+                context.clear_page_mark_class(PageMark::Top, 32_767);
+            }
+        });
+        (reads, writes, page_queue, mark_classes)
     })
     .expect("final state gate universe")
 }

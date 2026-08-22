@@ -59,6 +59,65 @@ fn scalar_and_class_marks_store_handle_free_page_values() {
     assert!(page.mark_class(PageMark::SplitFirst, 19).is_empty());
 }
 
+#[test]
+fn sparse_mark_classes_use_dense_positions_and_canonical_order() {
+    let mut page = PageBuilderState::default();
+    let low = tokens(&[Token::param(1)]);
+    let middle = tokens(&[Token::param(2)]);
+    let high = tokens(&[Token::param(3)]);
+    page.set_mark_class(PageMark::Bot, 32_767, high.clone());
+    page.set_mark_class(PageMark::First, 7, low.clone());
+    page.set_mark_class(PageMark::SplitBot, 255, middle.clone());
+
+    assert_eq!(page.mark_class_ids().collect::<Vec<_>>(), [7, 255, 32_767]);
+    assert_eq!(page.mark_class(PageMark::Bot, 32_767), high);
+    assert_eq!(page.mark_class(PageMark::First, 7), low);
+
+    let mut same_semantics = PageBuilderState::default();
+    same_semantics.set_mark_class(PageMark::First, 7, low.clone());
+    same_semantics.set_mark_class(PageMark::SplitBot, 255, middle.clone());
+    same_semantics.set_mark_class(PageMark::Bot, 32_767, high.clone());
+    assert_eq!(
+        hash_page(&same_semantics),
+        hash_page(&page),
+        "class activation order does not affect canonical hashing"
+    );
+
+    page.clear_mark_class(PageMark::SplitBot, 255);
+    page.set_mark_class(PageMark::Top, 128, middle.clone());
+    assert_eq!(page.mark_class_ids().collect::<Vec<_>>(), [7, 128, 32_767]);
+    assert_eq!(page.mark_class(PageMark::Top, 128), middle);
+    assert!(page.mark_class(PageMark::SplitBot, 255).is_empty());
+}
+
+#[test]
+fn runtime_checkpoint_restores_sparse_mark_class_positions() {
+    let budget = crate::interner::InternerBudget::new(64, 64, 4096).expect("test budget");
+    crate::with_universe(budget, |universe| {
+        let expected = tokens(&[Token::param(4)]);
+        {
+            let mut context = universe.command_context().expect("command context");
+            context.set_page_mark_class(PageMark::Bot, 32_767, expected.clone());
+        }
+        let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
+        {
+            let mut context = universe.command_context().expect("command context");
+            context.clear_page_mark_class(PageMark::Bot, 32_767);
+            context.set_page_mark_class(PageMark::First, 9, tokens(&[Token::param(9)]));
+        }
+        universe
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("runtime checkpoint restores");
+        let context = universe.command_context().expect("command context");
+        assert_eq!(
+            context.page_mark_class_value(PageMark::Bot, 32_767),
+            Some(&expected)
+        );
+        assert_eq!(context.page_mark_classes().collect::<Vec<_>>(), [32_767]);
+    })
+    .expect("test universe");
+}
+
 fn hash_page(page: &PageBuilderState) -> u64 {
     let mut hasher = StateHasher::new_exact(0x7061_6765_5f74_6573);
     page.hash_semantic(

@@ -9,7 +9,7 @@ use crate::node::{Node, NodeTokenList};
 use crate::scaled::Scaled;
 use sequence::PageNodeSequence;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 
 /// TeX's `awful_bad` sentinel, `2^30 - 1`.
 pub const AWFUL_BAD: i32 = 0o7777777777;
@@ -328,7 +328,8 @@ pub(crate) struct PageBuilderState {
     bot_mark: Option<NodeTokenList>,
     split_first_mark: Option<NodeTokenList>,
     split_bot_mark: Option<NodeTokenList>,
-    mark_classes: BTreeMap<u16, MarkClassState>,
+    mark_classes: Vec<(u16, MarkClassState)>,
+    mark_class_positions: Vec<Option<u16>>,
 }
 
 /// Handle-free scalar half of a detached page-builder transition. Node, glue,
@@ -391,7 +392,8 @@ impl Default for PageBuilderState {
             bot_mark: None,
             split_first_mark: None,
             split_bot_mark: None,
-            mark_classes: BTreeMap::new(),
+            mark_classes: Vec::new(),
+            mark_class_positions: Vec::new(),
         }
     }
 }
@@ -588,8 +590,13 @@ impl PageBuilderState {
             )
             .saturating_add(
                 self.mark_classes
-                    .len()
+                    .capacity()
                     .saturating_mul(std::mem::size_of::<(u16, MarkClassState)>()),
+            )
+            .saturating_add(
+                self.mark_class_positions
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Option<u16>>()),
             )
     }
 
@@ -624,6 +631,7 @@ impl PageBuilderState {
             && self.split_first_mark.is_none()
             && self.split_bot_mark.is_none()
             && self.mark_classes.is_empty()
+            && self.mark_class_positions.is_empty()
     }
 
     pub(crate) fn dimension(
@@ -729,9 +737,8 @@ impl PageBuilderState {
         if class == 0 {
             return self.mark_value(mark);
         }
-        self.mark_classes
-            .get(&class)
-            .and_then(|marks| marks.get(mark))
+        self.mark_class_position(class)
+            .and_then(|position| self.mark_classes[position].1.get(mark))
     }
 
     pub(crate) fn set_mark_class(&mut self, mark: PageMark, class: u16, value: NodeTokenList) {
@@ -739,14 +746,7 @@ impl PageBuilderState {
             self.set_mark(mark, value);
             return;
         }
-        let classes = &mut self.mark_classes;
-        let mut marks = classes.get(&class).cloned().unwrap_or_default();
-        marks.set(mark, value);
-        if marks.is_empty() {
-            classes.remove(&class);
-        } else {
-            classes.insert(class, marks);
-        }
+        self.ensure_mark_class(class).set(mark, value);
     }
 
     pub(crate) fn clear_mark_class(&mut self, mark: PageMark, class: u16) {
@@ -754,20 +754,64 @@ impl PageBuilderState {
             self.clear_mark(mark);
             return;
         }
-        let classes = &mut self.mark_classes;
-        let Some(mut marks) = classes.get(&class).cloned() else {
+        let Some(position) = self.mark_class_position(class) else {
             return;
         };
-        marks.clear(mark);
-        if marks.is_empty() {
-            classes.remove(&class);
-        } else {
-            classes.insert(class, marks);
+        self.mark_classes[position].1.clear(mark);
+        if self.mark_classes[position].1.is_empty() {
+            self.remove_mark_class(class, position);
         }
     }
 
     pub(crate) fn mark_class_ids(&self) -> impl Iterator<Item = u16> + '_ {
-        self.mark_classes.keys().copied()
+        self.mark_classes.iter().map(|(class, _)| *class)
+    }
+
+    fn mark_class_position(&self, class: u16) -> Option<usize> {
+        self.mark_class_positions
+            .get(usize::from(class))
+            .copied()
+            .flatten()
+            .map(usize::from)
+    }
+
+    fn ensure_mark_class(&mut self, class: u16) -> &mut MarkClassState {
+        let class_index = usize::from(class);
+        if self.mark_class_positions.len() <= class_index {
+            self.mark_class_positions.resize(class_index + 1, None);
+        }
+        if let Some(position) = self.mark_class_positions[class_index] {
+            return &mut self.mark_classes[usize::from(position)].1;
+        }
+
+        let position = self
+            .mark_classes
+            .iter()
+            .position(|(active, _)| *active > class)
+            .unwrap_or(self.mark_classes.len());
+        self.mark_classes
+            .insert(position, (class, MarkClassState::default()));
+        for active in self.mark_class_positions.iter_mut().flatten() {
+            if usize::from(*active) >= position {
+                *active = active
+                    .checked_add(1)
+                    .expect("active mark-class count fits u16");
+            }
+        }
+        self.mark_class_positions[class_index] = Some(
+            u16::try_from(position).expect("active mark-class count fits the e-TeX register space"),
+        );
+        &mut self.mark_classes[position].1
+    }
+
+    fn remove_mark_class(&mut self, class: u16, position: usize) {
+        self.mark_classes.remove(position);
+        self.mark_class_positions[usize::from(class)] = None;
+        for active in self.mark_class_positions.iter_mut().flatten() {
+            if usize::from(*active) > position {
+                *active -= 1;
+            }
+        }
     }
 
     pub(crate) fn freeze_specs(

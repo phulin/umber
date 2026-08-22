@@ -145,8 +145,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   and stale-coordinate rejection after bounded row reuse.
 - `src/page.rs`: Page-lifetime builder state with directly owned contribution,
   current-page, discard, insertion, and mark buffers; active insertion classes
-  retain canonical iteration order beside a dense direct lookup index. The
-  aggregate Universe owns immutable page-list publication and rollback cursors.
+  and sparse mark classes retain canonical iteration order beside dense direct
+  lookup indexes. The aggregate Universe owns immutable page-list publication
+  and rollback cursors.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode with generation-typed token
   coordinates in catalog/page collections, deterministic object allocation,
   durable form-list coordinates, owned checkpoint collections, owned external

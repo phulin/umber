@@ -123,8 +123,8 @@ impl PageBuilderState {
             StateHashComponent::PageMarks,
             |projection| {
                 projection.usize(self.mark_classes.len());
-                for (&class, marks) in &self.mark_classes {
-                    projection.u16(class);
+                for (class, marks) in &self.mark_classes {
+                    projection.u16(*class);
                     for mark in &marks.marks {
                         projection.bool(mark.is_some());
                         if let Some(mark) = mark {
