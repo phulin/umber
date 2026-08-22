@@ -1917,14 +1917,29 @@ impl<'a, G> CommandContext<'a, G> {
             .unwrap_or(crate::token::OriginId::UNKNOWN)
     }
 
-    #[must_use]
     pub fn source_range_origin(
-        &self,
+        &mut self,
         source: crate::input::SourceId,
         start: u64,
         end: u64,
     ) -> crate::token::OriginId {
-        self.source_token_origin(source, start, end)
+        let Some(span) = self
+            .sources
+            .registered_source(source)
+            .and_then(|registered| registered.span(start, end).ok())
+        else {
+            return crate::token::OriginId::UNKNOWN;
+        };
+        let Ok(coordinate) = self
+            .admitted
+            .allocate_provenance(OriginRecord::SourceSpan(span))
+        else {
+            // Provenance is diagnostic-only: an exhausted sidecar must not
+            // change TeX semantics or make an otherwise valid token fail.
+            return crate::token::OriginId::UNKNOWN;
+        };
+        crate::token::OriginId::arena(coordinate.format_index())
+            .unwrap_or(crate::token::OriginId::UNKNOWN)
     }
 
     #[must_use]

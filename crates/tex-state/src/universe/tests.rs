@@ -720,3 +720,36 @@ fn engine_boundary_hash_resolves_children_and_erases_runtime_provenance() {
     })
     .expect("universe allocation");
 }
+
+#[test]
+fn multi_byte_source_origin_detaches_the_complete_registered_range() {
+    with_universe(budget(), |universe| {
+        let source = crate::input::SourceId::new(41);
+        let bytes: std::sync::Arc<[u8]> = std::sync::Arc::from(&b"x\\input y"[..]);
+        let mut context = universe.command_context().expect("command admission");
+        context
+            .register_source(
+                source,
+                crate::source_map::SourceDescriptor::named_generated("generated/main.tex", bytes),
+            )
+            .expect("source registration");
+
+        let origin = context.source_range_origin(source, 1, 7);
+        let detached = context
+            .detach_diagnostic_origin(
+                origin,
+                crate::DiagnosticOriginRequest {
+                    demand: crate::ColdProvenanceDemand::Diagnostic,
+                    message: "failure",
+                },
+            )
+            .expect("diagnostic detachment");
+
+        let resolved = detached.resolved_source.expect("resolved source");
+        assert_eq!((resolved.start, resolved.end), (1, 7));
+        assert_eq!(resolved.excerpt, "x\\input y");
+        let generated = detached.generated_origin.expect("generated source recipe");
+        assert_eq!((generated.start, generated.end), (1, 7));
+    })
+    .expect("universe allocation");
+}
