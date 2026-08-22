@@ -632,10 +632,6 @@ impl FontStore {
         }
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &LoadedFont> {
-        self.fonts.iter()
-    }
-
     pub(crate) fn expansion(&self, id: FontId) -> Option<FontExpansion> {
         assert!(
             self.contains(id),
@@ -695,14 +691,6 @@ impl FontStore {
         );
         let fragment = self.font_hash_fragments[id.raw() as usize];
         &self.hash_fragments[fragment]
-    }
-
-    pub(crate) fn complete_hash_fragment(&self, id: FontId) -> &StateHashFragment {
-        assert!(
-            self.contains(id),
-            "font id is not live in this Universe timeline"
-        );
-        &self.complete_hash_fragments[id.raw() as usize]
     }
 
     #[must_use]

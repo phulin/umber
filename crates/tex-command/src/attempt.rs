@@ -93,6 +93,22 @@ pub struct AttemptNameId {
     serial: NonZeroU64,
 }
 
+#[cfg(test)]
+impl AttemptNameId {
+    fn new(key: AttemptKey, row: usize) -> Result<Self, AttemptError> {
+        Ok(Self {
+            key: key.0,
+            row: u32::try_from(row).map_err(|_| AttemptError::CapacityOverflow)?,
+            serial: NonZeroU64::new(NEXT_ATTEMPT_SERIAL.fetch_add(1, Ordering::Relaxed))
+                .ok_or(AttemptError::CapacityOverflow)?,
+        })
+    }
+
+    const fn index(self) -> usize {
+        self.row as usize
+    }
+}
+
 /// Attempt-local roots selected for one atomic durable promotion.
 ///
 /// The request is branded by the destination generation even though its
@@ -172,6 +188,10 @@ pub(crate) struct AttemptMark {
     argument_words: u32,
     argument_records: u32,
     token_buffers: u32,
+    #[cfg(test)]
+    name_bytes: u32,
+    #[cfg(test)]
+    names: u32,
     provenance: u32,
 }
 
@@ -190,6 +210,10 @@ impl AttemptMark {
             argument_words: 0,
             argument_records: 0,
             token_buffers: 0,
+            #[cfg(test)]
+            name_bytes: 0,
+            #[cfg(test)]
+            names: 0,
             provenance: 0,
         }
     }
@@ -207,6 +231,17 @@ impl AttemptMark {
             && self.argument_records == 0
             && self.token_buffers == 0
             && self.provenance == 0
+            && self.test_names_are_empty()
+    }
+
+    #[cfg(test)]
+    const fn test_names_are_empty(self) -> bool {
+        self.name_bytes == 0 && self.names == 0
+    }
+
+    #[cfg(not(test))]
+    const fn test_names_are_empty(self) -> bool {
+        true
     }
 
     pub(crate) const fn checked_row_count(self) -> Option<u32> {
@@ -231,6 +266,17 @@ impl AttemptMark {
             };
             count = next;
             index += 1;
+        }
+        #[cfg(test)]
+        {
+            let Some(next) = count.checked_add(self.name_bytes) else {
+                return None;
+            };
+            count = next;
+            let Some(next) = count.checked_add(self.names) else {
+                return None;
+            };
+            count = next;
         }
         Some(count)
     }
@@ -324,6 +370,10 @@ pub(crate) struct AttemptArena<G> {
     argument_words: Vec<AttemptTokenListId>,
     argument_records: Vec<AttemptRow<AttemptRange>>,
     token_buffers: Vec<AttemptRow<Vec<TracedTokenWord>>>,
+    #[cfg(test)]
+    name_bytes: Vec<u8>,
+    #[cfg(test)]
+    names: Vec<AttemptRow<AttemptRange>>,
     provenance: Vec<AttemptRow<OriginRecord>>,
     _generation: PhantomData<fn(&G) -> &G>,
 }
@@ -343,6 +393,10 @@ impl<G> Default for AttemptArena<G> {
             argument_words: Vec::new(),
             argument_records: Vec::new(),
             token_buffers: Vec::new(),
+            #[cfg(test)]
+            name_bytes: Vec::new(),
+            #[cfg(test)]
+            names: Vec::new(),
             provenance: Vec::new(),
             _generation: PhantomData,
         }
@@ -373,6 +427,11 @@ impl<G> AttemptArena<G> {
         live.argument_words = live.argument_words.max(mark.argument_words);
         live.argument_records = live.argument_records.max(mark.argument_records);
         live.token_buffers = live.token_buffers.max(mark.token_buffers);
+        #[cfg(test)]
+        {
+            live.name_bytes = live.name_bytes.max(mark.name_bytes);
+            live.names = live.names.max(mark.names);
+        }
         live.provenance = live.provenance.max(mark.provenance);
         Ok(())
     }
@@ -497,6 +556,11 @@ impl<G> AttemptArena<G> {
                 .expect("attempt argument-record length is bounded"),
             token_buffers: u32::try_from(self.token_buffers.len())
                 .expect("attempt token-buffer length is bounded"),
+            #[cfg(test)]
+            name_bytes: u32::try_from(self.name_bytes.len())
+                .expect("attempt name-byte length is bounded"),
+            #[cfg(test)]
+            names: u32::try_from(self.names.len()).expect("attempt name length is bounded"),
             provenance: u32::try_from(self.provenance.len())
                 .expect("attempt provenance length is bounded"),
         }
@@ -523,6 +587,12 @@ impl<G> AttemptArena<G> {
         if lengths.iter().any(|(mark, live)| mark > live) {
             return Err(AttemptError::InvalidCoordinate);
         }
+        #[cfg(test)]
+        if mark.name_bytes as usize > self.name_bytes.len()
+            || mark.names as usize > self.names.len()
+        {
+            return Err(AttemptError::InvalidCoordinate);
+        }
         Ok(())
     }
 
@@ -530,6 +600,8 @@ impl<G> AttemptArena<G> {
     pub(crate) fn truncate(&mut self, mark: AttemptMark) -> Result<(), AttemptError> {
         self.validate_mark(mark)?;
         // Child coordinates disappear before their backing suffixes.
+        #[cfg(test)]
+        self.names.truncate(mark.names as usize);
         self.provenance.truncate(mark.provenance as usize);
         self.argument_records
             .truncate(mark.argument_records as usize);
@@ -543,6 +615,8 @@ impl<G> AttemptArena<G> {
         self.origin_scratch.truncate(mark.origin_scratch as usize);
         self.traced_words.truncate(mark.traced_words as usize);
         self.traced_origins.truncate(mark.traced_origins as usize);
+        #[cfg(test)]
+        self.name_bytes.truncate(mark.name_bytes as usize);
         Ok(())
     }
 
@@ -919,6 +993,37 @@ impl<G> AttemptArena<G> {
             return Err(AttemptError::InvalidCoordinate);
         }
         Ok(self.arguments(id)?.get(usize::from(slot - 1)).copied())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn allocate_name(&mut self, name: &str) -> Result<AttemptNameId, AttemptError> {
+        let range = AttemptRange::checked(self.name_bytes.len(), name.len())?;
+        let id = AttemptNameId::new(self.key, self.names.len())?;
+        self.name_bytes
+            .try_reserve(name.len())
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        self.names
+            .try_reserve(1)
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        self.name_bytes.extend_from_slice(name.as_bytes());
+        self.names.push(AttemptRow {
+            serial: id.serial,
+            value: range,
+        });
+        Ok(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn name(&self, id: AttemptNameId) -> Result<&str, AttemptError> {
+        self.validate_key(id.key)?;
+        let row = self
+            .names
+            .get(id.index())
+            .copied()
+            .filter(|row| row.serial == id.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        let bytes = row.value.resolve(&self.name_bytes)?;
+        std::str::from_utf8(bytes).map_err(|_| AttemptError::InvalidCoordinate)
     }
 
     /// Copies only declared roots and schema-declared definition children.

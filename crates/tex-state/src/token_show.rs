@@ -50,7 +50,7 @@ impl<G> TokenDisplayState for Universe<G> {
     }
 }
 
-trait MeaningDisplayState<G>: TokenDisplayState {
+pub(crate) trait MeaningDisplayState<G>: TokenDisplayState {
     fn display_active_character_symbol(&self, ch: char) -> Option<crate::interner::Symbol>;
     fn display_meaning(&self, symbol: crate::interner::Symbol) -> Option<ResolvedMeaning<G>>;
     fn display_macro_words(&self, definition: DefinitionId<G>) -> (Vec<TokenWord>, Vec<TokenWord>);

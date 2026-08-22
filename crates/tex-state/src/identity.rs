@@ -65,18 +65,6 @@ impl HandleIdentity {
         }
     }
 
-    pub(crate) const fn namespace(self) -> u64 {
-        self.namespace.get()
-    }
-
-    pub(crate) const fn upper(self) -> u32 {
-        self.generation.get()
-    }
-
-    pub(crate) const fn lower(self) -> u32 {
-        self.slot
-    }
-
     const fn tag(self) -> AllocationTag {
         AllocationTag {
             namespace: self.namespace,
@@ -212,10 +200,6 @@ impl IdentityAllocator {
         })
     }
 
-    pub(crate) fn storage_shape(&self) -> (usize, usize) {
-        (self.slots.len(), self.slots.capacity())
-    }
-
     /// Captures the identity component of an aggregate store snapshot in O(1).
     #[must_use]
     pub(crate) fn watermark(&self) -> IdentityMark {
@@ -223,19 +207,6 @@ impl IdentityAllocator {
             len: self.slots.len(),
             frontier: self.slots.last().copied(),
         }
-    }
-
-    /// Reconstructs an ancestor mark after the aggregate arena mark has
-    /// validated the shared allocation boundary.
-    pub(crate) fn watermark_at(&self, len: u32) -> Result<IdentityMark, IdentityError> {
-        let len = len as usize;
-        if len < self.builtin_slots as usize || len > self.slots.len() {
-            return Err(IdentityError::InvalidatedMark);
-        }
-        Ok(IdentityMark {
-            len,
-            frontier: len.checked_sub(1).map(|index| self.slots[index]),
-        })
     }
 
     /// Preflights an ancestor rollback without changing liveness or generation.

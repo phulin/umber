@@ -168,6 +168,7 @@ impl GeneratedSource {
         &self.bytes
     }
 
+    #[cfg(test)]
     pub(crate) fn backing(&self) -> Arc<[u8]> {
         Arc::clone(&self.bytes)
     }
@@ -313,10 +314,6 @@ impl SourceRegistrationRef {
     pub(crate) fn descriptor(&self) -> &SourceDescriptor {
         &self.0.descriptor
     }
-
-    pub(crate) fn line_starts(&self) -> &[usize] {
-        &self.0.line_starts
-    }
 }
 
 impl SourceRegion {
@@ -373,14 +370,6 @@ impl Clone for SourceMap {
             identities: self.identities.fork(),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct SourceMapStats {
-    pub(crate) regions: usize,
-    pub(crate) generated_backings: usize,
-    pub(crate) live_bytes: usize,
-    pub(crate) retained_bytes: usize,
 }
 
 impl SourceMap {
@@ -504,6 +493,17 @@ impl SourceMap {
         }
     }
 
+    pub(crate) fn span(&self, lo: SourcePos, hi: SourcePos) -> Result<SourceSpan, SourceMapError> {
+        let region = self
+            .region_for_position(lo)
+            .ok_or(SourceMapError::UnknownSource)?;
+        if hi.0 < lo.0 || hi.0 > region.anchor().0 {
+            return Err(SourceMapError::SpanCrossesSource);
+        }
+        Ok(SourceSpan::new(lo, hi))
+    }
+
+    #[cfg(test)]
     pub(crate) fn position(
         &self,
         source: SourceId,
@@ -516,34 +516,6 @@ impl SourceMap {
             return Err(SourceMapError::OffsetOutsideSource);
         }
         Ok(SourcePos(region.start.0 + byte_offset))
-    }
-
-    pub(crate) fn span(&self, lo: SourcePos, hi: SourcePos) -> Result<SourceSpan, SourceMapError> {
-        let region = self
-            .region_for_position(lo)
-            .ok_or(SourceMapError::UnknownSource)?;
-        if hi.0 < lo.0 || hi.0 > region.anchor().0 {
-            return Err(SourceMapError::SpanCrossesSource);
-        }
-        Ok(SourceSpan::new(lo, hi))
-    }
-
-    pub(crate) fn span_for_source_offsets(
-        &self,
-        source: SourceId,
-        lo: u64,
-        hi: u64,
-    ) -> Result<SourceSpan, SourceMapError> {
-        let region = self
-            .region_for_source(source)
-            .ok_or(SourceMapError::UnknownSource)?;
-        if lo > hi || hi > region.byte_len {
-            return Err(SourceMapError::OffsetOutsideSource);
-        }
-        Ok(SourceSpan::new(
-            SourcePos(region.start.0 + lo),
-            SourcePos(region.start.0 + hi),
-        ))
     }
 
     pub(crate) fn region_for_source(&self, source: SourceId) -> Option<SourceRegion> {
@@ -566,17 +538,6 @@ impl SourceMap {
             .cloned()
     }
 
-    pub(crate) fn registration_for_position(
-        &self,
-        position: SourcePos,
-    ) -> Option<SourceRegistrationRef> {
-        let region = self.region_for_position(position)?;
-        self.registration_roots
-            .get(region.identity.slot() as usize)
-            .filter(|registration| registration.region() == region)
-            .cloned()
-    }
-
     pub(crate) fn registration_for_source(
         &self,
         source: SourceId,
@@ -591,24 +552,6 @@ impl SourceMap {
     pub(crate) fn registered_source(&self, source: SourceId) -> Option<RegisteredSource> {
         let region = self.region_for_source(source)?;
         Some(RegisteredSource::new(region.start, region.byte_len))
-    }
-
-    pub(crate) fn descriptor_for_source(&self, source: SourceId) -> Option<SourceDescriptor> {
-        let region = self.region_for_source(source)?;
-        self.registration_roots
-            .get(region.identity.slot() as usize)
-            .filter(|registration| registration.region() == region)
-            .map(|registration| registration.0.descriptor.clone())
-    }
-
-    pub(crate) fn contains_registration(
-        &self,
-        source: SourceId,
-        registration: RegisteredSource,
-    ) -> bool {
-        self.region_for_source(source).is_some_and(|region| {
-            region.start == registration.start && region.byte_len == registration.byte_len
-        })
     }
 
     pub(crate) fn region_for_position(&self, position: SourcePos) -> Option<SourceRegion> {
@@ -630,47 +573,13 @@ impl SourceMap {
         self.generated.get(id.0 as usize)
     }
 
+    #[cfg(test)]
     pub(crate) fn line_starts(&self, region: SourceRegion) -> Option<&[usize]> {
         self.identities
             .contains(region.identity)
             .then(|| self.line_starts.get(region.identity.slot() as usize))
             .flatten()
             .map(AsRef::as_ref)
-    }
-
-    pub(crate) fn stats(&self) -> SourceMapStats {
-        SourceMapStats {
-            regions: self.regions.len(),
-            generated_backings: self.generated.len(),
-            live_bytes: self.regions.len() * std::mem::size_of::<SourceRegion>()
-                + self.region_by_source.len() * std::mem::size_of::<(SourceId, usize)>()
-                + self.generated.len() * std::mem::size_of::<GeneratedSource>()
-                + self
-                    .line_starts
-                    .iter()
-                    .map(|starts| starts.len() * std::mem::size_of::<usize>())
-                    .sum::<usize>(),
-            retained_bytes: self.regions.capacity() * std::mem::size_of::<SourceRegion>()
-                + self.region_by_source.capacity() * std::mem::size_of::<(SourceId, usize)>()
-                + self.generated.capacity() * std::mem::size_of::<GeneratedSource>()
-                + self
-                    .generated
-                    .iter()
-                    .map(GeneratedSource::len)
-                    .sum::<usize>()
-                + self
-                    .generated
-                    .iter()
-                    .filter_map(GeneratedSource::logical_path)
-                    .map(str::len)
-                    .sum::<usize>()
-                + self.line_starts.capacity() * std::mem::size_of::<Arc<[usize]>>()
-                + self
-                    .line_starts
-                    .iter()
-                    .map(|starts| starts.len() * std::mem::size_of::<usize>())
-                    .sum::<usize>(),
-        }
     }
 
     pub(crate) fn watermark(&self) -> SourceMapMark {

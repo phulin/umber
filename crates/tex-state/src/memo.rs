@@ -150,10 +150,7 @@ impl DetachedMemoValue {
         }
     }
 
-    pub(crate) fn from_payload(kind: MemoValueKind, payload: Vec<u8>) -> Self {
-        Self::new(kind, payload)
-    }
-
+    #[cfg(test)]
     pub(crate) fn payload(&self, expected: MemoValueKind) -> Result<&[u8], MemoValueError> {
         self.require_kind(expected)?;
         Ok(&self.payload)

@@ -15,7 +15,6 @@ impl FrozenToken {
     /// absent from the hash table and `no_new_control_sequence` is set. It is
     /// never a hash entry, so it can carry no interned spelling.
     pub(crate) const UNDEFINED_CONTROL_SEQUENCE: Self = Self(u16::MAX - 1);
-    pub(crate) const EXPANDED_TEXT_BOUNDARY: Self = Self(u16::MAX);
     const PRIMITIVE_BASE: u16 = 2;
     /// The lowest reserved sentinel value. Every frozen token at or above it
     /// is an engine sentinel rather than a registered primitive, so the

@@ -95,6 +95,7 @@ impl CellId {
 
     /// Decodes a detached raw cell key, rejecting reserved bank tags and bits.
     #[must_use]
+    #[cfg(test)]
     pub(crate) const fn from_raw(raw: u64) -> Option<Self> {
         let bank = raw >> BANK_SHIFT;
         if bank <= BankTag::PdfNoLigatures as u64 {

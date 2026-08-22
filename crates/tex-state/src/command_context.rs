@@ -193,25 +193,45 @@ pub struct CommandContext<'a, G> {
     engine_usage: &'a mut EngineUsageRuntime,
 }
 
+pub(super) struct CommandContextParts<'a, G> {
+    pub interner: &'a mut Interner,
+    pub admitted: AdmittedStateMut<'a, G>,
+    pub primitive_names: &'a [String],
+    pub primitive_meanings: &'a [MeaningWord<G>],
+    pub world: &'a mut World,
+    pub dependencies: &'a mut DependencyRuntime,
+    pub fonts: &'a mut FontStore,
+    pub page_nodes: &'a mut PageNodeArena,
+    pub page: &'a mut PageBuilderState,
+    pub pdf: &'a mut PdfState<G>,
+    pub sources: &'a mut SourceMap,
+    pub hyphenation: &'a mut HyphenationTable,
+    pub interaction_mode: &'a mut InteractionMode,
+    pub prepared_mag: &'a mut Option<i32>,
+    pub error_context_widths: crate::print::ErrorContextWidths,
+    pub engine_usage: &'a mut EngineUsageRuntime,
+}
+
 impl<'a, G> CommandContext<'a, G> {
-    pub(super) const fn new(
-        interner: &'a mut Interner,
-        admitted: AdmittedStateMut<'a, G>,
-        primitive_names: &'a [String],
-        primitive_meanings: &'a [MeaningWord<G>],
-        world: &'a mut World,
-        dependencies: &'a mut DependencyRuntime,
-        fonts: &'a mut FontStore,
-        page_nodes: &'a mut PageNodeArena,
-        page: &'a mut PageBuilderState,
-        pdf: &'a mut PdfState<G>,
-        sources: &'a mut SourceMap,
-        hyphenation: &'a mut HyphenationTable,
-        interaction_mode: &'a mut InteractionMode,
-        prepared_mag: &'a mut Option<i32>,
-        error_context_widths: crate::print::ErrorContextWidths,
-        engine_usage: &'a mut EngineUsageRuntime,
-    ) -> Self {
+    pub(super) fn new(parts: CommandContextParts<'a, G>) -> Self {
+        let CommandContextParts {
+            interner,
+            admitted,
+            primitive_names,
+            primitive_meanings,
+            world,
+            dependencies,
+            fonts,
+            page_nodes,
+            page,
+            pdf,
+            sources,
+            hyphenation,
+            interaction_mode,
+            prepared_mag,
+            error_context_widths,
+            engine_usage,
+        } = parts;
         Self {
             interner,
             admitted,
@@ -1305,13 +1325,15 @@ impl<'a, G> CommandContext<'a, G> {
         let prepared = allocates
             .then(|| {
                 self.admitted.state().prepare_derived_font_runtime(
-                    source,
-                    font.parameters(),
-                    preserve_character_settings,
-                    preserve_pdf_settings,
-                    disable_ligatures,
-                    default_hyphen_char,
-                    default_skew_char,
+                    crate::env::DerivedFontRuntimeRequest {
+                        source,
+                        parameters: font.parameters(),
+                        preserve_character_settings,
+                        preserve_pdf_settings,
+                        disable_ligatures,
+                        default_hyphen_char,
+                        default_skew_char,
+                    },
                 )
             })
             .transpose()
@@ -1778,11 +1800,6 @@ impl<'a, G> CommandContext<'a, G> {
     pub fn set_last_badness(&mut self, value: i32) {
         self.assign_int_param(IntParam::LAST_BADNESS, value, AssignmentScope::Global)
             .expect("last-badness parameter is admitted");
-    }
-
-    #[must_use]
-    pub(crate) const fn state(&self) -> &DenseState<G> {
-        self.admitted.state_ref()
     }
 
     #[must_use]

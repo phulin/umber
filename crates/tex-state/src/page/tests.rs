@@ -92,3 +92,23 @@ fn page_semantic_hash_tracks_direct_suffix_changes() {
     page.push_current_page(kern(2));
     assert_ne!(hash_page(&page), before);
 }
+
+#[test]
+fn detached_page_memo_parts_roundtrip_all_owned_sequences() {
+    let mut source = PageBuilderState::default();
+    source.push_contribution(kern(1));
+    source.push_current_page(kern(2));
+    source.push_page_discard(kern(3));
+    source.set_split_discards(vec![kern(4)]);
+
+    let (nodes, state) = source.memo_parts();
+    let mut restored = PageBuilderState::default();
+    restored
+        .install_memo_parts(nodes.clone(), state.clone())
+        .expect("detached page memo is internally aligned");
+    let (roundtrip_nodes, roundtrip_state) = restored.memo_parts();
+
+    assert_eq!(roundtrip_nodes, nodes);
+    assert_eq!(roundtrip_state, state);
+    assert!(restored.retained_bytes() >= std::mem::size_of::<PageBuilderState>());
+}

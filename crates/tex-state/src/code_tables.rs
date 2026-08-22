@@ -5,7 +5,6 @@
 //! cold detachment boundaries.
 
 pub use crate::env::CodeTableKind;
-use crate::token::Catcode;
 
 pub type LcCode = u32;
 pub type UcCode = u32;
@@ -23,15 +22,4 @@ pub struct CodeTableGenerations {
     pub sfcode: u32,
     pub mathcode: u32,
     pub delcode: u32,
-}
-
-/// Handle-free semantic values for one cold code-table row.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CodeTableValues {
-    pub(crate) catcode: Catcode,
-    pub(crate) lccode: LcCode,
-    pub(crate) uccode: UcCode,
-    pub(crate) sfcode: SfCode,
-    pub(crate) mathcode: MathCode,
-    pub(crate) delcode: DelCode,
 }

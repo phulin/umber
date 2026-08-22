@@ -66,13 +66,6 @@ macro_rules! dense_id {
             pub(crate) fn format_index(self) -> u32 {
                 self.row.get() - 1
             }
-
-            pub(crate) fn format_validation_coordinate(index: u32) -> Option<Self> {
-                index
-                    .checked_add(1)
-                    .and_then(NonZeroU32::new)
-                    .map(Self::from_row)
-            }
         }
     };
 }
@@ -80,6 +73,15 @@ macro_rules! dense_id {
 dense_id!(TokenListId);
 dense_id!(GlueId);
 dense_id!(ProvenanceId);
+
+impl<G> TokenListId<G> {
+    pub(crate) fn format_validation_coordinate(index: u32) -> Option<Self> {
+        index
+            .checked_add(1)
+            .and_then(NonZeroU32::new)
+            .map(Self::from_row)
+    }
+}
 
 impl<G> ProvenanceId<G> {
     pub(crate) fn from_origin_index(index: u32) -> Option<Self> {
@@ -201,6 +203,7 @@ impl<G> TokenListArena<G> {
         self.rows.len()
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {
         self.rows.is_empty()
@@ -268,6 +271,7 @@ impl<G> GlueArena<G> {
         self.rows.len()
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {
         self.rows.is_empty()
@@ -342,6 +346,7 @@ impl<G> ProvenanceArena<G> {
         self.rows.len()
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {
         self.rows.is_empty()

@@ -5,8 +5,6 @@
 //! particular, TeX groups, failed commands, and incremental revision rollback
 //! do not expose a cursor which can truncate this storage.
 
-use crate::ContentHash;
-use crate::state_hash::StateHasher;
 use ahash::{AHashMap, AHasher};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -269,7 +267,9 @@ struct Entry {
     len: u32,
     kind: EntryKind,
     hash_entry: bool,
+    #[cfg(test)]
     semantic_atom: u64,
+    #[cfg(test)]
     semantic_identity: ContentHash,
 }
 
@@ -490,7 +490,9 @@ impl Interner {
         let start = self.usage.bytes;
         let len = u32::try_from(value.len()).expect("byte budget bounds each spelling to u32");
         let slot = self.usage.slots;
+        #[cfg(test)]
         let semantic_atom = semantic_atom_for_entry(kind, value);
+        #[cfg(test)]
         let semantic_identity = semantic_identity(kind, value);
         let hash = lookup_hash(kind, value);
 
@@ -500,7 +502,9 @@ impl Interner {
             len,
             kind,
             hash_entry: false,
+            #[cfg(test)]
             semantic_atom,
+            #[cfg(test)]
             semantic_identity,
         });
         self.index.entry(hash).or_default().push(slot);
@@ -643,6 +647,7 @@ impl Interner {
     }
 
     /// Returns whether this identity owns a TeX82 §259 hash entry.
+    #[cfg(test)]
     pub(crate) fn is_hash_entry(&self, id: SymbolId) -> Result<bool, InternerAccessError> {
         Ok(self.admit_symbol(id)?.hash_entry)
     }
@@ -668,13 +673,13 @@ impl Interner {
         self.entries.is_empty()
     }
 
-    /// Returns the canonical semantic atom for a local control-sequence slot.
+    #[cfg(test)]
     pub(crate) fn semantic_atom(&self, symbol: Symbol) -> Option<u64> {
         let entry = self.entries.get(symbol.raw() as usize)?;
         matches!(entry.kind, EntryKind::ControlSequence(_)).then_some(entry.semantic_atom)
     }
 
-    /// Returns cached semantic projections for a local control-sequence slot.
+    #[cfg(test)]
     pub(crate) fn semantic_atom_identity(&self, symbol: Symbol) -> Option<(u64, ContentHash)> {
         let entry = self.entries.get(symbol.raw() as usize)?;
         matches!(entry.kind, EntryKind::ControlSequence(_))
@@ -697,6 +702,34 @@ impl Interner {
         self.retired = true;
         Ok(InternerRetirement { usage })
     }
+}
+
+#[cfg(test)]
+const fn entry_tag(kind: EntryKind) -> u8 {
+    match kind {
+        EntryKind::ControlSequence(ControlSequenceKind::Null)
+        | EntryKind::ControlSequence(ControlSequenceKind::SingleCharacter)
+        | EntryKind::ControlSequence(ControlSequenceKind::Named) => 0,
+        EntryKind::ControlSequence(ControlSequenceKind::ActiveCharacter) => 1,
+        EntryKind::ControlSequence(ControlSequenceKind::Internal) => 2,
+        EntryKind::Spelling => 3,
+    }
+}
+
+#[cfg(test)]
+fn semantic_atom_for_entry(kind: EntryKind, value: &str) -> u64 {
+    let mut hasher = StateHasher::new(0x6373_5f61_746f_6d31);
+    hasher.u8(entry_tag(kind));
+    hasher.str(value);
+    hasher.finish()
+}
+
+#[cfg(test)]
+fn semantic_identity(kind: EntryKind, value: &str) -> ContentHash {
+    let mut bytes = Vec::with_capacity(value.len() + 1);
+    bytes.push(entry_tag(kind));
+    bytes.extend_from_slice(value.as_bytes());
+    crate::state_hash::semantic_identity_bytes(b"umber-session-interner-v1", &bytes)
 }
 
 fn check_budget(
@@ -725,35 +758,6 @@ fn validate_character_kind(kind: ControlSequenceKind, name: &str) {
     }
 }
 
-const fn entry_tag(kind: EntryKind) -> u8 {
-    match kind {
-        EntryKind::ControlSequence(ControlSequenceKind::Null)
-        | EntryKind::ControlSequence(ControlSequenceKind::SingleCharacter)
-        | EntryKind::ControlSequence(ControlSequenceKind::Named) => 0,
-        EntryKind::ControlSequence(ControlSequenceKind::ActiveCharacter) => 1,
-        EntryKind::ControlSequence(ControlSequenceKind::Internal) => 2,
-        EntryKind::Spelling => 3,
-    }
-}
-
-pub(crate) fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {
-    semantic_atom_for_entry(EntryKind::ControlSequence(kind), name)
-}
-
-fn semantic_atom_for_entry(kind: EntryKind, value: &str) -> u64 {
-    let mut hasher = StateHasher::new(0x6373_5f61_746f_6d31);
-    hasher.u8(entry_tag(kind));
-    hasher.str(value);
-    hasher.finish()
-}
-
-fn semantic_identity(kind: EntryKind, value: &str) -> ContentHash {
-    let mut bytes = Vec::with_capacity(value.len() + 1);
-    bytes.push(entry_tag(kind));
-    bytes.extend_from_slice(value.as_bytes());
-    crate::state_hash::semantic_identity_bytes(b"umber-session-interner-v1", &bytes)
-}
-
 /// Selects TeX82 §222's fixed control-sequence namespace from its spelling.
 #[must_use]
 pub(crate) fn named_kind(name: &str) -> ControlSequenceKind {
@@ -774,3 +778,7 @@ fn lookup_hash(kind: EntryKind, value: &str) -> u64 {
 #[cfg(test)]
 #[path = "interner/tests.rs"]
 mod tests;
+#[cfg(test)]
+use crate::ContentHash;
+#[cfg(test)]
+use crate::state_hash::StateHasher;

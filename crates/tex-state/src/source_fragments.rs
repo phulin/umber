@@ -157,6 +157,7 @@ const fn default_retired_fragment_metadata_bytes() -> usize {
 pub struct FragmentStore {
     sources: Arc<HashMap<FragmentId, FragmentSource>>,
     retired: Arc<VecDeque<SourceFragment>>,
+    #[cfg(test)]
     root_coordinates: Option<RootCoordinateMap>,
     append_lineage: u64,
     next_slot: u32,
@@ -164,6 +165,7 @@ pub struct FragmentStore {
     retired_metadata_budget_bytes: usize,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug)]
 struct RootCoordinateMap {
     logical_path: Arc<str>,
@@ -181,6 +183,7 @@ impl Clone for FragmentStore {
         Self {
             sources: Arc::clone(&self.sources),
             retired: Arc::clone(&self.retired),
+            #[cfg(test)]
             root_coordinates: self.root_coordinates.clone(),
             append_lineage: next_fragment_lineage(),
             next_slot: self.next_slot,
@@ -195,6 +198,7 @@ impl Default for FragmentStore {
         Self {
             sources: Arc::new(HashMap::new()),
             retired: Arc::new(VecDeque::new()),
+            #[cfg(test)]
             root_coordinates: None,
             append_lineage: next_fragment_lineage(),
             next_slot: 0,
@@ -383,6 +387,7 @@ impl FragmentStore {
         Self {
             sources: Arc::new(HashMap::new()),
             retired: Arc::clone(&self.retired),
+            #[cfg(test)]
             root_coordinates: self.root_coordinates.clone(),
             append_lineage: next_fragment_lineage(),
             next_slot: self.next_slot,
@@ -391,6 +396,7 @@ impl FragmentStore {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn metadata_snapshot_for_layout(
         &self,
         layout: &EditorLayout,
@@ -438,6 +444,7 @@ impl FragmentStore {
         snapshot
     }
 
+    #[cfg(test)]
     pub(crate) fn bind_generated_root_registration(
         &mut self,
         registration: RegisteredSource,
@@ -457,16 +464,6 @@ impl FragmentStore {
         root.backing = Some(source.backing());
     }
 
-    pub(crate) fn bind_rebound_root_registration(&mut self, registration: RegisteredSource) {
-        let Some(root) = self.root_coordinates.as_mut() else {
-            return;
-        };
-        if root.registrations.contains(&registration) {
-            return;
-        }
-        Arc::make_mut(&mut root.registrations).push(registration);
-    }
-
     /// Measurement-only access to the exact immutable view installed in an
     /// engine generation.
     #[cfg(feature = "testing")]
@@ -480,11 +477,6 @@ impl FragmentStore {
             .len()
             .saturating_mul(mem::size_of::<FragmentSource>())
             .saturating_add(self.retired_metadata_budget_bytes)
-            .saturating_add(self.root_coordinates.as_ref().map_or(0, |root| {
-                root.fragments
-                    .len()
-                    .saturating_mul(mem::size_of::<SourceFragment>())
-            }))
     }
 
     fn retain_retired_metadata(&mut self, fragment: SourceFragment) {
@@ -622,6 +614,7 @@ impl FragmentStore {
         None
     }
 
+    #[cfg(test)]
     pub(crate) fn direct_root_span_id(&self, origin: crate::token::OriginId) -> Option<RootSpanId> {
         let crate::token::OriginEncoding::DirectSource(position) = origin.decode() else {
             return None;
@@ -651,31 +644,7 @@ impl FragmentStore {
         })
     }
 
-    pub(crate) fn root_span_for_source_span(&self, span: SourceSpan) -> Option<RootSpanId> {
-        if let Some(span) = self.root_span_for_registered_span(span) {
-            return Some(span);
-        }
-        let (fragment_id, fragment) = self.fragment_at(span.lo())?;
-        if span.hi().raw() < span.lo().raw() || span.hi().raw() > fragment.anchor() {
-            return None;
-        }
-        let start = u32::try_from(span.lo().raw() - fragment.region_start.raw()).ok()?;
-        let end = u32::try_from(span.hi().raw() - fragment.region_start.raw()).ok()?;
-        let content = self
-            .bytes(fragment_id)
-            .and_then(|bytes| bytes.get(start as usize..end as usize))
-            .map_or_else(|| ContentHash::from_bytes(&[]), ContentHash::from_bytes);
-        Some(RootSpanId {
-            piece: PieceId(fragment_id),
-            start,
-            end,
-            content,
-            region_start: fragment.region_start,
-            fragment_byte_len: fragment.byte_len,
-            minted_revision: fragment.minted_revision,
-        })
-    }
-
+    #[cfg(test)]
     fn root_span_for_registered_position(&self, position: SourcePos) -> Option<RootSpanId> {
         self.root_span_for_registered_span(SourceSpan::new(
             position,
@@ -683,6 +652,7 @@ impl FragmentStore {
         ))
     }
 
+    #[cfg(test)]
     fn root_span_for_registered_span(&self, span: SourceSpan) -> Option<RootSpanId> {
         let root = self.root_coordinates.as_ref()?;
         let registration = root.registrations.iter().find(|registration| {
@@ -727,16 +697,6 @@ impl FragmentStore {
         })
     }
 
-    pub(crate) fn source_span_for_root(&self, span: RootSpanId) -> Option<SourceSpan> {
-        if u64::from(span.end) > span.fragment_byte_len {
-            return None;
-        }
-        let registration = RegisteredSource::new(span.region_start, span.fragment_byte_len);
-        registration
-            .span(u64::from(span.start), u64::from(span.end))
-            .ok()
-    }
-
     /// Returns the allocation-free registration capability for one fragment.
     #[must_use]
     pub fn registration(&self, id: FragmentId) -> Option<RegisteredSource> {
@@ -747,34 +707,28 @@ impl FragmentStore {
         ))
     }
 
-    #[must_use]
-    pub(crate) fn contains_registration(&self, registration: RegisteredSource) -> bool {
-        self.fragment_at(registration.start())
-            .is_some_and(|(_, fragment)| {
-                RegisteredSource::new(fragment.region_start, fragment.byte_len) == registration
-            })
-    }
-
-    #[must_use]
-    pub(crate) fn contains_position(&self, position: SourcePos) -> bool {
-        self.fragment_at(position).is_some()
-    }
-
     fn get(&self, id: FragmentId) -> Option<&SourceFragment> {
         self.sources
             .get(&id)
             .map(|source| &source.fragment)
             .or_else(|| self.retired.iter().find(|fragment| fragment.id == id))
             .or_else(|| {
-                self.root_coordinates
-                    .as_ref()?
-                    .fragments
-                    .iter()
-                    .find(|fragment| fragment.id == id)
+                #[cfg(test)]
+                {
+                    return self
+                        .root_coordinates
+                        .as_ref()?
+                        .fragments
+                        .iter()
+                        .find(|fragment| fragment.id == id);
+                }
+                #[cfg(not(test))]
+                None
             })
     }
 
     fn fragment_at(&self, position: SourcePos) -> Option<(FragmentId, &SourceFragment)> {
+        #[cfg(test)]
         if let Some(fragment) = self
             .root_coordinates
             .as_ref()
@@ -800,6 +754,7 @@ impl FragmentStore {
             .map(|fragment| (fragment.id, fragment))
     }
 
+    #[cfg(test)]
     fn span_for_direct(&self, position: SourcePos) -> Option<SourceSpan> {
         let (_, fragment) = self.fragment_at(position)?;
         let offset = position.raw().checked_sub(fragment.region_start.raw())?;
@@ -819,6 +774,7 @@ impl FragmentStore {
     }
 }
 
+#[cfg(test)]
 fn fragment_at_in_sorted(
     fragments: &[SourceFragment],
     position: SourcePos,
@@ -970,24 +926,6 @@ impl EditorLayout {
         })
     }
 
-    /// Verifies that every piece still names the exact fragment allocation
-    /// against which this layout was constructed.
-    pub(crate) fn validate_store(
-        &self,
-        fragments: &FragmentStore,
-    ) -> Result<(), EditorLayoutError> {
-        for piece in self.pieces.iter() {
-            let fragment = fragments
-                .get(piece.fragment)
-                .ok_or(EditorLayoutError::UnknownFragment)?;
-            if piece.range.start > piece.range.end || u64::from(piece.range.end) > fragment.byte_len
-            {
-                return Err(EditorLayoutError::InvalidPieceRange);
-            }
-        }
-        Ok(())
-    }
-
     #[must_use]
     pub const fn generation(&self) -> LayoutGeneration {
         self.generation
@@ -1026,6 +964,7 @@ impl EditorLayout {
             }))
     }
 
+    #[cfg(test)]
     fn current_range(&self, fragment: FragmentId, lo: u64, hi: u64) -> Option<(u64, u64)> {
         let fragment_index = self
             .fragment_index
@@ -1104,6 +1043,7 @@ pub enum LayoutResolvedOrigin {
     Unknown,
 }
 
+#[cfg(test)]
 pub(crate) fn resolve_fragment_span(
     span: SourceSpan,
     fragments: &FragmentStore,
@@ -1132,6 +1072,7 @@ pub(crate) fn resolve_fragment_span(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn resolve_root_span(
     span: RootSpanId,
     fragments: &FragmentStore,
@@ -1163,6 +1104,7 @@ pub(crate) fn resolve_root_span(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn direct_fragment_span(
     origin: crate::token::OriginId,
     fragments: &FragmentStore,

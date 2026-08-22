@@ -6,9 +6,7 @@
 
 use crate::cell::CellId;
 use crate::world::ContentHash;
-use ahash::{AHashMap, AHashSet};
-#[cfg(test)]
-use std::cell::Cell;
+use ahash::AHashMap;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -249,12 +247,9 @@ pub(crate) struct DependencyTrackerSnapshot {
 #[derive(Debug, Default)]
 pub struct DependencyRuntime {
     tracker: DependencyTracker,
-    tracked_world_backed: AHashSet<DependencyKey>,
     active: Option<ActiveDependencyRegion>,
     next_region_epoch: u64,
     tracking_enabled: bool,
-    #[cfg(test)]
-    tracked_world_scan_calls: Cell<usize>,
 }
 
 #[derive(Debug)]
@@ -314,12 +309,9 @@ impl Clone for DependencyRuntime {
     fn clone(&self) -> Self {
         Self {
             tracker: self.tracker.clone(),
-            tracked_world_backed: self.tracked_world_backed.clone(),
             active: None,
             next_region_epoch: self.next_region_epoch,
             tracking_enabled: self.tracking_enabled,
-            #[cfg(test)]
-            tracked_world_scan_calls: Cell::new(self.tracked_world_scan_calls.get()),
         }
     }
 }
@@ -355,9 +347,6 @@ impl DependencyRuntime {
     pub fn record(&mut self, key: DependencyKey, value: DependencyValue) {
         if let Some(active) = &mut self.active {
             let key = key.canonical();
-            if is_world_backed(key) {
-                self.tracked_world_backed.insert(key);
-            }
             active.region.record(self.tracker.observe(key, value));
         }
     }
@@ -404,21 +393,6 @@ impl DependencyRuntime {
         Ok(())
     }
 
-    pub(crate) fn ensure_region(
-        &self,
-        token: &DependencyRegionToken,
-    ) -> Result<(), DependencyRegionError> {
-        match &self.active {
-            Some(active) if active.epoch == token.0 => Ok(()),
-            Some(_) => Err(DependencyRegionError::StaleToken),
-            None => Err(DependencyRegionError::NoActiveRegion),
-        }
-    }
-
-    pub(crate) fn abandon_active_region(&mut self) {
-        self.active = None;
-    }
-
     pub fn mark_changed(&mut self, key: DependencyKey) -> ChangedAt {
         if !self.tracking_enabled {
             return ChangedAt::NEVER;
@@ -430,9 +404,6 @@ impl DependencyRuntime {
     pub fn track(&mut self, key: DependencyKey) -> ChangedAt {
         self.tracking_enabled = true;
         let key = key.canonical();
-        if is_world_backed(key) {
-            self.tracked_world_backed.insert(key);
-        }
         self.tracker.track(key)
     }
 
@@ -440,30 +411,6 @@ impl DependencyRuntime {
         if self.tracking_enabled {
             self.tracker.invalidate_all();
         }
-    }
-
-    /// Returns the World facts whose stamps can affect an existing memo.
-    ///
-    /// The broad driver-only World mutation capability uses this bounded set
-    /// to compare canonical values around a mutable borrow. Untracked facts
-    /// need no stamp: a later first observation records their then-current
-    /// semantic value.
-    pub(crate) fn tracked_world_backed_keys(&self) -> Vec<DependencyKey> {
-        #[cfg(test)]
-        self.tracked_world_scan_calls
-            .set(self.tracked_world_scan_calls.get() + 1);
-        let mut keys = self
-            .tracked_world_backed
-            .iter()
-            .copied()
-            .collect::<Vec<_>>();
-        keys.sort_unstable();
-        keys
-    }
-
-    #[cfg(test)]
-    pub(crate) fn tracked_world_scan_calls(&self) -> usize {
-        self.tracked_world_scan_calls.get()
     }
 
     pub(crate) fn snapshot_tracker(&self) -> DependencyTrackerSnapshot {
@@ -481,19 +428,6 @@ impl DependencyRuntime {
     pub const fn tracker(&self) -> &DependencyTracker {
         &self.tracker
     }
-}
-
-fn is_world_backed(key: DependencyKey) -> bool {
-    matches!(
-        key,
-        DependencyKey::World { .. }
-            | DependencyKey::InputStream(_)
-            | DependencyKey::Engine(
-                DependencyEngineField::PdfTimer
-                    | DependencyEngineField::PdfRandom
-                    | DependencyEngineField::PdfShellEscape
-            )
-    )
 }
 
 impl DependencyTracker {

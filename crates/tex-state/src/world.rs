@@ -682,12 +682,6 @@ impl FileModificationDate {
 pub struct InputRecordId(HandleIdentity);
 
 impl InputRecordId {
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn new(raw: u32) -> Self {
-        Self(HandleIdentity::builtin(raw))
-    }
-
     #[must_use]
     pub(crate) const fn raw(self) -> u32 {
         self.0.slot()
@@ -1367,7 +1361,7 @@ pub struct DetachedEffectPublicationError {
     failed_ordinal: Option<u32>,
     slot: Option<StreamSlot>,
     path: Option<PathBuf>,
-    error: WorldError,
+    error: Box<WorldError>,
 }
 
 impl DetachedEffectPublicationError {
@@ -1392,12 +1386,12 @@ impl DetachedEffectPublicationError {
     }
 
     #[must_use]
-    pub const fn retry_safety(&self) -> EffectRetrySafety {
+    pub fn retry_safety(&self) -> EffectRetrySafety {
         self.error.retry_safety()
     }
 
     #[must_use]
-    pub const fn world_error(&self) -> &WorldError {
+    pub fn world_error(&self) -> &WorldError {
         &self.error
     }
 }
@@ -1619,20 +1613,6 @@ impl WorldSnapshot {
                 ..other_artifact_range.end.saturating_sub(other.artifact_base),
         )
     }
-}
-
-/// Cursor into World-owned state for semantic convergence hashing.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct WorldStateHashCursor {
-    effect_pos: EffectPos,
-    stream_bufs: Arc<StreamBufState>,
-    rng: RngState,
-    pdf_rng: PdfRandomState,
-    pdf_time_micros: u64,
-    pdf_timer_origin_micros: u64,
-    job_clock: JobClock,
-    shell_escape_policy: ShellEscapePolicy,
-    shell_escape_len: usize,
 }
 
 /// Engine capability object for all external effects.
@@ -3666,7 +3646,7 @@ impl World {
                 failed_ordinal,
                 slot,
                 path,
-                error,
+                error: Box::new(error),
             });
         }
         Ok(())
@@ -4983,91 +4963,6 @@ impl World {
             })
             .sum::<usize>();
         effects.saturating_add(artifacts)
-    }
-
-    #[must_use]
-    pub(crate) fn state_hash_cursor(&self) -> WorldStateHashCursor {
-        WorldStateHashCursor {
-            effect_pos: self.effect_pos(),
-            stream_bufs: self.stream_bufs.clone(),
-            rng: self.rng,
-            pdf_rng: self.pdf_rng.clone(),
-            pdf_time_micros: self.pdf_time_micros,
-            pdf_timer_origin_micros: self.pdf_timer_origin_micros,
-            job_clock: self.job_clock,
-            shell_escape_policy: self.shell_escape_policy,
-            shell_escape_len: self.shell_escapes.len(),
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn state_hash_cursor_from_snapshot(
-        snapshot: &WorldSnapshot,
-    ) -> WorldStateHashCursor {
-        WorldStateHashCursor {
-            effect_pos: snapshot.effect_pos,
-            stream_bufs: snapshot.stream_bufs.clone(),
-            rng: snapshot.rng,
-            pdf_rng: snapshot.pdf_rng.clone(),
-            pdf_time_micros: snapshot.pdf_time_micros,
-            pdf_timer_origin_micros: snapshot.pdf_timer_origin_micros,
-            job_clock: snapshot.job_clock,
-            shell_escape_policy: snapshot.shell_escape_policy,
-            shell_escape_len: snapshot.shell_escape_len,
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn retarget_state_hash_cursor_after_commit(
-        &self,
-        cursor: &WorldStateHashCursor,
-    ) -> WorldStateHashCursor {
-        let effect_pos = cursor.effect_pos.max(self.effect_base);
-        assert!(
-            effect_pos <= self.effect_pos(),
-            "World hash cursor effect position is past effect end"
-        );
-        assert!(
-            cursor.shell_escape_len <= self.shell_escapes.len(),
-            "World hash cursor shell-escape length is past shell-escape end"
-        );
-        WorldStateHashCursor {
-            effect_pos,
-            stream_bufs: cursor.stream_bufs.clone(),
-            rng: cursor.rng,
-            pdf_rng: cursor.pdf_rng.clone(),
-            pdf_time_micros: cursor.pdf_time_micros,
-            pdf_timer_origin_micros: cursor.pdf_timer_origin_micros,
-            job_clock: cursor.job_clock,
-            shell_escape_policy: cursor.shell_escape_policy,
-            shell_escape_len: cursor.shell_escape_len,
-        }
-    }
-
-    #[must_use]
-    pub(crate) fn effect_records_since(&self, cursor: &WorldStateHashCursor) -> &[EffectRecord] {
-        assert!(
-            cursor.effect_pos >= self.effect_base,
-            "World hash cursor effect position has already been committed and dropped"
-        );
-        let start = (cursor.effect_pos.raw() - self.effect_base.raw()) as usize;
-        assert!(
-            start <= self.effects.len(),
-            "World hash cursor is past effect end"
-        );
-        &self.effects[start..]
-    }
-
-    #[must_use]
-    pub(crate) fn shell_escape_records_since(
-        &self,
-        cursor: &WorldStateHashCursor,
-    ) -> &[ShellEscapeRecord] {
-        assert!(
-            cursor.shell_escape_len <= self.shell_escapes.len(),
-            "World hash cursor is past shell-escape end"
-        );
-        &self.shell_escapes[cursor.shell_escape_len..]
     }
 
     #[must_use]

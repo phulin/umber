@@ -106,7 +106,6 @@ impl<G> StateCore<G> {
     }
 
     /// Retires the complete generation after all admitted borrows end.
-    #[must_use]
     pub(crate) fn retire(self) -> Result<StateCoreRetirement, StateError> {
         let journal_entries = self.state.journal_len();
         let allocated_overflow_pages = self.state.allocated_overflow_pages();
@@ -188,6 +187,7 @@ impl<'a, G> AdmittedState<'a, G> {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn provenance(&self, id: ProvenanceId<G>) -> OriginRecord {
         self.generation.provenance().get(id)
     }

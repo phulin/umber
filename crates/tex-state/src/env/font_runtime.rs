@@ -18,6 +18,16 @@ pub(crate) enum FontRuntimeCell {
     LigaturesDisabled(u32),
 }
 
+pub(crate) struct DerivedFontRuntimeRequest<'a, F> {
+    pub source: F,
+    pub parameters: &'a [Scaled],
+    pub preserve_character_settings: bool,
+    pub preserve_pdf_settings: bool,
+    pub disable_ligatures: bool,
+    pub default_hyphen_char: i32,
+    pub default_skew_char: i32,
+}
+
 pub(crate) struct PreparedFontRuntime {
     row: FontRuntimeRow,
 }
@@ -140,14 +150,17 @@ impl FontRuntimeBank {
 
     pub(crate) fn prepare_derived(
         &mut self,
-        source: u32,
-        parameters: &[Scaled],
-        preserve_character_settings: bool,
-        preserve_pdf_settings: bool,
-        disable_ligatures: bool,
-        default_hyphen_char: i32,
-        default_skew_char: i32,
+        request: DerivedFontRuntimeRequest<'_, u32>,
     ) -> Result<PreparedFontRuntime, BankError> {
+        let DerivedFontRuntimeRequest {
+            source,
+            parameters,
+            preserve_character_settings,
+            preserve_pdf_settings,
+            disable_ligatures,
+            default_hyphen_char,
+            default_skew_char,
+        } = request;
         self.rows
             .try_reserve(1)
             .map_err(|_| BankError::AllocationFailed)?;

@@ -526,6 +526,10 @@ pub struct NodeList<'a, L, Glue = GlueSpec, Tokens = NodeTokenList> {
     id: NodeListId<L>,
 }
 
+/// Immutable logical node sequence resolved through one arena borrow.
+pub type NodeSlice<L, Glue = GlueSpec, Tokens = NodeTokenList> =
+    [Node<NodeListId<L>, Glue, Tokens>];
+
 impl<L, Glue, Tokens> core::fmt::Debug for NodeList<'_, L, Glue, Tokens> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
@@ -538,7 +542,7 @@ impl<L, Glue, Tokens> core::fmt::Debug for NodeList<'_, L, Glue, Tokens> {
 impl<'a, L, Glue, Tokens> NodeList<'a, L, Glue, Tokens> {
     /// Returns the immutable logical nodes in source order.
     #[must_use]
-    pub fn nodes(&self) -> &'a [Node<NodeListId<L>, Glue, Tokens>] {
+    pub fn nodes(&self) -> &'a NodeSlice<L, Glue, Tokens> {
         self.id.index().map_or(&[], |index| {
             self.arena.rows[index]
                 .as_ref()
@@ -553,7 +557,7 @@ impl<'a, L, Glue, Tokens> NodeList<'a, L, Glue, Tokens> {
     }
 
     #[must_use]
-    pub fn is_empty(self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.id.is_empty()
     }
 
@@ -576,7 +580,7 @@ impl<'a, L, Glue, Tokens> NodeList<'a, L, Glue, Tokens> {
     pub fn child_nodes(
         self,
         id: NodeListId<L>,
-    ) -> Result<&'a [Node<NodeListId<L>, Glue, Tokens>], NodeArenaError> {
+    ) -> Result<&'a NodeSlice<L, Glue, Tokens>, NodeArenaError> {
         Ok(self.child(id)?.nodes())
     }
 }

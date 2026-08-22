@@ -581,11 +581,6 @@ impl<T: Copy> DenseBank<T> {
         Ok(())
     }
 
-    #[must_use]
-    pub(crate) fn len(&self) -> usize {
-        self.cells.len()
-    }
-
     pub(crate) fn values(&self) -> impl Iterator<Item = T> + '_ {
         self.cells.iter().map(|cell| cell.value)
     }

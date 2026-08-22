@@ -1,15 +1,13 @@
 //! Snapshot-owned page-builder state.
 
 mod sequence;
+#[cfg(test)]
 mod state_hash;
-
-use sequence::PageNodeSequence;
-#[allow(unused_imports)]
-pub(crate) use state_hash::{PageHashCache, PageStateHashCursor};
 
 use crate::glue::GlueSpec;
 use crate::node::{Node, NodeTokenList};
 use crate::scaled::Scaled;
+use sequence::PageNodeSequence;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 
@@ -334,7 +332,8 @@ pub(crate) struct PageBuilderState {
 
 /// Handle-free scalar half of a detached page-builder transition. Node, glue,
 /// token-list, and font handles travel in one ordinary detached node graph.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg(test)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct PageMemoState {
     pub(crate) contribution_len: usize,
     pub(crate) current_page_len: usize,
@@ -411,6 +410,7 @@ impl PageBuilderState {
             })
     }
 
+    #[cfg(test)]
     pub(crate) fn memo_parts(&self) -> (Vec<Node>, PageMemoState) {
         let mut nodes = Vec::with_capacity(
             self.contribution.len()
@@ -467,6 +467,7 @@ impl PageBuilderState {
         (nodes, state)
     }
 
+    #[cfg(test)]
     pub(crate) fn install_memo_parts(
         &mut self,
         nodes: Vec<Node>,
@@ -551,6 +552,7 @@ impl PageBuilderState {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             .saturating_add(

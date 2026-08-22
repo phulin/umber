@@ -10,6 +10,7 @@ use banks::{
     BankCell, BankError, DenseBank, IntParam, LEVEL_ONE, PARAMETER_COUNT, PagedDenseBank,
     RegisterBank,
 };
+pub(crate) use font_runtime::DerivedFontRuntimeRequest;
 use font_runtime::{BankCellValue, FontRuntimeBank, FontRuntimeCell, PreparedFontRuntime};
 use group::{GroupFrame, GroupKind, GroupMismatch};
 
@@ -1078,23 +1079,19 @@ impl<G> DenseState<G> {
 
     pub(crate) fn prepare_derived_font_runtime(
         &mut self,
-        source: FontId,
-        parameters: &[Scaled],
-        preserve_character_settings: bool,
-        preserve_pdf_settings: bool,
-        disable_ligatures: bool,
-        default_hyphen_char: i32,
-        default_skew_char: i32,
+        request: DerivedFontRuntimeRequest<'_, FontId>,
     ) -> Result<PreparedFontRuntime, StateError> {
-        Ok(self.font_runtime.prepare_derived(
-            source.raw(),
-            parameters,
-            preserve_character_settings,
-            preserve_pdf_settings,
-            disable_ligatures,
-            default_hyphen_char,
-            default_skew_char,
-        )?)
+        Ok(self
+            .font_runtime
+            .prepare_derived(DerivedFontRuntimeRequest {
+                source: request.source.raw(),
+                parameters: request.parameters,
+                preserve_character_settings: request.preserve_character_settings,
+                preserve_pdf_settings: request.preserve_pdf_settings,
+                disable_ligatures: request.disable_ligatures,
+                default_hyphen_char: request.default_hyphen_char,
+                default_skew_char: request.default_skew_char,
+            })?)
     }
 
     pub(crate) fn font_parameter_count(&self, font: FontId) -> Result<u32, StateError> {

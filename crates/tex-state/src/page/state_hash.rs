@@ -19,58 +19,7 @@ const SPLIT_DISCARDS_DOMAIN: u64 = 0x7370_6c69_745f_6469;
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PageHashCache;
 
-/// Bounded value cursor used only to detect an unchanged page projection.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PageStateHashCursor {
-    dimensions: [crate::scaled::Scaled; 9],
-    contents: PageContents,
-    lengths: [usize; 6],
-    last_penalty: i32,
-    last_kern: crate::scaled::Scaled,
-    last_node_type: i32,
-    insert_penalties: i32,
-    dead_cycles: i32,
-    least_page_cost: i32,
-    best_page_break: Option<PageBreak>,
-    best_size: crate::scaled::Scaled,
-    fire_up: Option<super::PageFireUp>,
-}
-
 impl PageBuilderState {
-    pub(crate) fn state_hash_cursor(&self) -> PageStateHashCursor {
-        PageStateHashCursor {
-            dimensions: [
-                self.page_goal,
-                self.page_total,
-                self.page_stretch,
-                self.page_fil_stretch,
-                self.page_fill_stretch,
-                self.page_filll_stretch,
-                self.page_shrink,
-                self.page_depth,
-                self.page_max_depth,
-            ],
-            contents: self.contents,
-            lengths: [
-                self.contribution.len(),
-                self.current_page.len(),
-                self.page_discards.len(),
-                self.split_discards.len(),
-                self.insertions.len(),
-                self.mark_classes.len(),
-            ],
-            last_penalty: self.last_penalty,
-            last_kern: self.last_kern,
-            last_node_type: self.last_node_type,
-            insert_penalties: self.insert_penalties,
-            dead_cycles: self.dead_cycles,
-            least_page_cost: self.least_page_cost,
-            best_page_break: self.best_page_break,
-            best_size: self.best_size,
-            fire_up: self.fire_up,
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn hash_semantic(
         &self,

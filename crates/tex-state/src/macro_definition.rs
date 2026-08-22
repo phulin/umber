@@ -1,6 +1,6 @@
 //! Storage-independent macro parameter-program semantics.
 
-use crate::token::{Token, TokenWord, TracedTokenWord};
+use crate::token::{Token, TokenWord};
 
 #[cfg(test)]
 #[path = "macro_definition/tests.rs"]
@@ -19,10 +19,6 @@ pub struct MacroParameterPattern {
 impl MacroParameterPattern {
     pub fn from_tokens(tokens: &[Token]) -> Self {
         Self::from_token_iter(tokens.iter().copied())
-    }
-
-    pub(crate) fn from_traced_words(words: &[TracedTokenWord]) -> Self {
-        Self::from_token_iter(words.iter().map(|word| word.semantic_token()))
     }
 
     pub(crate) fn from_words(words: &[TokenWord]) -> Self {

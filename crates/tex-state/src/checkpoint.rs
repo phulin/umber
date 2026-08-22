@@ -20,7 +20,7 @@ pub struct BoundedStateMark<Journal: Copy, Durable: Copy, Page: Copy, Input: Cop
     journal: Journal,
     durable: Durable,
     page: Page,
-    input: Input,
+    _input: Input,
 }
 
 impl<Journal: Copy, Durable: Copy, Page: Copy, Input: Copy> Clone
@@ -45,7 +45,7 @@ impl<Journal: Copy, Durable: Copy, Page: Copy, Input: Copy>
             journal,
             durable,
             page,
-            input,
+            _input: input,
         }
     }
 
@@ -65,8 +65,9 @@ impl<Journal: Copy, Durable: Copy, Page: Copy, Input: Copy>
     }
 
     #[must_use]
+    #[cfg(test)]
     pub(crate) const fn input(&self) -> &Input {
-        &self.input
+        &self._input
     }
 }
 

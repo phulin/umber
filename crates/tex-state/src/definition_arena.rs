@@ -207,6 +207,7 @@ impl<G> DefinitionArena<G> {
         self.rows.len()
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn is_empty(&self) -> bool {
         self.rows.is_empty()

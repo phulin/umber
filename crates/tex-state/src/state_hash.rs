@@ -37,6 +37,7 @@ fn exact_hasher(domain: u64) -> AHasher {
 
 /// Fixed-seed, domain-framed session-local exact identity for canonical bytes.
 #[must_use]
+#[cfg(test)]
 pub(crate) fn exact_identity_bytes(domain: &[u8], bytes: &[u8]) -> u64 {
     let mut hasher = exact_hasher(0x6279_7465_735f_7631);
     hasher.write_usize(domain.len());
@@ -45,9 +46,6 @@ pub(crate) fn exact_identity_bytes(domain: &[u8], bytes: &[u8]) -> u64 {
     hasher.write(bytes);
     hasher.finish()
 }
-
-/// Initial checkpoint hash before any semantic slice is combined.
-pub(crate) const INITIAL_STATE_HASH: u64 = INITIAL_STATE;
 
 /// Performance-owner categories for discardable checkpoint projections.
 ///
@@ -87,12 +85,6 @@ impl StateHashComponent {
     }
 }
 
-/// Combines a previous checkpoint hash with the next semantic slice hash.
-#[must_use]
-pub(crate) fn combine(prev: u64, slice: u64) -> u64 {
-    splitmix64(prev ^ slice.wrapping_add(MIX_INCREMENT))
-}
-
 /// Fixed-seed AHash identity for canonically encoded semantic data.
 ///
 /// The engine uses these identities only as probabilistic equality checks. The
@@ -100,6 +92,7 @@ pub(crate) fn combine(prev: u64, slice: u64) -> u64 {
 /// state to the representation used by durable content identities, but only
 /// the first 64 bits carry state here.
 #[must_use]
+#[cfg(test)]
 pub(crate) fn semantic_identity_bytes(domain: &[u8], bytes: &[u8]) -> ContentHash {
     identity_from_u64(exact_identity_bytes(domain, bytes))
 }
@@ -130,30 +123,8 @@ pub(crate) struct StateHashFragment {
     identity: ContentHash,
 }
 
-/// One discardable canonical projection paired with its private reuse key.
-///
-/// The key may use allocation identity, but it is consulted only through the
-/// caller-supplied predicate and is never incorporated into the fingerprint.
-#[derive(Clone, Debug)]
-pub(crate) struct CachedProjection<K> {
-    key: K,
-    fragment: StateHashFragment,
-}
-
-impl<K> CachedProjection<K> {
-    pub(crate) const fn new(key: K, fragment: StateHashFragment) -> Self {
-        Self { key, fragment }
-    }
-
-    pub(crate) fn fragment_if(
-        &self,
-        matches: impl FnOnce(&K) -> bool,
-    ) -> Option<StateHashFragment> {
-        matches(&self.key).then_some(self.fragment)
-    }
-}
-
 impl StateHashFragment {
+    #[cfg(test)]
     pub(crate) const fn from_parts(fingerprint: u64, identity: ContentHash) -> Self {
         Self {
             fingerprint,
@@ -177,6 +148,7 @@ impl StateHashFragment {
         hasher.finish_fragment()
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn from_measured_builder(
         domain: u64,
@@ -190,6 +162,7 @@ impl StateHashFragment {
         })
     }
 
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn from_measured_builder_counted(
         domain: u64,
@@ -231,6 +204,7 @@ impl StateHashFragment {
     }
 
     /// Probabilistic fixed-seed identity used only for session-local exact reuse.
+    #[cfg(test)]
     #[must_use]
     pub(crate) const fn exact_identity(self) -> u64 {
         self.exact_identity
@@ -321,11 +295,6 @@ impl StateHasher {
     #[must_use]
     pub(crate) fn finish(self) -> u64 {
         splitmix64(self.states[0])
-    }
-
-    #[must_use]
-    pub(crate) fn finish_exact_identity(self) -> u64 {
-        self.exact.finish()
     }
 
     pub(crate) fn finish_fragment(self) -> StateHashFragment {

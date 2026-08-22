@@ -1,7 +1,7 @@
 //! Session epoch plus one admitted revision-generation state core.
 
 use crate::checkpoint::{BoundedStateMark, GenerationCheckpoint, RestoreTarget, prepare_restore};
-use crate::command_context::CommandContext;
+use crate::command_context::{CommandContext, CommandContextParts};
 use crate::definition_arena::{DefinitionAllocationError, DefinitionId};
 use crate::dependency::{
     DependencyRegionError, DependencyRegionToken, DependencyRuntime, ObservedDependency,
@@ -1135,6 +1135,7 @@ impl<G> Universe<G> {
         self.core.as_ref().expect("live universe").admit().glue(id)
     }
 
+    #[cfg(test)]
     pub(crate) fn provenance_record(&self, id: ProvenanceId<G>) -> OriginRecord {
         self.core
             .as_ref()
@@ -1853,24 +1854,24 @@ impl<G> Universe<G> {
     /// Admits matching coarse owners once for a command episode.
     pub fn command_context(&mut self) -> Result<CommandContext<'_, G>, UniverseError> {
         let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
-        Ok(CommandContext::new(
-            &mut self.interner,
-            core.admit_mut()?,
-            &self.primitive_names,
-            &self.primitive_meanings,
-            &mut self.world,
-            &mut self.dependencies,
-            &mut self.fonts,
-            &mut self.page_nodes,
-            &mut self.page,
-            &mut self.pdf,
-            &mut self.sources,
-            &mut self.hyphenation,
-            &mut self.interaction_mode,
-            &mut self.prepared_mag,
-            self.error_context_widths,
-            &mut self.engine_usage,
-        ))
+        Ok(CommandContext::new(CommandContextParts {
+            interner: &mut self.interner,
+            admitted: core.admit_mut()?,
+            primitive_names: &self.primitive_names,
+            primitive_meanings: &self.primitive_meanings,
+            world: &mut self.world,
+            dependencies: &mut self.dependencies,
+            fonts: &mut self.fonts,
+            page_nodes: &mut self.page_nodes,
+            page: &mut self.page,
+            pdf: &mut self.pdf,
+            sources: &mut self.sources,
+            hyphenation: &mut self.hyphenation,
+            interaction_mode: &mut self.interaction_mode,
+            prepared_mag: &mut self.prepared_mag,
+            error_context_widths: self.error_context_widths,
+            engine_usage: &mut self.engine_usage,
+        }))
     }
 
     /// Retains the complete immutable generation across an in-process

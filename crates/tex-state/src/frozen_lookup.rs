@@ -7,7 +7,9 @@ const EMPTY: u32 = u32::MAX;
 const HEADER_LEN: usize = 32;
 const ENTRY_LEN: usize = 16;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+#[cfg(test)]
 const DIRECT_ALGORITHM: u32 = 2;
+#[cfg(test)]
 const DIRECT_VERSION: u32 = 1;
 
 #[derive(Clone, Debug)]
@@ -17,27 +19,7 @@ pub(crate) struct FrozenLookup {
     keys: Vec<Vec<u8>>,
 }
 
-pub(crate) struct FrozenWordHasher(u64);
-
-impl FrozenWordHasher {
-    #[must_use]
-    pub(crate) const fn new() -> Self {
-        Self(SEED)
-    }
-
-    pub(crate) fn push_u32(&mut self, word: u32) {
-        for byte in word.to_le_bytes() {
-            self.0 ^= u64::from(byte);
-            self.0 = self.0.wrapping_mul(FNV_PRIME);
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn finish(self) -> u64 {
-        self.0
-    }
-}
-
+#[cfg(test)]
 pub(crate) fn encode_direct(hashes: &[u64]) -> Result<Vec<u8>, &'static str> {
     let count = u32::try_from(hashes.len()).map_err(|_| "direct lookup entry capacity")?;
     let bucket_count = bucket_count(hashes.len())?;
@@ -67,6 +49,7 @@ pub(crate) fn encode_direct(hashes: &[u64]) -> Result<Vec<u8>, &'static str> {
     Ok(out)
 }
 
+#[cfg(test)]
 pub(crate) fn decode_direct(bytes: &[u8], hashes: &[u64]) -> Result<(), &'static str> {
     if bytes.len() < HEADER_LEN
         || read_u32(bytes, 0) != DIRECT_ALGORITHM
@@ -92,15 +75,7 @@ pub(crate) fn decode_direct(bytes: &[u8], hashes: &[u64]) -> Result<(), &'static
 }
 
 impl FrozenLookup {
-    #[must_use]
-    pub(crate) fn empty() -> Self {
-        Self {
-            buckets: vec![EMPTY; 8],
-            targets: Vec::new(),
-            keys: Vec::new(),
-        }
-    }
-
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn get(&self, key: &[u8]) -> Option<u32> {
         let mask = self.buckets.len() - 1;
@@ -144,6 +119,7 @@ impl FrozenLookup {
         None
     }
 
+    #[cfg(test)]
     pub(crate) fn spot_check(&self, checksum: u64) -> Result<(), &'static str> {
         if self.keys.is_empty() {
             return Ok(());
@@ -157,21 +133,6 @@ impl FrozenLookup {
             let entry = (state.wrapping_mul(0x2545_f491_4f6c_dd1d) as usize) % self.keys.len();
             if self.get(&self.keys[entry]) != Some(self.targets[entry]) {
                 return Err("frozen lookup spot check failed");
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn validate_targets(&self, expected: &[Vec<u8>]) -> Result<(), &'static str> {
-        if expected.len() != self.targets.len() {
-            return Err("frozen lookup target count mismatch");
-        }
-        for (key, &target) in self.keys.iter().zip(&self.targets) {
-            if expected
-                .get(target as usize)
-                .is_none_or(|value| value != key)
-            {
-                return Err("frozen lookup key does not match target");
             }
         }
         Ok(())

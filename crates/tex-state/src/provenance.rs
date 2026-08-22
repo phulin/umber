@@ -150,20 +150,6 @@ impl MacroInvocationOrigin {
         self.definition_operand
     }
 
-    pub(crate) const fn from_nonowning_operand(
-        definition_operand: u64,
-        invocation: OriginId,
-        definition_origin: OriginId,
-        parent_invocation: OriginId,
-    ) -> Self {
-        Self {
-            definition_operand,
-            invocation,
-            definition_origin,
-            parent_invocation,
-        }
-    }
-
     #[must_use]
     pub const fn invocation(self) -> OriginId {
         self.invocation

@@ -103,6 +103,7 @@ impl FragmentPieceIndex {
         Ok(index)
     }
 
+    #[cfg(test)]
     pub(super) fn covering_piece(&self, lo: u64, hi: u64) -> Option<usize> {
         let required_end = if lo == hi { lo } else { hi };
         let start_count = self.starts.partition_point(|start| u64::from(*start) <= lo);
@@ -122,6 +123,7 @@ impl FragmentPieceIndex {
         (piece_index != usize::MAX).then_some(piece_index)
     }
 
+    #[cfg(test)]
     fn range_min(
         nodes: &[RangeMinNode],
         root: u32,

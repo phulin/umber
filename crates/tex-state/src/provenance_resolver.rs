@@ -8,14 +8,19 @@
 use core::fmt::{self, Write as _};
 use unicode_width::UnicodeWidthChar;
 
+#[cfg(test)]
 use crate::durable_arena::ProvenanceId;
+#[cfg(test)]
+use crate::provenance::SourceOrigin;
 use crate::provenance::{
-    InsertedOriginKind, OriginRecord, RelatedLocationRole, SourceOrigin, SynthesizedOriginKind,
+    InsertedOriginKind, OriginRecord, RelatedLocationRole, SynthesizedOriginKind,
     SyntheticOriginKind,
 };
 use crate::token::Token;
+#[cfg(test)]
 use crate::universe::Universe;
 
+#[cfg(test)]
 const DEFAULT_TRACE_DEPTH: usize = 8;
 
 /// Capability proving that a consumer explicitly requested cold provenance.
@@ -33,6 +38,7 @@ pub struct DiagnosticOriginRequest<'a> {
 }
 
 /// One generation-local live coordinate selected for cold resolution.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 pub struct DiagnosticProvenanceCoordinate<G> {
     pub role: Option<RelatedLocationRole>,
@@ -40,22 +46,12 @@ pub struct DiagnosticProvenanceCoordinate<G> {
 }
 
 /// Explicit typed roots for one diagnostic presentation build.
+#[cfg(test)]
 #[derive(Debug)]
 pub struct DiagnosticProvenanceRequest<'a, G> {
     pub primary: Option<ProvenanceId<G>>,
     pub related: &'a [DiagnosticProvenanceCoordinate<G>],
     pub expansion: &'a [ProvenanceId<G>],
-}
-
-impl<G> DiagnosticProvenanceRequest<'_, G> {
-    #[must_use]
-    pub const fn primary(primary: ProvenanceId<G>) -> Self {
-        Self {
-            primary: Some(primary),
-            related: &[],
-            expansion: &[],
-        }
-    }
 }
 
 /// Owned physical source range. It contains no source id or engine owner.
@@ -105,21 +101,27 @@ pub struct DetachedOriginDiagnostic {
 
 /// Resolver which allocates presentation only after explicit cold admission.
 pub struct ProvenanceResolver<'a, G> {
+    #[cfg(test)]
     universe: Option<&'a Universe<G>>,
-    demand: ColdProvenanceDemand,
+    _demand: ColdProvenanceDemand,
+    #[cfg(test)]
     trace_depth: usize,
+    _brand: core::marker::PhantomData<&'a G>,
 }
 
 impl<'a, G> ProvenanceResolver<'a, G> {
+    #[cfg(test)]
     #[must_use]
     pub const fn new(universe: &'a Universe<G>, demand: ColdProvenanceDemand) -> Self {
         Self {
             universe: Some(universe),
-            demand,
+            _demand: demand,
             trace_depth: DEFAULT_TRACE_DEPTH,
+            _brand: core::marker::PhantomData,
         }
     }
 
+    #[cfg(test)]
     #[must_use]
     pub const fn with_trace_depth(
         universe: &'a Universe<G>,
@@ -128,21 +130,26 @@ impl<'a, G> ProvenanceResolver<'a, G> {
     ) -> Self {
         Self {
             universe: Some(universe),
-            demand,
+            _demand: demand,
             trace_depth,
+            _brand: core::marker::PhantomData,
         }
     }
 
+    #[cfg(test)]
     #[must_use]
     pub const fn demand(&self) -> ColdProvenanceDemand {
-        self.demand
+        self._demand
     }
 
     pub(crate) const fn admitted(demand: ColdProvenanceDemand) -> Self {
         Self {
+            #[cfg(test)]
             universe: None,
-            demand,
+            _demand: demand,
+            #[cfg(test)]
             trace_depth: DEFAULT_TRACE_DEPTH,
+            _brand: core::marker::PhantomData,
         }
     }
 
@@ -171,6 +178,7 @@ impl<'a, G> ProvenanceResolver<'a, G> {
     }
 
     /// Detaches one live coordinate to an owned source presentation.
+    #[cfg(test)]
     #[must_use]
     pub fn resolve_coordinate(
         &self,
@@ -195,6 +203,7 @@ impl<'a, G> ProvenanceResolver<'a, G> {
     }
 
     /// Builds complete structural/presentation evidence only at this call.
+    #[cfg(test)]
     #[must_use]
     pub fn detach_diagnostic(
         &self,
@@ -240,20 +249,12 @@ impl<'a, G> ProvenanceResolver<'a, G> {
         }
     }
 
-    /// Renders a detached presentation without returning to live state.
-    #[must_use]
-    pub fn render_diagnostic(
-        &self,
-        message: &str,
-        request: &DiagnosticProvenanceRequest<'_, G>,
-    ) -> String {
-        render_detached_diagnostic(message, &self.detach_diagnostic(request))
-    }
-
+    #[cfg(test)]
     fn record(&self, coordinate: ProvenanceId<G>) -> Option<OriginRecord> {
         Some(self.universe?.provenance_record(coordinate))
     }
 
+    #[cfg(test)]
     fn resolve_record(&self, record: OriginRecord) -> Option<ResolvedSourceLocation> {
         match record {
             OriginRecord::Source(source) => self.resolve_source(source),
@@ -266,6 +267,7 @@ impl<'a, G> ProvenanceResolver<'a, G> {
         }
     }
 
+    #[cfg(test)]
     fn resolve_source(&self, source: SourceOrigin) -> Option<ResolvedSourceLocation> {
         let universe = self.universe?;
         let record = universe.world().input_record(source.input_record()?)?;
@@ -277,6 +279,7 @@ impl<'a, G> ProvenanceResolver<'a, G> {
         resolve_owned_bytes(&record.path().to_string_lossy(), bytes, start, end)
     }
 
+    #[cfg(test)]
     fn record_summary(&self, record: OriginRecord) -> String {
         match record {
             OriginRecord::UnknownBootstrap => "unknown origin".to_owned(),
@@ -419,6 +422,7 @@ fn line_starts(bytes: &[u8]) -> Vec<usize> {
     starts
 }
 
+#[cfg(test)]
 fn utf8_scalar_len_at(bytes: &[u8], offset: usize) -> Option<usize> {
     let width = match *bytes.get(offset)? {
         0x00..=0x7f => 1,
@@ -486,11 +490,11 @@ fn synthetic_kind_label(kind: SyntheticOriginKind) -> &'static str {
 
 impl<G> fmt::Debug for ProvenanceResolver<'_, G> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ProvenanceResolver")
-            .field("demand", &self.demand)
-            .field("trace_depth", &self.trace_depth)
-            .finish_non_exhaustive()
+        let mut debug = formatter.debug_struct("ProvenanceResolver");
+        debug.field("demand", &self._demand);
+        #[cfg(test)]
+        debug.field("trace_depth", &self.trace_depth);
+        debug.finish_non_exhaustive()
     }
 }
 

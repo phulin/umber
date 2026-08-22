@@ -963,9 +963,6 @@ impl<G> PdfFormRecord<G> {
 }
 
 impl<G> PdfPageRecord<G> {
-    pub(crate) fn retarget_artifact(&mut self, artifact: ContentHash) {
-        self.artifact = artifact;
-    }
     #[must_use]
     pub const fn artifact(&self) -> ContentHash {
         self.artifact

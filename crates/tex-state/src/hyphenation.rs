@@ -4,7 +4,9 @@
 //! not Knuth's packed `trie_link`/`trie_char` array layout, but it preserves the
 //! same edge labels and hyphen-value semantics used by Liang's algorithm.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 /// pdfTeX's default maximum number of nodes in the hyphenation pattern trie.
@@ -423,27 +425,7 @@ impl HyphenationTable {
             .map(Vec::as_slice)
     }
 
-    pub(crate) fn hash_semantic(&self, hasher: &mut crate::state_hash::StateHasher) -> usize {
-        let mut visits = 0;
-        hasher.tag(0x70);
-        hasher.usize(self.languages.len());
-        for (language, table) in &self.languages {
-            hasher.u8(*language);
-            visits += table.hash_semantic(hasher);
-        }
-        hasher.usize(self.hyphen_codes.len());
-        for (language, codes) in &self.hyphen_codes {
-            hasher.u8(*language);
-            hasher.usize(codes.len());
-            for (from, to) in codes {
-                visits += 1;
-                hasher.u32(*from as u32);
-                hasher.u32(*to as u32);
-            }
-        }
-        visits
-    }
-
+    #[cfg(test)]
     pub(crate) fn dependency_fingerprint(&self, language: u8, kind: u8) -> u64 {
         assert!(kind < 3, "hyphenation dependency kind is fixed");
         self.dependency_fingerprints
@@ -469,6 +451,7 @@ impl HyphenationTable {
             .unwrap_or_else(|| self.compute_dependency_fingerprint(language, kind))
     }
 
+    #[cfg(test)]
     fn compute_dependency_fingerprint(&self, language: u8, kind: u8) -> u64 {
         let mut hasher =
             crate::state_hash::StateHasher::new(0x6879_7068_6465_7000_u64 | u64::from(kind));
@@ -542,33 +525,6 @@ impl LanguageHyphenation {
                 next
             }
         }
-    }
-
-    fn hash_semantic(&self, hasher: &mut crate::state_hash::StateHasher) -> usize {
-        let mut visits = 0;
-        hasher.usize(self.nodes.len());
-        for node in &self.nodes {
-            visits += 1;
-            hasher.usize(node.edges.len());
-            for (ch, target) in &node.edges {
-                hasher.u32(*ch as u32);
-                hasher.usize(*target);
-            }
-            hasher.usize(node.values.len());
-            for value in &node.values {
-                hasher.u8(*value);
-            }
-        }
-        hasher.usize(self.exceptions.len());
-        for (word, positions) in &self.exceptions {
-            visits += 1;
-            hasher.str(word);
-            hasher.usize(positions.len());
-            for position in positions {
-                hasher.usize(*position);
-            }
-        }
-        visits
     }
 }
 

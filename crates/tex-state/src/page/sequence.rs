@@ -10,6 +10,7 @@ pub(super) struct PageNodeSequence {
 }
 
 impl PageNodeSequence {
+    #[cfg(test)]
     pub(super) fn retained_bytes(&self) -> usize {
         self.nodes
             .capacity()
@@ -20,6 +21,7 @@ impl PageNodeSequence {
         self.nodes.iter()
     }
 
+    #[cfg(test)]
     pub(super) fn as_slice(&self) -> &[Node] {
         &self.nodes
     }
