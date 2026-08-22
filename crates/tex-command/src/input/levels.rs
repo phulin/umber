@@ -447,41 +447,6 @@ impl<G> TokenPayload<G> {
         }
         Some(())
     }
-
-    pub(crate) fn rehome_backed_up_source(
-        &mut self,
-        source: tex_state::SourceId,
-        byte_delta: i64,
-    ) -> Option<()> {
-        match self {
-            Self::Packed(chunk) if chunk.ownership == PackedTokenOwnership::BackedUp => {
-                for provenance in chunk.source_provenance.iter_mut().flatten() {
-                    provenance.rehome(source, byte_delta)?;
-                }
-                Some(())
-            }
-            _ => None,
-        }
-    }
-
-    pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
-        if let (Self::Packed(recorded), Self::Packed(live)) = (&*self, live) {
-            if recorded.words.len() != live.words.len()
-                || recorded
-                    .words
-                    .iter()
-                    .zip(&live.words)
-                    .any(|(recorded, live)| recorded.token() != live.token())
-                || recorded.source_provenance != live.source_provenance
-                || recorded.ownership != live.ownership
-            {
-                return None;
-            }
-            *self = Self::Packed(live.clone());
-            return Some(());
-        }
-        None
-    }
 }
 
 /// Test-fixture staging for callers that deliberately exercise the private

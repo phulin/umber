@@ -137,15 +137,6 @@ impl SourceProvenance {
     pub const fn location(self) -> SourceLocation {
         self.location
     }
-
-    pub(crate) fn rehome(&mut self, source: SourceId, byte_delta: i64) -> Option<()> {
-        self.range.source = source;
-        self.range.start = self.range.start.checked_add_signed(byte_delta)?;
-        self.range.end = self.range.end.checked_add_signed(byte_delta)?;
-        self.location.source = source;
-        self.location.byte = self.location.byte.checked_add_signed(byte_delta)?;
-        Some(())
-    }
 }
 
 /// A half-open decoded-scalar range within one normalized physical line.
