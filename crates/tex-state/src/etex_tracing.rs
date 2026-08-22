@@ -11,18 +11,18 @@
 //! `tex-exec`, so its trace lines are assembled there against the primitives
 //! declared in this module.
 
+use crate::CommandContext;
 use crate::GroupKind;
 use crate::env::banks::IntParam;
-use crate::universe::Universe;
 
-impl<G> Universe<G> {
+impl<G> CommandContext<'_, G> {
     /// e-TeX 2.6 [19.274]'s `group_trace(false)`, called when
     /// [`Self::enter_group_with_kind_at_line`] opens a new save level.
     ///
     /// `level` is e-TeX's `qo(cur_level)`: the number of groups open
     /// *including* the one just entered, matching `\currentgrouplevel` and
     /// the level `\showgroups` prints for the same frame.
-    pub(crate) fn trace_group_enter(
+    pub fn trace_group_enter(
         &self,
         effects: &mut crate::diagnostic::DiagnosticEffects,
         kind: GroupKind,
@@ -55,7 +55,7 @@ impl<G> Universe<G> {
     ///
     /// `level` and `entered_line` were captured from the group being closed
     /// before restoration popped its frame.
-    pub(crate) fn trace_group_leave(
+    pub fn trace_group_leave(
         &self,
         effects: &mut crate::diagnostic::DiagnosticEffects,
         kind: GroupKind,

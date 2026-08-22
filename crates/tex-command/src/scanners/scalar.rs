@@ -1131,7 +1131,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Scans a normal or mu glue specification.
     pub fn scan_glue(&mut self, mu: bool) -> Result<ScannedScalar<GlueSpec>, CommandError> {
         self.scanned_glue_identity = None;
-        self.scanned_glue_skip_index = None;
+        self.scanned_glue_register = None;
         // TeX82 §461's `<Get the next non-blank non-sign token>`: `scan_glue`
         // owns its own leading signs so that §430 can negate an internal
         // glue's three components as a unit (`\skip0=-\skip1`). Routing a
@@ -1266,7 +1266,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         if negative {
             self.scanned_glue_identity = None;
-            self.scanned_glue_skip_index = None;
+            self.scanned_glue_register = None;
         }
         if !internal_glue {
             if self.scan_keyword("plus")?.value {
@@ -2283,7 +2283,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let index = self.scan_profile_register_index()?;
                 let identity = self.state.glue_register(index).ok().flatten();
                 self.scanned_glue_identity = identity;
-                self.scanned_glue_skip_index = Some(index);
+                self.scanned_glue_register = Some((false, index));
                 InternalValue::Glue(
                     identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
                 )
@@ -2292,6 +2292,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 let index = self.scan_profile_register_index()?;
                 let identity = self.state.muskip(index);
                 self.scanned_glue_identity = identity;
+                self.scanned_glue_register = Some((true, index));
                 InternalValue::MuGlue(
                     identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
                 )
@@ -2600,7 +2601,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Meaning::SkipRegister(index) => {
                 let identity = self.state.glue_register(index).ok().flatten();
                 self.scanned_glue_identity = identity;
-                self.scanned_glue_skip_index = Some(index);
+                self.scanned_glue_register = Some((false, index));
                 InternalValue::Glue(
                     identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
                 )
@@ -2608,6 +2609,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Meaning::MuskipRegister(index) => {
                 let identity = self.state.muskip(index);
                 self.scanned_glue_identity = identity;
+                self.scanned_glue_register = Some((true, index));
                 InternalValue::MuGlue(
                     identity.map_or_else(|| GlueSpec::ZERO, |id| self.state.glue(id)),
                 )

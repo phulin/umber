@@ -206,7 +206,12 @@ pub(in crate::main_control) fn replace_alignment_entry_save_level<G>(
         stores,
         "alignment entry group",
     )?;
-    enter_group(stores, command.state, GroupKind::Align);
+    enter_group(
+        stores,
+        command.state,
+        command.diagnostic_effects,
+        GroupKind::Align,
+    );
     schedule_aftergroup(command, stores, aftergroup)
 }
 

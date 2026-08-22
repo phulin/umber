@@ -101,6 +101,7 @@ const fn static_meaning<G>(meaning: ResolvedMeaning<G>) -> Meaning {
 struct ImmediatePrint {
     sink: PrintSink,
     text: String,
+    max_print_line: usize,
 }
 
 #[derive(Debug)]
@@ -1138,6 +1139,24 @@ impl<G> CommandMachine<'_, G> {
         )
     }
 
+    fn processor_with_diagnostic_effects<'episode, 'admission>(
+        &'episode mut self,
+        context: tex_state::CommandContext<'admission, G>,
+        diagnostic_effects: &'episode mut DiagnosticEffects,
+    ) -> InterpreterProcessor<'episode, 'admission, G> {
+        let observer = self
+            .observations
+            .as_mut()
+            .map(|buffer| buffer as &mut dyn CommandObserver);
+        self.state.processor(
+            context,
+            CommandHostContext::new(self.capabilities),
+            self.fuel,
+            observer,
+            diagnostic_effects,
+        )
+    }
+
     fn shipout_geometry_sink(&mut self) -> MainControlShipoutGeometrySink<'_, G> {
         MainControlShipoutGeometrySink {
             command: self.state,
@@ -1369,14 +1388,14 @@ impl<G> MainControl<G> {
                     index,
                     value,
                     source_identity,
-                    source_skip_index,
+                    source_register,
                     global: false,
                     ..
                 } => (
                     *index,
                     value,
                     source_identity,
-                    *source_skip_index == Some(*index),
+                    *source_register == Some((false, *index)),
                     match context.glue_register(*index).ok().flatten() {
                         Some(physical) => physical,
                         None => return false,
@@ -1387,13 +1406,14 @@ impl<G> MainControl<G> {
                     index,
                     value,
                     source_identity,
+                    source_register,
                     global: false,
                     ..
                 } => (
                     *index,
                     value,
                     source_identity,
-                    false,
+                    *source_register == Some((true, *index)),
                     match context.muskip(*index) {
                         Some(physical) => physical,
                         None => return false,
@@ -3044,7 +3064,7 @@ impl<G> MainControl<G> {
                 self.fuel.fuel_mut(),
             )?;
         }
-        self.open_discretionary_part(stores)?;
+        self.open_discretionary_part(stores, diagnostic_effects)?;
         self.active_discretionaries.push(ActiveDiscretionary {
             parts: Vec::new(),
             rejected: false,
@@ -3052,7 +3072,11 @@ impl<G> MainControl<G> {
         Ok(ReplayStep::Continue)
     }
 
-    fn open_discretionary_part(&mut self, stores: &mut Universe<G>) -> Result<(), ExecError> {
+    fn open_discretionary_part(
+        &mut self,
+        stores: &mut Universe<G>,
+        diagnostic_effects: &mut DiagnosticEffects,
+    ) -> Result<(), ExecError> {
         // TeX82 §216 checks nest capacity before saving the current semantic
         // level. Fatal overflow is committed by main control, so
         // this fallible operation must precede both halves of the live
@@ -3066,7 +3090,12 @@ impl<G> MainControl<G> {
                 .unwrap_or(i32::MAX),
         )?;
         let mut context = stores.command_context().expect("live generation");
-        enter_group(&mut context, &mut self.command, GroupKind::Disc);
+        enter_group(
+            &mut context,
+            &mut self.command,
+            diagnostic_effects,
+            GroupKind::Disc,
+        );
         Ok(())
     }
 
@@ -3177,7 +3206,7 @@ impl<G> MainControl<G> {
             }
             self.capture_first_causal_context(stores, &diagnostics);
             report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
-            self.open_discretionary_part(stores)?;
+            self.open_discretionary_part(stores, diagnostic_effects)?;
             return Ok(ReplayStep::Continue);
         }
         let active = self
@@ -5065,7 +5094,12 @@ impl<G> MainControl<G> {
                     }
                     opened?;
                     let mut context = stores.command_context().expect("live generation");
-                    enter_group(&mut context, &mut self.command, GroupKind::Output);
+                    enter_group(
+                        &mut context,
+                        &mut self.command,
+                        diagnostic_effects,
+                        GroupKind::Output,
+                    );
                     self.modes.push_at_line(
                         Mode::InternalVertical,
                         -i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
@@ -5109,6 +5143,7 @@ impl<G> MainControl<G> {
         enter_group(
             &mut stores.command_context().expect("math-group admission"),
             &mut self.command,
+            diagnostic_effects,
             kind,
         );
         self.modes.push_at_line(
@@ -5484,7 +5519,12 @@ impl<G> MainControl<G> {
                 } else {
                     let display = take_finished_math_list(&mut self.modes, stores)?;
                     let mut context = stores.command_context().expect("live generation");
-                    enter_group(&mut context, &mut self.command, GroupKind::MathShift);
+                    enter_group(
+                        &mut context,
+                        &mut self.command,
+                        diagnostic_effects,
+                        GroupKind::MathShift,
+                    );
                     context
                         .assign_int_param(IntParam::FAM, -1, tex_state::AssignmentScope::Local)
                         .expect("family parameter is admitted");
@@ -5656,13 +5696,16 @@ impl<G> MainControl<G> {
     fn prepare_math_list(
         &mut self,
         stores: &mut Universe<G>,
-        _diagnostic_effects: &mut DiagnosticEffects,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<tex_state::node_arena::PageListId, ExecError> {
-        let rejected = {
-            let mut context = stores.command_context().expect("math-font admission");
-            let math_font_context = self.command.output_open_context(&context);
-            crate::math::reject_invalid_math_fonts(&mut context, math_font_context)?
-        };
+        let math_font_context = self
+            .command
+            .output_open_context(&stores.command_context().expect("math-font admission"));
+        let rejected = crate::math::reject_invalid_math_fonts_at_outer_barrier(
+            stores,
+            diagnostic_effects,
+            math_font_context,
+        )?;
         let content = take_finished_math_list(&mut self.modes, stores)?;
         Ok(if rejected {
             tex_state::node_arena::PageListId::empty()
@@ -5727,10 +5770,15 @@ impl<G> MainControl<G> {
         &mut self,
         display: bool,
         stores: &mut Universe<G>,
-        _diagnostic_effects: &mut DiagnosticEffects,
+        diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<(), ExecError> {
         let mut context = stores.command_context().expect("live generation");
-        enter_group(&mut context, &mut self.command, GroupKind::MathShift);
+        enter_group(
+            &mut context,
+            &mut self.command,
+            diagnostic_effects,
+            GroupKind::MathShift,
+        );
         context
             .assign_int_param(IntParam::FAM, -1, tex_state::AssignmentScope::Local)
             .expect("family parameter is admitted");
@@ -5834,14 +5882,20 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<(), ExecError> {
         let mut content = take_finished_math_list(&mut self.modes, stores)?;
-        let mut context =
-            LinearCommandContext::new(stores.command_context().expect("inline-math admission"));
-        let diagnostic_text = self.command.output_open_context(&context);
+        let diagnostic_text = self
+            .command
+            .output_open_context(&stores.command_context().expect("inline-math admission"));
         let conversion_error_context =
             crate::math::MathConversionErrorContext::new(diagnostic_text.clone());
-        if crate::math::reject_invalid_math_fonts(&mut context, diagnostic_text.clone())? {
+        if crate::math::reject_invalid_math_fonts_at_outer_barrier(
+            stores,
+            diagnostic_effects,
+            diagnostic_text,
+        )? {
             content = tex_state::node_arena::PageListId::empty();
         }
+        let mut context =
+            LinearCommandContext::new(stores.command_context().expect("inline-math admission"));
         let _ = crate::box_runtime::commit_current_list(
             &mut self.modes,
             &mut context,
@@ -6014,19 +6068,26 @@ impl<G> MainControl<G> {
         fonts_checked: bool,
         display_level: Option<crate::mode::ModeLevelSummary>,
     ) -> Result<(), ExecError> {
-        let mut context =
-            LinearCommandContext::new(stores.command_context().expect("display-math admission"));
-        let diagnostic_text = self.command.output_open_context(&context);
+        let diagnostic_text = self
+            .command
+            .output_open_context(&stores.command_context().expect("display-math admission"));
         let conversion_error_context =
             crate::math::MathConversionErrorContext::new(diagnostic_text.clone());
         let diagnostic_context =
             crate::diagnostics::ExecutionDiagnosticContext::source_free(diagnostic_text.clone());
         // TeX82 §1194 performs this check before every display `fin_mlist`,
         // including the saved outer mlist after an equation number.
-        if !fonts_checked && crate::math::reject_invalid_math_fonts(&mut context, diagnostic_text)?
+        if !fonts_checked
+            && crate::math::reject_invalid_math_fonts_at_outer_barrier(
+                stores,
+                diagnostic_effects,
+                diagnostic_text,
+            )?
         {
             content = tex_state::node_arena::PageListId::empty();
         }
+        let mut context =
+            LinearCommandContext::new(stores.command_context().expect("display-math admission"));
         let mut level = match display_level {
             Some(level) => level,
             None => crate::box_runtime::commit_current_list(
@@ -6210,6 +6271,7 @@ impl<G> MainControl<G> {
                 enter_group(
                     &mut stores.command_context().expect("math-left admission"),
                     &mut self.command,
+                    diagnostic_effects,
                     GroupKind::MathLeft,
                 );
                 self.modes.push_at_line(
@@ -6263,7 +6325,12 @@ impl<G> MainControl<G> {
                         aftergroup,
                     )?;
 
-                    enter_group(&mut context, &mut self.command, GroupKind::MathLeft);
+                    enter_group(
+                        &mut context,
+                        &mut self.command,
+                        diagnostic_effects,
+                        GroupKind::MathLeft,
+                    );
                     self.modes.push_at_line(
                         Mode::Math,
                         self.command
@@ -6933,6 +7000,15 @@ impl<G> MainControl<G> {
             context.observe_changed_command_projection(
                 inner_key,
                 DependencyValue::Bool(mode.is_inner()),
+            );
+            let (group_level, group_type) = context.current_group_values();
+            context.observe_changed_command_projection(
+                DependencyKey::Engine(DependencyEngineField::GroupLevel),
+                DependencyValue::Integer(i64::from(group_level)),
+            );
+            context.observe_changed_command_projection(
+                DependencyKey::Engine(DependencyEngineField::GroupType),
+                DependencyValue::Integer(i64::from(group_type)),
             );
             context.observe_changed_command_projection(
                 last_node_key,
@@ -7651,29 +7727,78 @@ impl<G> MainControl<G> {
             immediate_prints: &mut self.immediate_prints,
             prepared_shipout: &mut self.prepared_shipout,
         };
-        let context = stores
-            .command_context()
-            .map_err(|_| ExecError::MissingToken {
-                context: "cold operation admission",
-            })?;
-        let mut result = apply_cold_operation(
-            scanned,
-            context,
-            &mut self.modes,
-            &mut self.next_alignment_identity,
-            &mut self.active_alignment,
-            &mut command,
-            &mut self.boxes,
-            &self.active_discretionaries,
-            &self.active_math_choices,
-            &self.active_math_left_boundaries,
-            &self.active_math_shifts,
-            &mut self.prepared_dvi_pages,
-            &mut self.end_job_ejection_pending,
-        );
+        let mut result = match scanned {
+            ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(request)) => {
+                let provenance_demand = stores.provenance_demand();
+                let provenance_budget_bytes =
+                    stores.provenance_budgets().detached_artifact_recipe_bytes;
+                let (form, source_resolver) = {
+                    let mut context =
+                        stores
+                            .command_context()
+                            .map_err(|_| ExecError::MissingToken {
+                                context: "immediate form admission",
+                            })?;
+                    let form = apply_pdf_form_request(
+                        request,
+                        &mut context,
+                        &mut self.modes,
+                        &mut command,
+                        true,
+                    )?
+                    .expect("immediate form creation returns a publication record");
+                    let source_resolver =
+                        DetachedArtifactSourceResolver::capture_durable(form.box_list(), &context);
+                    (form, source_resolver)
+                };
+                let mut geometry = DetachedShipoutGeometry::default();
+                publish_immediate_pdf_form(
+                    form,
+                    &mut command,
+                    stores,
+                    &source_resolver,
+                    provenance_demand,
+                    provenance_budget_bytes,
+                    &mut geometry,
+                )?;
+                if let Some(geometry) = geometry.0 {
+                    crate::shipout::ShipoutGeometrySink::committed_shipout_geometry(
+                        &mut command.shipout_geometry_sink(),
+                        geometry,
+                    );
+                }
+                Ok(ReplayStep::Continue)
+            }
+            scanned => {
+                let context = stores
+                    .command_context()
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "cold operation admission",
+                    })?;
+                apply_cold_operation(
+                    scanned,
+                    context,
+                    &mut self.modes,
+                    &mut self.next_alignment_identity,
+                    &mut self.active_alignment,
+                    &mut command,
+                    &mut self.boxes,
+                    &self.active_discretionaries,
+                    &self.active_math_choices,
+                    &self.active_math_left_boundaries,
+                    &self.active_math_shifts,
+                    &mut self.prepared_dvi_pages,
+                    &mut self.end_job_ejection_pending,
+                )
+            }
+        };
         if result.is_ok() {
             for print in command.immediate_prints.drain(..) {
-                stores.world_mut().write_text(print.sink, &print.text);
+                stores.world_mut().publish_print_text(
+                    print.sink,
+                    &print.text,
+                    print.max_print_line,
+                );
             }
             if let Some(shipout) = command.prepared_shipout.take()
                 && let Some(receipt) = shipout_replay_box(shipout.node, stores, &mut command)?

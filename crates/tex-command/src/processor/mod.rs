@@ -178,7 +178,7 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     /// Canonical glue-node identity retained only while an internal glue or
     /// e-TeX expression result remains pointer-identical to its source.
     pub(crate) scanned_glue_identity: Option<tex_state::GlueId<G>>,
-    pub(crate) scanned_glue_skip_index: Option<u16>,
+    pub(crate) scanned_glue_register: Option<(bool, u16)>,
     /// Nesting of TeX82's artificial deferred-write expansion episode.
     /// This is operational call-stack state, never snapshot state.
     pub(crate) write_expansion_depth: u32,
@@ -265,8 +265,8 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     #[must_use]
-    pub const fn scanned_glue_skip_index(&self) -> Option<u16> {
-        self.scanned_glue_skip_index
+    pub const fn scanned_glue_register(&self) -> Option<(bool, u16)> {
+        self.scanned_glue_register
     }
 
     /// TeX82 §578's `find_font_dimen` decision for a scanned parameter number.
@@ -518,7 +518,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             expression_depth: 0,
             is_in_csname: false,
             scanned_glue_identity: None,
-            scanned_glue_skip_index: None,
+            scanned_glue_register: None,
             write_expansion_depth: 0,
             command_trace_mode_prefix: None,
             command_trace_printed: false,

@@ -19,9 +19,10 @@ use crate::{AttemptTokenListId, CommandError, CommandProcessor};
 /// e-TeX's 15-bit sparse-register bound. The token list is already frozen by
 /// the command-owned collector or copied from an internal token-list value.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScannedTokenRegisterAssignment {
+pub struct ScannedTokenRegisterAssignment<G> {
     pub index: u16,
-    pub tokens: AttemptTokenListId,
+    pub tokens: Option<AttemptTokenListId>,
+    pub source: Option<tex_state::TokenListId<G>>,
 }
 
 /// A completed TeX token-parameter assignment operand.
@@ -30,13 +31,15 @@ pub struct ScannedTokenRegisterAssignment {
 /// imply a nonempty list: §1226 copies a present source pointer even when its
 /// list is empty, while a newly scanned empty braced list becomes null.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScannedTokenParameterAssignment {
+pub struct ScannedTokenParameterAssignment<G> {
     pub tokens: Option<AttemptTokenListId>,
+    pub source: Option<tex_state::TokenListId<G>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ScannedTokenListRightHandSide {
-    tokens: AttemptTokenListId,
+struct ScannedTokenListRightHandSide<G> {
+    tokens: Option<AttemptTokenListId>,
+    source: Option<tex_state::TokenListId<G>>,
     pointer_present: bool,
 }
 
@@ -51,11 +54,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_token_register_assignment(
         &mut self,
         owner: Symbol,
-    ) -> Result<ScannedTokenRegisterAssignment, CommandError> {
+    ) -> Result<ScannedTokenRegisterAssignment<G>, CommandError> {
         let index = self.scan_profile_register_index()?;
         let _ = self.scan_optional_equals()?;
-        let tokens = self.scan_token_list_right_hand_side(owner, false)?.tokens;
-        Ok(ScannedTokenRegisterAssignment { index, tokens })
+        let value = self.scan_token_list_right_hand_side(owner, false)?;
+        Ok(ScannedTokenRegisterAssignment {
+            index,
+            tokens: value.tokens,
+            source: value.source,
+        })
     }
 
     /// Scans the right-hand side of an already selected token register.
@@ -65,9 +72,16 @@ impl<G> CommandProcessor<'_, '_, G> {
     pub fn scan_token_register_value(
         &mut self,
         owner: Symbol,
-    ) -> Result<AttemptTokenListId, CommandError> {
+    ) -> Result<
+        (
+            Option<AttemptTokenListId>,
+            Option<tex_state::TokenListId<G>>,
+        ),
+        CommandError,
+    > {
         let _ = self.scan_optional_equals()?;
-        Ok(self.scan_token_list_right_hand_side(owner, false)?.tokens)
+        let value = self.scan_token_list_right_hand_side(owner, false)?;
+        Ok((value.tokens, value.source))
     }
 
     /// Scans a token-parameter assignment such as `\everypar={...}`.
@@ -89,14 +103,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         parameter: TokParam,
         owner: Symbol,
-    ) -> Result<ScannedTokenParameterAssignment, CommandError> {
+    ) -> Result<ScannedTokenParameterAssignment<G>, CommandError> {
         let _ = self.scan_optional_equals()?;
         let right_hand_side =
             self.scan_token_list_right_hand_side(owner, parameter == TokParam::OUTPUT)?;
         Ok(ScannedTokenParameterAssignment {
             tokens: right_hand_side
                 .pointer_present
-                .then_some(right_hand_side.tokens),
+                .then_some(right_hand_side.tokens)
+                .flatten(),
+            source: right_hand_side.source,
         })
     }
 
@@ -104,7 +120,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         owner: Symbol,
         enclose_collected: bool,
-    ) -> Result<ScannedTokenListRightHandSide, CommandError> {
+    ) -> Result<ScannedTokenListRightHandSide<G>, CommandError> {
         let command = self
             .next_non_blank_non_relax_x_token()?
             .ok_or_else(CommandError::input_invariant)?;
@@ -119,7 +135,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .token_register(index)
                     .expect("scanner produced an admitted token-register index");
                 return Ok(ScannedTokenListRightHandSide {
-                    tokens: self.copy_durable_token_list_into_attempt(tokens)?,
+                    tokens: None,
+                    source: tokens,
                     pointer_present: tokens
                         .is_some_and(|tokens| !self.state.token_list(tokens).is_empty()),
                 });
@@ -130,7 +147,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .token_register(index)
                     .expect("meaning contains an admitted token-register index");
                 return Ok(ScannedTokenListRightHandSide {
-                    tokens: self.copy_durable_token_list_into_attempt(tokens)?,
+                    tokens: None,
+                    source: tokens,
                     pointer_present: tokens
                         .is_some_and(|tokens| !self.state.token_list(tokens).is_empty()),
                 });
@@ -143,16 +161,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                         .expect("meaning contains an admitted token-parameter index")
                     {
                         Some(tokens) => ScannedTokenListRightHandSide {
-                            tokens: self.copy_durable_token_list_into_attempt(Some(tokens))?,
+                            tokens: None,
+                            source: Some(tokens),
                             pointer_present: true,
                         },
                         None => ScannedTokenListRightHandSide {
-                            tokens: self
-                                .command
-                                .attempt
-                                .arena_mut()
-                                .allocate_token_list([])
-                                .map_err(crate::scan_toks::attempt_command_error)?,
+                            tokens: None,
+                            source: None,
                             pointer_present: false,
                         },
                     },
@@ -194,13 +209,15 @@ impl<G> CommandProcessor<'_, '_, G> {
             .is_empty()
         {
             return Ok(ScannedTokenListRightHandSide {
-                tokens: collected,
+                tokens: None,
+                source: None,
                 pointer_present: false,
             });
         }
         if !enclose_collected {
             return Ok(ScannedTokenListRightHandSide {
-                tokens: collected,
+                tokens: Some(collected),
+                source: None,
                 pointer_present: true,
             });
         }
@@ -227,12 +244,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             OriginId::UNKNOWN,
         ));
         Ok(ScannedTokenListRightHandSide {
-            tokens: self
-                .command
-                .attempt
-                .arena_mut()
-                .allocate_token_list(tokens)
-                .map_err(crate::scan_toks::attempt_command_error)?,
+            tokens: Some(
+                self.command
+                    .attempt
+                    .arena_mut()
+                    .allocate_token_list(tokens)
+                    .map_err(crate::scan_toks::attempt_command_error)?,
+            ),
+            source: None,
             pointer_present: true,
         })
     }

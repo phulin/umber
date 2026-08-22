@@ -68,7 +68,7 @@ struct ExpressionGlue<G> {
     shrink: i64,
     shrink_order: Order,
     identity: Option<GlueId<G>>,
-    skip_index: Option<u16>,
+    source_register: Option<(bool, u16)>,
 }
 
 impl<G> Clone for ExpressionGlue<G> {
@@ -87,10 +87,14 @@ impl<G> ExpressionGlue<G> {
         shrink: 0,
         shrink_order: Order::Normal,
         identity: None,
-        skip_index: None,
+        source_register: None,
     };
 
-    fn from_spec(spec: GlueSpec, identity: Option<GlueId<G>>, skip_index: Option<u16>) -> Self {
+    fn from_spec(
+        spec: GlueSpec,
+        identity: Option<GlueId<G>>,
+        source_register: Option<(bool, u16)>,
+    ) -> Self {
         Self {
             width: i64::from(spec.width.raw()),
             stretch: i64::from(spec.stretch.raw()),
@@ -98,7 +102,7 @@ impl<G> ExpressionGlue<G> {
             shrink: i64::from(spec.shrink.raw()),
             shrink_order: spec.shrink_order,
             identity,
-            skip_index,
+            source_register,
         }
     }
 
@@ -240,8 +244,8 @@ impl<G> CommandProcessor<'_, '_, G> {
             ExpressionValue::Glue(value) => value.identity,
             ExpressionValue::Number(_) => None,
         };
-        self.scanned_glue_skip_index = match value {
-            ExpressionValue::Glue(value) => value.skip_index,
+        self.scanned_glue_register = match value {
+            ExpressionValue::Glue(value) => value.source_register,
             ExpressionValue::Number(_) => None,
         };
         Ok(expression_internal_value(kind, value))
@@ -344,7 +348,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpressionValue::Glue(ExpressionGlue::from_spec(
                     value,
                     self.scanned_glue_identity,
-                    self.scanned_glue_skip_index,
+                    self.scanned_glue_register,
                 ))
             }
             ExpressionKind::MuGlue => {
@@ -352,7 +356,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ExpressionValue::Glue(ExpressionGlue::from_spec(
                     value,
                     self.scanned_glue_identity,
-                    self.scanned_glue_skip_index,
+                    self.scanned_glue_register,
                 ))
             }
         };
@@ -496,7 +500,7 @@ fn apply_factor<G>(
                 };
                 glue.normalize();
                 glue.identity = None;
-                glue.skip_index = None;
+                glue.source_register = None;
                 frame.term = ExpressionValue::Glue(glue);
             }
         }
@@ -575,7 +579,7 @@ fn add_value<G>(
             );
             left.normalize();
             left.identity = None;
-            left.skip_index = None;
+            left.source_register = None;
             ExpressionValue::Glue(left)
         }
         _ => unreachable!("one expression frame has one value type"),
@@ -662,7 +666,7 @@ fn map_components<G>(
             glue.stretch = apply(glue.stretch, DIMENSION_LIMIT);
             glue.shrink = apply(glue.shrink, DIMENSION_LIMIT);
             glue.identity = None;
-            glue.skip_index = None;
+            glue.source_register = None;
             ExpressionValue::Glue(glue)
         }
     }

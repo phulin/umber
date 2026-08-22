@@ -3742,6 +3742,16 @@ impl World {
         self.write_text_with_line_limit(sink, text, crate::print::MAX_PRINT_LINE);
     }
 
+    /// Publishes text which already crossed an admitted TeX printer while
+    /// retaining that printer's process-selected §3 line width.
+    ///
+    /// The outer owner calls this immediately after releasing the command
+    /// context, so wrapping is evaluated against the live per-sink partial
+    /// lines without exposing those lines through the admitted facade.
+    pub fn publish_print_text(&mut self, sink: PrintSink, text: &str, max_print_line: usize) {
+        self.write_text_with_line_limit(sink, text, max_print_line);
+    }
+
     /// Detaches tex.web's terminal and transcript partial-line predicates for
     /// an outer publication barrier.
     #[must_use]

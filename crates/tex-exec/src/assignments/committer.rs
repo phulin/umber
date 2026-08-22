@@ -337,7 +337,7 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
     pub(crate) fn toks(
         &mut self,
         index: u16,
-        value: TokenListId<G>,
+        value: Option<TokenListId<G>>,
         observed: ObservationValue,
         global: bool,
     ) -> MutationReceipt {
@@ -348,15 +348,15 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
             .stores
             .token_register(index)
             .expect("token-register index is admitted");
-        let new = Some(value);
+        let new = value;
         let redundant = !global && self.redundant_word(old, new);
         if global {
             self.stores
-                .assign_token_register(index, Some(value), AssignmentScope::Global)
+                .assign_token_register(index, value, AssignmentScope::Global)
                 .expect("global token assignment targets admitted state");
         } else if !redundant {
             self.stores
-                .assign_token_register(index, Some(value), AssignmentScope::Local)
+                .assign_token_register(index, value, AssignmentScope::Local)
                 .expect("local token assignment targets admitted state");
         }
         tracing::trace_toks_register(

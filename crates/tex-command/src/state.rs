@@ -833,7 +833,6 @@ impl<G> CommandState<G> {
         if !state.tracked_region_is_active() {
             return;
         }
-        state.observe_command_rendering_dependencies();
         let Some((line, mut stack)) = crate::input::tracked_input_projection(&self.input, state)
         else {
             state.unsupported_command_state();

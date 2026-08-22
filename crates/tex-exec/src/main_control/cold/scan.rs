@@ -208,12 +208,12 @@ pub(in crate::main_control) fn scan<G>(
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(false).map_err(command_error)?.value;
             let source_identity = processor.scanned_glue_identity();
-            let source_skip_index = processor.scanned_glue_skip_index();
+            let source_register = processor.scanned_glue_register();
             Ok(ColdOperation::Skip {
                 index,
                 value,
                 source_identity,
-                source_skip_index,
+                source_register,
                 redundant: false,
                 reassigning: false,
                 global,
@@ -223,12 +223,12 @@ pub(in crate::main_control) fn scan<G>(
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(false).map_err(command_error)?.value;
             let source_identity = processor.scanned_glue_identity();
-            let source_skip_index = processor.scanned_glue_skip_index();
+            let source_register = processor.scanned_glue_register();
             Ok(ColdOperation::Skip {
                 index,
                 value,
                 source_identity,
-                source_skip_index,
+                source_register,
                 redundant: false,
                 reassigning: false,
                 global,
@@ -241,10 +241,12 @@ pub(in crate::main_control) fn scan<G>(
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(true).map_err(command_error)?.value;
             let source_identity = processor.scanned_glue_identity();
+            let source_register = processor.scanned_glue_register();
             Ok(ColdOperation::Muskip {
                 index,
                 value,
                 source_identity,
+                source_register,
                 redundant: false,
                 reassigning: false,
                 global,
@@ -254,10 +256,12 @@ pub(in crate::main_control) fn scan<G>(
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(true).map_err(command_error)?.value;
             let source_identity = processor.scanned_glue_identity();
+            let source_register = processor.scanned_glue_register();
             Ok(ColdOperation::Muskip {
                 index,
                 value,
                 source_identity,
+                source_register,
                 redundant: false,
                 reassigning: false,
                 global,
@@ -513,6 +517,7 @@ pub(in crate::main_control) fn scan<G>(
             Ok(ColdOperation::Toks {
                 index: assignment.index,
                 tokens: assignment.tokens,
+                source: assignment.source,
                 global,
             })
         }
@@ -520,11 +525,13 @@ pub(in crate::main_control) fn scan<G>(
             let owner = command.control_sequence().ok_or(ExecError::MissingToken {
                 context: "token-list assignment owner",
             })?;
+            let (tokens, source) = processor
+                .scan_token_register_value(owner)
+                .map_err(command_error)?;
             Ok(ColdOperation::Toks {
                 index,
-                tokens: processor
-                    .scan_token_register_value(owner)
-                    .map_err(command_error)?,
+                tokens,
+                source,
                 global,
             })
         }
@@ -575,6 +582,7 @@ pub(in crate::main_control) fn scan<G>(
             Ok(ColdOperation::TokParam {
                 index,
                 tokens: tokens.tokens,
+                source: tokens.source,
                 global,
             })
         }

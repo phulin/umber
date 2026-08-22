@@ -34,13 +34,19 @@ fn enable_tracing<G>(universe: &mut Universe<G>) {
 
 fn trace_enter<G>(universe: &mut Universe<G>, kind: GroupKind, level: u32, line: u32) {
     let mut effects = crate::diagnostic::DiagnosticEffects::new();
-    universe.trace_group_enter(&mut effects, kind, level, line);
+    universe
+        .command_context()
+        .expect("group trace admission")
+        .trace_group_enter(&mut effects, kind, level, line);
     universe.world_mut().publish_diagnostic_effects(effects);
 }
 
 fn trace_leave<G>(universe: &mut Universe<G>, kind: GroupKind, level: u32, line: u32) {
     let mut effects = crate::diagnostic::DiagnosticEffects::new();
-    universe.trace_group_leave(&mut effects, kind, level, line);
+    universe
+        .command_context()
+        .expect("group trace admission")
+        .trace_group_leave(&mut effects, kind, level, line);
     universe.world_mut().publish_diagnostic_effects(effects);
 }
 

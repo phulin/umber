@@ -268,7 +268,7 @@ pub(super) fn apply<G>(
         } => apply_catcode(*character, *value, *global, stores, command),
         PreparedHotOperation::EnterGroup(kind) => {
             flush_group_boundary(modes, stores, command).map(|()| {
-                enter_group(stores, command.state, *kind);
+                enter_group(stores, command.state, command.diagnostic_effects, *kind);
                 ReplayStep::Continue
             })
         }

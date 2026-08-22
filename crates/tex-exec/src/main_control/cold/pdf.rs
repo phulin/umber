@@ -1379,7 +1379,7 @@ pub(in crate::main_control) fn print_shipout_memory_usage<G>(
 }
 
 #[derive(Default)]
-struct DetachedArtifactSourceResolver {
+pub(in crate::main_control) struct DetachedArtifactSourceResolver {
     recipes: std::collections::HashMap<
         tex_state::token::OriginId,
         tex_state::world::ArtifactSourceRecipe,
@@ -1432,10 +1432,60 @@ impl DetachedArtifactSourceResolver {
         visit(node, stores, &mut recipes);
         Self { recipes }
     }
+
+    pub(in crate::main_control) fn capture_durable<G>(
+        list: tex_state::node_arena::DurableListId<G>,
+        stores: &tex_state::CommandContext<'_, G>,
+    ) -> Self {
+        fn visit<G>(
+            node: &tex_state::node::Node<
+                tex_state::node_arena::DurableListId<G>,
+                tex_state::GlueId<G>,
+                tex_state::TokenListId<G>,
+            >,
+            stores: &tex_state::CommandContext<'_, G>,
+            recipes: &mut std::collections::HashMap<
+                tex_state::token::OriginId,
+                tex_state::world::ArtifactSourceRecipe,
+            >,
+        ) {
+            let origins: &[tex_state::token::OriginId] = match node {
+                tex_state::node::Node::Char { origin, .. } => std::slice::from_ref(origin),
+                tex_state::node::Node::Lig { origins, .. } => origins,
+                _ => &[],
+            };
+            for &origin in origins {
+                if !recipes.contains_key(&origin)
+                    && let Some(recipe) = stores.detach_artifact_source_recipe(origin)
+                {
+                    recipes.insert(origin, recipe);
+                }
+            }
+            let mut children = Vec::new();
+            node.visit_semantic_node_lists(|list| children.push(*list));
+            for child in children {
+                if let Ok(list) = stores.node_list(child) {
+                    for node in list.nodes() {
+                        visit(node, stores, recipes);
+                    }
+                }
+            }
+        }
+
+        let mut recipes = std::collections::HashMap::new();
+        if let Ok(list) = stores.node_list(list) {
+            for node in list.nodes() {
+                visit(node, stores, &mut recipes);
+            }
+        }
+        Self { recipes }
+    }
 }
 
 #[derive(Default)]
-struct DetachedShipoutGeometry(Option<crate::shipout::ShipoutGeometry>);
+pub(in crate::main_control) struct DetachedShipoutGeometry(
+    pub(in crate::main_control) Option<crate::shipout::ShipoutGeometry>,
+);
 
 impl crate::shipout::ShipoutGeometrySink for DetachedShipoutGeometry {
     fn committed_shipout_geometry(&mut self, geometry: crate::shipout::ShipoutGeometry) {
@@ -1540,7 +1590,8 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             let durable = context
                 .allocate_token_list(tokens)
                 .expect("deferred write fits admitted durable storage");
-            let mut processor = command.processor(context);
+            let mut processor =
+                command.processor_with_diagnostic_effects(context, diagnostic_effects);
             processor.set_command_trace_mode_prefix(mode_prefix);
             let result = processor
                 .expand_durable_write_text(durable)
@@ -1603,6 +1654,9 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             // Expansion diagnostics above, this report, and the recovered
             // payload all remain in their live-call order inside the
             // atomic page transaction.
+            stores
+                .world_mut()
+                .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
             let mut context = stores
                 .command_context()
                 .map_err(|_| ExecError::MissingToken {

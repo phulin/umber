@@ -183,7 +183,7 @@ fn restoration_text<G>(
         }
         (GroupRestorationCell::TokenRegister(index), GroupRestorationValue::TokenList(value)) => (
             escaped(&format!("toks{index}")),
-            tokens_text_at(stores, value, escape_char),
+            bounded_tokens_text_at(stores, value, escape_char),
             false,
         ),
         (GroupRestorationCell::GlueRegister(index), GroupRestorationValue::Glue(value)) => (
@@ -212,11 +212,28 @@ fn restoration_text<G>(
             GroupRestorationCell::DimensionParameter(index),
             GroupRestorationValue::Dimension(value),
         ) => (escaped(&dimen_param_name(index)), dimen_text(value), false),
-        (GroupRestorationCell::TokenParameter(index), GroupRestorationValue::TokenList(value)) => (
-            escaped(&tok_param_name(index)),
-            tokens_text_at(stores, value, escape_char),
-            false,
-        ),
+        (GroupRestorationCell::TokenParameter(index), GroupRestorationValue::TokenList(value)) => {
+            let parameter = tex_state::env::banks::TokParam::new(index);
+            if let Some(kind) = PenaltyArrayKind::from_storage_parameter(parameter) {
+                let raw_name = match kind {
+                    PenaltyArrayKind::InterLine => "interlinepenalties",
+                    PenaltyArrayKind::Club => "clubpenalties",
+                    PenaltyArrayKind::Widow => "widowpenalties",
+                    PenaltyArrayKind::DisplayWidow => "displaywidowpenalties",
+                };
+                (
+                    escaped(raw_name),
+                    penalty_array_text(stores, &stores.penalty_array(kind)),
+                    false,
+                )
+            } else {
+                (
+                    escaped(&tok_param_name(index)),
+                    bounded_tokens_text_at(stores, value, escape_char),
+                    false,
+                )
+            }
+        }
         (GroupRestorationCell::GlueParameter(index), GroupRestorationValue::Glue(value)) => {
             let (raw_name, unit) = glue_param_name(index);
             (
@@ -733,6 +750,44 @@ fn tokens_text_at<G>(
     let words = tokens.map_or_else(Vec::new, |id| stores.token_list(id).to_vec());
     for token in words {
         tex_state::token_show::append_token_show_text(&display, token.semantic_token(), &mut text);
+    }
+    text
+}
+
+/// TeX82 §§252/283 render restored token lists through §262's
+/// `show_token_list(..., 32)`. The bound is on rendered characters rather
+/// than token count, and `\ETC.` is appended as soon as another token would
+/// cross it.
+fn bounded_tokens_text_at<G>(
+    stores: &CommandContext<'_, G>,
+    tokens: Option<TokenListId<G>>,
+    escape_char: i32,
+) -> String {
+    const BREADTH: usize = 32;
+    let display = RestorationTokenDisplay {
+        stores,
+        escape_char,
+    };
+    let mut text = String::new();
+    let words = tokens.map_or_else(Vec::new, |id| stores.token_list(id).to_vec());
+    let mut truncated = false;
+    for token in words {
+        let mut rendered = String::new();
+        tex_state::token_show::append_token_show_text(
+            &display,
+            token.semantic_token(),
+            &mut rendered,
+        );
+        let remaining = BREADTH.saturating_sub(text.chars().count());
+        if rendered.chars().count() > remaining {
+            text.extend(rendered.chars().take(remaining));
+            truncated = true;
+            break;
+        }
+        text.push_str(&rendered);
+    }
+    if truncated {
+        text.push_str(&escaped_at(escape_char, "ETC."));
     }
     text
 }

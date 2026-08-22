@@ -43,7 +43,7 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
 
         AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).toks(
             0,
-            replacement_register,
+            Some(replacement_register),
             ObservationValue::Integer(0),
             true,
         );
@@ -104,7 +104,7 @@ fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
 
         AssignmentCommitter::new(&mut stores, &mut diagnostic_effects).toks(
             0,
-            replacement,
+            Some(replacement),
             ObservationValue::Integer(0),
             false,
         );

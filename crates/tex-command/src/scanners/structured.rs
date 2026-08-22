@@ -1112,6 +1112,21 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §1215's `get_r_token`, including its restart after inserting
     /// the inaccessible target. The rejected delivery is backed up, so the
     /// caller's following operand scan still owns it.
+    fn delivered_definition_target(
+        &mut self,
+        command: &crate::CurrentCommand<G>,
+    ) -> Option<tex_state::interner::Symbol> {
+        command
+            .control_sequence()
+            .or_else(|| match command.spelling().semantic_token() {
+                Token::Char {
+                    ch,
+                    cat: Catcode::Active,
+                } => Some(self.state.intern_active_character(ch)),
+                _ => None,
+            })
+    }
+
     fn scan_definition_target(&mut self) -> Result<tex_state::interner::Symbol, CommandError> {
         loop {
             let command = match self.next_non_space_raw()? {
@@ -1120,7 +1135,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .next_non_space_raw()?
                     .ok_or(CommandError::input_invariant())?,
             };
-            if let Some(target) = command.control_sequence() {
+            if let Some(target) = self.delivered_definition_target(&command) {
                 return Ok(target);
             }
 
@@ -2193,9 +2208,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         provisional_global: bool,
     ) -> Result<FontLoadRequest, CommandError> {
-        let target = self
+        let command = self
             .next_non_space_raw()?
-            .and_then(|command| command.control_sequence())
+            .ok_or(CommandError::input_invariant())?;
+        let target = self
+            .delivered_definition_target(&command)
             .ok_or(CommandError::input_invariant())?;
         self.state.set_provisional_meaning(
             target,
@@ -3850,7 +3867,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let command = self
                 .next_non_space_raw()?
                 .ok_or(CommandError::input_invariant())?;
-            if let Some(target) = command.control_sequence() {
+            if let Some(target) = self.delivered_definition_target(&command) {
                 target
             } else {
                 self.back_input(command)?;
@@ -3890,9 +3907,11 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         future: bool,
     ) -> Result<ScannedLetAssignment<G>, CommandError> {
-        let target = self
+        let command = self
             .next_non_space_raw()?
-            .and_then(|command| command.control_sequence())
+            .ok_or(CommandError::input_invariant())?;
+        let target = self
+            .delivered_definition_target(&command)
             .ok_or(CommandError::input_invariant())?;
         let (source, meaning) = if future {
             let first = self.get_token()?.ok_or(CommandError::input_invariant())?;

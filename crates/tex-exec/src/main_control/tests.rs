@@ -10907,6 +10907,7 @@ fn readline_assignment_trace_precedes_the_next_command_trace() {
     // returns. e-TeX [17.687-750] therefore renders both halves of that eqtb
     // write before §299 can trace the following command.
     crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
         stores
             .world_mut()
             .push_memory_terminal_line("replacement")
@@ -10986,6 +10987,7 @@ fn out_of_range_read_selector_reaches_the_terminal_without_a_report() {
     // therefore an ordinary terminal read, not a recovered zero, and nothing
     // is reported.
     crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
         stores
             .world_mut()
             .push_memory_terminal_line("recovered")
@@ -11099,6 +11101,7 @@ fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() 
     // TeX82 §1225 commits `define(p,call,cur_val)` before §1211 reaches
     // §1269's `done:` and backs up the saved afterassignment token.
     crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
         stores
             .world_mut()
             .push_memory_terminal_line("alpha")
@@ -13772,6 +13775,9 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
     // and the same stop then ejects that residual page exactly once. Use the
     // standard nonstop test host so §82 tests the recovery instead of ending
     // at an exhausted interactive terminal while asking for error advice.
+    // The host-visible ShipoutComplete checkpoint is its own step between the
+    // ejection and the backed-up stop; assert that boundary explicitly rather
+    // than counting it as a second TeX command.
     crate::test_harness::with_nonstop_plain_universe(|mut stores| {
         let mut control = MainControl::tex82_initex(&mut stores);
         register_source(&mut control, br"\hbox{A\end");
@@ -13793,8 +13799,12 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
             }
         }
 
-        assert_eq!(terminal_step, Some((6, MainControlStep::End)));
-        assert_eq!(artifact_counts, [0, 0, 0, 0, 1, 1]);
+        assert_eq!(terminal_step, Some((7, MainControlStep::End)));
+        assert_eq!(artifact_counts, [0, 0, 0, 0, 1, 1, 1]);
+        assert_eq!(
+            control.take_completed_boundaries(),
+            [crate::EngineBoundary::ShipoutComplete]
+        );
         assert_eq!(stores.world().artifact_commits().len(), 1);
         assert!(
             admitted!(stores, |context| context

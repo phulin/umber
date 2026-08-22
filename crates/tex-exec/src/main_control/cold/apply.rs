@@ -13,13 +13,16 @@ use super::support::*;
 pub(in crate::main_control) fn enter_group<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut PersistentInterpreter<G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     kind: GroupKind,
 ) {
     let entered_line = command.current_file_line_number();
-    command
+    let frame = command
         .state_mut()
         .begin_group(stores, kind, entered_line)
         .expect("executor and command group stacks remain synchronized");
+    let level = u32::try_from(stores.execution_group_depth()).unwrap_or(u32::MAX);
+    stores.trace_group_enter(diagnostic_effects, frame.kind(), level, entered_line);
 }
 
 pub(in crate::main_control) fn leave_group_payloads<G>(
@@ -28,6 +31,12 @@ pub(in crate::main_control) fn leave_group_payloads<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     kind: GroupKind,
 ) -> Result<Vec<tex_state::token::TracedTokenWord>, tex_command::CommandGroupError> {
+    let frame = stores
+        .group_frames()
+        .last()
+        .copied()
+        .ok_or(tex_command::CommandGroupError::NoOpenGroup)?;
+    let level = u32::try_from(stores.execution_group_depth()).unwrap_or(u32::MAX);
     let closed = command.state_mut().end_group(stores, kind)?;
     // e-TeX [19.282--283]: each trace observes the already restored/retained
     // live word, and all of them precede §282's `\aftergroup` backups.
@@ -35,6 +44,12 @@ pub(in crate::main_control) fn leave_group_payloads<G>(
         stores,
         diagnostic_effects,
         closed.restorations(),
+    );
+    stores.trace_group_leave(
+        diagnostic_effects,
+        frame.kind(),
+        level,
+        frame.entered_line(),
     );
     Ok(closed.into_aftergroup())
 }
@@ -856,14 +871,18 @@ pub(in crate::main_control) fn apply<G>(
             index,
             tokens,
             global,
+            ..
         } => {
             let new = tokens;
             let observed = ObservationValue::Tokens(
-                stores
-                    .token_list(new)
-                    .iter()
-                    .map(|word| observed_macro_token(word.semantic_token(), stores))
-                    .collect(),
+                new.map(|new| {
+                    stores
+                        .token_list(new)
+                        .iter()
+                        .map(|word| observed_macro_token(word.semantic_token(), stores))
+                        .collect()
+                })
+                .unwrap_or_default(),
             );
             let receipt = AssignmentCommitter::new(stores, command.diagnostic_effects)
                 .toks(index, new, observed, global);
@@ -904,6 +923,7 @@ pub(in crate::main_control) fn apply<G>(
             index,
             tokens,
             global,
+            ..
         } => {
             let new = tokens;
             let observed = ObservationValue::Tokens(
@@ -2552,7 +2572,12 @@ pub(in crate::main_control) fn apply<G>(
                 class = 0;
             }
             let class = class as u16;
-            enter_group(stores, command.state, GroupKind::Insert);
+            enter_group(
+                stores,
+                command.state,
+                command.diagnostic_effects,
+                GroupKind::Insert,
+            );
             modes.push_at_line(
                 Mode::InternalVertical,
                 i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
@@ -2672,7 +2697,12 @@ pub(in crate::main_control) fn apply<G>(
                 ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
                 ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
             };
-            enter_group(stores, command.state, kind.group_kind());
+            enter_group(
+                stores,
+                command.state,
+                command.diagnostic_effects,
+                kind.group_kind(),
+            );
             modes.push_at_line(
                 if kind.horizontal() {
                     Mode::RestrictedHorizontal
@@ -2708,7 +2738,12 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::BeginSimpleGroup => {
-            enter_group(stores, command.state, GroupKind::Simple);
+            enter_group(
+                stores,
+                command.state,
+                command.diagnostic_effects,
+                GroupKind::Simple,
+            );
             boxes.recovery_simple_group_pending = false;
             boxes.recovery_simple_group_open = true;
             Ok(ReplayStep::Continue)
@@ -3282,7 +3317,12 @@ pub(in crate::main_control) fn apply<G>(
             // `scan_spec(align_group,false)`, whose `new_save_level(c)` opens
             // the save level that brackets the alignment as a whole. §800's
             // `fin_align` removes it with the second of its two `unsave`s.
-            enter_group(stores, command.state, GroupKind::Align);
+            enter_group(
+                stores,
+                command.state,
+                command.diagnostic_effects,
+                GroupKind::Align,
+            );
             Ok(ReplayStep::Continue)
         }
         ColdOperation::AlignmentPreambleStart { alignment } => {
@@ -3303,7 +3343,12 @@ pub(in crate::main_control) fn apply<G>(
             // cell -- `\\bf`, `\\tt`, a `\\fam`, any local register -- is
             // restored before the next entry begins. §800's first `unsave`
             // removes the last one.
-            enter_group(stores, command.state, GroupKind::Align);
+            enter_group(
+                stores,
+                command.state,
+                command.diagnostic_effects,
+                GroupKind::Align,
+            );
             // §774 then runs
             // `if every_cr<>null then begin_token_list(every_cr,every_cr_text)`
             // before its own `align_peek`, exactly as §799 does at every later
@@ -3321,7 +3366,12 @@ pub(in crate::main_control) fn apply<G>(
                 })?;
             active.align_peek_pending = false;
             active.noalign_open = true;
-            enter_group(stores, command.state, GroupKind::NoAlign);
+            enter_group(
+                stores,
+                command.state,
+                command.diagnostic_effects,
+                GroupKind::NoAlign,
+            );
             // TeX82 §785 leaves the alignment's own mode level in place when
             // `\noalign` opens. It calls `normal_paragraph` only for an
             // h-alignment's internal-vertical mode; a v-alignment is already

@@ -80,6 +80,24 @@ impl PenaltyArrayKind {
             Self::DisplayWidow => crate::env::banks::TokParam::DISPLAY_WIDOW_PENALTIES_INTERNAL,
         }
     }
+
+    /// Identifies the private token-parameter cell which backs one e-TeX
+    /// penalty array.
+    ///
+    /// The cell identity is needed by the synchronous group-restoration
+    /// renderer after the journal has restored its live value. The payload
+    /// remains private durable storage; callers receive only the semantic
+    /// array kind.
+    #[must_use]
+    pub const fn from_storage_parameter(parameter: crate::env::banks::TokParam) -> Option<Self> {
+        match parameter.raw() {
+            raw if raw == Self::InterLine.storage().raw() => Some(Self::InterLine),
+            raw if raw == Self::Club.storage().raw() => Some(Self::Club),
+            raw if raw == Self::Widow.storage().raw() => Some(Self::Widow),
+            raw if raw == Self::DisplayWidow.storage().raw() => Some(Self::DisplayWidow),
+            _ => None,
+        }
+    }
 }
 
 /// One detached indent/width pair in TeX's current `\parshape` value.
@@ -319,6 +337,17 @@ impl<'a, G> CommandContext<'a, G> {
     #[must_use]
     pub fn active_character_symbol(&self, ch: char) -> Option<Symbol> {
         self.interner.active(ch).map(SymbolId::symbol)
+    }
+
+    /// Interns TeX82's `active_base + c` definition cell on first use.
+    ///
+    /// Raw delivery can resolve an already-defined active character without
+    /// allocation. Definition targets are different: `get_r_token` must make
+    /// the cell addressable even when the active character has never had a
+    /// meaning before.
+    pub fn intern_active_character(&mut self, ch: char) -> Symbol {
+        let id = self.interner.intern_active(ch);
+        self.intern_symbol(id)
     }
 
     #[must_use]
@@ -956,7 +985,13 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         kind: crate::GroupKind,
     ) -> Result<crate::GroupRestorationReceipt<G>, StateError> {
-        self.admitted.state().end_group(kind)
+        let receipt = self.admitted.state().end_group(kind)?;
+        // Closing a save level replays an ordered environment-journal suffix.
+        // That timeline mutation cannot be validated from the individual live
+        // post-images alone, so an in-flight memo episode must fail closed.
+        self.dependencies
+            .poison(TrackedRegionBarrier::EnvironmentTimelineChange);
+        Ok(receipt)
     }
 
     /// Opens §245's diagnostic channel with the print controls captured after
@@ -2918,10 +2953,6 @@ impl<'a, G> CommandContext<'a, G> {
         self.assign_token_parameter(parameter, root, scope)
             .expect("penalty-array parameter is admitted");
         Ok(())
-    }
-
-    pub fn observe_command_rendering_dependencies(&mut self) {
-        self.unsupported_command_state();
     }
 
     pub fn append_selector_string_text(&self, raw: &str, text: &mut String) {

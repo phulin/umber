@@ -1009,24 +1009,12 @@ mod tests {
                     tex_state::AssignmentScope::Global,
                 )
                 .expect("parameter");
-            stores
-                .assign_int_param(
-                    IntParam::DEFAULT_HYPHEN_CHAR,
-                    -1,
-                    tex_state::AssignmentScope::Global,
-                )
-                .expect("parameter");
+            stores.set_font_hyphen_char(font, -1);
             let mut missing = Vec::new();
             assert_eq!(automatic_hyphen_char(&stores, font, 7, &mut missing), None);
             assert!(missing.is_empty());
 
-            stores
-                .assign_int_param(
-                    IntParam::DEFAULT_HYPHEN_CHAR,
-                    i32::from(b'?'),
-                    tex_state::AssignmentScope::Global,
-                )
-                .expect("parameter");
+            stores.set_font_hyphen_char(font, i32::from(b'?'));
             assert_eq!(automatic_hyphen_char(&stores, font, 7, &mut missing), None);
             assert_eq!(missing.len(), 1);
             assert_eq!(missing[0].node_index, 7);

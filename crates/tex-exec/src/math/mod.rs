@@ -80,3 +80,33 @@ pub(crate) fn reject_invalid_math_fonts<G>(
     crate::error_report::report_error(stores, message, &help, context)?;
     Ok(true)
 }
+
+/// Reports §1194's font failure only after publishing diagnostics which the
+/// caller already completed earlier in the same canonical operation.
+///
+/// Recoverable error dialogue still belongs to World, so this explicit outer
+/// barrier releases admission, publishes the detached prefix, then opens a
+/// fresh admitted report context. No printer or output-offset state crosses
+/// the boundary.
+pub(crate) fn reject_invalid_math_fonts_at_outer_barrier<G>(
+    stores: &mut tex_state::Universe<G>,
+    diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    context: String,
+) -> Result<bool, crate::ExecError> {
+    let invalid = {
+        let mut admitted = stores.command_context().expect("math-font admission");
+        math_font_failure(&mut admitted).is_some()
+    };
+    if !invalid {
+        return Ok(false);
+    }
+    stores
+        .world_mut()
+        .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
+    reject_invalid_math_fonts(
+        &mut stores
+            .command_context()
+            .expect("math-font report admission"),
+        context,
+    )
+}

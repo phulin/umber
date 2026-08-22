@@ -615,7 +615,7 @@ pub(in crate::main_control) enum ColdOperation<
         index: u16,
         value: GlueSpec,
         source_identity: Option<tex_state::GlueId<G>>,
-        source_skip_index: Option<u16>,
+        source_register: Option<(bool, u16)>,
         redundant: bool,
         reassigning: bool,
         global: bool,
@@ -624,6 +624,7 @@ pub(in crate::main_control) enum ColdOperation<
         index: u16,
         value: GlueSpec,
         source_identity: Option<tex_state::GlueId<G>>,
+        source_register: Option<(bool, u16)>,
         redundant: bool,
         reassigning: bool,
         global: bool,
@@ -790,7 +791,8 @@ pub(in crate::main_control) enum ColdOperation<
     },
     Toks {
         index: u16,
-        tokens: T,
+        tokens: Option<T>,
+        source: Option<tex_state::TokenListId<G>>,
         global: bool,
     },
     IntParam {
@@ -806,6 +808,7 @@ pub(in crate::main_control) enum ColdOperation<
     TokParam {
         index: u16,
         tokens: Option<T>,
+        source: Option<tex_state::TokenListId<G>>,
         global: bool,
     },
     GlueParam {
@@ -1685,7 +1688,7 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
             index,
             value,
             source_identity,
-            source_skip_index,
+            source_register,
             redundant,
             reassigning,
             global,
@@ -1693,7 +1696,7 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
             index,
             value,
             source_identity,
-            source_skip_index,
+            source_register,
             redundant,
             reassigning,
             global,
@@ -1702,6 +1705,7 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
             index,
             value,
             source_identity,
+            source_register,
             redundant,
             reassigning,
             global,
@@ -1709,6 +1713,7 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
             index,
             value,
             source_identity,
+            source_register,
             redundant,
             reassigning,
             global,
@@ -1776,11 +1781,17 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
         },
         ColdOperation::Toks {
             index,
-            tokens: _,
+            tokens,
+            source,
             global,
         } => ColdOperation::Toks {
             index,
-            tokens: cursor.token()?,
+            tokens: match (source, tokens) {
+                (Some(source), _) => Some(source),
+                (None, Some(_)) => Some(cursor.token()?),
+                (None, None) => None,
+            },
+            source: None,
             global,
         },
         ColdOperation::IntParam {
@@ -1804,10 +1815,16 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
         ColdOperation::TokParam {
             index,
             tokens,
+            source,
             global,
         } => ColdOperation::TokParam {
             index,
-            tokens: tokens.map(|_| cursor.token()).transpose()?,
+            tokens: match (source, tokens) {
+                (Some(source), _) => Some(source),
+                (None, Some(_)) => Some(cursor.token()?),
+                (None, None) => None,
+            },
+            source: None,
             global,
         },
         ColdOperation::GlueParam {
@@ -2209,7 +2226,10 @@ impl<G> ColdOperation<G> {
         roots: &mut Vec<tex_command::AttemptTokenListId>,
     ) {
         match self {
-            Self::Toks { tokens, .. }
+            Self::Toks {
+                tokens: Some(tokens),
+                ..
+            }
             | Self::PdfSpaceFont(tokens)
             | Self::DeferredWrite { tokens, .. }
             | Self::DeferredSpecial { tokens, .. }

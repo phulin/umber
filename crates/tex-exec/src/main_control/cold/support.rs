@@ -117,19 +117,20 @@ pub(in crate::main_control) fn write_immediate_text<G>(
     sink: PrintSink,
     text: &str,
 ) {
-    let line_is_open = match sink {
+    let (line_is_open, max_print_line) = match sink {
         PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog => {
             let printer = stores.printer();
-            match sink {
+            let line_is_open = match sink {
                 PrintSink::Terminal => printer.terminal_offset() > 0,
                 PrintSink::Log => printer.log_offset() > 0,
                 PrintSink::TerminalAndLog => {
                     printer.terminal_offset() > 0 || printer.log_offset() > 0
                 }
                 PrintSink::Stream(_) => unreachable!(),
-            }
+            };
+            (line_is_open, printer.max_print_line())
         }
-        PrintSink::Stream(_) => false,
+        PrintSink::Stream(_) => (false, tex_state::print::MAX_PRINT_LINE),
     };
     command.immediate_prints.push(ImmediatePrint {
         sink,
@@ -138,6 +139,7 @@ pub(in crate::main_control) fn write_immediate_text<G>(
         } else {
             text.to_owned()
         },
+        max_print_line,
     });
 }
 
@@ -565,7 +567,12 @@ pub(in crate::main_control) fn begin_replay_box<G>(
     } else {
         kind.group_kind()
     };
-    enter_group(stores, command.state, group_kind);
+    enter_group(
+        stores,
+        command.state,
+        command.diagnostic_effects,
+        group_kind,
+    );
     modes.push_at_line(
         if kind.horizontal() {
             Mode::RestrictedHorizontal
@@ -695,7 +702,12 @@ pub(in crate::main_control) fn apply_box_shift<G>(
             } else {
                 kind.group_kind()
             };
-            enter_group(stores, command.state, group_kind);
+            enter_group(
+                stores,
+                command.state,
+                command.diagnostic_effects,
+                group_kind,
+            );
             modes.push_at_line(
                 if kind.horizontal() {
                     Mode::RestrictedHorizontal
