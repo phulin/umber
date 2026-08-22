@@ -1343,7 +1343,7 @@ fn generated_probe_present_to_missing_restarts_from_job_start_and_matches_cold()
 }
 
 #[test]
-fn unchanged_consumed_input_and_changed_unconsumed_output_preserve_checkpoint_reuse() {
+fn unchanged_consumed_input_and_changed_unconsumed_output_use_cold_recompute() {
     let source = concat!(
         "\\input stable.tex \\font\\f=cmr10 \\f reusable paragraph\\par ",
         "\\immediate\\openout1=unused.aux \\immediate\\write1{old-output} ",
@@ -1362,14 +1362,23 @@ fn unchanged_consumed_input_and_changed_unconsumed_output_preserve_checkpoint_re
     ));
 
     let _next = apply_text_replacement(&mut session, 2, source, "old-output", "new-output");
-    assert!(matches!(
-        session.compile_attempt(),
-        CompileAttemptResult::Complete(_)
-    ));
-    let reuse = session.reuse_metrics().expect("incremental reuse metrics");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("edited output candidate must complete");
+    };
     assert!(
-        reuse.restart_boundary.is_some(),
-        "unchanged semantic dependencies must preserve normal restart selection: {reuse:?}"
+        output
+            .files
+            .iter()
+            .any(|file| { file.path.ends_with("unused.aux") && file.bytes == b"new-output\n" })
+    );
+    let reuse = session.reuse_metrics().expect("incremental reuse metrics");
+    assert_eq!(
+        reuse.execution_path,
+        tex_incr::RevisionExecutionPath::SlowEdit
+    );
+    assert!(
+        reuse.restart_boundary.is_none(),
+        "phase 6 deliberately cold-recomputes across generation boundaries: {reuse:?}"
     );
 }
 
@@ -2666,12 +2675,12 @@ fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent(
         }
     }
     let partitioned_telemetry = partitioned.compile_telemetry();
-    assert_eq!(preloaded_telemetry.execution.cold_starts, 0);
+    assert_eq!(preloaded_telemetry.execution.cold_starts, 1);
     assert_eq!(preloaded_telemetry.execution.suspensions, 0);
     assert_eq!(preloaded_telemetry.execution.local_step_retries, 0);
     assert_eq!(preloaded_telemetry.execution.replayed_delivered_tokens, 0);
     assert_eq!(preloaded_telemetry.execution.replayed_dispatches, 0);
-    assert_eq!(partitioned_telemetry.execution.cold_starts, 0);
+    assert_eq!(partitioned_telemetry.execution.cold_starts, 1);
     assert_eq!(partitioned_telemetry.execution.suspensions, 3);
     assert_eq!(
         (
@@ -3284,6 +3293,7 @@ fn failed_patch_restores_the_complete_accepted_build() {
 
 #[test]
 fn every_engine_mode_has_source_and_schema_11_format_artifact_equivalence() {
+    let source = b"\\catcode123=1 \\catcode125=2 \\shipout\\hbox{}\\end";
     for engine in [
         EngineMode::Tex82,
         EngineMode::ETex,
@@ -3291,11 +3301,6 @@ fn every_engine_mode_has_source_and_schema_11_format_artifact_equivalence() {
         EngineMode::Latex,
         EngineMode::PdfLatex,
     ] {
-        let source = if matches!(engine, EngineMode::Latex | EngineMode::PdfLatex) {
-            b"\\catcode123=1 \\catcode125=2 \\shipout\\hbox{}\\end".as_slice()
-        } else {
-            b"\\shipout\\hbox{}\\end".as_slice()
-        };
         let format = construct_test_format(engine, "\\dump");
         assert_eq!(
             u32::from_le_bytes(format.as_bytes()[8..12].try_into().expect("schema bytes")),
