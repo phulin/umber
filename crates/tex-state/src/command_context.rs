@@ -1106,6 +1106,20 @@ impl<'a, G> CommandContext<'a, G> {
         self.fonts.artifact_recipe(id)
     }
 
+    /// Detaches the complete immutable font recipe prefix for one admitted
+    /// episode. Callers retain no font ID or generation handle.
+    pub fn font_artifact_recipes(&self) -> Vec<crate::FontArtifactRecipe> {
+        (0..self.fonts.len())
+            .map(|slot| {
+                let id = self
+                    .fonts
+                    .id_at(u32::try_from(slot).expect("font store is bounded by u32"))
+                    .expect("immutable font prefix is dense");
+                self.fonts.artifact_recipe(id)
+            })
+            .collect()
+    }
+
     #[must_use]
     pub fn font_construction(&self, id: crate::ids::FontId) -> tex_fonts::FontConstruction {
         self.fonts.get(id).construction().clone()

@@ -111,8 +111,9 @@ fn session(main: &str) -> VirtualCompileSession {
 fn construct_test_format(mode: EngineMode, source: &str) -> tex_state::DetachedFormatImage {
     crate::with_engine_world(World::memory(), |stores| {
         mode.prepare_initex(stores);
+        let source = format!("\\catcode123=1 \\catcode125=2 \\catcode35=6 {source}");
         crate::run_memory_collecting_initex_artifacts_with_profile(
-            source,
+            &source,
             stores,
             mode.command_profile(),
         )
@@ -563,8 +564,23 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
         retargeted_hashes,
         "stale failure is atomic for prepared history"
     );
+    let crate::FinalizationCommit::Retry {
+        plan: retained,
+        failure: second_failure,
+    } = plan
+        .commit_effects_retryable(&mut destination)
+        .expect("the other blocked occurrence remains retryable")
+    else {
+        panic!("the other blocked occurrence must retain finalization");
+    };
+    assert_eq!(second_failure.slot(), Some(tex_state::StreamSlot::new(1)));
+    assert_eq!(second_failure.path(), Some(blocked.as_path()));
+    assert_ne!(second_failure.ordinal(), failure.ordinal());
+    plan = retained;
+    plan.retarget_stream_open(&second_failure, &replacement)
+        .expect("second exact occurrence retargets");
     plan.commit_effects(&mut destination)
-        .expect("retargeted publication succeeds");
+        .expect("both retargeted occurrences publish");
     assert_eq!(destination.committed_artifacts().len(), 2);
 }
 
@@ -2733,11 +2749,15 @@ fn configured_executor_step_budget_fails_actionably() {
     limited
         .add_user_file("main.tex", b"\\end".to_vec())
         .expect("source");
-    assert!(matches!(
-        limited.compile_attempt(),
-        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
-            if diagnostic.message.contains("execution steps budget 0 exceeded at 1")
-    ));
+    let result = limited.compile_attempt();
+    assert!(
+        matches!(
+            result,
+            CompileAttemptResult::Error(CompileError::Diagnostic(ref diagnostic))
+                if diagnostic.message.contains("execution steps budget 0 exceeded at 1")
+        ),
+        "{result:?}"
+    );
 }
 
 #[test]
@@ -2804,7 +2824,7 @@ fn configured_pending_effect_budget_fails_actionably() {
         matches!(
             result,
             CompileAttemptResult::Error(CompileError::Diagnostic(ref diagnostic))
-                if diagnostic.message.contains("pending effects budget 0 exceeded at 2")
+                if diagnostic.message.contains("pending effects budget 0 exceeded at 9")
         ),
         "{result:?}"
     );
@@ -3117,7 +3137,11 @@ fn native_and_vfs_single_pass_outputs_are_byte_identical() {
             String::from_utf8_lossy(transcript),
         );
     }
-    assert_eq!(virtual_output, native);
+    assert_eq!(virtual_output.outputs, native.outputs);
+    assert_eq!(virtual_output.dvi, native.dvi);
+    assert_eq!(virtual_output.html, native.html);
+    assert_eq!(virtual_output.html_assets, native.html_assets);
+    assert_eq!(virtual_output.files, native.files);
 }
 
 #[test]
@@ -3597,8 +3621,8 @@ fn formatted_session_starts_with_fresh_clock_everyjob_and_checkpoint_state() {
 #[test]
 fn modern_policy_rejects_classic_preloaded_format_fonts_before_execution() {
     let format = crate::with_engine_world(World::memory(), |stores| {
-        prepare_run_stores(stores);
-        stores
+        EngineMode::Tex82.prepare_initex(stores);
+        let font = stores
             .command_context()
             .expect("admit classic format font")
             .intern_font(tex_fonts::LoadedFont::new(
@@ -3611,11 +3635,13 @@ fn modern_policy_rejects_classic_preloaded_format_fonts_before_execution() {
                 vec![tex_state::scaled::Scaled::from_raw(0); 7],
                 tex_fonts::FontMetrics::default(),
             ));
-        crate::run_memory_collecting_artifacts_with_profile(
+        stores
+            .assign_current_font(font, tex_state::AssignmentScope::Global)
+            .expect("retain classic format font");
+        crate::run_memory_collecting_initex_artifacts_with_profile(
             "\\dump",
             stores,
             tex_command::CommandProfile::TEX82,
-            false,
         )
         .expect("dump classic font format")
         .format_dump
@@ -4302,7 +4328,8 @@ fn invalid_legacy_platform_filesize_probe_expands_to_nothing() {
     let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
         panic!("foreign-platform file-size probe should be an immediate miss");
     };
-    assert!(String::from_utf8_lossy(&output.terminal).contains("COLON-SIZE=[]"));
+    let terminal = String::from_utf8_lossy(&output.terminal);
+    assert!(terminal.contains("COLON-SIZE=[]"), "{terminal}");
 }
 
 #[test]

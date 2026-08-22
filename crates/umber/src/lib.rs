@@ -2172,7 +2172,7 @@ mod tests {
         png[20..24].copy_from_slice(&1_u32.to_be_bytes());
         png[24] = 8;
         png[25] = 0;
-        let root = b"\\font\\tenrm=cmr10 \\tenrm A\\pdfoutput=1\\pdfximage {image.png}\\end";
+        let root = b"\\font\\tenrm=cmr10 \\tenrm A\\pdfoutput=1\\pdfximage image.png\\end";
 
         fn exercise<G>(stores: &mut Universe<G>, mode: EngineMode) {
             let selected_root = stores

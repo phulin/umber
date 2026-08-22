@@ -919,6 +919,18 @@ impl CompileDiagnostic {
     }
 }
 
+fn compile_error_from_session(
+    error: &tex_incr::SessionError,
+    candidate: Option<&RetainedExecution>,
+) -> CompileError {
+    match error {
+        tex_incr::SessionError::FormatFontPolicy { name } => CompileError::Font(format!(
+            "format preloads classic TFM font {name}; OpenTypePreferred requires fonts to be selected through typed resources before layout"
+        )),
+        _ => CompileError::Diagnostic(CompileDiagnostic::from_session_error(error, candidate)),
+    }
+}
+
 enum PreparedExecution {
     Initial {
         session: Box<tex_incr::Session>,
@@ -1984,6 +1996,7 @@ impl VirtualCompileSession {
                 session.set_job_clock(self.clock);
                 session.set_command_profile(self.engine.command_profile(), self.format.is_none());
                 session.set_command_compatibility(self.engine.command_compatibility());
+                session.set_required_font_layout_policy(self.font_layout_policy);
                 if let Some(image) = format_image {
                     session.set_format_image(image);
                 }
@@ -2099,9 +2112,7 @@ impl VirtualCompileSession {
                     return Err(CompileError::NoProgress);
                 }
                 Err(error) => {
-                    return Err(CompileError::Diagnostic(
-                        CompileDiagnostic::from_session_error(error, Some(&retained.execution)),
-                    ));
+                    return Err(compile_error_from_session(error, Some(&retained.execution)));
                 }
             };
             generated_transaction.discard();
@@ -2243,10 +2254,9 @@ impl VirtualCompileSession {
                 return Err(CompileError::NoProgress);
             }
             Err(error) => {
-                let diagnostic =
-                    CompileDiagnostic::from_session_error(&error, Some(&retained.execution));
+                let error = compile_error_from_session(&error, Some(&retained.execution));
                 generated_transaction.discard();
-                return Err(CompileError::Diagnostic(diagnostic));
+                return Err(error);
             }
         }
         if self.outputs.contains(OutputCapability::Pdf) {
@@ -2405,9 +2415,7 @@ impl VirtualCompileSession {
             ),
         }
         .into_prepared()
-        .map_err(|error| {
-            CompileError::Diagnostic(CompileDiagnostic::from_session_error(&error, None))
-        })?;
+        .map_err(|error| compile_error_from_session(&error, None))?;
         let mut accepted_world = tex_state::World::memory();
         accepted_world
             .publish_detached_effect_records(execution.completion().effects())

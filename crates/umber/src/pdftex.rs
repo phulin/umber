@@ -620,7 +620,7 @@ mod tests {
             )
             .expect("form resource enquiries expand");
             assert!(output.contains("name=1,missing=0"), "{output}");
-            assert_eq!(stores.pdf_forms().len(), 1);
+            assert_eq!(stores.pdf_last_form(), 1);
             assert_eq!(
                 stores.pdf_last_object(),
                 0,

@@ -475,6 +475,7 @@ pub struct RevisionCandidate {
     root_framing_name: Option<String>,
     root_source_is_byte_projection: bool,
     format_image: Option<DetachedFormatImage>,
+    required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
     job_clock: JobClock,
     completed: Option<CandidateCompletion>,
     cumulative_fuel_limit: u64,
@@ -687,6 +688,19 @@ fn execute_plan<G>(
     failed_attempt_fuel: &mut u64,
 ) -> Result<PlanExecution, SessionError> {
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
+    if candidate.format_image.is_some()
+        && candidate.required_font_layout_policy
+            == Some(tex_fonts::FontLayoutPolicy::OpenTypePreferred)
+        && let Some(font) = universe
+            .command_context()
+            .map_err(SessionError::Universe)?
+            .font_artifact_recipes()
+            .into_iter()
+            .skip(1)
+            .find(|font| font.layout_policy != tex_fonts::FontLayoutPolicy::OpenTypePreferred)
+    {
+        return Err(SessionError::FormatFontPolicy { name: font.name });
+    }
     universe.begin_retained_session()?;
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     if candidate.format_image.is_none() {
@@ -776,6 +790,17 @@ fn execute_plan<G>(
             | CanonicalStepResult::Completed(step) => {
                 answered_needs.clear();
                 delivered_commands = delivered_commands.saturating_add(1);
+                if u64::try_from(delivered_commands).unwrap_or(u64::MAX)
+                    > candidate.execution_budgets.steps
+                {
+                    return Err(SessionError::Execute(
+                        tex_exec::ExecError::ResourceBudgetExceeded {
+                            resource: "steps",
+                            limit: candidate.execution_budgets.steps,
+                            attempted: u64::try_from(delivered_commands).unwrap_or(u64::MAX),
+                        },
+                    ));
+                }
                 if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
                     let terminal = ledger.terminal_receipt(&control, step)?;
                     let dependencies = universe.world().input_dependencies().cloned().collect();
@@ -1094,6 +1119,7 @@ pub struct Session {
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
     accepted_retention: Option<RetentionMetrics>,
     format_image: Option<DetachedFormatImage>,
+    required_font_layout_policy: Option<tex_fonts::FontLayoutPolicy>,
     job_clock: JobClock,
     utf8_input_as_bytes: bool,
     dvi_output: bool,
@@ -1207,6 +1233,7 @@ impl Session {
             registered_inputs: BTreeMap::new(),
             accepted_retention: None,
             format_image: None,
+            required_font_layout_policy: None,
             job_clock: JobClock::default(),
             utf8_input_as_bytes: false,
             dvi_output: true,
@@ -1279,6 +1306,14 @@ impl Session {
         assert!(self.history.is_empty(), "format is fixed after execution");
         self.format_image = Some(image);
         self.initex = false;
+    }
+
+    pub fn set_required_font_layout_policy(&mut self, policy: tex_fonts::FontLayoutPolicy) {
+        assert!(
+            self.history.is_empty(),
+            "font policy is fixed after execution"
+        );
+        self.required_font_layout_policy = Some(policy);
     }
 
     pub fn set_job_clock(&mut self, clock: JobClock) {
@@ -1478,6 +1513,7 @@ impl Session {
             root_framing_name: self.root_framing_name.clone(),
             root_source_is_byte_projection: self.root_source_is_byte_projection,
             format_image,
+            required_font_layout_policy: self.required_font_layout_policy,
             job_clock: self.job_clock,
             completed: None,
             cumulative_fuel_limit: MainControl::<GenerationBrand<'static>>::DEFAULT_FUEL_LIMIT,
@@ -2210,6 +2246,9 @@ pub enum SessionError {
     Execute(tex_exec::ExecError),
     Format(tex_state::FormatError),
     FormatDump(tex_exec::FormatDumpError),
+    FormatFontPolicy {
+        name: String,
+    },
     World(WorldError),
     State(tex_state::StateError),
     Universe(tex_state::UniverseError),
@@ -2245,6 +2284,10 @@ impl fmt::Display for SessionError {
             Self::Execute(error) => write!(f, "incremental execution failed: {error}"),
             Self::Format(error) => write!(f, "incremental format materialization failed: {error}"),
             Self::FormatDump(error) => write!(f, "incremental format capture failed: {error}"),
+            Self::FormatFontPolicy { name } => write!(
+                f,
+                "format preloads classic TFM font {name}; OpenTypePreferred requires fonts to be selected through typed resources before layout"
+            ),
             Self::World(error) => write!(f, "incremental world failed: {error}"),
             Self::State(error) => write!(f, "incremental generation failed: {error:?}"),
             Self::Universe(error) => write!(f, "incremental runtime setup failed: {error:?}"),

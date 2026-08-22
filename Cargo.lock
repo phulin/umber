@@ -1325,6 +1325,7 @@ dependencies = [
  "tempfile",
  "tex-command",
  "tex-exec",
+ "tex-fonts",
  "tex-out",
  "tex-state",
 ]
