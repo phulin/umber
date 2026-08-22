@@ -134,6 +134,38 @@ fn rollback_restores_effects_and_value_root_identity() {
 }
 
 #[test]
+fn page_effect_interval_and_stream_open_context_survive_detachment_and_rollback() {
+    let mut world = World::memory();
+    world.open_out(StreamSlot::new(3), "first.out");
+    world.set_last_stream_open_context("\nLEAF-CONTEXT");
+    world.finish_page_effect_interval();
+    let checkpoint = world.snapshot();
+    world.open_out(StreamSlot::new(3), "second.out");
+    world.set_last_stream_open_context("\nSTALE-CONTEXT");
+    assert_eq!(world.pending_page_effect_range(2), 1..2);
+
+    let (records, contexts) = world.detached_effect_records();
+    assert_eq!(records.len(), 2);
+    assert_eq!(contexts[0].as_deref(), Some("\nLEAF-CONTEXT"));
+    assert_eq!(contexts[1].as_deref(), Some("\nSTALE-CONTEXT"));
+
+    world.finish_page_effect_interval();
+    assert_eq!(world.pending_page_effect_range(2), 2..2);
+    world.rollback(&checkpoint);
+    world.open_out(StreamSlot::new(3), "second.out");
+    assert_eq!(world.pending_page_effect_range(2), 1..2);
+    let (_, contexts) = world.detached_effect_records();
+    assert_eq!(contexts[1], None, "rollback must discard stale context");
+    world
+        .commit_effects(world.effect_pos())
+        .expect("memory publication succeeds");
+    assert!(
+        world.stream_open_contexts.is_empty(),
+        "committed contexts must not become retained World history"
+    );
+}
+
+#[test]
 fn committed_artifact_bytes_are_owned_and_rehash_on_preparation() {
     let original = VerifiedArtifact::new(vec![1, 2, 3]);
     let original_hash = original.hash();

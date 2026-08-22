@@ -64,6 +64,7 @@ impl DetachedPreparedPage {
 #[derive(Debug)]
 pub struct DetachedEngineCompletion {
     effects: Vec<EffectRecord>,
+    stream_open_contexts: Vec<Option<String>>,
     pages: Vec<DetachedPreparedPage>,
     pdf: Option<DetachedPdfCompletion>,
 }
@@ -71,11 +72,13 @@ pub struct DetachedEngineCompletion {
 impl DetachedEngineCompletion {
     pub(crate) fn capture(
         effects: Vec<EffectRecord>,
+        stream_open_contexts: Vec<Option<String>>,
         artifacts: Vec<CommittedArtifact>,
         artifact_publications: &[tex_state::ArtifactPublicationRecord],
         dvi_pages: Vec<PreparedDviPage>,
         pdf: Option<DetachedPdfCompletion>,
     ) -> Result<Self, EngineCompletionError> {
+        validate_stream_open_contexts(&effects, &stream_open_contexts)?;
         if artifacts.len() != artifact_publications.len() {
             return Err(EngineCompletionError::ArtifactPublicationCount);
         }
@@ -111,6 +114,7 @@ impl DetachedEngineCompletion {
             .collect();
         Ok(Self {
             effects,
+            stream_open_contexts,
             pages,
             pdf,
         })
@@ -137,6 +141,7 @@ impl DetachedEngineCompletion {
         validate_prepared(&self.effects, &self.pages, self.pdf.as_ref())?;
         Ok(PreparedEnginePublication {
             effects: self.effects,
+            stream_open_contexts: self.stream_open_contexts,
             cursor: 0,
             pages: self.pages,
             pdf: self.pdf,
@@ -151,6 +156,8 @@ pub enum EngineCompletionError {
     Admission(tex_state::UniverseError),
     Pdf(PdfCompletionError),
     MaterializedEffectBase,
+    EffectContextCount,
+    InvalidEffectContext { ordinal: usize },
     ArtifactPublicationCount,
     DviPageCount,
     DviPublicationMismatch,
@@ -257,6 +264,7 @@ impl std::error::Error for EnginePublicationError {}
 #[derive(Debug)]
 pub struct PreparedEnginePublication {
     effects: Vec<EffectRecord>,
+    stream_open_contexts: Vec<Option<String>>,
     cursor: usize,
     pages: Vec<DetachedPreparedPage>,
     pdf: Option<DetachedPdfCompletion>,
@@ -380,7 +388,10 @@ impl PreparedEnginePublication {
                 .preflight_detached_retry(self.cursor)
                 .map_err(EnginePublicationError::Destination)?;
         }
-        match world.publish_detached_effect_records(&self.effects[self.cursor..]) {
+        match world.publish_detached_effect_records_with_contexts(
+            &self.effects[self.cursor..],
+            &self.stream_open_contexts[self.cursor..],
+        ) {
             Ok(()) => {
                 self.cursor = self.effects.len();
             }
@@ -495,6 +506,21 @@ impl CommittedEnginePublication {
     pub fn into_pdf(self) -> Option<DetachedPdfCompletion> {
         self.pdf
     }
+}
+
+fn validate_stream_open_contexts(
+    effects: &[EffectRecord],
+    contexts: &[Option<String>],
+) -> Result<(), EngineCompletionError> {
+    if effects.len() != contexts.len() {
+        return Err(EngineCompletionError::EffectContextCount);
+    }
+    for (index, (effect, context)) in effects.iter().zip(contexts).enumerate() {
+        if context.is_some() && !matches!(effect, EffectRecord::StreamOpen { .. }) {
+            return Err(EngineCompletionError::InvalidEffectContext { ordinal: index + 1 });
+        }
+    }
+    Ok(())
 }
 
 fn validate_prepared(

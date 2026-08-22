@@ -167,8 +167,10 @@ impl OutputLedger {
         {
             return Err(crate::EngineCompletionError::MaterializedEffectBase);
         }
+        let (effects, stream_open_contexts) = world.detached_effect_records();
         let completion = crate::DetachedEngineCompletion::capture(
-            world.effect_journal().materialized_records(),
+            effects,
+            stream_open_contexts,
             world.committed_artifacts().to_vec(),
             world.artifact_publications(),
             control.prepared_dvi_pages().to_vec(),

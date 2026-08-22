@@ -1506,9 +1506,15 @@ impl WorldError {
 impl fmt::Display for WorldError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.path {
-            Some(path) => write!(f, "{} {}: {}", self.operation, path.display(), self.message),
-            None => write!(f, "{}: {}", self.operation, self.message),
+            Some(path) => write!(f, "{} {}: {}", self.operation, path.display(), self.message)?,
+            None => write!(f, "{}: {}", self.operation, self.message)?,
         }
+        if let Some(failure) = &self.stream_open_unavailable
+            && !failure.context.is_empty()
+        {
+            f.write_str(&failure.context)?;
+        }
+        Ok(())
     }
 }
 
@@ -1525,6 +1531,7 @@ pub struct WorldSnapshot {
     /// the ownership contract: publication detaches through COW while any
     /// checkpoint retains the old root.
     effect_base: EffectPos,
+    page_effect_artifact_cursor: usize,
     effects: Arc<Vec<EffectRecord>>,
     effect_sequences: Arc<Vec<EffectSequence>>,
     effect_publications: Arc<Vec<Option<EffectPublicationId>>>,
@@ -1544,6 +1551,7 @@ pub struct WorldSnapshot {
     next_terminal_publication_identity: u64,
     effect_root_ancestry: Arc<Vec<EffectRootIdentity>>,
     effect_pos: EffectPos,
+    stream_open_contexts: Arc<BTreeMap<EffectPos, String>>,
     stream_bufs: Arc<StreamBufState>,
     rng: RngState,
     pdf_rng: PdfRandomState,
@@ -1641,6 +1649,9 @@ pub struct World {
     page_effect_prefix_domains: Arc<Vec<EffectDomain>>,
     page_effect_prefix_semantic_record_ordinals: Arc<Vec<EffectSemanticRecordOrdinal>>,
     page_effect_prefix_placement_intra_orders: Arc<Vec<EffectPlacementIntraOrder>>,
+    /// Number of prefix-or-live effects already embedded in a committed page.
+    /// This is an in-session page-staging cursor, not detached identity.
+    page_effect_artifact_cursor: usize,
     effect_base: EffectPos,
     effects: Arc<Vec<EffectRecord>>,
     effect_sequences: Arc<Vec<EffectSequence>>,
@@ -1700,7 +1711,7 @@ pub struct World {
     #[cfg(test)]
     publish_rename_fault: Option<usize>,
     unavailable_memory_outputs: BTreeSet<PathBuf>,
-    stream_open_contexts: BTreeMap<EffectPos, String>,
+    stream_open_contexts: Arc<BTreeMap<EffectPos, String>>,
 }
 
 /// Memory-backed materialization prefix retained across one host retry.
@@ -2104,6 +2115,7 @@ impl Clone for World {
             page_effect_prefix_placement_intra_orders: self
                 .page_effect_prefix_placement_intra_orders
                 .clone(),
+            page_effect_artifact_cursor: self.page_effect_artifact_cursor,
             effect_base: self.effect_base,
             effects: self.effects.clone(),
             effect_sequences: self.effect_sequences.clone(),
@@ -2173,6 +2185,7 @@ impl PartialEq for World {
     fn eq(&self, other: &Self) -> bool {
         self.backend == other.backend
             && self.page_effect_prefix == other.page_effect_prefix
+            && self.page_effect_artifact_cursor == other.page_effect_artifact_cursor
             && self.effect_base == other.effect_base
             && self.effects == other.effects
             && self.stream_bufs == other.stream_bufs
@@ -2360,6 +2373,7 @@ impl World {
             page_effect_prefix_domains: Arc::new(Vec::new()),
             page_effect_prefix_semantic_record_ordinals: Arc::new(Vec::new()),
             page_effect_prefix_placement_intra_orders: Arc::new(Vec::new()),
+            page_effect_artifact_cursor: 0,
             effect_base: EffectPos::default(),
             effects: Arc::new(Vec::new()),
             effect_sequences: Arc::new(Vec::new()),
@@ -2418,7 +2432,7 @@ impl World {
             #[cfg(test)]
             publish_rename_fault: None,
             unavailable_memory_outputs: BTreeSet::new(),
-            stream_open_contexts: BTreeMap::new(),
+            stream_open_contexts: Arc::new(BTreeMap::new()),
         }
     }
 
@@ -3582,9 +3596,32 @@ impl World {
         &mut self,
         records: &[EffectRecord],
     ) -> Result<(), DetachedEffectPublicationError> {
+        let contexts = vec![None; records.len()];
+        self.publish_detached_effect_records_with_contexts(records, &contexts)
+    }
+
+    /// Publishes one detached suffix with ordinal-aligned stream-open context.
+    #[doc(hidden)]
+    pub fn publish_detached_effect_records_with_contexts(
+        &mut self,
+        records: &[EffectRecord],
+        stream_open_contexts: &[Option<String>],
+    ) -> Result<(), DetachedEffectPublicationError> {
+        assert_eq!(
+            records.len(),
+            stream_open_contexts.len(),
+            "detached effect contexts must stay ordinal-aligned"
+        );
         let start = self.effect_pos();
-        for record in records {
+        for (record, context) in records.iter().zip(stream_open_contexts) {
             self.append_effect(record.clone());
+            if let Some(context) = context {
+                assert!(
+                    matches!(record, EffectRecord::StreamOpen { .. }),
+                    "only a detached stream open may carry rendered context"
+                );
+                self.set_last_stream_open_context(context.clone());
+            }
         }
         if self.commit_mode == WorldCommitMode::Retained {
             return Ok(());
@@ -3621,6 +3658,8 @@ impl World {
             Arc::make_mut(&mut self.effect_domains).truncate(0);
             Arc::make_mut(&mut self.effect_semantic_record_ordinals).truncate(0);
             Arc::make_mut(&mut self.effect_placement_intra_orders).truncate(0);
+            Arc::make_mut(&mut self.stream_open_contexts)
+                .retain(|position, _| *position <= self.effect_base);
             debug_assert_eq!(pending, records.len().saturating_sub(committed));
             return Err(DetachedEffectPublicationError {
                 committed,
@@ -3679,7 +3718,7 @@ impl World {
             matches!(self.effects.last(), Some(EffectRecord::StreamOpen { .. })),
             "stream-open context must follow its exact effect"
         );
-        self.stream_open_contexts.insert(position, context.into());
+        Arc::make_mut(&mut self.stream_open_contexts).insert(position, context.into());
     }
 
     /// Returns a retained host outcome for an output target when one exists.
@@ -4118,6 +4157,7 @@ impl World {
         for index in 0..count {
             if let Err(err) = self.apply_effect(index) {
                 if applied > 0 {
+                    self.drain_page_effect_interval_prefix(applied);
                     self.effects_mut().drain(0..applied);
                     Arc::make_mut(&mut self.effect_sequences).drain(0..applied);
                     Arc::make_mut(&mut self.effect_publications).drain(0..applied);
@@ -4127,6 +4167,8 @@ impl World {
                     Arc::make_mut(&mut self.effect_placement_intra_orders).drain(0..applied);
                     self.effect_root_ancestry = Arc::new(Vec::new());
                     self.effect_base.0 += applied as u64;
+                    Arc::make_mut(&mut self.stream_open_contexts)
+                        .retain(|position, _| *position > self.effect_base);
                 }
                 let retry_safety = match err.retry_safety() {
                     EffectRetrySafety::Safe => EffectRetrySafety::Safe,
@@ -4143,6 +4185,7 @@ impl World {
             applied += 1;
         }
 
+        self.drain_page_effect_interval_prefix(applied);
         self.effects_mut().drain(0..applied);
         Arc::make_mut(&mut self.effect_sequences).drain(0..applied);
         Arc::make_mut(&mut self.effect_publications).drain(0..applied);
@@ -4152,6 +4195,8 @@ impl World {
         Arc::make_mut(&mut self.effect_placement_intra_orders).drain(0..applied);
         self.effect_root_ancestry = Arc::new(Vec::new());
         self.effect_base = effect_pos;
+        Arc::make_mut(&mut self.stream_open_contexts)
+            .retain(|position, _| *position > self.effect_base);
         Ok(())
     }
 
@@ -4351,6 +4396,32 @@ impl World {
             self.effect_placement_intra_orders.as_ref().clone(),
         )
         .expect("World effect columns are aligned")
+    }
+
+    /// Detaches canonical effect values and their optional rendered
+    /// stream-open contexts in one ordinal-aligned projection.
+    ///
+    /// The contexts are already-owned diagnostic text. Runtime positions and
+    /// publication sidecars remain inside this World.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn detached_effect_records(&self) -> (Vec<EffectRecord>, Vec<Option<String>>) {
+        let journal = self.effect_journal();
+        let indices = journal.materialized_record_indices();
+        let mut records = Vec::with_capacity(indices.len());
+        let mut contexts = Vec::with_capacity(indices.len());
+        for index in indices {
+            let record = self.effects[index].clone();
+            let context = if matches!(record, EffectRecord::StreamOpen { .. }) {
+                self.effect_position(index)
+                    .and_then(|position| self.stream_open_contexts.get(&position).cloned())
+            } else {
+                None
+            };
+            records.push(record);
+            contexts.push(context);
+        }
+        (records, contexts)
     }
 
     /// Reinstalls one validated in-session journal's aligned runtime sidecars.
@@ -4653,6 +4724,38 @@ impl World {
     #[must_use]
     pub fn page_effect_prefix(&self) -> &[EffectRecord] {
         self.page_effect_prefix.as_slice()
+    }
+
+    /// Prefix-or-live indices not yet embedded in a committed page, bounded
+    /// by the caller's pre-shipout live-effect end.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn pending_page_effect_range(&self, pending_live_end: usize) -> std::ops::Range<usize> {
+        let end = self
+            .page_effect_prefix
+            .len()
+            .saturating_add(pending_live_end.min(self.effects.len()));
+        self.page_effect_artifact_cursor.min(end)..end
+    }
+
+    /// Closes the page-visible effect interval after an artifact commit.
+    #[doc(hidden)]
+    pub fn finish_page_effect_interval(&mut self) {
+        self.page_effect_artifact_cursor = self
+            .page_effect_prefix
+            .len()
+            .saturating_add(self.effects.len());
+    }
+
+    fn drain_page_effect_interval_prefix(&mut self, count: usize) {
+        let prefix = self.page_effect_prefix.len();
+        if self.page_effect_artifact_cursor > prefix {
+            self.page_effect_artifact_cursor = prefix
+                + self
+                    .page_effect_artifact_cursor
+                    .saturating_sub(prefix)
+                    .saturating_sub(count);
+        }
     }
 
     /// Absolute position of a page-visible prefix-or-live effect.
@@ -5249,6 +5352,7 @@ impl World {
     pub(crate) fn snapshot(&self) -> WorldSnapshot {
         WorldSnapshot {
             effect_base: self.effect_base,
+            page_effect_artifact_cursor: self.page_effect_artifact_cursor,
             effects: Arc::clone(&self.effects),
             effect_sequences: Arc::clone(&self.effect_sequences),
             effect_publications: Arc::clone(&self.effect_publications),
@@ -5272,6 +5376,7 @@ impl World {
             next_terminal_publication_identity: self.next_terminal_publication_identity,
             effect_root_ancestry: Arc::new(self.effect_root_ancestry.iter().cloned().collect()),
             effect_pos: self.effect_pos(),
+            stream_open_contexts: Arc::clone(&self.stream_open_contexts),
             stream_bufs: self.stream_bufs.clone(),
             rng: self.rng,
             pdf_rng: self.pdf_rng.clone(),
@@ -5334,6 +5439,7 @@ impl World {
             .rollback(snapshot.input_identities)
             .expect("World input identity mark must name a retained ancestor");
         self.effect_base = snapshot.effect_base;
+        self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
         self.effects = Arc::clone(&snapshot.effects);
         self.effect_sequences = Arc::clone(&snapshot.effect_sequences);
         self.effect_publications = Arc::clone(&snapshot.effect_publications);
@@ -5363,6 +5469,7 @@ impl World {
         self.active_terminal_publication = snapshot.active_terminal_publication;
         self.effect_root_ancestry =
             Arc::new(snapshot.effect_root_ancestry.iter().cloned().collect());
+        self.stream_open_contexts = Arc::clone(&snapshot.stream_open_contexts);
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
         self.pdf_rng = snapshot.pdf_rng.clone();
@@ -5453,6 +5560,7 @@ impl World {
             Arc::new(page_effect_prefix_semantic_record_ordinals);
         self.page_effect_prefix_placement_intra_orders =
             Arc::new(page_effect_prefix_placement_intra_orders);
+        self.page_effect_artifact_cursor = snapshot.page_effect_artifact_cursor;
         self.effect_base = snapshot.effect_pos;
         self.effects = Arc::new(Vec::new());
         self.effect_sequences = Arc::new(Vec::new());
@@ -5477,6 +5585,7 @@ impl World {
             .max(snapshot.next_artifact_publication_identity);
         self.active_artifact_publication_group = None;
         self.active_terminal_publication = None;
+        self.stream_open_contexts = Arc::clone(&snapshot.stream_open_contexts);
         self.next_effect_sequence = snapshot.next_effect_sequence;
         self.next_effect_publication_record_ordinals =
             snapshot.next_effect_publication_record_ordinals.clone();

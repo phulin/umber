@@ -193,6 +193,63 @@ fn stream_open_retry_keeps_exact_suffix_and_retargets_page_and_pdf_once() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // Exercises authoritative real-backend retry context.
+fn stream_open_retry_keeps_detached_rendered_source_context() {
+    let temporary = tempfile::tempdir().expect("temporary publication root");
+    let failed = temporary.path().join("blocked.tex");
+    std::fs::create_dir(&failed).expect("blocked output target");
+    let source = format!(
+        "\\shipout\\hbox{{\\openout3={}\\relax}} LEAF-CONTEXT\\end",
+        failed.display()
+    );
+    let completion = capture(source.as_bytes(), EngineCompletionDemand::without_pdf());
+    let mut destination = World::real_with_artifact_dir(temporary.path().join("artifacts"));
+    let publication = completion
+        .into_publication()
+        .expect("capture preflight succeeds")
+        .publish(&mut destination)
+        .expect("unavailable open is retryable");
+    let CompletionPublication::Retry { failure, .. } = publication else {
+        panic!("directory target must reject openout")
+    };
+    assert!(
+        failure.message().contains("LEAF-CONTEXT"),
+        "detached publication must retain the already-rendered innermost source: {:?}",
+        failure.message()
+    );
+}
+
+#[test]
+fn successive_pages_own_disjoint_stream_open_occurrences() {
+    let completion = capture(
+        br"\shipout\hbox{\openout1=first.out\relax}\shipout\hbox{\openout1=second.out\relax\openout1=second.out\relax}\end",
+        EngineCompletionDemand::without_pdf(),
+    );
+    let opens = completion
+        .pages()
+        .iter()
+        .map(|page| {
+            tex_out::PageArtifact::from_bytes(page.artifact().bytes())
+                .expect("prepared page parses")
+                .effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    tex_out::PageEffect::OpenOut { path, .. } => Some(path.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        opens,
+        [
+            vec!["first.out".to_owned()],
+            vec!["second.out".to_owned(), "second.out".to_owned()],
+        ]
+    );
+}
+
+#[test]
 fn retry_rejects_destination_divergence_without_publishing_artifacts() {
     let temporary = tempfile::tempdir().expect("temporary publication root");
     let failed = temporary.path().join("missing").join("old.tex");

@@ -179,9 +179,22 @@ impl EffectJournal {
     /// only after their publication transaction has assigned an ordering.
     #[must_use]
     pub fn materialized_records(&self) -> Vec<EffectRecord> {
+        self.materialized_record_indices()
+            .into_iter()
+            .map(|index| self.records[index].clone())
+            .collect()
+    }
+
+    /// Source-journal indices in canonical externally visible order.
+    ///
+    /// Runtime-only World sidecars use this private projection to detach
+    /// owned values in exactly the same order as [`Self::materialized_records`]
+    /// without exposing positional publication columns.
+    pub(crate) fn materialized_record_indices(&self) -> Vec<usize> {
         let (ordinary, mut terminal): (Vec<_>, Vec<_>) = self
             .records
             .iter()
+            .enumerate()
             .zip(&self.domains)
             .partition(|(_, domain)| !matches!(domain, EffectDomain::TerminalPublication { .. }));
         terminal.sort_by_key(|(_, domain)| match domain {
@@ -193,7 +206,7 @@ impl EffectJournal {
         ordinary
             .into_iter()
             .chain(terminal)
-            .map(|(record, _)| record.clone())
+            .map(|((index, _), _)| index)
             .collect()
     }
 }

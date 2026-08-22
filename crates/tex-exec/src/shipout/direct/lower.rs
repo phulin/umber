@@ -22,11 +22,14 @@ pub(super) fn pending_page_effects(
 ) -> PendingPageEffects {
     let mut effects = Vec::new();
     let mut open_out_occurrences = Vec::new();
+    let pending = world.pending_page_effect_range(pending_end);
     for (world_index, record) in world
         .page_effect_prefix()
         .iter()
         .chain(world.effect_records()[..pending_end].iter())
         .enumerate()
+        .skip(pending.start)
+        .take(pending.len())
     {
         let Some(effect) = lower_effect_record(record) else {
             continue;

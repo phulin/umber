@@ -1782,6 +1782,11 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         let after = (usage.memory_words, usage.font_info_words);
         print_shipout_memory_usage(stores, command.state.profile(), before, after);
     }
+    // Everything through this point belongs to the shipout operation that
+    // just committed. A later page must carry only effects produced after
+    // this boundary, even when a retained host defers materialization until
+    // terminal completion.
+    stores.world_mut().finish_page_effect_interval();
     // The closing bracket prints after `shipout_node_with_input_summary`'s
     // own transaction has committed, so without this call it would sit as a
     // live, uncommitted effect suffix that a later `\shipout` would find at

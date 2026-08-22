@@ -1974,6 +1974,7 @@ impl<G> ShipoutTransaction<'_, G> {
             open_out_occurrences,
             reservation,
         );
+        self.world.finish_page_effect_interval();
         self.rollback = None;
         Ok((hash, record))
     }
