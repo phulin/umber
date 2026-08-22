@@ -191,6 +191,7 @@ pub struct CommandContext<'a, G> {
     prepared_mag: &'a mut Option<i32>,
     error_context_widths: crate::print::ErrorContextWidths,
     engine_usage: &'a mut EngineUsageRuntime,
+    font_info_capacity: usize,
 }
 
 pub(super) struct CommandContextParts<'a, G> {
@@ -210,6 +211,7 @@ pub(super) struct CommandContextParts<'a, G> {
     pub prepared_mag: &'a mut Option<i32>,
     pub error_context_widths: crate::print::ErrorContextWidths,
     pub engine_usage: &'a mut EngineUsageRuntime,
+    pub font_info_capacity: usize,
 }
 
 impl<'a, G> CommandContext<'a, G> {
@@ -231,6 +233,7 @@ impl<'a, G> CommandContext<'a, G> {
             prepared_mag,
             error_context_widths,
             engine_usage,
+            font_info_capacity,
         } = parts;
         Self {
             interner,
@@ -249,6 +252,7 @@ impl<'a, G> CommandContext<'a, G> {
             prepared_mag,
             error_context_widths,
             engine_usage,
+            font_info_capacity,
         }
     }
 
@@ -1528,7 +1532,8 @@ impl<'a, G> CommandContext<'a, G> {
                     let current = self.font_parameter_count(id);
                     let growth = number.saturating_sub(current);
                     growth
-                        <= crate::font::FONT_INFO_CAPACITY
+                        <= self
+                            .font_info_capacity
                             .saturating_sub(self.admitted.state_ref().font_parameter_words())
                 }))
     }
@@ -1556,12 +1561,12 @@ impl<'a, G> CommandContext<'a, G> {
         value: Scaled,
     ) -> Result<(), usize> {
         if !self.font_dimen_writable(id, number) {
-            return Err(crate::font::FONT_INFO_CAPACITY);
+            return Err(self.font_info_capacity);
         }
         self.admitted
             .state()
             .assign_font_dimen(id, number, value, AssignmentScope::Global)
-            .map_err(|_| crate::font::FONT_INFO_CAPACITY)
+            .map_err(|_| self.font_info_capacity)
     }
 
     pub fn set_font_hyphen_char(&mut self, id: crate::ids::FontId, value: i32) {

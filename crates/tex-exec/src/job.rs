@@ -109,6 +109,18 @@ impl EngineBinaryIdentity {
             Self::Pdftex14029 => (15_000, 600_000),
         }
     }
+
+    /// Returns this executable's process-configured `font_info` word bound.
+    ///
+    /// The value is operational rather than format-owned: TeX82 and e-TeX
+    /// use the compiled default, while the pinned Web2C pdfTeX process uses
+    /// the distribution's `font_mem_size` setting.
+    pub(crate) const fn font_info_capacity(self) -> usize {
+        match self {
+            Self::Tex82 | Self::Etex26 => tex_state::font::FONT_INFO_CAPACITY,
+            Self::Pdftex14029 => tex_state::font::WEB2C_FONT_INFO_CAPACITY,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

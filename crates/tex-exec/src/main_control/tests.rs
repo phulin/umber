@@ -12679,6 +12679,51 @@ fn fontdimen_identifier_and_bound_recovery_matrix_is_exact() {
 }
 
 #[test]
+fn executable_profile_selects_the_process_font_info_capacity() {
+    // TeX82 §11 compiles a 20,000-word font_info array, while the pinned
+    // Web2C pdfTeX process reads font_mem_size=8,000,000. Modern l3kernel's
+    // integer-array fallback relies on growing the newest font through
+    // \fontdimen65536, so the executable identity -- not the format image --
+    // must select the operational bound before the first command runs.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        control.begin_job(stores, "tex82-capacity.tex");
+        register_source(&mut control, br"\fontdimen65536\nullfont=1sp \count0=1\end");
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.count(0).expect("trailing count"), 1);
+        assert_eq!(
+            admitted!(stores, |context| context
+                .font_parameter_count(tex_state::font::NULL_FONT)),
+            7
+        );
+        assert!(
+            terminal_text(stores).contains("! Font \\nullfont has only 7 fontdimen parameters.")
+        );
+    });
+
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        control.begin_job(stores, "pdftex-capacity.tex");
+        register_source(&mut control, br"\fontdimen65536\nullfont=1sp \count0=1\end");
+        run_to_end(&mut control, stores);
+
+        assert_eq!(stores.count(0).expect("trailing count"), 1);
+        assert_eq!(
+            admitted!(stores, |context| context
+                .font_parameter_count(tex_state::font::NULL_FONT)),
+            65_536
+        );
+        assert_eq!(
+            admitted!(stores, |context| context
+                .font_parameter(tex_state::font::NULL_FONT, 65_536)),
+            Scaled::from_raw(1)
+        );
+        assert!(!terminal_text(stores).contains("fontdimen parameters"));
+    });
+}
+
+#[test]
 fn font_definition_size_boundaries_use_exact_replacements() {
     // TeX82 §§1258--1259 accept scaled 1..32768 and at sizes whose scaled
     // value is 1..(2048pt-1sp); each adjacent invalid value becomes 1000 or

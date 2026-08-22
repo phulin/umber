@@ -397,6 +397,8 @@ pub struct Universe<G> {
     prepared_mag: Option<i32>,
     error_context_widths: ErrorContextWidths,
     engine_usage: crate::command_context::EngineUsageRuntime,
+    /// Executable-process `font_info` bound; operational, not format state.
+    font_info_capacity: usize,
     pub(crate) provenance_demand: crate::ProvenanceDemand,
     pub(crate) provenance_budgets: crate::ProvenanceBudgets,
     pub(crate) primitive_names: Vec<String>,
@@ -561,6 +563,7 @@ impl<G> Universe<G> {
             prepared_mag: None,
             error_context_widths: ErrorContextWidths::default(),
             engine_usage: crate::command_context::EngineUsageRuntime::default(),
+            font_info_capacity: crate::font::FONT_INFO_CAPACITY,
             provenance_demand: crate::ProvenanceDemand::default(),
             provenance_budgets: crate::ProvenanceBudgets::default(),
             primitive_names: Vec::new(),
@@ -1900,7 +1903,17 @@ impl<G> Universe<G> {
             prepared_mag: &mut self.prepared_mag,
             error_context_widths: self.error_context_widths,
             engine_usage: &mut self.engine_usage,
+            font_info_capacity: self.font_info_capacity,
         }))
+    }
+
+    /// Selects the executable-process `font_info` word bound.
+    ///
+    /// TeX82's compiled default and Web2C pdfTeX's configured limit differ.
+    /// This operational limit is deliberately absent from formats and state
+    /// hashes; the executable framing installs it before command execution.
+    pub fn set_font_info_capacity(&mut self, capacity: usize) {
+        self.font_info_capacity = capacity;
     }
 
     /// Retains the complete immutable generation across an in-process

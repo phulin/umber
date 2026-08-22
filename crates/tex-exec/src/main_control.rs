@@ -1862,6 +1862,7 @@ impl<G> MainControl<G> {
         let binary = self.engine_binary.unwrap_or_else(|| {
             crate::job::EngineBinaryIdentity::for_profile(self.command_profile())
         });
+        stores.set_font_info_capacity(binary.font_info_capacity());
         let etex = self.command_profile() == CommandProfile::ETEX26;
         // §534's `**` line is exactly what §313 pseudoprints for the base
         // terminal level; a driver that frames the job here rather than
