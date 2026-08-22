@@ -56,6 +56,7 @@ pub(crate) fn break_current_paragraph<G>(
     reset_paragraph: bool,
     diagnostic_context: crate::pack_report::ExecutionDiagnosticContext,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars_with_fuel(nest, stores, diagnostic_effects, fuel)?;
@@ -78,6 +79,7 @@ pub(crate) fn break_current_paragraph<G>(
     let mut hlist = crate::math::finish_math_lists_owned(
         stores,
         diagnostic_effects,
+        geometry,
         level.list_mutation().take_nodes(),
         true,
     );
@@ -190,6 +192,7 @@ pub(crate) fn break_current_paragraph<G>(
         let line = hpack_owned_with_overfull_rule(
             stores,
             diagnostic_effects,
+            geometry,
             &paragraph_diagnostic_context,
             &mut broken.nodes,
             needs_physical_diagnostic.then_some(&mut diagnostic_nodes),

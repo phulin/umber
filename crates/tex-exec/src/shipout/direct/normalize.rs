@@ -369,7 +369,17 @@ fn normalize_index<G>(
         NormalizeNode::Math(math) => {
             let mut nodes = {
                 let mut command = stores.command_context().expect("live generation");
-                crate::math::finish_math_list_node(&mut command, diagnostic_effects, math, false)
+                // A math list surviving to direct shipout is normalization
+                // scratch outside command delivery. Its box dimensions are
+                // not a canonical command-operation geometry transition.
+                let mut geometry = crate::geometry::IgnorePackGeometry;
+                crate::math::finish_math_list_node(
+                    &mut command,
+                    diagnostic_effects,
+                    &mut geometry,
+                    math,
+                    false,
+                )
             };
             let replacement = stores.publish_page_nodes_owned(&mut nodes);
             overlay.math.push(MathSubstitution {

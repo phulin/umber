@@ -9790,6 +9790,66 @@ impl CommandObserver for ObservationRecorder {
     }
 }
 
+#[derive(Default)]
+struct GeometryObservationRecorder(Vec<CommandObservation>);
+
+impl CommandObserver for GeometryObservationRecorder {
+    fn observes_geometry(&self) -> bool {
+        true
+    }
+
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
+
+#[test]
+fn observed_box_packaging_commits_geometry_at_the_operation_boundary() {
+    // TeX82 §§649--668 and §§668--676 commit the finished hpack/vpack
+    // dimensions. The observer sees those transitions only after each
+    // enclosing command operation commits; no Universe-owned queue is
+    // involved.
+    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        let mut control = MainControl::tex82_initex(&mut stores);
+        register_source(&mut control, br"\setbox0=\hbox{}\setbox1=\vbox{}\end");
+        let mut observations = GeometryObservationRecorder::default();
+        loop {
+            match control
+                .step_with_observer(&mut stores, &mut observations)
+                .expect("box packaging executes")
+            {
+                MainControlStep::End | MainControlStep::EndOfInput => break,
+                MainControlStep::Continue => {}
+            }
+        }
+        let geometry = observations
+            .0
+            .iter()
+            .filter_map(|observation| match observation {
+                CommandObservation::Geometry(record) => Some(record),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            geometry.as_slice(),
+            [
+                GeometryRecord::Hpack {
+                    width_sp: 0,
+                    height_sp: 0,
+                    depth_sp: 0,
+                    ..
+                },
+                GeometryRecord::Vpack {
+                    width_sp: 0,
+                    height_sp: 0,
+                    depth_sp: 0,
+                    ..
+                }
+            ]
+        ));
+    });
+}
+
 fn observation_name(value: &ObservationValue) -> Option<&str> {
     match value {
         ObservationValue::Name(name) => Some(name),

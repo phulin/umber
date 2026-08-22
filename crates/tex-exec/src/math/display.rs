@@ -50,6 +50,7 @@ pub(crate) struct FinishedEqNo {
 pub(crate) fn finish_eq_no<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     side: EqNoSide,
     content: tex_state::node_arena::PageListId,
@@ -59,6 +60,7 @@ pub(crate) fn finish_eq_no<G>(
     let nodes = convert_math_hlist_with_error_context(
         stores,
         diagnostic_effects,
+        geometry,
         content,
         Style::TEXT,
         false,
@@ -69,6 +71,7 @@ pub(crate) fn finish_eq_no<G>(
     let mut boxed = hpack_nodes(
         stores,
         diagnostic_effects,
+        geometry,
         diagnostic_context,
         list,
         PackSpec::Natural,
@@ -83,6 +86,7 @@ pub(crate) fn finish_display_math<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     content: tex_state::node_arena::PageListId,
     eq_no: Option<FinishedEqNo>,
@@ -98,6 +102,7 @@ pub(crate) fn finish_display_math<G>(
     let display_nodes = convert_math_hlist_with_error_context(
         stores,
         diagnostic_effects,
+        geometry,
         display_content,
         Style::DISPLAY,
         false,
@@ -118,6 +123,7 @@ pub(crate) fn finish_display_math<G>(
     let mut display_box = hpack_nodes(
         stores,
         diagnostic_effects,
+        geometry,
         diagnostic_context,
         display_list.clone(),
         PackSpec::Natural,
@@ -150,6 +156,7 @@ pub(crate) fn finish_display_math<G>(
             display_box = hpack_nodes(
                 stores,
                 diagnostic_effects,
+                geometry,
                 diagnostic_context,
                 display_list,
                 PackSpec::Exactly(z - q),
@@ -163,6 +170,7 @@ pub(crate) fn finish_display_math<G>(
                 display_box = hpack_with_overfull_rule(
                     stores,
                     diagnostic_effects,
+                    geometry,
                     diagnostic_context,
                     display_list,
                     PackSpec::Exactly(z),
@@ -230,6 +238,7 @@ pub(crate) fn finish_display_math<G>(
         display_line = hpack_nodes(
             stores,
             diagnostic_effects,
+            geometry,
             diagnostic_context,
             list,
             PackSpec::Natural,
@@ -244,6 +253,7 @@ pub(crate) fn finish_display_math<G>(
         display_line = package_directed_display_line(
             stores,
             diagnostic_effects,
+            geometry,
             diagnostic_context,
             display_line,
             prototype,

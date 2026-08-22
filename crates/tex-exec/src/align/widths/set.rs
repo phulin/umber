@@ -36,6 +36,7 @@ pub(super) fn set_alignment_nodes<G>(
     offset: Scaled,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Result<Vec<Node>, ExecError> {
     let config = SetConfig {
@@ -57,6 +58,7 @@ pub(super) fn set_alignment_nodes<G>(
                 node,
                 stores,
                 diagnostic_effects,
+                geometry,
                 diagnostic_context,
             )),
             _ => out.push(node.clone()),
@@ -80,6 +82,7 @@ fn set_running_rule<G>(
     node: &Node,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Node {
     let prototype = &config.prototype.box_node;
@@ -106,6 +109,7 @@ fn set_running_rule<G>(
     let mut packed = crate::packing_params::hpack(
         stores,
         diagnostic_effects,
+        geometry,
         diagnostic_context,
         list,
         tex_typeset::PackSpec::Natural,

@@ -28,6 +28,7 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
     crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut geometry = crate::geometry::IgnorePackGeometry;
         let diagnostic_context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
         let last_line = box_node(100, 7, 3, 5, BoxLr::Normal);
         let prototype = display_line_prototype(&mut stores, last_line);
@@ -36,6 +37,7 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
         let reused = package_directed_display_line(
             &mut stores,
             &mut diagnostic_effects,
+            &mut geometry,
             &diagnostic_context,
             display,
             Some(prototype),
@@ -68,6 +70,7 @@ fn etex_display_prototype_replaces_its_list_without_repacking() {
         let packed = package_directed_display_line(
             &mut stores,
             &mut diagnostic_effects,
+            &mut geometry,
             &diagnostic_context,
             display,
             None,

@@ -51,6 +51,7 @@ impl ParagraphEnd {
         nest: &mut ModeNest,
         stores: &mut CommandContext<'_, G>,
         diagnostic_effects: &mut DiagnosticEffects,
+        geometry: &mut dyn crate::geometry::PackGeometrySink,
         fuel: &mut tex_command::CommandFuel,
     ) -> Result<ParagraphBreakResult, ExecError> {
         let is_display = self.continuation == ParagraphEndContinuation::DisplayInterruption;
@@ -82,6 +83,7 @@ impl ParagraphEnd {
             !is_display,
             self.diagnostic_context,
             diagnostic_effects,
+            geometry,
             fuel,
         )
     }
@@ -92,10 +94,17 @@ pub(crate) fn end_paragraph_with_fuel<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: ExecutionDiagnosticContext,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    ParagraphEnd::end(diagnostic_context).finish(nest, stores, diagnostic_effects, fuel)?;
+    ParagraphEnd::end(diagnostic_context).finish(
+        nest,
+        stores,
+        diagnostic_effects,
+        geometry,
+        fuel,
+    )?;
     Ok(())
 }
 
@@ -103,10 +112,17 @@ pub(crate) fn end_paragraph_with_context<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     fuel: &mut tex_command::CommandFuel,
     diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
-    ParagraphEnd::end(diagnostic_context).finish(nest, stores, diagnostic_effects, fuel)?;
+    ParagraphEnd::end(diagnostic_context).finish(
+        nest,
+        stores,
+        diagnostic_effects,
+        geometry,
+        fuel,
+    )?;
     Ok(())
 }
 
@@ -114,6 +130,7 @@ pub(crate) fn interrupt_paragraph_for_display<G>(
     nest: &mut ModeNest,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     fuel: &mut tex_command::CommandFuel,
     diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<ParagraphBreakResult, ExecError> {
@@ -121,6 +138,7 @@ pub(crate) fn interrupt_paragraph_for_display<G>(
         nest,
         stores,
         diagnostic_effects,
+        geometry,
         fuel,
     )?;
     Ok(result)

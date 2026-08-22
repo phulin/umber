@@ -37,6 +37,7 @@ pub(crate) enum UnsetPackContext {
 pub(crate) fn make_unset_node<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     children: tex_state::node_arena::PageListId,
     kind: UnsetKind,
@@ -55,6 +56,7 @@ pub(crate) fn make_unset_node<G>(
         UnsetKind::HBox => hpack(
             stores,
             diagnostic_effects,
+            geometry,
             diagnostic_context,
             children,
             PackSpec::Natural,
@@ -73,6 +75,7 @@ pub(crate) fn make_unset_node<G>(
             vpack(
                 stores,
                 diagnostic_effects,
+                geometry,
                 diagnostic_context,
                 children,
                 PackSpec::Natural,

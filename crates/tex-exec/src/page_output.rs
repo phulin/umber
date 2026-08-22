@@ -36,10 +36,17 @@ pub(crate) enum SelectedPageOutput {
 pub(crate) fn select_pending_page_output<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     fire_up: PageFireUp,
     diagnostic_context: ExecutionDiagnosticContext,
 ) -> Result<SelectedPageOutput, ExecError> {
-    prepare_box255(stores, diagnostic_effects, fire_up, &diagnostic_context)?;
+    prepare_box255(
+        stores,
+        diagnostic_effects,
+        geometry,
+        fire_up,
+        &diagnostic_context,
+    )?;
     let output_is_empty = stores
         .token_parameter(TokParam::OUTPUT)
         .expect("output token parameter is admitted")
@@ -95,6 +102,7 @@ pub(crate) fn resume_page_builder_after_output<G>(
 pub(crate) fn prepare_box255<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     fire_up: PageFireUp,
     diagnostic_context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
@@ -120,14 +128,20 @@ pub(crate) fn prepare_box255<G>(
         )
         .expect("output penalty assignment targets admitted state");
     stores.prepend_page_contributions(after_break);
-    let distributed =
-        distribute_insertions(stores, diagnostic_effects, diagnostic_context, page_nodes)?;
+    let distributed = distribute_insertions(
+        stores,
+        diagnostic_effects,
+        geometry,
+        diagnostic_context,
+        page_nodes,
+    )?;
     update_page_marks_at_fire_up(stores, &distributed.page_nodes);
 
     let page_list = stores.publish_page_nodes(distributed.page_nodes);
     let packed = vpack(
         stores,
         diagnostic_effects,
+        geometry,
         diagnostic_context,
         page_list,
         PackSpec::Exactly(fire_up.best_size()),
@@ -241,6 +255,7 @@ struct SplitInsertionContext {
 fn distribute_insertions<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &ExecutionDiagnosticContext,
     page_nodes: Vec<Node>,
 ) -> Result<DistributedInsertions, ExecError> {
@@ -311,6 +326,7 @@ fn distribute_insertions<G>(
                         if let Some(remainder) = split_insertion_remainder(
                             stores,
                             diagnostic_effects,
+                            geometry,
                             diagnostic_context,
                             queue,
                             SplitInsertionContext {
@@ -329,6 +345,7 @@ fn distribute_insertions<G>(
                         package_insertion_box(
                             stores,
                             diagnostic_effects,
+                            geometry,
                             diagnostic_context,
                             class,
                             boxed_nodes,
@@ -391,6 +408,7 @@ fn insertion_box_nodes<G>(
 fn split_insertion_remainder<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &ExecutionDiagnosticContext,
     queue: &mut InsertionQueue,
     context: SplitInsertionContext,
@@ -420,6 +438,7 @@ fn split_insertion_remainder<G>(
     let size = natural_vlist_size(
         stores,
         diagnostic_effects,
+        geometry,
         diagnostic_context,
         content.clone(),
     )?;
@@ -436,12 +455,19 @@ fn split_insertion_remainder<G>(
 fn package_insertion_box<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &ExecutionDiagnosticContext,
     class: u16,
     nodes: Vec<Node>,
 ) {
     let list = stores.publish_page_nodes(nodes);
-    let packed = vpack_natural(stores, diagnostic_effects, diagnostic_context, list);
+    let packed = vpack_natural(
+        stores,
+        diagnostic_effects,
+        geometry,
+        diagnostic_context,
+        list,
+    );
     let boxed = stores.publish_page_nodes(vec![Node::VList(packed)]);
     stores.assign_page_box_global(class, boxed);
 }

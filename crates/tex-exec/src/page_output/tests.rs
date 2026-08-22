@@ -72,9 +72,11 @@ fn fire_up_recovers_hbox_insertion_register_before_distribution() {
             .expect("box assignment");
 
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut geometry = crate::geometry::IgnorePackGeometry;
         let distributed = distribute_insertions(
             &mut stores,
             &mut diagnostic_effects,
+            &mut geometry,
             &diagnostic_context,
             page_nodes,
         )

@@ -11,6 +11,7 @@ fn sp(raw: i32) -> Scaled {
 fn package_unset_cell_records_natural_extent_and_glue_orders() {
     crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
+        let mut geometry = crate::geometry::IgnorePackGeometry;
         let diagnostic_context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
         let fil = GlueSpec {
             width: sp(3),
@@ -57,6 +58,7 @@ fn package_unset_cell_records_natural_extent_and_glue_orders() {
             let Node::Unset(cell) = make_unset_node(
                 &mut stores,
                 &mut tex_state::diagnostic::DiagnosticEffects::new(),
+                &mut geometry,
                 &diagnostic_context,
                 children.clone(),
                 kind,
@@ -91,6 +93,7 @@ fn span_record_256_limit_and_merge_fields() {
     // the canonical confusion, without losing the packed metric fields.
     crate::test_harness::with_nonstop_plain_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
+        let mut geometry = crate::geometry::IgnorePackGeometry;
         let diagnostic_context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
         let children = stores.publish_page_nodes(vec![Node::Rule {
             width: Some(sp(9)),
@@ -100,6 +103,7 @@ fn span_record_256_limit_and_merge_fields() {
         let Node::Unset(limit) = make_unset_node(
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            &mut geometry,
             &diagnostic_context,
             children.clone(),
             UnsetKind::HBox,
@@ -118,6 +122,7 @@ fn span_record_256_limit_and_merge_fields() {
         let error = make_unset_node(
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            &mut geometry,
             &diagnostic_context,
             children,
             UnsetKind::HBox,

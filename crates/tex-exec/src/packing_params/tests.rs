@@ -28,6 +28,7 @@ fn ordinary_hpack_reports_once_without_decorating_its_list() {
         universe.set_interaction_mode(tex_state::InteractionMode::Batch);
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
+        let mut geometry = crate::geometry::IgnorePackGeometry;
         let context = crate::pack_report::ExecutionDiagnosticContext::source_free("");
         let list = stores.publish_page_nodes(vec![Node::Kern {
             amount: Scaled::from_raw(2 * Scaled::UNITY),
@@ -38,6 +39,7 @@ fn ordinary_hpack_reports_once_without_decorating_its_list() {
         let packed = hpack(
             &mut stores,
             &mut diagnostic_effects,
+            &mut geometry,
             &context,
             list,
             PackSpec::Exactly(Scaled::from_raw(Scaled::UNITY)),
@@ -68,6 +70,7 @@ fn vtop_readjusts_leading_glue_height_and_depth() {
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         let mut diagnostic_effects = DiagnosticEffects::new();
+        let mut geometry = crate::geometry::IgnorePackGeometry;
         let context = crate::pack_report::ExecutionDiagnosticContext::new(330, 0, false, "");
         let glue = GlueSpec {
             width: NEGATIVE_THREE_MM,
@@ -82,6 +85,7 @@ fn vtop_readjusts_leading_glue_height_and_depth() {
         let packed = vtop(
             &mut stores,
             &mut diagnostic_effects,
+            &mut geometry,
             &context,
             list,
             PackSpec::Natural,

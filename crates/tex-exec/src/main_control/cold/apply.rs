@@ -2377,9 +2377,11 @@ pub(in crate::main_control) fn apply<G>(
                             report_missing_vsplit_to(context, stores)?;
                         }
                         let diagnostic_context = command_diagnostic_context(command, stores);
+                        let mut geometry = pack_geometry_sink(command.state, command.observations);
                         let node = crate::box_runtime::split_vbox_register(
                             stores,
                             command.diagnostic_effects,
+                            &mut geometry,
                             &diagnostic_context,
                             split.index,
                             split.height,
@@ -2406,9 +2408,11 @@ pub(in crate::main_control) fn apply<G>(
                 report_missing_vsplit_to(context, stores)?;
             }
             let diagnostic_context = command_diagnostic_context(command, stores);
+            let mut geometry = pack_geometry_sink(command.state, command.observations);
             let node = crate::box_runtime::split_vbox_register(
                 stores,
                 command.diagnostic_effects,
+                &mut geometry,
                 &diagnostic_context,
                 split.index,
                 split.height,
@@ -2811,10 +2815,12 @@ pub(in crate::main_control) fn apply<G>(
             // `end_paragraph` is the shared spelling of §1096: it ignores
             // non-horizontal modes and pops a null paragraph without a line.
             let diagnostic_context = command_diagnostic_context(command, stores);
+            let mut geometry = pack_geometry_sink(command.state, command.observations);
             crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
                 stores,
                 command.diagnostic_effects,
+                &mut geometry,
                 diagnostic_context,
                 command.fuel,
             )?;
@@ -3018,10 +3024,12 @@ pub(in crate::main_control) fn apply<G>(
             // on the mode nest (`umber2-johp.232`).
             if !box_state.kind.horizontal() {
                 let diagnostic_context = command_diagnostic_context(command, stores);
+                let mut geometry = pack_geometry_sink(command.state, command.observations);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
                     command.diagnostic_effects,
+                    &mut geometry,
                     diagnostic_context,
                     command.fuel,
                 )?;
@@ -3078,9 +3086,11 @@ pub(in crate::main_control) fn apply<G>(
             // the exception: `package` saved it above before `unsave`.
             let node = if box_state.kind.horizontal() {
                 let diagnostic_context = command_diagnostic_context(command, stores);
+                let mut geometry = pack_geometry_sink(command.state, command.observations);
                 Node::HList(crate::box_runtime::hpack_with_overfull_rule(
                     stores,
                     command.diagnostic_effects,
+                    &mut geometry,
                     &diagnostic_context,
                     children,
                     box_state.packing,
@@ -3091,9 +3101,11 @@ pub(in crate::main_control) fn apply<G>(
                         let diagnostic_context = command_diagnostic_context(command, stores);
                         let mut params = crate::packing_params::vpack_params(stores);
                         params.box_max_depth = box_max_depth;
+                        let mut geometry = pack_geometry_sink(command.state, command.observations);
                         crate::packing_params::vpack(
                             stores,
                             command.diagnostic_effects,
+                            &mut geometry,
                             &diagnostic_context,
                             children,
                             box_state.packing,
@@ -3105,9 +3117,11 @@ pub(in crate::main_control) fn apply<G>(
                         let diagnostic_context = command_diagnostic_context(command, stores);
                         let mut params = crate::packing_params::vpack_params(stores);
                         params.box_max_depth = box_max_depth;
+                        let mut geometry = pack_geometry_sink(command.state, command.observations);
                         crate::packing_params::vtop(
                             stores,
                             command.diagnostic_effects,
+                            &mut geometry,
                             &diagnostic_context,
                             children,
                             box_state.packing,
@@ -3467,10 +3481,12 @@ pub(in crate::main_control) fn apply<G>(
             // level and `fin_align` popped that level instead of the alignment
             // (`umber2-usol`).
             let diagnostic_context = command_diagnostic_context(command, stores);
+            let mut geometry = pack_geometry_sink(command.state, command.observations);
             crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
                 stores,
                 command.diagnostic_effects,
+                &mut geometry,
                 diagnostic_context,
                 command.fuel,
             )?;
@@ -3564,11 +3580,13 @@ pub(in crate::main_control) fn apply<G>(
                 .as_mut()
                 .expect("active replay alignment was checked");
             let error_context = command.state.output_open_context(&**stores);
+            let mut geometry = pack_geometry_sink(command.state, command.observations);
             finish_replay_alignment(
                 active,
                 modes,
                 stores,
                 command.diagnostic_effects,
+                &mut geometry,
                 command.fuel,
                 &error_context,
             )?;
@@ -3607,10 +3625,12 @@ pub(in crate::main_control) fn apply<G>(
                 )?;
             } else {
                 let diagnostic_context = command_diagnostic_context(command, stores);
+                let mut geometry = pack_geometry_sink(command.state, command.observations);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
                     command.diagnostic_effects,
+                    &mut geometry,
                     diagnostic_context,
                     command.fuel,
                 )?;

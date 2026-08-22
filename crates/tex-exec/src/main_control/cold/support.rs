@@ -686,9 +686,11 @@ pub(in crate::main_control) fn apply_box_shift<G>(
                 report_missing_vsplit_to(context, stores)?;
             }
             let diagnostic_context = command_diagnostic_context(command, stores);
+            let mut geometry = pack_geometry_sink(command.state, command.observations);
             let node = crate::box_runtime::split_vbox_register(
                 stores,
                 command.diagnostic_effects,
+                &mut geometry,
                 &diagnostic_context,
                 split.index,
                 split.height,
@@ -937,10 +939,12 @@ pub(in crate::main_control) fn apply_scanned_rule<G>(
             Mode::Vertical | Mode::InternalVertical => {}
             Mode::Horizontal => {
                 let diagnostic_context = command_diagnostic_context(command, stores);
+                let mut geometry = pack_geometry_sink(command.state, command.observations);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
                     command.diagnostic_effects,
+                    &mut geometry,
                     diagnostic_context,
                     command.fuel,
                 )?;
@@ -1024,6 +1028,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     etex_extended: bool,
     placement: AccentPlacement,
 ) -> Result<ReplayStep, ExecError> {
@@ -1084,6 +1089,7 @@ pub(in crate::main_control) fn apply_accent_nodes<G>(
         let mut boxed = crate::box_runtime::hpack_with_overfull_rule(
             stores,
             diagnostic_effects,
+            geometry,
             &diagnostic_context,
             children,
             PackSpec::Natural,
@@ -1250,10 +1256,12 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
     // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
     let page_error_context = command.state.output_open_context(stores);
     let diagnostic_context = command_diagnostic_context(command, stores);
+    let mut geometry = pack_geometry_sink(command.state, command.observations);
     crate::paragraph_end::end_paragraph_with_fuel(
         modes,
         stores,
         command.diagnostic_effects,
+        &mut geometry,
         diagnostic_context.clone(),
         command.fuel,
     )?;
@@ -1284,9 +1292,11 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         box_max_depth: Scaled::MAX_DIMEN,
         ..crate::packing_params::vpack_params(stores)
     };
+    let mut geometry = pack_geometry_sink(command.state, command.observations);
     let packed = crate::packing_params::vpack(
         stores,
         command.diagnostic_effects,
+        &mut geometry,
         &diagnostic_context,
         content.clone(),
         PackSpec::Natural,

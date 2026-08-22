@@ -29,15 +29,25 @@ impl MathConversionErrorContext {
 pub(crate) fn finish_math_list_node<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     list: MathListNode,
     insert_penalties: bool,
 ) -> Vec<Node> {
-    finish_math_list_node_with_reads(stores, diagnostic_effects, list, insert_penalties, None).0
+    finish_math_list_node_with_reads(
+        stores,
+        diagnostic_effects,
+        geometry,
+        list,
+        insert_penalties,
+        None,
+    )
+    .0
 }
 
 pub(crate) fn finish_inline_math_list_node<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     list: MathListNode,
     insert_penalties: bool,
     error_context: MathConversionErrorContext,
@@ -45,6 +55,7 @@ pub(crate) fn finish_inline_math_list_node<G>(
     finish_math_list_node_with_reads(
         stores,
         diagnostic_effects,
+        geometry,
         list,
         insert_penalties,
         Some(&error_context),
@@ -54,11 +65,12 @@ pub(crate) fn finish_inline_math_list_node<G>(
 fn finish_math_list_node_with_reads<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     list: MathListNode,
     insert_penalties: bool,
     error_context: Option<&MathConversionErrorContext>,
 ) -> (Vec<Node>, u64) {
-    let mut sink = LoweredMathSink::new(stores, diagnostic_effects, error_context);
+    let mut sink = LoweredMathSink::new(stores, diagnostic_effects, geometry, error_context);
     let params = MathParams::read(&sink);
     let style = if list.display {
         Style::DISPLAY
@@ -90,13 +102,14 @@ fn finish_math_list_node_with_reads<G>(
 pub(super) fn convert_math_hlist_with_error_context<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     input: PageListId,
     style: Style,
     penalties: bool,
     params: &MathParams,
     error_context: Option<&MathConversionErrorContext>,
 ) -> Vec<Node> {
-    let mut sink = LoweredMathSink::new(stores, diagnostic_effects, error_context);
+    let mut sink = LoweredMathSink::new(stores, diagnostic_effects, geometry, error_context);
     convert_math_hlist_with_sink(&mut sink, input, style, penalties, params)
 }
 
@@ -115,6 +128,7 @@ fn convert_math_hlist_with_sink<G>(
 struct LoweredMathSink<'a, 'ctx, G> {
     stores: &'a mut CommandContext<'ctx, G>,
     diagnostic_effects: &'a mut DiagnosticEffects,
+    geometry: &'a mut dyn crate::geometry::PackGeometrySink,
     error_context: Option<&'a MathConversionErrorContext>,
     root_nodes: Vec<Node>,
     glue_cache: Vec<(GlueSpec, GlueSpec)>,
@@ -125,11 +139,13 @@ impl<'a, 'ctx, G> LoweredMathSink<'a, 'ctx, G> {
     fn new(
         stores: &'a mut CommandContext<'ctx, G>,
         diagnostic_effects: &'a mut DiagnosticEffects,
+        geometry: &'a mut dyn crate::geometry::PackGeometrySink,
         error_context: Option<&'a MathConversionErrorContext>,
     ) -> Self {
         Self {
             stores,
             diagnostic_effects,
+            geometry,
             error_context,
             root_nodes: Vec::new(),
             glue_cache: Vec::with_capacity(8),
@@ -367,6 +383,18 @@ impl<G> LoweredMathSink<'_, '_, G> {
             self.root_nodes.clear();
             return;
         }
+        for packed in layout.pack_observations() {
+            match packed.axis {
+                tex_typeset::math::BoxAxis::Horizontal => {
+                    self.geometry
+                        .committed_hpack(packed.width, packed.height, packed.depth);
+                }
+                tex_typeset::math::BoxAxis::Vertical => {
+                    self.geometry
+                        .committed_vpack(packed.width, packed.height, packed.depth);
+                }
+            }
+        }
         let mut root = std::mem::take(&mut self.root_nodes);
         root.clear();
         root.reserve(list.node_count());
@@ -378,6 +406,7 @@ impl<G> LoweredMathSink<'_, '_, G> {
 pub(crate) fn finish_math_lists_owned<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     nodes: Vec<Node>,
     insert_penalties: bool,
 ) -> Vec<Node> {
@@ -391,6 +420,7 @@ pub(crate) fn finish_math_lists_owned<G>(
                 out.extend(finish_math_list_node(
                     stores,
                     diagnostic_effects,
+                    geometry,
                     list,
                     insert_penalties,
                 ));

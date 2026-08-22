@@ -59,6 +59,7 @@ pub(crate) fn display_line_prototype<G>(
 pub(super) fn package_directed_display_line<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut tex_state::diagnostic::DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     display_line: BoxNode,
     prototype: Option<BoxNode>,
@@ -177,6 +178,7 @@ pub(super) fn package_directed_display_line<G>(
     let mut boxed = hpack_nodes(
         stores,
         diagnostic_effects,
+        geometry,
         diagnostic_context,
         list,
         PackSpec::Natural,

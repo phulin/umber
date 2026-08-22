@@ -89,6 +89,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             Scaled::from_raw(0),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            &mut crate::geometry::IgnorePackGeometry,
             &diagnostic_context,
         )
         .expect("running horizontal rules resolve");
@@ -126,6 +127,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             Scaled::from_raw(0),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            &mut crate::geometry::IgnorePackGeometry,
             &diagnostic_context,
         )
         .expect("running vertical rules resolve");
@@ -162,6 +164,7 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
             sp(5),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            &mut crate::geometry::IgnorePackGeometry,
             &diagnostic_context,
         )
         .expect("display running rules resolve");
@@ -250,6 +253,7 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
             sp(5),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            &mut crate::geometry::IgnorePackGeometry,
             &diagnostic_context,
         )
         .expect("spanned row sets");
@@ -353,6 +357,7 @@ fn set_alignment_preserves_final_node_order_and_running_rules() {
             Scaled::from_raw(0),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            &mut crate::geometry::IgnorePackGeometry,
             &diagnostic_context,
         )
         .expect("final traversal succeeds");

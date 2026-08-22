@@ -947,6 +947,56 @@ struct MainControlShipoutGeometrySink<'a, G> {
     observations: &'a mut ObservationSlot,
 }
 
+/// Explicit operation-local boundary for TeX82 §§649--676 packing geometry.
+///
+/// The command cursor supplies detached source coordinates while the
+/// observation slot remains the sole rollback/publication owner. The sink
+/// cannot outlive this command operation and owns no engine-state handle.
+struct MainControlPackGeometrySink<'a> {
+    line: u32,
+    source: Option<tex_command::SourceId>,
+    observations: &'a mut ObservationSlot,
+}
+
+fn pack_geometry_sink<'a, G>(
+    command: &PersistentInterpreter<G>,
+    observations: &'a mut ObservationSlot,
+) -> MainControlPackGeometrySink<'a> {
+    MainControlPackGeometrySink {
+        line: command.current_file_line_number(),
+        source: command.current_file_source_id(),
+        observations,
+    }
+}
+
+impl crate::geometry::PackGeometrySink for MainControlPackGeometrySink<'_> {
+    fn committed_hpack(&mut self, width: Scaled, height: Scaled, depth: Scaled) {
+        let Some(observations) = self.observations.as_mut() else {
+            return;
+        };
+        observations.committed(CommandObservation::Geometry(GeometryRecord::Hpack {
+            width_sp: i64::from(width.raw()),
+            height_sp: i64::from(height.raw()),
+            depth_sp: i64::from(depth.raw()),
+            line: self.line,
+            source: self.source,
+        }));
+    }
+
+    fn committed_vpack(&mut self, width: Scaled, height: Scaled, depth: Scaled) {
+        let Some(observations) = self.observations.as_mut() else {
+            return;
+        };
+        observations.committed(CommandObservation::Geometry(GeometryRecord::Vpack {
+            width_sp: i64::from(width.raw()),
+            height_sp: i64::from(height.raw()),
+            depth_sp: i64::from(depth.raw()),
+            line: self.line,
+            source: self.source,
+        }));
+    }
+}
+
 impl<G> crate::shipout::ShipoutGeometrySink for MainControlShipoutGeometrySink<'_, G> {
     fn committed_shipout_geometry(&mut self, geometry: crate::shipout::ShipoutGeometry) {
         let Some(observations) = self.observations.as_mut() else {
@@ -5023,10 +5073,12 @@ impl<G> MainControl<G> {
         let accent_origin = scanned.accent_provenance.primary;
         let etex_extended = self.command_profile() == CommandProfile::ETEX26;
         let mut context = stores.command_context().expect("live generation");
+        let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
         apply_accent_nodes(
             &mut self.modes,
             &mut context,
             diagnostic_effects,
+            &mut geometry,
             etex_extended,
             AccentPlacement {
                 accent,
@@ -5114,9 +5166,12 @@ impl<G> MainControl<G> {
                 let error_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
                     self.command.output_open_context(&context),
                 );
+                let mut geometry =
+                    pack_geometry_sink(&self.command, &mut self.operation_observations);
                 crate::page_output::select_pending_page_output(
                     &mut context,
                     diagnostic_effects,
+                    &mut geometry,
                     fire_up,
                     error_context,
                 )?
@@ -5904,10 +5959,12 @@ impl<G> MainControl<G> {
             let error_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
                 self.command.output_open_context(&context),
             );
+            let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
             let paragraph = crate::paragraph_end::interrupt_paragraph_for_display(
                 &mut self.modes,
                 &mut context,
                 diagnostic_effects,
+                &mut geometry,
                 self.fuel.fuel_mut(),
                 error_context,
             )?;
@@ -5994,9 +6051,11 @@ impl<G> MainControl<G> {
             self.fuel.fuel_mut(),
         )?;
         let insert_penalties = self.modes.current_mode() == Mode::Horizontal;
+        let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
         let (nodes, _) = crate::math::finish_inline_math_list_node(
             &mut context,
             diagnostic_effects,
+            &mut geometry,
             tex_state::math::MathListNode {
                 display: false,
                 content,
@@ -6065,9 +6124,11 @@ impl<G> MainControl<G> {
             crate::math::MathConversionErrorContext::new(diagnostic_text.clone());
         let diagnostic_context =
             crate::diagnostics::ExecutionDiagnosticContext::source_free(diagnostic_text);
+        let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
         let finished = crate::math::display::finish_eq_no(
             &mut context,
             diagnostic_effects,
+            &mut geometry,
             &diagnostic_context,
             eq.side,
             content,
@@ -6195,10 +6256,12 @@ impl<G> MainControl<G> {
                 .ok_or(ExecError::MissingToken {
                     context: "display interrupt",
                 })?;
+        let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
         crate::math::display::finish_display_math(
             &mut self.modes,
             &mut context,
             diagnostic_effects,
+            &mut geometry,
             &diagnostic_context,
             content,
             eq_no,

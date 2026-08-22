@@ -36,12 +36,13 @@ pub(crate) fn vpack_params<G>(stores: &CommandContext<'_, G>) -> VpackParams {
 pub(crate) fn hpack<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     context: &ExecutionDiagnosticContext,
     list: PageListId,
     spec: PackSpec,
     params: HpackParams,
 ) -> PackedBox {
-    let (packed, lr_problems) = hpack_unreported(stores, list, spec, params);
+    let (packed, lr_problems) = hpack_unreported(stores, geometry, list, spec, params);
     report_hpack(stores, diagnostic_effects, context, &packed, lr_problems);
     packed
 }
@@ -53,6 +54,7 @@ pub(crate) fn hpack<G>(
 /// [`report_hpack`]. Ordinary callers use [`hpack`], which reports once.
 pub(crate) fn hpack_unreported<G>(
     stores: &mut CommandContext<'_, G>,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     list: PageListId,
     spec: PackSpec,
     params: HpackParams,
@@ -75,6 +77,7 @@ pub(crate) fn hpack_unreported<G>(
         params,
     );
     stores.set_last_badness(packed.badness);
+    geometry.committed_hpack(packed.node.width, packed.node.height, packed.node.depth);
     (packed, lr_problems)
 }
 
@@ -146,6 +149,7 @@ pub(crate) fn recover_texxet_directions<G>(
 pub(crate) fn vpack<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     context: &ExecutionDiagnosticContext,
     list: PageListId,
     spec: PackSpec,
@@ -158,6 +162,7 @@ pub(crate) fn vpack<G>(
         params,
     );
     stores.set_last_badness(packed.badness);
+    geometry.committed_vpack(packed.node.width, packed.node.height, packed.node.depth);
     report_pack_diagnostics(
         stores,
         diagnostic_effects,
@@ -173,6 +178,7 @@ pub(crate) fn vpack<G>(
 pub(crate) fn vtop<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     context: &ExecutionDiagnosticContext,
     list: PageListId,
     spec: PackSpec,
@@ -180,7 +186,15 @@ pub(crate) fn vtop<G>(
 ) -> PackedBox {
     // TeX82 packages the vertical list in §668, including observation-worthy
     // dimensions and diagnostics, before §1087 readjusts the returned vtop.
-    let mut packed = vpack(stores, diagnostic_effects, context, list, spec, params);
+    let mut packed = vpack(
+        stores,
+        diagnostic_effects,
+        geometry,
+        context,
+        list,
+        spec,
+        params,
+    );
     let children = packed.node.children.clone();
     tex_typeset::readjust_vtop(
         &crate::typeset_context::TypesetContext::new(stores),

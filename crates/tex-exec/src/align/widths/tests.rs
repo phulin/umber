@@ -56,6 +56,7 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
         crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let mut diagnostic_effects = DiagnosticEffects::new();
+            let mut geometry = crate::geometry::IgnorePackGeometry;
             let diagnostic_context =
                 crate::pack_report::ExecutionDiagnosticContext::source_free("");
             let flexible = GlueSpec {
@@ -81,6 +82,7 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
                 &empty,
                 &mut stores,
                 &mut diagnostic_effects,
+                &mut geometry,
                 &diagnostic_context,
             );
             let exact_extent = match kind {
@@ -105,6 +107,7 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
                 &empty,
                 &mut stores,
                 &mut diagnostic_effects,
+                &mut geometry,
                 &diagnostic_context,
             );
             let spread_extent = match kind {
@@ -135,6 +138,7 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
         crate::test_harness::with_nonstop_plain_universe(|universe| {
             let mut stores = universe.command_context().expect("test state is admitted");
             let mut diagnostic_effects = DiagnosticEffects::new();
+            let mut geometry = crate::geometry::IgnorePackGeometry;
             let diagnostic_context =
                 crate::pack_report::ExecutionDiagnosticContext::source_free("");
             let resolved = ResolvedWidths {
@@ -151,6 +155,7 @@ fn alignment_prototype_diagnostic_retains_unset_columns() {
                 &empty,
                 &mut stores,
                 &mut diagnostic_effects,
+                &mut geometry,
                 &diagnostic_context,
             );
 
@@ -213,6 +218,7 @@ fn fin_align_orders_groups_packing_pop_and_insertion() {
             Scaled::from_raw(0),
             &mut stores,
             &mut tex_state::diagnostic::DiagnosticEffects::new(),
+            &mut crate::geometry::IgnorePackGeometry,
             &diagnostic_context,
         )
         .expect("the complete width, prototype, and setting pipeline succeeds");

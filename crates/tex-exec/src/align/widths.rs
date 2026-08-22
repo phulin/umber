@@ -31,6 +31,7 @@ pub(crate) fn finish_alignment<G>(
     offset: Scaled,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Result<Vec<Node>, ExecError> {
     let resolved = resolution::resolve_widths(state, rows, stores)?;
@@ -41,6 +42,7 @@ pub(crate) fn finish_alignment<G>(
         &empty,
         stores,
         diagnostic_effects,
+        geometry,
         diagnostic_context,
     );
     let finished = set::set_alignment_nodes(
@@ -52,6 +54,7 @@ pub(crate) fn finish_alignment<G>(
         offset,
         stores,
         diagnostic_effects,
+        geometry,
         diagnostic_context,
     )?;
     debug::debug_assert_no_unset_nodes(stores, &finished);
@@ -75,6 +78,7 @@ fn pack_prototype<G>(
     empty: &PageListId,
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
 ) -> Prototype {
     let nodes = prototype_nodes(state.kind(), resolved, empty);
@@ -85,6 +89,7 @@ fn pack_prototype<G>(
             hpack(
                 stores,
                 diagnostic_effects,
+                geometry,
                 diagnostic_context,
                 list,
                 spec,
@@ -96,6 +101,7 @@ fn pack_prototype<G>(
             vpack(
                 stores,
                 diagnostic_effects,
+                geometry,
                 diagnostic_context,
                 list,
                 spec,

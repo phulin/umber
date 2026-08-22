@@ -19,6 +19,7 @@ mod error;
 mod error_report;
 mod execution_receipt;
 mod font_support;
+mod geometry;
 mod host_api;
 mod interpreter;
 mod job;

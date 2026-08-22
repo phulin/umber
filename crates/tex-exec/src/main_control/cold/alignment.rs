@@ -33,10 +33,12 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
         let error_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
             command.state.output_open_context(stores),
         );
+        let mut geometry = pack_geometry_sink(command.state, command.observations);
         crate::paragraph_end::end_paragraph_with_context(
             modes,
             stores,
             command.diagnostic_effects,
+            &mut geometry,
             command.fuel,
             error_context,
         )?;
@@ -47,11 +49,13 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
             .checked_add(1)
             .ok_or(ExecError::ArithmeticOverflow)?;
     } else {
+        let mut geometry = pack_geometry_sink(command.state, command.observations);
         capture_replay_alignment_cell(
             active,
             modes,
             stores,
             command.diagnostic_effects,
+            &mut geometry,
             command.fuel,
         )?;
     }
@@ -97,11 +101,13 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
             recovered,
             AlignmentRequestResult::ExtraTabRecovered
         ));
+        let mut geometry = pack_geometry_sink(command.state, command.observations);
         finish_replay_alignment_row(
             active,
             modes,
             stores,
             command.diagnostic_effects,
+            &mut geometry,
             command.fuel,
         )?;
         active.column = 0;
@@ -141,11 +147,13 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
         })?;
     match delimiter {
         AlignmentCellDelimiter::Row => {
+            let mut geometry = pack_geometry_sink(command.state, command.observations);
             finish_replay_alignment_row(
                 active,
                 modes,
                 stores,
                 command.diagnostic_effects,
+                &mut geometry,
                 command.fuel,
             )?;
             // TeX82 §799 `fin_row` closes with
@@ -315,6 +323,7 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     if !active.cell_open {
@@ -343,6 +352,7 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
         let material = crate::math::finish_math_lists_owned(
             stores,
             diagnostic_effects,
+            geometry,
             cell.list_mutation().take_nodes(),
             false,
         );
@@ -365,6 +375,7 @@ pub(in crate::main_control) fn capture_replay_alignment_cell<G>(
     let cell = crate::align::packaging::make_unset_node(
         stores,
         diagnostic_effects,
+        geometry,
         &crate::diagnostics::ExecutionDiagnosticContext::source_free("alignment cell"),
         material,
         crate::align::packaging::cell_unset_kind(active.kind),
@@ -390,9 +401,10 @@ pub(in crate::main_control) fn finish_replay_alignment_row<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    capture_replay_alignment_cell(active, modes, stores, diagnostic_effects, fuel)?;
+    capture_replay_alignment_cell(active, modes, stores, diagnostic_effects, geometry, fuel)?;
     if !active.row_open {
         return Ok(());
     }
@@ -402,6 +414,7 @@ pub(in crate::main_control) fn finish_replay_alignment_row<G>(
     let row = crate::align::packaging::make_unset_node(
         stores,
         diagnostic_effects,
+        geometry,
         &crate::diagnostics::ExecutionDiagnosticContext::source_free("alignment row"),
         children,
         crate::align::packaging::row_unset_kind(active.kind),
@@ -460,10 +473,11 @@ pub(in crate::main_control) fn finish_replay_alignment<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
 ) -> Result<(), ExecError> {
-    finish_replay_alignment_row(active, modes, stores, diagnostic_effects, fuel)?;
+    finish_replay_alignment_row(active, modes, stores, diagnostic_effects, geometry, fuel)?;
     let mut alignment =
         crate::box_runtime::commit_current_list(modes, stores, diagnostic_effects, fuel)?;
     // TeX82 §800 makes §661's box-diagnostic origin negative for the whole
@@ -478,6 +492,7 @@ pub(in crate::main_control) fn finish_replay_alignment<G>(
         modes,
         stores,
         diagnostic_effects,
+        geometry,
         &mut alignment,
         &diagnostic_context,
     )
@@ -488,6 +503,7 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
     modes: &mut ModeNest,
     stores: &mut tex_state::CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     alignment: &mut crate::mode::ModeLevelSummary,
     diagnostic_context: &crate::diagnostics::ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
@@ -532,6 +548,7 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
         offset,
         stores,
         diagnostic_effects,
+        geometry,
         diagnostic_context,
     )?;
     let aux_prev_depth = alignment.list().prev_depth();

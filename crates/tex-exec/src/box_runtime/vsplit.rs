@@ -19,6 +19,7 @@ use crate::splitting::{prune_page_top_with_discards, vpack_natural};
 pub(crate) fn split_vbox_register<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     index: u16,
     height: Scaled,
@@ -87,6 +88,7 @@ pub(crate) fn split_vbox_register<G>(
     replace_split_source(
         stores,
         diagnostic_effects,
+        geometry,
         diagnostic_context,
         index,
         remainder,
@@ -100,6 +102,7 @@ pub(crate) fn split_vbox_register<G>(
         vpack(
             stores,
             diagnostic_effects,
+            geometry,
             diagnostic_context,
             split_list,
             PackSpec::Exactly(height),
@@ -142,6 +145,7 @@ fn normalize_split_infinite_shrink<G>(
 fn replace_split_source<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     diagnostic_context: &crate::pack_report::ExecutionDiagnosticContext,
     index: u16,
     remainder: Vec<Node>,
@@ -160,6 +164,7 @@ fn replace_split_source<G>(
     let packed = vpack_natural(
         stores,
         diagnostic_effects,
+        geometry,
         diagnostic_context,
         remainder_list,
     );

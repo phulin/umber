@@ -104,13 +104,14 @@ fn report_cannot_take_last_box<G>(
 pub(crate) fn hpack_with_overfull_rule<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     context: &crate::pack_report::ExecutionDiagnosticContext,
     children: tex_state::node_arena::PageListId,
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
     let params = hpack_params(stores);
     let (mut packed, lr_problems) =
-        crate::packing_params::hpack_unreported(stores, children, spec, params);
+        crate::packing_params::hpack_unreported(stores, geometry, children, spec, params);
     if !packed.node.children.is_empty()
         && params.overfull_rule.raw() > 0
         && packed
@@ -190,6 +191,7 @@ fn physical_discretionary_projection<G>(
 pub(crate) fn hpack_owned_with_overfull_rule<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
+    geometry: &mut dyn crate::geometry::PackGeometrySink,
     context: &crate::pack_report::ExecutionDiagnosticContext,
     nodes: &mut Vec<Node>,
     mut diagnostic_nodes: Option<&mut Vec<Node>>,
@@ -245,6 +247,7 @@ pub(crate) fn hpack_owned_with_overfull_rule<G>(
         0
     };
     stores.set_last_badness(packed.badness);
+    geometry.committed_hpack(packed.node.width, packed.node.height, packed.node.depth);
     let diagnostic_box = if let Some(nodes) = diagnostic_nodes {
         let diagnostic_children = stores.publish_page_nodes(std::mem::take(nodes));
         let children = stores.publish_page_nodes(
