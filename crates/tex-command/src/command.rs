@@ -261,13 +261,15 @@ impl<G> CurrentCommand<G> {
             Token::Frozen(_) if token.is_frozen_relax() => {
                 (None, ResolvedMeaning::Static(Meaning::Relax))
             }
+            // Frozen primitive slots retain their complete registered word.
+            // In particular TeX82 §§1369--1371's inaccessible `\endwrite`
+            // is an outer macro, not a static primitive; projecting through
+            // `Meaning` alone silently reclassified it as `undefined_cs`.
             Token::Frozen(_) => (
                 None,
-                ResolvedMeaning::Static(
-                    state
-                        .frozen_primitive_meaning(token)
-                        .unwrap_or(Meaning::Undefined),
-                ),
+                state
+                    .frozen_primitive_resolved(token)
+                    .unwrap_or(ResolvedMeaning::Static(Meaning::Undefined)),
             ),
         };
         let macro_observation_operand = None;

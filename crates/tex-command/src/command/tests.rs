@@ -100,3 +100,28 @@ fn macro_delivery_carries_a_generation_typed_definition_coordinate() {
         );
     });
 }
+
+#[test]
+fn frozen_endwrite_delivery_retains_its_outer_macro_command() {
+    crate::test_harness::with_universe(|universe| {
+        crate::install_tex82_unexpandable_primitives(universe);
+        let endwrite = universe.primitive_token("endwrite").expect("write stopper");
+        let command = resolved(universe, endwrite);
+        let ResolvedMeaning::Macro { flags, definition } = command.meaning() else {
+            panic!("frozen endwrite meaning")
+        };
+        assert_eq!(flags, MeaningFlags::OUTER);
+        assert!(
+            universe
+                .command_context()
+                .expect("context")
+                .definition(definition)
+                .replacement_text()
+                .is_empty()
+        );
+        assert_eq!(
+            crate::observation::canonical_current_command_identity(&command),
+            ("outer_call".to_owned(), None)
+        );
+    });
+}
