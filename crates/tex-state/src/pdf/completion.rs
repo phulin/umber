@@ -432,29 +432,32 @@ pub(crate) fn detach<G>(
     let forms = pdf
         .forms
         .iter()
-        .map(|form| {
-            let artifact = pdf
-                .form_artifacts
-                .get(&form.object)
-                .ok_or(PdfCompletionError::MissingFormArtifact(form.object))?;
-            Ok(DetachedPdfForm {
-                object: form.object,
-                resource: form.resource,
-                artifact_bytes: artifact.bytes.clone(),
-                width: form.width,
-                height: form.height,
-                depth: form.depth,
-                entries: form
-                    .attr
-                    .map(|value| tokens(value.id()))
-                    .transpose()?
-                    .unwrap_or_default(),
-                resource_entries: form
-                    .resources
-                    .map(|value| tokens(value.id()))
-                    .transpose()?
-                    .unwrap_or_default(),
-                immediate: form.immediate,
+        .filter_map(|form| {
+            // Lazy forms are only output resources after an immediate form
+            // publication or a shipped `\pdfrefxform` has staged their
+            // artifact. Merely creating or enquiring about an unreferenced
+            // form must not force an incomplete resource into the terminal
+            // PDF projection.
+            pdf.form_artifacts.get(&form.object).map(|artifact| {
+                Ok(DetachedPdfForm {
+                    object: form.object,
+                    resource: form.resource,
+                    artifact_bytes: artifact.bytes.clone(),
+                    width: form.width,
+                    height: form.height,
+                    depth: form.depth,
+                    entries: form
+                        .attr
+                        .map(|value| tokens(value.id()))
+                        .transpose()?
+                        .unwrap_or_default(),
+                    resource_entries: form
+                        .resources
+                        .map(|value| tokens(value.id()))
+                        .transpose()?
+                        .unwrap_or_default(),
+                    immediate: form.immediate,
+                })
             })
         })
         .collect::<Result<Vec<_>, _>>()?;

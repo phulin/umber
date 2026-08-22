@@ -231,6 +231,64 @@ fn omitted_pdf_demand_does_not_create_a_pdf_projection() {
 }
 
 #[test]
+fn terminal_pdf_completion_keeps_deferred_destination_warnings() {
+    let completion = capture(
+        concat!(
+            "\\pdfoutput=1",
+            "\\shipout\\hbox{\\pdfdest num 7 fit\\pdfdest name{7} fit}",
+            "\\shipout\\hbox{\\pdfdest num 7 fit}",
+            "\\shipout\\hbox{\\pdfdest name{7} fit}\\end",
+        )
+        .as_bytes(),
+        EngineCompletionDemand::with_pdf(),
+    );
+    let text = completion
+        .effects()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(
+        text.matches("destination with the same identifier").count(),
+        2
+    );
+    assert!(text.contains("(num7)"), "{text:?}");
+    assert!(text.contains("(name{7})"), "{text:?}");
+}
+
+#[test]
+fn terminal_pdf_completion_keeps_scan_time_destination_warning() {
+    let completion = capture(
+        br"\pdfoutput=1\shipout\hbox{\pdfdest num 7 fit}\setbox0=\hbox{\pdfdest num 7 fit}\end",
+        EngineCompletionDemand::with_pdf(),
+    );
+    let text = completion
+        .effects()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(
+        text.matches("destination with the same identifier").count(),
+        1
+    );
+    assert!(text.contains("(num7)"), "{text:?}");
+}
+
+#[test]
+fn unreferenced_lazy_pdf_form_does_not_block_terminal_completion() {
+    let completion = capture(
+        br"\pdfoutput=1\setbox0=\hbox{}\pdfxform0\message{name=\pdfxformname1}\end",
+        EngineCompletionDemand::with_pdf(),
+    );
+    assert!(completion.pdf().expect("PDF completion").forms().is_empty());
+}
+
+#[test]
 fn invalid_artifact_preflight_and_dropped_plan_publish_nothing() {
     let mut completion = capture(
         br"\shipout\hbox{}\end",

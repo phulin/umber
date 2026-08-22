@@ -80,6 +80,20 @@ impl DiagnosticEffects {
         self.effects.push(effect);
     }
 
+    pub(crate) fn push_ordinary_rendered(
+        &mut self,
+        interaction_mode: InteractionMode,
+        max_print_line: usize,
+        text: String,
+    ) {
+        self.effects.push(DetachedDiagnosticEffect {
+            selector: Selector::for_interaction(interaction_mode),
+            max_print_line,
+            records_warning_history: false,
+            operations: vec![DiagnosticPrintOperation::Rendered(text)],
+        });
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.effects.is_empty()

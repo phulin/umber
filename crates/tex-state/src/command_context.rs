@@ -3042,6 +3042,21 @@ impl<'a, G> CommandContext<'a, G> {
         )
     }
 
+    /// Appends one ordinary selector-routed print as an operation-local,
+    /// rollback-safe effect. Publication remains outside admission so the
+    /// World evaluates its then-current per-sink partial lines atomically.
+    pub fn append_ordinary_print_effect(
+        &self,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+        text: String,
+    ) {
+        effects.push_ordinary_rendered(
+            *self.interaction_mode,
+            self.error_context_widths.max_print_line(),
+            text,
+        );
+    }
+
     /// Opens §245's diagnostic channel with terminal-and-log routing.
     ///
     /// e-TeX 2.6 change 17.516 temporarily forces `tracing_online` while

@@ -276,7 +276,9 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                 .pdf_destination(&identity, structure.is_some())
                 .is_some_and(|record| record.defined())
             {
-                warn_pdf_destination_duplicate(stores, &identity);
+                if let Some((_, text)) = warn_pdf_destination_duplicate(stores, &identity) {
+                    stores.append_ordinary_print_effect(diagnostic_effects, text);
+                }
                 return Ok(ReplayStep::Continue);
             }
             crate::box_runtime::append_whatsit(
