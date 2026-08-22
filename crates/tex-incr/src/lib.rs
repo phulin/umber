@@ -865,8 +865,12 @@ fn execute_plan<G>(
                 ));
             }
         }
-        let step =
-            CanonicalStepRunner::new(control, universe, ledger).step(&mut sink, cancellation);
+        // A revision candidate owns the complete process-level job frame. A
+        // fatal TeX outcome therefore still has to cross §1332 cleanup and
+        // produce one terminal detached completion; diagnostic-only callers
+        // use `step` when they need the captured fatal as an immediate error.
+        let step = CanonicalStepRunner::new(control, universe, ledger)
+            .step_completing_fatal(&mut sink, cancellation);
         *failed_attempt_fuel = control.fuel_burned();
         match step {
             CanonicalStepResult::Progress(step)

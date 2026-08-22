@@ -105,6 +105,22 @@ fn cold_candidate_runs_canonical_job_start_before_root_input() {
 }
 
 #[test]
+fn complete_job_candidate_detaches_fatal_terminal_diagnostics() {
+    let mut session = session(
+        RevisionId::new(1),
+        r"\errorstopmode\undefinedcontrolsequence",
+    );
+
+    let output = session
+        .cold()
+        .expect("a defined TeX fatal still closes the complete job");
+    let text = terminal_effect_text(&output);
+
+    assert!(text.contains("Undefined control sequence"), "{text:?}");
+    assert!(text.contains("Emergency stop"), "{text:?}");
+}
+
+#[test]
 fn terminal_budget_failure_retains_attempted_fuel_telemetry() {
     let session = session(RevisionId::new(1), "\\end");
     let mut candidate = session.start_cold_candidate().expect("candidate");
