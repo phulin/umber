@@ -336,7 +336,7 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     // alignment stack rather than giving any other record its own field.
     assert_eq!(alignment.matches("align_state: i32").count(), 1);
     assert_eq!(alignment.matches("align_stack: Vec<i32>").count(), 1);
-    assert_eq!(alignment.matches("fn classify_delivery<G>(").count(), 1);
+    assert_eq!(alignment.matches("fn classify_delivery(").count(), 1);
     assert_eq!(
         next.matches("self.command.alignment.classify_delivery(")
             .count(),
