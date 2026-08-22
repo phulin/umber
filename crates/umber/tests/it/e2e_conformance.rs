@@ -2839,11 +2839,12 @@ fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, TripObservers)
             },
         )
         .expect("focused loaded TRIP run");
-    let log = loaded
+    let channels = loaded
         .projection
         .channels
-        .expect("focused TRIP channel projection")
-        .log;
+        .expect("focused TRIP channel projection");
+    let (_, log) =
+        append_transcript_suffix(channels.terminal, channels.log, &channels.pending_effects);
     (String::from_utf8(log).expect("TRIP log is UTF-8"), observer)
 }
 
