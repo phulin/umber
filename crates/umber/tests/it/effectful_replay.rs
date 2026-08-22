@@ -136,18 +136,20 @@ commit_path_shard!(effectful_commit_path_7, 7);
 
 #[test]
 fn terminal_read_chunk_survives_a_prior_retained_run() {
-    let mut universe = setup_universe();
-    run_tex_chunk(&mut universe, r"\write0{before} ");
-    assert_eq!(universe.world().stream_bufs().terminal_input_next(), 0);
-    run_tex_chunk(&mut universe, r"\read15 to\RA \message{t:\RA} ");
+    with_universe(|universe| {
+        run_tex_chunk(universe, r"\write0{before} ");
+        assert_eq!(universe.world().stream_bufs().terminal_input_next(), 0);
+        run_tex_chunk(universe, r"\read15 to\RA \message{t:\RA} ");
+    });
 }
 
 #[test]
 fn shipout_commit_cursor_survives_a_prior_effect_commit() {
-    let mut universe = setup_universe();
-    run_tex_chunk(&mut universe, r"\message{before} ");
-    commit_all(&mut universe);
-    run_tex_chunk(&mut universe, r"\shipout\hbox{\write16{page}} ");
+    with_universe(|universe| {
+        run_tex_chunk(universe, r"\message{before} ");
+        commit_all(universe);
+        run_tex_chunk(universe, r"\shipout\hbox{\write16{page}} ");
+    });
 }
 
 #[test]
@@ -182,87 +184,88 @@ fn fixed_effectful_program_does_not_leak_before_commit() {
 }
 
 fn assert_effectful_replay_identity(program: &Program) {
-    let mut universe = setup_universe();
-    let before = universe.snapshot().state_hash();
-    let checkpoint = universe.snapshot();
-
-    run_steps(&mut universe, &program.steps);
-
-    assert_no_committed_outputs(&universe, program);
-    universe.rollback(&checkpoint);
-    assert_eq!(
-        universe.snapshot().state_hash(),
-        before,
-        "effectful rollback hash diverged after program:\n{}",
-        program.render()
-    );
-    assert_no_committed_outputs(&universe, program);
+    with_universe(|universe| {
+        let checkpoint = universe.runtime_checkpoint().expect("runtime checkpoint");
+        run_steps(universe, &program.steps);
+        assert_no_committed_outputs(universe, program);
+        universe
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("effectful rollback");
+        assert_no_committed_outputs(universe, program);
+    });
 }
 
 fn assert_commit_path_matches_straight_line(program: &Program, mask: &[bool]) {
-    let mut universe = setup_universe();
-    for (index, step) in program.steps.iter().enumerate() {
-        run_step(&mut universe, step);
-        if should_commit(index, mask) {
-            commit_all(&mut universe);
-            assert_eq!(
-                committed_outputs(&universe),
-                committed_prefix_outputs(program, index),
-                "committed prefix mismatch at step {index} for program:\n{}",
-                program.render()
-            );
+    with_universe(|universe| {
+        for (index, step) in program.steps.iter().enumerate() {
+            run_step(universe, step);
+            if should_commit(index, mask) {
+                commit_all(universe);
+                assert_eq!(
+                    committed_outputs(universe),
+                    committed_prefix_outputs(program, index),
+                    "committed prefix mismatch at step {index} for program:\n{}",
+                    program.render()
+                );
+            }
         }
-    }
-
-    commit_all(&mut universe);
-    assert_eq!(
-        committed_outputs(&universe),
-        committed_prefix_outputs(program, program.steps.len() - 1),
-        "final committed output mismatch for program:\n{}",
-        program.render()
-    );
+        commit_all(universe);
+        assert_eq!(
+            committed_outputs(universe),
+            committed_prefix_outputs(program, program.steps.len() - 1),
+            "final committed output mismatch for program:\n{}",
+            program.render()
+        );
+    });
 }
 
 fn committed_prefix_outputs(program: &Program, end_index: usize) -> CommittedOutputs {
-    let mut universe = setup_universe();
-    run_steps(&mut universe, &program.steps[..=end_index]);
-    commit_all(&mut universe);
-    committed_outputs(&universe)
+    with_universe(|universe| {
+        run_steps(universe, &program.steps[..=end_index]);
+        commit_all(universe);
+        committed_outputs(universe)
+    })
 }
 
 fn should_commit(index: usize, mask: &[bool]) -> bool {
     !mask.is_empty() && mask[index % mask.len()]
 }
 
-fn run_steps(universe: &mut Universe, steps: &[Step]) {
+fn run_steps<G>(universe: &mut Universe<G>, steps: &[Step]) {
     for step in steps {
         run_step(universe, step);
     }
 }
 
-fn run_step(universe: &mut Universe, step: &Step) {
+fn run_step<G>(universe: &mut Universe<G>, step: &Step) {
     match step {
         Step::Tex(step) => run_tex_chunk(universe, &step.render()),
         Step::RngTick { register } => {
             let random = universe.world_mut().next_random_u64();
-            universe.set_count(*register, (random % 10_000) as i32);
+            universe
+                .assign_count(
+                    *register,
+                    (random % 10_000) as i32,
+                    tex_state::AssignmentScope::Global,
+                )
+                .expect("assign random count");
         }
     }
 }
 
-fn run_tex_chunk(universe: &mut Universe, source: &str) {
+fn run_tex_chunk<G>(universe: &mut Universe<G>, source: &str) {
     umber::run_memory_with_stores(source, universe)
         .unwrap_or_else(|err| panic!("effectful chunk failed: {err}\n{source}"));
 }
 
-fn commit_all(universe: &mut Universe) {
+fn commit_all<G>(universe: &mut Universe<G>) {
     let effect_pos = universe.world().effect_pos();
     universe
-        .commit_effects(effect_pos)
+        .publish_effect_prefix(effect_pos)
         .expect("memory world commit succeeds");
 }
 
-fn committed_outputs(universe: &Universe) -> CommittedOutputs {
+fn committed_outputs<G>(universe: &Universe<G>) -> CommittedOutputs {
     CommittedOutputs {
         terminal: universe
             .world()
@@ -281,7 +284,7 @@ fn committed_outputs(universe: &Universe) -> CommittedOutputs {
     }
 }
 
-fn assert_no_committed_outputs(universe: &Universe, program: &Program) {
+fn assert_no_committed_outputs<G>(universe: &Universe<G>, program: &Program) {
     let outputs = committed_outputs(universe);
     assert!(
         outputs.terminal.is_empty(),
@@ -300,17 +303,18 @@ fn assert_no_committed_outputs(universe: &Universe, program: &Program) {
     );
 }
 
-fn setup_universe() -> Universe {
+fn with_universe<R>(
+    use_universe: impl for<'id> FnOnce(&mut Universe<tex_state::GenerationBrand<'id>>) -> R,
+) -> R {
     let mut world = World::memory();
     seed_world(&mut world);
-    let mut universe = Universe::with_world(world);
-    umber::prepare_run_stores(&mut universe);
-    // These are retained fragments, not interactive error-dialogue tests.
-    // Scroll mode still permits the generated terminal `\read` operations
-    // while allowing deliberately invalid register probes to recover without
-    // consuming the terminal-read fixture as §83 responses.
-    universe.set_interaction_mode(tex_state::InteractionMode::Scroll);
-    universe
+    umber::with_engine_world(world, |universe| {
+        umber::prepare_run_stores(universe);
+        // These are retained fragments, not interactive error-dialogue tests.
+        universe.set_interaction_mode(tex_state::InteractionMode::Scroll);
+        use_universe(universe)
+    })
+    .expect("fresh effectful replay universe")
 }
 
 fn seed_world(world: &mut World) {

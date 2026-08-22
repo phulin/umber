@@ -17,10 +17,8 @@ use tex_observe::{
     LiveSource, SemanticEvidenceProfile,
 };
 use tex_oracle::{ObservationStream, SchemaVersion};
-use tex_state::provenance::MacroInvocationProvenanceStats;
-use tex_state::provenance::ProvenanceStats;
 use tex_state::{EffectRecord, PrintSink, ProvenanceDemand};
-use tex_state::{JobClock, Universe, World};
+use tex_state::{JobClock, World};
 
 use umber::FormatCacheStore;
 use umber::{
@@ -53,8 +51,6 @@ fn target_dir(repo_root: &Path) -> PathBuf {
 
 struct InProcessRun {
     dvi: Option<Vec<u8>>,
-    provenance: ProvenanceStats,
-    macro_provenance: MacroInvocationProvenanceStats,
     terminal: Vec<u8>,
     log: Vec<u8>,
     capture: PhaseCapture,
@@ -320,7 +316,10 @@ fn trip_geometry_profile_follows_the_pinned_oracle_schema() {
     );
 }
 
-fn transcript_channels(stores: &Universe, effects: &[EffectRecord]) -> (Vec<u8>, Vec<u8>) {
+fn transcript_channels<G>(
+    stores: &tex_state::Universe<G>,
+    effects: &[EffectRecord],
+) -> (Vec<u8>, Vec<u8>) {
     // A shipout commits and drains the live effect prefix into the memory
     // backend. `RunResult::effects` consequently contains only the suffix
     // after the last commit. TeX82 §§61, 536, 638, and 1333 still define one
@@ -364,36 +363,38 @@ fn append_transcript_suffix(
 
 #[test]
 fn transcript_capture_preserves_multiple_committed_prefixes_exactly_once() {
-    let mut stores = Universe::with_world(World::memory());
-    stores
-        .world_mut()
-        .write_text(PrintSink::TerminalAndLog, "shared-prefix:");
-    stores
-        .commit_effects(stores.world().effect_pos())
-        .expect("commit shared prefix");
-    stores
-        .world_mut()
-        .write_text(PrintSink::Terminal, "terminal-prefix:");
-    stores.world_mut().write_text(PrintSink::Log, "log-prefix:");
-    stores
-        .commit_effects(stores.world().effect_pos())
-        .expect("commit per-channel prefixes");
-    stores
-        .world_mut()
-        .write_text(PrintSink::TerminalAndLog, "shared-tail");
-    stores
-        .world_mut()
-        .write_text(PrintSink::Terminal, "-terminal");
-    stores.world_mut().write_text(PrintSink::Log, "-log");
+    umber::with_engine_world(World::memory(), |stores| {
+        stores
+            .world_mut()
+            .write_text(PrintSink::TerminalAndLog, "shared-prefix:");
+        stores
+            .publish_effect_prefix(stores.world().effect_pos())
+            .expect("commit shared prefix");
+        stores
+            .world_mut()
+            .write_text(PrintSink::Terminal, "terminal-prefix:");
+        stores.world_mut().write_text(PrintSink::Log, "log-prefix:");
+        stores
+            .publish_effect_prefix(stores.world().effect_pos())
+            .expect("commit per-channel prefixes");
+        stores
+            .world_mut()
+            .write_text(PrintSink::TerminalAndLog, "shared-tail");
+        stores
+            .world_mut()
+            .write_text(PrintSink::Terminal, "-terminal");
+        stores.world_mut().write_text(PrintSink::Log, "-log");
 
-    let effects = stores.world().effect_records().to_vec();
-    let (terminal, log) = transcript_channels(&stores, &effects);
+        let effects = stores.world().effect_records().to_vec();
+        let (terminal, log) = transcript_channels(stores, &effects);
 
-    assert_eq!(
-        terminal,
-        b"shared-prefix:terminal-prefix:shared-tail-terminal"
-    );
-    assert_eq!(log, b"shared-prefix:log-prefix:shared-tail-log");
+        assert_eq!(
+            terminal,
+            b"shared-prefix:terminal-prefix:shared-tail-terminal"
+        );
+        assert_eq!(log, b"shared-prefix:log-prefix:shared-tail-log");
+    })
+    .expect("fresh transcript-capture universe");
 }
 
 #[test]
@@ -561,7 +562,7 @@ fn trip_and_etrip_recipes_select_typed_public_format_inputs() {
             ]
         );
         assert_eq!(
-            recipe.distribution_identity.as_ref(),
+            recipe.distribution_identity.as_slice(),
             b"pinned-trip-public-format-boundary-v1"
         );
         assert_eq!(
@@ -736,12 +737,15 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
                             },
                         ],
                         terminal_input: Vec::new(),
-                        projection: LoadedFormatProjectionDemand::default(),
+                        projection: LoadedFormatProjectionDemand {
+                            count_registers: vec![0],
+                            ..LoadedFormatProjectionDemand::default()
+                        },
                         observer: &mut observer,
                     },
                 )
                 .expect("fresh loaded provider job");
-            assert_eq!(run.universe.count(0), expected);
+            assert_eq!(run.projection.counts, [(0, expected)]);
             assert!(!observer.into_captured().is_empty());
         }
     }
@@ -778,7 +782,6 @@ fn plain_guards() -> FormatGenerationGuards {
 fn plain_format_recipe(repo_root: &Path) -> Result<FormatRecipe, String> {
     let read = |relative: &str| {
         fs::read(repo_root.join(relative))
-            .map(Arc::<[u8]>::from)
             .map_err(|error| format!("read pinned Plain construction resource {relative}: {error}"))
     };
     let mut resources = vec![
@@ -915,7 +918,10 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
                 source: source.clone(),
                 resources: input.resources,
                 terminal_input: Vec::new(),
-                projection: LoadedFormatProjectionDemand::default(),
+                projection: LoadedFormatProjectionDemand {
+                    channels: true,
+                    ..LoadedFormatProjectionDemand::default()
+                },
                 observer: &mut observers,
             },
         )
@@ -924,17 +930,18 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
         .then(|| dvi_from_page_plans(&loaded.result.dvi_pages))
         .transpose()
         .map_err(|error| error.to_string())?;
-    let (terminal, log) = transcript_channels(&loaded.universe, &loaded.result.effects);
+    let channels = loaded
+        .projection
+        .channels
+        .expect("Plain job channel projection");
     Ok(InProcessRun {
         dvi,
-        provenance: loaded.universe.provenance_stats(),
-        macro_provenance: loaded.universe.macro_invocation_provenance_stats(),
-        terminal,
-        log,
+        terminal: channels.terminal,
+        log: channels.log,
         capture: PhaseCapture::Live(LiveCapture {
             root: LiveSource {
                 name: source_name,
-                source: loaded.root_source,
+                source: tex_state::SourceId::new(0),
                 bytes: Arc::from(source),
             },
             observations: observers.into_captured(),
@@ -1015,7 +1022,10 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
                 source: source.clone(),
                 resources,
                 terminal_input: Vec::new(),
-                projection: LoadedFormatProjectionDemand::default(),
+                projection: LoadedFormatProjectionDemand {
+                    channels: true,
+                    ..LoadedFormatProjectionDemand::default()
+                },
                 observer: &mut observers,
             },
         )
@@ -1024,17 +1034,18 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
         .then(|| dvi_from_page_plans(&loaded.result.dvi_pages))
         .transpose()
         .map_err(|error| error.to_string())?;
-    let (terminal, log) = transcript_channels(&loaded.universe, &loaded.result.effects);
+    let channels = loaded
+        .projection
+        .channels
+        .expect("raw TeX82 job channel projection");
     Ok(InProcessRun {
         dvi,
-        provenance: loaded.universe.provenance_stats(),
-        macro_provenance: loaded.universe.macro_invocation_provenance_stats(),
-        terminal,
-        log,
+        terminal: channels.terminal,
+        log: channels.log,
         capture: PhaseCapture::Live(LiveCapture {
             root: LiveSource {
                 name: source_name,
-                source: loaded.root_source,
+                source: tex_state::SourceId::new(0),
                 bytes: Arc::from(source),
             },
             observations: observers.into_captured(),
@@ -1053,7 +1064,7 @@ fn plain_recipe_has_exact_pinned_ordered_closure_and_stable_identity() {
     assert_eq!(first.format_name, "repository-plain-tex82");
     assert_eq!(first.construction_source_name, "repository-plain-tex82.ini");
     assert_eq!(
-        first.construction_source.as_ref(),
+        first.construction_source.as_slice(),
         b"\\input plain.tex\n\\dump\n"
     );
     assert!(
@@ -1138,7 +1149,7 @@ fn plain_job_split_types_non_preload_resources() {
     fs::write(temp.path().join("extra.tfm"), b"job tfm").expect("job tfm");
     fs::write(temp.path().join("support.tex"), b"job input").expect("job input");
     let input = plain_job_input(&temp.path().join("texput.tex")).expect("typed Plain job");
-    assert_eq!(input.source.as_ref(), b"\\input support.tex\n");
+    assert_eq!(input.source.as_slice(), b"\\input support.tex\n");
     assert_eq!(
         input.resources,
         vec![
@@ -1236,7 +1247,7 @@ fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
     );
     let raw = FormatRecipe::raw_tex82();
     assert_eq!(raw.format_name, "raw-tex82");
-    assert_eq!(raw.construction_source.as_ref(), b"\\dump\n");
+    assert_eq!(raw.construction_source.as_slice(), b"\\dump\n");
     assert!(
         raw.resources.is_empty(),
         "raw TeX82 must not hide Plain inputs"
@@ -1309,12 +1320,6 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
         first.construction_evidence(),
         second.construction_evidence()
     );
-    for image in [first.image(), second.image()] {
-        let loaded = Universe::from_format(World::memory(), image)
-            .expect("Plain image reconstructs without construction provenance");
-        assert_eq!(loaded.provenance_stats().origin_records(), 0);
-        assert_eq!(loaded.macro_invocation_provenance_stats().invocations(), 0);
-    }
     assert_eq!(
         fs::read_dir(cache.path().join("blobs-v1"))
             .expect("Plain provider namespace")
@@ -1347,107 +1352,22 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
                     source: source.to_vec(),
                     resources: Vec::new(),
                     terminal_input: Vec::new(),
-                    projection: LoadedFormatProjectionDemand::default(),
+                    projection: LoadedFormatProjectionDemand {
+                        count_registers: vec![0],
+                        ..LoadedFormatProjectionDemand::default()
+                    },
                     observer: &mut observer,
                 },
             )
             .expect("fresh Plain loaded job");
-        assert_eq!(run.universe.count(0), expected);
+        assert_eq!(run.projection.counts, [(0, expected)]);
         assert!(!observer.into_captured().is_empty());
     }
-
-    let mut repeated = Vec::new();
-    for (provider, fixture) in [(&first_provider, &first), (&second_provider, &second)] {
-        let mut observer = TripObservers::default();
-        let run = provider
-            .run(
-                fixture,
-                PreparedFormatJob {
-                    engine: EngineMode::Tex82,
-                    engine_binary: tex_exec::EngineBinaryIdentity::Tex82,
-                    backend: OutputCapability::Dvi,
-                    clock: PLAIN_CLOCK,
-                    interaction: tex_state::InteractionMode::Nonstop,
-                    error_context_widths: recipe.construction_error_context_widths,
-                    provenance_demand: ProvenanceDemand::DIAGNOSTICS_AND_RENDERED_SOURCE,
-                    guards: plain_guards(),
-                    startup_line: "plain-provider-provenance-isolation.tex".into(),
-                    source_name: "plain-provider-provenance-isolation.tex".into(),
-                    source_kind: RegisteredSourceKind::Generated,
-                    source: b"\\def\\x{a}\\x\\end\n".to_vec(),
-                    resources: Vec::new(),
-                    terminal_input: Vec::new(),
-                    projection: LoadedFormatProjectionDemand::default(),
-                    observer: &mut observer,
-                },
-            )
-            .expect("fresh repeated Plain loaded job");
-        repeated.push((
-            run.universe.provenance_stats(),
-            run.universe.macro_invocation_provenance_stats(),
-        ));
-    }
-    assert!(repeated[0].1.invocations() > 0);
-    assert_eq!(repeated[0].1, repeated[1].1);
-    assert!(
-        repeated[0].0.retained_layout_eq(repeated[1].0),
-        "cold-entry and cache-hit jobs must retain identical job-owned provenance: {:?} vs {:?}",
-        repeated[0].0,
-        repeated[1].0,
-    );
 }
 
 fn run_plain_fixture_case(document: &str, gate: &GateAssets) {
-    let fixture_name = gate.name;
     run_named_fixture_document(&gate.repo_root, document, &gate.oracle, |path| {
         let run = run_file_with_plain_format(path)?;
-        let macro_stats = run.macro_provenance;
-        let invocations = macro_stats.invocations();
-        if invocations == 0 {
-            return Err(format!("{document} executed no macro invocations"));
-        }
-        let macro_bytes = macro_stats.retained_bytes();
-        let bytes_per_invocation = macro_stats.bytes_per_invocation();
-        let layout_budget = run.provenance.origin_record_layout_budget_bytes();
-        eprintln!(
-            "{fixture_name} provenance: invocations={invocations} macro_retained_bytes={macro_bytes} observed_bytes_per_invocation={bytes_per_invocation} origin_record_retained_bytes={} origin_record_layout_budget_bytes={layout_budget} total_retained_bytes={} components={:?}",
-            run.provenance.origin_record_retained_bytes(),
-            run.provenance.retained_bytes(), run.provenance,
-        );
-        if run.provenance.origin_record_slot_bytes() > 64 {
-            return Err(format!(
-                "{document} archived provenance slot is {} bytes (admission charge: 64)",
-                run.provenance.origin_record_slot_bytes(),
-            ));
-        }
-        if run.provenance.origin_record_archive_chunk_slots() != 1024 {
-            return Err(format!(
-                "{document} provenance archive chunk has {} slots (layout contract: 1024)",
-                run.provenance.origin_record_archive_chunk_slots(),
-            ));
-        }
-        if run.provenance.origin_key_lease_slots() != 256 {
-            return Err(format!(
-                "{document} provenance key lease has {} slots (layout contract: 256)",
-                run.provenance.origin_key_lease_slots(),
-            ));
-        }
-        let key_run_budget = run
-            .provenance
-            .origin_records()
-            .div_ceil(run.provenance.origin_key_lease_slots());
-        if run.provenance.origin_key_runs() > key_run_budget {
-            return Err(format!(
-                "{document} provenance retained {} affine key runs (fresh-job lease budget: {key_run_budget})",
-                run.provenance.origin_key_runs(),
-            ));
-        }
-        if run.provenance.origin_record_retained_bytes() > layout_budget {
-            return Err(format!(
-                "{document} origin-record containers retained {} bytes (derived layout budget: {layout_budget})",
-                run.provenance.origin_record_retained_bytes(),
-            ));
-        }
         run.dvi
             .ok_or_else(|| "Umber did not produce DVI".to_owned())
     })
@@ -1908,92 +1828,59 @@ fn trip_geometry_only_mismatch_is_reported_but_non_gating() {
 }
 
 fn assert_format_image_contract(format: &[u8], engine: EngineMode) {
+    let image = tex_state::DetachedFormatImage::try_from_bytes(format.to_vec())
+        .expect("validated detached format image");
     let mut host_world = World::memory();
     host_world
         .set_memory_file("host-only-capability.tex", b"host-only".to_vec())
         .expect("stage host-only capability");
-    let mut loaded =
-        Universe::from_format(host_world, format).expect("load format into supplied host world");
-    let pristine =
-        Universe::from_format(World::memory(), format).expect("load format into pristine world");
-
-    assert_eq!(
-        loaded.dump_format().expect("redump loaded format"),
-        pristine.dump_format().expect("redump pristine format"),
-        "host capabilities must not enter the format image"
-    );
-    assert_eq!(
-        loaded.provenance_stats(),
-        pristine.provenance_stats(),
-        "diagnostic provenance must not survive format loading"
-    );
-    assert_eq!(
-        loaded.macro_invocation_provenance_stats().invocations(),
-        0,
-        "macro invocation provenance must not survive format loading"
-    );
-    assert!(
-        loaded.world().effect_records().is_empty(),
-        "host effects must not survive format loading"
-    );
-    assert_eq!(
-        loaded.env_journal_bytes(),
-        pristine.env_journal_bytes(),
-        "format loading must reconstruct only the schema's baseline environment journal"
-    );
-
-    let before_runtime_state = loaded.dump_format().expect("format before runtime state");
-    let _checkpoint = loaded.snapshot();
-    loaded.testing_clear_state_hash_caches();
-    assert_eq!(
-        loaded.dump_format().expect("format after runtime state"),
-        before_runtime_state,
-        "checkpoints and runtime caches must not enter the format image"
-    );
-
-    let relax = loaded.intern("relax");
-    let live_relax = loaded.meaning(relax);
-    assert_eq!(
-        loaded.primitive_meaning("relax"),
-        None,
-        "primitive registry is runtime state and must not be serialized"
-    );
-    let mut fresh = Universe::new();
-    engine.prepare_initex(&mut fresh);
-    let expected_relax = fresh
-        .primitive_meaning("relax")
-        .expect("fresh engine registers relax");
-    engine.install_after_format(&mut loaded);
-    assert_eq!(
-        loaded.meaning(relax),
-        live_relax,
-        "registry reconstruction must preserve the format's live meaning"
-    );
-    assert_eq!(
-        loaded.primitive_meaning("relax"),
-        Some(expected_relax),
-        "format loading must reconstruct the selected engine registry"
-    );
-    let frozen_relax = loaded
-        .primitive_token("relax")
-        .expect("reconstructed primitive token");
-    assert_eq!(
-        loaded.frozen_primitive_meaning(frozen_relax),
-        Some(expected_relax),
-        "reconstructed frozen meaning must match fresh engine setup"
-    );
+    for world in [host_world, World::memory()] {
+        tex_state::with_materialized_format(
+            tex_state::interner::InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024)
+                .expect("test interner budget"),
+            world,
+            &image,
+            |loaded| {
+                assert!(
+                    loaded.world().effect_records().is_empty(),
+                    "host effects must not enter a materialized format"
+                );
+                assert_eq!(
+                    loaded.primitive_meaning("relax"),
+                    None,
+                    "primitive registry is runtime state and must not be serialized"
+                );
+                engine.install_after_format(loaded);
+                assert!(
+                    loaded.primitive_meaning("relax").is_some(),
+                    "format loading reconstructs the selected engine registry"
+                );
+            },
+        )
+        .expect("materialize format contract fixture");
+    }
 }
 
 #[test]
 fn format_image_contract_excludes_runtime_state_and_rebuilds_registry() {
-    let mut source = Universe::new();
-    EngineMode::Tex82.prepare_initex(&mut source);
-    source
-        .world_mut()
-        .write_text(PrintSink::TerminalAndLog, "host effect excluded");
-    let _checkpoint = source.snapshot();
-    source.testing_clear_state_hash_caches();
-    let format = source.dump_format().expect("bounded format image");
+    let format = umber::with_engine_universe(|source| {
+        EngineMode::Tex82.prepare_initex(source);
+        source
+            .world_mut()
+            .write_text(PrintSink::TerminalAndLog, "host effect excluded");
+        umber::run_memory_collecting_artifacts_with_profile(
+            "\\dump",
+            source,
+            tex_command::CommandProfile::TEX82,
+            false,
+        )
+        .expect("format contract construction")
+        .format_dump
+        .expect("bounded format image")
+        .image
+        .into_bytes()
+    })
+    .expect("fresh format-contract universe");
 
     assert_format_image_contract(&format, EngineMode::Tex82);
 }
@@ -2045,8 +1932,6 @@ fn run_two_phase_fixture(
     let initex_identity = format!("sha256:{:x}", Sha256::digest(&format));
     let initial = InProcessRun {
         dvi: None,
-        provenance: ProvenanceStats::default(),
-        macro_provenance: MacroInvocationProvenanceStats::default(),
         terminal: Vec::new(),
         log: Vec::new(),
         capture: PhaseCapture::Detached(prepared.construction_evidence().clone()),
@@ -2077,7 +1962,7 @@ fn run_two_phase_fixture(
         },
     ];
     let mut observers = TripObservers::default();
-    let mut loaded_run = provider
+    let loaded_run = provider
         .run(
             &prepared,
             PreparedFormatJob {
@@ -2096,10 +1981,13 @@ fn run_two_phase_fixture(
                 ),
                 source_name: source_identity.canonical_name().to_owned(),
                 source_kind: RegisteredSourceKind::Generated,
-                source: source_bytes,
+                source: source_bytes.clone(),
                 resources,
                 terminal_input: Vec::new(),
-                projection: LoadedFormatProjectionDemand::default(),
+                projection: LoadedFormatProjectionDemand {
+                    channels: true,
+                    ..LoadedFormatProjectionDemand::default()
+                },
                 observer: &mut observers,
             },
         )
@@ -2108,7 +1996,13 @@ fn run_two_phase_fixture(
         .then(|| dvi_from_page_plans(&loaded_run.result.dvi_pages))
         .transpose()
         .expect("serialize loaded DVI");
-    let (terminal, log) = transcript_channels(&loaded_run.universe, &loaded_run.result.effects);
+    let channels = loaded_run
+        .projection
+        .channels
+        .as_ref()
+        .expect("loaded TRIP channel projection");
+    let terminal = channels.terminal.clone();
+    let log = channels.log.clone();
     assert!(
         !terminal
             .windows(b"Beginning to dump on file".len())
@@ -2120,15 +2014,13 @@ fn run_two_phase_fixture(
     );
     let loaded = InProcessRun {
         dvi,
-        provenance: loaded_run.universe.provenance_stats(),
-        macro_provenance: loaded_run.universe.macro_invocation_provenance_stats(),
         terminal: terminal.clone(),
         log: log.clone(),
         capture: PhaseCapture::Live(LiveCapture {
             root: LiveSource {
                 name: source_identity.canonical_name().to_owned(),
-                source: loaded_run.root_source,
-                bytes: source_bytes,
+                source: tex_state::SourceId::new(0),
+                bytes: Arc::from(source_bytes),
             },
             observations: observers.into_captured(),
             outcome: LiveSessionOutcome::Completed,
@@ -2147,18 +2039,11 @@ fn run_two_phase_fixture(
     let expected_dvi = fs::read(fixture).expect("read conformance DVI oracle");
     let actual_dvi = fs::read(&actual).expect("read conformance DVI artifact");
     if profile == TripEngineProfile::ETex {
-        let effect_pos = loaded_run.universe.world().effect_pos();
-        loaded_run
-            .universe
-            .commit_effects(effect_pos)
-            .expect("commit e-TRIP output effects");
-        let output = loaded_run
-            .universe
-            .world()
-            .memory_outputs()
-            .expect("e-TRIP uses a memory World")
-            .find(|output| output.path() == Path::new("etrip.out"))
-            .map(|output| output.bytes().to_vec())
+        let output = channels
+            .outputs
+            .iter()
+            .find(|output| output.path == Path::new("etrip.out"))
+            .map(|output| output.bytes.clone())
             .expect("e-TRIP produced etrip.out");
         let initex_log = fs::read(
             target_dir(root)
@@ -2943,12 +2828,19 @@ fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, TripObservers)
                     },
                 ],
                 terminal_input: Vec::new(),
-                projection: LoadedFormatProjectionDemand::default(),
+                projection: LoadedFormatProjectionDemand {
+                    channels: true,
+                    ..LoadedFormatProjectionDemand::default()
+                },
                 observer: &mut observer,
             },
         )
         .expect("focused loaded TRIP run");
-    let (_, log) = transcript_channels(&loaded.universe, &loaded.result.effects);
+    let log = loaded
+        .projection
+        .channels
+        .expect("focused TRIP channel projection")
+        .log;
     (String::from_utf8(log).expect("TRIP log is UTF-8"), observer)
 }
 

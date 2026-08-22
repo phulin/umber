@@ -10,7 +10,6 @@ use test_support::{
     CorpusCase, assert_matches_fixture, closed_case::FixtureCase, corpus_cases, dvi, normalize,
     read_binary_fixture,
 };
-use tex_state::Universe;
 
 const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
 
@@ -125,11 +124,22 @@ fn format_cache_cli_stores_restores_and_reports_misses() {
     fs::write(&source_lock, b"pinned sources\n").expect("write source lock");
     fs::write(&build_configuration, b"profile=release\n").expect("write build config");
     let format_path = directory.path().join("generated.fmt");
-    fs::write(
-        &format_path,
-        Universe::new().dump_format().expect("schema-11 format"),
-    )
-    .expect("write format image");
+    let format = umber::with_engine_universe(|stores| {
+        umber::prepare_initex_stores(stores);
+        umber::run_memory_collecting_artifacts_with_profile(
+            "\\dump",
+            stores,
+            tex_command::CommandProfile::TEX82,
+            false,
+        )
+        .expect("format construction")
+        .format_dump
+        .expect("schema-11 format")
+        .image
+        .into_bytes()
+    })
+    .expect("fresh CLI format universe");
+    fs::write(&format_path, format).expect("write format image");
     let cache_root = directory.path().join("cache");
 
     let common = [

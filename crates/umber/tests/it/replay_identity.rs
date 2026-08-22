@@ -222,13 +222,13 @@ fn stale_epoch_global_compaction_regression_replays_cleanly() {
 
 #[test]
 fn vsplit_freezes_each_error_context_at_its_canonical_scan_point() {
-    let mut stores = Universe::new();
-    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    umber::prepare_run_stores(&mut stores);
-
-    let log =
-        umber::run_memory_with_stores(r"\setbox3=\hbox{}\setbox4=\vsplit3 0pt}\end", &mut stores)
-            .expect("recover from both vsplit diagnostics");
+    let log = umber::with_engine_universe(|stores| {
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        umber::prepare_run_stores(stores);
+        umber::run_memory_with_stores(r"\setbox3=\hbox{}\setbox4=\vsplit3 0pt}\end", stores)
+            .expect("recover from both vsplit diagnostics")
+    })
+    .expect("fresh vsplit replay universe");
 
     let missing_to = log
         .find("Missing `to' inserted")
@@ -254,29 +254,26 @@ fn vsplit_freezes_each_error_context_at_its_canonical_scan_point() {
 }
 
 fn assert_replay_identity(source: &str) {
-    let mut stores = Universe::new();
-    // These generated programs raise recoverable errors on purpose. tex.web
-    // §75 starts a job in `error_stop_mode`, where §82 enters §83's dialog
-    // and §71 answers a memory terminal holding nothing with `fatal_error`;
-    // the subject here is replay identity, so the job runs `\nonstopmode`.
-    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    umber::prepare_run_stores(&mut stores);
-    let before = stores.snapshot().state_hash();
-    let checkpoint = stores.snapshot();
+    umber::with_engine_universe(|stores| {
+        // These generated programs raise recoverable errors on purpose.
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        umber::prepare_run_stores(stores);
+        let checkpoint = stores.runtime_checkpoint().expect("runtime checkpoint");
 
-    let log = match umber::run_memory_with_stores(source, &mut stores) {
-        Ok(log) => log,
-        Err(err) => panic!("generated program failed: {err}\n{source}"),
-    };
-    verify_shadow(&stores);
+        let log = match umber::run_memory_with_stores(source, stores) {
+            Ok(log) => log,
+            Err(err) => panic!("generated program failed: {err}\n{source}"),
+        };
+        verify_shadow(stores);
 
-    stores.rollback(&checkpoint);
-    assert_eq!(
-        stores.snapshot().state_hash(),
-        before,
-        "rollback hash diverged after program:\n{source}\nlog:\n{log}"
-    );
-    verify_shadow(&stores);
+        stores
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .unwrap_or_else(|error| {
+                panic!("rollback diverged after program: {error:?}\n{source}\nlog:\n{log}")
+            });
+        verify_shadow(stores);
+    })
+    .expect("fresh replay-identity universe");
 }
 
 fn program_strategy() -> impl Strategy<Value = String> {
@@ -851,9 +848,9 @@ fn prop_cases_for_shard(shard: u32) -> u32 {
 }
 
 #[cfg(feature = "shadow")]
-fn verify_shadow(stores: &Universe) {
+fn verify_shadow<G>(stores: &Universe<G>) {
     stores.verify_shadow();
 }
 
 #[cfg(not(feature = "shadow"))]
-fn verify_shadow(_: &Universe) {}
+fn verify_shadow<G>(_: &Universe<G>) {}

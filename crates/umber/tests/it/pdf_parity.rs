@@ -9,7 +9,7 @@ use test_support::{
     pdf_query::{PdfQuery, QueryLimits},
     read_binary_fixture, read_fixture,
 };
-use tex_state::Universe;
+use tex_state::{DetachedPdfCompletion, Universe};
 
 const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
 const PDF_PARITY_CASES: &[PdfParityCase] = &[
@@ -270,69 +270,76 @@ fn closed_pdf_case(case: &str) -> FixtureCase {
         .unwrap_or_else(|error| panic!("pdf/{case} is not a typed closed fixture case: {error:#}"))
 }
 
+fn detach_pdf_run<G>(stores: &mut Universe<G>, source: &str) -> DetachedPdfCompletion {
+    umber::run_memory_with_stores_and_profile(
+        source,
+        stores,
+        tex_command::CommandProfile::PDFTEX14029,
+        false,
+    )
+    .expect("PDF execution");
+    stores
+        .command_context()
+        .expect("admit terminal PDF completion")
+        .detach_pdf_completion()
+        .expect("detach terminal PDF completion")
+}
+
+fn finalize_detached_pdf(completion: &DetachedPdfCompletion) -> Vec<u8> {
+    umber::pdf_from_accepted_artifacts_with_virtual_fonts(
+        completion,
+        &umber::PdfVirtualFontResources::default(),
+        &umber::PdfRawObjectFileReceipt::default(),
+    )
+    .expect("detached PDF finalization")
+}
+
 #[test]
 #[allow(clippy::disallowed_methods)] // Committed corpus fixture boundary.
 fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
     let source = fs::read_to_string(corpus_root().join("pdf/object_dictionaries/source.tex"))
         .expect("read object dictionary parity source");
-    let mut stores = Universe::default();
-    umber::prepare_pdftex_run_stores(&mut stores);
-    stores
-        .begin_retained_session()
-        .expect("retained replay session starts");
-    let checkpoint = stores.snapshot();
+    umber::with_engine_universe(|stores| {
+        umber::prepare_pdftex_run_stores(stores);
+        stores
+            .begin_retained_session()
+            .expect("retained replay session starts");
+        let checkpoint = stores.runtime_checkpoint().expect("PDF replay checkpoint");
 
-    umber::run_memory_with_stores_and_profile(
-        &source,
-        &mut stores,
-        tex_command::CommandProfile::PDFTEX14029,
-        false,
-    )
-    .expect("first PDF execution");
-    let raw_objects = stores.pdf_raw_objects();
-    assert_eq!(raw_objects.len(), 2);
-    assert_eq!(raw_objects[0].id().raw(), 1);
-    assert!(raw_objects[0].is_referenced());
-    assert_eq!(raw_objects[1].id().raw(), 2);
-    assert!(raw_objects[1].is_immediate());
-    let action = stores
-        .pdf_catalog_open_action()
-        .expect("fixture installs its catalog action");
-    assert_eq!(action.id(), 3);
-    assert_eq!(action.target_object(), Some(4));
-    assert_eq!(stores.pdf_pages()[0].resources_object(), 5);
-    assert_eq!(stores.pdf_pages()[0].contents_object(), 6);
-    assert_eq!(stores.pdf_pages()[0].page_object(), 4);
-    let first_artifacts = stores.world().committed_artifacts().to_vec();
-    let first = umber::pdf_from_committed_artifacts(&mut stores, &first_artifacts)
-        .expect("first PDF finalization");
-    let document_ids = stores
-        .finalize_pdf_document_objects(true)
-        .expect("document identities remain idempotent");
-    assert_eq!(document_ids.pages(), Some(7));
-    assert_eq!(document_ids.names(), Some(8));
-    assert_eq!(document_ids.catalog(), Some(9));
-    assert_eq!(document_ids.info(), Some(10));
-    let first_hash = stores.snapshot().state_hash();
+        let first_completion = detach_pdf_run(stores, &source);
+        let raw_objects = first_completion.raw_objects();
+        assert_eq!(raw_objects.len(), 2);
+        assert_eq!(raw_objects[0].object, 1);
+        assert!(raw_objects[0].referenced);
+        assert_eq!(raw_objects[1].object, 2);
+        assert!(raw_objects[1].immediate);
+        let action = first_completion
+            .document()
+            .open_action
+            .as_ref()
+            .expect("fixture installs its catalog action");
+        assert_eq!(action.id, 3);
+        assert_eq!(action.target_object, Some(4));
+        let page = &first_completion.pages()[0];
+        assert_eq!(
+            (
+                page.resources_object,
+                page.contents_object,
+                page.page_object
+            ),
+            (5, 6, 4)
+        );
+        let first = finalize_detached_pdf(&first_completion);
 
-    stores.rollback(&checkpoint);
-    umber::run_memory_with_stores_and_profile(
-        &source,
-        &mut stores,
-        tex_command::CommandProfile::PDFTEX14029,
-        false,
-    )
-    .expect("replayed PDF execution");
-    let replayed_artifacts = stores.world().committed_artifacts().to_vec();
-    let replayed = umber::pdf_from_committed_artifacts(&mut stores, &replayed_artifacts)
-        .expect("replayed PDF finalization");
-
-    assert_eq!(replayed, first, "rollback replay changed final PDF bytes");
-    assert_eq!(
-        stores.snapshot().state_hash(),
-        first_hash,
-        "rollback replay changed the finalized PDF ledger hash"
-    );
+        stores
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("restore PDF replay checkpoint");
+        let replayed_completion = detach_pdf_run(stores, &source);
+        let replayed = finalize_detached_pdf(&replayed_completion);
+        assert_eq!(replayed_completion, first_completion);
+        assert_eq!(replayed, first, "rollback replay changed final PDF bytes");
+    })
+    .expect("fresh object-dictionary replay universe");
 }
 
 #[test]
@@ -340,42 +347,28 @@ fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
 fn navigation_fixture_replays_graph_bytes_and_state() {
     let source = fs::read_to_string(corpus_root().join("pdf/navigation_structures/source.tex"))
         .expect("read navigation parity source");
-    let mut stores = Universe::default();
-    umber::prepare_pdftex_run_stores(&mut stores);
-    stores
-        .begin_retained_session()
-        .expect("retained navigation replay session starts");
-    let checkpoint = stores.snapshot();
+    umber::with_engine_universe(|stores| {
+        umber::prepare_pdftex_run_stores(stores);
+        stores
+            .begin_retained_session()
+            .expect("retained navigation replay session starts");
+        let checkpoint = stores.runtime_checkpoint().expect("navigation checkpoint");
+        let first_completion = detach_pdf_run(stores, &source);
+        let first = finalize_detached_pdf(&first_completion);
+        let structure = normalize_structure(&first).expect("normalize navigation graph");
+        for marker in ["names ", "outlines ", "threads ", "beads "] {
+            assert!(structure.contains(marker), "missing {marker} projection");
+        }
 
-    umber::run_memory_with_stores_and_profile(
-        &source,
-        &mut stores,
-        tex_command::CommandProfile::PDFTEX14029,
-        false,
-    )
-    .expect("first navigation execution");
-    let first_artifacts = stores.world().committed_artifacts().to_vec();
-    let first = umber::pdf_from_committed_artifacts(&mut stores, &first_artifacts)
-        .expect("first navigation PDF finalization");
-    let first_hash = stores.snapshot().state_hash();
-    let structure = normalize_structure(&first).expect("normalize navigation graph");
-    for marker in ["names ", "outlines ", "threads ", "beads "] {
-        assert!(structure.contains(marker), "missing {marker} projection");
-    }
-
-    stores.rollback(&checkpoint);
-    umber::run_memory_with_stores_and_profile(
-        &source,
-        &mut stores,
-        tex_command::CommandProfile::PDFTEX14029,
-        false,
-    )
-    .expect("replayed navigation execution");
-    let replayed_artifacts = stores.world().committed_artifacts().to_vec();
-    let replayed = umber::pdf_from_committed_artifacts(&mut stores, &replayed_artifacts)
-        .expect("replayed navigation PDF finalization");
-    assert_eq!(replayed, first, "navigation rollback changed PDF bytes");
-    assert_eq!(stores.snapshot().state_hash(), first_hash);
+        stores
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("restore navigation checkpoint");
+        let replayed_completion = detach_pdf_run(stores, &source);
+        let replayed = finalize_detached_pdf(&replayed_completion);
+        assert_eq!(replayed_completion, first_completion);
+        assert_eq!(replayed, first, "navigation rollback changed PDF bytes");
+    })
+    .expect("fresh navigation replay universe");
 }
 
 #[test]
@@ -388,88 +381,46 @@ fn form_xobject_fixture_replays_bytes_artifacts_positions_and_state() {
          \\textfont2=\\sym \\scriptfont2=\\sym \\scriptscriptfont2=\\sym \
          \\textfont3=\\ext \\scriptfont3=\\ext \\scriptscriptfont3=\\ext {source}"
     );
-    let mut stores = Universe::default();
-    umber::prepare_pdftex_run_stores(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file(
-            "cmsy10.tfm",
-            include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm").to_vec(),
-        )
-        .expect("seed symbol font fixture");
-    stores
-        .world_mut()
-        .set_memory_file(
-            "cmex10.tfm",
-            include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm").to_vec(),
-        )
-        .expect("seed extension font fixture");
-    stores
-        .begin_retained_session()
-        .expect("retained form replay session starts");
-    let checkpoint = stores.snapshot();
-
-    umber::run_memory_with_stores_and_profile(
-        &source,
-        &mut stores,
-        tex_command::CommandProfile::PDFTEX14029,
-        false,
-    )
-    .expect("first form execution");
-    assert_eq!(
+    umber::with_engine_universe(|stores| {
+        umber::prepare_pdftex_run_stores(stores);
         stores
-            .pdf_forms()
-            .map(|form| (form.object(), form.resource()))
-            .collect::<Vec<_>>(),
-        [(1, 1), (3, 2), (5, 3)]
-    );
-    let first_artifacts = [1, 3, 5].map(|object| {
+            .world_mut()
+            .set_memory_file(
+                "cmsy10.tfm",
+                include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm").to_vec(),
+            )
+            .expect("seed symbol font fixture");
         stores
-            .pdf_form_artifact(object)
-            .expect("referenced form was traversed")
-            .clone()
-    });
-    assert_eq!(
-        first_artifacts[0].last_position(),
-        Some((tex_state::scaled::Scaled::from_raw(0), pt(2)))
-    );
-    assert_eq!(
-        first_artifacts[1].last_position(),
-        Some((tex_state::scaled::Scaled::from_raw(0), pt(6)))
-    );
-    assert_eq!(first_artifacts[1].snap_reference(), (pt(0), pt(10)));
-    assert_eq!(first_artifacts[2].last_position(), Some((pt(1), pt(2))));
-    assert_eq!(stores.pdf_snap_reference(), (pt(0), pt(5)));
-    let first_pages = stores.world().committed_artifacts().to_vec();
-    let first = umber::pdf_from_committed_artifacts(&mut stores, &first_pages)
-        .expect("first form PDF finalization");
-    let first_hash = stores.snapshot().state_hash();
+            .world_mut()
+            .set_memory_file(
+                "cmex10.tfm",
+                include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm").to_vec(),
+            )
+            .expect("seed extension font fixture");
+        stores
+            .begin_retained_session()
+            .expect("retained form replay session starts");
+        let checkpoint = stores.runtime_checkpoint().expect("form replay checkpoint");
+        let first_completion = detach_pdf_run(stores, &source);
+        assert_eq!(
+            first_completion
+                .forms()
+                .iter()
+                .map(|form| (form.object, form.resource))
+                .collect::<Vec<_>>(),
+            [(1, 1), (3, 2), (5, 3)]
+        );
+        let first = finalize_detached_pdf(&first_completion);
 
-    stores.rollback(&checkpoint);
-    umber::run_memory_with_stores_and_profile(
-        &source,
-        &mut stores,
-        tex_command::CommandProfile::PDFTEX14029,
-        false,
-    )
-    .expect("replayed form execution");
-    let replay_pages = stores.world().committed_artifacts().to_vec();
-    let replayed = umber::pdf_from_committed_artifacts(&mut stores, &replay_pages)
-        .expect("replayed form PDF finalization");
-    assert_eq!(replayed, first, "form rollback replay changed PDF bytes");
-    for (object, expected) in [1, 3, 5].into_iter().zip(first_artifacts) {
-        let actual = stores
-            .pdf_form_artifact(object)
-            .expect("replayed form artifact exists");
-        assert_eq!(actual.bytes(), expected.bytes());
-        assert_eq!(actual.last_position(), expected.last_position());
-        assert_eq!(actual.snap_reference(), expected.snap_reference());
-    }
-    assert_eq!(stores.snapshot().state_hash(), first_hash);
-}
-
-fn pt(value: i32) -> tex_state::scaled::Scaled {
-    tex_state::scaled::Scaled::from_raw(value * 65_536)
+        stores
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("restore form replay checkpoint");
+        let replayed_completion = detach_pdf_run(stores, &source);
+        let replayed = finalize_detached_pdf(&replayed_completion);
+        assert_eq!(replayed, first, "form rollback replay changed PDF bytes");
+        assert_eq!(replayed_completion, first_completion);
+    })
+    .expect("fresh form replay universe");
 }
 
 #[test]
