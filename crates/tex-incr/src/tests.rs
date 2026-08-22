@@ -606,6 +606,11 @@ fn history_budget_keeps_job_start_and_newest_observation() {
         session.history()[1].key().boundary,
         EngineBoundary::ShipoutComplete
     );
+    assert_eq!(
+        session.accepted_checkpoint_keys.len(),
+        session.history().len(),
+        "pruning releases every unnamed checkpoint root"
+    );
 }
 
 #[test]
@@ -626,6 +631,7 @@ fn repeated_revisions_match_fresh_cold_output() {
         assert_detached_output_eq(&output, &expected);
         source = next;
     }
+    assert_eq!(incremental.retired_generation_count(), 11);
 }
 
 /// Deterministic edit fuzzing is deliberately an explicit tier: it executes a

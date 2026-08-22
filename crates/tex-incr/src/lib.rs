@@ -1,9 +1,8 @@
 //! Named-boundary incremental editor sessions.
 //!
-//! Phase 6 deliberately keeps accepted editor state generation-free. A drive
-//! runs inside one freshly branded runtime generation, and publishes only
-//! detached output plus allocation-independent boundary observations. Coarse
-//! revision-generation retention and checkpoint relocation belong to phase 7.
+//! Accepted editor revisions own opaque coarse engine generations. Runtime ids
+//! remain branded inside generic admission episodes, while public output and
+//! boundary observations stay handle-free.
 
 #![forbid(unsafe_code)]
 
@@ -343,6 +342,8 @@ pub struct RevisionTransaction {
     reuse: ReuseMetrics,
     format_dump: Option<DetachedFormatDump>,
     expansion_stats: ExpansionStats,
+    generation: tex_exec::RetainedEngineGeneration,
+    checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
 }
 
 impl RevisionTransaction {
@@ -399,6 +400,7 @@ struct CandidateCompletion {
     dependencies: Vec<tex_state::InputDependency>,
     delivered_commands: usize,
     format_dump: Option<DetachedFormatDump>,
+    checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
 }
 
 /// Command spellings and fresh-state conventions layered over a canonical
@@ -414,13 +416,12 @@ pub enum CommandCompatibility {
     Latex,
 }
 
-/// Handle-free plan for one revision execution.
+/// Outer plan and private retained generation for one revision execution.
 ///
-/// A resource suspension retains only this plan and detached host state. The
-/// next drive safely recomputes inside a fresh generation; no runtime id or
-/// owner crosses the suspension boundary.
+/// No runtime id or owner is exposed through the candidate API.
 pub struct RevisionCandidate {
     session_output_id: RenderedOutputId,
+    session_epoch: tex_state::SessionInternerEpoch,
     job_name: String,
     source_path: String,
     plan: CandidatePlan,
@@ -443,6 +444,7 @@ pub struct RevisionCandidate {
     suspension_serial: u64,
     advance_calls: u64,
     cumulative_fuel: u64,
+    generation: Option<tex_exec::RetainedEngineGeneration>,
 }
 
 /// Result of driving a revision until it suspends or completes.
@@ -453,6 +455,18 @@ pub enum RevisionCandidateResult {
 }
 
 impl RevisionCandidate {
+    fn new_retained_generation(&self) -> Result<tex_exec::RetainedEngineGeneration, SessionError> {
+        let world = World::memory_with_clock(self.job_clock);
+        match &self.format_image {
+            Some(image) => {
+                tex_exec::RetainedEngineGeneration::from_format(&self.session_epoch, world, image)
+                    .map_err(SessionError::Format)
+            }
+            None => tex_exec::RetainedEngineGeneration::new(&self.session_epoch, world)
+                .map_err(SessionError::Epoch),
+        }
+    }
+
     pub fn drive_with_resource_resolvers(
         &mut self,
         host: &mut dyn ResourceHost,
@@ -462,25 +476,20 @@ impl RevisionCandidate {
             return Ok(RevisionCandidateResult::Complete);
         }
         let mut failed_attempt_fuel = 0;
-        let result = if let Some(image) = &self.format_image {
-            tex_state::with_materialized_format(
-                session_interner_budget(),
-                World::memory_with_clock(self.job_clock),
-                image,
-                |universe| {
-                    execute_plan(universe, self, host, cancellation, &mut failed_attempt_fuel)
-                },
-            )
-            .map_err(SessionError::Format)
-            .and_then(|result| result)
-        } else {
-            tex_state::with_universe(session_interner_budget(), |universe| {
-                *universe.world_mut() = World::memory_with_clock(self.job_clock);
-                execute_plan(universe, self, host, cancellation, &mut failed_attempt_fuel)
-            })
-            .map_err(SessionError::State)
-            .and_then(|result| result)
+        let mut generation = match self.generation.take() {
+            Some(generation) => generation,
+            None => self.new_retained_generation()?,
         };
+        let result = generation
+            .with_admitted(CandidateRun {
+                candidate: self,
+                host,
+                cancellation,
+                failed_attempt_fuel: &mut failed_attempt_fuel,
+            })
+            .map_err(SessionError::RetainedEngine)
+            .and_then(|result| result);
+        self.generation = Some(generation);
         let result = match result {
             Ok(result) => result,
             Err(error) => {
@@ -490,6 +499,9 @@ impl RevisionCandidate {
         };
         match result {
             PlanExecution::Suspended(need) => {
+                // Until the resource-loop sidecar moves under the retained
+                // owner, retry uses the conservative cold recomputation path.
+                self.generation = None;
                 self.suspension_serial = self.suspension_serial.saturating_add(1);
                 Ok(RevisionCandidateResult::AwaitingResources(need))
             }
@@ -591,27 +603,55 @@ enum PlanExecution {
     Complete(Box<CandidateCompletion>, u64),
 }
 
-struct LiveHistorySink<G> {
+struct CandidateRun<'a> {
+    candidate: &'a RevisionCandidate,
+    host: &'a mut dyn ResourceHost,
+    cancellation: &'a Cancellation,
+    failed_attempt_fuel: &'a mut u64,
+}
+
+impl tex_exec::RetainedEngineOperation for CandidateRun<'_> {
+    type Output = Result<PlanExecution, SessionError>;
+
+    fn run<G: 'static>(
+        self,
+        mut admitted: tex_exec::AdmittedEngineGeneration<'_, G>,
+    ) -> Self::Output {
+        let (universe, checkpoints) = admitted.parts();
+        execute_plan(
+            universe,
+            checkpoints,
+            self.candidate,
+            self.host,
+            self.cancellation,
+            self.failed_attempt_fuel,
+        )
+    }
+}
+
+struct LiveHistorySink<'a, G> {
     revision: RevisionId,
     records: Vec<BoundaryRecord>,
     occurrences: HashMap<(usize, EngineBoundary), u32>,
     paragraphs: usize,
-    marker: std::marker::PhantomData<fn(G) -> G>,
+    retained: tex_exec::RetainedCheckpointStore<'a, G>,
+    checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
 }
 
-impl<G> LiveHistorySink<G> {
-    fn new(revision: RevisionId) -> Self {
+impl<'a, G> LiveHistorySink<'a, G> {
+    fn new(revision: RevisionId, retained: tex_exec::RetainedCheckpointStore<'a, G>) -> Self {
         Self {
             revision,
             records: Vec::new(),
             occurrences: HashMap::new(),
             paragraphs: 0,
-            marker: std::marker::PhantomData,
+            retained,
+            checkpoint_keys: Vec::new(),
         }
     }
 }
 
-impl<G> CheckpointSink<G> for LiveHistorySink<G> {
+impl<G> CheckpointSink<G> for LiveHistorySink<'_, G> {
     fn wants_exact_state_identity(&self, _boundary: EngineBoundary, _root_anchor: usize) -> bool {
         true
     }
@@ -634,12 +674,14 @@ impl<G> CheckpointSink<G> for LiveHistorySink<G> {
             artifact_prefix: checkpoint.artifact_prefix_len(),
             state_hash: checkpoint.mode_hash(),
         });
+        self.checkpoint_keys.push(self.retained.retain(checkpoint));
         *ordinal = ordinal.saturating_add(1);
     }
 }
 
 fn execute_plan<G>(
     universe: &mut Universe<G>,
+    checkpoints: tex_exec::RetainedCheckpointStore<'_, G>,
     candidate: &RevisionCandidate,
     host: &mut dyn ResourceHost,
     cancellation: &Cancellation,
@@ -690,7 +732,7 @@ fn execute_plan<G>(
         .set_fuel_limit(candidate.cumulative_fuel_limit)
         .expect("candidate fuel limit is positive");
     control.attach_pure_memo_capability(universe);
-    let mut sink = LiveHistorySink::new(candidate.plan.revision);
+    let mut sink = LiveHistorySink::new(candidate.plan.revision, checkpoints);
     let mut ledger = OutputLedger::new(CheckpointIdentity::Exact);
     ledger.commit_job_start(&mut control, universe, &mut sink)?;
     let mut delivered_commands = 0usize;
@@ -780,6 +822,7 @@ fn execute_plan<G>(
                             dependencies,
                             delivered_commands,
                             format_dump,
+                            checkpoint_keys: sink.checkpoint_keys,
                         }),
                         control.fuel_burned(),
                     ));
@@ -1062,9 +1105,10 @@ impl RenderMapCache {
     }
 }
 
-/// Long-lived incremental session containing no runtime generation handle.
+/// Long-lived incremental session owning only an opaque coarse generation.
 pub struct Session {
     job_name: String,
+    session_epoch: tex_state::SessionInternerEpoch,
     revision: RevisionId,
     output_id: RenderedOutputId,
     source: String,
@@ -1089,10 +1133,13 @@ pub struct Session {
     initex: bool,
     expansion_stats: ExpansionStats,
     render_maps: RefCell<RenderMapCache>,
+    accepted_generation: Option<tex_exec::RetainedEngineGeneration>,
+    accepted_checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
+    retired_generations: usize,
 }
 
 impl Session {
-    /// Starts a generation-free editor session.
+    /// Starts an editor session with no admitted generation.
     ///
     /// `template` is accepted only as a migration-time configuration marker;
     /// live runtime state is never retained or cloned from it.
@@ -1179,6 +1226,7 @@ impl Session {
         getrandom::fill(&mut output_id).map_err(SessionError::OutputIdentity)?;
         Ok(Self {
             job_name: job_name.into(),
+            session_epoch: tex_state::SessionInternerEpoch::new(session_interner_budget()),
             revision,
             output_id: RenderedOutputId::from_bytes(output_id),
             content_hash: ContentHash::from_bytes(source.as_bytes()),
@@ -1203,6 +1251,9 @@ impl Session {
             initex: true,
             expansion_stats: ExpansionStats::default(),
             render_maps: RefCell::new(RenderMapCache::new(usize::MAX)),
+            accepted_generation: None,
+            accepted_checkpoint_keys: Vec::new(),
+            retired_generations: 0,
         })
     }
 
@@ -1326,6 +1377,13 @@ impl Session {
                 .saturating_add(self.render_maps.borrow().retained_bytes);
             retention
         })
+    }
+
+    /// Number of previously accepted coarse generations retired as complete
+    /// bundles by this session.
+    #[must_use]
+    pub const fn retired_generation_count(&self) -> usize {
+        self.retired_generations
     }
 
     pub fn register_input_file(&mut self, path: &Path, bytes: Vec<u8>) -> Result<(), SessionError> {
@@ -1455,6 +1513,7 @@ impl Session {
             .map_err(SessionError::Format)?;
         Ok(RevisionCandidate {
             session_output_id: self.output_id,
+            session_epoch: self.session_epoch.clone(),
             job_name: self.job_name.clone(),
             source_path: plan.layout.path().to_owned(),
             plan,
@@ -1481,6 +1540,7 @@ impl Session {
             suspension_serial: 0,
             advance_calls: 0,
             cumulative_fuel: 0,
+            generation: None,
         })
     }
 
@@ -1503,6 +1563,10 @@ impl Session {
             revision_setup_latency: candidate.plan.revision_setup_latency,
             pages_retyped: completion.completion.pages().len(),
         });
+        let generation = candidate
+            .generation
+            .take()
+            .ok_or(SessionError::CandidateNotComplete)?;
         Ok(RevisionTransaction {
             session_output_id: candidate.session_output_id,
             base_revision: candidate.plan.base_revision,
@@ -1518,6 +1582,8 @@ impl Session {
             reuse,
             format_dump: completion.format_dump,
             expansion_stats: ExpansionStats::default(),
+            generation,
+            checkpoint_keys: completion.checkpoint_keys,
         })
     }
 
@@ -1537,13 +1603,38 @@ impl Session {
         if transaction.base_content_hash != self.content_hash {
             return Err(SessionError::ContentHashMismatch);
         }
+        let pruned = prune_history(transaction.history, self.checkpoint_budget);
+        let mut checkpoint_keys = transaction
+            .checkpoint_keys
+            .into_iter()
+            .map(Some)
+            .collect::<Vec<_>>();
+        let retained_checkpoint_keys = pruned
+            .retained_indices
+            .iter()
+            .map(|index| {
+                checkpoint_keys[*index]
+                    .take()
+                    .expect("boundary and checkpoint publication stay aligned")
+            })
+            .collect::<Vec<_>>();
+        let mut generation = transaction.generation;
+        generation
+            .prune_checkpoints(&retained_checkpoint_keys)
+            .map_err(SessionError::RetainedEngine)?;
+        if let Some(previous) = self.accepted_generation.take() {
+            previous.retire().map_err(SessionError::Universe)?;
+            self.retired_generations = self.retired_generations.saturating_add(1);
+        }
         let acceptance = Timer::start();
         self.revision = transaction.revision;
         self.source = transaction.source;
         self.fragments = transaction.fragments;
         self.layout = transaction.layout;
         self.content_hash = transaction.content_hash;
-        self.history = prune_history(transaction.history, self.checkpoint_budget);
+        self.history = pruned.records;
+        self.accepted_generation = Some(generation);
+        self.accepted_checkpoint_keys = retained_checkpoint_keys;
         self.dependencies = transaction.dependencies;
         self.expansion_stats = transaction.expansion_stats;
         self.render_maps.borrow_mut().clear();
@@ -2097,6 +2188,8 @@ pub enum SessionError {
     },
     World(WorldError),
     State(tex_state::StateError),
+    Epoch(tex_state::SessionEpochError),
+    RetainedEngine(tex_exec::RetainedEngineAccessError),
     Universe(tex_state::UniverseError),
     Fragment(tex_state::source_map::SourceMapError),
     Layout(EditorLayoutError),
@@ -2136,6 +2229,10 @@ impl fmt::Display for SessionError {
             ),
             Self::World(error) => write!(f, "incremental world failed: {error}"),
             Self::State(error) => write!(f, "incremental generation failed: {error:?}"),
+            Self::Epoch(error) => write!(f, "incremental session epoch failed: {error:?}"),
+            Self::RetainedEngine(error) => {
+                write!(f, "incremental retained generation failed: {error:?}")
+            }
             Self::Universe(error) => write!(f, "incremental runtime setup failed: {error:?}"),
             Self::Fragment(error) => write!(f, "editor fragment allocation failed: {error}"),
             Self::Layout(error) => write!(f, "editor layout update failed: {error}"),
@@ -2207,7 +2304,7 @@ impl From<EditorLayoutError> for SessionError {
 }
 
 #[cfg(test)]
-mod phase6_tests {
+mod retained_generation_tests {
     use super::*;
 
     #[test]

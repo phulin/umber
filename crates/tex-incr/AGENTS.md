@@ -22,8 +22,8 @@ long-lived editor-session strategy over executor-named checkpoints.
   immutable resource retry overlays, rendered-source demand selection and lazy
   budgeted/evictable artifact-root/recipe queries, terminal recognition of
   complete-job and explicit-fragment outcomes, candidate acceptance, and
-  generation-detached accepted output views whose restart history remains
-  session-private.
+  detached accepted output views, and opaque coarse generation/checkpoint
+  ownership whose runtime coordinates remain inside generic admission.
 - `src/trace.rs`: derived ordered leaf/parent trace summaries, dependency reduction, and atomic replay.
 - `src/trace/tests.rs`: parent composition, leaf-equivalence, ordering, and atomic-miss coverage.
 - `src/tests.rs`: synthetic edit, convergence, retention, and cold-parity tests.

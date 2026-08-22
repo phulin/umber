@@ -34,6 +34,7 @@ mod packing_params;
 mod page_builder;
 mod page_output;
 mod paragraph_end;
+mod retained_generation;
 mod retained_resource;
 mod session_api;
 mod shipout;
@@ -94,6 +95,11 @@ pub use mode::{
     ModeNest, ModeNestSummary,
 };
 pub use paragraph_end::cached_pretolerance_plan;
+pub use retained_generation::{
+    AdmittedEngineGeneration, CheckpointPruningReceipt, RetainedCheckpointKey,
+    RetainedCheckpointStore, RetainedEngineAccessError, RetainedEngineGeneration,
+    RetainedEngineOperation, RetainedEngineRetirement,
+};
 pub use retained_resource::{
     ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld, canonical_font_resource_path,
 };

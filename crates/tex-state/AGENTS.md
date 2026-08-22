@@ -106,6 +106,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   whole-epoch retirement.
 - `src/interner/tests.rs`: Session budget, namespace, stability, admission,
   and retirement tests.
+- `src/session_epoch.rs`: Cloneable coarse owner and exclusive physical lease
+  for one append-only interning epoch shared by successive revision
+  generations.
 - `src/journal.rs`: Generation-branded ordered mutation/group history carrying
   exact prior packed values, TeX save levels, and owner-checked cursors.
 - `src/journal/tests.rs`: Exact position/truncation and foreign-owner cursor
@@ -178,6 +181,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
   contract shared across engine layers.
 - `src/read_observation.rs`: State-owned read-recorder contract, detached
   transactional batches, and deterministic dependency-set recorder.
+- `src/retained_generation.rs`: Opaque non-generic physical revision owner,
+  universally generic admission operations, and owner-relative engine-sidecar
+  keys that prevent runtime coordinates from escaping.
 - `src/pure_memo/tests.rs`: Collision, eviction, retention-release, and disabled-cache tests.
 - `src/scaled.rs`: Compatibility re-export for shared TeX scaled-point arithmetic.
 - `src/source_map.rs`: Rollback-coupled logical source regions, validated positions/spans, and immutable World/generated backing identities.

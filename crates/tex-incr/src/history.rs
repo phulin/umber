@@ -147,10 +147,13 @@ pub(crate) fn compare_histories(comparison: HistoryComparison<'_>) -> ReuseMetri
 /// restart family. The generation owner attached to each surviving record is
 /// added by the phase-7 retained-generation boundary; this selection policy
 /// deliberately knows nothing about row-level storage.
-pub(crate) fn prune_history(
-    mut history: Vec<BoundaryRecord>,
-    budget: usize,
-) -> Vec<BoundaryRecord> {
+pub(crate) struct PrunedHistory {
+    pub(crate) records: Vec<BoundaryRecord>,
+    pub(crate) retained_indices: Vec<usize>,
+}
+
+pub(crate) fn prune_history(mut history: Vec<BoundaryRecord>, budget: usize) -> PrunedHistory {
+    let mut retained_indices = (0..history.len()).collect::<Vec<_>>();
     while std::mem::size_of_val(history.as_slice()) > budget && history.len() > 2 {
         let newest = history.len() - 1;
         let victim = history
@@ -172,8 +175,12 @@ pub(crate) fn prune_history(
             break;
         };
         history.remove(victim);
+        retained_indices.remove(victim);
     }
-    history
+    PrunedHistory {
+        records: history,
+        retained_indices,
+    }
 }
 
 fn paragraph_count(history: &[BoundaryRecord]) -> usize {

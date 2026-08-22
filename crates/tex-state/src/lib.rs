@@ -122,6 +122,8 @@ pub use pdf::{
     PdfRasterFormat, PdfRasterImageMetadata, PdfRawObjectData, PdfRawObjectId,
     PdfRawObjectInitializeError, PdfRawObjectRecord, PdfThreadBeadRecord, PdfThreadRecord,
 };
+mod retained_generation;
+mod session_epoch;
 pub mod world;
 
 pub use expansion_diagnostic::RecoverableExpansionDiagnostic;
@@ -134,6 +136,7 @@ pub use format::{
     DetachedFormatImage, FORMAT_ABI_FINGERPRINT, FORMAT_LOOKUP_CONFIGURATION_FINGERPRINT,
     FORMAT_SCHEMA_VERSION, FormatDestination, FormatError, FormatMaterializationConfig,
     FormatPublicationError, FormatStaging, with_format_destination, with_materialized_format,
+    with_materialized_format_in_epoch,
 };
 pub use generation::GenerationOwner;
 pub use read_observation::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};
@@ -141,6 +144,11 @@ pub use resource::{
     InputOpenContext, InputOpenState, InputReadState, InputResolver, ResourceLookup, ResourceNeed,
     ResourceResult,
 };
+pub use retained_generation::{
+    RetainedAttachmentKey, RetainedStateAccessError, RetainedStateAdmission,
+    RetainedStateGeneration, RetainedStateOperation, RetainedStateRetirement,
+};
+pub use session_epoch::{SessionEpochError, SessionInternerEpoch};
 
 pub use command_context::{
     BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, EngineUsageStatistics,
@@ -198,6 +206,7 @@ pub use universe::{
     DefinitionPromotion, EngineBoundaryHasher, InteractionMode, NodePromotionError, PromotionError,
     PromotionReceipt, RuntimeCheckpoint, ShipoutTransaction, StateCheckpoint, StateCheckpointMark,
     TokenListPromotion, Universe, UniverseError, UniverseRetirement, with_universe,
+    with_universe_in_epoch,
 };
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;

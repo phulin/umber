@@ -30,6 +30,7 @@ use crate::pdf::PdfState;
 use crate::print::ErrorContextWidths;
 use crate::provenance::OriginRecord;
 use crate::scaled::Scaled;
+use crate::session_epoch::{InternerLease, SessionEpochError, SessionInternerEpoch};
 use crate::source_map::{SourceMap, SourceMapMark};
 use crate::stores::{StateCore, StateCoreRetirement};
 use crate::token::TokenWord;
@@ -381,7 +382,7 @@ impl From<NodeArenaError> for UniverseError {
 
 /// Coarse owner of one session interning epoch and current generation.
 pub struct Universe<G> {
-    pub(crate) interner: Interner,
+    pub(crate) interner: Option<InternerLease>,
     pub(crate) core: Option<StateCore<G>>,
     page_nodes: PageNodeArena,
     pub(crate) fonts: FontStore,
@@ -408,6 +409,31 @@ pub struct Universe<G> {
 }
 
 impl<G> Universe<G> {
+    pub(crate) fn interner(&self) -> &Interner {
+        self.interner
+            .as_deref()
+            .expect("live Universe has an admitted session epoch")
+    }
+
+    pub(crate) fn interner_mut(&mut self) -> &mut Interner {
+        self.interner
+            .as_deref_mut()
+            .expect("live Universe has an admitted session epoch")
+    }
+
+    pub(crate) fn release_session_epoch(&mut self) -> InternerLease {
+        self.interner
+            .take()
+            .expect("retained generation releases one admitted session epoch")
+    }
+
+    pub(crate) fn admit_session_epoch(&mut self, interner: InternerLease) {
+        assert!(
+            self.interner.replace(interner).is_none(),
+            "retained generation admits its session epoch exactly once"
+        );
+    }
+
     /// Atomically installs one canonical fresh profile layer in dense state.
     /// Restored-format construction uses primitive registration instead and
     /// must not call this method.
@@ -508,7 +534,7 @@ impl<G> Universe<G> {
         self.dependencies.poison(barrier);
     }
 
-    pub(crate) fn new(interner: Interner, mut core: StateCore<G>) -> Self {
+    pub(crate) fn new(interner: InternerLease, mut core: StateCore<G>) -> Self {
         let fonts = FontStore::new();
         let null_font = fonts.get(crate::font::NULL_FONT);
         let prepared = core
@@ -521,7 +547,7 @@ impl<G> Universe<G> {
             .install_font_runtime(crate::font::NULL_FONT, prepared)
             .expect("null-font runtime row is first");
         Self {
-            interner,
+            interner: Some(interner),
             core: Some(core),
             page_nodes: PageNodeArena::new(),
             fonts,
@@ -551,7 +577,7 @@ impl<G> Universe<G> {
         if self.core.is_none() {
             return Err(UniverseError::Retired);
         }
-        let symbol = self.interner.intern(name)?;
+        let symbol = self.interner_mut().intern(name)?;
         self.core
             .as_mut()
             .ok_or(UniverseError::Retired)?
@@ -562,32 +588,32 @@ impl<G> Universe<G> {
     }
 
     pub fn resolve_symbol(&self, symbol: SymbolId) -> Result<&str, UniverseError> {
-        Ok(self.interner.resolve_id(symbol)?)
+        Ok(self.interner().resolve_id(symbol)?)
     }
 
     #[must_use]
     pub fn resolve(&self, symbol: Symbol) -> Option<&str> {
-        self.interner.resolve_local(symbol)
+        self.interner().resolve_local(symbol)
     }
 
     #[must_use]
     pub fn qualify_symbol(&self, symbol: Symbol) -> Option<SymbolId> {
-        self.interner.qualify_local(symbol)
+        self.interner().qualify_local(symbol)
     }
 
     #[must_use]
     pub fn control_sequence_kind(&self, symbol: Symbol) -> Option<ControlSequenceKind> {
         self.qualify_symbol(symbol)
-            .and_then(|id| self.interner.kind_id(id).ok())
+            .and_then(|id| self.interner().kind_id(id).ok())
     }
 
     #[must_use]
     pub fn active_character_symbol(&self, ch: char) -> Option<SymbolId> {
-        self.interner.active(ch)
+        self.interner().active(ch)
     }
 
     pub fn intern_active_character(&mut self, ch: char) -> Result<SymbolId, UniverseError> {
-        let symbol = self.interner.intern_active(ch)?;
+        let symbol = self.interner_mut().intern_active(ch)?;
         self.core
             .as_mut()
             .ok_or(UniverseError::Retired)?
@@ -733,7 +759,7 @@ impl<G> Universe<G> {
         &self,
         symbol: Symbol,
     ) -> Result<crate::meaning::ResolvedMeaning<G>, UniverseError> {
-        self.interner
+        self.interner()
             .resolve_local(symbol)
             .ok_or(UniverseError::State(StateError::ForeignSession))?;
         Ok(self
@@ -1400,7 +1426,7 @@ impl<G> Universe<G> {
         value: MeaningWord<G>,
         scope: AssignmentScope,
     ) -> Result<(), UniverseError> {
-        self.interner.resolve_id(symbol)?;
+        self.interner().resolve_id(symbol)?;
         if value.font().is_some_and(|font| !self.fonts.contains(font)) {
             return Err(UniverseError::State(StateError::ForeignSession));
         }
@@ -1855,7 +1881,10 @@ impl<G> Universe<G> {
     pub fn command_context(&mut self) -> Result<CommandContext<'_, G>, UniverseError> {
         let core = self.core.as_mut().ok_or(UniverseError::Retired)?;
         Ok(CommandContext::new(CommandContextParts {
-            interner: &mut self.interner,
+            interner: self
+                .interner
+                .as_mut()
+                .expect("live Universe has an admitted session epoch"),
             admitted: core.admit_mut()?,
             primitive_names: &self.primitive_names,
             primitive_meanings: &self.primitive_meanings,
@@ -1911,6 +1940,22 @@ impl<G> Universe<G> {
     /// aggregate remains only as a typed retired shell which rejects reuse.
     pub fn retire(&mut self) -> Result<UniverseRetirement, UniverseError> {
         if !self
+            .interner
+            .as_ref()
+            .expect("live Universe has an admitted session epoch")
+            .is_last_owner()
+        {
+            return Err(UniverseError::State(StateError::GenerationInUse));
+        }
+        let interner = self.interner_mut().retire()?;
+        Ok(UniverseRetirement {
+            interner,
+            state: self.retire_generation()?,
+        })
+    }
+
+    pub(crate) fn retire_generation(&mut self) -> Result<StateCoreRetirement, UniverseError> {
+        if !self
             .core
             .as_ref()
             .ok_or(UniverseError::Retired)?
@@ -1918,12 +1963,11 @@ impl<G> Universe<G> {
         {
             return Err(UniverseError::State(StateError::GenerationInUse));
         }
-        let core = self.core.take().ok_or(UniverseError::Retired)?;
-        let interner = self.interner.retire()?;
-        Ok(UniverseRetirement {
-            interner,
-            state: core.retire()?,
-        })
+        self.core
+            .take()
+            .ok_or(UniverseError::Retired)?
+            .retire()
+            .map_err(UniverseError::State)
     }
 
     #[must_use]
@@ -2089,9 +2133,25 @@ pub fn with_universe<R>(
     budget: InternerBudget,
     use_universe: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
 ) -> Result<R, StateError> {
+    let epoch = SessionInternerEpoch::new(budget);
+    let interner = epoch.lease().map_err(|_| StateError::ForeignSession)?;
+    drop(epoch);
     with_generation(|generation| {
         let core = StateCore::new(generation)?;
-        let mut universe = Universe::new(Interner::new(budget), core);
+        let mut universe = Universe::new(interner, core);
+        Ok(use_universe(&mut universe))
+    })
+}
+
+/// Introduces one fresh revision generation under an existing session epoch.
+pub fn with_universe_in_epoch<R>(
+    epoch: &SessionInternerEpoch,
+    use_universe: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
+) -> Result<R, SessionEpochError> {
+    let interner = epoch.lease()?;
+    with_generation(|generation| {
+        let core = StateCore::new(generation).map_err(|_| SessionEpochError::Retired)?;
+        let mut universe = Universe::new(interner, core);
         Ok(use_universe(&mut universe))
     })
 }

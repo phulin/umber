@@ -125,7 +125,7 @@ pub(crate) struct GenerationRetirement {
 }
 
 impl<G> Generation<G> {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             definitions: DefinitionArena::new(ArenaToken::new()),
             token_lists: TokenListArena::new(ArenaToken::new()),

@@ -9,8 +9,9 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 
 use crate::generation::{GenerationBrand, with_generation};
-use crate::interner::{Interner, InternerBudget};
+use crate::interner::InternerBudget;
 use crate::pdf::PdfState;
+use crate::session_epoch::SessionInternerEpoch;
 use crate::stores::StateCore;
 use crate::{InteractionMode, ProvenanceBudgets, ProvenanceDemand, Universe, World};
 
@@ -243,7 +244,7 @@ impl DetachedFormatImage {
     }
 
     pub(crate) fn capture<G>(universe: &Universe<G>) -> Result<Self, FormatError> {
-        let captured_names = universe.interner.capture_format_names();
+        let captured_names = universe.interner().capture_format_names();
         let names = encode_rows(captured_names.clone())?;
         let names_lookup =
             crate::frozen_lookup::encode(captured_names.iter().enumerate().map(|(slot, name)| {
@@ -777,8 +778,30 @@ impl<G> FormatDestination<G> {
 
     /// Rewrites a validated image into this destination's fresh generation.
     pub fn stage(&mut self, image: &DetachedFormatImage) -> Result<FormatStaging<G>, FormatError> {
+        let epoch = SessionInternerEpoch::new(self.budget);
+        let interner = epoch.lease().map_err(|_| FormatError::AllocationFailed)?;
+        drop(epoch);
+        self.stage_with_interner(image, interner)
+    }
+
+    fn stage_in_epoch(
+        &mut self,
+        image: &DetachedFormatImage,
+        epoch: &SessionInternerEpoch,
+    ) -> Result<FormatStaging<G>, FormatError> {
+        let interner = epoch.lease().map_err(|error| {
+            FormatError::InvalidState(format!("session epoch is not available: {error:?}"))
+        })?;
+        self.stage_with_interner(image, interner)
+    }
+
+    fn stage_with_interner(
+        &mut self,
+        image: &DetachedFormatImage,
+        interner: crate::session_epoch::InternerLease,
+    ) -> Result<FormatStaging<G>, FormatError> {
         let core = self.core.take().ok_or(FormatError::DestinationConsumed)?;
-        let mut universe = Universe::new_format_candidate(Interner::new(self.budget), core);
+        let mut universe = Universe::new_format_candidate(interner, core);
         universe.install_format_logical_rows(&image.decoded)?;
         universe.interaction_mode =
             decode_interaction_mode(image.decoded.metadata.interaction_mode)?;
@@ -866,6 +889,40 @@ pub fn with_materialized_format<R>(
     })
 }
 
+/// Materializes one image into a fresh revision generation while preserving
+/// the caller's exact session interning epoch.
+pub fn with_materialized_format_in_epoch<R>(
+    budget: InternerBudget,
+    world: World,
+    epoch: &SessionInternerEpoch,
+    image: &DetachedFormatImage,
+    use_universe: impl for<'id> FnOnce(&mut Universe<GenerationBrand<'id>>) -> R,
+) -> Result<R, FormatError> {
+    with_format_destination(budget, world, |destination| {
+        let staging = destination.stage_in_epoch(image, epoch)?;
+        destination
+            .materialize(staging, use_universe)
+            .map_err(|_| FormatError::InvalidState("foreign format destination".to_owned()))
+    })
+}
+
+pub(crate) fn materialize_retained_format<G>(
+    interner: crate::session_epoch::InternerLease,
+    generation: crate::generation::Generation<G>,
+    world: World,
+    image: &DetachedFormatImage,
+) -> Result<Universe<G>, FormatError> {
+    let core = StateCore::new(generation).map_err(|_| FormatError::AllocationFailed)?;
+    let mut universe = Universe::new_format_candidate(interner, core);
+    universe.install_format_logical_rows(&image.decoded)?;
+    universe.interaction_mode = decode_interaction_mode(image.decoded.metadata.interaction_mode)?;
+    universe.world = world;
+    universe.refresh_job_clock_parameters().map_err(|error| {
+        FormatError::InvalidState(format!("retained format clock refresh failed: {error:?}"))
+    })?;
+    Ok(universe)
+}
+
 impl<G> Universe<G> {
     fn validate_format_capture_state(&self) -> Result<(), FormatError> {
         let core = self
@@ -883,7 +940,10 @@ impl<G> Universe<G> {
         Ok(())
     }
 
-    pub(crate) fn new_format_candidate(interner: Interner, core: StateCore<G>) -> Self {
+    pub(crate) fn new_format_candidate(
+        interner: crate::session_epoch::InternerLease,
+        core: StateCore<G>,
+    ) -> Self {
         Self::new(interner, core)
     }
 
@@ -947,7 +1007,7 @@ impl<G> Universe<G> {
     fn install_format_logical_rows(&mut self, format: &DecodedFormat) -> Result<(), FormatError> {
         for (slot, row) in format.names.iter().enumerate() {
             if let Some(symbol) = self
-                .interner
+                .interner_mut()
                 .install_format_name(slot as u32, row)
                 .map_err(|message| FormatError::InvalidState(message.to_owned()))?
             {
@@ -959,7 +1019,7 @@ impl<G> Universe<G> {
                     .map_err(|_| FormatError::AllocationFailed)?;
             }
         }
-        self.fonts = crate::font::FontStore::restore_format_fonts(&format.fonts, &self.interner)
+        self.fonts = crate::font::FontStore::restore_format_fonts(&format.fonts, self.interner())
             .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
         let fonts = (0..self.fonts.len())
             .map(|slot| {
