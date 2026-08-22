@@ -739,9 +739,13 @@ fn capture_loaded_projection<G>(
                     outputs.push(output);
                 }
             }
+            let mut terminal = source.memory_terminal_output().unwrap_or_default().to_vec();
+            terminal.extend_from_slice(destination.memory_terminal_output().unwrap_or_default());
+            let mut log = source.memory_log_output().unwrap_or_default().to_vec();
+            log.extend_from_slice(destination.memory_log_output().unwrap_or_default());
             Some(LoadedFormatChannels {
-                terminal: source.memory_terminal_output().unwrap_or_default().to_vec(),
-                log: source.memory_log_output().unwrap_or_default().to_vec(),
+                terminal,
+                log,
                 pending_effects: records,
                 outputs,
             })
