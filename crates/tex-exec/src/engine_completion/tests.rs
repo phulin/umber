@@ -36,16 +36,65 @@ fn capture(source: &[u8], demand: EngineCompletionDemand) -> DetachedEngineCompl
             .command_mut()
             .open_registered_source(source)
             .expect("source opens");
-        loop {
-            match control.step(universe).expect("program executes") {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
+        let mut ledger = OutputLedger::default();
+        let mut checkpoints = Vec::new();
+        let cancellation = crate::Cancellation::new();
+        let terminal = loop {
+            match crate::CanonicalStepRunner::new(&mut control, universe, &mut ledger)
+                .step(&mut checkpoints, &cancellation)
+            {
+                crate::CanonicalStepResult::Completed(step) => {
+                    break ledger
+                        .terminal_receipt(&control, step)
+                        .expect("canonical terminal step arms its receipt");
+                }
+                crate::CanonicalStepResult::Progress(_)
+                | crate::CanonicalStepResult::Committed(_) => {}
+                other => panic!("unexpected completion step: {other:?}"),
             }
-        }
-        OutputLedger::default()
-            .close_revision(&mut control, universe, demand)
+        };
+        ledger
+            .close_revision(&mut control, universe, &terminal, demand)
             .expect("terminal completion detaches")
     })
+}
+
+#[test]
+fn partial_execution_cannot_detach_or_latch_terminal_state() {
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
+        universe
+            .begin_retained_session()
+            .expect("test execution retains host effects");
+        let mut control = MainControl::tex82_initex(universe);
+        control.begin_job(universe, "partial-completion.tex");
+        let source = control
+            .command_mut()
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(br"\relax\end".as_slice()),
+            ))
+            .expect("source registers");
+        control
+            .command_mut()
+            .open_registered_source(source)
+            .expect("source opens");
+        let ledger = OutputLedger::default();
+        let effects_before = universe.world().effect_records().to_vec();
+        let artifacts_before = universe.world().committed_artifacts().to_vec();
+
+        assert!(matches!(
+            ledger.terminal_receipt(&control, MainControlStep::End),
+            Err(EngineCompletionError::TerminalRevisionUnavailable)
+        ));
+        assert_eq!(universe.world().effect_records(), effects_before);
+        assert_eq!(universe.world().committed_artifacts(), artifacts_before);
+        assert_eq!(
+            control
+                .step(universe)
+                .expect("rejection leaves execution live"),
+            MainControlStep::Continue
+        );
+    });
 }
 
 #[test]

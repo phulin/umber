@@ -147,6 +147,7 @@ impl DetachedEngineCompletion {
 
 #[derive(Debug)]
 pub enum EngineCompletionError {
+    TerminalRevisionUnavailable,
     Admission(tex_state::UniverseError),
     Pdf(PdfCompletionError),
     MaterializedEffectBase,

@@ -53,7 +53,7 @@ pub use assignments::{
 };
 pub use canonical_step::{
     CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, CheckpointIdentity,
-    OutputLedger,
+    OutputLedger, TerminalRevisionReceipt,
 };
 pub use checkpoint::{
     CheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EngineBoundary,

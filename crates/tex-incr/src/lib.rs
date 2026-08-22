@@ -706,6 +706,7 @@ fn execute_plan<G>(
                 answered_needs.clear();
                 delivered_commands = delivered_commands.saturating_add(1);
                 if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+                    let terminal = ledger.terminal_receipt(&control, step)?;
                     let dependencies = universe.world().input_dependencies().cloned().collect();
                     let format_dump = control
                         .take_format_dump(universe)
@@ -713,6 +714,7 @@ fn execute_plan<G>(
                     let completion = ledger.close_revision(
                         &mut control,
                         universe,
+                        &terminal,
                         EngineCompletionDemand::new(
                             candidate.profile.dialect() == tex_command::CommandDialect::Pdftex14029,
                         ),

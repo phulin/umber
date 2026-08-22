@@ -45,6 +45,25 @@ pub enum CanonicalStepResult {
     Failed(CanonicalStepFailure),
 }
 
+/// Unforgeable proof that the canonical runner reached a quiescent terminal
+/// step for the ledger/control pair that will detach its output.
+///
+/// Construction is private. The receipt is intentionally neither `Clone` nor
+/// `Copy`; [`OutputLedger::close_revision`] also validates the still-live
+/// ledger and control state before consuming any output.
+#[derive(Debug)]
+pub struct TerminalRevisionReceipt {
+    step: MainControlStep,
+    suspension_serial: u64,
+}
+
+impl TerminalRevisionReceipt {
+    #[must_use]
+    pub const fn step(&self) -> MainControlStep {
+        self.step
+    }
+}
+
 /// Publication and retry state shared by cold and incremental revisions.
 ///
 /// `MainControl` owns atomic semantic rollback. This ledger owns everything
@@ -56,6 +75,8 @@ pub struct OutputLedger {
     checkpoint_identity: CheckpointIdentity,
     job_start_committed: bool,
     suspension_serial: u64,
+    terminal_step: Option<MainControlStep>,
+    terminal_closed: bool,
 }
 
 impl OutputLedger {
@@ -65,6 +86,8 @@ impl OutputLedger {
             checkpoint_identity,
             job_start_committed: false,
             suspension_serial: 0,
+            terminal_step: None,
+            terminal_closed: false,
         }
     }
 
@@ -75,6 +98,8 @@ impl OutputLedger {
             checkpoint_identity,
             job_start_committed: true,
             suspension_serial: 0,
+            terminal_step: None,
+            terminal_closed: false,
         }
     }
 
@@ -89,6 +114,26 @@ impl OutputLedger {
         self.suspension_serial = self.suspension_serial.saturating_add(1);
     }
 
+    /// Returns the terminal capability armed by this ledger's canonical
+    /// runner. A guessed step or a partial/non-quiescent execution is rejected
+    /// without changing either the ledger or the executor.
+    pub fn terminal_receipt<G>(
+        &self,
+        control: &MainControl<G>,
+        step: MainControlStep,
+    ) -> Result<TerminalRevisionReceipt, crate::EngineCompletionError> {
+        if self.terminal_closed
+            || self.terminal_step != Some(step)
+            || !control.terminal_revision_is_quiescent(step)
+        {
+            return Err(crate::EngineCompletionError::TerminalRevisionUnavailable);
+        }
+        Ok(TerminalRevisionReceipt {
+            step,
+            suspension_serial: self.suspension_serial,
+        })
+    }
+
     /// Closes all executor-owned output ledgers after a terminal committed
     /// step. Suspension never calls this method and therefore cannot expose a
     /// partial revision patch.
@@ -96,8 +141,16 @@ impl OutputLedger {
         &mut self,
         control: &mut MainControl<G>,
         universe: &mut Universe<G>,
+        receipt: &TerminalRevisionReceipt,
         demand: crate::EngineCompletionDemand,
     ) -> Result<crate::DetachedEngineCompletion, crate::EngineCompletionError> {
+        if self.terminal_closed
+            || self.terminal_step != Some(receipt.step)
+            || self.suspension_serial != receipt.suspension_serial
+            || !control.terminal_revision_is_quiescent(receipt.step)
+        {
+            return Err(crate::EngineCompletionError::TerminalRevisionUnavailable);
+        }
         let pdf = demand
             .pdf()
             .then(|| {
@@ -122,6 +175,8 @@ impl OutputLedger {
             pdf,
         )?;
         let _ = control.take_prepared_dvi_pages();
+        self.terminal_closed = true;
+        control.close_terminal_revision(receipt.step);
         Ok(completion)
     }
 
@@ -273,7 +328,10 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
         match result {
             CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error)) => {
                 if let Some(fatal) = error.as_fatal() {
-                    CanonicalStepResult::Completed(self.control.succumb(fatal))
+                    let step = self.control.succumb(fatal);
+                    self.control.arm_terminal_revision(step);
+                    self.ledger.terminal_step = Some(step);
+                    CanonicalStepResult::Completed(step)
                 } else {
                     CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error))
                 }
@@ -327,6 +385,8 @@ impl<'a, G> CanonicalStepRunner<'a, G> {
             return CanonicalStepResult::Failed(CanonicalStepFailure::Checkpoint(error));
         }
         if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+            self.control.arm_terminal_revision(step);
+            self.ledger.terminal_step = Some(step);
             CanonicalStepResult::Completed(step)
         } else if boundaries.is_empty() {
             CanonicalStepResult::Progress(step)

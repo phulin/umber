@@ -293,6 +293,12 @@ pub struct MainControl<G> {
     /// committed. Retrying resumes either its exact settled command/cursor or
     /// its fully scanned operation without fetching another diagnostic token.
     pending_diagnostic_operation: Option<PendingDiagnosticOperation<G>>,
+    /// Terminal step armed only by [`crate::CanonicalStepRunner`] after the
+    /// final operation and all named-boundary publication have committed.
+    /// Once armed, ordinary execution cannot continue; output detachment
+    /// consumes the corresponding ledger receipt and closes this state.
+    terminal_revision_step: Option<MainControlStep>,
+    terminal_revision_closed: bool,
     /// TeX82 §76's `history=fatal_error_stop`, carrying §93/§94/§95's payload.
     ///
     /// `succumb` ends the job through §81's `jump_out`, which a library engine
@@ -1270,6 +1276,8 @@ impl<G> Default for MainControl<G> {
             pending_resource_operation: None,
             pending_alignment_delivery: None,
             pending_diagnostic_operation: None,
+            terminal_revision_step: None,
+            terminal_revision_closed: false,
             fatal: None,
             captured_fatal_origin: None,
             first_causal_context: None,
@@ -1283,6 +1291,38 @@ impl<G> Default for MainControl<G> {
 }
 
 impl<G> MainControl<G> {
+    pub(crate) fn arm_terminal_revision(&mut self, step: MainControlStep) {
+        debug_assert!(matches!(
+            step,
+            MainControlStep::End | MainControlStep::EndOfInput
+        ));
+        debug_assert!(!self.terminal_revision_closed);
+        debug_assert!(self.terminal_revision_step.is_none());
+        self.terminal_revision_step = Some(step);
+    }
+
+    pub(crate) fn terminal_revision_is_quiescent(&self, step: MainControlStep) -> bool {
+        self.terminal_revision_step == Some(step)
+            && !self.terminal_revision_closed
+            && self.command.named_boundary_is_quiescent()
+            && !self.has_external_attempt_owner()
+            && self.active_alignment.is_none()
+            && self.operation_observations.is_none()
+            && self.operation_receipt_start.is_none()
+            && self.suspended_operation_observation.is_none()
+            && self.prepared_shipout.is_none()
+            && self.immediate_prints.is_empty()
+            && self.pending_named_boundaries.is_empty()
+            && self.pending_resource_site.is_none()
+            && self.pending_preflight_command.is_none()
+            && self.pending_alignment_delivery.is_none()
+    }
+
+    pub(crate) fn close_terminal_revision(&mut self, step: MainControlStep) {
+        debug_assert!(self.terminal_revision_is_quiescent(step));
+        self.terminal_revision_closed = true;
+    }
+
     /// Replaces the execution-owned memo service between candidate runs.
     pub fn install_pure_memo_runtime(&mut self, runtime: tex_state::PureMemoRuntime) {
         self.pure_memo = Arc::new(std::sync::Mutex::new(runtime));
@@ -4613,6 +4653,9 @@ impl<G> MainControl<G> {
     /// creates a fresh processor borrow and resumes that continuation without
     /// redelivering the command.
     pub fn advance(&mut self, stores: &mut Universe<G>) -> Result<StepResult, ExecError> {
+        if self.terminal_revision_step.is_some() {
+            return Err(ExecError::ExecutionAlreadyTerminated);
+        }
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -4637,6 +4680,9 @@ impl<G> MainControl<G> {
     /// point. The public one-operation [`Self::advance`] contract remains
     /// available to diagnostic and focused-test callers.
     pub fn advance_episode(&mut self, stores: &mut Universe<G>) -> Result<StepResult, ExecError> {
+        if self.terminal_revision_step.is_some() {
+            return Err(ExecError::ExecutionAlreadyTerminated);
+        }
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -4667,6 +4713,9 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<TrackedStepResult, ExecError> {
+        if self.terminal_revision_step.is_some() {
+            return Err(ExecError::ExecutionAlreadyTerminated);
+        }
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
@@ -6559,6 +6608,9 @@ impl<G> MainControl<G> {
         stores: &mut Universe<G>,
         observer: &mut dyn CommandObserver,
     ) -> Result<StepResult, ExecError> {
+        if self.terminal_revision_step.is_some() {
+            return Err(ExecError::ExecutionAlreadyTerminated);
+        }
         if !self.pure_memo_initialized {
             let runtime = stores.take_pure_memo_config().map_or_else(
                 tex_state::PureMemoRuntime::default,
