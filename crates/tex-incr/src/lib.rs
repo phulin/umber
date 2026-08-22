@@ -488,20 +488,32 @@ impl RevisionCandidate {
         if self.completed.is_some() {
             return Ok(RevisionCandidateResult::Complete);
         }
+        let mut failed_attempt_fuel = 0;
         let result = if let Some(image) = &self.format_image {
             tex_state::with_materialized_format(
                 session_interner_budget(),
                 World::memory_with_clock(self.job_clock),
                 image,
-                |universe| execute_plan(universe, self, host, cancellation),
+                |universe| {
+                    execute_plan(universe, self, host, cancellation, &mut failed_attempt_fuel)
+                },
             )
-            .map_err(SessionError::Format)??
+            .map_err(SessionError::Format)
+            .and_then(|result| result)
         } else {
             tex_state::with_universe(session_interner_budget(), |universe| {
                 *universe.world_mut() = World::memory_with_clock(self.job_clock);
-                execute_plan(universe, self, host, cancellation)
+                execute_plan(universe, self, host, cancellation, &mut failed_attempt_fuel)
             })
-            .map_err(SessionError::State)??
+            .map_err(SessionError::State)
+            .and_then(|result| result)
+        };
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                self.cumulative_fuel = self.cumulative_fuel.saturating_add(failed_attempt_fuel);
+                return Err(error);
+            }
         };
         match result {
             PlanExecution::Suspended(need) => {
@@ -658,6 +670,7 @@ fn execute_plan<G>(
     candidate: &RevisionCandidate,
     host: &mut dyn ResourceHost,
     cancellation: &Cancellation,
+    failed_attempt_fuel: &mut u64,
 ) -> Result<PlanExecution, SessionError> {
     universe.set_provenance_config(candidate.provenance_demand, candidate.provenance_budgets);
     universe.begin_retained_session()?;
@@ -739,9 +752,10 @@ fn execute_plan<G>(
                 ));
             }
         }
-        match CanonicalStepRunner::new(&mut control, universe, &mut ledger)
-            .step(&mut sink, cancellation)
-        {
+        let step = CanonicalStepRunner::new(&mut control, universe, &mut ledger)
+            .step(&mut sink, cancellation);
+        *failed_attempt_fuel = control.fuel_burned();
+        match step {
             CanonicalStepResult::Progress(step)
             | CanonicalStepResult::Committed(step)
             | CanonicalStepResult::Completed(step) => {

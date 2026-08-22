@@ -101,6 +101,27 @@ fn cold_candidate_runs_canonical_job_start_before_root_input() {
 }
 
 #[test]
+fn terminal_budget_failure_retains_attempted_fuel_telemetry() {
+    let session = session(RevisionId::new(1), "\\end");
+    let mut candidate = session.start_cold_candidate().expect("candidate");
+    candidate.set_execution_budgets(tex_exec::ExecutionBudgets {
+        steps: 0,
+        ..tex_exec::ExecutionBudgets::default()
+    });
+
+    assert!(matches!(
+        candidate.drive_with_resource_resolvers(&mut DirectResourceHost, &Cancellation::new()),
+        Err(SessionError::Execute(
+            tex_exec::ExecError::ResourceBudgetExceeded {
+                resource: "steps",
+                ..
+            }
+        ))
+    ));
+    assert_eq!(candidate.execution_telemetry().cumulative_fuel, 1);
+}
+
+#[test]
 fn root_framing_alias_is_used_for_startup_while_provenance_keeps_the_source_path() {
     let mut session = Session::start_with_source_path(
         (),
