@@ -5248,6 +5248,7 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
         let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
         let mut checkpoints = Vec::new();
         let cancellation = crate::Cancellation::new();
+        let mut terminal_step = None;
         for _ in 0..512 {
             let result = crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
                 .step(&mut checkpoints, &cancellation);
@@ -5314,13 +5315,54 @@ fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
                         )
                         .expect("input fulfillment matches");
                 }
-                crate::CanonicalStepResult::Completed(ReplayStep::End) => break,
+                crate::CanonicalStepResult::Completed(step @ ReplayStep::End) => {
+                    terminal_step = Some(step);
+                    break;
+                }
                 crate::CanonicalStepResult::Progress(_)
                 | crate::CanonicalStepResult::Committed(_) => {}
                 other => panic!("unexpected reference step {other:?}"),
             }
         }
         assert_eq!(requested, ["main.aux", "main.toc"]);
+        assert_eq!(control.pending_resource_site(), None);
+        ledger
+            .terminal_receipt(&control, terminal_step.expect("terminal step"))
+            .expect("answered probes leave terminal completion quiescent");
+    });
+}
+
+#[test]
+fn unavailable_input_probe_releases_its_diagnostic_site_before_terminal_close() {
+    crate::test_harness::with_nonstop_plain_universe(|mut stores| {
+        let mut control = pdftex_initex(&mut stores);
+        register_source(
+            &mut control,
+            br"\message{[\pdffilesize{missing-resource}]}\end",
+        );
+        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut checkpoints = Vec::new();
+        let cancellation = crate::Cancellation::new();
+        let terminal = loop {
+            match crate::CanonicalStepRunner::new(&mut control, &mut stores, &mut ledger)
+                .step(&mut checkpoints, &cancellation)
+            {
+                crate::CanonicalStepResult::ResourceNeed(
+                    need @ ResourceNeed::InputProbe { .. },
+                ) => {
+                    assert!(control.pending_resource_site().is_some());
+                    ledger.mark_unavailable(&mut control, &need, false);
+                    assert_eq!(control.pending_resource_site(), None);
+                }
+                crate::CanonicalStepResult::Completed(step) => break step,
+                crate::CanonicalStepResult::Progress(_)
+                | crate::CanonicalStepResult::Committed(_) => {}
+                other => panic!("unexpected unavailable-probe step: {other:?}"),
+            }
+        };
+        ledger
+            .terminal_receipt(&control, terminal)
+            .expect("unavailable probe leaves terminal completion quiescent");
     });
 }
 

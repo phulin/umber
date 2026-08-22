@@ -224,6 +224,7 @@ impl OutputLedger {
                 .register_pdf_image(request, *resource),
             (_, fulfillment) => return Err(Box::new(fulfillment)),
         }
+        control.acknowledge_resource_need();
         Ok(())
     }
 
@@ -252,6 +253,7 @@ impl OutputLedger {
                 .capabilities_mut()
                 .register_pdf_image(request.clone(), PdfImageResource::Unavailable),
         }
+        control.acknowledge_resource_need();
     }
 
     fn publish<G>(

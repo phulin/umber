@@ -2689,6 +2689,13 @@ impl<G> MainControl<G> {
         self.pending_resource_site
     }
 
+    /// Releases the diagnostic-only site retained for the resource need that
+    /// has just been answered by the outer ledger. The command attempt itself
+    /// remains installed until the next canonical step resumes it.
+    pub(crate) fn acknowledge_resource_need(&mut self) {
+        self.pending_resource_site = None;
+    }
+
     /// Drains committed shipout receipts in artifact order.
     ///
     /// Each plan was prepared during shipout and is retained only after the
