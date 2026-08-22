@@ -27,7 +27,7 @@ pub trait RetainedStateOperation {
 pub struct RetainedStateAdmission<'a, G> {
     incarnation: u64,
     universe: &'a mut Universe<G>,
-    attachments: &'a mut Vec<Option<Box<dyn Any>>>,
+    attachments: &'a mut Vec<Option<Box<dyn Any + Send>>>,
 }
 
 impl<G: 'static> RetainedStateAdmission<'_, G> {
@@ -36,7 +36,7 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
     }
 
     /// Stores one generation-typed engine sidecar under the same owner.
-    pub fn attach<T: 'static>(&mut self, attachment: T) -> RetainedAttachmentKey {
+    pub fn attach<T: Send + 'static>(&mut self, attachment: T) -> RetainedAttachmentKey {
         let slot = self.attachments.len();
         self.attachments.push(Some(Box::new(attachment)));
         RetainedAttachmentKey {
@@ -45,7 +45,7 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
         }
     }
 
-    pub fn attachment_mut<T: 'static>(
+    pub fn attachment_mut<T: Send + 'static>(
         &mut self,
         key: &RetainedAttachmentKey,
     ) -> Result<&mut T, RetainedStateAccessError> {
@@ -60,7 +60,7 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
             .ok_or(RetainedStateAccessError::AttachmentTypeMismatch)
     }
 
-    pub fn take_attachment<T: 'static>(
+    pub fn take_attachment<T: Send + 'static>(
         &mut self,
         key: RetainedAttachmentKey,
     ) -> Result<T, RetainedStateAccessError> {
@@ -80,7 +80,7 @@ impl<G: 'static> RetainedStateAdmission<'_, G> {
 
     /// Splits the aggregate runtime and one validated sidecar for an engine
     /// episode. Validation completes before either mutable borrow is exposed.
-    pub fn universe_and_attachment_mut<T: 'static>(
+    pub fn universe_and_attachment_mut<T: Send + 'static>(
         &mut self,
         key: &RetainedAttachmentKey,
     ) -> Result<(&mut Universe<G>, &mut T), RetainedStateAccessError> {
@@ -136,7 +136,7 @@ pub struct RetainedStateGeneration {
     incarnation: u64,
     epoch: SessionInternerEpoch,
     universe: Universe<PhysicalGenerationCoordinate>,
-    attachments: Vec<Option<Box<dyn Any>>>,
+    attachments: Vec<Option<Box<dyn Any + Send>>>,
 }
 
 impl core::fmt::Debug for RetainedStateGeneration {

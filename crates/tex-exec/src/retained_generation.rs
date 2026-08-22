@@ -67,7 +67,7 @@ impl<G> AdmittedEngineGeneration<'_, G> {
             .ok_or(RetainedEngineAccessError::StaleCheckpoint)
     }
 
-    pub fn attach<T: 'static>(&mut self, attachment: T) -> RetainedEngineAttachmentKey {
+    pub fn attach<T: Send + 'static>(&mut self, attachment: T) -> RetainedEngineAttachmentKey {
         let slot = self.sidecars.attachments.len();
         self.sidecars.attachments.push(Some(Box::new(attachment)));
         RetainedEngineAttachmentKey {
@@ -76,7 +76,7 @@ impl<G> AdmittedEngineGeneration<'_, G> {
         }
     }
 
-    pub fn attachment_mut<T: 'static>(
+    pub fn attachment_mut<T: Send + 'static>(
         &mut self,
         key: &RetainedEngineAttachmentKey,
     ) -> Result<&mut T, RetainedEngineAccessError> {
@@ -90,7 +90,7 @@ impl<G> AdmittedEngineGeneration<'_, G> {
             .ok_or(RetainedEngineAccessError::AttachmentTypeMismatch)
     }
 
-    pub fn take_attachment<T: 'static>(
+    pub fn take_attachment<T: Send + 'static>(
         &mut self,
         key: RetainedEngineAttachmentKey,
     ) -> Result<T, RetainedEngineAccessError> {
@@ -356,7 +356,7 @@ impl RetainedEngineOperation for PruneCheckpoints<'_> {
 struct EngineGenerationSidecars<G> {
     generation: u64,
     checkpoints: Vec<Option<EngineCheckpoint<G>>>,
-    attachments: Vec<Option<Box<dyn Any>>>,
+    attachments: Vec<Option<Box<dyn Any + Send>>>,
 }
 
 struct InitializeSidecars {
