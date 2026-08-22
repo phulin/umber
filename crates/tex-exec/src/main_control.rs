@@ -7130,11 +7130,15 @@ impl<G> MainControl<G> {
         diagnostic_effects: &mut DiagnosticEffects,
     ) -> Result<OperationReadiness<G>, PrepareOperationError<G>> {
         let mode = self.modes.current_mode();
-        let mode_fingerprint = self.modes.summary().semantic_fingerprint(stores);
-        let last_node_type = self.last_node_type_value(stores);
-        if let Ok(mut context) = stores.command_context()
-            && context.tracked_region_is_active()
-        {
+        let tracked_region_is_active = stores
+            .command_context()
+            .is_ok_and(|context| context.tracked_region_is_active());
+        if tracked_region_is_active {
+            let mode_fingerprint = self.modes.summary().semantic_fingerprint(stores);
+            let last_node_type = self.last_node_type_value(stores);
+            let mut context = stores
+                .command_context()
+                .expect("tracked region keeps its generation admitted");
             let mode_key = DependencyKey::Engine(DependencyEngineField::Mode);
             let inner_key = DependencyKey::Engine(DependencyEngineField::InnerMode);
             let last_node_key = DependencyKey::Engine(DependencyEngineField::LastNodeType);

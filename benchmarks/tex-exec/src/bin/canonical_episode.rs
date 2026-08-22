@@ -41,7 +41,20 @@ fn try_main() -> Result<(), String> {
         _ => return Err(format!("invalid workload shape {shape:?}")),
     };
     let (result, elapsed, stats) = measure(|| run_production(&workload))?;
+    enforce_allocation_ceiling(&workload, stats)?;
     print_result(&shape, &workload, &result, elapsed, stats);
+    Ok(())
+}
+
+fn enforce_allocation_ceiling(workload: &Workload, stats: Stats) -> Result<(), String> {
+    let calls = workload.calls();
+    let allocation_ceiling = 10_000_usize.saturating_add(calls.saturating_mul(64));
+    if stats.allocations > allocation_ceiling {
+        return Err(format!(
+            "canonical hot-path allocation ceiling exceeded: calls={calls} allocations={} ceiling={allocation_ceiling}",
+            stats.allocations
+        ));
+    }
     Ok(())
 }
 

@@ -91,6 +91,30 @@ fn recording_enabled_and_disabled_jobs_have_identical_committed_outcomes() {
     assert_eq!(run_missing_font(false), run_missing_font(true));
 }
 
+fn projection_hashes_for_one_operation(tracked: bool) -> u64 {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\relax\end");
+        crate::mode::reset_semantic_fingerprint_calls_for_test();
+        if tracked {
+            control
+                .advance_with_tracked_region(stores)
+                .expect("tracked operation executes");
+        } else {
+            control
+                .advance(stores)
+                .expect("ordinary operation executes");
+        }
+        crate::mode::semantic_fingerprint_calls_for_test()
+    })
+}
+
+#[test]
+fn ordinary_operations_skip_tracked_projection_hashing() {
+    assert_eq!(projection_hashes_for_one_operation(false), 0);
+    assert_eq!(projection_hashes_for_one_operation(true), 1);
+}
+
 #[test]
 fn fatal_attempt_publishes_the_typed_partial_commit_barrier() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
