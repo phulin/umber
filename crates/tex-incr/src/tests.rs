@@ -628,6 +628,38 @@ fn repeated_revisions_match_fresh_cold_output() {
     }
 }
 
+/// Deterministic edit fuzzing is deliberately an explicit tier: it executes a
+/// fresh oracle for every accepted revision and is too expensive for the
+/// routine workspace suite.
+#[test]
+#[ignore = "explicit 1,000-edit incremental/cold semantic tier"]
+fn thousand_edit_scripted_fuzz_matches_cold_every_revision() {
+    let mut source = page_source(1);
+    let mut incremental = session(RevisionId::new(1), &source);
+    incremental.cold().expect("initial revision");
+
+    // A fixed full-period recurrence makes failures reproducible while still
+    // exercising growing and shrinking decimal replacements.
+    let mut state = 0x4d59_5df4_d0f3_3173_u64;
+    for revision in 2_u64..=1_001 {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let width = usize::try_from((state >> 24) % 10_000 + 1).expect("bounded width");
+        let next = page_source(width);
+        let accepted = incremental
+            .advance(
+                RevisionId::new(revision),
+                edit(&incremental, 0..source.len(), &next),
+            )
+            .expect("scripted edit accepts");
+        let mut cold = session(RevisionId::new(revision), &next);
+        let expected = cold.cold().expect("fresh comparison");
+        assert_detached_output_eq(&accepted, &expected);
+        source = next;
+    }
+}
+
 #[test]
 fn byte_projection_round_trips_invalid_utf8_source() {
     let bytes = vec![b'\\', b'e', b'n', b'd', 0xff];
