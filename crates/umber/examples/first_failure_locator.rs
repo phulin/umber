@@ -96,15 +96,19 @@ fn main() -> ExitCode {
     seed_memory_file(&mut world, "hyphen.tex", &hyphen_path);
     seed_corpus_tfms(&mut world, &root);
 
-    let mut stores = Universe::with_world(world);
-    let mut session = EngineSession::tex82_initex(&mut stores);
+    umber::with_engine_world(world, |stores| run_locator(stores, &source))
+        .expect("create the locator's branded runtime")
+}
+
+fn run_locator<G>(stores: &mut Universe<G>, source: &str) -> ExitCode {
+    let mut session = EngineSession::tex82_initex(stores);
     let root_source = format!("\\input plain.tex \\input {source}.tex\n");
     session
         .register_authored_job("job.tex", Arc::from(root_source.into_bytes()))
         .expect("register the locator's authored root");
 
     let mut host = CorpusHost;
-    let mut checkpoints: Vec<EngineCheckpoint> = Vec::new();
+    let mut checkpoints: Vec<EngineCheckpoint<G>> = Vec::new();
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         session.run(&mut host, &mut checkpoints)
     }));
@@ -153,7 +157,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn report_error(source: &str, session: &EngineSession<'_>, error: &SessionError) {
+fn report_error<G>(source: &str, session: &EngineSession<'_, G>, error: &SessionError) {
     eprintln!("first_failure_locator: {source} run stopped");
     eprintln!("current mode: {:?}", session.current_mode());
     match error {
@@ -173,7 +177,11 @@ fn report_error(source: &str, session: &EngineSession<'_>, error: &SessionError)
     }
 }
 
-fn report_panic(source: &str, session: &EngineSession<'_>, payload: &(dyn std::any::Any + Send)) {
+fn report_panic<G>(
+    source: &str,
+    session: &EngineSession<'_, G>,
+    payload: &(dyn std::any::Any + Send),
+) {
     // The default panic hook already printed the Rust-side "panicked at
     // src/file.rs:LINE:COL" location (and a backtrace under
     // RUST_BACKTRACE=1) before unwinding reached this catch_unwind boundary.
