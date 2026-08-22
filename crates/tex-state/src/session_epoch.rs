@@ -150,7 +150,9 @@ mod tests {
             let mut first = epoch.lease().expect("first generation admission");
             let symbol = first.intern("shared").expect("intern");
             assert_eq!(
-                epoch.lease().unwrap_err(),
+                epoch
+                    .lease()
+                    .expect_err("an admitted epoch rejects a second generation"),
                 SessionEpochError::GenerationAdmitted
             );
             symbol
