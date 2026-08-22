@@ -1,7 +1,7 @@
 use super::*;
+use crate::test_state::TestState;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
-use tex_state::Universe;
 use tex_state::font::FontExpansion;
 use tex_state::font::NULL_FONT;
 use tex_state::glue::{GlueSpec, Order};
@@ -50,7 +50,7 @@ fn params(width: i32) -> LineBreakParams {
 
 #[test]
 fn single_line_break_retains_ordered_allocator_phases() {
-    let universe = Universe::new();
+    let universe = TestState::new();
     let nodes = vec![rule(10), Node::Penalty(EJECT_PENALTY)];
     let plan = try_line_break_without_hyphenation(&universe, &nodes, &params(10))
         .expect("the forced one-line paragraph breaks");
@@ -86,7 +86,7 @@ fn single_line_break_retains_ordered_allocator_phases() {
 fn tracing_omits_initial_second_pass_label_but_records_emergency_transition() {
     // TeX82 §816 begins the diagnostic silently when `pretolerance<0`;
     // `@secondpass` names only the transition from a failed first pass.
-    let universe = Universe::new();
+    let universe = TestState::new();
     let nodes = vec![rule(100), Node::Penalty(EJECT_PENALTY)];
     let mut parameters = params(10);
     parameters.pretolerance = -1;
@@ -111,7 +111,7 @@ fn tracing_omits_initial_second_pass_label_but_records_emergency_transition() {
 fn tracing_reports_a_line_class_champion_before_the_next_class_feasible_route() {
     // TeX82 §§851--854 creates the first class's active node when traversal
     // reaches the next line number, before reporting that next route.
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let stretch = GlueSpec {
         stretch: sp(100),
         ..GlueSpec::ZERO
@@ -169,7 +169,7 @@ fn tracing_reports_a_line_class_champion_before_the_next_class_feasible_route() 
 #[test]
 fn tracing_active_lines_include_the_previous_paragraph_offset() {
     // TeX82 §§816/854 initializes active-node line numbers at `prev_graf+1`.
-    let universe = Universe::new();
+    let universe = TestState::new();
     let nodes = vec![rule(100), Node::Penalty(EJECT_PENALTY)];
     let mut parameters = params(100);
     parameters.pretolerance = 10_000;
@@ -189,7 +189,7 @@ fn tracing_active_lines_include_the_previous_paragraph_offset() {
 /// and obtains a real feasible route instead of the final-pass artificial one.
 #[test]
 fn positive_emergency_stretch_uses_the_real_tolerance_route() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let nodes = vec![
         rule(100),
@@ -237,7 +237,7 @@ fn positive_emergency_stretch_uses_the_real_tolerance_route() {
 /// while values at or below `eject_penalty` are normalized to a forced break.
 #[test]
 fn penalty_boundaries_match_infinite_and_eject_semantics() {
-    let universe = Universe::new();
+    let universe = TestState::new();
     let cases = [
         (-10_001, Some(EJECT_PENALTY)),
         (-10_000, Some(EJECT_PENALTY)),
@@ -263,7 +263,7 @@ fn penalty_boundaries_match_infinite_and_eject_semantics() {
 
 #[test]
 fn pdf_image_reference_contributes_width_to_line_measurement() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let image = Node::Whatsit(Whatsit::PdfRefXImage {
         object: 1,
         width: sp(30),
@@ -284,7 +284,7 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
     // TeX82 §1362: line-break traversal recognizes base whatsits without
     // measuring, breaking, executing, or reordering them. Language-state
     // interpretation belongs to the executor's pre-hyphenation visit.
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let tokens =
         tex_state::node::NodeTokenList::new([tex_state::token::TokenWord::pack(Token::Char {
             ch: 'w',
@@ -335,7 +335,7 @@ fn base_whatsit_line_visitation_is_zero_width_and_never_a_breakpoint() {
 
 #[test]
 fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let zero = GlueSpec::ZERO;
     let breaks = vec![
@@ -395,7 +395,7 @@ fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
 /// backward from that partial paragraph's end and repeat their final value.
 #[test]
 fn etex_display_widow_selector_survives_to_post_line_break() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let zero = GlueSpec::ZERO;
     let breaks = (1..=4)
@@ -516,7 +516,7 @@ fn microtype_char(font: tex_state::ids::FontId, ch: char) -> Node {
 /// shrink, discretionary, and mixed-font candidates.
 #[test]
 fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let first = universe.intern_font(microtype_font("first", 100));
     let second = universe.intern_font(microtype_font("second", 80));
     for font in [first, second] {
@@ -706,7 +706,7 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
 
 #[test]
 fn pdftex_hz_mode_two_is_inert_without_pdftex_font_configuration() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let glue = GlueSpec {
         width: sp(10),
         stretch: sp(20),
@@ -750,8 +750,8 @@ fn pdftex_hz_mode_two_is_inert_without_pdftex_font_configuration() {
     assert_eq!(run(2, 2), run(0, 0));
 }
 
-fn last_line_fit_paragraph() -> (Universe, Vec<Node>, LineBreakParams) {
-    let mut universe = Universe::new();
+fn last_line_fit_paragraph() -> (TestState, Vec<Node>, LineBreakParams) {
+    let universe = TestState::new();
     let finite = GlueSpec {
         width: sp(5 * Scaled::UNITY),
         stretch: sp(20 * Scaled::UNITY),
@@ -1069,7 +1069,7 @@ fn etex_last_line_fit_preserves_ordinary_badness_for_long_terminal_line() {
 /// ordinary even when the global enablement conditions hold.
 #[test]
 fn etex_last_line_fit_does_not_adjust_a_single_line_paragraph() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let par_fill_spec = GlueSpec {
         stretch: sp(Scaled::UNITY),
         stretch_order: Order::Fill,
@@ -1152,7 +1152,7 @@ fn etex_last_line_fit_is_applied_on_the_emergency_final_pass() {
 
 #[test]
 fn breaks_at_legal_glue() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let glue = GlueSpec {
         width: sp(10),
         stretch: sp(10),
@@ -1199,7 +1199,7 @@ fn tracing_display_includes_the_feasible_glue_breakpoint() {
     // TeX82 §851's temporary `link(cur_p):=null` includes `cur_p` in
     // `short_display`; for a glue breakpoint, §175 renders that node as a
     // trailing space. Width measurement still ends before the glue.
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let glue = GlueSpec {
         width: sp(10),
         stretch: sp(10),
@@ -1238,7 +1238,7 @@ fn tracing_display_retains_structural_successors_after_discretionary_cluster() {
     // TeX82 §§851/855 temporarily hide linked replacement nodes while the
     // current discretionary is displayed. The pure breaker's detached cursor
     // must still begin its next fragment at the structural successor.
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let first_replace = universe.publish_page_nodes(&[]);
     let second_replace = universe.publish_page_nodes(&[kern(2), rule(3)]);
@@ -1286,7 +1286,7 @@ fn tracing_display_does_not_repeat_successors_rendered_with_a_discretionary_clus
     // The negative control has replacement material on the preceding disc.
     // The extended current slice therefore renders nodes beyond its own
     // hidden replacement and advances §851's `printed_node` through them.
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let first_replace = universe.publish_page_nodes(&[kern(1)]);
     let second_replace = universe.publish_page_nodes(&[kern(2), rule(3)]);
@@ -1334,7 +1334,7 @@ fn tracing_display_includes_automatic_discretionary_replacement_after_font_kern(
     // TeX82's reconstitution can leave the replaced ligature in the
     // discretionary after a font kern; §851 displays that replacement before
     // reporting the feasible discretionary.
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let replace = universe.publish_page_nodes(&[rule(2)]);
     let nodes = vec![
@@ -1376,7 +1376,7 @@ fn tracing_display_includes_automatic_discretionary_replacement_after_font_kern(
 
 #[test]
 fn paragraph_prefix_widths_remain_exact_past_i32_max() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let mut nodes = Vec::new();
     for index in 0..6 {
@@ -1405,7 +1405,7 @@ fn paragraph_prefix_widths_remain_exact_past_i32_max() {
 
 #[test]
 fn final_pass_keeps_last_active_route_when_every_route_is_overfull() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let glue = GlueSpec::ZERO;
     let nodes = vec![
         rule(100),
@@ -1428,7 +1428,7 @@ fn final_pass_keeps_last_active_route_when_every_route_is_overfull() {
 
 #[test]
 fn consecutive_discardable_breakpoints_do_not_form_a_backwards_chain() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
     let nodes = vec![rule(1), Node::Penalty(0), Node::Penalty(0), rule(1)];
@@ -1469,7 +1469,7 @@ fn consecutive_discardable_breakpoints_do_not_form_a_backwards_chain() {
 /// discardable material does not suppress a syntactically later breakpoint.
 #[test]
 fn glue_route_is_considered_at_immediately_following_forced_penalty() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let nodes = vec![
         rule(1),
@@ -1514,7 +1514,7 @@ fn glue_route_is_considered_at_immediately_following_forced_penalty() {
 
 #[test]
 fn line_break_includes_left_and_right_skip_in_background_widths() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let break_glue = GlueSpec::ZERO;
     let nodes = vec![
         rule(80),
@@ -1659,7 +1659,7 @@ fn equivalent_line_classes_discard_noncompetitive_fitness_routes() {
 
 #[test]
 fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let nonempty = universe.publish_page_nodes(&[kern(0)]);
     let right_skip = GlueSpec {
@@ -1905,7 +1905,7 @@ fn hangindent_selects_affected_lines() {
 
 #[test]
 fn break_glue_does_not_contribute_to_preceding_line_width() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let glue = GlueSpec {
         width: sp(1000),
         stretch: sp(0),
@@ -1930,7 +1930,7 @@ fn break_glue_does_not_contribute_to_preceding_line_width() {
 
 #[test]
 fn discardable_tail_does_not_create_an_empty_final_line() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let trailing = GlueSpec {
         width: sp(10),
         stretch: sp(0),
@@ -1980,7 +1980,7 @@ fn discardable_tail_does_not_create_an_empty_final_line() {
 
 #[test]
 fn looseness_can_select_empty_line_after_terminal_discretionary() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let hyphen = universe.publish_page_nodes(&[rule(5)]);
     let par_fill = GlueSpec {
@@ -2022,7 +2022,7 @@ fn equal_demerit_easy_line_champion_uses_terminal_discretionary_route() {
     // `\looseness=0`. Sections 851--854 retain one champion per equivalent
     // line/fitness class, and `d<=minimal_demerits` lets the later route via
     // this terminal discretionary replace the direct route.
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let par_fill = GlueSpec::ZERO;
     let nodes = vec![
@@ -2074,7 +2074,7 @@ fn equal_demerit_easy_line_champion_uses_terminal_discretionary_route() {
 
 #[test]
 fn unmet_looseness_retries_after_the_pretolerance_pass() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let break_glue = GlueSpec {
         width: sp(0),
         stretch: sp(100),
@@ -2117,7 +2117,7 @@ fn unmet_looseness_retries_after_the_pretolerance_pass() {
 
 #[test]
 fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let glue = GlueSpec {
         width: sp(1000),
         stretch: sp(0),
@@ -2189,7 +2189,7 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
 fn explicit_kern_break_scores_before_adding_the_kern() {
     // TeX82 §§822/866 tests the break before adding the explicit kern, then
     // discards that kern while constructing the following line's prefix.
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let glue = GlueSpec::ZERO;
     let nodes = vec![
         rule(10),
@@ -2211,7 +2211,7 @@ fn explicit_kern_break_scores_before_adding_the_kern() {
 
 #[test]
 fn math_boundaries_suppress_internal_glue_and_kern_breaks() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let glue = GlueSpec {
         width: sp(10),
         stretch: sp(10),
@@ -2255,7 +2255,7 @@ fn math_boundaries_suppress_internal_glue_and_kern_breaks() {
 
 #[test]
 fn final_pass_deactivates_unshrinkable_active_line() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let glue = GlueSpec {
         width: sp(10),
         stretch: sp(10),
@@ -2311,7 +2311,7 @@ fn final_pass_deactivates_unshrinkable_active_line() {
 
 #[test]
 fn discretionary_penalty_depends_on_pre_break_text() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let pre = universe.publish_page_nodes(&[kern(0)]);
     let empty = universe.publish_page_nodes(&[]);
     let mut params = params(20);
@@ -2363,13 +2363,13 @@ fn font_kern_is_not_discarded_at_start_of_next_line() {
 fn existing_discretionary_is_available_on_the_pretolerance_pass() {
     struct UnexpectedHyphenation;
 
-    impl HyphenationHook<Universe> for UnexpectedHyphenation {
+    impl HyphenationHook<TestState> for UnexpectedHyphenation {
         fn hyphenate(&mut self, _nodes: &[Node]) -> Vec<Node> {
             panic!("a feasible first pass must not invoke automatic hyphenation")
         }
     }
 
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let pre = universe.publish_page_nodes(&[kern(1)]);
     let empty = universe.publish_page_nodes(&[]);
     let par_fill = GlueSpec {
@@ -2406,7 +2406,7 @@ fn existing_discretionary_is_available_on_the_pretolerance_pass() {
 
 #[test]
 fn final_hyphen_demerits_apply_to_penultimate_hyphenated_line() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let nodes = vec![
         kern(20),
@@ -2495,7 +2495,7 @@ fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
 
 #[test]
 fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty_glue = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
     let mark_tokens =
@@ -2565,7 +2565,7 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
 /// list to the line being closed and its `post_break` list to the next line.
 #[test]
 fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
     let pre = universe.publish_page_nodes(&[rule(11), kern(12)]);
@@ -2652,7 +2652,7 @@ fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
 /// list can therefore make the following line exactly fit on the first pass.
 #[test]
 fn discretionary_post_break_width_participates_in_the_next_line() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let pre = universe.publish_page_nodes(&[rule(7)]);
     let post = universe.publish_page_nodes(&[rule(4)]);
     let replace = universe.publish_page_nodes(&[rule(6)]);
@@ -2697,7 +2697,7 @@ fn discretionary_post_break_width_participates_in_the_next_line() {
 /// disappear before the next line, but a font kern terminates that discard.
 #[test]
 fn next_line_discards_all_discardables_but_retains_font_kern() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
     let nodes = vec![
@@ -2773,7 +2773,7 @@ fn next_line_discards_all_discardables_but_retains_font_kern() {
 /// four scalar penalty contributions apply, including `broken_penalty`.
 #[test]
 fn two_line_penalty_after_combines_club_widow_and_broken_penalties() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let zero = GlueSpec::ZERO;
     let breaks = vec![
@@ -2813,7 +2813,7 @@ fn two_line_penalty_after_combines_club_widow_and_broken_penalties() {
 fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
     use tex_state::node::Direction;
 
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
     let nodes = vec![
@@ -2870,7 +2870,7 @@ fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
 
 #[test]
 fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
     let replacement = universe.publish_page_nodes(&[rule(7)]);
@@ -2924,7 +2924,7 @@ fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count
 
 #[test]
 fn line_materializer_reuses_the_returned_line_buffer() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
     let nodes = vec![rule(1), rule(2), rule(3), rule(4)];
@@ -2978,7 +2978,7 @@ fn line_materializer_reuses_the_returned_line_buffer() {
 
 #[test]
 fn post_line_break_omits_only_zero_leftskip() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
     let nonzero = GlueSpec {
@@ -3068,7 +3068,7 @@ fn post_line_break_omits_only_zero_leftskip() {
 
 #[test]
 fn paragraph_tape_bounds_analysis_storage_for_large_paragraphs() {
-    let mut universe = Universe::new();
+    let universe = TestState::new();
     let glue = GlueSpec::ZERO;
     let mut nodes = Vec::with_capacity(100_000);
     for _ in 0..50_000 {
@@ -3093,7 +3093,7 @@ fn paragraph_tape_bounds_analysis_storage_for_large_paragraphs() {
 
 #[test]
 fn paragraph_tape_analyzes_twenty_thousand_nested_replacements_iteratively() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let empty = universe.publish_page_nodes(&[]);
     let mut replacement = universe.publish_page_nodes(&[rule(1)]);
     for _ in 0..20_000 {
@@ -3128,7 +3128,7 @@ fn paragraph_tape_analyzes_twenty_thousand_nested_replacements_iteratively() {
 
 #[test]
 fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
     let parameters = params(100);
@@ -3183,7 +3183,7 @@ fn paired_materialization_cursor_preserves_physical_diagnostic_topology() {
 
 #[test]
 fn materialized_final_line_preserves_two_direct_and_four_frozen_lig_ptr_cells() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let zero = GlueSpec::ZERO;
     let empty = universe.publish_page_nodes(&[]);
     let lig = |ch, orig: [char; 2]| Node::Lig {

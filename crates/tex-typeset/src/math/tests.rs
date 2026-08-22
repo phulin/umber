@@ -45,7 +45,7 @@ fn style_transitions_follow_tex_style_codes() {
 #[test]
 fn classic_math_parameters_observe_live_fontdimen_assignments() {
     let size = sc(10 * Scaled::UNITY);
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let font = universe.intern_font(LoadedFont::new(
         "math",
         "math.tfm",
@@ -218,7 +218,7 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
             .construction(base_sum, tex_fonts::MathVariantDirection::Vertical)
             .is_some()
     );
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let font = universe.intern_font(loaded);
     for size in [
         MathFontSize::Text,
@@ -459,7 +459,7 @@ fn all_math_glyphs(layout: &MathLayout) -> Vec<Option<u16>> {
 
 #[test]
 fn deeply_nested_math_choices_use_an_explicit_work_stack() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let mut selected = universe.publish_page_nodes(&[]);
     for _ in 0..20_000 {
         selected = universe.publish_page_nodes(&[Node::MathChoice(MathChoice {
@@ -478,7 +478,7 @@ fn deeply_nested_math_choices_use_an_explicit_work_stack() {
 
 #[test]
 fn deeply_nested_sub_mlists_use_an_explicit_work_stack() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let mut nested = universe.publish_page_nodes(&[]);
     for _ in 0..20_000 {
         nested = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
@@ -501,7 +501,7 @@ fn deeply_nested_sub_mlists_use_an_explicit_work_stack() {
 #[test]
 fn nested_sub_mlist_transaction_storage_is_linear_in_depth() {
     fn entry_count(depth: usize) -> usize {
-        let mut universe = Universe::new();
+        let mut universe = TestState::new();
         let mut nested = universe.publish_page_nodes(&[]);
         for _ in 0..depth {
             nested = universe.publish_page_nodes(&[Node::MathNoad(MathNoad::new(
@@ -524,7 +524,7 @@ fn nested_sub_mlist_transaction_storage_is_linear_in_depth() {
 
 #[test]
 fn deeply_nested_sub_boxes_use_an_explicit_work_stack() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let mut children = universe.publish_page_nodes(&[]);
     for _ in 0..20_000 {
         let boxed = Node::HList(BoxNode::new(BoxNodeFields {
@@ -2405,8 +2405,8 @@ pub(super) fn math_char(ch: char) -> MathChar {
     }
 }
 
-pub(super) fn setup_universe() -> Universe {
-    let mut universe = Universe::new();
+pub(super) fn setup_universe() -> TestState {
+    let mut universe = TestState::new();
     let text = universe.intern_font(test_font("math-text", 10));
     let script = universe.intern_font(test_font("math-script", 8));
     let script_script = universe.intern_font(test_font("math-script-script", 6));

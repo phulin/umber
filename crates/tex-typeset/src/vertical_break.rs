@@ -255,7 +255,7 @@ fn sub(lhs: Scaled, rhs: Scaled) -> Result<Scaled, VerticalBreakError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tex_state::Universe;
+    use crate::test_state::TestState;
     use tex_state::glue::{GlueSpec, Order};
     use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Sign};
     use tex_state::scaled::GlueSetRatio;
@@ -266,7 +266,7 @@ mod tests {
         Scaled::from_raw(raw)
     }
 
-    fn hbox(universe: &mut Universe, height: i32, depth: i32) -> Node {
+    fn hbox(universe: &mut TestState, height: i32, depth: i32) -> Node {
         let children = universe.publish_page_nodes(&[]);
         Node::HList(BoxNode::new(BoxNodeFields {
             width: sp(10),
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn forced_penalty_breaks_before_the_penalty_node() {
-        let mut universe = Universe::new();
+        let mut universe = TestState::new();
         let nodes = vec![hbox(&mut universe, 10, 3), Node::Penalty(EJECT_PENALTY)];
 
         let split = vert_break(&universe, &nodes, sp(100), sp(2)).expect("vertical break");
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn glue_break_uses_stretch_badness() {
-        let mut universe = Universe::new();
+        let mut universe = TestState::new();
         let glue = GlueSpec {
             width: sp(1),
             stretch: sp(100),
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn end_break_returns_none_for_whole_list() {
-        let mut universe = Universe::new();
+        let mut universe = TestState::new();
         let nodes = vec![hbox(&mut universe, 7, 5)];
 
         let split = vert_break(&universe, &nodes, sp(100), sp(2)).expect("vertical break");
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn kern_before_glue_is_a_legal_break() {
-        let mut universe = Universe::new();
+        let mut universe = TestState::new();
         let glue = GlueSpec {
             width: sp(3),
             stretch: sp(0),
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn reports_infinite_shrink_glue_that_enters_accounting() {
-        let mut universe = Universe::new();
+        let mut universe = TestState::new();
         let glue = GlueSpec {
             width: sp(0),
             stretch: sp(0),

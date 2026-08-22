@@ -11,6 +11,7 @@ tex-state = { path = "../tex-state" }
 
 [dev-dependencies]
 sha2.workspace = true
+tex-state = { path = "../tex-state", features = ["testing"] }
 woff2-patched = "0.4.0"
 
 [lints]

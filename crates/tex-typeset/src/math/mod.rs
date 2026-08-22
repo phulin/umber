@@ -14,10 +14,10 @@ mod spacing;
 mod style;
 mod variants;
 
+#[cfg(test)]
+use crate::test_state::TestState;
 use tex_fonts::metrics::ExtensibleRecipe as MetricExtensibleRecipe;
 use tex_fonts::{CharMetrics, LigKernChar, LigKernCommand, MathMetricsSource};
-#[cfg(test)]
-use tex_state::Universe;
 #[cfg(test)]
 use tex_state::env::banks::DimenParam;
 use tex_state::ids::FontId;

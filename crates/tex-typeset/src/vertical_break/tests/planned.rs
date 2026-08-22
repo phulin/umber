@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn tex82_vert_break_cost_depth_and_tie_matrix() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let nodes = vec![
         hbox(&mut universe, 8, 6),
         Node::Penalty(0),
@@ -27,7 +27,7 @@ fn tex82_vert_break_cost_depth_and_tie_matrix() {
 
 #[test]
 fn vertical_break_ignores_perpendicular_box_overflow() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let children = universe.publish_page_nodes(&[]);
     let nodes = vec![Node::HList(BoxNode::new(BoxNodeFields {
         width: Scaled::from_raw(i32::MAX),
@@ -48,7 +48,7 @@ fn vertical_break_ignores_perpendicular_box_overflow() {
 
 #[test]
 fn vertical_break_preserves_height_then_depth_addition_order() {
-    let mut universe = Universe::new();
+    let mut universe = TestState::new();
     let nodes = vec![
         hbox(&mut universe, -1, i32::MAX),
         Node::Kern {

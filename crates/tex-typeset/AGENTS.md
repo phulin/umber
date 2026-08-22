@@ -23,6 +23,7 @@ Use this crate for layout algorithms whose correctness can be tested as pure fun
 - `src/math/variants.rs`: deterministic OpenType MATH size-variant selection and horizontal/vertical glyph-assembly planning.
 - `src/math/variants/tests.rs`: connector, overlap, extender-repetition, and malformed-construction tests.
 - `src/metrics.rs`: neutral metric-event IR and shared horizontal, vertical, and wide accumulators; domain modules retain glue, breakpoint, font-expansion, and observation policy.
+- `src/test_state.rs`: test-only value projection over a typed page arena, copied font/parameter values, and narrow typesetting traits; it is not a runtime or `Universe` facade.
 - `src/math/arithmetic.rs`: shared checked scaled-arithmetic guards for Appendix G.
 - `src/math/rebox.rs`: shared TeX82 §715 exact-width math-box centering and vertical-source packaging.
 - `src/packing.rs`: hpack/vpack/vtop kernels over page-arena list coordinates,

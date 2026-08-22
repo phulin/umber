@@ -1,7 +1,7 @@
 use super::*;
+use crate::test_state::TestState;
 use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
-use tex_state::Universe;
 use tex_state::glue::GlueSpec;
 use tex_state::node::KernKind;
 
@@ -44,7 +44,7 @@ fn character(font: tex_state::ids::FontId, ch: char) -> Node {
 
 #[test]
 fn computes_pdftex_edge_amounts_from_font_quad_and_codes() {
-    let mut state = Universe::new();
+    let mut state = TestState::new();
     let font = state.intern_font(protruding_font());
     state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
     state.set_pdf_font_code(PdfFontCode::Rp, font, b'.', 700);
@@ -57,7 +57,7 @@ fn computes_pdftex_edge_amounts_from_font_quad_and_codes() {
 
 #[test]
 fn materializes_margin_kerns_inside_paragraph_skip_glue() {
-    let mut state = Universe::new();
+    let mut state = TestState::new();
     let font = state.intern_font(protruding_font());
     state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
     state.set_pdf_font_code(PdfFontCode::Rp, font, b'.', 700);
@@ -113,7 +113,7 @@ fn materializes_margin_kerns_inside_paragraph_skip_glue() {
 
 #[test]
 fn nonzero_material_blocks_edge_search() {
-    let mut state = Universe::new();
+    let mut state = TestState::new();
     let font = state.intern_font(protruding_font());
     state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
     let nodes = [
@@ -133,7 +133,7 @@ fn nonzero_material_blocks_edge_search() {
 /// accidentally inherit the wrong edge behavior from a catch-all arm.
 #[test]
 fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
-    let mut state = Universe::new();
+    let mut state = TestState::new();
     let font = state.intern_font(protruding_font());
     state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
     state.set_pdf_font_code(PdfFontCode::Rp, font, b'A', 500);

@@ -1,11 +1,15 @@
 use super::*;
 use crate::math::tests::{math_char, noad, root_nodes, setup_universe};
-use tex_state::Universe;
+use crate::test_state::TestState;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::GlueSpec;
 use tex_state::math::{MathChoice, NoadClass};
 
-fn context<'a>(state: &'a Universe, params: &'a MathParams, style: Style) -> Context<'a, Universe> {
+fn context<'a>(
+    state: &'a TestState,
+    params: &'a MathParams,
+    style: Style,
+) -> Context<'a, TestState> {
     Context {
         state,
         params,

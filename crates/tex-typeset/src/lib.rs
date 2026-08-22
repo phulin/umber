@@ -11,6 +11,8 @@ pub mod math;
 mod metrics;
 mod packing;
 pub mod protrusion;
+#[cfg(test)]
+mod test_state;
 mod vertical_break;
 
 use tex_state::font::PdfFontCode;

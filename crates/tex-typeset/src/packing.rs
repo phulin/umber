@@ -2,8 +2,6 @@ use tex_state::glue::Order;
 use tex_state::node::Node;
 use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Sign, UnsetKind};
 #[cfg(test)]
-use tex_state::node_arena::NodeList;
-#[cfg(test)]
 use tex_state::node_arena::NodeRef;
 use tex_state::node_arena::{NodeCursor, PackedNode, PageListId};
 use tex_state::scaled::{GlueSetRatio, Scaled};

@@ -1,4 +1,4 @@
-use tex_state::Universe;
+use crate::test_state::TestState;
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFraction, MathNoad,
     MathStyle, NoadClass, NoadKind,
@@ -62,7 +62,7 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
         assert_eq!(noad.superscript, MathField::Empty);
     }
 
-    let mut stores = Universe::new();
+    let mut stores = TestState::new();
     let arms = [1, 2, 3, 4].map(|penalty| stores.publish_page_nodes(&[Node::Penalty(penalty)]));
     let choice = MathChoice {
         display: arms[0].clone(),
