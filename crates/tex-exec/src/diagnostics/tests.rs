@@ -58,6 +58,60 @@ fn extended_missing_character_forces_online_routing_inside_admission() {
 }
 
 #[test]
+fn forced_online_missing_character_uses_the_joint_print_nl_offset_test() {
+    // e-TeX change 17.516 temporarily routes a level-two warning to both
+    // sinks. tex.web §62 tests the selected offsets jointly, so an open
+    // terminal line makes the ensuing newline visible in the already-closed
+    // transcript too. This is the blank line between e-TRIP's `b` and `c`
+    // nullfont warnings.
+    crate::test_harness::with_nonstop_plain_universe(|universe| {
+        universe
+            .world_mut()
+            .write_text(PrintSink::TerminalAndLog, "(");
+        let font = universe.current_font().expect("live nullfont identity");
+
+        let mut first = DiagnosticEffects::new();
+        {
+            let mut command = universe.command_context().expect("first admission");
+            command
+                .assign_int_param(IntParam::TRACING_LOST_CHARS, 1, AssignmentScope::Global)
+                .expect("enable ordinary warning");
+            super::report_missing_character_warning(&mut command, &mut first, font, 'b', true);
+        }
+        universe.world_mut().publish_diagnostic_effects(first);
+
+        let mut second = DiagnosticEffects::new();
+        {
+            let mut command = universe.command_context().expect("second admission");
+            command
+                .assign_int_param(IntParam::TRACING_LOST_CHARS, 2, AssignmentScope::Global)
+                .expect("enable forced-online warning");
+            super::report_missing_character_warning(&mut command, &mut second, font, 'c', true);
+        }
+        universe.world_mut().publish_diagnostic_effects(second);
+
+        let log = universe
+            .world()
+            .effect_records()
+            .iter()
+            .filter_map(|record| match record {
+                EffectRecord::StreamWrite {
+                    sink: PrintSink::Log | PrintSink::TerminalAndLog,
+                    text,
+                } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert!(
+            log.contains(
+                "Missing character: There is no b in font nullfont!\n\nMissing character: There is no c in font nullfont!"
+            ),
+            "{log:?}"
+        );
+    });
+}
+
+#[test]
 fn infinite_shrink_report_uses_only_detached_output_context() {
     crate::test_harness::with_nonstop_plain_universe(|universe| {
         let context =

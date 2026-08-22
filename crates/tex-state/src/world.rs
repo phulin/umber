@@ -3654,9 +3654,20 @@ impl World {
                 }
             }
             PrintSink::TerminalAndLog => {
-                let (terminal, _) = render(&terminal_line);
-                let (log, _) = render(&log_line);
-                if terminal == log {
+                // tex.web §62 tests both selected offsets together before
+                // calling §57 `print_ln`. If either line is open, that one
+                // call writes a newline to both terminal and transcript; the
+                // sinks are independent again for ordinary text wrapping.
+                // Replaying the program twice in isolation loses the blank
+                // transcript line when only the terminal is open (e-TeX
+                // change 17.516's forced-online missing-character report).
+                let (terminal, log) = render_detached_diagnostic_pair(
+                    effect.operations(),
+                    &terminal_line,
+                    &log_line,
+                    max_print_line,
+                );
+                if terminal == log && terminal_line == log_line {
                     if !terminal.is_empty() {
                         records.push(EffectRecord::StreamWrite {
                             sink: PrintSink::TerminalAndLog,
@@ -5278,6 +5289,45 @@ fn render_detached_diagnostic(
         }
     }
     (output, partial_line)
+}
+
+/// Replays a §245 diagnostic selected for both terminal and transcript.
+///
+/// Character wrapping retains independent per-sink offsets, while §62's
+/// `print_nl` predicate is selector-wide: one open selected line makes the
+/// resulting §57 newline visible in both sinks.
+fn render_detached_diagnostic_pair(
+    operations: &[crate::diagnostic::DiagnosticPrintOperation],
+    initial_terminal_line: &str,
+    initial_log_line: &str,
+    max_print_line: usize,
+) -> (String, String) {
+    let mut terminal_output = String::new();
+    let mut log_output = String::new();
+    let mut terminal_line = initial_terminal_line.to_owned();
+    let mut log_line = initial_log_line.to_owned();
+    for operation in operations {
+        match operation {
+            crate::diagnostic::DiagnosticPrintOperation::Rendered(text) => {
+                let terminal =
+                    wrap_print_lines_at(text, terminal_line.chars().count(), max_print_line);
+                let log = wrap_print_lines_at(text, log_line.chars().count(), max_print_line);
+                append_partial_line(&mut terminal_line, &terminal);
+                append_partial_line(&mut log_line, &log);
+                terminal_output.push_str(&terminal);
+                log_output.push_str(&log);
+            }
+            crate::diagnostic::DiagnosticPrintOperation::EnsureLineStart => {
+                if !terminal_line.is_empty() || !log_line.is_empty() {
+                    terminal_line.clear();
+                    log_line.clear();
+                    terminal_output.push('\n');
+                    log_output.push('\n');
+                }
+            }
+        }
+    }
+    (terminal_output, log_output)
 }
 
 /// The byte-domain counterpart of [`wrap_print_lines_at`]. Every TeX82 output

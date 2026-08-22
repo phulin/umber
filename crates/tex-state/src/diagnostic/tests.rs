@@ -147,7 +147,7 @@ fn online_print_nl_breaks_a_terminal_partial_line() {
             routed(universe),
             vec![
                 (PrintSink::Terminal, "term\nfirst\n".to_owned()),
-                (PrintSink::Log, "first\n".to_owned()),
+                (PrintSink::Log, "\nfirst\n".to_owned()),
             ]
         );
     });
