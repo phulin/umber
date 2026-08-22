@@ -3234,9 +3234,13 @@ impl<'a, G> CommandContext<'a, G> {
         self.interner.known(name).map(SymbolId::symbol)
     }
 
-    #[must_use]
-    pub fn known_control_sequence(&self, name: &str) -> Option<Symbol> {
-        self.symbol(name)
+    pub fn known_control_sequence(&mut self, name: &str) -> Option<Symbol> {
+        let symbol = self.symbol(name)?;
+        self.admitted
+            .state()
+            .admit_symbol(symbol)
+            .expect("session-known symbol fits the current meaning bank");
+        Some(symbol)
     }
 
     fn intern_symbol(&mut self, id: Result<SymbolId, crate::interner::InternerError>) -> Symbol {

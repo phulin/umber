@@ -285,6 +285,40 @@ mod tests {
         }
     }
 
+    struct InternKnown;
+
+    impl RetainedStateOperation for InternKnown {
+        type Output = u32;
+
+        fn run<G: 'static>(self, mut admitted: RetainedStateAdmission<'_, G>) -> Self::Output {
+            admitted
+                .universe()
+                .intern("session-known")
+                .expect("intern")
+                .symbol()
+                .raw()
+        }
+    }
+
+    struct AdmitKnown;
+
+    impl RetainedStateOperation for AdmitKnown {
+        type Output = (u32, crate::ResolvedMeaning<()>);
+
+        fn run<G: 'static>(self, mut admitted: RetainedStateAdmission<'_, G>) -> Self::Output {
+            let mut context = admitted.universe().command_context().expect("context");
+            let symbol = context
+                .known_control_sequence("session-known")
+                .expect("same epoch symbol");
+            let meaning = context.meaning(symbol);
+            let detached = match meaning {
+                crate::ResolvedMeaning::Static(meaning) => crate::ResolvedMeaning::Static(meaning),
+                crate::ResolvedMeaning::Macro { .. } => panic!("fresh current root is undefined"),
+            };
+            (symbol.raw(), detached)
+        }
+    }
+
     #[test]
     fn attachment_key_is_generation_relative_and_foreign_rejection_is_mutation_free() {
         let epoch = epoch();
@@ -299,5 +333,21 @@ mod tests {
             Err(RetainedStateAccessError::ForeignGeneration)
         );
         assert_eq!(second.attachment_count(), 0);
+    }
+
+    #[test]
+    fn session_epoch_symbol_is_admitted_into_each_fresh_generation_bank() {
+        let epoch = epoch();
+        let mut prior =
+            RetainedStateGeneration::new(&epoch, World::default()).expect("prior generation");
+        let prior_symbol = prior.with_admitted(InternKnown);
+        let mut current =
+            RetainedStateGeneration::new(&epoch, World::default()).expect("current generation");
+        let (current_symbol, meaning) = current.with_admitted(AdmitKnown);
+        assert_eq!(current_symbol, prior_symbol);
+        assert_eq!(
+            meaning,
+            crate::ResolvedMeaning::Static(crate::meaning::Meaning::Undefined)
+        );
     }
 }
