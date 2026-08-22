@@ -67,7 +67,14 @@ pub(in crate::main_control) fn command_diagnostic_context<G>(
     command: &CommandMachine<'_, G>,
     stores: &tex_state::CommandContext<'_, G>,
 ) -> crate::diagnostics::ExecutionDiagnosticContext {
-    crate::diagnostics::ExecutionDiagnosticContext::source_free(
+    // TeX82 §§660--661 formats standalone box diagnostics with the live
+    // input `line` when `pack_begin_line=0`.  Detach that scalar together
+    // with the rendered error context: treating this command-owned context
+    // as source-free changes a line-one `\hbox` report to "line 0".
+    crate::diagnostics::ExecutionDiagnosticContext::new(
+        i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
+        0,
+        false,
         command.state.output_open_context(stores),
     )
 }

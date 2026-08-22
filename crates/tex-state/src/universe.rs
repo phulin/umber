@@ -160,6 +160,7 @@ struct ShipoutRollback<G> {
     page: PageBuilderState,
     pdf: crate::pdf::PdfStateSnapshot<G>,
     world: crate::world::WorldSnapshot,
+    prepared_mag: Option<i32>,
 }
 
 /// Coarse generation owner plus every runtime root needed by an aggregate
@@ -177,6 +178,7 @@ pub struct RuntimeCheckpoint<G> {
     hyphenation: HyphenationTable,
     dependencies: crate::dependency::DependencyTrackerSnapshot,
     interaction_mode: InteractionMode,
+    prepared_mag: Option<i32>,
 }
 
 impl<G> Clone for RuntimeCheckpoint<G> {
@@ -191,6 +193,7 @@ impl<G> Clone for RuntimeCheckpoint<G> {
             hyphenation: self.hyphenation.clone(),
             dependencies: self.dependencies.clone(),
             interaction_mode: self.interaction_mode,
+            prepared_mag: self.prepared_mag,
         }
     }
 }
@@ -230,6 +233,7 @@ impl<G> Drop for ShipoutTransaction<'_, G> {
         self.universe.page = rollback.page;
         self.universe.pdf.rollback(rollback.pdf);
         self.universe.world.rollback(&rollback.world);
+        self.universe.prepared_mag = rollback.prepared_mag;
         self.universe
             .restore_state_checkpoint(&rollback.state)
             .expect("validated shipout rollback remains restorable");
@@ -388,6 +392,8 @@ pub struct Universe<G> {
     pub(crate) world: World,
     dependencies: DependencyRuntime,
     pub(crate) interaction_mode: InteractionMode,
+    /// TeX82 §288's job-level `mag_set`; deliberately absent from formats.
+    prepared_mag: Option<i32>,
     error_context_widths: ErrorContextWidths,
     engine_usage: crate::command_context::EngineUsageRuntime,
     pub(crate) provenance_demand: crate::ProvenanceDemand,
@@ -509,6 +515,7 @@ impl<G> Universe<G> {
             world: World::default(),
             dependencies: DependencyRuntime::default(),
             interaction_mode: InteractionMode::default(),
+            prepared_mag: None,
             error_context_widths: ErrorContextWidths::default(),
             engine_usage: crate::command_context::EngineUsageRuntime::default(),
             provenance_demand: crate::ProvenanceDemand::default(),
@@ -1617,6 +1624,7 @@ impl<G> Universe<G> {
             hyphenation: self.hyphenation.clone(),
             dependencies: self.dependencies.snapshot_tracker(),
             interaction_mode: self.interaction_mode,
+            prepared_mag: self.prepared_mag,
         })
     }
 
@@ -1685,6 +1693,7 @@ impl<G> Universe<G> {
         self.hyphenation = checkpoint.hyphenation.clone();
         self.dependencies.restore_tracker(&checkpoint.dependencies);
         self.interaction_mode = checkpoint.interaction_mode;
+        self.prepared_mag = checkpoint.prepared_mag;
         transfer_external_roots();
         <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::transfer_roots(
             self, mark,
@@ -1716,6 +1725,7 @@ impl<G> Universe<G> {
             page: self.page.clone(),
             pdf: self.pdf.snapshot(),
             world: self.world.snapshot(),
+            prepared_mag: self.prepared_mag,
         };
         let empty_tokens = self
             .allocate_token_list(&[])
@@ -1825,6 +1835,7 @@ impl<G> Universe<G> {
             &mut self.sources,
             &mut self.hyphenation,
             &mut self.interaction_mode,
+            &mut self.prepared_mag,
             self.error_context_widths,
             &mut self.engine_usage,
         ))

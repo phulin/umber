@@ -188,6 +188,7 @@ pub struct CommandContext<'a, G> {
     sources: &'a mut SourceMap,
     hyphenation: &'a mut HyphenationTable,
     interaction_mode: &'a mut InteractionMode,
+    prepared_mag: &'a mut Option<i32>,
     error_context_widths: crate::print::ErrorContextWidths,
     engine_usage: &'a mut EngineUsageRuntime,
 }
@@ -207,6 +208,7 @@ impl<'a, G> CommandContext<'a, G> {
         sources: &'a mut SourceMap,
         hyphenation: &'a mut HyphenationTable,
         interaction_mode: &'a mut InteractionMode,
+        prepared_mag: &'a mut Option<i32>,
         error_context_widths: crate::print::ErrorContextWidths,
         engine_usage: &'a mut EngineUsageRuntime,
     ) -> Self {
@@ -224,6 +226,7 @@ impl<'a, G> CommandContext<'a, G> {
             sources,
             hyphenation,
             interaction_mode,
+            prepared_mag,
             error_context_widths,
             engine_usage,
         }
@@ -1668,16 +1671,33 @@ impl<'a, G> CommandContext<'a, G> {
             .expect("tabskip parameter is admitted");
     }
 
-    pub fn prepare_mag(&self) -> (i32, Option<PrepareMagDiagnostic>) {
-        let mag = self.int_param(IntParam::MAG);
-        if !(1..=32_768).contains(&mag) {
+    /// Validates and freezes TeX82 §288's job-level magnification.
+    pub fn prepare_mag(&mut self) -> (i32, Option<PrepareMagDiagnostic>) {
+        let attempted = self.int_param(IntParam::MAG);
+        let (effective, diagnostic) = if let Some(retained) = *self.prepared_mag
+            && attempted != retained
+        {
+            (
+                retained,
+                Some(PrepareMagDiagnostic::IncompatibleMagnification {
+                    attempted,
+                    retained,
+                }),
+            )
+        } else if !(1..=32_768).contains(&attempted) {
             (
                 1_000,
-                Some(PrepareMagDiagnostic::IllegalMagnification { attempted: mag }),
+                Some(PrepareMagDiagnostic::IllegalMagnification { attempted }),
             )
         } else {
-            (mag, None)
+            (attempted, None)
+        };
+        if effective != attempted {
+            self.assign_int_param(IntParam::MAG, effective, AssignmentScope::Global)
+                .expect("the magnification parameter is admitted");
         }
+        *self.prepared_mag = Some(effective);
+        (effective, diagnostic)
     }
 
     #[must_use]

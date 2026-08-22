@@ -1,5 +1,6 @@
 use super::{UniverseError, with_universe};
 use crate::env::AssignmentScope;
+use crate::env::banks::IntParam;
 use crate::interner::InternerBudget;
 use crate::meaning::{Meaning, MeaningWord, ResolvedMeaning};
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
@@ -46,6 +47,65 @@ fn command_episode_admits_session_and_generation_once() {
             context.meaning(symbol.symbol()),
             ResolvedMeaning::Static(Meaning::Relax)
         );
+    })
+    .expect("universe allocation");
+}
+
+/// TeX82 §288: `mag_set` freezes the first prepared magnification, corrects
+/// an incompatible later assignment globally, and belongs to the checkpointed
+/// job session rather than to a reusable format image.
+#[test]
+fn prepared_magnification_is_job_scoped_and_checkpointed() {
+    with_universe(budget(), |universe| {
+        {
+            let mut context = universe.command_context().expect("context");
+            context
+                .assign_int_param(IntParam::MAG, 1_200, AssignmentScope::Global)
+                .expect("mag assignment");
+        }
+        let checkpoint = universe.runtime_checkpoint().expect("checkpoint");
+        assert_eq!(
+            universe.command_context().expect("context").prepare_mag(),
+            (1_200, None)
+        );
+        {
+            let mut context = universe.command_context().expect("context");
+            context
+                .assign_int_param(IntParam::MAG, 2_000, AssignmentScope::Global)
+                .expect("mag assignment");
+            assert_eq!(
+                context.prepare_mag(),
+                (
+                    1_200,
+                    Some(crate::PrepareMagDiagnostic::IncompatibleMagnification {
+                        attempted: 2_000,
+                        retained: 1_200,
+                    })
+                )
+            );
+            assert_eq!(context.int_param(IntParam::MAG), 1_200);
+        }
+
+        universe
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("restore checkpoint");
+        {
+            let mut transaction = universe.begin_shipout();
+            assert_eq!(
+                transaction
+                    .command_context()
+                    .expect("context")
+                    .prepare_mag(),
+                (1_200, None)
+            );
+        }
+        {
+            let mut context = universe.command_context().expect("context");
+            context
+                .assign_int_param(IntParam::MAG, 2_000, AssignmentScope::Global)
+                .expect("mag assignment");
+            assert_eq!(context.prepare_mag(), (2_000, None));
+        }
     })
     .expect("universe allocation");
 }

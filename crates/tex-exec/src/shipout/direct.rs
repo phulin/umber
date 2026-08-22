@@ -242,7 +242,7 @@ pub(crate) fn stage_shipout<G>(
     } = origin;
     let pending_effects = pending_page_effects(stores.world(), pending_effect_end);
     let (counts, diagnostic, job) = {
-        let command = stores
+        let mut command = stores
             .command_context()
             .expect("page shipout runs inside an admitted command episode");
         let counts = page_counts(&command);
