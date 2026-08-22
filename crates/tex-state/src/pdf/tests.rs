@@ -52,6 +52,101 @@ fn aliased_pdf_fonts_enumerate_one_terminal_resource_object() {
     assert_eq!(alias.object_number(), first.object_number());
     assert_eq!(alias.resource_number(), first.resource_number());
     assert_eq!(state.font_resources().collect::<Vec<_>>(), vec![first]);
+    assert_eq!(
+        state.font_resource_records().collect::<Vec<_>>(),
+        vec![first, alias],
+        "terminal identity enumeration retains every artifact-facing alias"
+    );
+}
+
+#[test]
+fn terminal_pdf_completion_retains_every_scaled_font_alias_recipe() {
+    let mut state = PdfState::<()>::default();
+    let identity = tex_fonts::PdfFontResourceIdentity::new([7; 32], None);
+    let base = crate::ids::FontId::testing_new(1);
+    let scaled = crate::ids::FontId::testing_new(2);
+    let base_identity = tex_fonts::FontSourceIdentity::from_bytes([1; 32]);
+    let scaled_identity = tex_fonts::FontSourceIdentity::from_bytes([2; 32]);
+    let first = state
+        .ensure_font_resource(base, base_identity, identity)
+        .expect("base PDF font resource");
+    let alias = state
+        .ensure_font_resource(scaled, scaled_identity, identity)
+        .expect("scaled PDF font alias");
+
+    let completion = completion::detach(
+        &state,
+        completion::PdfCompletionScalars {
+            font_configuration: PdfFontConfiguration {
+                adjust_spacing: 0,
+                protrude_chars: 0,
+                tracing_fonts: 0,
+                adjust_interword_glue: 0,
+                prepend_kern: 0,
+                append_kern: 0,
+                generate_to_unicode: 0,
+                pk_resolution: 600,
+                omit_charset: 0,
+            },
+            pages_entries: Vec::new(),
+            include_info_dictionary: true,
+            include_dates: true,
+            suppress_ptex_info: 0,
+            ptex_use_underscore: false,
+            form_omit_procset: 0,
+            suppress_page_group_warning: false,
+            clock: crate::JobClock::DEFAULT,
+        },
+        |_| Ok(Vec::new()),
+        |font| {
+            let (name, at_size, semantic_identity) = if font == base {
+                ("cmr10", 10, base_identity)
+            } else {
+                ("cmr10-scaled", 9, scaled_identity)
+            };
+            crate::FontArtifactRecipe {
+                name: name.to_owned(),
+                tfm_content_hash: [7; 32],
+                tfm_checksum: 0,
+                design_size: Scaled::from_raw(10 * Scaled::UNITY),
+                at_size: Scaled::from_raw(at_size * Scaled::UNITY),
+                layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+                mapping_fallback: None,
+                opentype: None,
+                semantic_identity,
+                construction: crate::FontArtifactConstructionRecipe::Loaded,
+            }
+        },
+        |_, _| None,
+        |_, _| Scaled::from_raw(0),
+        |_| Ok(None),
+    )
+    .expect("alias-only PDF ledger detaches");
+
+    assert_eq!(completion.fonts().len(), 2);
+    assert_eq!(
+        completion
+            .fonts()
+            .iter()
+            .map(|font| (
+                font.recipe.semantic_identity,
+                font.resource_number,
+                font.object_number,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                base_identity,
+                first.resource_number(),
+                first.object_number()
+            ),
+            (
+                scaled_identity,
+                alias.resource_number(),
+                alias.object_number(),
+            ),
+        ]
+    );
 }
 
 #[test]

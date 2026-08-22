@@ -587,18 +587,28 @@ fn validate_pdf(
         }
     }
     let mut font_resources = BTreeMap::new();
+    let mut font_identities = BTreeSet::new();
     for font in pdf.fonts() {
         if font.object_number == 0 || font.resource_number == 0 {
             return Err(EngineCompletionError::PdfObjectIdentity(font.object_number));
         }
-        if let Some((object, recipe)) = font_resources.get(&font.resource_number) {
-            if *object != font.object_number || *recipe != &font.recipe {
+        if !font_identities.insert(font.recipe.semantic_identity) {
+            return Err(EngineCompletionError::PdfResourceIdentity(
+                font.resource_number,
+            ));
+        }
+        if let Some(object) = font_resources.get(&font.resource_number) {
+            // Multiple realized TeX font recipes may alias the same PDF
+            // resource (notably a base font and a scaled copy). They must
+            // agree on the ledger's object identity, while their distinct
+            // semantic recipes remain available to artifact lookup.
+            if *object != font.object_number {
                 return Err(EngineCompletionError::PdfResourceIdentity(
                     font.resource_number,
                 ));
             }
         } else {
-            font_resources.insert(font.resource_number, (font.object_number, &font.recipe));
+            font_resources.insert(font.resource_number, font.object_number);
             if !objects.insert(font.object_number) {
                 return Err(EngineCompletionError::PdfObjectIdentity(font.object_number));
             }

@@ -1756,6 +1756,18 @@ impl<G> PdfState<G> {
             })
     }
 
+    /// Every live font-to-resource association, including aliases that share
+    /// one emitted PDF object.
+    ///
+    /// [`Self::font_resources`] is the object-enumeration view used by the
+    /// live ledger. Terminal detachment instead needs this identity view:
+    /// page artifacts address realized semantic font identities, and two TeX
+    /// fonts with different scale recipes may intentionally share one PDF
+    /// resource object.
+    pub(crate) fn font_resource_records(&self) -> impl Iterator<Item = PdfFontResourceRecord> + '_ {
+        self.font_resources.iter().copied()
+    }
+
     pub(crate) fn reserve_annotation(
         &mut self,
     ) -> Result<PdfAnnotationRecord<G>, PdfObjectCapacityError> {
