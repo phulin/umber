@@ -77,6 +77,10 @@ struct Frame {
     projection_start: usize,
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "rollback values stay move-only and inline; boxing a popped mode level would add a per-operation heap owner"
+)]
 enum Inverse {
     Nodes {
         level_id: u64,
