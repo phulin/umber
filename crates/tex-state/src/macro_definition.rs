@@ -21,8 +21,13 @@ impl MacroParameterPattern {
         Self::from_token_iter(tokens.iter().copied())
     }
 
+    #[cfg(test)]
     pub(crate) fn from_words(words: &[TokenWord]) -> Self {
-        Self::from_token_iter(words.iter().map(|word| word.semantic_token()))
+        Self::from_word_iter(words.iter().copied())
+    }
+
+    pub(crate) fn from_word_iter(words: impl Iterator<Item = TokenWord>) -> Self {
+        Self::from_token_iter(words.map(|word| word.semantic_token()))
     }
 
     fn from_token_iter(tokens: impl Iterator<Item = Token>) -> Self {

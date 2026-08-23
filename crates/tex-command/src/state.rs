@@ -708,11 +708,7 @@ impl<G> CommandState<G> {
         universe: &mut tex_state::Universe<G>,
         id: crate::AttemptDefinitionId,
     ) -> Result<tex_state::DefinitionId<G>, crate::AttemptError> {
-        let promotion = self.promote_attempt_roots(
-            universe,
-            crate::AttemptPromotionRoots::new(&[], &[], core::slice::from_ref(&id), &[]),
-        )?;
-        Ok(promotion.definitions[0])
+        self.attempt.arena().promote_definition(universe, id)
     }
 
     /// Captures every attempt-local table and subordinate builder cursor for

@@ -3,6 +3,11 @@
 //! Semantic state machines are crate-private. The public facade grows only as
 //! executor integration requires stable, end-state operations.
 
+#[cfg(all(test, feature = "profiling"))]
+#[global_allocator]
+static TEST_HOT_CORE_ALLOCATOR: tex_state::measurement::HotCoreAllocator =
+    tex_state::measurement::HotCoreAllocator;
+
 /// Publishes one semantic observation, evaluating its payload only when the
 /// episode has an external observer.
 ///

@@ -1160,6 +1160,29 @@ impl<G> Universe<G> {
             .allocate_definition(parameter_text, replacement_text)?)
     }
 
+    /// Promotes exact-size semantic token streams directly into one durable
+    /// definition after reserving every destination word and row.
+    pub fn promote_definition_from_words<Parameters, Replacement>(
+        &mut self,
+        parameter_text: Parameters,
+        replacement_text: Replacement,
+    ) -> Result<DefinitionId<G>, PromotionError>
+    where
+        Parameters: Clone + ExactSizeIterator<Item = TokenWord>,
+        Replacement: ExactSizeIterator<Item = TokenWord>,
+    {
+        self.core
+            .as_mut()
+            .ok_or(PromotionError::Retired)?
+            .admit_mut()
+            .map_err(|error| match error {
+                StateError::GenerationInUse => PromotionError::GenerationInUse,
+                _ => PromotionError::AllocationFailed,
+            })?
+            .allocate_definition_from_iter(parameter_text, replacement_text)
+            .map_err(PromotionError::from)
+    }
+
     pub(crate) fn glue_value(&self, id: GlueId<G>) -> GlueSpec {
         self.core.as_ref().expect("live universe").admit().glue(id)
     }

@@ -116,6 +116,29 @@ impl<G> DefinitionArena<G> {
         parameter_text: &[TokenWord],
         replacement_text: &[TokenWord],
     ) -> Result<DefinitionId<G>, DefinitionAllocationError> {
+        self.allocate_from_iter(
+            parameter_text.iter().copied(),
+            replacement_text.iter().copied(),
+        )
+    }
+
+    /// Atomically publishes one definition from exact-size token streams.
+    ///
+    /// Promotion can thereby transform traced attempt words directly into
+    /// generation storage without allocating intermediate token vectors.
+    /// Both destination vectors reserve before the first iterator advances or
+    /// either logical length changes.
+    pub(crate) fn allocate_from_iter<Parameters, Replacement>(
+        &mut self,
+        parameter_text: Parameters,
+        replacement_text: Replacement,
+    ) -> Result<DefinitionId<G>, DefinitionAllocationError>
+    where
+        Parameters: Clone + ExactSizeIterator<Item = TokenWord>,
+        Replacement: ExactSizeIterator<Item = TokenWord>,
+    {
+        let parameter_len = parameter_text.len();
+        let replacement_len = replacement_text.len();
         let row_number = self
             .rows
             .len()
@@ -126,27 +149,26 @@ impl<G> DefinitionArena<G> {
         let replacement_start = self
             .words
             .len()
-            .checked_add(parameter_text.len())
+            .checked_add(parameter_len)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
         let final_word_len = replacement_start
-            .checked_add(replacement_text.len())
+            .checked_add(replacement_len)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
         u32::try_from(final_word_len).map_err(|_| DefinitionAllocationError::CapacityOverflow)?;
 
-        let parameter_span = TokenSpan::checked(self.words.len(), parameter_text.len())
+        let parameter_span = TokenSpan::checked(self.words.len(), parameter_len)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        let replacement_span = TokenSpan::checked(replacement_start, replacement_text.len())
+        let replacement_span = TokenSpan::checked(replacement_start, replacement_len)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
-        let parameters = MacroParameterPattern::from_words(parameter_text);
+        let parameters = MacroParameterPattern::from_word_iter(parameter_text.clone());
         let record = DefinitionRecord {
             parameter_text: parameter_span,
             replacement_text: replacement_span,
             parameters,
         };
 
-        let appended_word_len = parameter_text
-            .len()
-            .checked_add(replacement_text.len())
+        let appended_word_len = parameter_len
+            .checked_add(replacement_len)
             .ok_or(DefinitionAllocationError::CapacityOverflow)?;
         self.words
             .try_reserve(appended_word_len)
@@ -155,8 +177,8 @@ impl<G> DefinitionArena<G> {
             .try_reserve(1)
             .map_err(|_| DefinitionAllocationError::AllocationFailed)?;
 
-        self.words.extend_from_slice(parameter_text);
-        self.words.extend_from_slice(replacement_text);
+        self.words.extend(parameter_text);
+        self.words.extend(replacement_text);
         self.rows.push(record);
         Ok(DefinitionId {
             row: row_number,

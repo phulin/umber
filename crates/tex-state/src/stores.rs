@@ -247,6 +247,20 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             .allocate(parameter_text, replacement_text)
     }
 
+    pub(crate) fn allocate_definition_from_iter<Parameters, Replacement>(
+        &mut self,
+        parameter_text: Parameters,
+        replacement_text: Replacement,
+    ) -> Result<DefinitionId<G>, DefinitionAllocationError>
+    where
+        Parameters: Clone + ExactSizeIterator<Item = TokenWord>,
+        Replacement: ExactSizeIterator<Item = TokenWord>,
+    {
+        self.generation
+            .definitions_mut()
+            .allocate_from_iter(parameter_text, replacement_text)
+    }
+
     pub(crate) fn allocate_token_list(
         &mut self,
         words: &[TokenWord],

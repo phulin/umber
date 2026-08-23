@@ -1084,55 +1084,53 @@ impl<G> AttemptArena<G> {
     }
 
     /// Copies only declared roots and schema-declared definition children.
-    /// Dense relocation vectors exist only for this publication call.
+    ///
+    /// This is the multi-root cold preparation path. Its inline root staging
+    /// spills only when a declared batch exceeds four unique roots; work and
+    /// storage are proportional to that declaration, never to unrelated live
+    /// attempt rows. Ordinary one-definition promotion uses
+    /// [`Self::promote_definition`] and allocates no staging or receipt.
     pub(crate) fn promote(
         &self,
         universe: &mut Universe<G>,
         roots: AttemptEscapeRoots<'_>,
     ) -> Result<AttemptPromotion<G>, AttemptError> {
-        let mut token_relocation = vec![None; self.token_lists.len()];
-        let mut glue_relocation = vec![None; self.glue_values.len()];
-        let mut definition_relocation = vec![None; self.definitions.len()];
-        let mut provenance_relocation = vec![None; self.provenance.len()];
-        let mut token_scheduled = vec![false; self.token_lists.len()];
-        let mut glue_scheduled = vec![false; self.glue_values.len()];
-        let mut definition_scheduled = vec![false; self.definitions.len()];
-        let mut provenance_scheduled = vec![false; self.provenance.len()];
-        let mut token_sources = Vec::<(AttemptTokenListId, Vec<TokenWord>)>::new();
-        let mut glue_sources = Vec::<(AttemptGlueId, GlueSpec)>::new();
+        let mut token_sources =
+            smallvec::SmallVec::<[(AttemptTokenListId, Vec<TokenWord>); 4]>::new();
+        let mut glue_sources = smallvec::SmallVec::<[(AttemptGlueId, GlueSpec); 4]>::new();
         let mut definition_sources =
-            Vec::<(AttemptDefinitionId, Vec<TokenWord>, Vec<TokenWord>)>::new();
-        let mut provenance_sources = Vec::<(AttemptProvenanceId, OriginRecord)>::new();
+            smallvec::SmallVec::<[(AttemptDefinitionId, Vec<TokenWord>, Vec<TokenWord>); 4]>::new();
+        let mut provenance_sources =
+            smallvec::SmallVec::<[(AttemptProvenanceId, OriginRecord); 4]>::new();
 
         for &id in roots.token_lists {
-            self.collect_token_source(id, &mut token_scheduled, &mut token_sources)?;
+            self.validate_key(id.key)?;
+            self.token_words(id)?;
+            if !token_sources.iter().any(|(source, _)| *source == id) {
+                token_sources.push((id, self.semantic_words(id)?));
+            }
         }
         for &id in roots.glue {
             self.validate_key(id.key)?;
-            let scheduled = glue_scheduled
-                .get_mut(id.index())
-                .ok_or(AttemptError::InvalidCoordinate)?;
-            self.glue(id)?;
-            if !*scheduled {
-                *scheduled = true;
-                glue_sources.push((id, self.glue(id)?));
+            let glue = self.glue(id)?;
+            if !glue_sources.iter().any(|(source, _)| *source == id) {
+                glue_sources.push((id, glue));
             }
         }
         for &id in roots.definitions {
             self.validate_key(id.key)?;
-            let scheduled = definition_scheduled
-                .get_mut(id.index())
-                .ok_or(AttemptError::InvalidCoordinate)?;
             let row = self
                 .definitions
                 .get(id.index())
                 .copied()
                 .filter(|row| row.serial == id.serial)
                 .ok_or(AttemptError::InvalidCoordinate)?;
-            if *scheduled {
+            if definition_sources
+                .iter()
+                .any(|(source, _, _)| *source == id)
+            {
                 continue;
             }
-            *scheduled = true;
             let definition = row.value;
             // The two token ranges are schema-declared children. Definition
             // text is copied into DefinitionArena directly, not published as
@@ -1143,12 +1141,8 @@ impl<G> AttemptArena<G> {
         }
         for &id in roots.provenance {
             self.validate_key(id.key)?;
-            let scheduled = provenance_scheduled
-                .get_mut(id.index())
-                .ok_or(AttemptError::InvalidCoordinate)?;
             let record = self.provenance(id)?;
-            if !*scheduled {
-                *scheduled = true;
+            if !provenance_sources.iter().any(|(source, _)| *source == id) {
                 provenance_sources.push((id, record));
             }
         }
@@ -1161,75 +1155,99 @@ impl<G> AttemptArena<G> {
                     replacement_text,
                 },
             )
-            .collect::<Vec<_>>();
+            .collect::<smallvec::SmallVec<[_; 4]>>();
         let token_lists = token_sources
             .iter()
             .map(|(_, words)| TokenListPromotion { words })
-            .collect::<Vec<_>>();
+            .collect::<smallvec::SmallVec<[_; 4]>>();
         let glue_values = glue_sources
             .iter()
             .map(|(_, glue)| *glue)
-            .collect::<Vec<_>>();
+            .collect::<smallvec::SmallVec<[_; 4]>>();
         let provenance = provenance_sources
             .iter()
             .map(|(_, record)| *record)
-            .collect::<Vec<_>>();
+            .collect::<smallvec::SmallVec<[_; 4]>>();
         let receipt =
             universe.promote_values(&definitions, &token_lists, &glue_values, &provenance)?;
-
-        for ((source, _), destination) in token_sources.iter().zip(receipt.token_lists) {
-            token_relocation[source.index()] = Some(destination);
-        }
-        for ((source, _), destination) in glue_sources.iter().zip(receipt.glue) {
-            glue_relocation[source.index()] = Some(destination);
-        }
-        for ((source, _, _), destination) in definition_sources.iter().zip(receipt.definitions) {
-            definition_relocation[source.index()] = Some(destination);
-        }
-        for ((source, _), destination) in provenance_sources.iter().zip(receipt.provenance) {
-            provenance_relocation[source.index()] = Some(destination);
-        }
 
         Ok(AttemptPromotion {
             token_lists: roots
                 .token_lists
                 .iter()
-                .map(|id| token_relocation[id.index()].expect("declared root was promoted"))
+                .map(|id| {
+                    let index = token_sources
+                        .iter()
+                        .position(|(source, _)| source == id)
+                        .expect("declared token root was promoted");
+                    receipt.token_lists[index]
+                })
                 .collect(),
             glue: roots
                 .glue
                 .iter()
-                .map(|id| glue_relocation[id.index()].expect("declared root was promoted"))
+                .map(|id| {
+                    let index = glue_sources
+                        .iter()
+                        .position(|(source, _)| source == id)
+                        .expect("declared glue root was promoted");
+                    receipt.glue[index]
+                })
                 .collect(),
             definitions: roots
                 .definitions
                 .iter()
-                .map(|id| definition_relocation[id.index()].expect("declared root was promoted"))
+                .map(|id| {
+                    let index = definition_sources
+                        .iter()
+                        .position(|(source, _, _)| source == id)
+                        .expect("declared definition root was promoted");
+                    receipt.definitions[index]
+                })
                 .collect(),
             provenance: roots
                 .provenance
                 .iter()
-                .map(|id| provenance_relocation[id.index()].expect("declared root was promoted"))
+                .map(|id| {
+                    let index = provenance_sources
+                        .iter()
+                        .position(|(source, _)| source == id)
+                        .expect("declared provenance root was promoted");
+                    receipt.provenance[index]
+                })
                 .collect(),
         })
     }
 
-    fn collect_token_source(
+    /// Promotes one macro definition without arena-sized relocation tables,
+    /// temporary semantic-word vectors, or a heap-allocated receipt.
+    pub(crate) fn promote_definition(
         &self,
-        id: AttemptTokenListId,
-        scheduled: &mut [bool],
-        sources: &mut Vec<(AttemptTokenListId, Vec<TokenWord>)>,
-    ) -> Result<(), AttemptError> {
+        universe: &mut Universe<G>,
+        id: AttemptDefinitionId,
+    ) -> Result<DefinitionId<G>, AttemptError> {
         self.validate_key(id.key)?;
-        let scheduled = scheduled
-            .get_mut(id.index())
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        self.token_words(id)?;
-        if !*scheduled {
-            *scheduled = true;
-            sources.push((id, self.semantic_words(id)?));
-        }
-        Ok(())
+        let definition = self
+            .definitions
+            .get(id.index())
+            .copied()
+            .filter(|row| row.serial == id.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?
+            .value;
+        let parameter_text = self.token_words(definition.parameter_text)?;
+        let replacement_text = self.token_words(definition.replacement_text)?;
+        universe
+            .promote_definition_from_words(
+                parameter_text
+                    .iter()
+                    .copied()
+                    .map(TracedTokenWord::token_word),
+                replacement_text
+                    .iter()
+                    .copied()
+                    .map(TracedTokenWord::token_word),
+            )
+            .map_err(AttemptError::from)
     }
 
     fn semantic_words(&self, id: AttemptTokenListId) -> Result<Vec<TokenWord>, AttemptError> {

@@ -125,6 +125,57 @@ fn attempt_promotion_returns_mixed_roots_in_declared_order() {
     });
 }
 
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_single_definition_promotion_ignores_the_large_live_attempt_arena() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        for _ in 0..16_384 {
+            state
+                .attempt
+                .arena_mut()
+                .allocate_token_list([word('z')])
+                .expect("large unrelated attempt row");
+        }
+        let parameter = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('#')])
+            .expect("parameter text");
+        let replacement = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("replacement text");
+        let definition = state
+            .attempt
+            .arena_mut()
+            .allocate_definition(parameter, replacement)
+            .expect("definition");
+
+        // Grow the two generation-owned destination vectors before measuring;
+        // ordinary repeated promotions then reuse their retained capacity.
+        for _ in 0..17 {
+            state
+                .promote_attempt_definition(universe, definition)
+                .expect("warm definition promotion");
+        }
+        let owner = tex_state::measurement::HotCoreAllocationOwner::SemanticApply;
+        let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(owner);
+            for _ in 0..8 {
+                state
+                    .promote_attempt_definition(universe, definition)
+                    .expect("measured definition promotion");
+            }
+        }
+        let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+        assert_eq!(after.calls - before.calls, 0);
+        assert_eq!(after.requested_bytes - before.requested_bytes, 0);
+    });
+}
+
 #[test]
 fn foreign_attempt_root_rejection_is_mutation_free() {
     crate::test_harness::with_universe(|universe| {
