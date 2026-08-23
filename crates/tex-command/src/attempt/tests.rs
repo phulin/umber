@@ -694,3 +694,75 @@ fn preallocated_scanner_sink_survives_a_younger_operation_rollback() {
         .expect("completed retry closes the whole retired suffix");
     assert!(attempt.mark().is_empty());
 }
+
+#[test]
+fn deferred_child_keeps_the_original_operation_identity_and_drops_a_retired_return() {
+    let mut attempt = CommandAttempt::<()>::default();
+    let operation = attempt.begin_operation(0).expect("operation scope");
+    attempt
+        .active_operation
+        .as_mut()
+        .expect("active operation owner")
+        .set_return_activation(7, 11)
+        .expect("synthetic activation return");
+    let child = attempt.begin_child_scope().expect("scanner child");
+
+    let transfer = attempt
+        .defer_child_to_operation(child)
+        .expect("scanner takes the operation owner")
+        .expect("operation carried an activation return");
+    assert_eq!((transfer.0, transfer.1), (7, 11));
+    assert!(attempt.validate_operation(operation).is_ok());
+    assert_eq!(
+        attempt.clear_retired_operation_return(7, 12),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    attempt
+        .clear_retired_operation_return(7, 11)
+        .expect("the exact retired activation return is cleared");
+    assert!(matches!(
+        attempt.commit_operation(operation, None),
+        Ok(super::OperationCommit::Closed)
+    ));
+    assert!(attempt.is_empty());
+}
+
+#[test]
+fn foreign_deferred_child_is_rejected_without_consuming_the_live_operation() {
+    let mut attempt = CommandAttempt::<()>::default();
+    let operation = attempt.begin_operation(0).expect("operation scope");
+    let mut foreign = CommandAttempt::<()>::default();
+    let _foreign_operation = foreign.begin_operation(0).expect("foreign operation");
+    let foreign_child = foreign.begin_child_scope().expect("foreign child");
+
+    assert_eq!(
+        attempt.defer_child_to_operation(foreign_child),
+        Err(AttemptError::ForeignAttempt)
+    );
+    assert!(attempt.validate_operation(operation).is_ok());
+    assert_eq!(attempt.rollback_operation(operation), Ok(None));
+    assert!(attempt.is_empty());
+}
+
+#[test]
+fn rollback_truncates_a_child_that_inherited_the_operation_owner() {
+    let mut attempt = CommandAttempt::<()>::default();
+    let operation = attempt.begin_operation(0).expect("operation scope");
+    let child = attempt.begin_child_scope().expect("scanner child");
+    let rejected = attempt
+        .arena_mut()
+        .allocate_token_list([word('x')])
+        .expect("child scratch");
+    assert_eq!(
+        attempt.defer_child_to_operation(child),
+        Ok(None),
+        "the child directly inherits an operation with no macro return"
+    );
+
+    assert_eq!(attempt.rollback_operation(operation), Ok(None));
+    assert_eq!(
+        attempt.arena().token_words(rejected),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    assert!(attempt.is_empty());
+}

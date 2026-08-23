@@ -859,9 +859,23 @@ impl<G> CommandState<G> {
         match retired.scope {
             MacroScopeOwner::Owned(scope) => self.finish_attempt_child_scope(scope, false),
             MacroScopeOwner::Loaned(loan) => {
-                if let Some((parent_index, parent_identity, from, to)) = self
-                    .attempt
-                    .retire_loaned_macro(retired.index, retired.identity.0, loan)
+                let return_parent_live =
+                    loan.return_activation()
+                        .is_none_or(|(parent_index, parent_identity)| {
+                            self.parameters.activations.get(parent_index).is_some_and(
+                                |activation| {
+                                    activation.identity.0 == parent_identity
+                                        && matches!(&activation.scope, MacroScopeOwner::Loaned(_))
+                                },
+                            )
+                        });
+                if let Some((parent_index, parent_identity, from, to)) =
+                    self.attempt.retire_loaned_macro(
+                        retired.index,
+                        retired.identity.0,
+                        loan,
+                        return_parent_live,
+                    )
                 {
                     let roots = Arc::make_mut(&mut self.roots);
                     let parent = roots
@@ -910,28 +924,14 @@ impl<G> CommandState<G> {
         defer_to_operation: bool,
     ) -> Result<(), crate::AttemptError> {
         let Some((parent_index, parent_identity)) = scope.return_activation() else {
-            return if defer_to_operation {
-                self.attempt.defer_child_to_operation(scope)
-            } else if self.attempt.child_scope_is_top(&scope) {
-                self.attempt.close_child_scope(scope)
-            } else {
-                self.retire_local_parent_into_live_macro_child(scope)
-            };
+            return self.finish_unparented_attempt_scope(scope, defer_to_operation);
         };
         let roots = Arc::make_mut(&mut self.roots);
         let Some(parent) = roots.parameters.activations.get_mut(parent_index) else {
-            return if defer_to_operation {
-                self.attempt.defer_child_to_operation(scope)
-            } else {
-                self.attempt.close_child_scope(scope)
-            };
+            return self.finish_unparented_attempt_scope(scope, defer_to_operation);
         };
         if parent.identity.0 != parent_identity {
-            return if defer_to_operation {
-                self.attempt.defer_child_to_operation(scope)
-            } else {
-                self.attempt.close_child_scope(scope)
-            };
+            return self.finish_unparented_attempt_scope(scope, defer_to_operation);
         }
         let loan = match std::mem::replace(&mut parent.scope, MacroScopeOwner::Transition) {
             MacroScopeOwner::Loaned(loan) if loan.child() == scope.coordinate() => loan,
@@ -960,6 +960,52 @@ impl<G> CommandState<G> {
                 Err(error)
             }
         }
+    }
+
+    fn finish_unparented_attempt_scope(
+        &mut self,
+        scope: crate::attempt::OwnedAttemptScope,
+        defer_to_operation: bool,
+    ) -> Result<(), crate::AttemptError> {
+        // Successful scanner sinks were reserved by the logical parent before
+        // this scratch child opened. A nested synchronous scanner therefore
+        // closes directly to its stack-held parent, while an outer scanner
+        // transfers its sole capability to the operation until apply commits.
+        // A younger live macro child instead consumes the retired scanner.
+        if !self.attempt.child_scope_is_top(&scope) {
+            return self.retire_local_parent_into_live_macro_child(scope);
+        }
+        if defer_to_operation && self.attempt.child_scope_is_direct_operation_child(&scope) {
+            self.defer_scope_to_operation(scope)
+        } else {
+            self.attempt.close_child_scope(scope)
+        }
+    }
+
+    fn defer_scope_to_operation(
+        &mut self,
+        scope: crate::attempt::OwnedAttemptScope,
+    ) -> Result<(), crate::AttemptError> {
+        let Some((parent_index, parent_identity, from, to)) =
+            self.attempt.defer_child_to_operation(scope)?
+        else {
+            return Ok(());
+        };
+        let roots = Arc::make_mut(&mut self.roots);
+        let Some(parent) = roots
+            .parameters
+            .activations
+            .get_mut(parent_index)
+            .filter(|activation| activation.identity.0 == parent_identity)
+        else {
+            return self
+                .attempt
+                .clear_retired_operation_return(parent_index, parent_identity);
+        };
+        let MacroScopeOwner::Loaned(loan) = &mut parent.scope else {
+            return Err(crate::AttemptError::InvalidCoordinate);
+        };
+        loan.retarget_child(from, to)
     }
 
     fn retire_local_parent_into_live_macro_child(

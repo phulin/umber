@@ -677,6 +677,10 @@ impl<G> AttemptArena<G> {
     /// address or close the collapsed chain. If the parent remains live when
     /// the child retires, [`Self::return_loaned_parent`] consumes both values
     /// to reconstruct the sole parent capability.
+    #[expect(
+        clippy::result_large_err,
+        reason = "the error must return the move-only scope owner without boxing or heap allocation"
+    )]
     pub(crate) fn loan_owned_parent(
         &self,
         parent: OwnedAttemptScope,
@@ -709,6 +713,10 @@ impl<G> AttemptArena<G> {
     /// Validation is mutation-free. Successful return drops only the child's
     /// own suffix and restores the exact parent capability recorded by the
     /// move-only loan receipt.
+    #[expect(
+        clippy::result_large_err,
+        reason = "failed validation must return both move-only capabilities without boxing or allocation"
+    )]
     pub(crate) fn return_loaned_parent(
         &mut self,
         child: OwnedAttemptScope,
@@ -1583,6 +1591,7 @@ pub(crate) struct AttemptPromotion<G> {
 pub struct CommandAttempt<G> {
     arena: AttemptArena<G>,
     active_operation: Option<OwnedAttemptScope>,
+    active_operation_origin: Option<AttemptScopeCoordinate>,
     operation_macro_direct_child: Option<(AttemptScopeCoordinate, u32, u64)>,
     operation_macro_child: Option<(AttemptScopeCoordinate, u32, u64)>,
 }
@@ -1648,6 +1657,7 @@ impl<G> Default for CommandAttempt<G> {
         Self {
             arena: AttemptArena::default(),
             active_operation: None,
+            active_operation_origin: None,
             operation_macro_direct_child: None,
             operation_macro_child: None,
         }
@@ -1672,12 +1682,13 @@ impl<G> CommandAttempt<G> {
         &mut self,
         macro_depth: usize,
     ) -> Result<CommandAttemptMark, AttemptError> {
-        if self.active_operation.is_some() {
+        if self.active_operation.is_some() || self.active_operation_origin.is_some() {
             return Err(AttemptError::InvalidCoordinate);
         }
         let opening = self.arena.mark();
         let owner = self.arena.begin_owned_scope()?;
         let mark = CommandAttemptMark::new(opening, &owner, macro_depth)?;
+        self.active_operation_origin = Some(owner.coordinate());
         self.active_operation = Some(owner);
         self.operation_macro_direct_child = None;
         self.operation_macro_child = None;
@@ -1690,6 +1701,10 @@ impl<G> CommandAttempt<G> {
             .is_some_and(|operation| operation.is_direct_child_of(parent))
     }
 
+    #[expect(
+        clippy::result_large_err,
+        reason = "the error must return the move-only scope owner without boxing or heap allocation"
+    )]
     pub(crate) fn loan_activation_to_operation(
         &mut self,
         parent: OwnedAttemptScope,
@@ -1710,9 +1725,8 @@ impl<G> CommandAttempt<G> {
         if mark.operation.key != self.arena.key.0 {
             return Err(AttemptError::InvalidCoordinate);
         }
-        let owns_operation = self.active_operation.as_ref().is_some_and(|owner| {
-            owner.coordinate() == mark.operation || owner.owns_through(mark.operation)
-        });
+        let owns_operation =
+            self.active_operation.is_some() && self.active_operation_origin == Some(mark.operation);
         owns_operation
             .then_some(())
             .ok_or(AttemptError::InvalidCoordinate)
@@ -1738,6 +1752,7 @@ impl<G> CommandAttempt<G> {
             .active_operation
             .take()
             .ok_or(AttemptError::InvalidCoordinate)?;
+        self.active_operation_origin = None;
         let direct_child = self.operation_macro_direct_child.take();
         self.operation_macro_child = None;
         if let Some((_, _, child)) = surviving_child {
@@ -1776,6 +1791,7 @@ impl<G> CommandAttempt<G> {
             .active_operation
             .take()
             .ok_or(AttemptError::InvalidCoordinate)?;
+        self.active_operation_origin = None;
         self.operation_macro_child = None;
         self.operation_macro_direct_child = None;
         if operation.return_activation().is_some() {
@@ -1792,6 +1808,10 @@ impl<G> CommandAttempt<G> {
         self.arena.begin_owned_scope()
     }
 
+    #[expect(
+        clippy::result_large_err,
+        reason = "the error must return the move-only scope owner without boxing or heap allocation"
+    )]
     pub(crate) fn loan_activation_parent(
         &mut self,
         parent: OwnedAttemptScope,
@@ -1800,6 +1820,10 @@ impl<G> CommandAttempt<G> {
         self.arena.loan_owned_parent(parent, child)
     }
 
+    #[expect(
+        clippy::result_large_err,
+        reason = "failed validation must return both move-only capabilities without boxing or allocation"
+    )]
     pub(crate) fn return_activation_parent(
         &mut self,
         child: OwnedAttemptScope,
@@ -1808,6 +1832,13 @@ impl<G> CommandAttempt<G> {
         self.arena.return_loaned_parent(child, loan)
     }
 
+    #[cfg_attr(
+        test,
+        expect(
+            clippy::result_large_err,
+            reason = "test-only arena marks enlarge the move-only loan receipt; boxing would allocate on the production lifecycle path"
+        )
+    )]
     pub(crate) fn absorb_retired_parent_into_local_child(
         &mut self,
         child: &mut OwnedAttemptScope,
@@ -1854,6 +1885,7 @@ impl<G> CommandAttempt<G> {
         index: usize,
         identity: u64,
         loan: AttemptScopeLoan,
+        return_parent_live: bool,
     ) -> Option<(usize, u64, AttemptScopeCoordinate, AttemptScopeCoordinate)> {
         let coordinate = loan.parent();
         let mut retarget = None;
@@ -1861,10 +1893,16 @@ impl<G> CommandAttempt<G> {
             && operation.return_activation() == Some((index, identity))
         {
             let actual_child = operation.coordinate();
-            if let Some((parent_index, parent_identity)) = loan.return_activation() {
+            if return_parent_live
+                && let Some((parent_index, parent_identity)) = loan.return_activation()
+            {
                 retarget = Some((parent_index, parent_identity, coordinate, actual_child));
             }
-            operation.return_activation = loan.return_activation;
+            operation.return_activation = if return_parent_live {
+                loan.return_activation
+            } else {
+                None
+            };
         }
         let physical_child = self.operation_macro_child;
         if self.operation_macro_direct_child.is_some_and(
@@ -1912,17 +1950,51 @@ impl<G> CommandAttempt<G> {
         self.arena.top_scope == owner.serial
     }
 
+    pub(crate) fn child_scope_is_direct_operation_child(&self, child: &OwnedAttemptScope) -> bool {
+        self.active_operation
+            .as_ref()
+            .is_some_and(|operation| child.is_direct_child_of(operation))
+    }
+
     pub(crate) fn defer_child_to_operation(
         &mut self,
         mut child: OwnedAttemptScope,
-    ) -> Result<(), AttemptError> {
+    ) -> Result<Option<(usize, u64, AttemptScopeCoordinate, AttemptScopeCoordinate)>, AttemptError>
+    {
         self.arena.validate_top_owner(&child)?;
+        let parent = self
+            .active_operation
+            .as_ref()
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        self.arena.validate_owner(parent)?;
+        if !child.is_direct_child_of(parent) {
+            return Err(AttemptError::InvalidCoordinate);
+        }
         let parent = self
             .active_operation
             .take()
             .ok_or(AttemptError::InvalidCoordinate)?;
+        let from = parent.coordinate();
+        let return_activation = parent.return_activation();
         self.arena.handoff_owned_parent(parent, &mut child)?;
+        let to = child.coordinate();
         self.active_operation = Some(child);
+        Ok(return_activation.map(|(index, identity)| (index, identity, from, to)))
+    }
+
+    pub(crate) fn clear_retired_operation_return(
+        &mut self,
+        index: usize,
+        identity: u64,
+    ) -> Result<(), AttemptError> {
+        let operation = self
+            .active_operation
+            .as_mut()
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        if operation.return_activation() != Some((index, identity)) {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        operation.return_activation = None;
         Ok(())
     }
 
@@ -2049,6 +2121,7 @@ impl<G> CommandAttempt<G> {
         self.arena.mark().is_empty()
             && self.arena.top_scope == AttemptScopeSerial::ROOT
             && self.active_operation.is_none()
+            && self.active_operation_origin.is_none()
             && self.operation_macro_child.is_none()
     }
 }

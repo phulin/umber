@@ -637,7 +637,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }),
         );
         self.command
-            .discard_attempt_scope_suffix(scope)
+            .defer_attempt_scope_retirement(scope)
             .map_err(attempt_command_error)?;
         Ok(result)
     }

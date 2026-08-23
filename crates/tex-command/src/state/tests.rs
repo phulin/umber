@@ -496,7 +496,7 @@ fn failed_unpublished_macro_child_returns_ownership_before_operation_rollback() 
 }
 
 #[test]
-fn completed_nested_scanner_closes_to_its_synchronous_parent_scope() {
+fn nested_completed_scanners_defer_only_the_outer_owner_to_the_operation() {
     let mut state = CommandState::<()>::default();
     let operation = state.begin_attempt_operation();
     let parent_sink = state
@@ -517,12 +517,12 @@ fn completed_nested_scanner_closes_to_its_synchronous_parent_scope() {
         .expect("nested scanner scope");
 
     state
-        .discard_attempt_scope_suffix(child)
+        .defer_attempt_scope_retirement(child)
         .expect("nested scanner closes to the synchronous parent");
     assert_eq!(state.attempt_token_words(parent_sink), Ok(&[word('p')][..]));
     assert_eq!(state.attempt_token_words(child_sink), Ok(&[word('c')][..]));
     state
-        .discard_attempt_scope_suffix(parent)
+        .defer_attempt_scope_retirement(parent)
         .expect("parent scanner closes to the operation");
     state
         .commit_attempt_operation(operation)
@@ -561,7 +561,7 @@ fn completed_scanner_hands_ownership_to_its_live_macro_child() {
         );
 
         state
-            .discard_attempt_scope_suffix(scanner)
+            .defer_attempt_scope_retirement(scanner)
             .expect("scanner moves its close-through into the exact live child");
         state
             .commit_attempt_operation(operation)
