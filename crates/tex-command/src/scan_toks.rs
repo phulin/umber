@@ -565,7 +565,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )
             }
         };
+        let parent_watermark = self.command.active_scanner_watermark;
+        self.command.active_scanner_watermark = Some(
+            parent_watermark.unwrap_or_else(|| self.command.attempt.arena().empty_live_cursor()),
+        );
         let result = self.scan_toks_inner(config, &episode, phase);
+        self.command.active_scanner_watermark = parent_watermark;
         let result = match result {
             Ok(result) => result,
             Err(failure) if failure.error.is_resource_suspension() => {
@@ -774,6 +779,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 _ => unreachable!("ScanToksConfig admits no other grammar/opening pair"),
             },
         };
+        self.retain_active_scanner_token_list(parameter_text)?;
+        self.retain_active_scanner_token_buffer(replacement_progress.output)?;
         let replacement = if missing_left_brace {
             replacement_progress.output
         } else {
@@ -886,6 +893,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// representation; doubled hashes remain literal parameter characters.
     fn scan_parameter_text(&mut self) -> Result<ScannedParameterText, CommandError> {
         let output = self.begin_attempt_token_list()?;
+        self.retain_active_scanner_token_buffer(output)?;
         let mut next_parameter = 1_u8;
         let mut primary = OriginId::UNKNOWN;
         let mut malformed_parameter = false;
@@ -897,7 +905,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let token = command.spelling().semantic_token();
             if is_begin_group(token) {
                 return Ok(ScannedParameterText {
-                    tokens: self.finish_attempt_token_list(output)?,
+                    tokens: self.finish_active_scan_toks_output(output)?,
                     highest_parameter: next_parameter - 1,
                     hash_brace: None,
                     primary,
@@ -929,7 +937,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .context(context);
                 report.error().jump_out()?;
                 return Ok(ScannedParameterText {
-                    tokens: self.finish_attempt_token_list(output)?,
+                    tokens: self.finish_active_scan_toks_output(output)?,
                     highest_parameter: next_parameter - 1,
                     hash_brace: None,
                     primary,
@@ -946,7 +954,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             if is_begin_group(follower_token) {
                 self.push_attempt_token(output, follower.spelling())?;
                 return Ok(ScannedParameterText {
-                    tokens: self.finish_attempt_token_list(output)?,
+                    tokens: self.finish_active_scan_toks_output(output)?,
                     highest_parameter: next_parameter - 1,
                     hash_brace: Some(follower.spelling()),
                     primary,
@@ -1004,6 +1012,47 @@ impl<G> CommandProcessor<'_, '_, G> {
                 next_parameter += 1;
             }
         }
+    }
+
+    fn finish_active_scan_toks_output(
+        &mut self,
+        output: AttemptTokenBufferId,
+    ) -> Result<AttemptTokenListId, CommandError> {
+        self.finish_attempt_token_list(output)
+    }
+
+    fn retain_active_scanner_token_list(
+        &mut self,
+        list: AttemptTokenListId,
+    ) -> Result<(), CommandError> {
+        let mut watermark = self
+            .command
+            .active_scanner_watermark
+            .ok_or(CommandError::input_invariant())?;
+        self.command
+            .attempt
+            .arena()
+            .retain_token_list(&mut watermark, list)
+            .map_err(attempt_command_error)?;
+        self.command.active_scanner_watermark = Some(watermark);
+        Ok(())
+    }
+
+    fn retain_active_scanner_token_buffer(
+        &mut self,
+        buffer: AttemptTokenBufferId,
+    ) -> Result<(), CommandError> {
+        let mut watermark = self
+            .command
+            .active_scanner_watermark
+            .ok_or(CommandError::input_invariant())?;
+        self.command
+            .attempt
+            .arena()
+            .retain_token_buffer(&mut watermark, buffer)
+            .map_err(attempt_command_error)?;
+        self.command.active_scanner_watermark = Some(watermark);
+        Ok(())
     }
 
     /// TeX82 §477, "Scan and build the body of the token list".

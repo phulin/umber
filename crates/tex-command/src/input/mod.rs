@@ -353,7 +353,7 @@ fn project_token_cursor<G>(
     });
     if matches!(
         cursor.payload,
-        TokenPayload::MacroReplacement { .. } | TokenPayload::Argument { .. }
+        TokenPayload::MacroReplacement { .. } | TokenPayload::AttemptList { .. }
     ) {
         return None;
     }
@@ -363,7 +363,7 @@ fn project_token_cursor<G>(
                 project_token(hash, chunk.word(index)?.token()?, state)?;
             }
         }
-        TokenPayload::MacroReplacement { .. } | TokenPayload::Argument { .. } => {
+        TokenPayload::MacroReplacement { .. } | TokenPayload::AttemptList { .. } => {
             unreachable!("packed macro payloads fail closed above")
         }
     }
@@ -831,7 +831,7 @@ impl<G> InputState<G> {
             match &tokens.payload {
                 TokenPayload::Packed(chunk) => chunk.len(),
                 TokenPayload::MacroReplacement { len, .. } => *len as usize,
-                TokenPayload::Argument { len, .. } => *len as usize,
+                TokenPayload::AttemptList { len, .. } => *len as usize,
             }
         }
 
@@ -849,7 +849,7 @@ impl<G> InputState<G> {
                     .replacement_text()
                     .get(index)
                     .map(|word| word.semantic_token()),
-                TokenPayload::Argument { list, .. } => attempt
+                TokenPayload::AttemptList { list, .. } => attempt
                     .token_word(*list, index)
                     .ok()
                     .map(|word| word.semantic_token()),

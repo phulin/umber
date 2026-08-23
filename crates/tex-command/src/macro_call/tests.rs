@@ -23,6 +23,7 @@ fn word(ch: char) -> TracedTokenWord {
 fn arguments_are_completed_in_tex_parameter_order_and_live_in_the_attempt() {
     crate::test_harness::with_universe(|_universe| {
         let mut attempt = AttemptArena::<()>::default();
+        let opening = attempt.empty_live_cursor();
         let first = attempt.allocate_token_list([word('a')]).expect("first");
         let second = attempt.allocate_token_list([]).expect("second");
         let mut builder = MacroArgumentBuilder::default();
@@ -35,7 +36,9 @@ fn arguments_are_completed_in_tex_parameter_order_and_live_in_the_attempt() {
             })
         );
         builder.complete(2, second).expect("slot two");
-        let arguments = builder.finish(&mut attempt).expect("argument record");
+        let arguments = builder
+            .finish(&mut attempt, opening)
+            .expect("argument record");
         assert_eq!(
             attempt.arguments(arguments.record().expect("nonempty record")),
             Ok(&[first, second][..])

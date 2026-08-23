@@ -79,6 +79,7 @@ pub(crate) enum InputRetirementError {
         expected: MacroActivationId,
         actual: Option<MacroActivationId>,
     },
+    AttemptRootInvariant,
     NotRetainedVTemplate,
 }
 
@@ -229,6 +230,31 @@ impl<G> CommandState<G> {
         identity
     }
 
+    /// Pushes one attempt-local list while advancing the direct input-owner
+    /// watermark. The payload retains the preceding Copy value so exact-LIFO
+    /// retirement restores it without scanning the input stack.
+    pub(crate) fn push_attempt_list_level(
+        &mut self,
+        list: crate::attempt::AttemptTokenListId,
+        len: u32,
+        behavior: TokenBehavior,
+        retirement: RetirementBehavior,
+        trace: ReplayTrace,
+    ) -> Result<InputLevelId, crate::AttemptError> {
+        let prior = self.input_argument_watermark;
+        let mut watermark = prior;
+        self.attempt
+            .arena()
+            .extend_input_watermark(&mut watermark, list)?;
+        self.input_argument_watermark = watermark;
+        Ok(self.push_token_level(
+            TokenPayload::AttemptList { list, len, prior },
+            behavior,
+            retirement,
+            trace,
+        ))
+    }
+
     /// Applies TeX's `param_start` ownership rule to one `OutParameter`.
     ///
     /// The owner is the nearest macro-body level at or below the delivering
@@ -304,16 +330,18 @@ impl<G> CommandState<G> {
                 slot,
             })?
             .len();
-        let payload = TokenPayload::Argument {
-            list,
-            len: u32::try_from(len).expect("macro argument length exceeds u32"),
-        };
-        let identity = self.push_token_level(
-            payload,
-            TokenBehavior::Parameter,
-            RetirementBehavior::Pop,
-            ReplayTrace::MacroParameter { slot },
-        );
+        let identity = self
+            .push_attempt_list_level(
+                list,
+                u32::try_from(len).expect("macro argument length exceeds u32"),
+                TokenBehavior::Parameter,
+                RetirementBehavior::Pop,
+                ReplayTrace::MacroParameter { slot },
+            )
+            .map_err(|_| ParameterReplayError::ArgumentRangeOutsideBuffer {
+                activation: owner,
+                slot,
+            })?;
         Ok(OutParameterReplay::Pushed(identity))
     }
 
@@ -430,7 +458,14 @@ impl<G> CommandState<G> {
             });
         }
 
-        self.validate_macro_body_retirement(&cursor.behavior)?;
+        let retirement_opening = self.validate_macro_body_retirement(&cursor.behavior)?;
+        let retirement_live = retirement_opening
+            .map(|opening| {
+                self.macro_retirement_live_attempt_cursor()
+                    .map(|live| (opening, live))
+                    .map_err(|_| InputRetirementError::AttemptRootInvariant)
+            })
+            .transpose()?;
         let InputLevel::Tokens(cursor) = self
             .input
             .levels
@@ -439,7 +474,10 @@ impl<G> CommandState<G> {
         else {
             unreachable!("the inspected top level was a token cursor");
         };
-        self.finish_macro_body_retirement(&cursor.behavior);
+        if let TokenPayload::AttemptList { prior, .. } = &cursor.payload {
+            self.input_argument_watermark = *prior;
+        }
+        self.finish_macro_body_retirement(&cursor.behavior, retirement_live);
         let action = match cursor.retirement {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
@@ -490,7 +528,10 @@ impl<G> CommandState<G> {
                 trace: None,
             });
         };
-        self.finish_macro_body_retirement(&cursor.behavior);
+        if let TokenPayload::AttemptList { prior, .. } = &cursor.payload {
+            self.input_argument_watermark = *prior;
+        }
+        self.finish_macro_body_retirement(&cursor.behavior, None);
         let action = match cursor.retirement {
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
             RetirementBehavior::Pop
@@ -518,28 +559,44 @@ impl<G> CommandState<G> {
     fn validate_macro_body_retirement(
         &self,
         behavior: &TokenBehavior,
-    ) -> Result<(), InputRetirementError> {
+    ) -> Result<Option<crate::attempt::AttemptLiveCursor>, InputRetirementError> {
         let TokenBehavior::MacroBody(expected) = behavior else {
-            return Ok(());
+            return Ok(None);
         };
-        let actual = self
-            .parameters
-            .activations
-            .last()
-            .map(|activation| activation.identity);
-        if actual == Some(*expected) {
-            Ok(())
+        let actual = self.parameters.activations.last();
+        if actual.map(|activation| activation.identity) == Some(*expected) {
+            Ok(actual.and_then(|activation| activation.opening))
         } else {
             Err(InputRetirementError::MacroActivationOrder {
                 expected: *expected,
-                actual,
+                actual: actual.map(|activation| activation.identity),
             })
         }
     }
 
-    fn finish_macro_body_retirement(&mut self, behavior: &TokenBehavior) {
+    fn finish_macro_body_retirement(
+        &mut self,
+        behavior: &TokenBehavior,
+        reclaim: Option<(
+            crate::attempt::AttemptLiveCursor,
+            crate::attempt::AttemptLiveCursor,
+        )>,
+    ) {
         if matches!(behavior, TokenBehavior::MacroBody(_)) {
-            self.parameters.retire_last_activation();
+            let retired_opening = self.parameters.retire_last_activation();
+            if let Some((opening, live)) = reclaim {
+                debug_assert_eq!(retired_opening, Some(opening));
+                if let Some(arguments) = &mut self.pending_macro_arguments {
+                    arguments.absorb_retired_opening(opening);
+                }
+                if self.pending_macro_opening.is_some() {
+                    self.pending_macro_opening = Some(opening);
+                }
+                self.attempt
+                    .arena_mut()
+                    .truncate_macro_retirement(opening, live)
+                    .expect("macro retirement roots were validated before mutation");
+            }
         }
     }
 }

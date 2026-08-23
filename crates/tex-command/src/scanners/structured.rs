@@ -2675,15 +2675,16 @@ impl<G> CommandProcessor<'_, '_, G> {
         // by frozen outer `\\endwrite`; the write list and opening brace sit
         // above it exactly as TeX82's three `ins_list` calls do.
         let stopper_level = self.push_write_recovery([right_brace, endwrite], right_brace);
-        let write_level = self.command.push_token_level(
-            TokenPayload::Argument {
-                list: tokens,
-                len: u32::try_from(write_words).map_err(|_| CommandError::input_invariant())?,
-            },
-            TokenBehavior::Ordinary,
-            RetirementBehavior::Pop,
-            ReplayTrace::Stored(StoredReplayReason::Write),
-        );
+        let write_level = self
+            .command
+            .push_attempt_list_level(
+                tokens,
+                u32::try_from(write_words).map_err(|_| CommandError::input_invariant())?,
+                TokenBehavior::Ordinary,
+                RetirementBehavior::Pop,
+                ReplayTrace::Stored(StoredReplayReason::Write),
+            )
+            .map_err(|_| CommandError::input_invariant())?;
         // TeX82 §§323 and 1370 trace the named write_text list at
         // begin_token_list, before the opening-brace insertion and expanded
         // scan_toks can report an error. The whole write expansion runs
@@ -3811,15 +3812,16 @@ impl<G> CommandProcessor<'_, '_, G> {
             .token_words(shifted)
             .map_err(|_| CommandError::input_invariant())?
             .len();
-        let level = self.command.push_token_level(
-            TokenPayload::Argument {
-                list: shifted,
-                len: u32::try_from(shifted_len).map_err(|_| CommandError::input_invariant())?,
-            },
-            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
-            RetirementBehavior::Pop,
-            ReplayTrace::BackedUp,
-        );
+        let level = self
+            .command
+            .push_attempt_list_level(
+                shifted,
+                u32::try_from(shifted_len).map_err(|_| CommandError::input_invariant())?,
+                TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+                RetirementBehavior::Pop,
+                ReplayTrace::BackedUp,
+            )
+            .map_err(|_| CommandError::input_invariant())?;
         // `back_list` is a plain `begin_token_list`, not §325's `back_input`:
         // it pushes a backed-up level without the accompanying recovery
         // record that a backed-up raw delivery reports.

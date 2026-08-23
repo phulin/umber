@@ -6,7 +6,7 @@ use tex_state::DefinitionId;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
-use crate::attempt::AttemptTokenListId;
+use crate::attempt::{AttemptInputWatermark, AttemptTokenListId};
 use crate::macro_call::MacroActivationId;
 
 use super::{
@@ -179,8 +179,13 @@ pub(crate) enum TokenPayload<G> {
         definition: DefinitionId<G>,
         len: u32,
     },
-    /// One already materialized macro argument, replayed literally by range.
-    Argument { list: AttemptTokenListId, len: u32 },
+    /// One attempt-local token list, replayed literally by range.
+    AttemptList {
+        list: AttemptTokenListId,
+        len: u32,
+        /// Input-owned watermark before this exact-LIFO replay was pushed.
+        prior: AttemptInputWatermark,
+    },
 }
 
 impl<G> Clone for TokenPayload<G> {
@@ -191,9 +196,10 @@ impl<G> Clone for TokenPayload<G> {
                 definition: *definition,
                 len: *len,
             },
-            Self::Argument { list, len } => Self::Argument {
+            Self::AttemptList { list, len, prior } => Self::AttemptList {
                 list: *list,
                 len: *len,
+                prior: *prior,
             },
         }
     }
@@ -340,7 +346,7 @@ impl<G> TokenPayload<G> {
         match self {
             Self::Packed(chunk) => chunk.len(),
             Self::MacroReplacement { len, .. } => *len as usize,
-            Self::Argument { len, .. } => *len as usize,
+            Self::AttemptList { len, .. } => *len as usize,
         }
     }
 

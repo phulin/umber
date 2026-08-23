@@ -2102,7 +2102,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .replacement_text()
                 .get(index)
                 .map(|word| (TracedTokenWord::from_parts(*word, OriginId::UNKNOWN), None)),
-            TokenPayload::Argument { list, .. } => attempt
+            TokenPayload::AttemptList { list, .. } => attempt
                 .token_word(*list, index)
                 .ok()
                 .map(|spelling| (spelling, None)),

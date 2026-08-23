@@ -174,7 +174,7 @@ pub(crate) struct AttemptTokenBuilder {
 }
 
 /// Fixed-size rollback coordinates for every command-attempt table.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AttemptMark {
     key: NonZeroU64,
     traced_words: u32,
@@ -288,7 +288,7 @@ impl AttemptMark {
 /// neither a registry nor a retained root set: typed owners contribute their
 /// coordinates, schema children are followed immediately, and only the
 /// unreachable append-only suffix is reclaimed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AttemptLiveCursor(AttemptMark);
 
 impl AttemptLiveCursor {
@@ -312,6 +312,21 @@ impl AttemptLiveCursor {
             self.0.names = self.0.names.max(mark.names);
         }
     }
+}
+
+/// Componentwise high-water cursor for token lists owned by live parameter
+/// replay levels.
+///
+/// The input stack maintains this value incrementally at its exact LIFO push
+/// and pop boundaries. It contains only the four append-only tables reachable
+/// from an argument token list, so macro retirement can preserve input-owned
+/// values in O(1) without rescanning the stack or allocating side storage.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub(crate) struct AttemptInputWatermark {
+    traced_words: u32,
+    traced_origins: u32,
+    token_lists: u32,
+    provenance: u32,
 }
 
 /// Invalid foreign coordinates or bounded-capacity failure.
@@ -461,6 +476,14 @@ impl<G> AttemptArena<G> {
         Ok(())
     }
 
+    pub(crate) fn retain_live_cursor(
+        &self,
+        cursor: &mut AttemptLiveCursor,
+        live: AttemptLiveCursor,
+    ) -> Result<(), AttemptError> {
+        self.retain_mark(cursor, live.0)
+    }
+
     pub(crate) fn retain_token_list(
         &self,
         cursor: &mut AttemptLiveCursor,
@@ -489,6 +512,31 @@ impl<G> AttemptArena<G> {
             self.retain_provenance(cursor, *origin)?;
         }
         Ok(())
+    }
+
+    pub(crate) fn extend_input_watermark(
+        &self,
+        watermark: &mut AttemptInputWatermark,
+        id: AttemptTokenListId,
+    ) -> Result<(), AttemptError> {
+        let mut cursor = self.empty_live_cursor();
+        self.retain_token_list(&mut cursor, id)?;
+        watermark.traced_words = watermark.traced_words.max(cursor.0.traced_words);
+        watermark.traced_origins = watermark.traced_origins.max(cursor.0.traced_origins);
+        watermark.token_lists = watermark.token_lists.max(cursor.0.token_lists);
+        watermark.provenance = watermark.provenance.max(cursor.0.provenance);
+        Ok(())
+    }
+
+    pub(crate) fn retain_input_watermark(
+        &self,
+        cursor: &mut AttemptLiveCursor,
+        watermark: AttemptInputWatermark,
+    ) {
+        cursor.0.traced_words = cursor.0.traced_words.max(watermark.traced_words);
+        cursor.0.traced_origins = cursor.0.traced_origins.max(watermark.traced_origins);
+        cursor.0.token_lists = cursor.0.token_lists.max(watermark.token_lists);
+        cursor.0.provenance = cursor.0.provenance.max(watermark.provenance);
     }
 
     pub(crate) fn retain_argument_record(
@@ -564,6 +612,17 @@ impl<G> AttemptArena<G> {
     ) -> Result<(), AttemptError> {
         self.validate_mark(opening)?;
         live.include_mark(opening);
+        self.truncate_to_live(live)
+    }
+
+    /// Rejects a retired macro suffix after combining its cached typed
+    /// opening watermark with roots that remain live at exact-LIFO exit.
+    pub(crate) fn truncate_macro_retirement(
+        &mut self,
+        opening: AttemptLiveCursor,
+        mut live: AttemptLiveCursor,
+    ) -> Result<(), AttemptError> {
+        live.include_mark(opening.0);
         self.truncate_to_live(live)
     }
 

@@ -4,6 +4,7 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{CommandGroupError, CommandState};
+use crate::input::OutParameterReplay;
 use crate::macro_call::MacroArgumentBuilder;
 use crate::processor::AlignmentIdentity;
 use crate::{AttemptError, AttemptPromotionRoots};
@@ -314,6 +315,9 @@ fn live_pre_mark_macro_arguments_bound_suffix_reclamation() {
             .allocate_definition(&[], &[])
             .expect("macro definition");
         let name = universe.intern("outer").expect("macro name").symbol();
+        let opening = state
+            .macro_activation_opening_cursor()
+            .expect("opening roots");
         let retained = state
             .attempt
             .arena_mut()
@@ -322,7 +326,7 @@ fn live_pre_mark_macro_arguments_bound_suffix_reclamation() {
         let mut arguments = MacroArgumentBuilder::default();
         arguments.complete(1, retained).expect("first argument");
         let arguments = arguments
-            .finish(state.attempt.arena_mut())
+            .finish(state.attempt.arena_mut(), opening)
             .expect("argument record");
         let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
 
@@ -357,6 +361,9 @@ fn post_mark_macro_arguments_survive_commit_until_activation_retirement() {
             .expect("macro definition");
         let name = universe.intern("inner").expect("macro name").symbol();
         let mark = state.begin_attempt_operation();
+        let opening = state
+            .macro_activation_opening_cursor()
+            .expect("opening roots");
         let retained = state
             .attempt
             .arena_mut()
@@ -365,7 +372,7 @@ fn post_mark_macro_arguments_survive_commit_until_activation_retirement() {
         let mut arguments = MacroArgumentBuilder::default();
         arguments.complete(1, retained).expect("first argument");
         let arguments = arguments
-            .finish(state.attempt.arena_mut())
+            .finish(state.attempt.arena_mut(), opening)
             .expect("argument record");
         let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
 
@@ -394,6 +401,9 @@ fn scanner_rollback_preserves_post_mark_parameter_replay_roots() {
             .expect("macro definition");
         let name = universe.intern("inner").expect("macro name").symbol();
         let scanner_mark = state.attempt.arena().mark();
+        let opening = state
+            .macro_activation_opening_cursor()
+            .expect("opening roots");
         let retained = state
             .attempt
             .arena_mut()
@@ -402,12 +412,16 @@ fn scanner_rollback_preserves_post_mark_parameter_replay_roots() {
         let mut arguments = MacroArgumentBuilder::default();
         arguments.complete(1, retained).expect("first argument");
         let arguments = arguments
-            .finish(state.attempt.arena_mut())
+            .finish(state.attempt.arena_mut(), opening)
             .expect("argument record");
         let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
         state
             .replay_out_parameter(level, 1)
             .expect("parameter replay level");
+        assert_ne!(
+            state.input_argument_watermark,
+            crate::attempt::AttemptInputWatermark::default()
+        );
         let scratch = state
             .attempt
             .arena_mut()
@@ -420,6 +434,309 @@ fn scanner_rollback_preserves_post_mark_parameter_replay_roots() {
 
         assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
         assert!(state.attempt_token_words(scratch).is_err());
+    });
+}
+
+#[test]
+fn nested_macro_retirement_preserves_live_parameter_replay() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("nested").expect("macro name").symbol();
+
+        let outer_opening = state
+            .macro_activation_opening_cursor()
+            .expect("outer opening roots");
+        let argument = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('a')])
+            .expect("outer argument");
+        let mut arguments = MacroArgumentBuilder::default();
+        arguments.complete(1, argument).expect("outer slot");
+        let arguments = arguments
+            .finish(state.attempt.arena_mut(), outer_opening)
+            .expect("outer argument record");
+        let outer = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
+        let replay = state
+            .replay_out_parameter(outer, 1)
+            .expect("parameter replay");
+        let OutParameterReplay::Pushed(replay) = replay else {
+            panic!("outer parameter must push a replay level");
+        };
+
+        let inner_opening = state
+            .macro_activation_opening_cursor()
+            .expect("inner opening roots");
+        let inner_arguments = MacroArgumentBuilder::default()
+            .finish(state.attempt.arena_mut(), inner_opening)
+            .expect("empty inner argument record");
+        let inner =
+            state.push_macro_activation(name, definition, inner_arguments, OriginId::UNKNOWN, 0);
+        state
+            .retire_exhausted_input(inner)
+            .expect("inner body retires around outer replay");
+        assert_eq!(state.attempt_token_words(argument), Ok(&[word('a')][..]));
+
+        state
+            .retire_exhausted_input(replay)
+            .expect("parameter replay retires in LIFO order");
+        assert_eq!(
+            state.input_argument_watermark,
+            crate::attempt::AttemptInputWatermark::default()
+        );
+        state
+            .retire_exhausted_input(outer)
+            .expect("outer body retires after replay");
+        assert!(state.attempt.is_empty());
+    });
+}
+
+#[test]
+fn nested_macro_retirement_preserves_outer_arguments() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("nested").expect("macro name").symbol();
+
+        let outer_opening = state
+            .macro_activation_opening_cursor()
+            .expect("outer opening roots");
+        let outer = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('o')])
+            .expect("outer argument");
+        let mut outer_arguments = MacroArgumentBuilder::default();
+        outer_arguments.complete(1, outer).expect("outer slot");
+        let outer_arguments = outer_arguments
+            .finish(state.attempt.arena_mut(), outer_opening)
+            .expect("outer argument record");
+        let outer_level =
+            state.push_macro_activation(name, definition, outer_arguments, OriginId::UNKNOWN, 0);
+
+        let inner_opening = state
+            .macro_activation_opening_cursor()
+            .expect("inner opening roots");
+        let inner = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('i')])
+            .expect("inner argument");
+        let mut inner_arguments = MacroArgumentBuilder::default();
+        inner_arguments.complete(1, inner).expect("inner slot");
+        let inner_arguments = inner_arguments
+            .finish(state.attempt.arena_mut(), inner_opening)
+            .expect("inner argument record");
+        let inner_level =
+            state.push_macro_activation(name, definition, inner_arguments, OriginId::UNKNOWN, 0);
+
+        state
+            .retire_exhausted_input(inner_level)
+            .expect("inner body retires in LIFO order");
+        assert_eq!(state.attempt_token_words(outer), Ok(&[word('o')][..]));
+        assert!(state.attempt_token_words(inner).is_err());
+
+        state
+            .retire_exhausted_input(outer_level)
+            .expect("outer body retires after its child");
+        assert!(state.attempt.is_empty());
+    });
+}
+
+#[test]
+fn macro_retirement_preserves_a_live_scanner_builder() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("builder").expect("macro name").symbol();
+        let opening = state
+            .macro_activation_opening_cursor()
+            .expect("opening roots");
+        let argument = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('a')])
+            .expect("macro argument");
+        let mut arguments = MacroArgumentBuilder::default();
+        arguments.complete(1, argument).expect("argument slot");
+        let arguments = arguments
+            .finish(state.attempt.arena_mut(), opening)
+            .expect("argument record");
+        let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
+
+        let tokens = state
+            .attempt
+            .arena_mut()
+            .allocate_token_buffer()
+            .expect("live scanner builder");
+        state.transient.builders.push(super::LiveTokenBuilder {
+            identity: 7,
+            tokens,
+        });
+        let discarded = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("retired scratch");
+
+        state
+            .retire_exhausted_input(level)
+            .expect("macro body retires around live builder");
+        assert!(state.attempt.arena().token_buffer(tokens).is_ok());
+        assert!(state.attempt_token_words(discarded).is_err());
+        assert!(state.attempt_token_words(argument).is_err());
+
+        state.transient.builders.clear();
+        state
+            .reclaim_unreachable_attempt_suffix()
+            .expect("builder retirement releases final attempt row");
+        assert!(state.attempt.is_empty());
+    });
+}
+
+#[test]
+fn macro_retirement_preserves_completed_inner_arguments_before_activation() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("pending").expect("macro name").symbol();
+
+        let outer_opening = state
+            .macro_activation_opening_cursor()
+            .expect("outer opening roots");
+        let outer_argument = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('o')])
+            .expect("outer argument");
+        let mut outer_arguments = MacroArgumentBuilder::default();
+        outer_arguments
+            .complete(1, outer_argument)
+            .expect("outer slot");
+        let outer_arguments = outer_arguments
+            .finish(state.attempt.arena_mut(), outer_opening)
+            .expect("outer argument record");
+        let outer_level =
+            state.push_macro_activation(name, definition, outer_arguments, OriginId::UNKNOWN, 0);
+
+        let inner_opening = state
+            .macro_activation_opening_cursor()
+            .expect("inner opening roots");
+        let inner_argument = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('i')])
+            .expect("inner argument");
+        let mut inner_arguments = MacroArgumentBuilder::default();
+        inner_arguments
+            .complete(1, inner_argument)
+            .expect("inner slot");
+        let inner_arguments = inner_arguments
+            .finish(state.attempt.arena_mut(), inner_opening)
+            .expect("inner argument record");
+        state.pending_macro_arguments = Some(inner_arguments);
+
+        state
+            .retire_exhausted_input(outer_level)
+            .expect("outer retirement while inner arguments await activation");
+        assert_eq!(
+            state.attempt_token_words(inner_argument),
+            Ok(&[word('i')][..])
+        );
+        assert_eq!(
+            state.attempt_token_words(outer_argument),
+            Ok(&[word('o')][..])
+        );
+
+        let inner_arguments = state
+            .pending_macro_arguments
+            .take()
+            .expect("pending arguments survive outer retirement");
+        let inner_level =
+            state.push_macro_activation(name, definition, inner_arguments, OriginId::UNKNOWN, 0);
+        state
+            .retire_exhausted_input(inner_level)
+            .expect("inner retirement releases both physical prefixes");
+        assert!(state.attempt.is_empty());
+    });
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_long_macro_operation_retires_each_argument_without_allocation() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("long-op").expect("macro name").symbol();
+        let run = |state: &mut CommandState<_>| {
+            let opening = state
+                .macro_activation_opening_cursor()
+                .expect("opening roots");
+            let argument = state
+                .attempt
+                .arena_mut()
+                .allocate_token_list([word('x')])
+                .expect("macro argument");
+            let mut arguments = MacroArgumentBuilder::default();
+            arguments.complete(1, argument).expect("argument slot");
+            let arguments = arguments
+                .finish(state.attempt.arena_mut(), opening)
+                .expect("argument record");
+            let level =
+                state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
+            state
+                .retire_exhausted_input(level)
+                .expect("macro body retirement");
+            assert!(state.attempt.is_empty());
+        };
+
+        for _ in 0..64 {
+            run(&mut state);
+        }
+        let owners = [
+            tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
+            tex_state::measurement::HotCoreAllocationOwner::SemanticApply,
+            tex_state::measurement::HotCoreAllocationOwner::EvidencePublication,
+            tex_state::measurement::HotCoreAllocationOwner::InterpreterConstruction,
+            tex_state::measurement::HotCoreAllocationOwner::InterpreterBorrow,
+            tex_state::measurement::HotCoreAllocationOwner::ColdMaterialization,
+            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
+            tex_state::measurement::HotCoreAllocationOwner::GenerationBoundary,
+            tex_state::measurement::HotCoreAllocationOwner::ArenaGrowth,
+        ];
+        let before = owners.map(tex_state::measurement::hot_core_thread_allocation_measurement);
+        {
+            let _scope = tex_state::measurement::hot_core_allocation_scope(
+                tex_state::measurement::HotCoreAllocationOwner::DeliveryAndScan,
+            );
+            for _ in 0..8_192 {
+                run(&mut state);
+            }
+        }
+        let after = owners.map(tex_state::measurement::hot_core_thread_allocation_measurement);
+        let calls = after
+            .iter()
+            .zip(before.iter())
+            .map(|(after, before)| after.calls - before.calls)
+            .sum::<u64>();
+        let bytes = after
+            .iter()
+            .zip(before.iter())
+            .map(|(after, before)| after.requested_bytes - before.requested_bytes)
+            .sum::<u64>();
+        assert_eq!(calls, 0);
+        assert_eq!(bytes, 0);
     });
 }
 
