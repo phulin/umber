@@ -686,21 +686,30 @@ fn invalid_prevgraf_reports_after_diagnostics_from_its_value_scan() {
     // scan-time trace must therefore be published before the synchronous
     // `int_error` report.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
+        stores.set_interaction_mode(tex_state::InteractionMode::Batch);
         let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
-            br"\tracingonline=1\tracingcommands=2\prevgraf=-1\if 01X\else Y\fi\end",
+            br"\tracingonline=1\tracingcommands=2
+{\if 11 \prevgraf=-1\if 0123\errmessage{skipped}\else\relax\fi
+ \else\errmessage{outer skipped}\fi}\end",
         );
 
         run_to_end(&mut control, stores);
 
         let terminal = terminal_text(stores);
-        let false_trace = terminal
-            .find("{false}")
-            .unwrap_or_else(|| panic!("missing conditional trace: {terminal:?}"));
         let error = terminal
             .find("Bad \\prevgraf")
             .unwrap_or_else(|| panic!("missing prevgraf error: {terminal:?}"));
+        let prevgraf_trace = terminal[..error]
+            .rfind("\\prevgraf}")
+            .unwrap_or_else(|| panic!("missing prevgraf command trace: {terminal:?}"));
+        let false_trace = terminal[prevgraf_trace..error]
+            .find("{false}")
+            .map(|offset| prevgraf_trace + offset)
+            .unwrap_or_else(|| {
+                panic!("conditional result did not precede prevgraf error: {terminal:?}")
+            });
         assert!(
             false_trace < error,
             "prevgraf error overtook its completed value-scan trace: {terminal:?}"

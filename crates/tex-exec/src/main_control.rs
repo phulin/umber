@@ -8057,14 +8057,26 @@ impl<G> MainControl<G> {
             } => Some((*dump, incomplete_conditions.clone())),
             _ => None,
         };
-        if matches!(
+        let reports_synchronous_auxiliary_error = matches!(
             &scanned,
-            ColdOperation::OffSave(_)
-                | ColdOperation::AlignmentRecovery { .. }
-                | ColdOperation::Message { .. }
-                | ColdOperation::SetInteractionMode(_)
-                | ColdOperation::SetInteractionModeValue { .. }
-        ) {
+            ColdOperation::IllegalPrevDepth { .. } | ColdOperation::IllegalSpaceFactor { .. }
+        ) || matches!(
+            &scanned,
+            ColdOperation::PrevGraf { value } if *value < 0
+        ) || matches!(
+            &scanned,
+            ColdOperation::SpaceFactor { value } if !(1..=32767).contains(value)
+        );
+        if reports_synchronous_auxiliary_error
+            || matches!(
+                &scanned,
+                ColdOperation::OffSave(_)
+                    | ColdOperation::AlignmentRecovery { .. }
+                    | ColdOperation::Message { .. }
+                    | ColdOperation::SetInteractionMode(_)
+                    | ColdOperation::SetInteractionModeValue { .. }
+            )
+        {
             // TeX82 §§1030/1064: command tracing happens when the offending
             // command is fetched, before `off_save`/`align_error` prints its
             // balancing-token error. The trace is detached while scanning,
@@ -8086,6 +8098,13 @@ impl<G> MainControl<G> {
             // Otherwise the unconditional `print_ln` overtakes the detached
             // trace, moving TeX's blank line from after `\batchmode` to before
             // it and routing later output from the wrong partial-line state.
+            //
+            // §§1243--1244's auxiliary-assignment rejection arms likewise
+            // call the synchronous error reporter after their operand scan.
+            // A conditional expanded as the integer terminator has already
+            // completed both its command and boolean-result traces at this
+            // point, so publish the whole scan program before `int_error` or
+            // `report_illegal_case` can overtake it.
             stores
                 .world_mut()
                 .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
