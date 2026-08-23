@@ -3698,7 +3698,7 @@ impl World {
                     &log_line,
                     max_print_line,
                 );
-                if terminal == log && terminal_line == log_line {
+                if terminal == log {
                     if !terminal.is_empty() {
                         records.push(EffectRecord::StreamWrite {
                             sink: PrintSink::TerminalAndLog,

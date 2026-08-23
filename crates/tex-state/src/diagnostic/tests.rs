@@ -140,14 +140,12 @@ fn online_print_nl_breaks_a_terminal_partial_line() {
         diagnostic.print_nl("first");
         diagnostic.end(false);
         universe.world_mut().publish_diagnostic_effects(effects);
-        let sequences = universe.world().effect_sequences();
-        assert_eq!(universe.world().effect_records().len(), before + 2);
-        assert_eq!(sequences[before], sequences[before + 1]);
+        assert_eq!(universe.world().effect_records().len(), before + 1);
         assert_eq!(
             routed(universe),
             vec![
-                (PrintSink::Terminal, "term\nfirst\n".to_owned()),
-                (PrintSink::Log, "\nfirst\n".to_owned()),
+                (PrintSink::Terminal, "term".to_owned()),
+                (PrintSink::TerminalAndLog, "\nfirst\n".to_owned()),
             ]
         );
     });
@@ -202,7 +200,7 @@ fn scalar_printing_matches_tex_web() {
 }
 
 #[test]
-fn detached_publication_is_one_sequence_when_sink_offsets_diverge() {
+fn detached_publication_combines_equal_payloads_when_sink_offsets_diverge() {
     with_test_universe(|universe| {
         universe
             .assign_int_param(IntParam::TRACING_ONLINE, 1, AssignmentScope::Global)
@@ -220,9 +218,14 @@ fn detached_publication_is_one_sequence_when_sink_offsets_diverge() {
 
         assert_eq!(universe.world().effect_records().len(), before);
         universe.world_mut().publish_diagnostic_effects(effects);
-        let sequences = universe.world().effect_sequences();
-        assert_eq!(universe.world().effect_records().len(), before + 2);
-        assert_eq!(sequences[before], sequences[before + 1]);
+        assert_eq!(universe.world().effect_records().len(), before + 1);
+        assert_eq!(
+            &universe.world().effect_records()[before],
+            &EffectRecord::StreamWrite {
+                sink: PrintSink::TerminalAndLog,
+                text: "\ntrace\n".to_owned(),
+            }
+        );
     });
 }
 
