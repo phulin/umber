@@ -811,7 +811,7 @@ impl<G> CommandState<G> {
 
     /// Commits the exact direct-operation scope and any already-retired LIFO
     /// children. Persistent macro owners remain in the arena until their own
-    /// semantic retirement; no root census or coordinate search is needed.
+    /// exact LIFO semantic retirement.
     pub fn commit_attempt_operation(
         &mut self,
         operation: crate::CommandAttemptMark,

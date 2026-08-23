@@ -23,7 +23,7 @@ mod tests;
 static NEXT_ATTEMPT_KEY: AtomicU64 = AtomicU64::new(1);
 static NEXT_ATTEMPT_SERIAL: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 struct AttemptScopeSerial(NonZeroU64);
 
 impl AttemptScopeSerial {
@@ -477,6 +477,7 @@ struct AttemptRow<T> {
 pub(crate) struct AttemptArena<G> {
     key: AttemptKey,
     next_scope: AttemptScopeSerial,
+    committed_through: AttemptScopeSerial,
     scopes: Vec<OwnedAttemptScope>,
     traced_words: Vec<TracedTokenWord>,
     traced_origins: Vec<Option<AttemptProvenanceId>>,
@@ -505,6 +506,7 @@ impl<G> Default for AttemptArena<G> {
             next_scope: AttemptScopeSerial::ROOT
                 .checked_successor()
                 .expect("the root attempt scope has a successor"),
+            committed_through: AttemptScopeSerial::ROOT,
             scopes: Vec::new(),
             traced_words: Vec::new(),
             traced_origins: Vec::new(),
@@ -617,6 +619,7 @@ impl<G> AttemptArena<G> {
             return Err(AttemptError::InvalidCoordinate);
         }
         self.scopes[index].retirement = Some(AttemptScopeRetirement::Immediate { operation });
+        self.committed_through = operation.serial;
         self.close_retired_scope_tail()
     }
 
@@ -683,19 +686,9 @@ impl<G> AttemptArena<G> {
         };
         match retirement {
             AttemptScopeRetirement::Immediate { .. } => true,
-            AttemptScopeRetirement::AtOperationCommit { operation } => self
-                .scopes
-                .get(operation.slot as usize)
-                .is_some_and(|scope| {
-                    scope.key == operation.key
-                        && scope.serial == operation.serial
-                        && matches!(
-                            scope.retirement,
-                            Some(AttemptScopeRetirement::Immediate {
-                                operation: owner,
-                            }) if owner == operation
-                        )
-                }),
+            AttemptScopeRetirement::AtOperationCommit { operation } => {
+                operation.key == self.key.0 && operation.serial <= self.committed_through
+            }
         }
     }
 

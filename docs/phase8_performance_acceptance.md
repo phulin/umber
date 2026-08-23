@@ -63,24 +63,33 @@ terminal retirement.
 ## Authoritative fixed workload
 
 The numerical authority is the pinned pdfLaTeX build of arXiv `2606.12566`
-under the immutable TeX Live 2026 distribution and resource closure. The host
-environment is `SOURCE_DATE_EPOCH=1787080434` and `LC_ALL=C.UTF-8`. Inputs are
-accepted only at these identities:
+under a versioned TeX Live 2026 input tree and resource closure. The host
+environment is `SOURCE_DATE_EPOCH=1787080434` and `LC_ALL=C.UTF-8`. The
+reproducible benchmark fixture pins these input identities:
 
-- source SHA-256:
+- source archive SHA-256:
+  `05a491fc231c85c5827f1dd1b41f80c361f300898d2b3830601c121b0e6d8a2a`;
+- selected `ArXiv.tex` SHA-256:
   `816440f61d611fa57cef802e6f372b9337beef1cc4e48e5536d4bad1014ec537`;
-- format SHA-256:
-  `32ae8a46f86ecc3520b48ff6739fa413170f7b34c2263560d7d589abe1466a7b`;
-- distribution SHA-256:
-  `560ab65f2a4933879b05e47554a9d94434ec1e94ff8f6caa163d26cde7fe35bd`;
-- 105-key closure SHA-256:
-  `75d85bb12f8fa5eba0ae2a42daf73fd86c44852ecdc230196455b9aea24565b5`.
+- LaTeX source lock SHA-256:
+  `6b00b710b60d4fcf21b792abfb5446963ee58a55d654574248b0c8d62027098b`;
+- staged format-input tree SHA-256:
+  `5f04e640bdf337a8764e5e5310e1395356f0363f3a19100f87682c33f8c40a87`.
 
-The accepted output must preserve the declared semantic coordinates and output
-identity recorded by the pinned authority. The fixed budgets are no more than
-20 seconds wall time and 150 MiB peak RSS. Measurements are authoritative only
-in a quiet window after repository provisioning verifies the locked assets;
-default hosted resources are not a substitute.
+Each measurement receipt additionally records the exact current format,
+distribution manifest, and resolved resource-closure identities used by that
+run. Those are derived inputs for repeatability, not immutable historical
+Umber behavior. A correctness fix may deliberately change semantic
+coordinates, artifacts, snapshots, or the derived format and closure; the
+canonical correctness gates review that change, and performance comparisons
+then use repeated cold and warmed runs of the same newly recorded input tuple.
+Constructing that current LaTeX format is a separate preparation workload with
+a 2 GiB memory guard and 200,000,000-command fuel limit; its peak does not count
+as the document measurement.
+The fixed budgets are no more than 20 seconds wall time and 150 MiB peak RSS.
+Measurements are authoritative only in a quiet window after repository
+provisioning verifies the locked assets; an unrecorded default hosted resource
+is not a substitute.
 
 ## Reproducible gates
 

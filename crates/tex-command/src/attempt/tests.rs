@@ -633,3 +633,45 @@ fn deferred_scanner_result_survives_a_younger_immediate_retirement() {
         .expect("commit releases scanner result and operation");
     assert!(attempt.mark().is_empty());
 }
+
+#[test]
+fn preallocated_scanner_sink_survives_a_younger_operation_rollback() {
+    let mut attempt = AttemptArena::<()>::default();
+    let opening_operation = attempt.begin_owned_scope().expect("opening operation");
+    let scanner = attempt.begin_owned_scope().expect("scanner scope");
+    let output = attempt
+        .allocate_token_buffer()
+        .expect("scanner reserves its parent sink");
+    attempt
+        .commit_owned_operation(opening_operation)
+        .expect("scanner keeps the opening operation below it");
+
+    let rejected_retry = attempt.begin_owned_scope().expect("rejected retry");
+    let rejected = attempt
+        .allocate_token_list([word('x')])
+        .expect("retry-local scratch");
+    attempt
+        .rollback_owned_operation(rejected_retry)
+        .expect("retry suffix rolls back");
+    assert_eq!(attempt.token_buffer(output), Ok(&[][..]));
+    assert_eq!(
+        attempt.token_words(rejected),
+        Err(AttemptError::InvalidCoordinate)
+    );
+
+    let completed_retry = attempt.begin_owned_scope().expect("completed retry");
+    attempt
+        .push_buffer_token(output, word('r'))
+        .expect("retry writes through the scanner-owned sink");
+    let result = attempt
+        .finish_token_buffer(output)
+        .expect("parent sink finalizes after retry");
+    attempt
+        .defer_owned_scope_retirement(scanner, completed_retry)
+        .expect("result survives through retry commit");
+    assert_eq!(attempt.token_words(result), Ok(&[word('r')][..]));
+    attempt
+        .commit_owned_operation(completed_retry)
+        .expect("completed retry closes the whole retired suffix");
+    assert!(attempt.mark().is_empty());
+}

@@ -133,10 +133,22 @@ struct ScanToksConfig {
     status_visibility: ScannerStatusVisibility,
 }
 
+/// The two fixed mutable sinks owned by one `scan_toks` scope.
+///
+/// Both coordinates are reserved when the scope opens, before delivery can
+/// suspend and a younger direct-operation scope can be admitted. Nested macro
+/// retirement therefore never captures either parent sink.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ScanToksSinks {
+    parameter_text: AttemptTokenBufferId,
+    replacement_text: AttemptTokenBufferId,
+}
+
 /// Exact command-owned continuation of one host-suspended token collector.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PendingScanToks<G> {
     scope: crate::attempt::AttemptScopeCoordinate,
+    sinks: ScanToksSinks,
     config: ScanToksConfig,
     episode: ScannerEpisode,
     phase: PendingScanToksPhase<G>,
@@ -146,6 +158,7 @@ impl<G> Clone for PendingScanToks<G> {
     fn clone(&self) -> Self {
         Self {
             scope: self.scope,
+            sinks: self.sinks,
             config: self.config,
             episode: self.episode.clone(),
             phase: self.phase.clone(),
@@ -523,9 +536,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         mode: ScanToksMode,
     ) -> Result<ScannedToksBuffers, CommandError> {
         let config = ScanToksConfig::parse(mode);
-        let (scope, episode, phase) = match self.command.pending_scan_toks.pop() {
+        let (scope, sinks, episode, phase) = match self.command.pending_scan_toks.pop() {
             Some(pending) if pending.config == config => {
-                (pending.scope, pending.episode, pending.phase)
+                (pending.scope, pending.sinks, pending.episode, pending.phase)
             }
             Some(pending) => {
                 self.command.pending_scan_toks.push(pending);
@@ -536,12 +549,27 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .command
                     .begin_attempt_child_scope()
                     .map_err(attempt_command_error)?;
+                let sinks = match (|| {
+                    Ok::<_, CommandError>(ScanToksSinks {
+                        parameter_text: self.begin_attempt_token_list()?,
+                        replacement_text: self.begin_attempt_token_list()?,
+                    })
+                })() {
+                    Ok(sinks) => sinks,
+                    Err(error) => {
+                        self.command
+                            .discard_attempt_scope_suffix(scope)
+                            .map_err(attempt_command_error)?;
+                        return Err(error);
+                    }
+                };
                 let builder = TokenBuilderId(self.command.transient.next_builder_identity);
                 self.command.transient.next_builder_identity =
                     self.command.transient.next_builder_identity.wrapping_add(1);
                 let warning = ScannerWarning(builder.0);
                 (
                     scope,
+                    sinks,
                     self.begin_scanner_episode(
                         config.scanner_status(builder, warning),
                         config.status_visibility,
@@ -550,12 +578,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )
             }
         };
-        let result = self.scan_toks_inner(config, &episode, phase);
+        let result = self.scan_toks_inner(config, sinks, &episode, phase);
         let result = match result {
             Ok(result) => result,
             Err(failure) if failure.error.is_resource_suspension() => {
                 self.command.pending_scan_toks.push(PendingScanToks {
                     scope,
+                    sinks,
                     config,
                     episode,
                     phase: *failure.continuation,
@@ -634,6 +663,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn scan_toks_inner(
         &mut self,
         config: ScanToksConfig,
+        sinks: ScanToksSinks,
         episode: &ScannerEpisode,
         phase: PendingScanToksPhase<G>,
     ) -> Result<ScannedToksBuffers, ScanToksFailure<G>> {
@@ -678,8 +708,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             continuation: Box::new(PendingScanToksPhase::Opening),
                         })?;
                     let primary = opening.origin();
-                    let parameter_text = self.allocate_attempt_token_list([])?;
-                    let output = self.begin_attempt_token_list()?;
+                    let parameter_text = self.finish_attempt_token_list(sinks.parameter_text)?;
                     (
                         parameter_text,
                         None,
@@ -687,7 +716,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         primary,
                         false,
                         false,
-                        ReplacementProgress::new(output),
+                        ReplacementProgress::new(sinks.replacement_text),
                     )
                 }
                 (ScanToksGrammar::General, ScanToksOpening::Prevalidated { primary }) => {
@@ -724,8 +753,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         });
                     }
                     self.observe_expanded_delivery(&opening);
-                    let parameter_text = self.allocate_attempt_token_list([])?;
-                    let output = self.begin_attempt_token_list()?;
+                    let parameter_text = self.finish_attempt_token_list(sinks.parameter_text)?;
                     (
                         parameter_text,
                         None,
@@ -733,12 +761,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                         primary,
                         false,
                         false,
-                        ReplacementProgress::new(output),
+                        ReplacementProgress::new(sinks.replacement_text),
                     )
                 }
                 (ScanToksGrammar::MacroDefinition, ScanToksOpening::AfterParameterText) => {
                     let parameters =
-                        self.scan_parameter_text()
+                        self.scan_parameter_text(sinks.parameter_text)
                             .map_err(|error| ScanToksFailure {
                                 error,
                                 continuation: Box::new(PendingScanToksPhase::Opening),
@@ -756,7 +784,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         parameters.primary,
                         parameters.malformed_parameter,
                         parameters.missing_left_brace,
-                        ReplacementProgress::new(self.begin_attempt_token_list()?),
+                        ReplacementProgress::new(sinks.replacement_text),
                     )
                 }
                 _ => unreachable!("ScanToksConfig admits no other grammar/opening pair"),
@@ -872,8 +900,10 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// Scans the prefix before a macro replacement's compulsory opening
     /// brace.  Compact `Token::Param` values are the stored out-parameter
     /// representation; doubled hashes remain literal parameter characters.
-    fn scan_parameter_text(&mut self) -> Result<ScannedParameterText, CommandError> {
-        let output = self.begin_attempt_token_list()?;
+    fn scan_parameter_text(
+        &mut self,
+        output: AttemptTokenBufferId,
+    ) -> Result<ScannedParameterText, CommandError> {
         let mut next_parameter = 1_u8;
         let mut primary = OriginId::UNKNOWN;
         let mut malformed_parameter = false;
