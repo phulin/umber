@@ -3598,8 +3598,7 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 &mut geometry,
                 command.fuel,
-                &error_context,
-                current_line,
+                AlignmentFinishSite::new(&error_context, current_line),
             )?;
             schedule_aftergroup(command, stores, entry_aftergroup)?;
             schedule_aftergroup(command, stores, alignment_aftergroup)?;

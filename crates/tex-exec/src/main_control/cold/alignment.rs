@@ -473,6 +473,20 @@ pub(in crate::main_control) fn alignment_pack_spec(
     }
 }
 
+pub(in crate::main_control) struct AlignmentFinishSite<'a> {
+    error_context: &'a str,
+    current_line: u32,
+}
+
+impl<'a> AlignmentFinishSite<'a> {
+    pub(in crate::main_control) const fn new(error_context: &'a str, current_line: u32) -> Self {
+        Self {
+            error_context,
+            current_line,
+        }
+    }
+}
+
 pub(in crate::main_control) fn finish_replay_alignment<G>(
     active: &mut ActiveReplayAlignment<G>,
     modes: &mut ModeNest,
@@ -480,8 +494,7 @@ pub(in crate::main_control) fn finish_replay_alignment<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     fuel: &mut tex_command::CommandFuel,
-    error_context: &str,
-    current_line: u32,
+    site: AlignmentFinishSite<'_>,
 ) -> Result<(), ExecError> {
     finish_replay_alignment_row(active, modes, stores, diagnostic_effects, geometry, fuel)?;
     let mut alignment =
@@ -491,10 +504,10 @@ pub(in crate::main_control) fn finish_replay_alignment<G>(
     // `mode_line`, captured by §774's `push_nest`, and §812 restores the
     // enclosing diagnostic state after the finished alignment is appended.
     let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::new(
-        i32::try_from(current_line).unwrap_or(i32::MAX),
+        i32::try_from(site.current_line).unwrap_or(i32::MAX),
         -alignment.entry_line(),
         false,
-        error_context,
+        site.error_context,
     );
     finish_replay_alignment_with_origin(
         active,

@@ -8234,7 +8234,7 @@ impl<G> MainControl<G> {
                 .publish_diagnostic_effects(std::mem::take(command.diagnostic_effects));
             let mut stores = stores.command_context().expect("live generation");
             crate::vertical::build_page_if_outer_vertical_with_error_context(
-                &mut self.modes,
+                &self.modes,
                 &mut stores,
                 command.diagnostic_effects,
                 &context,

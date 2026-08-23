@@ -1067,15 +1067,20 @@ impl<'a, G> CommandContext<'a, G> {
             (1, Some(crate::node::Node::VList(node))) => ("vbox", node),
             _ => return "void".to_owned(),
         };
-        let abbreviated_children = self
+        let abbreviated_children = if self
             .page_node_list(node.children)
             .is_ok_and(|children| !children.is_empty())
-            .then_some(" []")
-            .unwrap_or("");
+        {
+            " []"
+        } else {
+            ""
+        };
         let glue_setting = box_glue_setting_text(node);
-        let shift = (node.shift.raw() != 0)
-            .then(|| format!(", shifted {}", crate::scaled::print_scaled(node.shift)))
-            .unwrap_or_default();
+        let shift = if node.shift.raw() != 0 {
+            format!(", shifted {}", crate::scaled::print_scaled(node.shift))
+        } else {
+            String::new()
+        };
         let subtype = match node.box_lr {
             crate::node::BoxLr::Normal => "",
             crate::node::BoxLr::Reversed => ", reversed",
