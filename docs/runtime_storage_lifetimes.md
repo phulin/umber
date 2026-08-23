@@ -28,6 +28,11 @@ runtime. It is the authority when another architecture document discusses a
 different runtime storage lifetime. It does not define a wire format or a
 host-resource policy.
 
+[Expansion memory lifetimes](expansion_memory_lifetimes.md) is the focused
+plain-language map from this normative end state to the current expansion,
+scanner, suspension, revision, and format implementation. Its retention audit
+labels current facts and migration gaps without weakening this contract.
+
 The central rule is that the lifetime of a value follows its semantic role.
 Mutable TeX state, immutable definitions, speculative execution data, page
 material, source evidence, and detached output have different owners and must

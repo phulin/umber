@@ -106,6 +106,11 @@ interning epochs, dense journaled TeX state, generation-scoped immutable
 definitions, operation and node arenas, promotion, checkpoints, compaction,
 provenance, and handle-free boundaries.
 
+`expansion_memory_lifetimes.md` maps that end-state contract onto the current
+expansion, scanner, input, suspension, incremental-candidate, and format code.
+It also records the source-audited retention classes and verified migration
+gaps; update it when an owner or exact reclamation point changes.
+
 `runtime_storage_contract_tests.md` maps the external TRIP/e-TRIP, tracer,
 artifact, CLI, format, retry, diagnostic, checkpoint, rollback, and incremental
 contracts that survive the runtime-storage rewrite and records the deleted

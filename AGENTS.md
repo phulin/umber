@@ -76,6 +76,9 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `tests/`: committed fixtures and parity test definitions.
 - `tests/corpus/pdf/`: pinned minimal pdfTeX references, deterministic Umber PDFs, normalized structure, and rendered-page parity fixtures.
 - `docs/`: architecture, phase, and design documents.
+- `docs/expansion_memory_lifetimes.md`: implementation map and retention audit
+  for expansion generations, durable values, scratch, scanners, suspension,
+  input, effects, and format ownership.
 - `scripts/`: local development scripts and versioned git hook templates.
 - `third_party/`: ignored reference downloads and external source archives.
 

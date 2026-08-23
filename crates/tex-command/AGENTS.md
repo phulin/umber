@@ -11,6 +11,11 @@ alignment delivery, and static profile dispatch. It depends on `tex-state` and
 must never depend on `tex-exec`; `tex-exec` consumes its completed
 unexpandable commands.
 
+`docs/expansion_memory_lifetimes.md` is the current implementation map and
+retention audit for command-state generations, execution scratch, macro and
+scanner nesting, input ownership, and suspension. Update it whenever this
+crate changes an owner or exact reclamation point.
+
 Host capabilities are borrow-scoped through `CommandHostContext` and must
 never enter snapshots, formats, durable summaries, or owned command state.
 Private state-machine modules must not be widened for compatibility with
