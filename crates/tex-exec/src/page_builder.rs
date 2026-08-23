@@ -571,12 +571,16 @@ fn update_glue_or_kern<G>(
 
 fn finite_page_shrink<G>(
     stores: &mut CommandContext<'_, G>,
-    _diagnostic_effects: &mut DiagnosticEffects,
+    diagnostic_effects: &mut DiagnosticEffects,
     mut spec: GlueSpec,
     diagnostic_context: &diagnostics::ExecutionDiagnosticContext,
 ) -> Result<GlueSpec, ExecError> {
     if spec.shrink_order != Order::Normal && spec.shrink.raw() != 0 {
-        diagnostics::report_page_infinite_shrinkage(stores, diagnostic_context)?;
+        diagnostics::report_page_infinite_shrinkage(
+            stores,
+            diagnostic_effects,
+            diagnostic_context,
+        )?;
         spec.shrink_order = Order::Normal;
     }
     Ok(spec)

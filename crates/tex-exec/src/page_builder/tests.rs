@@ -776,9 +776,20 @@ fn page_contribution_last_items_and_max_depth_matrix() {
 
 #[test]
 fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
+    // TeX82 §§1004--1006 test the first glue as a legal breakpoint and
+    // display its page cost before updating its measurements diagnoses the
+    // glue's infinite shrink. The operation-local trace must be published
+    // before the synchronous error dialogue without changing either event.
     crate::test_harness::with_nonstop_universe(|universe| {
         let mut stores = universe.command_context().expect("test state is admitted");
         params(&mut stores, 10_000, 10, 0);
+        stores
+            .assign_int_param(
+                IntParam::TRACING_PAGES,
+                1,
+                tex_state::AssignmentScope::Global,
+            )
+            .expect("parameter");
         stores.append_page_contribution(rule(1, 0));
         let bad = glue(&mut stores, 2, 0, Order::Normal, 5, Order::Fil);
         let good = glue(&mut stores, 3, 0, Order::Normal, 7, Order::Normal);
@@ -833,7 +844,11 @@ fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
             })
             .collect::<String>();
         let output = tex_state::print::without_line_breaks(&output);
-        assert!(output.contains("Infinite glue shrinkage found on current page"));
+        let page_cost = output.find("% t=").expect("page-break cost trace");
+        let infinite_shrink = output
+            .find("Infinite glue shrinkage found on current page")
+            .expect("page infinite-shrink error");
+        assert!(page_cost < infinite_shrink, "{output}");
         assert!(
             output.contains("l.27 published page continuation"),
             "{output}"

@@ -747,13 +747,15 @@ pub(crate) fn report_dimension_diagnostic<G>(
 /// glue or kern specified by node p>`.
 pub(crate) fn report_page_infinite_shrinkage<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
     // TeX82 §1004 reaches §82's `error` while handling the command that
     // contributed this glue. The command boundary detaches its already-
     // rendered display before this hot recovery path runs.
-    crate::error_report::report_error(
+    crate::error_report::report_ordered_error(
         stores,
+        diagnostic_effects,
         "Infinite glue shrinkage found on current page",
         &[
             "The page about to be output contains some infinitely",

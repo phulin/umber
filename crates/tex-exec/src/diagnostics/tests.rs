@@ -119,8 +119,12 @@ fn infinite_shrink_report_uses_only_detached_output_context() {
         let mut command = universe
             .command_context()
             .expect("admitted diagnostic state");
-        super::report_page_infinite_shrinkage(&mut command, &context)
-            .expect("nonstop mode recovers from the diagnostic");
+        super::report_page_infinite_shrinkage(
+            &mut command,
+            &mut DiagnosticEffects::new(),
+            &context,
+        )
+        .expect("nonstop mode recovers from the diagnostic");
         drop(command);
 
         let text = writes(universe)
