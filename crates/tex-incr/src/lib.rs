@@ -865,12 +865,13 @@ fn execute_plan<G>(
                 ));
             }
         }
-        // A revision candidate owns the complete process-level job frame. A
-        // fatal TeX outcome therefore still has to cross §1332 cleanup and
-        // produce one terminal detached completion; diagnostic-only callers
-        // use `step` when they need the captured fatal as an immediate error.
-        let step = CanonicalStepRunner::new(control, universe, ledger)
-            .step_completing_fatal(&mut sink, cancellation);
+        // TeX82 §93's `succumb` reaches §81's `jump_out`, but a revision
+        // candidate is still transactional: a fatal candidate must not be
+        // accepted as a normal detached output. `step` retains the captured
+        // source evidence and returns the fatal to the outer host, which may
+        // publish its diagnostic effects without publishing the revision.
+        let step =
+            CanonicalStepRunner::new(control, universe, ledger).step(&mut sink, cancellation);
         *failed_attempt_fuel = control.fuel_burned();
         match step {
             CanonicalStepResult::Progress(step)

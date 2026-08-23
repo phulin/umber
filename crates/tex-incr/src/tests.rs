@@ -105,19 +105,22 @@ fn cold_candidate_runs_canonical_job_start_before_root_input() {
 }
 
 #[test]
-fn complete_job_candidate_detaches_fatal_terminal_diagnostics() {
-    let mut session = session(
-        RevisionId::new(1),
-        r"\errorstopmode\undefinedcontrolsequence",
-    );
+fn unavailable_input_fatal_does_not_accept_the_revision() {
+    let mut session = session(RevisionId::new(1), r"\input absent \end");
 
-    let output = session
+    let error = session
         .cold()
-        .expect("a defined TeX fatal still closes the complete job");
-    let text = terminal_effect_text(&output);
-
-    assert!(text.contains("Undefined control sequence"), "{text:?}");
-    assert!(text.contains("Emergency stop"), "{text:?}");
+        .expect_err("an unavailable required input must reject the candidate");
+    let SessionError::Execute(error) = error else {
+        panic!("unavailable input returned the wrong error family: {error:?}");
+    };
+    assert_eq!(
+        error.as_fatal(),
+        Some(tex_command::FatalError::emergency_stop(
+            "job aborted, file error in nonstop mode"
+        ))
+    );
+    assert_eq!(session.revision(), RevisionId::new(1));
 }
 
 #[test]
