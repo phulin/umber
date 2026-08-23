@@ -3415,6 +3415,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .arena_mut()
                 .allocate_token_buffer()
                 .map_err(|_| CommandError::input_invariant())?;
+            // Both completed template sinks belong to this parent scanner.
+            // Reserve them before the first token demand: a macro whose final
+            // replacement token is the parameter marker remains live until
+            // the v-template's first fetch, and its exact child close must not
+            // reclaim the already-selected v-template sink.
+            let v_template = self
+                .command
+                .attempt
+                .arena_mut()
+                .allocate_token_buffer()
+                .map_err(|_| CommandError::input_invariant())?;
             loop {
                 let command = self
                     .get_preamble_token()?
@@ -3523,12 +3534,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             }
 
-            let v_template = self
-                .command
-                .attempt
-                .arena_mut()
-                .allocate_token_buffer()
-                .map_err(|_| CommandError::input_invariant())?;
             let ends_preamble = loop {
                 let command = self
                     .get_preamble_token()?

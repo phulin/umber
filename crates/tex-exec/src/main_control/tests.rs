@@ -3152,6 +3152,31 @@ fn alignment_v_template_continues_the_pending_ligkern_run() {
 }
 
 #[test]
+fn alignment_macro_ending_in_parameter_marker_preserves_the_v_template_sink() {
+    // TeX82 §§359 and 760: fetching a macro's final replacement token does
+    // not retire its input level until the next demand. Both template sinks
+    // therefore belong to the enclosing preamble scanner before expansion
+    // starts; retiring the macro at the first v-template token must not
+    // reclaim that parent-owned sink.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\def\parameter{##}\setbox0=\vbox{\halign{\span\parameter Z\cr A\cr}}\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        assert!(stores.copy_box_to_page(0).is_some());
+        assert!(
+            terminal_text(stores).is_empty(),
+            "{}",
+            terminal_text(stores)
+        );
+    });
+}
+
+#[test]
 fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
     // TeX82 §799 appends a finished `\valign` row with a plain horizontal
     // splice. The two row widths therefore total exactly 5pt in the enclosing
