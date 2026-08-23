@@ -37,9 +37,11 @@ use tex_state::{
     ResolvedSourceLocation, Universe, World, WorldError,
 };
 
+mod candidate_lease;
 mod history;
 mod trace;
 
+use candidate_lease::{CandidateLease, CandidateLeaseState};
 pub use history::{BoundaryKey, BoundaryRecord};
 use history::{HistoryComparison, compare_histories, prune_history};
 pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
@@ -344,6 +346,7 @@ pub struct RevisionTransaction {
     expansion_stats: ExpansionStats,
     generation: tex_exec::RetainedEngineGeneration,
     checkpoint_keys: Vec<tex_exec::RetainedCheckpointKey>,
+    _candidate_lease: CandidateLease,
 }
 
 impl RevisionTransaction {
@@ -361,6 +364,10 @@ impl RevisionTransaction {
     pub fn source(&self) -> &str {
         &self.source
     }
+
+    /// Rejects this completed candidate, dropping its current generation and
+    /// returning the session's candidate slot for immediate reuse.
+    pub fn reject(self) {}
 
     #[must_use]
     pub const fn completion(&self) -> &DetachedEngineCompletion {
@@ -446,6 +453,7 @@ pub struct RevisionCandidate {
     cumulative_fuel: u64,
     generation: Option<tex_exec::RetainedEngineGeneration>,
     runtime_key: Option<tex_exec::RetainedEngineAttachmentKey>,
+    candidate_lease: Option<CandidateLease>,
 }
 
 /// Result of driving a revision until it suspends or completes.
@@ -597,6 +605,10 @@ impl RevisionCandidate {
                 completion: &completed.completion,
             })
     }
+
+    /// Rejects this candidate, dropping any current generation and returning
+    /// the session's candidate slot for immediate reuse.
+    pub fn reject(self) {}
 }
 
 enum PlanExecution {
@@ -1236,6 +1248,7 @@ pub struct Session {
     /// this slot.
     prior_generation: Option<RetainedRevisionGeneration>,
     retired_generations: usize,
+    candidate_lease: Arc<CandidateLeaseState>,
 }
 
 impl Session {
@@ -1353,6 +1366,7 @@ impl Session {
             render_maps: RefCell::new(RenderMapCache::new(usize::MAX)),
             prior_generation: None,
             retired_generations: 0,
+            candidate_lease: CandidateLeaseState::new(),
         })
     }
 
@@ -1488,6 +1502,22 @@ impl Session {
     #[must_use]
     pub fn retained_generation_count(&self) -> usize {
         usize::from(self.prior_generation.is_some())
+    }
+
+    /// Number of reserved current-candidate generation slots.
+    ///
+    /// A newly issued candidate reserves its slot before lazily constructing
+    /// the generation, so this is an upper bound on current generations.
+    #[must_use]
+    pub fn current_candidate_generation_count(&self) -> usize {
+        usize::from(self.candidate_lease.is_claimed())
+    }
+
+    /// Upper bound on live prior-plus-current revision generations.
+    #[must_use]
+    pub fn occupied_generation_slot_count(&self) -> usize {
+        self.retained_generation_count()
+            .saturating_add(self.current_candidate_generation_count())
     }
 
     pub fn retained_revision_ids(&self) -> impl Iterator<Item = RevisionId> + '_ {
@@ -1628,6 +1658,7 @@ impl Session {
             .map(|image| DetachedFormatImage::try_from_bytes(image.as_bytes().to_vec()))
             .transpose()
             .map_err(SessionError::Format)?;
+        let candidate_lease = self.candidate_lease.claim()?;
         Ok(RevisionCandidate {
             session_output_id: self.output_id,
             session_epoch: self.session_epoch.clone(),
@@ -1659,6 +1690,7 @@ impl Session {
             cumulative_fuel: 0,
             generation: None,
             runtime_key: None,
+            candidate_lease: Some(candidate_lease),
         })
     }
 
@@ -1685,6 +1717,10 @@ impl Session {
             .generation
             .take()
             .ok_or(SessionError::CandidateNotComplete)?;
+        let candidate_lease = candidate
+            .candidate_lease
+            .take()
+            .expect("a live candidate owns its session lease");
         Ok(RevisionTransaction {
             session_output_id: candidate.session_output_id,
             base_revision: candidate.plan.base_revision,
@@ -1702,6 +1738,7 @@ impl Session {
             expansion_stats: ExpansionStats::default(),
             generation,
             checkpoint_keys: completion.checkpoint_keys,
+            _candidate_lease: candidate_lease,
         })
     }
 
@@ -2306,6 +2343,7 @@ pub enum SessionError {
     NonMonotonicRevision,
     InvalidEditRange,
     CandidateKindMismatch,
+    CandidateAlreadyLive,
     CandidateNotComplete,
     UnexpectedResource,
     ResourceNoProgress {
@@ -2346,6 +2384,9 @@ impl fmt::Display for SessionError {
             Self::NonMonotonicRevision => f.write_str("new revision id must increase"),
             Self::InvalidEditRange => f.write_str("edit range is outside UTF-8 boundaries"),
             Self::CandidateKindMismatch => f.write_str("candidate belongs to another session"),
+            Self::CandidateAlreadyLive => {
+                f.write_str("session already has a live revision candidate")
+            }
             Self::CandidateNotComplete => f.write_str("revision candidate is not complete"),
             Self::UnexpectedResource => f.write_str("resource fulfillment does not match"),
             Self::ResourceNoProgress { need, .. } => {

@@ -16,6 +16,9 @@ long-lived editor-session strategy over executor-named checkpoints.
 ## File Map
 
 - `Cargo.toml`: incremental driver dependencies and workspace lint policy.
+- `src/candidate_lease.rs` and `src/candidate_lease/tests.rs`: move-only,
+  zero-allocation current-candidate lease over the session-owned exclusive
+  slot and its repeated claim/release high-water control.
 - `src/history.rs`: handle-free named-boundary observations, convergence
   comparison, and prune-first durable-root selection policy.
 - `src/lib.rs`: revision/edit model, host-supplied resolver execution,

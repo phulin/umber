@@ -515,17 +515,28 @@ fn terminal_pdf_discovery_moves_exact_completion_through_acceptance() {
 }
 
 #[test]
-fn stale_transaction_does_not_change_newer_accepted_completion() {
+fn prepared_transaction_blocks_newer_candidate_until_rejected() {
     let original = page_source(10);
     let mut session = session(RevisionId::new(1), &original);
     session.cold().expect("baseline");
-    let stale = session
+    let rejected = session
         .prepare_revision_with_resolvers(
             RevisionId::new(2),
             edit(&session, 0..original.len(), &page_source(20)),
             &mut DirectResourceHost,
         )
         .expect("first transaction");
+    assert_eq!(session.occupied_generation_slot_count(), 2);
+    assert!(matches!(
+        session.advance(
+            RevisionId::new(2),
+            edit(&session, 0..original.len(), &page_source(30)),
+        ),
+        Err(SessionError::CandidateAlreadyLive)
+    ));
+    rejected.reject();
+    assert_eq!(session.occupied_generation_slot_count(), 1);
+
     let accepted = session
         .advance(
             RevisionId::new(2),
@@ -540,13 +551,6 @@ fn stale_transaction_does_not_change_newer_accepted_completion() {
         .collect::<Vec<_>>();
     let accepted_hash = session.content_hash();
 
-    assert!(matches!(
-        session.accept_revision(stale),
-        Err(SessionError::StaleRevision {
-            expected,
-            actual
-        }) if expected == RevisionId::new(2) && actual == RevisionId::new(1)
-    ));
     assert_eq!(session.revision(), RevisionId::new(2));
     assert_eq!(session.content_hash(), accepted_hash);
     assert_eq!(accepted.completion().effects(), accepted_effects);
@@ -735,12 +739,20 @@ fn rejection_drops_only_current_and_acceptance_drops_whole_prior() {
     assert!(prior.is_live());
     assert!(rejected_generation.is_live());
     assert_eq!(incremental.retained_generation_count(), 1);
+    assert_eq!(incremental.current_candidate_generation_count(), 1);
+    assert_eq!(incremental.occupied_generation_slot_count(), 2);
+    assert!(matches!(
+        incremental.start_cold_candidate(),
+        Err(SessionError::CandidateAlreadyLive)
+    ));
     drop(rejected);
     assert!(prior.is_live(), "rejection preserves prior wholesale");
     assert!(
         !rejected_generation.is_live(),
         "rejection drops current wholesale"
     );
+    assert_eq!(incremental.current_candidate_generation_count(), 0);
+    assert_eq!(incremental.occupied_generation_slot_count(), 1);
 
     let mut accepted = incremental
         .start_advance_candidate(RevisionId::new(2), edit(&incremental, 0..0, "\\relax "))
@@ -760,7 +772,66 @@ fn rejection_drops_only_current_and_acceptance_drops_whole_prior() {
     assert!(!prior.is_live(), "acceptance drops the former prior");
     assert!(current.is_live(), "current becomes the sole accepted prior");
     assert_eq!(incremental.retained_generation_count(), 1);
+    assert_eq!(incremental.current_candidate_generation_count(), 0);
+    assert_eq!(incremental.occupied_generation_slot_count(), 1);
     assert_eq!(incremental.retired_generation_count(), 1);
+}
+
+#[test]
+fn explicit_candidate_rejection_releases_generation_and_lease() {
+    let mut incremental = session(RevisionId::new(1), "\\relax\\end");
+    incremental.cold().expect("accepted prior");
+    let mut candidate = incremental
+        .start_advance_candidate(RevisionId::new(2), edit(&incremental, 0..0, "\\relax "))
+        .expect("candidate");
+    drive_synchronous_candidate(&mut candidate, &mut DirectResourceHost).expect("drive candidate");
+    let current = candidate
+        .generation
+        .as_ref()
+        .expect("current generation")
+        .witness();
+
+    candidate.reject();
+
+    assert!(!current.is_live());
+    assert_eq!(incremental.occupied_generation_slot_count(), 1);
+    incremental
+        .start_advance_candidate(RevisionId::new(2), edit(&incremental, 0..0, "\\relax "))
+        .expect("lease is immediately reusable")
+        .reject();
+}
+
+#[test]
+fn repeated_candidate_drop_keeps_generation_high_water_at_prior_plus_current() {
+    let mut incremental = session(RevisionId::new(1), "\\relax\\end");
+    incremental.cold().expect("accepted prior");
+    let prior = incremental
+        .prior_generation
+        .as_ref()
+        .expect("prior generation")
+        .generation
+        .witness();
+    let mut high_water = incremental.occupied_generation_slot_count();
+
+    for _ in 0..64 {
+        let mut candidate = incremental.start_cold_candidate().expect("candidate");
+        drive_synchronous_candidate(&mut candidate, &mut DirectResourceHost)
+            .expect("drive candidate");
+        let current = candidate
+            .generation
+            .as_ref()
+            .expect("current generation")
+            .witness();
+        high_water = high_water.max(incremental.occupied_generation_slot_count());
+        assert_eq!(incremental.occupied_generation_slot_count(), 2);
+        drop(candidate);
+        assert!(!current.is_live());
+        assert!(prior.is_live());
+        assert_eq!(incremental.occupied_generation_slot_count(), 1);
+    }
+
+    assert_eq!(high_water, 2);
+    assert_eq!(incremental.retired_generation_count(), 0);
 }
 
 /// Deterministic edit fuzzing is deliberately an explicit tier: it executes a
