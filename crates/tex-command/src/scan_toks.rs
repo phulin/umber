@@ -580,9 +580,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Err(failure) => {
                 self.finish_scanner_episode(episode);
                 self.command
-                    .attempt
-                    .arena_mut()
-                    .truncate(mark)
+                    .rollback_attempt_scanner_scratch(mark)
                     .map_err(attempt_command_error)?;
                 return Err(failure.error);
             }
@@ -1673,9 +1671,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Ok(tokens) => tokens,
             Err(error) => {
                 self.command
-                    .attempt
-                    .arena_mut()
-                    .truncate(mark)
+                    .rollback_attempt_scanner_scratch(mark)
                     .map_err(attempt_command_error)?;
                 return Err(error);
             }
@@ -1690,9 +1686,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Ok(tokens) => Ok(tokens),
             Err(error) => {
                 self.command
-                    .attempt
-                    .arena_mut()
-                    .truncate(mark)
+                    .rollback_attempt_scanner_scratch(mark)
                     .map_err(attempt_command_error)?;
                 Err(error)
             }

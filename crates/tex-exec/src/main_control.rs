@@ -3731,8 +3731,8 @@ impl<G> MainControl<G> {
             .expect("direct operation owns the top mode journal frame");
         if attempt == DirectAttemptDisposition::ReclaimUnreachable {
             self.command
-                .reclaim_attempt_operation(mark.attempt)
-                .expect("direct operation owns valid command-attempt coordinates");
+                .reclaim_unreachable_attempt_suffix()
+                .expect("committed operation retains valid command-attempt roots");
         }
     }
 

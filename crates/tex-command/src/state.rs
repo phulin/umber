@@ -765,6 +765,18 @@ impl<G> CommandState<G> {
         Ok(cursor)
     }
 
+    /// Rolls back one scanner's private suffix without discarding command
+    /// roots installed by nested expansion after the scanner opened.
+    pub(crate) fn rollback_attempt_scanner_scratch(
+        &mut self,
+        opening: crate::attempt::AttemptMark,
+    ) -> Result<(), crate::AttemptError> {
+        let live = self.live_attempt_cursor()?;
+        self.attempt
+            .arena_mut()
+            .truncate_scanner_scratch(opening, live)
+    }
+
     /// Reclaims only the attempt suffix unreachable from current command
     /// roots after validating the executor's opening operation mark.
     ///

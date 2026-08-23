@@ -291,6 +291,29 @@ impl AttemptMark {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct AttemptLiveCursor(AttemptMark);
 
+impl AttemptLiveCursor {
+    fn include_mark(&mut self, mark: AttemptMark) {
+        debug_assert_eq!(self.0.key, mark.key);
+        self.0.traced_words = self.0.traced_words.max(mark.traced_words);
+        self.0.traced_origins = self.0.traced_origins.max(mark.traced_origins);
+        self.0.token_scratch = self.0.token_scratch.max(mark.token_scratch);
+        self.0.origin_scratch = self.0.origin_scratch.max(mark.origin_scratch);
+        self.0.token_builders = self.0.token_builders.max(mark.token_builders);
+        self.0.token_lists = self.0.token_lists.max(mark.token_lists);
+        self.0.glue_values = self.0.glue_values.max(mark.glue_values);
+        self.0.definitions = self.0.definitions.max(mark.definitions);
+        self.0.argument_words = self.0.argument_words.max(mark.argument_words);
+        self.0.argument_records = self.0.argument_records.max(mark.argument_records);
+        self.0.token_buffers = self.0.token_buffers.max(mark.token_buffers);
+        self.0.provenance = self.0.provenance.max(mark.provenance);
+        #[cfg(test)]
+        {
+            self.0.name_bytes = self.0.name_bytes.max(mark.name_bytes);
+            self.0.names = self.0.names.max(mark.names);
+        }
+    }
+}
+
 /// Invalid foreign coordinates or bounded-capacity failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AttemptError {
@@ -530,6 +553,18 @@ impl<G> AttemptArena<G> {
         cursor: AttemptLiveCursor,
     ) -> Result<(), AttemptError> {
         self.truncate(cursor.0)
+    }
+
+    /// Rejects scanner-local scratch while preserving both the scanner's
+    /// opening prefix and command roots that became live after that prefix.
+    pub(crate) fn truncate_scanner_scratch(
+        &mut self,
+        opening: AttemptMark,
+        mut live: AttemptLiveCursor,
+    ) -> Result<(), AttemptError> {
+        self.validate_mark(opening)?;
+        live.include_mark(opening);
+        self.truncate_to_live(live)
     }
 
     #[must_use]

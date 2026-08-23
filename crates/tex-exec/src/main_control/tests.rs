@@ -5898,6 +5898,41 @@ fn production_batch_returns_after_a_world_effect() {
 }
 
 #[test]
+fn committed_fatal_command_reclaims_from_live_roots() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, &spanning_alignment_source(r"\i"));
+        let mut ledger = crate::OutputLedger::default();
+        let mut checkpoints = Vec::new();
+
+        let cancellation = crate::Cancellation::new();
+        let mut terminal = None;
+        for _ in 0..1_024 {
+            match crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+                .step_completing_fatal(&mut checkpoints, &cancellation)
+            {
+                crate::CanonicalStepResult::Completed(step) => {
+                    terminal = Some(step);
+                    break;
+                }
+                crate::CanonicalStepResult::Progress(_)
+                | crate::CanonicalStepResult::Committed(_) => {}
+                result => panic!("fatal command returned unexpected result: {result:?}"),
+            }
+        }
+
+        assert!(
+            matches!(terminal, Some(ReplayStep::End)),
+            "fatal command terminalizes from its live attempt roots: {terminal:?}"
+        );
+        assert_eq!(
+            control.fatal_error(),
+            Some(FatalError::confusion("256 spans"))
+        );
+    });
+}
+
+#[test]
 fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode() {
     // TeX82 §1135: `cs_error` diagnoses and ignores one stray `\endcsname`.
     for mode in [

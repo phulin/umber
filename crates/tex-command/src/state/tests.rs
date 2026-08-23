@@ -257,6 +257,56 @@ fn operation_discard_truncates_only_the_attempt_suffix() {
 }
 
 #[test]
+fn root_census_can_reclaim_below_a_stale_operation_mark() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let parameter = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('#')])
+            .expect("parameter text");
+        let replacement = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("replacement text");
+        let definition = state
+            .attempt
+            .arena_mut()
+            .allocate_definition(parameter, replacement)
+            .expect("definition");
+        let stale = state.begin_attempt_operation();
+        let durable = state
+            .promote_attempt_definition(universe, definition)
+            .expect("successful operation publishes its durable root");
+
+        state
+            .reclaim_unreachable_attempt_suffix()
+            .expect("typed roots define an empty live cursor");
+        assert!(matches!(
+            state.reclaim_attempt_operation(stale),
+            Err(AttemptError::InvalidCoordinate)
+        ));
+        assert!(matches!(
+            state.attempt.arena_mut().truncate(stale.attempt_mark()),
+            Err(AttemptError::InvalidCoordinate)
+        ));
+        state
+            .reclaim_unreachable_attempt_suffix()
+            .expect("successful commit does not require a stale opening mark");
+        assert!(state.attempt.is_empty());
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("admission")
+                .definition(durable)
+                .replacement_text(),
+            &[word('x').token_word()]
+        );
+    });
+}
+
+#[test]
 fn live_pre_mark_macro_arguments_bound_suffix_reclamation() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
@@ -332,6 +382,44 @@ fn post_mark_macro_arguments_survive_commit_until_activation_retirement() {
             .expect("retired suffix reclaims");
         assert!(state.attempt.is_empty());
         assert!(state.attempt_token_words(retained).is_err());
+    });
+}
+
+#[test]
+fn scanner_rollback_preserves_post_mark_parameter_replay_roots() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("inner").expect("macro name").symbol();
+        let scanner_mark = state.attempt.arena().mark();
+        let retained = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("new argument");
+        let mut arguments = MacroArgumentBuilder::default();
+        arguments.complete(1, retained).expect("first argument");
+        let arguments = arguments
+            .finish(state.attempt.arena_mut())
+            .expect("argument record");
+        let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
+        state
+            .replay_out_parameter(level, 1)
+            .expect("parameter replay level");
+        let scratch = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('z')])
+            .expect("scanner-local scratch");
+
+        state
+            .rollback_attempt_scanner_scratch(scanner_mark)
+            .expect("scanner rollback preserves nested command roots");
+
+        assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
+        assert!(state.attempt_token_words(scratch).is_err());
     });
 }
 
