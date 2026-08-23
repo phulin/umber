@@ -5822,6 +5822,59 @@ fn diagnostic_assignment_resumes_font_request_without_an_aggregate_savepoint() {
 }
 
 #[test]
+fn diagnostic_input_retry_reuses_the_retained_delivery_attempt() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(&mut control, br"\input child after");
+        assert!(matches!(
+            control
+                .diagnostic_expand_step(stores)
+                .expect("input request suspends"),
+            DiagnosticStepResult::Suspended(ResourceNeed::Input { ref name, .. })
+                if name == "child.tex"
+        ));
+
+        control.capabilities_mut().register_input(
+            "child.tex",
+            SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(
+                    &br"\def\frominput{IN}%
+\frominput
+"[..],
+                ),
+            ),
+        );
+        let mut characters = String::new();
+        for _ in 0..16 {
+            match control
+                .diagnostic_expand_step(stores)
+                .expect("retained input attempt resumes")
+            {
+                DiagnosticStepResult::Progress(DiagnosticStep::Token { spelling, .. }) => {
+                    if let Some(Token::Char { ch, .. }) = spelling.token() {
+                        characters.push(ch);
+                    }
+                }
+                DiagnosticStepResult::Progress(DiagnosticStep::Assignment) => {}
+                DiagnosticStepResult::Progress(DiagnosticStep::EndOfInput) => break,
+                DiagnosticStepResult::Suspended(need) => {
+                    panic!("registered input requested another resource: {need:?}")
+                }
+            }
+        }
+        assert_eq!(characters, "INafter ");
+        control
+            .capture_checkpoint(
+                crate::EngineBoundary::OuterParagraphEnd,
+                stores,
+                crate::ExecutionBudgetCounters::default(),
+            )
+            .expect("completed diagnostic input retry releases its attempt owner");
+    });
+}
+
+#[test]
 fn group_entry_local_restore_and_exit_open_no_aggregate_savepoint() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);

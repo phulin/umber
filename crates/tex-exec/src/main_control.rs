@@ -4846,6 +4846,13 @@ impl<G> MainControl<G> {
             .map(|continuation| match continuation {
                 PendingDiagnosticOperation::Prepared { attempt, .. }
                 | PendingDiagnosticOperation::Assignment { attempt, .. } => *attempt,
+            })
+            .or_else(|| {
+                // Expanded delivery can suspend before the diagnostic host
+                // owns a prepared or settled-command descriptor. Command
+                // state still owns the exact operation scope alongside that
+                // delivery continuation, so the retry must reuse it.
+                self.command.retained_attempt_operation().ok()
             });
         let operation_mark = self.begin_direct_operation(stores, retained_attempt);
         let mut diagnostic_effects = DiagnosticEffects::new();
