@@ -606,7 +606,7 @@ pub(crate) fn report_box255_not_emptied<G>(
 /// TeX82 §199's `box_error` tail after the caller's recoverable error.
 fn report_deleted_box<G>(
     stores: &mut CommandContext<'_, G>,
-    _diagnostic_effects: &mut DiagnosticEffects,
+    diagnostic_effects: &mut DiagnosticEffects,
     deleted: PageListId,
 ) {
     let dump = crate::node_dump::dump_page_list(
@@ -614,14 +614,17 @@ fn report_deleted_box<G>(
         deleted,
         crate::node_dump::DumpConfig::read(stores),
     );
-    // §199 is the synchronous continuation of the caller's live §82 report;
-    // it must finish before any later World-facing page-output report.
-    let mut diagnostic = stores.printer();
+    // §199 enters `begin_diagnostic` after the caller's live §82 report, so
+    // with nonpositive `\tracingonline` the deleted box is log-only even in
+    // an interactive mode. The next synchronous page-output reporter crosses
+    // the diagnostic-effects bridge before printing, preserving this tail's
+    // order without changing its canonical selector.
+    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     diagnostic
         .print_nl("The following box has been deleted:")
         .print_ln()
         .print_rendered(&dump);
-    diagnostic.print_nl("").print_ln();
+    diagnostic.end(true);
 }
 
 pub(crate) fn take_box255_node<G>(stores: &mut CommandContext<'_, G>) -> Result<Node, ExecError> {

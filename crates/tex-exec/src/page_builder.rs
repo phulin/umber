@@ -327,17 +327,16 @@ pub(crate) fn ensure_insertion_vbox<G>(
     // flushing the register. `show_box` starts with §182's structural newline.
     let text =
         crate::node_dump::dump_page_list(stores, list, crate::node_dump::DumpConfig::read(stores));
-    // This display is the middle of §993's synchronous `box_error`: it must
-    // precede any later §1009 error from the same page-building admission.
-    // Keeping only this continuation on the live printer preserves that
-    // ordering until recoverable ErrorReport itself becomes a detached
-    // program; no operation-local diagnostic may remain queued across it.
-    let mut diagnostic = stores.printer();
+    // §199's `box_error` tail is a diagnostic scope, not an ordinary live
+    // print. It is therefore log-only when `\tracingonline<=0`; later live
+    // reporters publish the operation-local collector at their explicit
+    // synchronous-print bridge, retaining the same detection order.
+    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
     diagnostic
         .print_nl("The following box has been deleted:")
         .print_ln()
         .print_rendered(&text);
-    diagnostic.print_nl("").print_ln();
+    diagnostic.end(true);
     // TeX82 §993 flushes the list and then assigns `box(n):=null` directly;
     // it does not call §275's `eq_define` or create a local save-stack entry.
     // Preserve the register's existing eq level while voiding its value.
