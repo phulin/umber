@@ -842,12 +842,13 @@ fn replay_text_transaction<G>(
     tokens: &[TokenWord],
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<Vec<u8>, ExecError> {
-    let snapshot = command
-        .state
-        .snapshot(stores)
-        .map_err(|_| ExecError::MissingToken {
-            context: "output replay snapshot",
-        })?;
+    let snapshot =
+        command
+            .state
+            .transient_snapshot(stores)
+            .map_err(|_| ExecError::MissingToken {
+                context: "output replay snapshot",
+            })?;
     let result = {
         let context = stores
             .command_context()
@@ -859,7 +860,7 @@ fn replay_text_transaction<G>(
     };
     command
         .state
-        .rollback(&snapshot, stores)
+        .rollback_transient(snapshot, stores)
         .map_err(|_| ExecError::MissingToken {
             context: "output replay rollback",
         })?;
@@ -872,12 +873,13 @@ fn replay_write_transaction<G>(
     tokens: &[TokenWord],
     diagnostics: &mut Vec<PendingDiagnostic<G>>,
 ) -> Result<crate::shipout::ExpandedWrite, ExecError> {
-    let snapshot = command
-        .state
-        .snapshot(stores)
-        .map_err(|_| ExecError::MissingToken {
-            context: "write replay snapshot",
-        })?;
+    let snapshot =
+        command
+            .state
+            .transient_snapshot(stores)
+            .map_err(|_| ExecError::MissingToken {
+                context: "write replay snapshot",
+            })?;
     let result = {
         let context = stores
             .command_context()
@@ -889,7 +891,7 @@ fn replay_write_transaction<G>(
     };
     command
         .state
-        .rollback(&snapshot, stores)
+        .rollback_transient(snapshot, stores)
         .map_err(|_| ExecError::MissingToken {
             context: "write replay rollback",
         })?;
@@ -1561,7 +1563,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
         let input_snapshot =
             command
                 .state
-                .snapshot(stores)
+                .transient_snapshot(stores)
                 .map_err(|_| ExecError::MissingToken {
                     context: "deferred write snapshot",
                 })?;
@@ -1627,7 +1629,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             .to_vec();
         command
             .state
-            .rollback(&input_snapshot, stores)
+            .rollback_transient(input_snapshot, stores)
             .map_err(|_| ExecError::MissingToken {
                 context: "deferred write rollback",
             })?;

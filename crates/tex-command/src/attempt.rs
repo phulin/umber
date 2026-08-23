@@ -52,6 +52,38 @@ impl AttemptKey {
     }
 }
 
+/// Direct coordinate of one owned scope record inside its attempt arena.
+///
+/// This is a non-owning command-state cursor. The arena's private
+/// [`OwnedAttemptScope`] row is the sole linear owner and is consumed exactly
+/// once by LIFO close. A copied stale cursor therefore cannot double-close;
+/// direct slot/serial validation rejects it before mutation.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct AttemptScopeCoordinate {
+    key: NonZeroU64,
+    slot: u32,
+    serial: AttemptScopeSerial,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AttemptScopeRetirement {
+    /// The semantic owner is exhausted and may close as soon as it reaches
+    /// the physical LIFO tail.
+    Immediate { operation: AttemptScopeCoordinate },
+    /// A scanner returned attempt-local output to its parent. The scope is
+    /// exhausted, but its suffix remains live until the owning operation
+    /// commits, even if a younger immediate child retires first.
+    AtOperationCommit { operation: AttemptScopeCoordinate },
+}
+
+impl AttemptScopeRetirement {
+    const fn operation(self) -> AttemptScopeCoordinate {
+        match self {
+            Self::Immediate { operation } | Self::AtOperationCommit { operation } => operation,
+        }
+    }
+}
+
 /// Linear capability owning one dynamically suspended attempt scope.
 ///
 /// A Rust lifetime cannot brand a scanner or macro frame which unwinds across
@@ -70,20 +102,7 @@ pub(crate) struct OwnedAttemptScope {
     /// The direct operation which observed this semantic owner retire.
     /// Rollback clears only matching ancestor flags; commit retires the
     /// operation scope and closes the now-contiguous LIFO tail.
-    retired_by: Option<AttemptScopeSerial>,
-}
-
-/// Direct coordinate of one owned scope record inside its attempt arena.
-///
-/// This is a non-owning command-state cursor. The arena's private
-/// [`OwnedAttemptScope`] row is the sole linear owner and is consumed exactly
-/// once by LIFO close. A copied stale cursor therefore cannot double-close;
-/// direct slot/serial validation rejects it before mutation.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct AttemptScopeCoordinate {
-    key: NonZeroU64,
-    slot: u32,
-    serial: AttemptScopeSerial,
+    retirement: Option<AttemptScopeRetirement>,
 }
 
 /// One attempt-local id whose child-scope brand cannot escape an HRTB
@@ -433,6 +452,22 @@ struct AttemptDefinition {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AttemptTokenStorage {
+    Range(AttemptRange),
+    /// A scanner result row is reserved with its parent-owned mutable sink.
+    /// Finalization points at that nonmoving sink without copying its words or
+    /// adding another heap owner.
+    Buffer(AttemptTokenBufferId),
+    PendingBuffer,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct AttemptTokenBuffer {
+    words: Vec<TracedTokenWord>,
+    result: AttemptTokenListId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AttemptRow<T> {
     serial: NonZeroU64,
     value: T,
@@ -448,12 +483,12 @@ pub(crate) struct AttemptArena<G> {
     token_scratch: Vec<TracedTokenWord>,
     origin_scratch: Vec<Option<AttemptProvenanceId>>,
     token_builders: Vec<AttemptTokenBuilder>,
-    token_lists: Vec<AttemptRow<AttemptRange>>,
+    token_lists: Vec<AttemptRow<AttemptTokenStorage>>,
     glue_values: Vec<AttemptRow<GlueSpec>>,
     definitions: Vec<AttemptRow<AttemptDefinition>>,
     argument_words: Vec<AttemptTokenListId>,
     argument_records: Vec<AttemptRow<AttemptRange>>,
-    token_buffers: Vec<AttemptRow<Vec<TracedTokenWord>>>,
+    token_buffers: Vec<AttemptRow<AttemptTokenBuffer>>,
     recycled_token_buffers: Vec<Vec<TracedTokenWord>>,
     #[cfg(test)]
     name_bytes: Vec<u8>,
@@ -508,7 +543,7 @@ impl<G> AttemptArena<G> {
             parent: self.current_scope(),
             opening,
             close_through: opening,
-            retired_by: None,
+            retirement: None,
         };
         self.scopes
             .try_reserve(1)
@@ -554,7 +589,8 @@ impl<G> AttemptArena<G> {
         coordinate: AttemptScopeCoordinate,
         operation: AttemptScopeCoordinate,
     ) -> Result<(), AttemptError> {
-        self.defer_owned_scope_retirement(coordinate, operation)?;
+        let index = self.validate_retirement(coordinate, operation)?;
+        self.scopes[index].retirement = Some(AttemptScopeRetirement::Immediate { operation });
         self.close_retired_scope_tail()
     }
 
@@ -565,14 +601,9 @@ impl<G> AttemptArena<G> {
         coordinate: AttemptScopeCoordinate,
         operation: AttemptScopeCoordinate,
     ) -> Result<(), AttemptError> {
-        let index = self.validate_scope_coordinate(coordinate)?;
-        let operation_index = self.validate_scope_coordinate(operation)?;
-        if self.scopes[operation_index].retired_by.is_some()
-            || self.scopes[index].retired_by.is_some()
-        {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        self.scopes[index].retired_by = Some(operation.serial);
+        let index = self.validate_retirement(coordinate, operation)?;
+        self.scopes[index].retirement =
+            Some(AttemptScopeRetirement::AtOperationCommit { operation });
         Ok(())
     }
 
@@ -582,10 +613,10 @@ impl<G> AttemptArena<G> {
         operation: AttemptScopeCoordinate,
     ) -> Result<(), AttemptError> {
         let index = self.validate_scope_coordinate(operation)?;
-        if self.scopes[index].retired_by.is_some() {
+        if self.scopes[index].retirement.is_some() {
             return Err(AttemptError::InvalidCoordinate);
         }
-        self.scopes[index].retired_by = Some(operation.serial);
+        self.scopes[index].retirement = Some(AttemptScopeRetirement::Immediate { operation });
         self.close_retired_scope_tail()
     }
 
@@ -598,8 +629,11 @@ impl<G> AttemptArena<G> {
         let index = self.validate_scope_coordinate(operation)?;
         let opening = self.scopes[index].opening;
         for scope in &mut self.scopes[..index] {
-            if scope.retired_by == Some(operation.serial) {
-                scope.retired_by = None;
+            if scope
+                .retirement
+                .is_some_and(|retirement| retirement.operation() == operation)
+            {
+                scope.retirement = None;
             }
         }
         self.truncate(opening)
@@ -616,11 +650,7 @@ impl<G> AttemptArena<G> {
     }
 
     fn close_retired_scope_tail(&mut self) -> Result<(), AttemptError> {
-        while self
-            .scopes
-            .last()
-            .is_some_and(|scope| scope.retired_by.is_some())
-        {
+        while self.tail_scope_is_reclaimable() {
             let close_through = self
                 .scopes
                 .last()
@@ -630,6 +660,43 @@ impl<G> AttemptArena<G> {
             self.truncate(close_through)?;
         }
         Ok(())
+    }
+
+    fn validate_retirement(
+        &self,
+        coordinate: AttemptScopeCoordinate,
+        operation: AttemptScopeCoordinate,
+    ) -> Result<usize, AttemptError> {
+        let index = self.validate_scope_coordinate(coordinate)?;
+        let operation_index = self.validate_scope_coordinate(operation)?;
+        if self.scopes[operation_index].retirement.is_some()
+            || self.scopes[index].retirement.is_some()
+        {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        Ok(index)
+    }
+
+    fn tail_scope_is_reclaimable(&self) -> bool {
+        let Some(retirement) = self.scopes.last().and_then(|scope| scope.retirement) else {
+            return false;
+        };
+        match retirement {
+            AttemptScopeRetirement::Immediate { .. } => true,
+            AttemptScopeRetirement::AtOperationCommit { operation } => self
+                .scopes
+                .get(operation.slot as usize)
+                .is_some_and(|scope| {
+                    scope.key == operation.key
+                        && scope.serial == operation.serial
+                        && matches!(
+                            scope.retirement,
+                            Some(AttemptScopeRetirement::Immediate {
+                                operation: owner,
+                            }) if owner == operation
+                        )
+                }),
+        }
     }
 
     pub(crate) fn validate_scope_coordinate(
@@ -763,7 +830,8 @@ impl<G> AttemptArena<G> {
                 .token_buffers
                 .pop()
                 .expect("attempt token-buffer suffix is nonempty")
-                .value;
+                .value
+                .words;
             buffer.clear();
             if buffer.capacity() != 0 {
                 self.recycled_token_buffers.push(buffer);
@@ -891,7 +959,7 @@ impl<G> AttemptArena<G> {
         self.token_builders.pop();
         self.token_lists.push(AttemptRow {
             serial: id.serial,
-            value: range,
+            value: AttemptTokenStorage::Range(range),
         });
         Ok(id)
     }
@@ -923,10 +991,13 @@ impl<G> AttemptArena<G> {
         let row = self
             .token_lists
             .get(id.index())
-            .copied()
             .filter(|row| row.serial == id.serial)
             .ok_or(AttemptError::InvalidCoordinate)?;
-        row.value.resolve(&self.traced_words)
+        match &row.value {
+            AttemptTokenStorage::Range(range) => range.resolve(&self.traced_words),
+            AttemptTokenStorage::Buffer(buffer) => self.token_buffer(*buffer),
+            AttemptTokenStorage::PendingBuffer => Err(AttemptError::InvalidCoordinate),
+        }
     }
 
     pub(crate) fn token_word(
@@ -986,22 +1057,31 @@ impl<G> AttemptArena<G> {
         index: usize,
     ) -> Result<AttemptOrigin, AttemptError> {
         self.validate_key(id.key)?;
-        let range = self
+        let storage = &self
             .token_lists
             .get(id.index())
-            .copied()
             .filter(|row| row.serial == id.serial)
             .ok_or(AttemptError::InvalidCoordinate)?
             .value;
-        if index >= range.len as usize {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        let absolute = range.start as usize + index;
-        match self.traced_origins[absolute] {
-            Some(origin) => Ok(AttemptOrigin::Local(origin)),
-            None => Ok(AttemptOrigin::Admitted(
-                self.traced_words[absolute].origin(),
-            )),
+        match storage {
+            AttemptTokenStorage::Range(range) => {
+                if index >= range.len as usize {
+                    return Err(AttemptError::InvalidCoordinate);
+                }
+                let absolute = range.start as usize + index;
+                match self.traced_origins[absolute] {
+                    Some(origin) => Ok(AttemptOrigin::Local(origin)),
+                    None => Ok(AttemptOrigin::Admitted(
+                        self.traced_words[absolute].origin(),
+                    )),
+                }
+            }
+            AttemptTokenStorage::Buffer(buffer) => self
+                .token_buffer(*buffer)?
+                .get(index)
+                .map(|word| AttemptOrigin::Admitted(word.origin()))
+                .ok_or(AttemptError::InvalidCoordinate),
+            AttemptTokenStorage::PendingBuffer => Err(AttemptError::InvalidCoordinate),
         }
     }
 
@@ -1078,12 +1158,23 @@ impl<G> AttemptArena<G> {
             tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
         );
         let id = AttemptTokenBufferId::new(self.key, self.token_buffers.len())?;
+        let result = AttemptTokenListId::new(self.key, self.token_lists.len())?;
         self.token_buffers
             .try_reserve(1)
             .map_err(|_| AttemptError::AllocationFailed)?;
+        self.token_lists
+            .try_reserve(1)
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        self.token_lists.push(AttemptRow {
+            serial: result.serial,
+            value: AttemptTokenStorage::PendingBuffer,
+        });
         self.token_buffers.push(AttemptRow {
             serial: id.serial,
-            value: self.recycled_token_buffers.pop().unwrap_or_default(),
+            value: AttemptTokenBuffer {
+                words: self.recycled_token_buffers.pop().unwrap_or_default(),
+                result,
+            },
         });
         Ok(id)
     }
@@ -1096,7 +1187,7 @@ impl<G> AttemptArena<G> {
         self.token_buffers
             .get(id.index())
             .filter(|row| row.serial == id.serial)
-            .map(|row| row.value.as_slice())
+            .map(|row| row.value.words.as_slice())
             .ok_or(AttemptError::InvalidCoordinate)
     }
 
@@ -1108,7 +1199,7 @@ impl<G> AttemptArena<G> {
         self.token_buffers
             .get_mut(id.index())
             .filter(|row| row.serial == id.serial)
-            .map(|row| &mut row.value)
+            .map(|row| &mut row.value.words)
             .ok_or(AttemptError::InvalidCoordinate)
     }
 
@@ -1161,20 +1252,27 @@ impl<G> AttemptArena<G> {
             tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
         );
         self.validate_key(id.key)?;
-        let row = self
+        let result = self
             .token_buffers
-            .get_mut(id.index())
+            .get(id.index())
             .filter(|row| row.serial == id.serial)
+            .map(|row| row.value.result)
             .ok_or(AttemptError::InvalidCoordinate)?;
-        let mut words = core::mem::take(&mut row.value);
-        let result = self.allocate_token_list(words.iter().copied());
-        words.clear();
-        // The builder coordinate is consumed here. Keep its row as the
-        // operation-lifetime audit record, but return the geometrically grown
-        // backing to the scanner pool immediately so the next macro/scan does
-        // not allocate another per-value owner.
-        self.recycled_token_buffers.push(words);
-        result
+        let storage = &self
+            .token_lists
+            .get(result.index())
+            .filter(|row| row.serial == result.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?
+            .value;
+        if !matches!(storage, AttemptTokenStorage::PendingBuffer) {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        self.token_lists
+            .get_mut(result.index())
+            .filter(|row| row.serial == result.serial)
+            .expect("validated token-list row remains live")
+            .value = AttemptTokenStorage::Buffer(id);
+        Ok(result)
     }
 
     pub(crate) fn arguments(

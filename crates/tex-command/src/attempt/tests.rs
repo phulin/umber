@@ -4,8 +4,8 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
-    AttemptArena, AttemptError, AttemptEscapeRoots, AttemptResumePoint, CommandAttempt,
-    PendingCommandAttempt,
+    AttemptArena, AttemptError, AttemptEscapeRoots, AttemptResumePoint, AttemptTokenStorage,
+    CommandAttempt, PendingCommandAttempt,
 };
 
 fn word(ch: char) -> TracedTokenWord {
@@ -253,7 +253,7 @@ fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
             attempt.token_buffer(buffer).expect("test fixture is valid"),
             &[word('a'), word('b')]
         );
-        let buffer_storage = attempt.token_buffers[buffer.index()].value.as_ptr();
+        let buffer_storage = attempt.token_buffers[buffer.index()].value.words.as_ptr();
         let frozen = attempt
             .finish_token_buffer(buffer)
             .expect("test fixture is valid");
@@ -261,30 +261,68 @@ fn mutable_scanner_buffers_are_attempt_owned_and_mark_bounded() {
             attempt.token_words(frozen).expect("test fixture is valid"),
             &[word('a'), word('b')]
         );
+        let AttemptTokenStorage::Buffer(frozen_buffer) = attempt.token_lists[frozen.index()].value
+        else {
+            panic!("finished scanner result addresses its parent sink")
+        };
+        assert_eq!(frozen_buffer, buffer);
+        assert_eq!(
+            attempt.token_words(frozen).expect("frozen words").as_ptr(),
+            buffer_storage
+        );
+
+        attempt.truncate(mark).expect("test fixture is valid");
         let recycled = attempt
             .allocate_token_buffer()
             .expect("test fixture is valid");
         assert_eq!(
-            attempt.token_buffers[recycled.index()].value.as_ptr(),
+            attempt.token_buffers[recycled.index()].value.words.as_ptr(),
             buffer_storage,
-            "finishing a scanner buffer returns its backing to the attempt pool"
+            "retiring the scanner result returns its backing to the attempt pool"
         );
-
-        attempt.truncate(mark).expect("test fixture is valid");
         assert_eq!(
             attempt.token_buffer(buffer),
             Err(AttemptError::InvalidCoordinate)
         );
-        assert_eq!(
-            attempt.token_buffer(recycled),
-            Err(AttemptError::InvalidCoordinate)
-        );
+        assert_eq!(attempt.token_buffer(recycled), Ok(&[][..]));
         assert_eq!(
             attempt.token_words(frozen),
             Err(AttemptError::InvalidCoordinate)
         );
+        attempt.truncate(mark).expect("recycled buffer retires");
+        assert_eq!(
+            attempt.token_buffer(recycled),
+            Err(AttemptError::InvalidCoordinate)
+        );
     })
     .expect("test fixture is valid");
+}
+
+#[cfg(feature = "profiling")]
+#[test]
+fn warmed_parent_owned_scanner_results_allocate_zero_heap() {
+    let mut attempt = AttemptArena::<()>::default();
+    let run = |attempt: &mut AttemptArena<()>| {
+        let mark = attempt.mark();
+        let buffer = attempt.allocate_token_buffer().expect("scanner buffer");
+        attempt
+            .push_buffer_token(buffer, word('x'))
+            .expect("scanner word");
+        let result = attempt.finish_token_buffer(buffer).expect("scanner result");
+        assert_eq!(attempt.token_words(result), Ok(&[word('x')][..]));
+        attempt.truncate(mark).expect("scanner scope retires");
+    };
+    for _ in 0..64 {
+        run(&mut attempt);
+    }
+    let owner = tex_state::measurement::HotCoreAllocationOwner::AttemptScratch;
+    let before = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    for _ in 0..8_192 {
+        run(&mut attempt);
+    }
+    let after = tex_state::measurement::hot_core_thread_allocation_measurement(owner);
+    assert_eq!(after.calls - before.calls, 0);
+    assert_eq!(after.requested_bytes - before.requested_bytes, 0);
 }
 
 #[test]
@@ -561,5 +599,37 @@ fn long_parent_scope_reclaims_8192_retired_children_at_constant_depth() {
     attempt
         .commit_owned_operation(operation)
         .expect("operation consumes scanner then itself");
+    assert!(attempt.mark().is_empty());
+}
+
+#[test]
+fn deferred_scanner_result_survives_a_younger_immediate_retirement() {
+    let mut attempt = AttemptArena::<()>::default();
+    let operation = attempt.begin_owned_scope().expect("operation scope");
+    let scanner = attempt.begin_owned_scope().expect("scanner scope");
+    let result = attempt
+        .allocate_token_list([word('s')])
+        .expect("scanner result");
+    attempt
+        .defer_owned_scope_retirement(scanner, operation)
+        .expect("scanner defers until its result is consumed");
+
+    let macro_child = attempt.begin_owned_scope().expect("macro child");
+    let scratch = attempt
+        .allocate_token_list([word('x')])
+        .expect("macro scratch");
+    attempt
+        .retire_owned_scope(macro_child, operation)
+        .expect("younger macro retires immediately");
+
+    assert_eq!(attempt.token_words(result), Ok(&[word('s')][..]));
+    assert_eq!(
+        attempt.token_words(scratch),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(attempt.scopes.len(), 2);
+    attempt
+        .commit_owned_operation(operation)
+        .expect("commit releases scanner result and operation");
     assert!(attempt.mark().is_empty());
 }

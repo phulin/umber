@@ -1798,7 +1798,10 @@ impl<G> MainControl<G> {
     /// two scanned-operation continuations below each carry the exact opening
     /// [`tex_command::CommandAttemptMark`] outside command state.
     fn has_external_attempt_owner(&self) -> bool {
-        self.pending_resource_operation.is_some() || self.pending_diagnostic_operation.is_some()
+        self.pending_resource_operation.is_some()
+            || self.pending_diagnostic_operation.is_some()
+            || self.pending_preflight_command.is_some()
+            || self.pending_alignment_delivery.is_some()
     }
 
     /// Borrows executor-installed host capabilities for the next operation.
@@ -3898,11 +3901,11 @@ impl<G> MainControl<G> {
                 && (self.pending_alignment_delivery.is_some()
                     || self.pending_preflight_command.is_some())
             {
-                Some(
-                    self.command
-                        .retained_attempt_operation()
-                        .expect("delivery retry retains its exact attempt owner"),
-                )
+                // Retry descriptors created after a resource suspension retain
+                // the exact attempt owner. Descriptors created after a
+                // mutation-free rejected preflight carry no attempt-local
+                // coordinates and deliberately start a fresh operation.
+                self.command.retained_attempt_operation().ok()
             } else {
                 None
             };

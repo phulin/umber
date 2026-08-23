@@ -154,7 +154,7 @@ pub use scanners::{
 };
 pub use snapshot::{
     CommandGenerationOwner, CommandRestoreError, CommandStateSnapshot, CommandSummary,
-    CommandSummaryError, PreparedCommandRestore,
+    CommandSummaryError, PreparedCommandRestore, TransientCommandSnapshot,
 };
 pub use state::{
     CommandGroupError, CommandGroupExit, CommandReplayDelivery, CommandReplayEpisode,

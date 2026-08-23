@@ -3768,12 +3768,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             .token_words(scanned)
             .map_err(|_| CommandError::input_invariant())?
             .to_vec();
-        let shifted = self
-            .command
-            .attempt
-            .arena_mut()
-            .allocate_token_buffer()
-            .map_err(|_| CommandError::input_invariant())?;
+        let mut shifted = Vec::with_capacity(source.len());
         for word in source {
             // Copy one immutable word at a time so the source interned lists
             // remain in place while the case-code lookup records its mutable
@@ -3793,35 +3788,17 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
                 Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => token,
             };
-            self.command
-                .attempt
-                .arena_mut()
-                .push_buffer_token(shifted, TracedTokenWord::pack(token, origin))
-                .map_err(|_| CommandError::input_invariant())?;
+            shifted.push(TracedTokenWord::pack(token, origin));
         }
-        let shifted = self
-            .command
-            .attempt
-            .arena_mut()
-            .finish_token_buffer(shifted)
-            .map_err(|_| CommandError::input_invariant())?;
-        let shifted_len = self
-            .command
-            .attempt
-            .arena()
-            .token_words(shifted)
-            .map_err(|_| CommandError::input_invariant())?
-            .len();
-        let level = self
-            .command
-            .push_attempt_list_level(
-                shifted,
-                u32::try_from(shifted_len).map_err(|_| CommandError::input_invariant())?,
-                TokenBehavior::BackedUp(BackupTreatment::Ordinary),
-                RetirementBehavior::Pop,
-                ReplayTrace::BackedUp,
-            )
-            .map_err(|_| CommandError::input_invariant())?;
+        // The backed-up level is a parent-owned input chunk, not a coordinate
+        // into the scanner child. Commit may therefore reclaim the scanner
+        // scope without leaving an attempt id in accepted command roots.
+        let level = self.command.push_token_level(
+            TokenPayload::transient(shifted),
+            TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+            RetirementBehavior::Pop,
+            ReplayTrace::BackedUp,
+        );
         // `back_list` is a plain `begin_token_list`, not §325's `back_input`:
         // it pushes a backed-up level without the accompanying recovery
         // record that a backed-up raw delivery reports.

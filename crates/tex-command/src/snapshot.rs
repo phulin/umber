@@ -56,6 +56,16 @@ impl<G> CommandTimeline<G> {
         if !attempt.is_empty() {
             return Err(CommandSummaryError::AttemptSuspended);
         }
+        self.retain_transient(roots, attempt, arenas, stacks)
+    }
+
+    fn retain_transient(
+        &self,
+        roots: Arc<CommandStateRoots<G>>,
+        attempt: AttemptMark,
+        arenas: CommandArenaCursors,
+        stacks: CommandStackCursors,
+    ) -> Result<CommandSnapshotCursor, CommandSummaryError> {
         let mut rows = self.rows.lock().expect("command timeline is not poisoned");
         let row = u32::try_from(rows.len()).map_err(|_| CommandSummaryError::TimelineCapacity)?;
         rows.push(CommandTimelineRow { roots, attempt });
@@ -349,6 +359,47 @@ impl<G> CommandStateSnapshot<G> {
     /// `generation`.
     #[must_use]
     pub(crate) fn addresses(
+        &self,
+        generation: &GenerationOwner<G>,
+        timeline: &Arc<CommandTimeline<G>>,
+    ) -> bool {
+        self.generation.addresses(generation, timeline)
+    }
+}
+
+/// Move-only rollback point for a synchronous nested command episode.
+///
+/// Unlike [`CommandStateSnapshot`], this cursor may name the exact open
+/// attempt suffix owned by its caller. It cannot be cloned, summarized,
+/// serialized, or detached, and rollback consumes it once. The caller must
+/// therefore finish the nested episode before the enclosing operation can
+/// commit or close its scope.
+pub struct TransientCommandSnapshot<G> {
+    generation: CommandGenerationOwner<G>,
+    cursor: CommandSnapshotCursor,
+    brand: PhantomData<fn(&G) -> &G>,
+}
+
+impl<G> fmt::Debug for TransientCommandSnapshot<G> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TransientCommandSnapshot")
+            .field("generation", &self.generation)
+            .field("cursor", &self.cursor)
+            .finish()
+    }
+}
+
+impl<G> TransientCommandSnapshot<G> {
+    fn new(generation: CommandGenerationOwner<G>, cursor: CommandSnapshotCursor) -> Self {
+        Self {
+            generation,
+            cursor,
+            brand: PhantomData,
+        }
+    }
+
+    fn addresses(
         &self,
         generation: &GenerationOwner<G>,
         timeline: &Arc<CommandTimeline<G>>,
@@ -732,6 +783,30 @@ impl<G> CommandState<G> {
         ))
     }
 
+    /// Captures a move-only rollback point inside one live operation.
+    ///
+    /// This is the synchronous nested-episode counterpart to [`Self::snapshot`]:
+    /// it may retain an open attempt mark, but neither the mark nor its coarse
+    /// generation owner can escape through a clone, summary, or detached DTO.
+    pub fn transient_snapshot(
+        &self,
+        universe: &Universe<G>,
+    ) -> Result<TransientCommandSnapshot<G>, CommandSummaryError> {
+        let generation = universe
+            .generation_owner()
+            .map_err(|_| CommandSummaryError::GenerationUnavailable)?;
+        let attempt = self.attempt.arena().mark();
+        let arenas = self.checkpoint_arenas(attempt)?;
+        let stacks = self.checkpoint_stacks()?;
+        let cursor =
+            self.timeline
+                .retain_transient(Arc::clone(&self.roots), attempt, arenas, stacks)?;
+        Ok(TransientCommandSnapshot::new(
+            CommandGenerationOwner::new(generation, Arc::clone(&self.timeline)),
+            cursor,
+        ))
+    }
+
     /// Publishes a bounded named-boundary summary without cloning the live
     /// command graph.
     pub fn publish_summary(
@@ -841,6 +916,28 @@ impl<G> CommandState<G> {
         universe: &Universe<G>,
     ) -> Result<(), CommandRestoreError> {
         let restore = self.prepare_snapshot_restore(snapshot, universe)?;
+        self.apply_prepared_restore(restore)
+    }
+
+    /// Consumes and restores one synchronous nested-episode rollback point.
+    pub fn rollback_transient(
+        &mut self,
+        snapshot: TransientCommandSnapshot<G>,
+        universe: &Universe<G>,
+    ) -> Result<(), CommandRestoreError> {
+        let generation = universe
+            .generation_owner()
+            .map_err(|_| CommandRestoreError::ForeignGeneration)?;
+        if !snapshot.addresses(&generation, &self.timeline) {
+            return Err(CommandRestoreError::ForeignGeneration);
+        }
+        let restore = self.resolve_restore(&snapshot.generation, snapshot.cursor)?;
+        self.profile()
+            .validate_fingerprint(
+                CommandProfileBoundary::Snapshot,
+                restore.roots.expansion.profile.fingerprint(),
+            )
+            .map_err(CommandRestoreError::Profile)?;
         self.apply_prepared_restore(restore)
     }
 }
