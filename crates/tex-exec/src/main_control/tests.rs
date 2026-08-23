@@ -679,6 +679,36 @@ fn forbidden_setbox_reports_before_reading_the_following_command() {
 }
 
 #[test]
+fn invalid_prevgraf_reports_after_diagnostics_from_its_value_scan() {
+    // TeX82 §§476/1244: expanded commands encountered while `scan_int`
+    // finishes the assigned value have already printed their command trace
+    // when `alter_prev_graf` diagnoses the negative result. The detached
+    // scan-time trace must therefore be published before the synchronous
+    // `int_error` report.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\tracingonline=1\tracingcommands=2\prevgraf=-1\if 01X\else Y\fi\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        let terminal = terminal_text(stores);
+        let false_trace = terminal
+            .find("{false}")
+            .unwrap_or_else(|| panic!("missing conditional trace: {terminal:?}"));
+        let error = terminal
+            .find("Bad \\prevgraf")
+            .unwrap_or_else(|| panic!("missing prevgraf error: {terminal:?}"));
+        assert!(
+            false_trace < error,
+            "prevgraf error overtook its completed value-scan trace: {terminal:?}"
+        );
+    });
+}
+
+#[test]
 fn accent_assignment_dispatches_backed_up_font_without_redelivery() {
     // TeX82 §§1123--1124 and 1270: the accent-code scan backs up its
     // non-space terminator, then `do_assignments` executes that already
@@ -1612,6 +1642,51 @@ fn tracingrestores_reports_current_font_selector_restoration() {
             pending_sink_text(stores, true),
             "{restoring current font=\\f}\n"
         );
+    });
+}
+
+#[test]
+fn fontname_expansion_includes_a_non_design_size() {
+    // TeX82 §§471--472: `\fontname` emits the external name followed by
+    // `at <size>pt` when the selected size differs from the TFM design size.
+    // TRIP line 339 captures this exact expansion inside a global `\edef`.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_cmr10_as(&mut control, stores, "cmr10.tfm");
+        register_source(
+            &mut control,
+            br"\font\small=cmr10 scaled 500
+\edef\result{\fontname\small}\message{RESULT:[\result]}\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        assert!(
+            terminal_text(stores).contains("RESULT:[cmr10 at 5.0pt]"),
+            "{}",
+            terminal_text(stores)
+        );
+    });
+}
+
+#[test]
+fn macro_trace_preserves_a_non_hash_parameter_marker() {
+    // TeX82 §§389 prints the actual match-token character retained by
+    // §476. TRIP makes `U` a parameter character and relies on `U3`, rather
+    // than a duplicated `UU#3`, in the invocation trace.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\catcode`U=6 \def\m U1{OK}
+\tracingonline=1\tracingmacros=1 \m X\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        let output = terminal_text(stores);
+        assert!(output.contains("\\m U1->OK"), "{output}");
+        assert!(!output.contains("\\m UU#1->OK"), "{output}");
     });
 }
 

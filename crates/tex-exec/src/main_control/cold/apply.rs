@@ -631,6 +631,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::IllegalPrevDepth { token } => {
+            stores.publish_diagnostic_effects_before_synchronous_print(command.diagnostic_effects);
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
@@ -657,6 +658,9 @@ pub(in crate::main_control) fn apply<G>(
                 // §91's `int_error` appends ` (value)` to the message before
                 // §82 completes the report, so the value is not part of the
                 // `print_err` text.
+                stores.publish_diagnostic_effects_before_synchronous_print(
+                    command.diagnostic_effects,
+                );
                 let context = command.state.output_open_context(&**stores);
                 let mut report = stores.print_err("Bad space factor");
                 report
@@ -667,6 +671,7 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::IllegalSpaceFactor { token } => {
+            stores.publish_diagnostic_effects_before_synchronous_print(command.diagnostic_effects);
             let context = command.state.output_open_context(&**stores);
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
@@ -682,6 +687,9 @@ pub(in crate::main_control) fn apply<G>(
             // rather than checking the current mode), unlike `\spacefactor`/
             // `\prevdepth`'s §1243 `report_illegal_case`.
             if value < 0 {
+                stores.publish_diagnostic_effects_before_synchronous_print(
+                    command.diagnostic_effects,
+                );
                 let context = command.state.output_open_context(&**stores);
                 let mut report = stores.print_err("Bad ");
                 report

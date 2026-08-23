@@ -1856,7 +1856,17 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// font, including its invalid-identifier recovery to `nullfont`.
     fn expand_fontname(&mut self, opener: CurrentCommand<G>) -> Result<(), CommandError> {
         let font = self.scan_font_selector()?;
-        let name = self.state.font_name(font);
+        let mut name = self.state.font_name(font);
+        let size = self.state.font_size(font);
+        if size != self.state.font_design_size(font) {
+            // TeX82 §472 appends `at <size>pt` whenever the selected size
+            // differs from the TFM design size. This text is inserted as
+            // catcode-12/space tokens by `str_toks`, so it must be complete
+            // before an enclosing `\edef` captures it.
+            name.push_str(" at ");
+            append_scaled_without_unit(size, &mut name);
+            name.push_str("pt");
+        }
         self.push_rendered_text(&name, opener.origin());
         Ok(())
     }
@@ -2777,7 +2787,7 @@ fn append_meaning_text_with_token_selector<G>(
     }
 }
 
-fn append_meaning_token_words<G>(
+pub(crate) fn append_meaning_token_words<G>(
     state: &tex_state::CommandContext<'_, G>,
     tokens: &[tex_state::token::TokenWord],
     active_selector: bool,

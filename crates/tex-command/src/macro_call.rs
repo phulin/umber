@@ -513,18 +513,23 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut text = String::new();
         crate::processor::expand::append_print_cs_text(&mut self.state, macro_name, &mut text);
         let definition = self.state.definition(definition);
-        for token in definition.parameter_text() {
-            crate::processor::expand::append_token_list_token_text(
-                &self.state,
-                token.semantic_token(),
-                &mut text,
-            );
-        }
+        // TeX82 §§389 uses `token_show` on the stored definition. A
+        // non-`#` parameter marker is stored beside its compact out-parameter
+        // slot and must render as one pair (`U3`), not as the literal marker
+        // followed by the generic `#3` spelling.
+        crate::processor::expand::append_meaning_token_words(
+            &self.state,
+            definition.parameter_text(),
+            false,
+            &mut text,
+        );
         text.push_str("->");
-        for word in definition.replacement_text() {
-            let token = word.semantic_token();
-            crate::processor::expand::append_token_list_token_text(&self.state, token, &mut text);
-        }
+        crate::processor::expand::append_meaning_token_words(
+            &self.state,
+            definition.replacement_text(),
+            false,
+            &mut text,
+        );
         self.print_macro_trace(text, true);
     }
 
