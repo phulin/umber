@@ -857,6 +857,10 @@ impl<G> CommandState<G> {
     }
 
     /// Reinstalls a returned arena after validating its coarse generation.
+    #[allow(
+        clippy::result_large_err,
+        reason = "stale admission must return the complete move-only continuation without a lifecycle allocation"
+    )]
     pub fn resume_attempt<R>(
         &mut self,
         universe: &tex_state::Universe<G>,

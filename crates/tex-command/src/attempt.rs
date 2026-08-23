@@ -1680,6 +1680,10 @@ impl<G, R> PendingCommandAttempt<G, R> {
         }
     }
 
+    #[allow(
+        clippy::result_large_err,
+        reason = "stale admission must return the complete move-only continuation without a lifecycle allocation"
+    )]
     pub(crate) fn resume(
         self,
         universe: &Universe<G>,
