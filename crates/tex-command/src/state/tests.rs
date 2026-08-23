@@ -17,6 +17,51 @@ fn word(ch: char) -> TracedTokenWord {
     )
 }
 
+#[test]
+fn synchronous_attempt_child_scope_reclaims_only_its_exact_suffix() {
+    let mut state = CommandState::<()>::default();
+    let operation = state.begin_attempt_operation();
+    let child = state
+        .begin_attempt_child_scope()
+        .expect("active operation admits one synchronous child");
+    let scratch = state
+        .attempt
+        .arena_mut()
+        .allocate_token_list([word('x')])
+        .expect("child scratch");
+    assert_eq!(state.attempt_token_words(scratch), Ok(&[word('x')][..]));
+
+    state
+        .close_attempt_child_scope(child)
+        .expect("move-only receipt closes its exact child");
+    assert_eq!(
+        state.attempt_token_words(scratch),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    state
+        .commit_attempt_operation(operation)
+        .expect("child close left the parent owner intact");
+}
+
+#[test]
+fn synchronous_attempt_child_scope_requires_an_active_operation() {
+    let mut state = CommandState::<()>::default();
+    assert_eq!(
+        state.begin_attempt_child_scope().unwrap_err(),
+        AttemptError::InvalidCoordinate
+    );
+    let operation = state.begin_attempt_operation();
+    let child = state
+        .begin_attempt_child_scope()
+        .expect("active operation admits a child");
+    state
+        .close_attempt_child_scope(child)
+        .expect("child closes normally");
+    state
+        .commit_attempt_operation(operation)
+        .expect("parent closes normally");
+}
+
 fn glue(width: i32) -> GlueSpec {
     GlueSpec {
         width: Scaled::from_raw(width),

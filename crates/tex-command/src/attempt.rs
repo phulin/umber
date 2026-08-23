@@ -1334,6 +1334,27 @@ impl CommandAttemptMark {
     }
 }
 
+/// Move-only capability for one synchronous child of the active command
+/// operation.
+///
+/// Construction and consumption are restricted to [`crate::CommandState`].
+/// The child owns only its exact attempt-arena suffix; semantic command roots
+/// remain parent-owned and are not restored when the child closes.
+#[derive(Debug)]
+pub struct CommandAttemptChildScope {
+    owner: OwnedAttemptScope,
+}
+
+impl CommandAttemptChildScope {
+    pub(crate) const fn new(owner: OwnedAttemptScope) -> Self {
+        Self { owner }
+    }
+
+    pub(crate) fn into_owner(self) -> OwnedAttemptScope {
+        self.owner
+    }
+}
+
 impl<G> core::fmt::Debug for CommandAttempt<G> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str("CommandAttempt(..)")

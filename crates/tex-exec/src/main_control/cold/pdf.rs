@@ -1568,13 +1568,13 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                             sink: PrintSink,
                             tokens: &[TokenWord]| {
         let mut command = command_cell.borrow_mut();
-        let input_snapshot =
-            command
-                .state
-                .transient_snapshot(stores)
-                .map_err(|_| ExecError::MissingToken {
-                    context: "deferred write snapshot",
-                })?;
+        let child_scope = command
+            .state
+            .state_mut()
+            .begin_attempt_child_scope()
+            .map_err(|_| ExecError::MissingToken {
+                context: "deferred write child scope",
+            })?;
         // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
         // before moving to the next whatsit. A following write expands only
         // after those effects have happened, so publish the committed prefix
@@ -1588,75 +1588,93 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
             );
         }
         effect_cursor.set(stores.world().effect_records().len());
-        let expanded = {
-            // TeX82 §1370 temporarily sets `mode:=0` while deferred
-            // write text expands. §299 names that value "no mode", and
-            // §367 updates `shown_mode` if it traces an expandable
-            // command during the scan.
-            let mode_prefix = command.shown_mode.is_some().then(|| "no mode".to_owned());
-            let mut context = stores
-                .command_context()
-                .map_err(|_| ExecError::MissingToken {
-                    context: "deferred write admission",
-                })?;
-            let durable = context
-                .allocate_token_list(tokens)
-                .expect("deferred write fits admitted durable storage");
-            let mut processor =
-                command.processor_with_diagnostic_effects(context, diagnostic_effects);
-            processor.set_command_trace_mode_prefix(mode_prefix);
-            let result = processor
-                .expand_durable_write_text(durable)
-                .map_err(command_error);
-            let command_trace_printed = processor.command_trace_printed();
-            let diagnostics = processor
-                .take_semantic_diagnostics()
-                .into_iter()
-                .map(PendingDiagnostic::Command)
-                .collect();
-            drop(processor.into_context());
-            // TeX82 §1370 performs expansion and then writes the
-            // resulting token list on one live `write_out` call stack.
-            // Publish §367 traces and scanner diagnostics into the
-            // shipout transaction now, before normalization appends the
-            // payload's stream effect.
-            report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
-            if command_trace_printed {
-                *command.shown_mode = None;
-            }
-            result
-        };
-        let expanded = expanded?;
-        let expanded_words = command
-            .state
-            .state()
-            .attempt_token_words(expanded.tokens)
-            .map_err(|_| ExecError::MissingToken {
-                context: "expanded deferred write",
-            })?
-            .to_vec();
-        // TeX82 §1370 expands deferred write text on the live command
-        // stack. Temporary input/token storage is exhausted by the frozen
-        // `\endwrite` stopper, but semantic mutations such as an unfinished
-        // conditional remain live for §1335's final cleanup. Reclaim only
-        // unreachable attempt storage here; restoring an aggregate command
-        // snapshot would incorrectly erase those committed condition frames.
-        command
-            .state
-            .rollback_transient(input_snapshot, stores)
-            .map_err(|_| ExecError::MissingToken {
-                context: "deferred write attempt reclamation",
-            })?;
-        let observed_tokens = command.observations.is_some().then(|| {
+        let detached = (|| {
+            let expanded = {
+                // TeX82 §1370 temporarily sets `mode:=0` while deferred
+                // write text expands. §299 names that value "no mode", and
+                // §367 updates `shown_mode` if it traces an expandable
+                // command during the scan.
+                let mode_prefix = command.shown_mode.is_some().then(|| "no mode".to_owned());
+                let mut context =
+                    stores
+                        .command_context()
+                        .map_err(|_| ExecError::MissingToken {
+                            context: "deferred write admission",
+                        })?;
+                let durable = context
+                    .allocate_token_list(tokens)
+                    .expect("deferred write fits admitted durable storage");
+                let mut processor =
+                    command.processor_with_diagnostic_effects(context, diagnostic_effects);
+                processor.set_command_trace_mode_prefix(mode_prefix);
+                let result = processor
+                    .expand_durable_write_text(durable)
+                    .map_err(command_error);
+                let command_trace_printed = processor.command_trace_printed();
+                let diagnostics = processor
+                    .take_semantic_diagnostics()
+                    .into_iter()
+                    .map(PendingDiagnostic::Command)
+                    .collect();
+                drop(processor.into_context());
+                // TeX82 §1370 performs expansion and then writes the
+                // resulting token list on one live `write_out` call stack.
+                // Publish §367 traces and scanner diagnostics into the
+                // shipout transaction now, before normalization appends the
+                // payload's stream effect.
+                report_pending_diagnostics(stores, diagnostic_effects, diagnostics)?;
+                if command_trace_printed {
+                    *command.shown_mode = None;
+                }
+                result
+            }?;
+            let tex_command::ExpandedWriteText {
+                tokens,
+                unbalanced,
+                error_context,
+            } = expanded;
+            let observing = command.observations.is_some();
             let context = stores
                 .command_context()
                 .expect("deferred write observation admission");
-            expanded_words
-                .iter()
-                .copied()
-                .map(|word| observed_macro_token(word.semantic_token(), &context))
-                .collect()
-        });
+            let expanded_words =
+                command
+                    .state
+                    .state()
+                    .attempt_token_words(tokens)
+                    .map_err(|_| ExecError::MissingToken {
+                        context: "expanded deferred write",
+                    })?;
+            let observed_tokens = observing.then(|| {
+                expanded_words
+                    .iter()
+                    .copied()
+                    .map(|word| observed_macro_token(word.semantic_token(), &context))
+                    .collect()
+            });
+            let mut text = String::new();
+            for word in expanded_words {
+                tex_state::token_show::append_token_string_text(
+                    &context,
+                    word.semantic_token(),
+                    &mut text,
+                );
+            }
+            let text = crate::diagnostics::print_text_with_newlinechar(&context, &text);
+            Ok::<_, ExecError>((observed_tokens, unbalanced, error_context, text))
+        })();
+        // The move-only child owns only the write expansion's attempt suffix.
+        // Consume it after rendering directly from that suffix; semantic
+        // conditions and input state mutated by the completed expansion stay
+        // in the parent operation for §1335 final cleanup.
+        command
+            .state
+            .state_mut()
+            .close_attempt_child_scope(child_scope)
+            .map_err(|_| ExecError::MissingToken {
+                context: "deferred write child scope close",
+            })?;
+        let (observed_tokens, unbalanced, error_context, mut text) = detached?;
         if let (Some(observations), Some(observed_tokens)) =
             (command.observations.as_mut(), observed_tokens)
         {
@@ -1667,7 +1685,7 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                 source: None,
             }));
         }
-        if expanded.unbalanced {
+        if unbalanced {
             // TeX82 §1372's `<Recover from an unbalanced write command>`.
             // Expansion diagnostics above, this report, and the recovered
             // payload all remain in their live-call order inside the
@@ -1687,25 +1705,9 @@ pub(in crate::main_control) fn shipout_replay_box<G>(
                     "On this page there's a \\write with fewer real {'s than }'s.",
                     "I can't handle that very well; good luck.",
                 ],
-                expanded
-                    .error_context
-                    .expect("unbalanced write retains its live input context"),
+                error_context.expect("unbalanced write retains its live input context"),
             )?;
         }
-        let mut text = String::new();
-        let context = stores
-            .command_context()
-            .map_err(|_| ExecError::MissingToken {
-                context: "deferred write rendering admission",
-            })?;
-        for word in expanded_words {
-            tex_state::token_show::append_token_string_text(
-                &context,
-                word.semantic_token(),
-                &mut text,
-            );
-        }
-        let mut text = crate::diagnostics::print_text_with_newlinechar(&context, &text);
         text.push('\n');
         Ok(crate::shipout::ExpandedWrite::transactional(text))
     };

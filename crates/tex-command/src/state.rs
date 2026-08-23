@@ -757,6 +757,29 @@ impl<G> CommandState<G> {
         Ok(operation)
     }
 
+    /// Opens one move-only synchronous child of the active direct operation.
+    ///
+    /// The child is attempt scratch only. Callers may consume its values while
+    /// it is live, but must detach their final non-attempt result before
+    /// [`Self::close_attempt_child_scope`] consumes the receipt. Semantic
+    /// command mutations deliberately remain in the parent operation.
+    pub fn begin_attempt_child_scope(
+        &mut self,
+    ) -> Result<crate::CommandAttemptChildScope, crate::AttemptError> {
+        self.active_attempt_operation
+            .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        let owner = self.attempt.begin_child_scope()?;
+        Ok(crate::CommandAttemptChildScope::new(owner))
+    }
+
+    /// Consumes and closes exactly one synchronous LIFO child scope.
+    pub fn close_attempt_child_scope(
+        &mut self,
+        scope: crate::CommandAttemptChildScope,
+    ) -> Result<(), crate::AttemptError> {
+        self.attempt.close_child_scope(scope.into_owner())
+    }
+
     pub(crate) fn begin_attempt_scanner_scope(
         &mut self,
     ) -> Result<crate::attempt::OwnedAttemptScope, crate::AttemptError> {

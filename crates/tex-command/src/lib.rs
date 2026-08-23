@@ -38,8 +38,8 @@ mod attempt;
 pub use attempt::{
     AttemptDefinitionId, AttemptError, AttemptGlueId, AttemptNameId, AttemptPromotionReceipt,
     AttemptPromotionRoots, AttemptProvenanceId, AttemptResumePoint, AttemptScope,
-    AttemptSuspendError, AttemptTokenListId, CommandAttempt, CommandAttemptMark,
-    PendingCommandAttempt, ScopedAttemptTokenListId,
+    AttemptSuspendError, AttemptTokenListId, CommandAttempt, CommandAttemptChildScope,
+    CommandAttemptMark, PendingCommandAttempt, ScopedAttemptTokenListId,
 };
 mod command;
 mod conditionals;
