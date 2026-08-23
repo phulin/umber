@@ -748,7 +748,13 @@ fn capture_loaded_projection<G>(
             Some(LoadedFormatChannels {
                 terminal,
                 log,
-                pending_effects: records,
+                // This complete-job projection has already replayed `records`
+                // into the detached per-sink bytes above. Returning the same
+                // records as an unpublished suffix would make every outer
+                // channel consumer publish the terminal episode twice.
+                // Root-EOF fragments take the branch below and retain their
+                // genuinely unpublished suffix instead.
+                pending_effects: Vec::new(),
                 outputs,
             })
         } else {

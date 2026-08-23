@@ -501,7 +501,7 @@ fn loaded_driver_configuration_is_job_local() {
 }
 
 #[test]
-fn complete_channel_projection_appends_the_pending_terminal_publication_suffix() {
+fn complete_channel_projection_materializes_the_terminal_suffix_once() {
     crate::with_engine_world(World::memory(), |universe| {
         universe
             .world_mut()
@@ -530,7 +530,7 @@ fn complete_channel_projection_appends_the_pending_terminal_publication_suffix()
         let channels = projection.channels.expect("channels requested");
         assert_eq!(channels.terminal, b"committed-terminal");
         assert_eq!(channels.log, b"committed-terminal");
-        assert_eq!(channels.pending_effects.len(), 1);
+        assert!(channels.pending_effects.is_empty());
     })
     .expect("fresh universe");
 }
