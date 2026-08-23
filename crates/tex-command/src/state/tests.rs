@@ -47,7 +47,9 @@ fn synchronous_attempt_child_scope_reclaims_only_its_exact_suffix() {
 fn synchronous_attempt_child_scope_requires_an_active_operation() {
     let mut state = CommandState::<()>::default();
     assert_eq!(
-        state.begin_attempt_child_scope().unwrap_err(),
+        state
+            .begin_attempt_child_scope()
+            .expect_err("a synchronous child requires an active operation"),
         AttemptError::InvalidCoordinate
     );
     let operation = state.begin_attempt_operation();
