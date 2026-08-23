@@ -123,7 +123,8 @@ collector (see `src/conditionals.rs`).
   superscript notation, invalid-character recovery steps, byte/scalar ranges,
   and focused conformance tests.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: canonical fixed-width
-  source/token cursors over chunk-owned packed traced words, cold backup source
+  source/token cursors over chunk-owned packed traced words and durable token-
+  list chunk cursors, cold backup source
   coordinates, explicit stored/transient/backed-up TeX82 cell ownership,
   orthogonal delivery/retirement classifications, and compact
   admitted-macro replacement and argument-span coordinates. A source level's `open_depths` field is

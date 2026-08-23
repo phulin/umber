@@ -361,7 +361,9 @@ fn logical_rows_roundtrip_aliases_values_codes_and_hyphenation() {
                 .as_ref()
                 .expect("core")
                 .admit()
-                .token_list(tokens),
+                .token_list(tokens)
+                .iter()
+                .collect::<Vec<_>>(),
             [TokenWord::pack(Token::Cs(alpha.symbol()))]
         );
         let glue = universe

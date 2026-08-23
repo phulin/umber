@@ -6189,7 +6189,7 @@ fn committed_token_scanner_attempt_is_discarded_before_named_checkpoint() {
                 .token_register(0)
                 .expect("token register lookup")
                 .expect("token assignment installs its promoted root");
-            context.token_list(tokens).to_vec()
+            context.token_list(tokens).iter().collect::<Vec<_>>()
         });
         assert_eq!(
             stored,
@@ -6635,7 +6635,11 @@ fn recursive_test_box<G>(stores: &mut Universe<G>) -> tex_state::node_arena::Pag
         ],
     );
     let tokens = tex_state::node::NodeTokenList::new(
-        admitted!(stores, |context| context.token_list(tokens).to_vec()).to_vec(),
+        admitted!(stores, |context| context
+            .token_list(tokens)
+            .iter()
+            .collect::<Vec<_>>())
+        .to_vec(),
     );
     let pre = stores.publish_page_nodes(&[Node::Char {
         font: NULL_FONT,
@@ -7903,13 +7907,16 @@ fn install_test_form<G>(stores: &mut Universe<G>) {
 }
 
 fn token_character_text<G>(stores: &mut Universe<G>, tokens: tex_state::TokenListId<G>) -> String {
-    admitted!(stores, |context| context.token_list(tokens).to_vec())
-        .into_iter()
-        .filter_map(|word| match word.semantic_token() {
-            Token::Char { ch, .. } => Some(ch),
-            Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
-        })
-        .collect()
+    admitted!(stores, |context| context
+        .token_list(tokens)
+        .iter()
+        .collect::<Vec<_>>())
+    .into_iter()
+    .filter_map(|word| match word.semantic_token() {
+        Token::Char { ch, .. } => Some(ch),
+        Token::Cs(_) | Token::Param(_) | Token::Frozen(_) => None,
+    })
+    .collect()
 }
 
 #[test]
@@ -10579,7 +10586,7 @@ fn etex_toks_assignment_and_rhs_keep_sparse_register_indices() {
                 context
                     .token_register(index)
                     .expect("token register")
-                    .map(|tokens| context.token_list(tokens).to_vec())
+                    .map(|tokens| context.token_list(tokens).iter().collect::<Vec<_>>())
                     .unwrap_or_default()
             };
             (
@@ -10682,7 +10689,10 @@ fn braced_token_parameter_assignment_normalizes_empty_to_null_and_restores_scope
                 .expect("everypar parameter"))
             .expect("nonempty assignment stores a pointer");
             assert_eq!(
-                admitted!(stores, |context| context.token_list(outer).to_vec()),
+                admitted!(stores, |context| context
+                    .token_list(outer)
+                    .iter()
+                    .collect::<Vec<_>>()),
                 [tex_state::token::TokenWord::pack(Token::Char {
                     ch: 'A',
                     cat: Catcode::Letter,

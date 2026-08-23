@@ -13,7 +13,7 @@ pub(in crate::main_control) fn write_text<G>(
     stores: &tex_state::CommandContext<'_, G>,
 ) -> String {
     let mut text = String::new();
-    for &word in stores.token_list(tokens) {
+    for word in stores.token_list(tokens) {
         tex_state::token_show::append_token_string_text(stores, word.semantic_token(), &mut text);
     }
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
@@ -41,7 +41,7 @@ pub(in crate::main_control) fn pdf_graphics_text<G>(
     stores: &tex_state::CommandContext<'_, G>,
 ) -> Vec<u8> {
     let mut text = String::new();
-    for &word in stores.token_list(tokens) {
+    for word in stores.token_list(tokens) {
         tex_state::token_show::append_token_string_text(stores, word.semantic_token(), &mut text);
     }
     tex_byte_text(&text)
@@ -71,7 +71,7 @@ fn node_pdf_navigation_identifier<G>(
     match identifier {
         tex_state::PdfActionIdentifier::Name(tokens) => {
             tex_state::node::NodePdfActionIdentifier::Name(tex_state::node::NodeTokenList::new(
-                stores.token_list(tokens).to_vec(),
+                stores.token_list(tokens).iter().collect::<Vec<_>>(),
             ))
         }
         tex_state::PdfActionIdentifier::Number(number) => {
@@ -79,7 +79,7 @@ fn node_pdf_navigation_identifier<G>(
         }
         tex_state::PdfActionIdentifier::Raw(tokens) => {
             tex_state::node::NodePdfActionIdentifier::Raw(tex_state::node::NodeTokenList::new(
-                stores.token_list(tokens).to_vec(),
+                stores.token_list(tokens).iter().collect::<Vec<_>>(),
             ))
         }
     }
@@ -320,7 +320,7 @@ pub(in crate::main_control) fn apply_pdf_navigation_request<G>(
                         tex_state::node::NodeTokenList::default,
                         |value| {
                             tex_state::node::NodeTokenList::new(
-                                stores.token_list(value.tokens).to_vec(),
+                                stores.token_list(value.tokens).iter().collect::<Vec<_>>(),
                             )
                         },
                     ),
@@ -433,7 +433,9 @@ pub(in crate::main_control) fn apply_pdf_graphics_request<G>(
             text,
         } => Node::Whatsit(Whatsit::DeferredPdfLiteral {
             mode,
-            tokens: tex_state::node::NodeTokenList::new(stores.token_list(text.tokens).to_vec()),
+            tokens: tex_state::node::NodeTokenList::new(
+                stores.token_list(text.tokens).iter().collect::<Vec<_>>(),
+            ),
         }),
         RootedPdfGraphicsRequest::Literal { mode, text, .. } => {
             Node::Whatsit(Whatsit::PdfLiteral {

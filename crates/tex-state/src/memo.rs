@@ -427,7 +427,6 @@ impl<G> Universe<G> {
         let tokens = admitted
             .token_list(id)
             .iter()
-            .copied()
             .map(|word| detach_token(self, word.semantic_token()))
             .collect::<Result<Vec<_>, _>>()?;
         DetachedMemoValue::encode(MemoValueKind::Tokens, &tokens)

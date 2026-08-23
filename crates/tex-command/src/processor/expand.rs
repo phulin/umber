@@ -2300,7 +2300,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn push_mark_text(&mut self, tokens: &tex_state::node::NodeTokenList) {
         let words = tokens.words();
         let level = self.command.push_token_level(
-            TokenPayload::durable(words),
+            TokenPayload::stored_semantic(words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::Mark),

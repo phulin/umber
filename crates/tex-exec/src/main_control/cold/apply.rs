@@ -1812,7 +1812,9 @@ pub(in crate::main_control) fn apply<G>(
             Ok(ReplayStep::Continue)
         }
         ColdOperation::DeferredWrite { stream, tokens } => {
-            let tokens = tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec());
+            let tokens = tex_state::node::NodeTokenList::new(
+                stores.token_list(tokens).iter().collect::<Vec<_>>(),
+            );
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
@@ -1829,7 +1831,9 @@ pub(in crate::main_control) fn apply<G>(
             deferred: true,
             tokens,
         } => {
-            let tokens = tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec());
+            let tokens = tex_state::node::NodeTokenList::new(
+                stores.token_list(tokens).iter().collect::<Vec<_>>(),
+            );
             crate::box_runtime::append_whatsit(
                 modes,
                 stores,
@@ -1847,7 +1851,7 @@ pub(in crate::main_control) fn apply<G>(
             tokens,
         } => {
             let mut text = String::new();
-            for &word in stores.token_list(tokens) {
+            for word in stores.token_list(tokens) {
                 tex_state::token_show::append_token_string_text(
                     &**stores,
                     word.semantic_token(),
@@ -2680,7 +2684,9 @@ pub(in crate::main_control) fn apply<G>(
                 command.diagnostic_effects,
                 command.fuel,
             )?;
-            let tokens = tex_state::node::NodeTokenList::new(stores.token_list(tokens).to_vec());
+            let tokens = tex_state::node::NodeTokenList::new(
+                stores.token_list(tokens).iter().collect::<Vec<_>>(),
+            );
             crate::vertical::append_vertical_contribution(
                 modes,
                 stores,

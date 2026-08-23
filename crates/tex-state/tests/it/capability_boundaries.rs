@@ -25,4 +25,16 @@ fn restricted_capabilities_reject_privileged_apis() {
             "cannot borrow `*universe` as mutable more than once at a time",
         ],
     );
+    assert_compile_fail(
+        "durable-token-boundary-forbidden",
+        &manifest_dir.join("tests/ui/durable_token_boundary_forbidden.rs"),
+        &dependencies,
+        &["mismatched types", "lifetime may not live long enough"],
+    );
+    assert_compile_fail(
+        "durable-token-constructor-forbidden",
+        &manifest_dir.join("tests/ui/durable_token_constructor_forbidden.rs"),
+        &dependencies,
+        &["fields `slot`, `serial` and `_brand` of struct `TokenListBuilder` are private"],
+    );
 }

@@ -750,9 +750,14 @@ fn tokens_text_at<G>(
         escape_char,
     };
     let mut text = String::new();
-    let words = tokens.map_or_else(Vec::new, |id| stores.token_list(id).to_vec());
-    for token in words {
-        tex_state::token_show::append_token_show_text(&display, token.semantic_token(), &mut text);
+    if let Some(id) = tokens {
+        for token in stores.token_list(id) {
+            tex_state::token_show::append_token_show_text(
+                &display,
+                token.semantic_token(),
+                &mut text,
+            );
+        }
     }
     text
 }
@@ -773,8 +778,10 @@ fn bounded_tokens_text_at<G>(
         escape_char,
     };
     let mut text = String::new();
-    let words = tokens.map_or_else(Vec::new, |id| stores.token_list(id).to_vec());
-    let mut words = words.into_iter().peekable();
+    let mut words = tokens
+        .into_iter()
+        .flat_map(|id| stores.token_list(id))
+        .peekable();
     while text.chars().count() < BREADTH {
         let Some(token) = words.next() else {
             break;

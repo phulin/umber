@@ -541,10 +541,14 @@ pub(in crate::main_control) fn finish_replay_alignment_with_origin<G>(
                             .u_template
                             .expect("alignment columns retain u templates"),
                     )
-                    .to_vec(),
+                    .iter()
+                    .collect::<Vec<_>>(),
             ),
             v_template: tex_state::node::NodeTokenList::new(
-                stores.token_list(templates.v_template).to_vec(),
+                stores
+                    .token_list(templates.v_template)
+                    .iter()
+                    .collect::<Vec<_>>(),
             ),
         })
         .collect();

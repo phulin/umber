@@ -1657,7 +1657,7 @@ pub(in crate::main_control) fn message_tokens_text<G>(
     tokens: tex_state::TokenListId<G>,
 ) -> String {
     let mut text = String::new();
-    for &token in stores.token_list(tokens) {
+    for token in stores.token_list(tokens) {
         tex_state::token_show::append_token_string_text(stores, token.semantic_token(), &mut text);
     }
     text
@@ -1681,7 +1681,7 @@ pub(in crate::main_control) fn show_tokens_tokens_text<G>(
         .filter(|&code| code <= u8::MAX.into())
         .and_then(char::from_u32);
     let mut text = String::new();
-    for &token in stores.token_list(tokens) {
+    for token in stores.token_list(tokens) {
         tex_state::token_show::append_token_selector_text(
             stores,
             token.semantic_token(),

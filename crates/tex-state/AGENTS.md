@@ -39,7 +39,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/definition_arena.rs`: Append-only generation-branded immutable macro
   definitions whose parameter and replacement words live in the same arena.
 - `src/durable_arena.rs`: Separate generation-branded append-only token-list,
-  glue, and provenance arenas with direct row resolution.
+  glue, and provenance arenas. Token lists use fixed-size packed chunks,
+  scalar sealed rows, opaque destination builders, and allocation-free
+  sequential views/cursors; glue and provenance retain direct row resolution.
 - `src/env.rs`: Generation-branded eqtb-equivalent current state, exact TeX
   local/global save semantics, group boundaries, and journal-cursor restore.
 - `src/env/font_runtime.rs`: Direct-index generation-owned mutable per-font

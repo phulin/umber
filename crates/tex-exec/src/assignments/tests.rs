@@ -48,7 +48,10 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
             true,
         );
         assert_eq!(
-            stores.token_list(stores.token_register(0).expect("register").expect("set")),
+            stores
+                .token_list(stores.token_register(0).expect("register").expect("set"))
+                .iter()
+                .collect::<Vec<_>>(),
             &[token('b')]
         );
 
@@ -75,12 +78,15 @@ fn global_token_writes_keep_displaced_values_live_through_assignment_trace() {
             true,
         );
         assert_eq!(
-            stores.token_list(
-                stores
-                    .token_parameter(parameter)
-                    .expect("parameter")
-                    .expect("everypar is set")
-            ),
+            stores
+                .token_list(
+                    stores
+                        .token_parameter(parameter)
+                        .expect("parameter")
+                        .expect("everypar is set"),
+                )
+                .iter()
+                .collect::<Vec<_>>(),
             &[token('d')]
         );
     });
@@ -110,12 +116,18 @@ fn local_token_write_undo_is_the_assignment_trace_liveness_negative_control() {
         );
 
         assert_eq!(
-            stores.token_list(stores.token_register(0).expect("register").expect("set")),
+            stores
+                .token_list(stores.token_register(0).expect("register").expect("set"))
+                .iter()
+                .collect::<Vec<_>>(),
             &[token('b')]
         );
         stores.end_group(GroupKind::Simple).expect("group");
         assert_eq!(
-            stores.token_list(stores.token_register(0).expect("register").expect("set")),
+            stores
+                .token_list(stores.token_register(0).expect("register").expect("set"))
+                .iter()
+                .collect::<Vec<_>>(),
             &[token('a')]
         );
     });

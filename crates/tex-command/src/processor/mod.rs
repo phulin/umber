@@ -348,24 +348,19 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         &mut self,
         tokens: Option<tex_state::TokenListId<G>>,
     ) -> Result<crate::AttemptTokenListId, CommandError> {
-        let words = tokens.map_or_else(Vec::new, |tokens| {
-            self.state
-                .token_list(tokens)
-                .iter()
-                .copied()
-                .map(|word| {
+        let arena = self.command.attempt.arena_mut();
+        match tokens {
+            Some(tokens) => {
+                arena.allocate_token_list(self.state.token_list(tokens).iter().map(|word| {
                     tex_state::token::TracedTokenWord::from_parts(
                         word,
                         tex_state::token::OriginId::UNKNOWN,
                     )
-                })
-                .collect::<Vec<_>>()
-        });
-        self.command
-            .attempt
-            .arena_mut()
-            .allocate_token_list(words)
-            .map_err(crate::scan_toks::attempt_command_error)
+                }))
+            }
+            None => arena.allocate_token_list([]),
+        }
+        .map_err(crate::scan_toks::attempt_command_error)
     }
 
     /// Prints TeX82 §§299/1030's command trace at the fetch boundary.

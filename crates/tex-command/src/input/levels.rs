@@ -184,6 +184,13 @@ pub(crate) enum TokenPayload<G> {
         replay: crate::execution_scratch::MacroReplayCursor<G>,
         len: u32,
     },
+    /// One generation-durable token list, replayed through its stable chunk
+    /// cursor without materializing an input-owned word buffer.
+    DurableList {
+        list: tex_state::TokenListId<G>,
+        cursor: tex_state::TokenListCursor<G>,
+        len: u32,
+    },
     /// One attempt-local token list, replayed literally by range.
     AttemptList { list: AttemptTokenListId, len: u32 },
 }
@@ -198,6 +205,11 @@ impl<G> Clone for TokenPayload<G> {
             },
             Self::MacroArgument { replay, len } => Self::MacroArgument {
                 replay: *replay,
+                len: *len,
+            },
+            Self::DurableList { list, cursor, len } => Self::DurableList {
+                list: *list,
+                cursor: *cursor,
                 len: *len,
             },
             Self::AttemptList { list, len } => Self::AttemptList {
@@ -282,18 +294,6 @@ impl PackedTokenChunk {
         }
     }
 
-    fn from_durable(words: &[tex_state::token::TokenWord]) -> Self {
-        Self {
-            words: words
-                .iter()
-                .copied()
-                .map(|word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN))
-                .collect(),
-            source_provenance: SmallVec::new(),
-            ownership: PackedTokenOwnership::Stored,
-        }
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.words.len()
     }
@@ -341,8 +341,27 @@ impl<G> TokenPayload<G> {
         Self::Packed(PackedTokenChunk::from_stored(tokens, origins))
     }
 
-    pub(crate) fn durable(words: &[tex_state::token::TokenWord]) -> Self {
-        Self::Packed(PackedTokenChunk::from_durable(words))
+    pub(crate) fn durable(
+        list: tex_state::TokenListId<G>,
+        words: tex_state::TokenListView<'_, G>,
+    ) -> Self {
+        Self::DurableList {
+            list,
+            cursor: words.cursor(),
+            len: u32::try_from(words.len()).expect("durable token-list length exceeds u32"),
+        }
+    }
+
+    pub(crate) fn stored_semantic(words: &[tex_state::token::TokenWord]) -> Self {
+        Self::Packed(PackedTokenChunk {
+            words: words
+                .iter()
+                .copied()
+                .map(|word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN))
+                .collect(),
+            source_provenance: SmallVec::new(),
+            ownership: PackedTokenOwnership::Stored,
+        })
     }
 
     pub(crate) fn frame_len(&self) -> usize {
@@ -350,6 +369,7 @@ impl<G> TokenPayload<G> {
             Self::Packed(chunk) => chunk.len(),
             Self::MacroReplacement { len, .. } => *len as usize,
             Self::MacroArgument { len, .. } => *len as usize,
+            Self::DurableList { len, .. } => *len as usize,
             Self::AttemptList { len, .. } => *len as usize,
         }
     }

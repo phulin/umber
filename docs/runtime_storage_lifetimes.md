@@ -250,6 +250,17 @@ arenas with the same private-id, admission, and coarse-ownership rules. They do
 not share the `DefinitionId` namespace, and definition-text spans remain
 physically owned by `DefinitionArena`.
 
+Durable token lists store their semantic `TokenWord` lane in generation-owned
+fixed-size chunks. A sealed row contains only its head coordinate and logical
+length; immutable replay retains a branded chunk cursor and hops only at fixed
+chunk boundaries. The destination builder owns no word buffer: it appends a
+`TokenWord`, or accepts a `TracedTokenWord` and extracts its already-packed
+token lane, directly into the final chunk chain. Token-list equality, content
+identity, and wire encoding deliberately exclude origin. Origin coordinates
+remain in the separate generation provenance arena and are detached only at
+the explicit diagnostic/source boundary; a future scanner migration must not
+create a parallel per-list origin owner or materialize a semantic-word vector.
+
 ## Hot resolution and suspension
 
 At episode admission, `tex-command` receives a borrowed view of the generation

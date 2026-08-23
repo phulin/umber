@@ -3,7 +3,10 @@
 use crate::InteractionMode;
 use crate::definition_arena::{DefinitionId, DefinitionView};
 use crate::dependency::{DependencyKey, DependencyRuntime, DependencyValue, TrackedRegionBarrier};
-use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
+use crate::durable_arena::{
+    DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListCursor, TokenListId,
+    TokenListView,
+};
 use crate::env::banks::IntParam;
 use crate::env::{AssignmentScope, CodeTableKind, DenseState, StateError};
 use crate::font::FontStore;
@@ -423,7 +426,7 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     #[inline(always)]
-    pub fn token_list(&self, id: TokenListId<G>) -> &[TokenWord] {
+    pub fn token_list(&self, id: TokenListId<G>) -> TokenListView<'_, G> {
         self.admitted.token_list(id)
     }
 
@@ -441,6 +444,67 @@ impl<'a, G> CommandContext<'a, G> {
         words: &[TokenWord],
     ) -> Result<TokenListId<G>, DurableAllocationError> {
         self.admitted.allocate_token_list(words)
+    }
+
+    /// Begins destination-directed construction in this generation's final
+    /// durable token-list pool. Nested builders have independent chunk chains.
+    pub fn begin_token_list_builder(
+        &mut self,
+    ) -> Result<TokenListBuilder<G>, DurableAllocationError> {
+        self.admitted.begin_token_list_builder()
+    }
+
+    /// Appends one final semantic token word without temporary ownership.
+    pub fn append_token_list_word(
+        &mut self,
+        builder: &TokenListBuilder<G>,
+        word: TokenWord,
+    ) -> Result<(), DurableAllocationError> {
+        self.admitted.append_token_list_word(builder, word)
+    }
+
+    /// Appends a scanner's already-packed word directly to the final semantic
+    /// lane. Durable token-list identity intentionally excludes origin; the
+    /// provenance lane remains generation-owned separately.
+    pub fn append_traced_token_list_word(
+        &mut self,
+        builder: &TokenListBuilder<G>,
+        word: crate::token::TracedTokenWord,
+    ) -> Result<(), DurableAllocationError> {
+        self.admitted
+            .append_token_list_word(builder, word.token_word())
+    }
+
+    /// Publishes only a dense row coordinate; the word chunks stay in place.
+    pub fn seal_token_list_builder(
+        &mut self,
+        builder: TokenListBuilder<G>,
+    ) -> Result<TokenListId<G>, DurableAllocationError> {
+        self.admitted.seal_token_list_builder(builder)
+    }
+
+    /// Returns an unpublished builder's chain to the generation-owned pool.
+    pub fn discard_token_list_builder(
+        &mut self,
+        builder: TokenListBuilder<G>,
+    ) -> Result<(), DurableAllocationError> {
+        self.admitted.discard_token_list_builder(builder)
+    }
+
+    #[inline(always)]
+    pub fn token_list_cursor_word(
+        &self,
+        cursor: TokenListCursor<G>,
+    ) -> Result<TokenWord, DurableAllocationError> {
+        self.admitted.token_list_cursor_word(cursor)
+    }
+
+    #[inline(always)]
+    pub fn advance_token_list_cursor(
+        &self,
+        cursor: &mut TokenListCursor<G>,
+    ) -> Result<(), DurableAllocationError> {
+        self.admitted.advance_token_list_cursor(cursor)
     }
 
     #[inline(always)]
@@ -2878,11 +2942,12 @@ impl<'a, G> CommandContext<'a, G> {
         };
         let words = self.token_list(root);
         assert_eq!(words.len() % 8, 0, "paragraph-shape payload is truncated");
-        words
-            .chunks_exact(8)
-            .map(|chunk| {
+        let mut words = words.iter();
+        (0..words.len() / 8)
+            .map(|_| {
                 let mut bytes = [0_u8; 8];
-                for (byte, word) in bytes.iter_mut().zip(chunk) {
+                for byte in &mut bytes {
+                    let word = words.next().expect("validated paragraph-shape length");
                     *byte = match word.semantic_token() {
                         crate::token::Token::Char {
                             ch,
@@ -3004,11 +3069,12 @@ impl<'a, G> CommandContext<'a, G> {
         };
         let words = self.token_list(root);
         assert_eq!(words.len() % 4, 0, "penalty-array payload is truncated");
-        words
-            .chunks_exact(4)
-            .map(|chunk| {
+        let mut words = words.iter();
+        (0..words.len() / 4)
+            .map(|_| {
                 let mut bytes = [0_u8; 4];
-                for (byte, word) in bytes.iter_mut().zip(chunk) {
+                for byte in &mut bytes {
+                    let word = words.next().expect("validated penalty-array length");
                     *byte = match word.semantic_token() {
                         crate::token::Token::Char {
                             ch,

@@ -28,7 +28,10 @@ fn admitted_view_resolves_every_generation_typed_value_directly() {
             admitted.definition(definition).replacement_text(),
             replacement
         );
-        assert_eq!(admitted.token_list(tokens), replacement);
+        assert_eq!(
+            admitted.token_list(tokens).iter().collect::<Vec<_>>(),
+            replacement
+        );
         assert_eq!(admitted.glue(glue), GlueSpec::ZERO);
     });
 }

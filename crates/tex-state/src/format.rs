@@ -985,20 +985,19 @@ impl<G> Universe<G> {
                 let tokens = *token_lists
                     .get(row as usize)
                     .ok_or_else(|| "PDF token root is out of range".to_owned())?;
-                let words = self
+                let admitted = self
                     .core
                     .as_ref()
                     .expect("format candidate retains core")
-                    .admit()
-                    .token_list(tokens)
-                    .to_vec();
+                    .admit();
+                let words = admitted.token_list(tokens);
                 Ok(crate::pdf::PdfTokenParameter {
                     tokens,
                     semantic_id: crate::state_hash::StateHashFragment::from_exact_builder(
                         0x7064_665f_746f_6b70,
                         |hasher| {
                             hasher.usize(words.len());
-                            for word in &words {
+                            for word in words {
                                 hasher.u32(word.raw());
                             }
                         },

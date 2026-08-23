@@ -164,7 +164,10 @@ pub use dependency::{
     DependencyRuntime, DependencyTracker, DependencyValidation, DependencyValue,
     DependencyWorldField, ObservedDependency, TrackedRegionBarrier,
 };
-pub use durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
+pub use durable_arena::{
+    DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListCursor, TokenListId,
+    TokenListView, TokenListWords,
+};
 pub use effect_journal::EffectJournal;
 pub use engine_state::{EngineMode, EngineStateSnapshot};
 pub use env::group::{GroupFrame, GroupKind, GroupMismatch};

@@ -1224,7 +1224,7 @@ impl<G> CommandState<G> {
     ) -> CommandReplayEpisode {
         let words = stores.token_list(tokens);
         let identity = self.push_token_level(
-            TokenPayload::durable(words),
+            TokenPayload::durable(tokens, words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -1384,7 +1384,7 @@ impl<G> CommandState<G> {
     ) {
         let words = stores.token_list(tokens);
         let level = self.push_token_level(
-            TokenPayload::durable(words),
+            TokenPayload::durable(tokens, words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
@@ -1419,11 +1419,8 @@ impl<G> CommandState<G> {
                         &mut text,
                     );
                     text.push_str("->");
-                    let token_count = state.token_list(tokens).len();
-                    for index in 0..token_count {
-                        let token = state.token_list(tokens)[index]
-                            .token()
-                            .expect("durable token word is valid");
+                    for word in state.token_list(tokens) {
+                        let token = word.token().expect("durable token word is valid");
                         crate::processor::expand::append_token_list_token_text(
                             state, token, &mut text,
                         );
@@ -2291,7 +2288,7 @@ impl<G> CommandState<G> {
         }
         let words = stores.token_list(every_eof);
         Some(self.push_token_level(
-            TokenPayload::durable(words),
+            TokenPayload::durable(every_eof, words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::EveryEof),
@@ -2423,7 +2420,7 @@ impl<G> CommandState<G> {
         trace: ReplayTrace,
     ) -> InputLevelId {
         self.push_token_level(
-            TokenPayload::durable(stores.token_list(template)),
+            TokenPayload::durable(template, stores.token_list(template)),
             behavior,
             retirement,
             trace,

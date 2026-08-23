@@ -376,6 +376,11 @@ fn project_token_cursor<G>(
                 project_token(hash, chunk.word(index)?.token()?, state)?;
             }
         }
+        TokenPayload::DurableList { list, .. } => {
+            for word in state.token_list(*list) {
+                project_token(hash, word.semantic_token(), state)?;
+            }
+        }
         TokenPayload::MacroReplacement { .. }
         | TokenPayload::AttemptList { .. }
         | TokenPayload::MacroArgument { .. } => {
@@ -856,6 +861,7 @@ impl<G> InputState<G> {
                 TokenPayload::MacroReplacement { len, .. } => *len as usize,
                 TokenPayload::AttemptList { len, .. } => *len as usize,
                 TokenPayload::MacroArgument { len, .. } => *len as usize,
+                TokenPayload::DurableList { len, .. } => *len as usize,
             }
         }
 
@@ -881,6 +887,10 @@ impl<G> InputState<G> {
                 TokenPayload::MacroArgument { replay, .. } => scratch
                     .argument_word(replay.range(), index)
                     .ok()
+                    .map(|word| word.semantic_token()),
+                TokenPayload::DurableList { list, .. } => stores
+                    .token_list(*list)
+                    .get(index)
                     .map(|word| word.semantic_token()),
             }
         }

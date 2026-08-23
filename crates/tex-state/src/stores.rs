@@ -1,7 +1,10 @@
 //! Coarse revision-generation owner and admitted state views.
 
 use crate::definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
-use crate::durable_arena::{DurableAllocationError, GlueId, ProvenanceId, TokenListId};
+use crate::durable_arena::{
+    DurableAllocationError, GlueId, ProvenanceId, TokenListBuilder, TokenListCursor, TokenListId,
+    TokenListView,
+};
 use crate::env::{DenseState, StateError};
 use crate::generation::{Generation, GenerationOwner, GenerationRetirement};
 use crate::glue::GlueSpec;
@@ -157,7 +160,7 @@ impl<'a, G> AdmittedState<'a, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn token_list(&self, id: TokenListId<G>) -> &[TokenWord] {
+    pub(crate) fn token_list(&self, id: TokenListId<G>) -> TokenListView<'_, G> {
         self.generation.token_lists().get(id)
     }
 
@@ -183,7 +186,7 @@ impl<'a, G> AdmittedState<'a, G> {
             roots,
             destination,
             |id| self.glue(id),
-            |id| NodeTokenList::new(self.token_list(id)),
+            |id| NodeTokenList::new(self.token_list(id).iter().collect::<Vec<_>>()),
         )
     }
 
@@ -219,7 +222,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
     }
 
     #[inline(always)]
-    pub(crate) fn token_list(&self, id: TokenListId<G>) -> &[TokenWord] {
+    pub(crate) fn token_list(&self, id: TokenListId<G>) -> TokenListView<'_, G> {
         self.generation.token_lists().get(id)
     }
 
@@ -268,6 +271,50 @@ impl<'a, G> AdmittedStateMut<'a, G> {
         self.generation.token_lists_mut().allocate(words)
     }
 
+    pub(crate) fn begin_token_list_builder(
+        &mut self,
+    ) -> Result<TokenListBuilder<G>, DurableAllocationError> {
+        self.generation.token_lists_mut().begin_builder()
+    }
+
+    pub(crate) fn append_token_list_word(
+        &mut self,
+        builder: &TokenListBuilder<G>,
+        word: TokenWord,
+    ) -> Result<(), DurableAllocationError> {
+        self.generation
+            .token_lists_mut()
+            .push_builder_word(builder, word)
+    }
+
+    pub(crate) fn seal_token_list_builder(
+        &mut self,
+        builder: TokenListBuilder<G>,
+    ) -> Result<TokenListId<G>, DurableAllocationError> {
+        self.generation.token_lists_mut().seal_builder(builder)
+    }
+
+    pub(crate) fn discard_token_list_builder(
+        &mut self,
+        builder: TokenListBuilder<G>,
+    ) -> Result<(), DurableAllocationError> {
+        self.generation.token_lists_mut().discard_builder(builder)
+    }
+
+    pub(crate) fn token_list_cursor_word(
+        &self,
+        cursor: TokenListCursor<G>,
+    ) -> Result<TokenWord, DurableAllocationError> {
+        self.generation.token_lists().cursor_word(cursor)
+    }
+
+    pub(crate) fn advance_token_list_cursor(
+        &self,
+        cursor: &mut TokenListCursor<G>,
+    ) -> Result<(), DurableAllocationError> {
+        self.generation.token_lists().advance_cursor(cursor)
+    }
+
     pub(crate) fn allocate_glue(
         &mut self,
         value: GlueSpec,
@@ -298,7 +345,7 @@ impl<'a, G> AdmittedStateMut<'a, G> {
             roots,
             destination,
             |id| self.glue(id),
-            |id| NodeTokenList::new(self.token_list(id)),
+            |id| NodeTokenList::new(self.token_list(id).iter().collect::<Vec<_>>()),
         )
     }
 

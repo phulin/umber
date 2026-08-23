@@ -16,6 +16,9 @@ pub(super) enum TokenListNamespace {}
 pub(super) enum GlueNamespace {}
 pub(super) enum ProvenanceNamespace {}
 
+const TOKEN_CHUNK_WORDS: usize = 64;
+const NO_CHUNK: u32 = u32::MAX;
+
 macro_rules! dense_id {
     ($name:ident) => {
         pub struct $name<G> {
@@ -107,29 +110,230 @@ fn next_row(len: usize) -> Result<NonZeroU32, DurableAllocationError> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct TokenSpan {
-    start: u32,
+struct TokenListRow {
+    head: u32,
     len: u32,
 }
 
-impl TokenSpan {
-    fn checked(start: usize, len: usize) -> Option<Self> {
-        let start = u32::try_from(start).ok()?;
-        let len = u32::try_from(len).ok()?;
-        start.checked_add(len)?;
-        Some(Self { start, len })
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TokenChunk {
+    words: [TokenWord; TOKEN_CHUNK_WORDS],
+    len: u8,
+    next: u32,
+}
+
+impl Default for TokenChunk {
+    fn default() -> Self {
+        Self {
+            words: [TokenWord::from_raw(0); TOKEN_CHUNK_WORDS],
+            len: 0,
+            next: NO_CHUNK,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BuilderSlot {
+    serial: u64,
+    head: u32,
+    tail: u32,
+    len: u32,
+    live: bool,
+}
+
+impl Default for BuilderSlot {
+    fn default() -> Self {
+        Self {
+            serial: 0,
+            head: NO_CHUNK,
+            tail: NO_CHUNK,
+            len: 0,
+            live: false,
+        }
+    }
+}
+
+/// An unpublished destination-directed durable token-list construction.
+///
+/// Constructors and coordinates are private. The invariant brand prevents a
+/// builder from being used through another admitted generation.
+#[must_use = "a durable token-list builder must be sealed or discarded"]
+pub struct TokenListBuilder<G> {
+    slot: u32,
+    serial: u64,
+    _brand: PhantomData<fn(&G) -> &G>,
+}
+
+/// A stable sequential coordinate into one sealed durable token list.
+///
+/// The fields are private so suspended command state can retain the typed
+/// coordinate but cannot forge a cross-list or cross-generation position.
+#[derive(Debug)]
+pub struct TokenListCursor<G> {
+    list: TokenListId<G>,
+    chunk: u32,
+    offset: u8,
+    remaining: u32,
+}
+
+impl<G> Copy for TokenListCursor<G> {}
+impl<G> Clone for TokenListCursor<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<G> PartialEq for TokenListCursor<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.list == other.list
+            && self.chunk == other.chunk
+            && self.offset == other.offset
+            && self.remaining == other.remaining
+    }
+}
+impl<G> Eq for TokenListCursor<G> {}
+impl<G> core::hash::Hash for TokenListCursor<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.list.hash(state);
+        self.chunk.hash(state);
+        self.offset.hash(state);
+        self.remaining.hash(state);
+    }
+}
+
+/// Cheap immutable sequential view of one sealed durable token list.
+pub struct TokenListView<'a, G> {
+    chunks: &'a [TokenChunk],
+    list: TokenListId<G>,
+    row: TokenListRow,
+}
+
+impl<G> Copy for TokenListView<'_, G> {}
+impl<G> Clone for TokenListView<'_, G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'a, G> TokenListView<'a, G> {
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.row.len as usize
     }
 
-    fn resolve(self, words: &[TokenWord]) -> &[TokenWord] {
-        let start = self.start as usize;
-        &words[start..start + self.len as usize]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.row.len == 0
+    }
+
+    #[must_use]
+    pub fn cursor(&self) -> TokenListCursor<G> {
+        TokenListCursor {
+            list: self.list,
+            chunk: self.row.head,
+            offset: 0,
+            remaining: self.row.len,
+        }
+    }
+
+    #[must_use]
+    pub fn iter(&self) -> TokenListWords<'a, G> {
+        TokenListWords {
+            chunks: self.chunks,
+            cursor: self.cursor(),
+        }
+    }
+
+    /// Cold random access for bounded diagnostic projections.
+    /// Sequential runtime replay must retain and advance a cursor instead.
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<TokenWord> {
+        let mut words = self.iter();
+        words.nth(index)
+    }
+}
+
+impl<G> core::fmt::Debug for TokenListView<'_, G> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_list().entries((*self).iter()).finish()
+    }
+}
+
+impl<G> PartialEq for TokenListView<'_, G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter())
+    }
+}
+impl<G> Eq for TokenListView<'_, G> {}
+
+impl<G> core::hash::Hash for TokenListView<'_, G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.len().hash(state);
+        for word in self.iter() {
+            word.hash(state);
+        }
+    }
+}
+
+/// Allocation-free iterator over a sealed durable token list.
+pub struct TokenListWords<'a, G> {
+    chunks: &'a [TokenChunk],
+    cursor: TokenListCursor<G>,
+}
+
+impl<G> Clone for TokenListWords<'_, G> {
+    fn clone(&self) -> Self {
+        Self {
+            chunks: self.chunks,
+            cursor: self.cursor,
+        }
+    }
+}
+
+impl<G> Iterator for TokenListWords<'_, G> {
+    type Item = TokenWord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cursor.remaining == 0 {
+            return None;
+        }
+        let chunk = self.chunks.get(self.cursor.chunk as usize)?;
+        let word = *chunk.words.get(self.cursor.offset as usize)?;
+        self.cursor.remaining -= 1;
+        self.cursor.offset += 1;
+        if self.cursor.offset == chunk.len {
+            self.cursor.chunk = chunk.next;
+            self.cursor.offset = 0;
+        }
+        Some(word)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.cursor.remaining as usize;
+        (len, Some(len))
+    }
+}
+impl<G> ExactSizeIterator for TokenListWords<'_, G> {}
+
+impl<'a, G> IntoIterator for TokenListView<'a, G> {
+    type Item = TokenWord;
+    type IntoIter = TokenListWords<'a, G>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        TokenListWords {
+            chunks: self.chunks,
+            cursor: self.cursor(),
+        }
     }
 }
 
 /// Durable token-register lists, physically separate from definition text.
 pub(crate) struct TokenListArena<G> {
-    rows: Vec<TokenSpan>,
-    words: Vec<TokenWord>,
+    rows: Vec<TokenListRow>,
+    chunks: Vec<TokenChunk>,
+    builder_slots: Vec<BuilderSlot>,
+    free_builder_slots: Vec<u32>,
+    free_chunk_head: u32,
+    next_builder_serial: u64,
     _brand: PhantomData<fn(&G) -> &G>,
 }
 
@@ -137,35 +341,30 @@ impl<G> TokenListArena<G> {
     pub(super) fn new(_token: ArenaToken<G, TokenListNamespace>) -> Self {
         Self {
             rows: Vec::new(),
-            words: Vec::new(),
+            chunks: Vec::new(),
+            builder_slots: Vec::new(),
+            free_builder_slots: Vec::new(),
+            free_chunk_head: NO_CHUNK,
+            next_builder_serial: 1,
             _brand: PhantomData,
         }
     }
 
-    /// Copies and publishes one complete list after all reservations succeed.
+    /// Cold/source-admission wrapper which streams once into final chunks.
+    /// Runtime scanners must use the destination-directed builder methods.
     pub(crate) fn allocate(
         &mut self,
         words: &[TokenWord],
     ) -> Result<TokenListId<G>, DurableAllocationError> {
-        let row = next_row(self.rows.len())?;
-        let final_word_len = self
-            .words
-            .len()
-            .checked_add(words.len())
-            .ok_or(DurableAllocationError::CapacityOverflow)?;
-        u32::try_from(final_word_len).map_err(|_| DurableAllocationError::CapacityOverflow)?;
-        let span = TokenSpan::checked(self.words.len(), words.len())
-            .ok_or(DurableAllocationError::CapacityOverflow)?;
-
-        self.words
-            .try_reserve(words.len())
-            .map_err(|_| DurableAllocationError::AllocationFailed)?;
-        self.rows
-            .try_reserve(1)
-            .map_err(|_| DurableAllocationError::AllocationFailed)?;
-        self.words.extend_from_slice(words);
-        self.rows.push(span);
-        Ok(TokenListId::from_row(row))
+        self.reserve_batch(1, words.len())?;
+        let builder = self.begin_builder()?;
+        for &word in words {
+            if let Err(error) = self.push_builder_word(&builder, word) {
+                let _ = self.discard_builder(builder);
+                return Err(error);
+            }
+        }
+        self.seal_builder(builder)
     }
 
     /// Reserves a complete promotion batch without publishing a row.
@@ -179,23 +378,162 @@ impl<G> TokenListArena<G> {
             .checked_add(rows)
             .and_then(|len| u32::try_from(len).ok())
             .ok_or(DurableAllocationError::CapacityOverflow)?;
-        self.words
+        let chunks = rows
+            .min(words)
+            .checked_add(words / TOKEN_CHUNK_WORDS)
+            .ok_or(DurableAllocationError::CapacityOverflow)?;
+        self.chunks
             .len()
-            .checked_add(words)
+            .checked_add(chunks)
             .and_then(|len| u32::try_from(len).ok())
             .ok_or(DurableAllocationError::CapacityOverflow)?;
         self.rows
             .try_reserve(rows)
             .map_err(|_| DurableAllocationError::AllocationFailed)?;
-        self.words
-            .try_reserve(words)
-            .map_err(|_| DurableAllocationError::AllocationFailed)
+        self.chunks
+            .try_reserve(chunks)
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        if self.builder_slots.is_empty() {
+            self.builder_slots
+                .try_reserve(1)
+                .map_err(|_| DurableAllocationError::AllocationFailed)?;
+            self.free_builder_slots
+                .try_reserve(1)
+                .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        }
+        Ok(())
     }
 
     #[must_use]
     #[inline(always)]
-    pub(crate) fn get(&self, id: TokenListId<G>) -> &[TokenWord] {
-        self.rows[id.index()].resolve(&self.words)
+    pub(crate) fn get(&self, id: TokenListId<G>) -> TokenListView<'_, G> {
+        TokenListView {
+            chunks: &self.chunks,
+            list: id,
+            row: self.rows[id.index()],
+        }
+    }
+
+    pub(crate) fn begin_builder(&mut self) -> Result<TokenListBuilder<G>, DurableAllocationError> {
+        let slot = if let Some(slot) = self.free_builder_slots.pop() {
+            slot
+        } else {
+            let slot = u32::try_from(self.builder_slots.len())
+                .map_err(|_| DurableAllocationError::CapacityOverflow)?;
+            self.builder_slots
+                .try_reserve(1)
+                .map_err(|_| DurableAllocationError::AllocationFailed)?;
+            let needed_free_capacity = self.builder_slots.len() + 1;
+            self.free_builder_slots
+                .try_reserve(
+                    needed_free_capacity.saturating_sub(self.free_builder_slots.capacity()),
+                )
+                .map_err(|_| DurableAllocationError::AllocationFailed)?;
+            self.builder_slots.push(BuilderSlot::default());
+            slot
+        };
+        let serial = self.next_builder_serial;
+        self.next_builder_serial = self.next_builder_serial.wrapping_add(1).max(1);
+        self.builder_slots[slot as usize] = BuilderSlot {
+            serial,
+            live: true,
+            ..BuilderSlot::default()
+        };
+        Ok(TokenListBuilder {
+            slot,
+            serial,
+            _brand: PhantomData,
+        })
+    }
+
+    /// Appends the final semantic word in O(1). Token origins deliberately do
+    /// not belong to durable token-list identity; scanner sinks extract the
+    /// token lane from `TracedTokenWord` at emission and append it here.
+    pub(crate) fn push_builder_word(
+        &mut self,
+        builder: &TokenListBuilder<G>,
+        word: TokenWord,
+    ) -> Result<(), DurableAllocationError> {
+        let slot = self.builder_slot(builder)?;
+        let mut head = slot.head;
+        let mut tail = slot.tail;
+        let len = slot
+            .len
+            .checked_add(1)
+            .ok_or(DurableAllocationError::CapacityOverflow)?;
+        let needs_chunk =
+            tail == NO_CHUNK || self.chunks[tail as usize].len as usize == TOKEN_CHUNK_WORDS;
+        if needs_chunk {
+            let chunk = self.allocate_chunk()?;
+            if tail == NO_CHUNK {
+                head = chunk;
+            } else {
+                self.chunks[tail as usize].next = chunk;
+            }
+            tail = chunk;
+        }
+        let chunk = &mut self.chunks[tail as usize];
+        chunk.words[chunk.len as usize] = word;
+        chunk.len += 1;
+        let slot = self.builder_slot_mut(builder)?;
+        slot.head = head;
+        slot.tail = tail;
+        slot.len = len;
+        Ok(())
+    }
+
+    pub(crate) fn seal_builder(
+        &mut self,
+        builder: TokenListBuilder<G>,
+    ) -> Result<TokenListId<G>, DurableAllocationError> {
+        let row = next_row(self.rows.len())?;
+        self.rows
+            .try_reserve(1)
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        let slot = *self.builder_slot(&builder)?;
+        self.rows.push(TokenListRow {
+            head: slot.head,
+            len: slot.len,
+        });
+        self.release_builder_slot(builder, false)?;
+        Ok(TokenListId::from_row(row))
+    }
+
+    pub(crate) fn discard_builder(
+        &mut self,
+        builder: TokenListBuilder<G>,
+    ) -> Result<(), DurableAllocationError> {
+        self.release_builder_slot(builder, true)
+    }
+
+    pub(crate) fn cursor_word(
+        &self,
+        cursor: TokenListCursor<G>,
+    ) -> Result<TokenWord, DurableAllocationError> {
+        let row = self.rows[cursor.list.index()];
+        if cursor.remaining == 0 || cursor.remaining > row.len {
+            return Err(DurableAllocationError::CapacityOverflow);
+        }
+        self.chunks
+            .get(cursor.chunk as usize)
+            .and_then(|chunk| chunk.words.get(cursor.offset as usize))
+            .copied()
+            .ok_or(DurableAllocationError::CapacityOverflow)
+    }
+
+    pub(crate) fn advance_cursor(
+        &self,
+        cursor: &mut TokenListCursor<G>,
+    ) -> Result<(), DurableAllocationError> {
+        self.cursor_word(*cursor)?;
+        let chunk = &self.chunks[cursor.chunk as usize];
+        cursor.remaining -= 1;
+        cursor.offset += 1;
+        if cursor.offset == chunk.len {
+            cursor.chunk = chunk.next;
+            cursor.offset = 0;
+        }
+        Ok(())
     }
 
     #[must_use]
@@ -212,13 +550,77 @@ impl<G> TokenListArena<G> {
     pub(crate) fn capture_format_rows(&self) -> Vec<Vec<u32>> {
         self.rows
             .iter()
-            .map(|span| {
-                span.resolve(&self.words)
-                    .iter()
-                    .map(|word| word.raw())
-                    .collect()
+            .enumerate()
+            .map(|(index, _)| {
+                let id = TokenListId::from_row(
+                    NonZeroU32::new(index as u32 + 1).expect("format row is nonzero"),
+                );
+                self.get(id).iter().map(TokenWord::raw).collect()
             })
             .collect()
+    }
+
+    fn builder_slot(
+        &self,
+        builder: &TokenListBuilder<G>,
+    ) -> Result<&BuilderSlot, DurableAllocationError> {
+        self.builder_slots
+            .get(builder.slot as usize)
+            .filter(|slot| slot.live && slot.serial == builder.serial)
+            .ok_or(DurableAllocationError::CapacityOverflow)
+    }
+
+    fn builder_slot_mut(
+        &mut self,
+        builder: &TokenListBuilder<G>,
+    ) -> Result<&mut BuilderSlot, DurableAllocationError> {
+        self.builder_slots
+            .get_mut(builder.slot as usize)
+            .filter(|slot| slot.live && slot.serial == builder.serial)
+            .ok_or(DurableAllocationError::CapacityOverflow)
+    }
+
+    fn allocate_chunk(&mut self) -> Result<u32, DurableAllocationError> {
+        if self.free_chunk_head != NO_CHUNK {
+            let chunk = self.free_chunk_head;
+            self.free_chunk_head = self.chunks[chunk as usize].next;
+            self.chunks[chunk as usize] = TokenChunk::default();
+            return Ok(chunk);
+        }
+        let chunk = u32::try_from(self.chunks.len())
+            .map_err(|_| DurableAllocationError::CapacityOverflow)?;
+        self.chunks
+            .try_reserve(1)
+            .map_err(|_| DurableAllocationError::AllocationFailed)?;
+        self.chunks.push(TokenChunk::default());
+        Ok(chunk)
+    }
+
+    fn release_builder_slot(
+        &mut self,
+        builder: TokenListBuilder<G>,
+        release_chunks: bool,
+    ) -> Result<(), DurableAllocationError> {
+        let slot = self.builder_slot_mut(&builder)?;
+        let head = slot.head;
+        let tail = slot.tail;
+        *slot = BuilderSlot::default();
+        if release_chunks && head != NO_CHUNK {
+            self.chunks[tail as usize].next = self.free_chunk_head;
+            self.free_chunk_head = head;
+        }
+        self.free_builder_slots.push(builder.slot);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    const fn retained_chunk_len(&self) -> usize {
+        self.chunks.len()
+    }
+
+    #[cfg(test)]
+    const fn retained_builder_slot_len(&self) -> usize {
+        self.builder_slots.len()
     }
 }
 

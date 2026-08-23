@@ -58,6 +58,7 @@ struct StoredTokenDelivery<G> {
     behavior: TokenBehavior,
     source_provenance: Option<SourceProvenance>,
     advanced_replay: Option<crate::execution_scratch::MacroReplayCursor<G>>,
+    advanced_durable: Option<tex_state::TokenListCursor<G>>,
 }
 
 use super::alignment::AlignmentDeliveryState;
@@ -1088,15 +1089,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             .expect("output is an admitted token parameter")
             .expect("output routine entry requires a configured token list");
         self.report_named_token_list("output", output);
-        let words = self
-            .state
-            .token_list(output)
-            .iter()
-            .copied()
-            .map(|word| TracedTokenWord::from_parts(word, OriginId::UNKNOWN))
-            .collect::<Vec<_>>();
+        let words = self.state.token_list(output);
         let level = self.command.push_token_level(
-            TokenPayload::transient(words),
+            TokenPayload::durable(output, words),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Stored(crate::input::StoredReplayReason::OutputRoutine),
@@ -1884,6 +1879,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                         behavior,
                         source_provenance,
                         advanced_replay,
+                        advanced_durable,
                     }) = next
                     {
                         let InputLevel::Tokens(cursor) = self
@@ -1900,6 +1896,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         if let TokenPayload::MacroArgument { replay, .. } = &mut cursor.payload {
                             *replay = advanced_replay.ok_or_else(CommandError::input_invariant)?;
+                        }
+                        if let TokenPayload::DurableList { cursor, .. } = &mut cursor.payload {
+                            *cursor = advanced_durable.ok_or_else(CommandError::input_invariant)?;
                         }
                         return Ok(Some(DeliveredToken {
                             spelling,
@@ -2156,14 +2155,15 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Option<StoredTokenDelivery<G>> {
         let index = cursor.position();
         let position = u64::try_from(index).ok()?;
-        let (spelling, advanced_replay) = match &cursor.payload {
-            TokenPayload::Packed(chunk) => (chunk.get(index), None),
+        let (spelling, advanced_replay, advanced_durable) = match &cursor.payload {
+            TokenPayload::Packed(chunk) => (chunk.get(index), None, None),
             TokenPayload::MacroReplacement { definition, .. } => (
                 stores
                     .definition(*definition)
                     .replacement_text()
                     .get(index)
                     .map(|word| (TracedTokenWord::from_parts(*word, OriginId::UNKNOWN), None)),
+                None,
                 None,
             ),
             TokenPayload::MacroArgument { replay, .. } => (
@@ -2172,6 +2172,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .ok()
                     .map(|spelling| (spelling, None)),
                 scratch.advanced_replay(*replay).ok(),
+                None,
             ),
             TokenPayload::AttemptList { list, .. } => (
                 attempt
@@ -2179,7 +2180,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                     .ok()
                     .map(|spelling| (spelling, None)),
                 None,
+                None,
             ),
+            TokenPayload::DurableList { cursor, .. } => {
+                let spelling = stores
+                    .token_list_cursor_word(*cursor)
+                    .ok()
+                    .map(|word| (TracedTokenWord::from_parts(word, OriginId::UNKNOWN), None));
+                let mut advanced = *cursor;
+                let advanced = stores
+                    .advance_token_list_cursor(&mut advanced)
+                    .ok()
+                    .map(|()| advanced);
+                (spelling, None, advanced)
+            }
         };
         let spelling = spelling?;
         Some(StoredTokenDelivery {
@@ -2188,6 +2202,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             behavior: cursor.behavior.clone(),
             source_provenance: spelling.1,
             advanced_replay,
+            advanced_durable,
         })
     }
 

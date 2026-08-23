@@ -232,9 +232,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         let mut text = String::new();
         crate::processor::expand::append_print_esc_text(&self.state, name, &mut text);
         text.push_str("->");
-        let token_count = self.state.token_list(tokens).len();
-        for index in 0..token_count {
-            let token = self.state.token_list(tokens)[index].semantic_token();
+        for word in self.state.token_list(tokens) {
+            let token = word.semantic_token();
             crate::processor::expand::append_token_list_token_text(&self.state, token, &mut text);
         }
         // §323 uses `print_nl`, unlike §389's unconditional `print_ln` for
