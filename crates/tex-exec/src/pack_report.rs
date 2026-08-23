@@ -122,6 +122,7 @@ pub(crate) fn report_lr_problems<G>(
     headline.push('\n');
     headline.push_str(&short_display(stores, boxed.children, list_layout));
     headline.push('\n');
+    stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
     stores.printer().print_rendered(&headline);
 
     let dump = dump_node_slice(
@@ -192,6 +193,7 @@ fn report_one<G>(
     // the headline and abbreviated hlist. Their live §54 selector is
     // therefore authoritative: batch mode writes the report to the log only,
     // while the other interaction modes write it to terminal and log.
+    stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
     stores.printer().print_rendered(&headline);
 
     // §663/§675: `begin_diagnostic; show_box(r); end_diagnostic(true)`.

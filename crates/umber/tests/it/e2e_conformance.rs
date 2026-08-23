@@ -1559,6 +1559,7 @@ fn compare_trip_phase(
     let PhaseComparison {
         dvi_pair,
         contract: phase_contract,
+        log_contract,
     } = comparison;
     let oracle_root = target_dir(root).join("trip-oracles").join(fixture_name);
     let artifact_root = target_dir(root)
@@ -1600,6 +1601,19 @@ fn compare_trip_phase(
     let (expected_terminal, actual_terminal) =
         phase_contract.text_channel(&expected_terminal, &run.terminal);
     let (expected_log, actual_log) = phase_contract.text_channel(&expected_log, &run.log);
+    let expected_log_projection;
+    let actual_log_projection;
+    let (expected_log, actual_log) = match log_contract {
+        PhaseLogContract::Exact => (expected_log, actual_log),
+        PhaseLogContract::EtripRepresentationNeutralEngineUsage => {
+            expected_log_projection =
+                etrip_official::normalize_loaded_log_engine_usage(expected_log)
+                    .expect("normalize e-TRIP oracle engine usage");
+            actual_log_projection = etrip_official::normalize_loaded_log_engine_usage(actual_log)
+                .expect("normalize e-TRIP actual engine usage");
+            (&expected_log_projection[..], &actual_log_projection[..])
+        }
+    };
     let verdict = write_trip_triage_artifact(
         &target_dir(root).join("conformance-triage"),
         TripTriageInput {
@@ -1650,6 +1664,16 @@ enum PhaseParityContract {
 struct PhaseComparison<'a> {
     dvi_pair: Option<(&'a [u8], &'a [u8])>,
     contract: PhaseParityContract,
+    log_contract: PhaseLogContract,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PhaseLogContract {
+    Exact,
+    /// e-TRIP's final storage counters describe WEB memory/string/font-table
+    /// representations, not TeX-visible semantics. The official artifact
+    /// comparator applies this same narrow projection.
+    EtripRepresentationNeutralEngineUsage,
 }
 
 impl PhaseParityContract {
@@ -1959,6 +1983,7 @@ fn run_two_phase_fixture(
         PhaseComparison {
             dvi_pair: None,
             contract: PhaseParityContract::DumpConstruction,
+            log_contract: PhaseLogContract::Exact,
         },
     );
     assert_format_image_contract(&format, engine);
@@ -2090,6 +2115,11 @@ fn run_two_phase_fixture(
         PhaseComparison {
             dvi_pair: Some((&expected_dvi, &actual_dvi)),
             contract: PhaseParityContract::OutputProducing,
+            log_contract: if profile == TripEngineProfile::ETex {
+                PhaseLogContract::EtripRepresentationNeutralEngineUsage
+            } else {
+                PhaseLogContract::Exact
+            },
         },
     );
     compare_dvi_files(

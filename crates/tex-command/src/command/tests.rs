@@ -13,6 +13,7 @@ fn resolved<G>(universe: &mut tex_state::Universe<G>, token: Token) -> CurrentCo
         DeliveryStamp::new(17, 23, 29),
         None,
         false,
+        None,
         &universe.command_context().expect("command context"),
     )
 }

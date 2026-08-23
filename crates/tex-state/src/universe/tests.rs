@@ -655,6 +655,40 @@ fn admitted_assignment_rendering_never_reopens_the_universe() {
             context.box_assignment_trace_text(Some(root)),
             "\\hbox(0.0+0.0)x0.0"
         );
+
+        let children = context.publish_page_nodes(vec![Node::Penalty(0)]);
+        let root = context.publish_page_nodes(vec![Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: crate::glue::Order::Normal,
+            children,
+        }))]);
+        assert_eq!(
+            context.box_assignment_trace_text(Some(root)),
+            "\\hbox(0.0+0.0)x0.0 []"
+        );
+
+        let children = context.publish_page_nodes(vec![Node::Penalty(0)]);
+        let root = context.publish_page_nodes(vec![Node::VList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(65_536),
+            box_lr: BoxLr::Reversed,
+            glue_set: GlueSetRatio::from_ratio_parts(1, 2),
+            glue_sign: Sign::Shrinking,
+            glue_order: crate::glue::Order::Fill,
+            children,
+        }))]);
+        assert_eq!(
+            context.box_assignment_trace_text(Some(root)),
+            "\\vbox(0.0+0.0)x0.0, glue set - 0.5fill, shifted 1.0, reversed []"
+        );
     })
     .expect("universe allocation");
 }

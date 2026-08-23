@@ -7,6 +7,7 @@ use super::support::*;
 pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
     alignment: AlignmentIdentity,
     delimiter: AlignmentCellDelimiter,
+    delimiter_line: u32,
     command: &mut CommandMachine<'_, G>,
     active_alignment: &mut Option<ActiveReplayAlignment<G>>,
     modes: &mut ModeNest,
@@ -30,9 +31,13 @@ pub(in crate::main_control) fn begin_next_replay_alignment_cell<G>(
     // list open. A valign entry can therefore leave horizontal mode before
     // the following column starts without packaging the spanning cell yet.
     if active.kind == AlignmentKind::VAlign {
-        let error_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
+        let mut error_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
             command.state.output_open_context(stores),
         );
+        // The live delimiter was intercepted before the v-template started;
+        // synthetic `endv` has no source line of its own. TeX82 §§1131/661
+        // nevertheless report the delimiter line as this paragraph's end.
+        error_context.current_line = i32::try_from(delimiter_line).unwrap_or(i32::MAX);
         let mut geometry = pack_geometry_sink(command.state, command.observations);
         crate::paragraph_end::end_paragraph_with_context(
             modes,
@@ -476,6 +481,7 @@ pub(in crate::main_control) fn finish_replay_alignment<G>(
     geometry: &mut dyn crate::geometry::PackGeometrySink,
     fuel: &mut tex_command::CommandFuel,
     error_context: &str,
+    current_line: u32,
 ) -> Result<(), ExecError> {
     finish_replay_alignment_row(active, modes, stores, diagnostic_effects, geometry, fuel)?;
     let mut alignment =
@@ -484,9 +490,12 @@ pub(in crate::main_control) fn finish_replay_alignment<G>(
     // `fin_align` setting pass. The magnitude is the alignment level's
     // `mode_line`, captured by §774's `push_nest`, and §812 restores the
     // enclosing diagnostic state after the finished alignment is appended.
-    let diagnostic_context =
-        crate::diagnostics::ExecutionDiagnosticContext::source_free(error_context)
-            .with_pack_begin_line(-alignment.entry_line());
+    let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::new(
+        i32::try_from(current_line).unwrap_or(i32::MAX),
+        -alignment.entry_line(),
+        false,
+        error_context,
+    );
     finish_replay_alignment_with_origin(
         active,
         modes,

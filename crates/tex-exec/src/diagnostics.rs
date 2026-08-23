@@ -344,8 +344,7 @@ pub(crate) fn execute_showgroups<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     diagnostic: &ShowGroupsDiagnostic,
-    context: String,
-) -> Result<(), ExecError> {
+) {
     {
         let mut output = stores.begin_diagnostic(diagnostic_effects);
         output.print_nl("").print_ln();
@@ -366,8 +365,6 @@ pub(crate) fn execute_showgroups<G>(
         output.print_nl("### bottom level");
         output.end(true);
     }
-    complete_show(stores, true, Some(context))?;
-    Ok(())
 }
 
 pub(crate) fn group_kind_text(kind: tex_state::GroupKind) -> &'static str {
@@ -378,9 +375,8 @@ pub(crate) fn execute_showbox<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     index: u16,
-    context: String,
     profile: tex_command::CommandProfile,
-) -> Result<(), ExecError> {
+) {
     // TeX82 §1296's `<Show the current contents of a box>`: `begin_diagnostic`
     // and `print_nl("> \box"); print_int; print_char("=")`, then `show_box`
     // or `"void"`.
@@ -405,8 +401,6 @@ pub(crate) fn execute_showbox<G>(
     // `print_nl(""); print_ln`.
     diagnostic.print_nl("").print_rendered(&text);
     diagnostic.end(true);
-    complete_show(stores, true, Some(context))?;
-    Ok(())
 }
 
 /// TeX82 §1298's `<Complete a potentially long \show command>` followed by
@@ -475,7 +469,6 @@ pub(crate) fn execute_showlists<G>(
     stores: &mut CommandContext<'_, G>,
     diagnostic_effects: &mut DiagnosticEffects,
     nest: &ModeNest,
-    context: String,
     profile: tex_command::CommandProfile,
 ) -> Result<(), ExecError> {
     let mut text = String::new();
@@ -595,7 +588,6 @@ pub(crate) fn execute_showlists<G>(
     diagnostic.print_nl("").print_ln();
     diagnostic.print_rendered(&text);
     diagnostic.end(true);
-    complete_show(stores, true, Some(context))?;
     Ok(())
 }
 
@@ -828,11 +820,13 @@ pub(crate) fn report_split_infinite_shrinkage<G>(
 /// TeX82 §1009's `<Subtract the natural width of the insertion ...>`.
 pub(crate) fn report_insertion_skip_infinite_shrinkage<G>(
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     class: u16,
     context: &ExecutionDiagnosticContext,
 ) -> Result<(), ExecError> {
-    crate::error_report::report_error(
+    crate::error_report::report_ordered_error(
         stores,
+        diagnostic_effects,
         &format!("Infinite glue shrinkage inserted from \\skip{class}"),
         &[
             "The correction glue for page breaking with insertions",

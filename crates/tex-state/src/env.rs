@@ -1375,7 +1375,8 @@ impl<G> DenseState<G> {
         Ok(frame)
     }
 
-    /// Performs TeX82 §283 restoration in exact reverse save order.
+    /// Performs TeX82 §283 restoration in exact save-stack order, including
+    /// e-TeX [53a]'s single sparse-array restore marker.
     pub(crate) fn end_group(
         &mut self,
         expected: GroupKind,
@@ -1406,48 +1407,103 @@ impl<G> DenseState<G> {
         entries
             .try_reserve_exact(restoration_count)
             .map_err(|_| StateError::Bank(BankError::AllocationFailed))?;
-        for index in (frame.journal_start as usize..end).rev() {
-            let JournalEntry::Mutation(saved) = self.journal.entry(index) else {
-                continue;
-            };
-            if saved.kind != MutationKind::Assignment || saved.saved_at != Some(frame.level) {
-                continue;
+        let start = frame.journal_start as usize;
+        let first_extended = (start..end).find(|&index| {
+            matches!(
+                self.journal.entry(index),
+                JournalEntry::Mutation(saved)
+                    if saved.kind == MutationKind::Assignment
+                        && saved.saved_at == Some(frame.level)
+                        && is_extended_register_cell(saved.cell)
+            )
+        });
+        if let Some(marker) = first_extended {
+            // e-TeX [53a] pushes one `restore_sa` marker at the first sparse
+            // save. Dense eqtb saves made later sit above that marker and
+            // restore first; reaching the marker restores the whole sparse
+            // chain in reverse sparse-save order; older dense saves follow.
+            for index in (marker..end).rev() {
+                let JournalEntry::Mutation(saved) = self.journal.entry(index) else {
+                    continue;
+                };
+                if saved.kind == MutationKind::Assignment
+                    && saved.saved_at == Some(frame.level)
+                    && !is_extended_register_cell(saved.cell)
+                {
+                    self.restore_group_mutation(saved, &mut entries)?;
+                }
             }
-            let current = self.read_cell(saved.cell)?;
-            // A global definition made after this save suppresses it exactly
-            // as TeX's `level_one` check in `unsave` does.
-            let (live, outcome) = if current.level == LEVEL_ONE {
-                (current.value, GroupRestorationOutcome::Retained)
-            } else {
-                self.write_cell(
-                    saved.cell,
-                    BankCell {
-                        value: saved.before,
-                        level: saved.before_level,
-                    },
-                )?;
-                self.journal.push(JournalEntry::Mutation(Mutation {
-                    cell: saved.cell,
-                    before: current.value,
-                    before_level: current.level,
-                    after: saved.before,
-                    after_level: saved.before_level,
-                    saved_at: None,
-                    kind: MutationKind::GroupRestore,
-                }));
-                (saved.before, GroupRestorationOutcome::Restored)
-            };
-            entries.push(GroupRestorationEntry {
-                cell: restoration_cell(saved.cell),
-                saved: restoration_value(saved.before),
-                live: restoration_value(live),
-                outcome,
-                trace: self.group_restoration_trace_state()?,
-            });
+            for index in (marker..end).rev() {
+                let JournalEntry::Mutation(saved) = self.journal.entry(index) else {
+                    continue;
+                };
+                if saved.kind == MutationKind::Assignment
+                    && saved.saved_at == Some(frame.level)
+                    && is_extended_register_cell(saved.cell)
+                {
+                    self.restore_group_mutation(saved, &mut entries)?;
+                }
+            }
+            for index in (start..marker).rev() {
+                let JournalEntry::Mutation(saved) = self.journal.entry(index) else {
+                    continue;
+                };
+                if saved.kind == MutationKind::Assignment && saved.saved_at == Some(frame.level) {
+                    self.restore_group_mutation(saved, &mut entries)?;
+                }
+            }
+        } else {
+            for index in (start..end).rev() {
+                let JournalEntry::Mutation(saved) = self.journal.entry(index) else {
+                    continue;
+                };
+                if saved.kind == MutationKind::Assignment && saved.saved_at == Some(frame.level) {
+                    self.restore_group_mutation(saved, &mut entries)?;
+                }
+            }
         }
         self.groups.pop();
         self.journal.push(JournalEntry::GroupExit(frame));
         Ok(GroupRestorationReceipt { frame, entries })
+    }
+
+    fn restore_group_mutation(
+        &mut self,
+        saved: Mutation<G>,
+        entries: &mut Vec<GroupRestorationEntry<G>>,
+    ) -> Result<(), StateError> {
+        let current = self.read_cell(saved.cell)?;
+        // A global definition made after this save suppresses it exactly
+        // as TeX's `level_one` check in `unsave` does.
+        let (live, outcome) = if current.level == LEVEL_ONE {
+            (current.value, GroupRestorationOutcome::Retained)
+        } else {
+            self.write_cell(
+                saved.cell,
+                BankCell {
+                    value: saved.before,
+                    level: saved.before_level,
+                },
+            )?;
+            self.journal.push(JournalEntry::Mutation(Mutation {
+                cell: saved.cell,
+                before: current.value,
+                before_level: current.level,
+                after: saved.before,
+                after_level: saved.before_level,
+                saved_at: None,
+                kind: MutationKind::GroupRestore,
+            }));
+            (saved.before, GroupRestorationOutcome::Restored)
+        };
+        entries.push(GroupRestorationEntry {
+            cell: restoration_cell(saved.cell),
+            saved: restoration_value(saved.before),
+            live: restoration_value(live),
+            outcome,
+            trace: self.group_restoration_trace_state()?,
+        });
+        Ok(())
     }
 
     fn group_restoration_trace_state(&self) -> Result<GroupRestorationTraceState, StateError> {
@@ -1831,6 +1887,18 @@ fn restoration_cell(cell: StateCell) -> GroupRestorationCell {
                 GroupRestorationFontRuntimeCell::LigaturesDisabled(font)
             }
         }),
+    }
+}
+
+fn is_extended_register_cell(cell: StateCell) -> bool {
+    match cell {
+        StateCell::Count(index)
+        | StateCell::Dimension(index)
+        | StateCell::TokenRegister(index)
+        | StateCell::GlueRegister(index)
+        | StateCell::BoxRegister(index)
+        | StateCell::MuGlueRegister(index) => index > u8::MAX.into(),
+        _ => false,
     }
 }
 

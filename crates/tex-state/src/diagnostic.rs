@@ -257,6 +257,20 @@ impl<'a> Diagnostic<'a> {
         if blank_line {
             self.print_ln();
         }
+        self.finish();
+    }
+
+    /// Commits an ordinary print program while retaining its open line.
+    ///
+    /// TeX82 §1297's `\showthe`/token display jumps to §1293's common
+    /// ending before `end_diagnostic`; §82 supplies the period that closes
+    /// the same line. This is that deliberately incomplete print boundary,
+    /// not a general substitute for [`Self::end`].
+    pub fn end_open(self) {
+        self.finish();
+    }
+
+    fn finish(self) {
         self.effects.push(DetachedDiagnosticEffect {
             selector: self.selector,
             max_print_line: self.max_print_line,

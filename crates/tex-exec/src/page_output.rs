@@ -565,6 +565,7 @@ fn report_box255_not_void<G>(
     error_context: Option<&str>,
 ) -> Result<(), ExecError> {
     let context = error_context.unwrap_or_default().to_owned();
+    stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
     let mut report = stores.print_err("");
     report
         .print_esc("box")
@@ -586,6 +587,7 @@ pub(crate) fn report_box255_not_emptied<G>(
     deleted: PageListId,
     context: String,
 ) -> Result<(), ExecError> {
+    stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
     let mut report = stores.print_err("Output routine didn't use all of ");
     report
         .print_esc("box")
@@ -604,7 +606,7 @@ pub(crate) fn report_box255_not_emptied<G>(
 /// TeX82 §199's `box_error` tail after the caller's recoverable error.
 fn report_deleted_box<G>(
     stores: &mut CommandContext<'_, G>,
-    diagnostic_effects: &mut DiagnosticEffects,
+    _diagnostic_effects: &mut DiagnosticEffects,
     deleted: PageListId,
 ) {
     let dump = crate::node_dump::dump_page_list(
@@ -612,12 +614,14 @@ fn report_deleted_box<G>(
         deleted,
         crate::node_dump::DumpConfig::read(stores),
     );
-    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
+    // §199 is the synchronous continuation of the caller's live §82 report;
+    // it must finish before any later World-facing page-output report.
+    let mut diagnostic = stores.printer();
     diagnostic
         .print_nl("The following box has been deleted:")
         .print_ln()
         .print_rendered(&dump);
-    diagnostic.end(true);
+    diagnostic.print_nl("").print_ln();
 }
 
 pub(crate) fn take_box255_node<G>(stores: &mut CommandContext<'_, G>) -> Result<Node, ExecError> {

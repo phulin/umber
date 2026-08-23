@@ -3542,6 +3542,37 @@ impl World {
         self.write_text_with_line_limit(sink, text, max_print_line);
     }
 
+    /// Publishes tex.web §62's `print_nl` followed by already-rendered text.
+    ///
+    /// The caller supplies no captured offset. This outer boundary evaluates
+    /// the current per-sink partial lines after every earlier detached effect
+    /// has committed, then records the optional break and text as one logical
+    /// write. For `term_and_log`, tex.web's shared predicate means either open
+    /// selected line inserts the newline in both sinks.
+    pub fn publish_print_nl_text(&mut self, sink: PrintSink, text: &str, max_print_line: usize) {
+        let (terminal_open, log_open) = {
+            let bufs = self.stream_bufs();
+            (
+                !bufs.terminal_partial_line.is_empty(),
+                !bufs.log_partial_line.is_empty(),
+            )
+        };
+        let line_is_open = match sink {
+            PrintSink::Terminal => terminal_open,
+            PrintSink::Log => log_open,
+            PrintSink::TerminalAndLog => terminal_open || log_open,
+            PrintSink::Stream(_) => false,
+        };
+        if line_is_open {
+            let mut framed = String::with_capacity(text.len().saturating_add(1));
+            framed.push('\n');
+            framed.push_str(text);
+            self.write_text_with_line_limit(sink, &framed, max_print_line);
+        } else {
+            self.write_text_with_line_limit(sink, text, max_print_line);
+        }
+    }
+
     /// Detaches tex.web's terminal and transcript partial-line predicates for
     /// an outer publication barrier.
     #[must_use]

@@ -330,7 +330,13 @@ fn normalize_paragraph_infinite_shrink<G>(
                 // diagnostic with `end_diagnostic(true)` before `print_err`.
                 // Umber materializes the detached trace later, but must keep
                 // this print-channel boundary at the recovery point.
+                // This empty diagnostic is TeX's live tracing-paragraph
+                // scope. Its `end_diagnostic(true)` contributes the canonical
+                // separator only when published before synchronous
+                // `print_err`; publishing it at the outer command boundary
+                // would move that newline after the recovery report.
                 stores.begin_diagnostic(diagnostic_effects).end(true);
+                stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
             }
             crate::diagnostics::report_paragraph_infinite_shrinkage(stores, diagnostic_context)?;
             reported = true;

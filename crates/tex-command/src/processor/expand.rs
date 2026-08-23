@@ -450,7 +450,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         );
         let stamp = DeliveryStamp::new(0, 0, self.next_delivery_sequence);
         self.next_delivery_sequence = self.next_delivery_sequence.wrapping_add(1);
-        let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, &self.state);
+        let command = CurrentCommand::<G>::resolve(spelling, stamp, None, false, None, &self.state);
         let Some(settled) = self.get_x_token_from(Some(command), ExpandedFetch::XToken)? else {
             return Ok(());
         };

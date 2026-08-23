@@ -25,7 +25,7 @@ use tex_command::{
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
     MutationTarget, ObservationEffectKind, ObservationValue, ObservedToken, ParameterClass,
-    parameter_mutation_key_for_dialect,
+    TokenListRecord, parameter_mutation_key_for_dialect,
 };
 use tex_state::GlueId;
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
@@ -103,6 +103,7 @@ struct ImmediatePrint {
     sink: PrintSink,
     text: String,
     max_print_line: usize,
+    ensure_line_start: bool,
 }
 
 #[derive(Debug)]
@@ -1189,9 +1190,25 @@ struct CommandMachine<'a, G> {
     emit_dvi_override: Option<bool>,
     immediate_prints: &'a mut Vec<ImmediatePrint>,
     prepared_shipout: &'a mut Option<PreparedShipout>,
+    pending_show_completion: Option<PendingShowCompletion>,
+    pending_outer_page_build_context: Option<String>,
+    output_routine_active: bool,
+}
+
+struct PendingShowCompletion {
+    long: bool,
+    context: String,
 }
 
 impl<G> CommandMachine<'_, G> {
+    fn defer_show_completion(&mut self, long: bool, context: String) {
+        assert!(
+            self.pending_show_completion.is_none(),
+            "one command operation completes at most one show diagnostic"
+        );
+        self.pending_show_completion = Some(PendingShowCompletion { long, context });
+    }
+
     fn processor<'episode, 'admission>(
         &'episode mut self,
         context: tex_state::CommandContext<'admission, G>,
@@ -1200,13 +1217,15 @@ impl<G> CommandMachine<'_, G> {
             .observations
             .as_mut()
             .map(|buffer| buffer as &mut dyn CommandObserver);
-        self.state.processor(
+        let mut processor = self.state.processor(
             context,
             CommandHostContext::new(self.capabilities),
             self.fuel,
             observer,
             self.diagnostic_effects,
-        )
+        );
+        processor.set_output_routine_active(self.output_routine_active);
+        processor
     }
 
     fn processor_with_diagnostic_effects<'episode, 'admission>(
@@ -1218,13 +1237,15 @@ impl<G> CommandMachine<'_, G> {
             .observations
             .as_mut()
             .map(|buffer| buffer as &mut dyn CommandObserver);
-        self.state.processor(
+        let mut processor = self.state.processor(
             context,
             CommandHostContext::new(self.capabilities),
             self.fuel,
             observer,
             diagnostic_effects,
-        )
+        );
+        processor.set_output_routine_active(self.output_routine_active);
+        processor
     }
 
     fn shipout_geometry_sink(&mut self) -> MainControlShipoutGeometrySink<'_, G> {
@@ -1252,6 +1273,18 @@ impl<G> CommandMachine<'_, G> {
             receipts.push(record);
         } else if let Some(observations) = self.observations.as_mut() {
             observations.committed(CommandObservation::Mutation(record));
+        }
+    }
+
+    /// Retains one semantic record at the current hot-operation commit seam.
+    ///
+    /// Definition scanning records the replacement text through the command
+    /// processor. e-TeX then installs its protected-macro marker while the
+    /// hot operation owns the live definition, so that marker's canonical
+    /// token-list transition belongs immediately before the meaning mutation.
+    fn retain_hot_observation(&mut self, observation: CommandObservation) {
+        if let Some(observations) = self.observations.as_mut() {
+            observations.committed(observation);
         }
     }
 
@@ -2522,6 +2555,9 @@ impl<G> MainControl<G> {
             emit_dvi_override: self.emit_dvi_override,
             immediate_prints: &mut self.immediate_prints,
             prepared_shipout: &mut self.prepared_shipout,
+            pending_show_completion: None,
+            pending_outer_page_build_context: None,
+            output_routine_active: self.boxes.output_routine_active,
         }
     }
 
@@ -3317,8 +3353,9 @@ impl<G> MainControl<G> {
         if replacement_too_long {
             let mut stores = stores.command_context().expect("live generation");
             let context = self.command.output_open_context(&stores);
-            crate::error_report::report_error(
+            crate::error_report::report_ordered_error(
                 &mut stores,
+                diagnostic_effects,
                 "Discretionary list is too long",
                 &["Wow---I never thought anybody would tweak me here."],
                 context,
@@ -3368,6 +3405,10 @@ impl<G> MainControl<G> {
             // in math mode; the discretionary and its first two parts survive.
             let mut command_context = stores.command_context().expect("live generation");
             let context = self.command.output_open_context(&command_context);
+            // Section 1120 calls `unsave` before diagnosing a forbidden
+            // nonempty replacement in math mode. Publish that completed
+            // restoration program before the synchronous error dialogue.
+            command_context.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
             report_escaped_error(
                 &mut command_context,
                 "Illegal math ",
@@ -5285,6 +5326,9 @@ impl<G> MainControl<G> {
                         emit_dvi_override: self.emit_dvi_override,
                         immediate_prints: &mut self.immediate_prints,
                         prepared_shipout: &mut self.prepared_shipout,
+                        pending_show_completion: None,
+                        pending_outer_page_build_context: None,
+                        output_routine_active: self.boxes.output_routine_active,
                     };
                     let publication = shipout_replay_box(page, stores, &mut command)?;
                     if let Some(receipt) = publication.and_then(|publication| publication.dvi) {
@@ -5394,6 +5438,15 @@ impl<G> MainControl<G> {
                 .try_into()
                 .unwrap_or(i32::MAX),
         )?;
+        // This group opener and its body execute inside one outer command
+        // operation. e-TeX [19.282] nevertheless prints the tracinggroups
+        // entry synchronously before fetching the first body command. A body
+        // `\message`, `\write`, or show completion writes through World, so
+        // commit the already-complete detached entry before nested main
+        // control can overtake it.
+        stores
+            .world_mut()
+            .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
         self.main_loop_active = false;
         while stores
             .command_context()
@@ -5402,7 +5455,17 @@ impl<G> MainControl<G> {
             .len()
             > enclosing_depth
         {
-            match self.execute_nested_operation(stores, None, diagnostic_effects)? {
+            let step = self.execute_nested_operation(stores, None, diagnostic_effects)?;
+            // `execute_live_math_group` fuses the body into its opener's
+            // outer operation, but TeX finishes each nested command before
+            // fetching the next one. Publish its completed diagnostic
+            // program at that same boundary so a following immediate World
+            // write cannot overtake tracing from `\vcenter`, math choices,
+            // or any other nested group transition.
+            stores
+                .world_mut()
+                .publish_diagnostic_effects(std::mem::take(diagnostic_effects));
+            match step {
                 ReplayStep::End | ReplayStep::EndOfInput => {
                     return Err(ExecError::MissingToken {
                         context: "math group closing brace",
@@ -6051,7 +6114,17 @@ impl<G> MainControl<G> {
     ) -> Result<(), ExecError> {
         let (paragraph, dimensions, pre_display_size, prototype, extended) = {
             let mut context = stores.command_context().expect("live generation");
-            let error_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
+            // TeX82 §1138 interrupts the paragraph while the opening display
+            // shift is still the current command. Section 661 therefore uses
+            // this live input `line` as the paragraph's ending line; a
+            // source-free detached context would incorrectly print line zero.
+            let error_context = crate::diagnostics::ExecutionDiagnosticContext::new(
+                self.command
+                    .current_file_line_number()
+                    .try_into()
+                    .unwrap_or(i32::MAX),
+                0,
+                false,
                 self.command.output_open_context(&context),
             );
             let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
@@ -6218,8 +6291,15 @@ impl<G> MainControl<G> {
         let diagnostic_text = self.command.output_open_context(&context);
         let conversion_error_context =
             crate::math::MathConversionErrorContext::new(diagnostic_text.clone());
-        let diagnostic_context =
-            crate::diagnostics::ExecutionDiagnosticContext::source_free(diagnostic_text);
+        let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::new(
+            self.command
+                .current_file_line_number()
+                .try_into()
+                .unwrap_or(i32::MAX),
+            0,
+            false,
+            diagnostic_text,
+        );
         let mut geometry = pack_geometry_sink(&self.command, &mut self.operation_observations);
         let finished = crate::math::display::finish_eq_no(
             &mut context,
@@ -6321,8 +6401,18 @@ impl<G> MainControl<G> {
             .output_open_context(&stores.command_context().expect("display-math admission"));
         let conversion_error_context =
             crate::math::MathConversionErrorContext::new(diagnostic_text.clone());
-        let diagnostic_context =
-            crate::diagnostics::ExecutionDiagnosticContext::source_free(diagnostic_text.clone());
+        // TeX82 §§1195--1196 converts and packs the display while the
+        // closing math shift is still current, so §661's `line` is the
+        // shift's live input line rather than a source-free zero.
+        let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::new(
+            self.command
+                .current_file_line_number()
+                .try_into()
+                .unwrap_or(i32::MAX),
+            0,
+            false,
+            diagnostic_text.clone(),
+        );
         // TeX82 §1194 performs this check before every display `fin_mlist`,
         // including the saved outer mlist after an equation number.
         if !fonts_checked
@@ -6939,6 +7029,7 @@ impl<G> MainControl<G> {
                 diagnostic_effects,
                 stores.command_context().expect("live generation"),
             );
+            processor.set_output_routine_active(self.boxes.output_routine_active);
             processor
                 .apply_error_stop_recovery()
                 .map_err(command_error)?;
@@ -7328,6 +7419,7 @@ impl<G> MainControl<G> {
                 diagnostic_effects,
                 stores.command_context().expect("live generation"),
             );
+            processor.set_output_routine_active(self.boxes.output_routine_active);
             let display_alignment_tail = matches!(&delivery, OperationDelivery::<G>::Replay(None))
                 && mode == Mode::DisplayMath
                 && self.modes.current_list().has_display_alignment();
@@ -7702,6 +7794,9 @@ impl<G> MainControl<G> {
                 emit_dvi_override: self.emit_dvi_override,
                 immediate_prints: &mut self.immediate_prints,
                 prepared_shipout: &mut self.prepared_shipout,
+                pending_show_completion: None,
+                pending_outer_page_build_context: None,
+                output_routine_active: self.boxes.output_routine_active,
             },
         );
         if result.is_ok() {
@@ -7900,7 +7995,7 @@ impl<G> MainControl<G> {
         let completes_alignment_cell =
             matches!(&scanned, ColdOperation::AlignmentCellFinish { .. });
         let finishes_alignment = match &scanned {
-            ColdOperation::AlignmentFinish { alignment } => {
+            ColdOperation::AlignmentFinish { alignment, .. } => {
                 self.command.alignment_finish_observation(*alignment)
             }
             _ => None,
@@ -7966,6 +8061,7 @@ impl<G> MainControl<G> {
             &scanned,
             ColdOperation::OffSave(_)
                 | ColdOperation::AlignmentRecovery { .. }
+                | ColdOperation::Message { .. }
                 | ColdOperation::SetInteractionMode(_)
                 | ColdOperation::SetInteractionModeValue { .. }
         ) {
@@ -7979,9 +8075,14 @@ impl<G> MainControl<G> {
             // operation requests no host resource and its error remains an
             // observable result even when ErrorStop jumps out.
             //
-            // §1264's `new_interaction` is another synchronous World-facing
-            // boundary: the already-rendered §1030 command trace must reach
-            // the old selector before `print_ln` and the selector transition.
+            // §1279's `\message`/`\errmessage` and §1264's
+            // `new_interaction` are synchronous World-facing boundaries.
+            // Any macro trace produced while scanning the message must be
+            // visible before its expanded text is printed.
+            //
+            // `new_interaction` similarly requires the already-rendered
+            // §1030 command trace to reach the old selector before `print_ln`
+            // and the selector transition.
             // Otherwise the unconditional `print_ln` overtakes the detached
             // trace, moving TeX's blank line from after `\batchmode` to before
             // it and routing later output from the wrong partial-line state.
@@ -8005,6 +8106,9 @@ impl<G> MainControl<G> {
             emit_dvi_override: self.emit_dvi_override,
             immediate_prints: &mut self.immediate_prints,
             prepared_shipout: &mut self.prepared_shipout,
+            pending_show_completion: None,
+            pending_outer_page_build_context: None,
+            output_routine_active: self.boxes.output_routine_active,
         };
         let mut result = match scanned {
             ColdOperation::ImmediateExtension(RootedImmediateExtension::PdfForm(request)) => {
@@ -8071,13 +8175,77 @@ impl<G> MainControl<G> {
                 )
             }
         };
+        if result.is_ok()
+            && let Some(completion) = command.pending_show_completion.take()
+        {
+            // TeX82 §§1293/1298 completes a long `\show` only after
+            // `end_diagnostic` has restored the selector and made the whole
+            // dump visible. The dump is an operation-local detached program,
+            // whereas `error` still owns the live World dialogue, so release
+            // command admission, atomically publish the dump, and only then
+            // enter the synchronous `! OK.` completion. This also preserves
+            // the dump when ErrorStop exits from the dialogue.
+            stores
+                .world_mut()
+                .publish_diagnostic_effects(std::mem::take(command.diagnostic_effects));
+            let completion_result = {
+                let mut context = stores
+                    .command_context()
+                    .expect("show completion has a live generation");
+                crate::diagnostics::complete_show(
+                    &mut context,
+                    completion.long,
+                    Some(completion.context),
+                )
+            };
+            if let Err(error) = completion_result {
+                result = Err(error);
+            }
+        }
+        if result.is_ok()
+            && let Some(context) = command.pending_outer_page_build_context.take()
+        {
+            // TeX82 §1099 runs `build_page` after §1100 has closed the
+            // insertion group. Group-command and restoration traces are
+            // detached, while §993/§1009 recovery still uses the live error
+            // dialogue. Publish the completed group-close program at this
+            // outer admission boundary before page building can report.
+            stores
+                .world_mut()
+                .publish_diagnostic_effects(std::mem::take(command.diagnostic_effects));
+            let mut stores = stores.command_context().expect("live generation");
+            crate::vertical::build_page_if_outer_vertical_with_error_context(
+                &mut self.modes,
+                &mut stores,
+                command.diagnostic_effects,
+                &context,
+            )?;
+        }
         if result.is_ok() {
+            if !command.immediate_prints.is_empty() {
+                // TeX82 §1375 performs an immediate write only after its
+                // token list has been expanded. Expansion/command traces are
+                // detached during that scan, while the resulting write is an
+                // outer World publication; commit the former first so the
+                // expanded text cannot overtake its own trace.
+                stores
+                    .world_mut()
+                    .publish_diagnostic_effects(std::mem::take(command.diagnostic_effects));
+            }
             for print in command.immediate_prints.drain(..) {
-                stores.world_mut().publish_print_text(
-                    print.sink,
-                    &print.text,
-                    print.max_print_line,
-                );
+                if print.ensure_line_start {
+                    stores.world_mut().publish_print_nl_text(
+                        print.sink,
+                        &print.text,
+                        print.max_print_line,
+                    );
+                } else {
+                    stores.world_mut().publish_print_text(
+                        print.sink,
+                        &print.text,
+                        print.max_print_line,
+                    );
+                }
             }
             if let Some(shipout) = command.prepared_shipout.take() {
                 // TeX82 §§367/1006 print the delivered command and page
@@ -8424,6 +8592,10 @@ fn report_improper_discretionary<G>(
         crate::node_dump::DumpConfig::read(stores),
     );
 
+    // TeX82 §§1120--1121 closes the discretionary part's group before
+    // checking its nodes. Any `\tracingrestores` lines from that `unsave`
+    // therefore precede the synchronous error dialogue.
+    stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
     let mut report = stores.print_err("Improper discretionary list");
     report
         .help(&["Discretionary lists must contain only boxes and kerns."])
@@ -8885,7 +9057,12 @@ fn report_missing_box<G>(
 fn report_improper_setbox<G>(
     context: String,
     stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
 ) -> Result<(), ExecError> {
+    // TeX82 §1084 reaches `box_error` only after `scan_box` has finished
+    // expanding and tracing the rejected operand. Those completed scanner
+    // diagnostics precede the synchronous `back_error` dialogue.
+    stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
     report_escaped_error(
         stores,
         "Improper ",
@@ -9222,8 +9399,14 @@ fn scan_alignment_peek<G>(
             cat: Catcode::EndGroup,
             ..
         }) => {
-            let _ = processor.commit_alignment_lookahead_delivery(lookahead);
-            Ok(ColdOperation::<G>::AlignmentFinish { alignment })
+            let command = processor.commit_alignment_lookahead_delivery(lookahead);
+            let current_line = command
+                .direct_source_line_number()
+                .unwrap_or_else(|| processor.current_file_line_number());
+            Ok(ColdOperation::<G>::AlignmentFinish {
+                alignment,
+                current_line,
+            })
         }
         ResolvedMeaning::Static(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit)) => {
             let _ = processor.commit_alignment_lookahead_delivery(lookahead);
@@ -9440,9 +9623,12 @@ fn scan_alignment_delivery_event<G>(
     event: tex_command::AlignmentDeliveryEvent<G>,
 ) -> Result<ColdOperation<G>, ExecError> {
     match event {
-        tex_command::AlignmentDeliveryEvent::EndTemplate(_) => {
+        tex_command::AlignmentDeliveryEvent::EndTemplate(delimiter) => {
             processor
-                .begin_alignment_v_template(alignment, event)
+                .begin_alignment_v_template(
+                    alignment,
+                    tex_command::AlignmentDeliveryEvent::EndTemplate(delimiter),
+                )
                 .map_err(command_error)?;
             Ok(ColdOperation::<G>::AlignmentTemplateEntered)
         }
@@ -10584,6 +10770,7 @@ fn scan_command<G>(
         }
         return Ok(ColdOperation::<G>::BoxEndGroup {
             ships_out: box_state.ships_out,
+            current_line: i32::try_from(processor.current_file_line_number()).unwrap_or(i32::MAX),
         }
         .into());
     }

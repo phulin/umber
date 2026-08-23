@@ -214,7 +214,9 @@ fn restoration_text<G>(
         ) => (escaped(&dimen_param_name(index)), dimen_text(value), false),
         (GroupRestorationCell::TokenParameter(index), GroupRestorationValue::TokenList(value)) => {
             let parameter = tex_state::env::banks::TokParam::new(index);
-            if let Some(kind) = PenaltyArrayKind::from_storage_parameter(parameter) {
+            if let Some(length) = stores.restored_paragraph_shape_len(parameter, value) {
+                (escaped("parshape"), length.to_string(), false)
+            } else if let Some(kind) = PenaltyArrayKind::from_storage_parameter(parameter) {
                 let raw_name = match kind {
                     PenaltyArrayKind::InterLine => "interlinepenalties",
                     PenaltyArrayKind::Club => "clubpenalties",
@@ -756,9 +758,10 @@ fn tokens_text_at<G>(
 }
 
 /// TeX82 §§252/283 render restored token lists through §262's
-/// `show_token_list(..., 32)`. The bound is on rendered characters rather
-/// than token count, and `\ETC.` is appended as soon as another token would
-/// cross it.
+/// `show_token_list(..., 32)`. Section 262 tests the rendered-character tally
+/// before printing the next token. A control sequence that starts below the
+/// bound is therefore printed whole even when its name crosses 32; only a
+/// subsequent token is replaced by `\ETC.`.
 fn bounded_tokens_text_at<G>(
     stores: &CommandContext<'_, G>,
     tokens: Option<TokenListId<G>>,
@@ -771,23 +774,14 @@ fn bounded_tokens_text_at<G>(
     };
     let mut text = String::new();
     let words = tokens.map_or_else(Vec::new, |id| stores.token_list(id).to_vec());
-    let mut truncated = false;
-    for token in words {
-        let mut rendered = String::new();
-        tex_state::token_show::append_token_show_text(
-            &display,
-            token.semantic_token(),
-            &mut rendered,
-        );
-        let remaining = BREADTH.saturating_sub(text.chars().count());
-        if rendered.chars().count() > remaining {
-            text.extend(rendered.chars().take(remaining));
-            truncated = true;
+    let mut words = words.into_iter().peekable();
+    while text.chars().count() < BREADTH {
+        let Some(token) = words.next() else {
             break;
-        }
-        text.push_str(&rendered);
+        };
+        tex_state::token_show::append_token_show_text(&display, token.semantic_token(), &mut text);
     }
-    if truncated {
+    if words.peek().is_some() {
         text.push_str(&escaped_at(escape_char, "ETC."));
     }
     text

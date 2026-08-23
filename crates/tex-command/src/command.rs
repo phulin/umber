@@ -25,6 +25,7 @@ pub struct CurrentCommand<G> {
     delivery: DeliveryStamp,
     source_provenance: Option<SourceProvenance>,
     direct_source: bool,
+    direct_source_line: Option<u32>,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
     outer_recovery_space: bool,
 }
@@ -47,6 +48,7 @@ impl<G> PartialEq for CurrentCommand<G> {
             && self.delivery == other.delivery
             && self.source_provenance == other.source_provenance
             && self.direct_source == other.direct_source
+            && self.direct_source_line == other.direct_source_line
             && self.alignment_adjustment == other.alignment_adjustment
             && self.outer_recovery_space == other.outer_recovery_space
     }
@@ -64,6 +66,7 @@ impl<G> core::hash::Hash for CurrentCommand<G> {
         self.delivery.hash(state);
         self.source_provenance.hash(state);
         self.direct_source.hash(state);
+        self.direct_source_line.hash(state);
         self.alignment_adjustment.hash(state);
         self.outer_recovery_space.hash(state);
     }
@@ -217,6 +220,7 @@ impl<G> CurrentCommand<G> {
         delivery: DeliveryStamp,
         source_provenance: Option<SourceProvenance>,
         direct_source: bool,
+        direct_source_line: Option<u32>,
         state: &CommandContext<'_, G>,
     ) -> Self {
         let token = spelling.semantic_token();
@@ -282,6 +286,7 @@ impl<G> CurrentCommand<G> {
             delivery,
             source_provenance,
             direct_source,
+            direct_source_line,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
             outer_recovery_space: false,
         }
@@ -496,6 +501,18 @@ impl<G> CurrentCommand<G> {
         }
     }
 
+    /// Physical line captured while this exact command was delivered from a
+    /// source cursor. Replayed macro and backup commands deliberately carry
+    /// no direct line even when their diagnostic provenance names a source.
+    #[must_use]
+    pub const fn direct_source_line_number(&self) -> Option<u32> {
+        if self.direct_source {
+            self.direct_source_line
+        } else {
+            None
+        }
+    }
+
     /// Makes a fresh copy for the input backup path. `CurrentCommand` itself
     /// remains deliberately non-`Clone` at the public boundary.
     pub(crate) fn copy_for_backup(&self) -> Self {
@@ -508,6 +525,7 @@ impl<G> CurrentCommand<G> {
             delivery: self.delivery,
             source_provenance: self.source_provenance,
             direct_source: self.direct_source,
+            direct_source_line: self.direct_source_line,
             alignment_adjustment: self.alignment_adjustment,
             outer_recovery_space: self.outer_recovery_space,
         }

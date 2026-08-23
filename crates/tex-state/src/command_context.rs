@@ -1067,8 +1067,22 @@ impl<'a, G> CommandContext<'a, G> {
             (1, Some(crate::node::Node::VList(node))) => ("vbox", node),
             _ => return "void".to_owned(),
         };
+        let abbreviated_children = self
+            .page_node_list(node.children)
+            .is_ok_and(|children| !children.is_empty())
+            .then_some(" []")
+            .unwrap_or("");
+        let glue_setting = box_glue_setting_text(node);
+        let shift = (node.shift.raw() != 0)
+            .then(|| format!(", shifted {}", crate::scaled::print_scaled(node.shift)))
+            .unwrap_or_default();
+        let subtype = match node.box_lr {
+            crate::node::BoxLr::Normal => "",
+            crate::node::BoxLr::Reversed => ", reversed",
+            crate::node::BoxLr::DList => ", display",
+        };
         format!(
-            "\\{kind}({}+{})x{}",
+            "\\{kind}({}+{})x{}{glue_setting}{shift}{subtype}{abbreviated_children}",
             crate::scaled::print_scaled(node.height),
             crate::scaled::print_scaled(node.depth),
             crate::scaled::print_scaled(node.width)
@@ -2895,6 +2909,28 @@ impl<'a, G> CommandContext<'a, G> {
             })
     }
 
+    /// Projects the logical TeX `\parshape` length from its internal scoped
+    /// storage cell for detached assignment/restoration diagnostics.
+    ///
+    /// The internal token-parameter coordinate and byte encoding remain
+    /// private to `tex-state`; callers receive only the user-visible logical
+    /// value when the supplied cell is the paragraph-shape cell.
+    #[must_use]
+    pub fn restored_paragraph_shape_len(
+        &self,
+        parameter: crate::env::banks::TokParam,
+        root: Option<TokenListId<G>>,
+    ) -> Option<usize> {
+        if parameter != crate::env::banks::TokParam::PAR_SHAPE_INTERNAL {
+            return None;
+        }
+        Some(root.map_or(0, |root| {
+            let len = self.token_list(root).len();
+            assert_eq!(len % 8, 0, "paragraph-shape payload is truncated");
+            len / 8
+        }))
+    }
+
     #[must_use]
     pub fn paragraph_shape_dimension(&self, line: i32, width: bool) -> Scaled {
         if line <= 0 {
@@ -3141,6 +3177,24 @@ impl<'a, G> CommandContext<'a, G> {
         )
     }
 
+    /// Publishes detached diagnostics that canonically precede a synchronous
+    /// live World-facing print sequence.
+    ///
+    /// Recoverable error reporting still owns live interaction/history state
+    /// in [`crate::World`]. A caller that has already rendered tracing or
+    /// restoration output into an operation-local collector must cross this
+    /// explicit bridge before opening [`crate::print::ErrorReport`] or a
+    /// legacy synchronous diagnostic headline, or that live output would
+    /// overtake the earlier program. No World handle or partial-line state
+    /// escapes this admission.
+    pub fn publish_diagnostic_effects_before_synchronous_print(
+        &mut self,
+        effects: &mut crate::diagnostic::DiagnosticEffects,
+    ) {
+        self.world
+            .publish_diagnostic_effects(std::mem::take(effects));
+    }
+
     pub fn error_report(&mut self) -> crate::print::ErrorReport<'_, G> {
         let newline = self.int_param(IntParam::NEWLINE_CHAR);
         let escape = self.int_param(IntParam::ESCAPE_CHAR);
@@ -3328,6 +3382,33 @@ impl<'a, G> CommandContext<'a, G> {
             )
             .expect("provisional meaning targets admitted state");
     }
+}
+
+fn box_glue_setting_text<List>(node: &crate::node::BoxNode<List>) -> String {
+    if node.glue_sign == crate::node::Sign::Normal || node.glue_set.is_zero() {
+        return String::new();
+    }
+    let sign = match node.glue_sign {
+        crate::node::Sign::Normal => unreachable!("normal glue was handled above"),
+        crate::node::Sign::Stretching => "",
+        crate::node::Sign::Shrinking => " -",
+    };
+    let numerator = i64::from(node.glue_set.numerator()) * i64::from(Scaled::UNITY);
+    let denominator = i64::from(node.glue_set.denominator());
+    let raw = if numerator >= 0 {
+        (numerator + denominator / 2) / denominator
+    } else {
+        -((-numerator + denominator / 2) / denominator)
+    };
+    let ratio =
+        crate::scaled::print_scaled(Scaled::from_raw(i32::try_from(raw).unwrap_or(i32::MAX)));
+    let order = match node.glue_order {
+        crate::glue::Order::Normal => "",
+        crate::glue::Order::Fil => "fil",
+        crate::glue::Order::Fill => "fill",
+        crate::glue::Order::Filll => "filll",
+    };
+    format!(", glue set{sign} {ratio}{order}")
 }
 
 fn page_list_semantic_id<G>(

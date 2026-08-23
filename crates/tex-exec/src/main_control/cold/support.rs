@@ -74,7 +74,7 @@ pub(in crate::main_control) fn command_diagnostic_context<G>(
     crate::diagnostics::ExecutionDiagnosticContext::new(
         i32::try_from(command.state.current_file_line_number()).unwrap_or(i32::MAX),
         0,
-        false,
+        command.output_routine_active,
         command.state.output_open_context(stores),
     )
 }
@@ -124,29 +124,17 @@ pub(in crate::main_control) fn write_immediate_text<G>(
     sink: PrintSink,
     text: &str,
 ) {
-    let (line_is_open, max_print_line) = match sink {
+    let max_print_line = match sink {
         PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog => {
-            let printer = stores.printer();
-            let line_is_open = match sink {
-                PrintSink::Terminal => printer.terminal_offset() > 0,
-                PrintSink::Log => printer.log_offset() > 0,
-                PrintSink::TerminalAndLog => {
-                    printer.terminal_offset() > 0 || printer.log_offset() > 0
-                }
-                PrintSink::Stream(_) => unreachable!(),
-            };
-            (line_is_open, printer.max_print_line())
+            stores.printer().max_print_line()
         }
-        PrintSink::Stream(_) => (false, tex_state::print::MAX_PRINT_LINE),
+        PrintSink::Stream(_) => tex_state::print::MAX_PRINT_LINE,
     };
     command.immediate_prints.push(ImmediatePrint {
         sink,
-        text: if line_is_open {
-            format!("\n{text}")
-        } else {
-            text.to_owned()
-        },
+        text: text.to_owned(),
         max_print_line,
+        ensure_line_start: !matches!(sink, PrintSink::Stream(_)),
     });
 }
 
@@ -165,14 +153,18 @@ pub(in crate::main_control) fn write_preframed_immediate_text<G>(
         sink,
         text,
         max_print_line: stores.printer().max_print_line(),
+        ensure_line_start: false,
     });
 }
 
 pub(in crate::main_control) fn print_display_content<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
     content: &str,
 ) {
-    stores.printer().print_nl("").print_rendered(content);
+    let mut diagnostic = stores.begin_online_diagnostic(diagnostic_effects);
+    diagnostic.print_nl("").print_rendered(content);
+    diagnostic.end_open();
 }
 
 /// TeX82 §282's `insert_token` arm, the only way an `\aftergroup` token ever
@@ -1198,7 +1190,10 @@ pub(in crate::main_control) fn start_paragraph<G>(
     diagnostic_effects: &mut DiagnosticEffects,
     indent: bool,
 ) -> Result<(), ExecError> {
-    let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::source_free(
+    let diagnostic_context = crate::diagnostics::ExecutionDiagnosticContext::new(
+        i32::try_from(command.current_file_line_number()).unwrap_or(i32::MAX),
+        0,
+        false,
         command.output_open_context(stores),
     );
     crate::paragraph_end::start_paragraph(
@@ -1327,12 +1322,11 @@ pub(in crate::main_control) fn finish_insert_or_adjust_group<G>(
         }
     };
     crate::vertical::append_vertical_contribution(modes, stores, node);
-    crate::vertical::build_page_if_outer_vertical_with_error_context(
-        modes,
-        stores,
-        command.diagnostic_effects,
-        &page_error_context,
-    )?;
+    // §1099 calls `build_page` only after §1100's `unsave` has completed.
+    // The outer operation releases this CommandContext, publishes the
+    // detached group-close/restoration program, then re-admits page building
+    // so its World-facing recovery diagnostics cannot overtake those traces.
+    command.pending_outer_page_build_context = Some(page_error_context);
     Ok(ReplayStep::Continue)
 }
 

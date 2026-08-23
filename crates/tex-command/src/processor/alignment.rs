@@ -114,6 +114,9 @@ pub enum AlignmentCellDelimiter {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FinishedAlignmentCell {
     pub delimiter: AlignmentCellDelimiter,
+    /// TeX82's live `line` captured when `get_next` intercepted the saved
+    /// delimiter, before the v-template and its cold executor boundary.
+    pub delimiter_line: u32,
 }
 
 /// Frozen template pairs collected during one raw alignment preamble scan.
@@ -367,6 +370,7 @@ pub(crate) struct ActiveCellDelivery<G> {
     pub(crate) u_level: Option<InputLevelId>,
     pub(crate) v_level: Option<InputLevelId>,
     pub(crate) delimiter: Option<AlignmentCellDelimiter>,
+    pub(crate) delimiter_line: Option<u32>,
     /// `init_col` consumed `\omit`, so its delimiter suffix is the canonical
     /// one-token `omit_template`, rather than this column's v-template.
     pub(crate) omit: bool,
@@ -382,6 +386,7 @@ impl<G> Clone for ActiveCellDelivery<G> {
             u_level: self.u_level,
             v_level: self.v_level,
             delimiter: self.delimiter,
+            delimiter_line: self.delimiter_line,
             omit: self.omit,
             omit_previous_align_state: self.omit_previous_align_state,
         }
@@ -396,6 +401,7 @@ impl<G> PartialEq for ActiveCellDelivery<G> {
             && self.u_level == other.u_level
             && self.v_level == other.v_level
             && self.delimiter == other.delimiter
+            && self.delimiter_line == other.delimiter_line
             && self.omit == other.omit
             && self.omit_previous_align_state == other.omit_previous_align_state
     }
@@ -572,6 +578,7 @@ impl<G> AlignmentDeliveryState<G> {
             u_level: None,
             v_level: None,
             delimiter: None,
+            delimiter_line: None,
             omit: false,
             omit_previous_align_state: None,
         });
@@ -637,6 +644,7 @@ impl<G> AlignmentDeliveryState<G> {
         alignment: AlignmentIdentity,
         level: InputLevelId,
         delimiter: AlignmentCellDelimiter,
+        delimiter_line: u32,
     ) -> Result<(), AlignmentLifecycleError> {
         let cell = self.active_cell_mut(alignment)?;
         if !cell.u_template_installed {
@@ -647,6 +655,7 @@ impl<G> AlignmentDeliveryState<G> {
         }
         cell.v_level = Some(level);
         cell.delimiter = Some(delimiter);
+        cell.delimiter_line = Some(delimiter_line);
         self.align_state = TEMPLATE_ALIGN_STATE;
         Ok(())
     }
@@ -693,8 +702,14 @@ impl<G> AlignmentDeliveryState<G> {
         let delimiter = cell
             .delimiter
             .ok_or(AlignmentLifecycleError::VTemplateNotExhausted)?;
+        let delimiter_line = cell
+            .delimiter_line
+            .ok_or(AlignmentLifecycleError::VTemplateNotExhausted)?;
         self.pending_fin_col_delimiter = Some((alignment, delimiter));
-        Ok(FinishedAlignmentCell { delimiter })
+        Ok(FinishedAlignmentCell {
+            delimiter,
+            delimiter_line,
+        })
     }
 
     /// Performs TeX82 §772's exhausted-preamble arm of `fin_col`.

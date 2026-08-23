@@ -351,6 +351,15 @@ impl<G> LoweredMathSink<'_, '_, G> {
                     family,
                     character,
                 } => {
+                    // TeX82 §§721 walks the converted noads in order.
+                    // A preceding §581 missing-character warning has already
+                    // completed before this synchronous error dialogue opens,
+                    // so publish its detached print program at this exact
+                    // event boundary.
+                    self.stores
+                        .publish_diagnostic_effects_before_synchronous_print(
+                            self.diagnostic_effects,
+                        );
                     let size = match size {
                         tex_state::math::MathFontSize::Text => "\\textfont",
                         tex_state::math::MathFontSize::Script => "\\scriptfont",

@@ -81,6 +81,9 @@ pub(in crate::main_control) fn apply<G>(
             // body can therefore ligate or kern with the v-template prefix.
             // The run ends at §1131's `endv` below, before `fin_col` advances
             // across a tab or span delimiter.
+            let _active = active_alignment.as_mut().ok_or(ExecError::MissingToken {
+                context: "active replay alignment",
+            })?;
             Ok(ReplayStep::Continue)
         }
         ColdOperation::Relax => {
@@ -2179,8 +2182,8 @@ pub(in crate::main_control) fn apply<G>(
             // owns the selector-sensitive transition and decodes no textual
             // envelope.
             let context = command.state.output_open_context(&**stores);
-            print_display_content(stores, &diagnostic.content);
-            crate::diagnostics::complete_show(stores, false, Some(context))?;
+            print_display_content(stores, command.diagnostic_effects, &diagnostic.content);
+            command.defer_show_completion(false, context);
             Ok(ReplayStep::Continue)
         }
         ColdOperation::ShowBox { index } => {
@@ -2189,9 +2192,9 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 command.diagnostic_effects,
                 index,
-                context,
                 command.state.profile(),
-            )?;
+            );
+            command.defer_show_completion(true, context);
             Ok(ReplayStep::Continue)
         }
         ColdOperation::ShowLists => {
@@ -2209,9 +2212,9 @@ pub(in crate::main_control) fn apply<G>(
                 stores,
                 command.diagnostic_effects,
                 modes,
-                context,
                 command.state.profile(),
             )?;
+            command.defer_show_completion(true, context);
             Ok(ReplayStep::Continue)
         }
         ColdOperation::ShowTokens { tokens } => {
@@ -2224,8 +2227,10 @@ pub(in crate::main_control) fn apply<G>(
             // conditional on a selected sink already having an open column.
             // An unconditional newline here left a blank line above the
             // display whenever the file's own `(` had just closed one.
-            stores.printer().print_nl("> ").print_rendered(&text);
-            crate::diagnostics::complete_show(stores, false, Some(context))?;
+            let mut diagnostic = stores.begin_online_diagnostic(command.diagnostic_effects);
+            diagnostic.print_nl("> ").print_rendered(&text);
+            diagnostic.end_open();
+            command.defer_show_completion(false, context);
             Ok(ReplayStep::Continue)
         }
         ColdOperation::ShowIfs { conditions } => {
@@ -2239,19 +2244,15 @@ pub(in crate::main_control) fn apply<G>(
             diagnostic.print_nl("").print_ln();
             diagnostic.print_rendered(&render_showifs(&conditions));
             diagnostic.end(true);
-            crate::diagnostics::complete_show(stores, true, Some(context))?;
+            command.defer_show_completion(true, context);
             Ok(ReplayStep::Continue)
         }
         ColdOperation::ShowGroups {
             diagnostic: Some(diagnostic),
         } => {
             let context = command.state.output_open_context(&**stores);
-            crate::diagnostics::execute_showgroups(
-                stores,
-                command.diagnostic_effects,
-                &diagnostic,
-                context,
-            )?;
+            crate::diagnostics::execute_showgroups(stores, command.diagnostic_effects, &diagnostic);
+            command.defer_show_completion(true, context);
             Ok(ReplayStep::Continue)
         }
         ColdOperation::ShowGroups { diagnostic: None } => {
@@ -2265,12 +2266,8 @@ pub(in crate::main_control) fn apply<G>(
                 active_math_shifts,
             );
             let context = command.state.output_open_context(&**stores);
-            crate::diagnostics::execute_showgroups(
-                stores,
-                command.diagnostic_effects,
-                &diagnostic,
-                context,
-            )?;
+            crate::diagnostics::execute_showgroups(stores, command.diagnostic_effects, &diagnostic);
+            command.defer_show_completion(true, context);
             Ok(ReplayStep::Continue)
         }
         ColdOperation::ImmediateExtension(extension) => {
@@ -2347,13 +2344,13 @@ pub(in crate::main_control) fn apply<G>(
             match path {
                 ScannedSetBoxPath::Forbidden { error_context } => {
                     let _ = boxes.take_box_context(false);
-                    report_improper_setbox(error_context, stores)?;
+                    report_improper_setbox(error_context, stores, command.diagnostic_effects)?;
                 }
                 ScannedSetBoxPath::Payload(payload) => match payload {
                     ScannedBoxShiftPayload::Missing => {
                         let _ = boxes.take_box_context(false);
                         let context = command.state.output_open_context(&**stores);
-                        report_improper_setbox(context, stores)?;
+                        report_improper_setbox(context, stores, command.diagnostic_effects)?;
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
                         let id = read_box_register(index, copy, stores, command);
@@ -3004,7 +3001,10 @@ pub(in crate::main_control) fn apply<G>(
             boxes.recovery_simple_group_pending = opens_simple_group;
             Ok(ReplayStep::Continue)
         }
-        ColdOperation::BoxEndGroup { ships_out } => {
+        ColdOperation::BoxEndGroup {
+            ships_out,
+            current_line,
+        } => {
             let box_state = boxes.active_boxes.pop().ok_or(ExecError::MissingToken {
                 context: "box group",
             })?;
@@ -3023,7 +3023,13 @@ pub(in crate::main_control) fn apply<G>(
             // char node -- and left the box's real internal-vertical level open
             // on the mode nest (`umber2-johp.232`).
             if !box_state.kind.horizontal() {
-                let diagnostic_context = command_diagnostic_context(command, stores);
+                let mut diagnostic_context = command_diagnostic_context(command, stores);
+                // The closing brace can exhaust and retire its source before
+                // this cold operation is applied. TeX82 §661 nevertheless
+                // uses the brace's live `line` as the ending line of every
+                // paragraph pack report, so retain that delivered scalar in
+                // `BoxEndGroup` instead of re-reading a now-empty input stack.
+                diagnostic_context.current_line = current_line;
                 let mut geometry = pack_geometry_sink(command.state, command.observations);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
@@ -3547,6 +3553,7 @@ pub(in crate::main_control) fn apply<G>(
             begin_next_replay_alignment_cell(
                 alignment,
                 finished.delimiter,
+                finished.delimiter_line,
                 command,
                 active_alignment,
                 modes,
@@ -3554,7 +3561,10 @@ pub(in crate::main_control) fn apply<G>(
             )?;
             Ok(ReplayStep::Continue)
         }
-        ColdOperation::AlignmentFinish { alignment } => {
+        ColdOperation::AlignmentFinish {
+            alignment,
+            current_line,
+        } => {
             if active_alignment.as_ref().map(|active| active.identity) != Some(alignment) {
                 return Err(ExecError::MissingToken {
                     context: "active replay alignment",
@@ -3589,6 +3599,7 @@ pub(in crate::main_control) fn apply<G>(
                 &mut geometry,
                 command.fuel,
                 &error_context,
+                current_line,
             )?;
             schedule_aftergroup(command, stores, entry_aftergroup)?;
             schedule_aftergroup(command, stores, alignment_aftergroup)?;
@@ -3610,7 +3621,7 @@ pub(in crate::main_control) fn apply<G>(
             }
             Ok(ReplayStep::Continue)
         }
-        ColdOperation::Paragraph => {
+        ColdOperation::Paragraph { current_line } => {
             if matches!(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
@@ -3624,7 +3635,8 @@ pub(in crate::main_control) fn apply<G>(
                     &error_context,
                 )?;
             } else {
-                let diagnostic_context = command_diagnostic_context(command, stores);
+                let mut diagnostic_context = command_diagnostic_context(command, stores);
+                diagnostic_context.current_line = current_line;
                 let mut geometry = pack_geometry_sink(command.state, command.observations);
                 crate::paragraph_end::end_paragraph_with_fuel(
                     modes,

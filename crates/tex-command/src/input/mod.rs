@@ -48,6 +48,14 @@ pub use tokenizer::{
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct InputState<G> {
     pub(crate) levels: Vec<InputLevel<G>>,
+    /// TeX82's process-global `line`, retained after a physical source level
+    /// retires while token-list input produced from that line remains live.
+    ///
+    /// Most reads can recover the value from the nearest live file or
+    /// `\scantokens` cursor. Incremental input boundaries may deliberately
+    /// retire that cursor before a macro or alignment template it produced,
+    /// so the scalar is also updated on every source-tokenization step.
+    pub(crate) retained_file_line_number: i32,
     /// TeX82 §331's bottom terminal buffer after the startup line has been
     /// consumed. Umber retires that acquisition level before opening the root
     /// file, but §310 must still reach its `<*>` context after the last file
@@ -68,6 +76,7 @@ impl<G> Clone for InputState<G> {
     fn clone(&self) -> Self {
         Self {
             levels: self.levels.clone(),
+            retained_file_line_number: self.retained_file_line_number,
             terminal_context_line: self.terminal_context_line.clone(),
             pending_sources: self.pending_sources.clone(),
             next_level_identity: self.next_level_identity,
@@ -81,6 +90,7 @@ impl<G> Default for InputState<G> {
     fn default() -> Self {
         Self {
             levels: Vec::new(),
+            retained_file_line_number: 0,
             terminal_context_line: None,
             pending_sources: BTreeMap::new(),
             next_level_identity: 0,
@@ -210,6 +220,7 @@ pub(crate) fn tracked_input_projection<G>(
             .as_bytes(),
     );
     stack.byte(input.force_eof.into());
+    stack.u64(input.retained_file_line_number as u32 as u64);
     // Pending ids are referenced by future host/resource operations. Until
     // their stable request identity is admitted here, fail closed.
     if !input.pending_sources.is_empty() {
@@ -1079,16 +1090,49 @@ impl<G> InputState<G> {
                         SourceNameClass::Scantokens(_) | SourceNameClass::File
                     ) =>
                 {
-                    source
-                        .cursor
-                        .line
-                        .as_ref()
-                        .map(|line| line.physical.number().min(i32::MAX as u64) as i32)
+                    Some(
+                        source
+                            .cursor
+                            .line
+                            .as_ref()
+                            .map_or_else(
+                                || source.cursor.next_line_number.saturating_sub(1),
+                                |line| line.physical.number(),
+                            )
+                            .min(i32::MAX as u64) as i32,
+                    )
                 }
                 InputLevel::Source(_) => Some(0),
                 InputLevel::Tokens(_) => None,
             })
-            .unwrap_or(0)
+            .unwrap_or(self.retained_file_line_number)
+    }
+
+    /// Synchronizes TeX82's global `line` after a physical source step.
+    ///
+    /// The source cursor can have just exhausted its line, in which case
+    /// `next_line_number - 1` is still the live value until another physical
+    /// line is acquired. Terminal and `\read` pseudo-files do not replace the
+    /// retained enclosing file value.
+    pub(crate) fn retain_active_file_line_number(&mut self) {
+        let Some(InputLevel::Source(source)) = self.levels.last() else {
+            return;
+        };
+        if !matches!(
+            source.name_class,
+            SourceNameClass::Scantokens(_) | SourceNameClass::File
+        ) {
+            return;
+        }
+        self.retained_file_line_number = source
+            .cursor
+            .line
+            .as_ref()
+            .map_or_else(
+                || source.cursor.next_line_number.saturating_sub(1),
+                |line| line.physical.number(),
+            )
+            .min(i32::MAX as u64) as i32;
     }
 
     pub(crate) fn current_file_source_id(&self) -> Option<tex_state::SourceId> {

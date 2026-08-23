@@ -174,6 +174,10 @@ pub struct CommandProcessor<'episode, 'admission, G> {
     pub(crate) expression_depth: u32,
     /// pdfTeX section 57's dynamically scoped control-sequence-name flag.
     pub(crate) is_in_csname: bool,
+    /// Whether this bounded processor episode runs inside TeX82's active
+    /// output routine. Page dimensions remain observable there after §1012
+    /// clears the page list and until §991 freezes the next page.
+    pub(crate) output_routine_active: bool,
     /// Canonical glue-node identity retained only while an internal glue or
     /// e-TeX expression result remains pointer-identical to its source.
     pub(crate) scanned_glue_identity: Option<tex_state::GlueId<G>>,
@@ -237,6 +241,14 @@ impl<G> CommandProcessor<'_, '_, G> {
     #[must_use]
     pub fn error_context(&self) -> String {
         self.command.output_open_context(&self.state)
+    }
+
+    /// Captures tex.web's live input `line` while a delivered command still
+    /// owns its source level. Cold consumers retain this scalar when apply
+    /// may run after the exhausted source has been retired.
+    #[must_use]
+    pub fn current_file_line_number(&self) -> u32 {
+        self.command.current_file_line_number()
     }
 
     /// Returns the immutable command dialect and character mode for this job.
@@ -412,6 +424,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
         let mut output = self.begin_diagnostic();
         output.print_nl(&text);
         output.end(false);
+        self.publish_diagnostics_before_operand_scan();
     }
 
     /// Supplies §299's mode prefix for the next command trace in this
@@ -514,6 +527,7 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
             eof_recovered_while_matching: false,
             expression_depth: 0,
             is_in_csname: false,
+            output_routine_active: false,
             scanned_glue_identity: None,
             scanned_glue_register: None,
             write_expansion_depth: 0,
@@ -528,6 +542,27 @@ impl<'episode, 'admission, G> CommandProcessor<'episode, 'admission, G> {
     pub fn with_fuel(mut self, fuel: &'episode mut CommandFuel) -> Self {
         self.fuel = ProcessorFuel::Shared(fuel);
         self
+    }
+
+    /// Supplies TeX82's executor-owned output-routine state to scalar scans.
+    ///
+    /// The command processor does not own the mode/group stack that makes
+    /// this fact authoritative. Main control therefore lends the detached
+    /// boolean for this episode instead of duplicating that state here.
+    pub fn set_output_routine_active(&mut self, active: bool) {
+        self.output_routine_active = active;
+    }
+
+    /// Publishes already-complete command diagnostics before operand scans.
+    ///
+    /// TeX82 §1030 prints a fetched command synchronously before its case arm
+    /// scans operands. A later scanner error writes through the live World
+    /// reporter, so the detached trace must cross its outer publication seam
+    /// first. The collector remains operation-local; this exposes neither
+    /// World nor partial-line state to command code.
+    pub fn publish_diagnostics_before_operand_scan(&mut self) {
+        self.state
+            .publish_diagnostic_effects_before_synchronous_print(self.diagnostic_effects);
     }
 
     pub(crate) fn charge_command_action(&mut self) -> Result<(), crate::CommandError> {

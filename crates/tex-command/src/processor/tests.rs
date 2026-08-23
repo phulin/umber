@@ -38,6 +38,46 @@ fn processor_episode_borrows_generation_and_delivers_one_current_command() {
 }
 
 #[test]
+fn direct_source_command_captures_its_physical_line_before_retirement() {
+    crate::test_harness::with_universe(|universe| {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(
+                crate::SourceRegistration::new(crate::RegisteredSourceKind::Generated, &b"\nX"[..])
+                    .with_name("two-lines.tex"),
+            )
+            .expect("source registration");
+        command
+            .open_registered_source(source)
+            .expect("source opening");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+
+        loop {
+            let delivered = processor
+                .get_next()
+                .expect("raw delivery")
+                .expect("second-line character");
+            if delivered.spelling().semantic_token()
+                == (Token::Char {
+                    ch: 'X',
+                    cat: Catcode::Letter,
+                })
+            {
+                assert_eq!(delivered.direct_source_line_number(), Some(2));
+                break;
+            }
+        }
+    });
+}
+
+#[test]
 fn frozen_macro_primitive_observation_retains_endwrite_identity() {
     crate::test_harness::with_universe(|universe| {
         crate::install_tex82_unexpandable_primitives(universe);

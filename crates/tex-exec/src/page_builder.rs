@@ -251,7 +251,12 @@ fn create_page_insertion<G>(
     let shrink = add(stores.page_dimension(PageDimension::Shrink), skip.shrink)?;
     stores.set_page_dimension(PageDimension::Shrink, shrink);
     if skip.shrink_order != Order::Normal && skip.shrink.raw() != 0 {
-        diagnostics::report_insertion_skip_infinite_shrinkage(stores, class, diagnostic_context)?;
+        diagnostics::report_insertion_skip_infinite_shrinkage(
+            stores,
+            diagnostic_effects,
+            class,
+            diagnostic_context,
+        )?;
     }
     Ok(insertion)
 }
@@ -306,8 +311,9 @@ pub(crate) fn ensure_insertion_vbox<G>(
     // whose dispatcher supplies §82's live display. Only the explicit
     // source-free test seam falls back to the published summary.
     let context = diagnostic_context.output_context.clone();
-    crate::error_report::report_error(
+    crate::error_report::report_ordered_error(
         stores,
+        diagnostic_effects,
         "Insertions can only be added to a vbox",
         &[
             "Tut tut: You're trying to \\insert into a",
@@ -321,12 +327,17 @@ pub(crate) fn ensure_insertion_vbox<G>(
     // flushing the register. `show_box` starts with §182's structural newline.
     let text =
         crate::node_dump::dump_page_list(stores, list, crate::node_dump::DumpConfig::read(stores));
-    let mut diagnostic = stores.begin_diagnostic(diagnostic_effects);
+    // This display is the middle of §993's synchronous `box_error`: it must
+    // precede any later §1009 error from the same page-building admission.
+    // Keeping only this continuation on the live printer preserves that
+    // ordering until recoverable ErrorReport itself becomes a detached
+    // program; no operation-local diagnostic may remain queued across it.
+    let mut diagnostic = stores.printer();
     diagnostic
         .print_nl("The following box has been deleted:")
         .print_ln()
         .print_rendered(&text);
-    diagnostic.end(true);
+    diagnostic.print_nl("").print_ln();
     // TeX82 §993 flushes the list and then assigns `box(n):=null` directly;
     // it does not call §275's `eq_define` or create a local save-stack entry.
     // Preserve the register's existing eq level while voiding its value.

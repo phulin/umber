@@ -656,13 +656,23 @@ fn forbidden_setbox_reports_before_reading_the_following_command() {
         let mut control = MainControl::tex82_initex(stores);
         register_source(
             &mut control,
-            br"\nonstopmode\accent65\setbox0=\count0=7 X\end",
+            br"\nonstopmode\tracingonline=1\tracingcommands=2\accent65\setbox0=\count0=7 X\end",
         );
 
         run_to_end(&mut control, stores);
 
         let terminal = terminal_text(stores);
         assert!(terminal.contains("Improper \\setbox"), "{terminal}");
+        let trace = terminal
+            .find("{\\setbox}")
+            .unwrap_or_else(|| panic!("missing rejected-command trace: {terminal}"));
+        let error = terminal
+            .find("Improper \\setbox")
+            .expect("improper-setbox report");
+        assert!(
+            trace < error,
+            "setbox error overtook its scan trace: {terminal}"
+        );
         assert!(stores.copy_box_to_page(0).is_none());
         assert_eq!(stores.count(0).expect("count register"), 7);
     });
@@ -1080,6 +1090,30 @@ fn tracingcommands_traces_reswitch_but_not_prefixed_command_internal_fetches() {
 }
 
 #[test]
+fn command_trace_precedes_synchronous_operand_scan_error() {
+    // TeX82 §§1030/1211/1243/460: main control prints the outer `\global`
+    // command at `reswitch` before `prefixed_command` scans the oversized
+    // dimension. The scanner's live World reporter must not overtake that
+    // already-complete detached trace.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\tracingonline=1\tracingcommands=1\global\vsize=16384pt\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        let terminal = pending_sink_text(stores, true);
+        let trace = terminal.find("\\global}").expect("global trace");
+        let error = terminal
+            .find("! Dimension too large.")
+            .expect("dimension error");
+        assert!(trace < error, "{terminal}");
+    });
+}
+
+#[test]
 fn disabled_tracingcommands_emits_no_command_diagnostic() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
@@ -1471,6 +1505,63 @@ fn tracingrestores_reports_dimension_register_restoration() {
             pending_sink_text(stores, true),
             "{restoring \\dimen9=0.0pt}\n"
         );
+    });
+}
+
+#[test]
+fn tracingrestores_projects_the_logical_parshape_cell() {
+    // TeX82 §§252/283 reports the logical `\parshape` entry as its line
+    // count. Umber's internal immutable byte payload is storage only and must
+    // neither leak its token-parameter coordinate nor its encoded bytes.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\tracingrestores=1\tracingonline=1
+\parshape=2 1pt 9pt 2pt 8pt
+{\parshape=1 3pt 7pt}\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        assert_eq!(
+            pending_sink_text(stores, true),
+            "{restoring \\parshape=2}\n"
+        );
+        assert_eq!(
+            pending_sink_text(stores, false),
+            "{restoring \\parshape=2}\n"
+        );
+    });
+}
+
+#[test]
+fn tracingrestores_preserves_dense_and_sparse_register_unsave_order() {
+    // e-TeX 2.6 [53a] keeps classic registers in eqtb and extended registers
+    // in the sparse array. Its `unsave`/`sa_restore` interleaving is observable
+    // through `\tracingrestores`; neither bank may disappear from the ordered
+    // receipt.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
+        register_source(
+            &mut control,
+            br"\tracingonline=1\begingroup\tracingrestores=1
+\count20=5\count2000=5\dimen21=5pt\dimen2100=5pt
+\skip22=5pt\relax\muskip2200=5mu\relax\endgroup\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        let expected = concat!(
+            "{restoring \\skip22=0.0pt}\n",
+            "{restoring \\dimen21=0.0pt}\n",
+            "{restoring \\muskip2200=0.0mu}\n",
+            "{restoring \\dimen2100=0.0pt}\n",
+            "{restoring \\count2000=0}\n",
+            "{restoring \\count20=0}\n",
+        );
+        assert_eq!(pending_sink_text(stores, true), expected);
+        assert_eq!(pending_sink_text(stores, false), expected);
     });
 }
 
@@ -1904,6 +1995,33 @@ fn etex_sparse_toks_restore_tracing_decodes_register_words_without_parameter_off
 }
 
 #[test]
+fn tracingrestores_keeps_a_control_sequence_atomic_at_the_show_token_list_breadth() {
+    // TeX82 §§252/262/283: the 32-character `show_token_list` bound is tested
+    // before a token is printed. `\outputpenalty` starts below the bound and
+    // must therefore be printed whole before the remaining suffix becomes
+    // `\ETC.`; clipping the control-sequence spelling is not a legal trace.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\tracingrestores=1\tracingonline=1\output={\tracingcommands 0\showthe \outputpenalty x}{\output={}}
+\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        let terminal = pending_sink_text(stores, true);
+        assert!(
+            terminal.contains(
+                "{restoring \\output={\\tracingcommands 0\\showthe \\outputpenalty \\ETC.}"
+            ),
+            "{terminal:?}"
+        );
+        assert!(!terminal.contains("\\out\\ETC."), "{terminal:?}");
+    });
+}
+
+#[test]
 fn tracingrestores_coalesces_same_level_writes_and_renders_parameter_banks() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
         let mut control = MainControl::tex82_initex(stores);
@@ -2097,6 +2215,11 @@ fn paragraph_shrink_error_uses_the_live_input_context() {
         let error = log
             .find("! Infinite glue shrinkage found in a paragraph.")
             .expect("paragraph shrink recovery reports");
+        assert_eq!(
+            &log[..error],
+            "\n",
+            "§825 closes the tracing diagnostic exactly once before print_err: {log:?}"
+        );
         let context = log[error..]
             .find("l.1 ")
             .expect("the report includes the live source line");
@@ -2445,6 +2568,53 @@ fn meaning_mutation_value_projects_protected_macro_storage_marker() {
 }
 
 #[test]
+fn protected_macro_marker_observation_precedes_meaning_mutation() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = etex_initex(stores);
+        register_source(&mut control, br"\protected\def\p{X}\end");
+        let mut observations = ObservationRecorder::default();
+
+        run_to_end_observed(&mut control, stores, &mut observations);
+
+        let marker = observations
+            .0
+            .iter()
+            .position(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::TokenList(TokenListRecord {
+                        transition: "complete",
+                        purpose: "protected_macro",
+                        tokens,
+                    }) if tokens == &[
+                        ObservedToken::MacroEndMatch,
+                        ObservedToken::Character {
+                            character: 'X',
+                            catcode: Catcode::Letter,
+                        },
+                    ]
+                )
+            })
+            .expect("protected marker transition is observed");
+        let mutation = observations
+            .0
+            .iter()
+            .position(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Mutation(MutationRecord {
+                        target: MutationTarget::Meaning,
+                        key: ObservationValue::Name(name),
+                        ..
+                    }) if name == "p"
+                )
+            })
+            .expect("protected definition mutation is observed");
+        assert_eq!(marker + 1, mutation, "{:?}", observations.0);
+    });
+}
+
+#[test]
 fn etex_unexpanded_replays_protected_macros_as_ordinary_expandable_input() {
     // e-TeX 2.6 change section [27.465] implements `\unexpanded` through
     // `the_toks`, whose `ins_list` result re-enters the enclosing expansion
@@ -2691,6 +2861,35 @@ fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
         assert_eq!(
             admitted!(stores, |context| context.innermost_group_kind()),
             None
+        );
+    });
+}
+
+#[test]
+fn discretionary_part_restoration_precedes_synchronous_validation_error() {
+    // TeX82 §§1120--1121 runs `unsave` before validating an improper
+    // part. The detached restoration program must not be overtaken
+    // by its live error report. Canonical TRIP line 277 additionally covers
+    // the same invariant for math mode's forbidden third part.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\tracingonline=1\tracingrestores=1
+x\discretionary{\count0=1\hfil}{}{}\end",
+        );
+        run_to_end(&mut control, stores);
+
+        let output = terminal_text(stores);
+        let restoration = output
+            .find("{restoring \\count0=0}")
+            .unwrap_or_else(|| panic!("missing restoration in {output:?}"));
+        let error = output
+            .find("Improper discretionary list")
+            .unwrap_or_else(|| panic!("missing discretionary error in {output:?}"));
+        assert!(
+            restoration < error,
+            "discretionary error overtook group restoration: {output:?}"
         );
     });
 }
@@ -7038,9 +7237,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
             context,
             &mut diagnostic_effects,
             &diagnostic,
-            String::new(),
-        ))
-        .expect("\\showgroups reports no fatal error");
+        ));
 
         crate::test_harness::begin_group(stores, GroupKind::MathShift, 7).expect("test group");
         modes.push(Mode::Math).expect("test mode push");
@@ -7059,9 +7256,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
             context,
             &mut diagnostic_effects,
             &diagnostic,
-            String::new(),
-        ))
-        .expect("\\showgroups reports no fatal error");
+        ));
 
         crate::test_harness::begin_group(stores, GroupKind::Align, 8).expect("test group");
         crate::test_harness::begin_group(stores, GroupKind::Align, 8).expect("test group");
@@ -7078,9 +7273,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
             context,
             &mut diagnostic_effects,
             &diagnostic,
-            String::new(),
-        ))
-        .expect("\\showgroups reports no fatal error");
+        ));
 
         crate::test_harness::begin_group(stores, GroupKind::NoAlign, 8).expect("test group");
         let diagnostic = admitted!(stores, |context| detached_showgroups(
@@ -7096,9 +7289,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
             context,
             &mut diagnostic_effects,
             &diagnostic,
-            String::new(),
-        ))
-        .expect("\\showgroups reports no fatal error");
+        ));
 
         stores
             .world_mut()
@@ -11757,10 +11948,12 @@ fn display_content_preserves_future_multiple_leading_newlines() {
     // If that contract expands, replay must still pass the content verbatim
     // to §62 rather than broadly deleting payload newlines.
     crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut effects = DiagnosticEffects::new();
         admitted!(stores, |context| {
             context.printer().print("closed").print_ln();
-            print_display_content(context, "\n\nfuture");
+            print_display_content(context, &mut effects, "\n\nfuture");
         });
+        stores.world_mut().publish_diagnostic_effects(effects);
 
         assert_eq!(pending_sink_text(stores, true), "closed\n\n\nfuture");
         assert_eq!(pending_sink_text(stores, false), "closed\n\n\nfuture");
@@ -12010,6 +12203,36 @@ fn showbox_scans_register_and_distinguishes_void_from_box_contents() {
         assert!(output.contains("> \\box255="), "{output}");
         assert!(output.contains("> \\box1=void"), "{output}");
         assert!(!output.contains("> \\box1=\nvoid"), "{output}");
+        let first_dump = output.find("> \\box0=").expect("first showbox dump");
+        let first_completion = output
+            .find("! OK")
+            .unwrap_or_else(|| panic!("§1293 completion missing from: {output}"));
+        assert!(
+            first_dump < first_completion,
+            "the detached box dump must publish before §1293's completion: {output}"
+        );
+    });
+}
+
+#[test]
+fn showthe_display_and_completion_follow_its_command_trace() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\tracingcommands=1\dimen0=1050pt\showthe\dimen0\end",
+        );
+
+        run_to_end(&mut control, stores);
+
+        let log = pending_sink_text(stores, false);
+        let trace = log
+            .find("{\\showthe}")
+            .unwrap_or_else(|| panic!("missing showthe command trace: {log}"));
+        let display = log
+            .find("> 1050.0pt.")
+            .unwrap_or_else(|| panic!("missing showthe display: {log}"));
+        assert!(trace < display, "showthe overtook its command trace: {log}");
     });
 }
 
@@ -13311,6 +13534,26 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
 }
 
 #[test]
+fn active_output_routine_reads_retained_page_dimensions() {
+    // TeX82 §§422/1012: `page_so_far` remains live while the output routine
+    // runs even though `fire_up` has emptied the current page list. The
+    // ordinary empty-page projection applies only outside that routine.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            br"\vsize=100pt
+               \output={\xdef\seen{\the\pageshrink}\shipout\box255}
+               \hbox{}\vskip20pt minus 3pt\penalty-10000\end",
+        );
+        run_to_end(&mut control, stores);
+
+        let rendered = macro_character_text(stores, "seen");
+        assert_eq!(rendered, "3.0pt");
+    });
+}
+
+#[test]
 fn invalid_arithmetic_target_uses_live_escapechar_for_operator() {
     // TeX82 §§63/298/1236: both commands in the diagnostic are printed via
     // `print_cmd_chr`/`print_esc`, so neither spelling hardcodes a backslash.
@@ -14043,6 +14286,115 @@ fn batch_undefined_recovery_keeps_the_log_only_selector() {
 }
 
 #[test]
+fn implicit_paragraph_pack_diagnostic_retains_its_input_line_range() {
+    // TeX82 §§661--663: `new_graf` saves the current input line as
+    // `pack_begin_line`; the closing vertical-box brace supplies the ending
+    // line. The detached context must not replace either with zero.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            b"\\tracingonline=1\\hbadness=0\\hsize=0pt\\parindent=10pt\n\\setbox0=\\vbox{\\indent\n}\n\\end",
+        );
+        run_to_end_observed(&mut control, stores, &mut ObservationRecorder::default());
+
+        let mut log = stores
+            .world()
+            .memory_log_output()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default();
+        log.push_str(&pending_sink_text(stores, false));
+        assert!(
+            log.contains("in paragraph at lines 2--3"),
+            "paragraph pack origin must retain its source range: {log}"
+        );
+        assert!(!log.contains("detected at line 0"), "{log}");
+    });
+}
+
+#[test]
+fn display_interruption_pack_diagnostic_retains_its_input_line_range() {
+    // TeX82 §§1138/661: the opening display shift ends the surrounding
+    // paragraph and its still-live input line is the ending line reported by
+    // `hpack`. Detaching the diagnostic presentation must not erase it.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            b"\\tracingonline=1\\hbadness=0\\hsize=0pt\\parindent=10pt\n\\setbox0=\\vbox{\\indent\n$$x$$\n}\n\\end",
+        );
+        run_to_end_observed(&mut control, stores, &mut ObservationRecorder::default());
+
+        let mut log = stores
+            .world()
+            .memory_log_output()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default();
+        log.push_str(&pending_sink_text(stores, false));
+        assert!(
+            log.contains("in paragraph at lines 2--3"),
+            "display-interrupted paragraph must retain its source range: {log}"
+        );
+        assert!(!log.contains("detected at line 0"), "{log}");
+    });
+}
+
+#[test]
+fn valign_cell_paragraph_pack_retains_the_intercepted_delimiter_line() {
+    // TeX82 §§789/1131/661: `\cr` is retained below the v-template and
+    // delivered to `fin_col` only after synthetic `endv` runs `end_graf`.
+    // The paragraph diagnostic still uses the delimiter's live input line.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            b"\\tracingonline=1\\hbadness=0\\hsize=0pt\\parindent=10pt\n\\setbox0=\\hbox{\\valign{#\\cr\n\\indent x\n\\cr % exhaust the delimiter's physical line\n}}\n\\end",
+        );
+        run_to_end_observed(&mut control, stores, &mut ObservationRecorder::default());
+
+        let mut log = stores
+            .world()
+            .memory_log_output()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default();
+        log.push_str(&pending_sink_text(stores, false));
+        assert!(
+            log.contains("in paragraph at lines 3--4"),
+            "alignment paragraph must retain its delimiter line: {log}"
+        );
+        assert!(!log.contains("lines 3--0"), "{log}");
+    });
+}
+
+#[test]
+fn alignment_setting_pack_retains_the_closing_brace_line() {
+    // TeX82 §§800/661: `fin_align` negates the alignment's opening
+    // `mode_line` while its closing right brace supplies the current line.
+    // The cold setting pass therefore must retain that consumed delimiter's
+    // line after the source delivery has completed.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            b"\\tracingonline=1\\hbadness=0\n\\setbox0=\\vbox{\\halign to100pt{#\\cr\nx\\cr\n}}\n\\end",
+        );
+        run_to_end_observed(&mut control, stores, &mut ObservationRecorder::default());
+
+        let mut log = stores
+            .world()
+            .memory_log_output()
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default();
+        log.push_str(&pending_sink_text(stores, false));
+        assert!(
+            log.contains("in alignment at lines 2--4"),
+            "alignment setting must retain its closing-brace line: {log}"
+        );
+        assert!(!log.contains("in alignment at lines 2--0"), "{log}");
+    });
+}
+
+#[test]
 fn interaction_transition_prints_its_unconditional_newline_after_the_command_trace() {
     // TeX82 §§1030/1264: `show_cur_cmd_chr` completes before
     // `new_interaction` performs its unconditional `print_ln` under the old
@@ -14062,6 +14414,56 @@ fn interaction_transition_prints_its_unconditional_newline_after_the_command_tra
             !log.contains("\n\n{vertical mode: \\batchmode}\n{\\output}"),
             "the §1264 newline must not overtake the trace: {log}"
         );
+    });
+}
+
+#[test]
+fn message_prints_expansion_trace_before_expanded_text() {
+    // TeX82 §§366/1279: macro expansion and its tracing finish while
+    // scanning the message token list; only then does `issue_message` print
+    // the expanded text through the live selector.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            b"\\tracingonline=1\\tracingmacros=1\\def\\a{PAYLOAD}\\message{MESSAGE:\\a}\\end",
+        );
+        run_to_end_observed(&mut control, stores, &mut ObservationRecorder::default());
+
+        let output = terminal_text(stores);
+        let trace = output
+            .find("\\a ->PAYLOAD")
+            .unwrap_or_else(|| panic!("missing expansion trace from {output:?}"));
+        let message = output
+            .find("MESSAGE:PAYLOAD")
+            .unwrap_or_else(|| panic!("missing expanded message from {output:?}"));
+        assert!(
+            trace < message,
+            "message overtook expansion trace: {output:?}"
+        );
+    });
+}
+
+#[test]
+fn immediate_write_prints_expansion_trace_before_expanded_text() {
+    // TeX82 §§366/1375: an immediate write expands its token list before
+    // the outer selector publishes the resulting text.
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = MainControl::tex82_initex(stores);
+        register_source(
+            &mut control,
+            b"\\tracingonline=1\\tracingmacros=1\\def\\a{PAYLOAD}\\immediate\\write16{WRITE:\\a}\\end",
+        );
+        run_to_end_observed(&mut control, stores, &mut ObservationRecorder::default());
+
+        let output = terminal_text(stores);
+        let trace = output
+            .find("\\a ->PAYLOAD")
+            .unwrap_or_else(|| panic!("missing expansion trace from {output:?}"));
+        let write = output
+            .find("WRITE:PAYLOAD")
+            .unwrap_or_else(|| panic!("missing immediate write from {output:?}"));
+        assert!(trace < write, "write overtook expansion trace: {output:?}");
     });
 }
 

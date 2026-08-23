@@ -300,7 +300,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         alignment: crate::AlignmentIdentity,
         event: AlignmentDeliveryEvent<G>,
     ) -> Result<(), CommandError> {
-        let saved_delimiter = match event {
+        let (saved_delimiter, delimiter_line) = match event {
             AlignmentDeliveryEvent::EndTemplate(delimiter) => {
                 if self.last_delivery != Some(delimiter.delivery_stamp())
                     || !matches!(
@@ -313,13 +313,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return Err(CommandError::StaleDelivery);
                 }
                 self.last_delivery = None;
-                Self::saved_alignment_delimiter(&delimiter)?
+                (
+                    Self::saved_alignment_delimiter(&delimiter)?,
+                    delimiter
+                        .direct_source_line_number()
+                        .unwrap_or_else(|| self.command.current_file_line_number()),
+                )
             }
             AlignmentDeliveryEvent::ClosingBrace(_) => {
                 return Err(CommandError::input_invariant());
             }
         };
-        self.start_alignment_v_template(alignment, saved_delimiter)
+        self.start_alignment_v_template(alignment, saved_delimiter, delimiter_line)
     }
 
     /// Completes TeX82 §1131's `do_endv` input-stack proof and cell
@@ -524,9 +529,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         alignment: crate::AlignmentIdentity,
         saved_delimiter: crate::AlignmentCellDelimiter,
+        delimiter_line: u32,
     ) -> Result<(), CommandError> {
         self.command
-            .begin_alignment_v_template(&self.state, alignment, saved_delimiter)
+            .begin_alignment_v_template(&self.state, alignment, saved_delimiter, delimiter_line)
             .map_err(|_| CommandError::input_invariant())?;
         if let Some(input) = self
             .command
@@ -1502,11 +1508,14 @@ impl<G> CommandProcessor<'_, '_, G> {
             .active_alignment
             .ok_or(CommandError::input_invariant())?;
         let delimiter = Self::saved_alignment_delimiter(&command)?;
+        let delimiter_line = command
+            .direct_source_line_number()
+            .unwrap_or_else(|| self.command.current_file_line_number());
         if self.last_delivery != Some(command.delivery_stamp()) {
             return Err(CommandError::StaleDelivery);
         }
         self.last_delivery = None;
-        self.start_alignment_v_template(alignment, delimiter)
+        self.start_alignment_v_template(alignment, delimiter, delimiter_line)
     }
 
     pub(super) fn get_next_with_control_sequence_creation(
@@ -1541,6 +1550,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 behavior,
                 source_provenance,
                 direct_source,
+                direct_source_line,
             } = delivery;
 
             if let Token::Param(slot) = spelling.semantic_token() {
@@ -1581,6 +1591,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 delivery_stamp,
                 source_provenance,
                 direct_source,
+                direct_source_line,
                 &self.state,
             );
             self.record_token_frame(!matches!(
@@ -1728,7 +1739,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         }
                         level.cursor.backing_registered = true;
                     }
-                    match self.next_source_step() {
+                    let source_step = self.next_source_step();
+                    self.command.input.retain_active_file_line_number();
+                    match source_step {
                         SourceTokenizationStep::Token(token) => {
                             self.ensure_replacement_line_registration();
                             let spelling =
@@ -1738,6 +1751,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                             else {
                                 return Err(CommandError::input_invariant());
                             };
+                            let direct_source_line = source.cursor.line.as_ref().map(|line| {
+                                u32::try_from(line.physical.number()).unwrap_or(u32::MAX)
+                            });
                             if source.frame.identity() != identity.0
                                 || source.frame.advance().is_none()
                             {
@@ -1750,6 +1766,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 behavior: TokenBehavior::Ordinary,
                                 source_provenance: Some(token.provenance()),
                                 direct_source: true,
+                                direct_source_line,
                             }));
                         }
                         SourceTokenizationStep::InvalidCharacter(_) => {
@@ -1891,6 +1908,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             behavior,
                             source_provenance,
                             direct_source: false,
+                            direct_source_line: None,
                         }));
                     }
                     match self.retire_and_restart(identity)? {
@@ -1908,6 +1926,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 behavior: TokenBehavior::VTemplate,
                                 source_provenance: None,
                                 direct_source: false,
+                                direct_source_line: None,
                             }));
                         }
                         RetirementRestart::Completed => return Ok(None),
@@ -2763,6 +2782,8 @@ struct DeliveredToken {
     /// True only for a token read directly from a physical source cursor.
     /// Backups preserve their diagnostic range while remaining replay input.
     direct_source: bool,
+    /// TeX82's live `line` captured before a direct source cursor can retire.
+    direct_source_line: Option<u32>,
 }
 
 enum RetirementRestart {

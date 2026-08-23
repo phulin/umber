@@ -21,6 +21,7 @@
 //! error message means adding a `report_*` call, never a `write_text`.
 
 use tex_state::CommandContext;
+use tex_state::diagnostic::DiagnosticEffects;
 
 /// tex.web §73's `print_err`, §79's help lines, and §82's `error`.
 ///
@@ -38,4 +39,17 @@ pub(crate) fn report_error<G>(
     report.help(help);
     report.context(context);
     Ok(report.error().jump_out()?)
+}
+
+/// [`report_error`] after publishing the operation-local diagnostics that
+/// precede this synchronous World-facing dialogue.
+pub(crate) fn report_ordered_error<G>(
+    stores: &mut CommandContext<'_, G>,
+    diagnostic_effects: &mut DiagnosticEffects,
+    message: &str,
+    help: &[&str],
+    context: String,
+) -> Result<(), crate::ExecError> {
+    stores.publish_diagnostic_effects_before_synchronous_print(diagnostic_effects);
+    report_error(stores, message, help, context)
 }

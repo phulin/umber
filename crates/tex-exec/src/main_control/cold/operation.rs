@@ -1104,6 +1104,10 @@ pub(in crate::main_control) enum ColdOperation<
     /// must complete before the outer suspended delivery context resumes.
     AlignmentFinish {
         alignment: AlignmentIdentity,
+        /// TeX82's live `line` at the closing right-brace delivery. The
+        /// source can retire before the cold `fin_align` setting pass emits
+        /// its box diagnostic, so the operation owns this scalar explicitly.
+        current_line: u32,
     },
     /// TeX82 §37 has consumed `\\noalign` and its compulsory opening brace.
     /// Command control owns both deliveries; the executor now owns the
@@ -1233,6 +1237,7 @@ pub(in crate::main_control) enum ColdOperation<
     },
     BoxEndGroup {
         ships_out: bool,
+        current_line: i32,
     },
     /// TeX82 §1101 and e-TeX 2.6 `etex.ch` [26.424]'s `make_mark`: a fully
     /// expanded balanced general text, appended as the selected mark class.
@@ -1240,7 +1245,9 @@ pub(in crate::main_control) enum ColdOperation<
         class: u16,
         tokens: T,
     },
-    Paragraph,
+    Paragraph {
+        current_line: i32,
+    },
     MathShift {
         pairing: MathShiftPairing,
     },
@@ -2141,9 +2148,13 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
         ColdOperation::AlignmentCellFinish { alignment } => {
             ColdOperation::AlignmentCellFinish { alignment }
         }
-        ColdOperation::AlignmentFinish { alignment } => {
-            ColdOperation::AlignmentFinish { alignment }
-        }
+        ColdOperation::AlignmentFinish {
+            alignment,
+            current_line,
+        } => ColdOperation::AlignmentFinish {
+            alignment,
+            current_line,
+        },
         ColdOperation::BeginNoAlign { alignment } => ColdOperation::BeginNoAlign { alignment },
         ColdOperation::AlignmentRecovery { brace } => ColdOperation::AlignmentRecovery { brace },
         ColdOperation::BeginSimpleGroup => ColdOperation::BeginSimpleGroup,
@@ -2178,12 +2189,18 @@ pub(in crate::main_control) fn prepare_cold_operation<G>(
         ColdOperation::IllegalLastItem { token, context } => {
             ColdOperation::IllegalLastItem { token, context }
         }
-        ColdOperation::BoxEndGroup { ships_out } => ColdOperation::BoxEndGroup { ships_out },
+        ColdOperation::BoxEndGroup {
+            ships_out,
+            current_line,
+        } => ColdOperation::BoxEndGroup {
+            ships_out,
+            current_line,
+        },
         ColdOperation::Mark { class, tokens: _ } => ColdOperation::Mark {
             class,
             tokens: cursor.token()?,
         },
-        ColdOperation::Paragraph => ColdOperation::Paragraph,
+        ColdOperation::Paragraph { current_line } => ColdOperation::Paragraph { current_line },
         ColdOperation::MathShift { pairing } => ColdOperation::MathShift { pairing },
         ColdOperation::ParagraphStart => ColdOperation::ParagraphStart,
         ColdOperation::Character {

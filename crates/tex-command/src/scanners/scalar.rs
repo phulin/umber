@@ -2595,9 +2595,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             Meaning::DimenParam(index) => {
                 InternalValue::Dimension(self.state.dimen_param(DimenParam::new(index)))
             }
-            Meaning::PageDimension(dimension) => {
-                InternalValue::Dimension(self.state.page_dimension(dimension))
-            }
+            Meaning::PageDimension(dimension) => InternalValue::Dimension(
+                self.state
+                    .page_dimension_with_output_routine(dimension, self.output_routine_active),
+            ),
             Meaning::SkipRegister(index) => {
                 let identity = self.state.glue_register(index).ok().flatten();
                 self.scanned_glue_identity = identity;

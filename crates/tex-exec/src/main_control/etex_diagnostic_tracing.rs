@@ -105,6 +105,31 @@ fn middle_traces_consecutive_math_left_groups() {
 }
 
 #[test]
+fn math_group_entry_precedes_nested_immediate_output() {
+    with_etex_control(|stores, control| {
+        register_source(
+            control,
+            b"\\nonstopmode\\tracingonline=1\\tracinggroups=1\n${\\vcenter{\\message{BODY}}}$\\end",
+        );
+
+        run_to_end(control, stores);
+
+        let log = terminal_text(stores);
+        let entry = log
+            .find("{entering math group (level 2) at line 2}")
+            .unwrap_or_else(|| panic!("missing nested math entry from {log:?}"));
+        let body = log
+            .find("BODY")
+            .unwrap_or_else(|| panic!("missing nested immediate output from {log:?}"));
+        assert!(entry < body, "math-group entry was overtaken: {log:?}");
+        let vcenter = log
+            .find("{entering vcenter group (level 3) at line 2}")
+            .unwrap_or_else(|| panic!("missing nested vcenter entry from {log:?}"));
+        assert!(vcenter < body, "vcenter entry was overtaken: {log:?}");
+    });
+}
+
+#[test]
 fn middle_restores_the_preceding_math_left_group() {
     with_etex_control(|stores, control| {
         register_source(

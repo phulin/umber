@@ -59,7 +59,12 @@ is TeX82 §638's complete `Memory usage before: ...` shipout record: its
 variable-node, dynamic-node, and free-memory counts expose the reference
 allocator rather than document semantics, so the comparator retains and
 reports those records as advisory while comparing all surrounding text in
-exact order. It requires byte-identical final DVI
+exact order. The e-TRIP loaded-log gate additionally projects the seven
+terminal engine-usage lines (string, character, memory, control-sequence,
+font-table, hyphenation, and stack occupancy) to typed labels after the
+official e-TRIP artifact comparator has accepted the same surrounding log.
+Those values describe WEB versus Umber physical storage; the heading, order,
+fonts/pages, and every neighboring byte remain exact. It requires byte-identical final DVI
 against the gitignored, locally generated
 `tests/corpus/e2e/trip.expected.dvi` oracle after normalizing only the preamble
 comment. The two-phase format-image path also asserts through the format schema
@@ -193,6 +198,8 @@ normalized DVI. The identity-separated schema-v2 geometry stream is compared
 and counted independently as advisory diagnostics. Complete TeX82 §638
 shipout memory-usage records are likewise counted independently as advisory;
 memory-like arbitrary text and every neighboring diagnostic remain byte-exact.
+For e-TRIP only, the separately documented terminal engine-usage projection is
+applied to the loaded log after official artifact parity.
 Transcript
 and log are present only for output-producing phases; successful recipe-owned
 dump construction has no textual output-parity channels. Geometry

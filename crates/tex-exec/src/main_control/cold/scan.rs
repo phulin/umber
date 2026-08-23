@@ -1617,7 +1617,12 @@ pub(in crate::main_control) fn scan<G>(
                 .map_err(command_error)?;
             Ok(ColdOperation::MissingMathShift)
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par) => Ok(ColdOperation::Paragraph),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par) => {
+            Ok(ColdOperation::Paragraph {
+                current_line: i32::try_from(processor.current_file_line_number())
+                    .unwrap_or(i32::MAX),
+            })
+        }
         // TeX82 §1193 closes math only at `math_shift_group`; a `$` inside
         // any nested math group first runs §1064's `off_save`, which inserts
         // that group's required closer and retries this same shift.

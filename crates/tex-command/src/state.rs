@@ -1815,6 +1815,7 @@ impl<G> CommandState<G> {
         stores: &tex_state::CommandContext<'_, G>,
         alignment: AlignmentIdentity,
         delimiter: AlignmentCellDelimiter,
+        delimiter_line: u32,
     ) -> Result<(), AlignmentLifecycleError> {
         let template = self.alignment.v_template(alignment)?;
         // tex.web §789: `if cur_cmd=omit then begin_token_list(omit_template,
@@ -1836,7 +1837,8 @@ impl<G> CommandState<G> {
                 ReplayTrace::VTemplate,
             ),
         };
-        self.alignment.begin_v_template(alignment, level, delimiter)
+        self.alignment
+            .begin_v_template(alignment, level, delimiter, delimiter_line)
     }
 
     /// Returns the committed v-template push made after a command-owned

@@ -239,6 +239,7 @@ fn is_final_usage_statistic(line: &str) -> bool {
         "string characters out of ",
         "words of memory out of ",
         "multiletter control sequences out of ",
+        "words of font info for ",
         "hyphenation exceptions out of ",
         "stack positions out of ",
     ]
@@ -256,6 +257,7 @@ fn final_usage_label(line: &str) -> String {
             "multiletter control sequences out of ",
             "<control sequence usage>\n",
         ),
+        ("words of font info for ", "<font info usage>\n"),
         ("hyphenation exceptions out of ", "<hyphenation usage>\n"),
         ("stack positions out of ", "<stack usage>\n"),
     ] {
@@ -264,6 +266,25 @@ fn final_usage_label(line: &str) -> String {
         }
     }
     line.to_owned()
+}
+
+/// Projects only e-TRIP's terminal engine-usage block across physical storage
+/// implementations. Every surrounding loaded-log byte remains exact.
+pub(super) fn normalize_loaded_log_engine_usage(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let text =
+        std::str::from_utf8(bytes).map_err(|_| "e-TRIP loaded log is not UTF-8".to_owned())?;
+    if text.contains('\r') {
+        return Err("e-TRIP loaded log contains a bare carriage return".into());
+    }
+    let mut normalized = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        if is_final_usage_statistic(line) {
+            normalized.push_str(&final_usage_label(line));
+        } else {
+            normalized.push_str(line);
+        }
+    }
+    Ok(normalized.into_bytes())
 }
 
 fn normalize_etex_version_diagnostics(mut text: String) -> Result<String, String> {
@@ -487,6 +508,28 @@ fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_usage_normalization_abstracts_storage_specific_font_info_words() {
+        assert!(is_final_usage_statistic(
+            " 2286 words of font info for 3 fonts"
+        ));
+        assert_eq!(
+            final_usage_label(" 60 words of font info for 3 fonts"),
+            "<font info usage>\n"
+        );
+        let expected = b"before\n 18 strings out of 13506\n 2286 words of font info for 3 fonts, out of 20000 for 75\nafter\n";
+        let actual = b"before\n 4 strings out of 13973\n 60 words of font info for 3 fonts, out of 20000 for 75\nafter\n";
+        assert_eq!(
+            normalize_loaded_log_engine_usage(expected).expect("expected projection"),
+            normalize_loaded_log_engine_usage(actual).expect("actual projection")
+        );
+        let changed = b"before changed\n 4 strings out of 13973\n 60 words of font info for 3 fonts, out of 20000 for 75\nafter\n";
+        assert_ne!(
+            normalize_loaded_log_engine_usage(expected).expect("expected projection"),
+            normalize_loaded_log_engine_usage(changed).expect("changed projection")
+        );
+    }
 
     #[test]
     fn deliberate_official_artifact_perturbation_fails_actionably() {

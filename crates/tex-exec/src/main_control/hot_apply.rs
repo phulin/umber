@@ -257,6 +257,21 @@ fn apply_macro_definition<G>(
     // cold evidence publication, never part of an unobserved definition.
     if command.observes_mutations() {
         let stored = stores.definition(definition);
+        if flags.contains(MeaningFlags::PROTECTED) {
+            // e-TeX change section [27.465] installs the protected marker as
+            // a distinct token-list link after §477 has completed the macro
+            // replacement. The canonical observer therefore sees this
+            // transition before the definition becomes the target meaning.
+            command.retain_hot_observation(CommandObservation::TokenList(TokenListRecord {
+                transition: "complete",
+                purpose: "protected_macro",
+                tokens: observed_macro_body(
+                    stored.parameter_text(),
+                    stored.replacement_text(),
+                    stores,
+                ),
+            }));
+        }
         let record = MutationRecord {
             target: MutationTarget::Meaning,
             key: ObservationValue::Name(stores.resolve(target).to_owned()),

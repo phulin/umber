@@ -1,5 +1,28 @@
 use super::*;
 
+#[test]
+fn print_nl_publication_uses_post_effect_selected_line_state() {
+    let mut world = World::memory();
+    world.publish_print_text(PrintSink::Terminal, "term", 79);
+    world.publish_print_nl_text(PrintSink::TerminalAndLog, "next\n", 79);
+
+    let writes: Vec<_> = world
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { sink, text } => Some((*sink, text.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        writes,
+        [
+            (PrintSink::Terminal, "term"),
+            (PrintSink::TerminalAndLog, "\nnext\n"),
+        ]
+    );
+}
+
 fn source(path: &str, start: u64, end: u64) -> ArtifactSourceRecipe {
     ArtifactSourceRecipe {
         content: ContentHash::for_domain(ContentDomain::Input, path.as_bytes()),
