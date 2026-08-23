@@ -735,6 +735,25 @@ impl<G> CommandState<G> {
         mark
     }
 
+    /// Returns the direct non-owning coordinate for an operation deliberately
+    /// retained across an in-process retry.
+    ///
+    /// The sole [`crate::attempt::OwnedAttemptScope`] remains inside the
+    /// installed arena. Callers use this only to open the disjoint state,
+    /// mode, and page journals around the resumed operation; it neither opens
+    /// nor clones an attempt owner.
+    pub fn retained_attempt_operation(
+        &self,
+    ) -> Result<crate::CommandAttemptMark, crate::AttemptError> {
+        let operation = self
+            .active_attempt_operation
+            .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        self.attempt
+            .arena()
+            .validate_scope_coordinate(operation.operation_scope())?;
+        Ok(operation)
+    }
+
     pub(crate) fn begin_attempt_child_scope(
         &mut self,
     ) -> Result<crate::attempt::AttemptScopeCoordinate, crate::AttemptError> {

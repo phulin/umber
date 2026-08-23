@@ -3683,13 +3683,17 @@ impl<G> MainControl<G> {
         self.advance_telemetry.commits += 1;
     }
 
-    fn begin_direct_operation(&mut self, stores: &Universe<G>) -> DirectOperationMark<G> {
+    fn begin_direct_operation(
+        &mut self,
+        stores: &Universe<G>,
+        attempt: Option<tex_command::CommandAttemptMark>,
+    ) -> DirectOperationMark<G> {
         DirectOperationMark {
             state: stores
                 .journal_cursor()
                 .expect("live generation has a state journal"),
             mode: self.modes.begin_journal(),
-            attempt: self.command.begin_attempt_operation(),
+            attempt: attempt.unwrap_or_else(|| self.command.begin_attempt_operation()),
             page: stores.page_node_cursor(),
         }
     }
@@ -3874,11 +3878,10 @@ impl<G> MainControl<G> {
             }
             // Private revisions require every scanner-time immutable
             // allocation to belong to one fixed-size operation suffix. The
-            // mark therefore opens before delivery preflight, while semantic
-            // owners still remain untouched until prepared apply.
-            let mut operation_mark = self.begin_direct_operation(stores);
-            let mut diagnostic_effects = DiagnosticEffects::new();
-            let preflight = if let Some(pending) = self.pending_resource_operation.take() {
+            // scope therefore opens before delivery preflight, while a
+            // resource retry reuses the exact scope moved into its
+            // continuation instead of nesting another owner around it.
+            let resumed_resource = self.pending_resource_operation.take().map(|pending| {
                 let (opening, resume, pending) = self
                     .command
                     .resume_attempt(stores, pending.attempt)
@@ -3889,7 +3892,29 @@ impl<G> MainControl<G> {
                     resume, PREPARED_RESOURCE_RESUME,
                     "resource continuation resumes at its prepared-operation cursor"
                 );
-                operation_mark.attempt = opening;
+                (opening, pending)
+            });
+            let retained_delivery_attempt = if resumed_resource.is_none()
+                && (self.pending_alignment_delivery.is_some()
+                    || self.pending_preflight_command.is_some())
+            {
+                Some(
+                    self.command
+                        .retained_attempt_operation()
+                        .expect("delivery retry retains its exact attempt owner"),
+                )
+            } else {
+                None
+            };
+            let operation_mark = self.begin_direct_operation(
+                stores,
+                resumed_resource
+                    .as_ref()
+                    .map(|(opening, _)| *opening)
+                    .or(retained_delivery_attempt),
+            );
+            let mut diagnostic_effects = DiagnosticEffects::new();
+            let preflight = if let Some((_, pending)) = resumed_resource {
                 PreflightDelivery::<G> {
                     delivery: OperationDelivery::<G>::Prepared(pending.scanned),
                     capabilities: pending.capabilities,
@@ -4812,12 +4837,18 @@ impl<G> MainControl<G> {
         &mut self,
         stores: &mut Universe<G>,
     ) -> Result<DiagnosticStepResult, ExecError> {
-        let mut operation_mark = self.begin_direct_operation(stores);
-        let mut diagnostic_effects = DiagnosticEffects::new();
         let continuation = self.pending_diagnostic_operation.take();
+        let retained_attempt = continuation
+            .as_ref()
+            .map(|continuation| match continuation {
+                PendingDiagnosticOperation::Prepared { attempt, .. }
+                | PendingDiagnosticOperation::Assignment { attempt, .. } => *attempt,
+            });
+        let operation_mark = self.begin_direct_operation(stores, retained_attempt);
+        let mut diagnostic_effects = DiagnosticEffects::new();
         let assignment = match continuation {
             Some(PendingDiagnosticOperation::<G>::Prepared { scanned, attempt }) => {
-                operation_mark.attempt = attempt;
+                debug_assert_eq!(operation_mark.attempt, attempt);
                 Some((OperationDelivery::<G>::Prepared(scanned), None))
             }
             Some(PendingDiagnosticOperation::<G>::Assignment {
@@ -4825,7 +4856,7 @@ impl<G> MainControl<G> {
                 cursor,
                 attempt,
             }) => {
-                operation_mark.attempt = attempt;
+                debug_assert_eq!(operation_mark.attempt, attempt);
                 let retry = (command, cursor);
                 Some((
                     OperationDelivery::<G>::Settled {
