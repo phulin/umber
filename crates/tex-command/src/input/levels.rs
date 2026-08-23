@@ -179,6 +179,11 @@ pub(crate) enum TokenPayload<G> {
         definition: DefinitionId<G>,
         len: u32,
     },
+    /// One literal macro-argument replay range in generation-owned scratch.
+    MacroArgument {
+        replay: crate::execution_scratch::MacroReplayCursor<G>,
+        len: u32,
+    },
     /// One attempt-local token list, replayed literally by range.
     AttemptList { list: AttemptTokenListId, len: u32 },
 }
@@ -189,6 +194,10 @@ impl<G> Clone for TokenPayload<G> {
             Self::Packed(chunk) => Self::Packed(chunk.clone()),
             Self::MacroReplacement { definition, len } => Self::MacroReplacement {
                 definition: *definition,
+                len: *len,
+            },
+            Self::MacroArgument { replay, len } => Self::MacroArgument {
+                replay: *replay,
                 len: *len,
             },
             Self::AttemptList { list, len } => Self::AttemptList {
@@ -340,6 +349,7 @@ impl<G> TokenPayload<G> {
         match self {
             Self::Packed(chunk) => chunk.len(),
             Self::MacroReplacement { len, .. } => *len as usize,
+            Self::MacroArgument { len, .. } => *len as usize,
             Self::AttemptList { len, .. } => *len as usize,
         }
     }

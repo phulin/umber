@@ -120,28 +120,7 @@ impl<G> CommandState<G> {
     /// peak with these owners before the command stack can retire them.
     #[must_use]
     pub fn transient_dynamic_words(&self) -> usize {
-        let arguments = self
-            .parameters
-            .activations
-            .iter()
-            .map(|activation| {
-                activation.arguments.record().map_or(0, |record| {
-                    self.attempt
-                        .arena()
-                        .arguments(record)
-                        .expect("live macro argument record")
-                        .iter()
-                        .map(|argument| {
-                            self.attempt
-                                .arena()
-                                .token_words(*argument)
-                                .expect("live macro argument list")
-                                .len()
-                        })
-                        .sum()
-                })
-            })
-            .sum::<usize>();
+        let arguments = self.scratch.argument_word_len();
         self.input.levels.iter().fold(arguments, |words, level| {
             let InputLevel::Tokens(cursor) = level else {
                 return words;
@@ -168,39 +147,29 @@ impl<G> CommandState<G> {
         &mut self,
         name: tex_state::interner::Symbol,
         definition: DefinitionId<G>,
-        arguments: MacroArguments,
+        arguments: MacroArguments<G>,
         invocation: OriginId,
         replacement_len: usize,
-        scope: crate::attempt::OwnedAttemptScope,
     ) -> InputLevelId {
         let parameter_count = self
-            .attempt
-            .arena()
-            .arguments(arguments.record().expect("macro call allocated arguments"))
-            .expect("live macro argument record")
-            .len();
+            .scratch
+            .argument_count(arguments.frame())
+            .expect("live macro argument record");
         let parameter_ptr = self
             .parameters
             .activations
             .iter()
             .map(|activation| {
-                activation.arguments.record().map_or(0, |record| {
-                    self.attempt
-                        .arena()
-                        .arguments(record)
-                        .expect("live macro argument record")
-                        .len()
-                })
+                self.scratch
+                    .argument_count(activation.arguments.frame())
+                    .expect("live macro argument record")
             })
             .sum::<usize>()
             .saturating_add(parameter_count);
         self.usage.record_parameter_push(parameter_ptr);
-        let activation_index = self.parameters.activations.len();
         let activation = self
             .parameters
-            .push_activation(name, definition, arguments, invocation, scope);
-        self.note_attempt_macro_child(activation_index, activation)
-            .expect("a macro activation opens beneath the active operation");
+            .push_activation(name, definition, arguments, invocation);
         self.push_token_level(
             TokenPayload::MacroReplacement {
                 definition,
@@ -314,35 +283,36 @@ impl<G> CommandState<G> {
             .iter()
             .find(|activation| activation.identity == owner)
             .ok_or(ParameterReplayError::MissingActivation(owner))?;
-        let list = activation
-            .arguments
-            .record()
-            .and_then(|record| self.attempt.arena().argument(record, slot).ok().flatten())
+        let range = self
+            .scratch
+            .argument_range(activation.arguments.frame(), slot)
+            .ok()
+            .flatten()
             .ok_or(ParameterReplayError::MissingArgument {
                 activation: owner,
                 slot,
             })?;
-        let len = self
-            .attempt
-            .arena()
-            .token_words(list)
-            .map_err(|_| ParameterReplayError::ArgumentRangeOutsideBuffer {
+        let len = self.scratch.argument_len(range).map_err(|_| {
+            ParameterReplayError::ArgumentRangeOutsideBuffer {
                 activation: owner,
                 slot,
-            })?
-            .len();
-        let identity = self
-            .push_attempt_list_level(
-                list,
-                u32::try_from(len).expect("macro argument length exceeds u32"),
-                TokenBehavior::Parameter,
-                RetirementBehavior::Pop,
-                ReplayTrace::MacroParameter { slot },
-            )
-            .map_err(|_| ParameterReplayError::ArgumentRangeOutsideBuffer {
+            }
+        })?;
+        let replay = self.scratch.begin_argument_replay(range).map_err(|_| {
+            ParameterReplayError::ArgumentRangeOutsideBuffer {
                 activation: owner,
                 slot,
-            })?;
+            }
+        })?;
+        let identity = self.push_token_level(
+            TokenPayload::MacroArgument {
+                replay,
+                len: u32::try_from(len).expect("macro argument length exceeds u32"),
+            },
+            TokenBehavior::Parameter,
+            RetirementBehavior::Pop,
+            ReplayTrace::MacroParameter { slot },
+        );
         Ok(OutParameterReplay::Pushed(identity))
     }
 
@@ -369,22 +339,6 @@ impl<G> CommandState<G> {
     pub(crate) fn retire_exhausted_input(
         &mut self,
         expected: InputLevelId,
-    ) -> Result<InputRetirement, InputRetirementError> {
-        self.retire_exhausted_input_with_local_child(expected, None)
-    }
-
-    pub(crate) fn retire_exhausted_input_around_local_child(
-        &mut self,
-        expected: InputLevelId,
-        child: &mut crate::attempt::OwnedAttemptScope,
-    ) -> Result<InputRetirement, InputRetirementError> {
-        self.retire_exhausted_input_with_local_child(expected, Some(child))
-    }
-
-    fn retire_exhausted_input_with_local_child(
-        &mut self,
-        expected: InputLevelId,
-        local_child: Option<&mut crate::attempt::OwnedAttemptScope>,
     ) -> Result<InputRetirement, InputRetirementError> {
         let level = self
             .input
@@ -475,7 +429,7 @@ impl<G> CommandState<G> {
             });
         }
 
-        let retirement_scope = self.validate_macro_body_retirement(&cursor.behavior)?;
+        self.validate_macro_body_retirement(&cursor.behavior)?;
         let InputLevel::Tokens(cursor) = self
             .input
             .levels
@@ -484,7 +438,7 @@ impl<G> CommandState<G> {
         else {
             unreachable!("the inspected top level was a token cursor");
         };
-        self.finish_macro_body_retirement(&cursor.behavior, retirement_scope, local_child)
+        self.finish_macro_body_retirement(&cursor.behavior)
             .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
         let action = match cursor.retirement {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
@@ -536,7 +490,7 @@ impl<G> CommandState<G> {
                 trace: None,
             });
         };
-        self.finish_macro_body_retirement(&cursor.behavior, None, None)
+        self.finish_macro_body_retirement(&cursor.behavior)
             .expect("final cleanup runs inside one direct operation");
         let action = match cursor.retirement {
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
@@ -565,13 +519,13 @@ impl<G> CommandState<G> {
     fn validate_macro_body_retirement(
         &self,
         behavior: &TokenBehavior,
-    ) -> Result<Option<crate::attempt::AttemptScopeCoordinate>, InputRetirementError> {
+    ) -> Result<(), InputRetirementError> {
         let TokenBehavior::MacroBody(expected) = behavior else {
-            return Ok(None);
+            return Ok(());
         };
         let actual = self.parameters.activations.last();
         if actual.map(|activation| activation.identity) == Some(*expected) {
-            Ok(actual.map(|activation| activation.scope.coordinate()))
+            Ok(())
         } else {
             Err(InputRetirementError::MacroActivationOrder {
                 expected: *expected,
@@ -583,25 +537,11 @@ impl<G> CommandState<G> {
     fn finish_macro_body_retirement(
         &mut self,
         behavior: &TokenBehavior,
-        expected_scope: Option<crate::attempt::AttemptScopeCoordinate>,
-        local_child: Option<&mut crate::attempt::OwnedAttemptScope>,
-    ) -> Result<(), crate::AttemptError> {
-        if matches!(behavior, TokenBehavior::MacroBody(_)) {
-            let retired_scope = self.parameters.retire_last_activation();
-            debug_assert!(
-                expected_scope.is_none()
-                    || retired_scope
-                        .as_ref()
-                        .map(|retired| retired.scope.coordinate())
-                        == expected_scope
-            );
-            if let Some(scope) = retired_scope {
-                if let Some(child) = local_child {
-                    self.retire_attempt_scope_into_local_child(scope, child)?;
-                } else {
-                    self.retire_attempt_scope(scope)?;
-                }
-            }
+    ) -> Result<(), crate::execution_scratch::ScratchError> {
+        if matches!(behavior, TokenBehavior::MacroBody(_))
+            && let Some(activation) = self.parameters.retire_last_activation()
+        {
+            self.scratch.pop_macro_frame(activation.arguments.frame())?;
         }
         Ok(())
     }

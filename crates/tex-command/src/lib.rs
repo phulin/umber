@@ -46,6 +46,7 @@ mod conditionals;
 mod continuation;
 pub use conditionals::{ActiveCondition, IncompleteCondition};
 mod error;
+mod execution_scratch;
 mod fatal;
 mod fuel;
 mod host;

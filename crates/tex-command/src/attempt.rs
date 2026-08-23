@@ -79,13 +79,6 @@ pub(crate) struct OwnedAttemptScope {
     opening: AttemptMark,
     close_through_serial: AttemptScopeSerial,
     close_through: AttemptMark,
-    return_activation: Option<ActivationReturn>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct ActivationReturn {
-    index: u32,
-    identity: u64,
 }
 
 impl OwnedAttemptScope {
@@ -96,96 +89,8 @@ impl OwnedAttemptScope {
         }
     }
 
-    fn owns_through(&self, coordinate: AttemptScopeCoordinate) -> bool {
-        self.key == coordinate.key && self.close_through_serial == coordinate.serial
-    }
-
-    pub(crate) const fn return_activation(&self) -> Option<(usize, u64)> {
-        match self.return_activation {
-            Some(target) => Some((target.index as usize, target.identity)),
-            None => None,
-        }
-    }
-
-    pub(crate) fn set_return_activation(
-        &mut self,
-        index: usize,
-        identity: u64,
-    ) -> Result<(), AttemptError> {
-        self.return_activation = Some(ActivationReturn {
-            index: u32::try_from(index).map_err(|_| AttemptError::CapacityOverflow)?,
-            identity,
-        });
-        Ok(())
-    }
-
     pub(crate) fn is_direct_child_of(&self, parent: &Self) -> bool {
         self.key == parent.key && self.parent == parent.serial
-    }
-}
-
-/// Move-only receipt proving that one live parent capability was transferred
-/// into its exact direct child.
-///
-/// This is fixed metadata embedded in the parent activation while the child
-/// is live. It cannot address the arena or close either scope by itself.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) struct AttemptScopeLoan {
-    key: NonZeroU64,
-    serial: AttemptScopeSerial,
-    opening: AttemptMark,
-    return_activation: Option<ActivationReturn>,
-    child: AttemptScopeCoordinate,
-}
-
-impl AttemptScopeLoan {
-    pub(crate) const fn child(&self) -> AttemptScopeCoordinate {
-        self.child
-    }
-
-    pub(crate) const fn parent(&self) -> AttemptScopeCoordinate {
-        AttemptScopeCoordinate {
-            key: self.key,
-            serial: self.serial,
-        }
-    }
-
-    pub(crate) fn retarget_child(
-        &mut self,
-        from: AttemptScopeCoordinate,
-        to: AttemptScopeCoordinate,
-    ) -> Result<(), AttemptError> {
-        if self.child != from || from.key != to.key {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        self.child = to;
-        Ok(())
-    }
-
-    pub(crate) const fn return_activation(&self) -> Option<(usize, u64)> {
-        match self.return_activation {
-            Some(target) => Some((target.index as usize, target.identity)),
-            None => None,
-        }
-    }
-
-    pub(crate) fn inherit_return_activation(
-        &mut self,
-        index: usize,
-        identity: u64,
-    ) -> Result<(), AttemptError> {
-        let inherited = ActivationReturn {
-            index: u32::try_from(index).map_err(|_| AttemptError::CapacityOverflow)?,
-            identity,
-        };
-        match self.return_activation {
-            None => {
-                self.return_activation = Some(inherited);
-                Ok(())
-            }
-            Some(existing) if existing == inherited => Ok(()),
-            Some(_) => Err(AttemptError::InvalidCoordinate),
-        }
     }
 }
 
@@ -287,13 +192,11 @@ macro_rules! attempt_id_constructor {
 attempt_id!(AttemptTokenListId);
 attempt_id!(AttemptGlueId);
 attempt_id!(AttemptDefinitionId);
-attempt_id!(AttemptArgumentRecordId);
 attempt_id!(AttemptTokenBufferId);
 attempt_id!(AttemptProvenanceId);
 
 attempt_id_constructor!(AttemptTokenListId);
 attempt_id_constructor!(AttemptDefinitionId);
-attempt_id_constructor!(AttemptArgumentRecordId);
 attempt_id_constructor!(AttemptTokenBufferId);
 
 #[cfg(test)]
@@ -401,8 +304,6 @@ pub(crate) struct AttemptMark {
     token_lists: u32,
     glue_values: u32,
     definitions: u32,
-    argument_words: u32,
-    argument_records: u32,
     token_buffers: u32,
     #[cfg(test)]
     name_bytes: u32,
@@ -421,8 +322,6 @@ impl AttemptMark {
             && self.token_lists == 0
             && self.glue_values == 0
             && self.definitions == 0
-            && self.argument_words == 0
-            && self.argument_records == 0
             && self.token_buffers == 0
             && self.provenance == 0
             && self.test_names_are_empty()
@@ -448,8 +347,6 @@ impl AttemptMark {
             self.token_lists,
             self.glue_values,
             self.definitions,
-            self.argument_words,
-            self.argument_records,
             self.token_buffers,
             self.provenance,
         ];
@@ -570,8 +467,6 @@ pub(crate) struct AttemptArena<G> {
     token_lists: Vec<AttemptRow<AttemptTokenStorage>>,
     glue_values: Vec<AttemptRow<GlueSpec>>,
     definitions: Vec<AttemptRow<AttemptDefinition>>,
-    argument_words: Vec<AttemptTokenListId>,
-    argument_records: Vec<AttemptRow<AttemptRange>>,
     token_buffers: Vec<AttemptRow<AttemptTokenBuffer>>,
     recycled_token_buffers: Vec<Vec<TracedTokenWord>>,
     #[cfg(test)]
@@ -598,8 +493,6 @@ impl<G> Default for AttemptArena<G> {
             token_lists: Vec::new(),
             glue_values: Vec::new(),
             definitions: Vec::new(),
-            argument_words: Vec::new(),
-            argument_records: Vec::new(),
             token_buffers: Vec::new(),
             recycled_token_buffers: Vec::new(),
             #[cfg(test)]
@@ -628,7 +521,6 @@ impl<G> AttemptArena<G> {
             opening,
             close_through_serial: serial,
             close_through: opening,
-            return_activation: None,
         };
         self.next_scope = next_scope;
         self.top_scope = serial;
@@ -665,106 +557,7 @@ impl<G> AttemptArena<G> {
         child.parent = parent.parent;
         child.close_through_serial = parent.close_through_serial;
         child.close_through = parent.close_through;
-        if child.return_activation.is_none() {
-            child.return_activation = parent.return_activation;
-        }
         Ok(())
-    }
-
-    /// Loans a live parent capability to its exact direct child.
-    ///
-    /// The receipt is not a second capability: only the mutated child can
-    /// address or close the collapsed chain. If the parent remains live when
-    /// the child retires, [`Self::return_loaned_parent`] consumes both values
-    /// to reconstruct the sole parent capability.
-    #[expect(
-        clippy::result_large_err,
-        reason = "the error must return the move-only scope owner without boxing or heap allocation"
-    )]
-    pub(crate) fn loan_owned_parent(
-        &self,
-        parent: OwnedAttemptScope,
-        child: &mut OwnedAttemptScope,
-    ) -> Result<AttemptScopeLoan, (AttemptError, OwnedAttemptScope)> {
-        if let Err(error) = self.validate_owner(&parent) {
-            return Err((error, parent));
-        }
-        if let Err(error) = self.validate_top_owner(child) {
-            return Err((error, parent));
-        }
-        if child.parent != parent.serial {
-            return Err((AttemptError::InvalidCoordinate, parent));
-        }
-        let loan = AttemptScopeLoan {
-            key: parent.key,
-            serial: parent.serial,
-            opening: parent.opening,
-            return_activation: parent.return_activation,
-            child: child.coordinate(),
-        };
-        child.parent = parent.parent;
-        child.close_through_serial = parent.close_through_serial;
-        child.close_through = parent.close_through;
-        Ok(loan)
-    }
-
-    /// Returns a retiring direct child to a still-live loaning parent.
-    ///
-    /// Validation is mutation-free. Successful return drops only the child's
-    /// own suffix and restores the exact parent capability recorded by the
-    /// move-only loan receipt.
-    #[expect(
-        clippy::result_large_err,
-        reason = "failed validation must return both move-only capabilities without boxing or allocation"
-    )]
-    pub(crate) fn return_loaned_parent(
-        &mut self,
-        child: OwnedAttemptScope,
-        loan: AttemptScopeLoan,
-    ) -> Result<OwnedAttemptScope, (AttemptError, OwnedAttemptScope, AttemptScopeLoan)> {
-        if let Err(error) = self.validate_top_owner(&child) {
-            return Err((error, child, loan));
-        }
-        if loan.key != self.key.0 || loan.child != child.coordinate() {
-            return Err((AttemptError::InvalidCoordinate, child, loan));
-        }
-        if let Err(error) = self.truncate_owned_suffix(child.opening) {
-            return Err((error, child, loan));
-        }
-        self.top_scope = loan.serial;
-        Ok(OwnedAttemptScope {
-            key: loan.key,
-            serial: loan.serial,
-            parent: child.parent,
-            opening: loan.opening,
-            close_through_serial: child.close_through_serial,
-            close_through: child.close_through,
-            return_activation: loan.return_activation,
-        })
-    }
-
-    fn truncate_owned_suffix(&mut self, mark: AttemptMark) -> Result<(), AttemptError> {
-        self.validate_key(mark.key)?;
-        let live = self.mark();
-        self.truncate(AttemptMark {
-            key: mark.key,
-            traced_words: mark.traced_words.min(live.traced_words),
-            traced_origins: mark.traced_origins.min(live.traced_origins),
-            token_scratch: mark.token_scratch.min(live.token_scratch),
-            origin_scratch: mark.origin_scratch.min(live.origin_scratch),
-            token_builders: mark.token_builders.min(live.token_builders),
-            token_lists: mark.token_lists.min(live.token_lists),
-            glue_values: mark.glue_values.min(live.glue_values),
-            definitions: mark.definitions.min(live.definitions),
-            argument_words: mark.argument_words.min(live.argument_words),
-            argument_records: mark.argument_records.min(live.argument_records),
-            token_buffers: mark.token_buffers.min(live.token_buffers),
-            #[cfg(test)]
-            name_bytes: mark.name_bytes.min(live.name_bytes),
-            #[cfg(test)]
-            names: mark.names.min(live.names),
-            provenance: mark.provenance.min(live.provenance),
-        })
     }
 
     fn validate_owner(&self, owner: &OwnedAttemptScope) -> Result<(), AttemptError> {
@@ -820,10 +613,6 @@ impl<G> AttemptArena<G> {
                 .expect("attempt glue length is bounded"),
             definitions: u32::try_from(self.definitions.len())
                 .expect("attempt definition length is bounded"),
-            argument_words: u32::try_from(self.argument_words.len())
-                .expect("attempt argument-word length is bounded"),
-            argument_records: u32::try_from(self.argument_records.len())
-                .expect("attempt argument-record length is bounded"),
             token_buffers: u32::try_from(self.token_buffers.len())
                 .expect("attempt token-buffer length is bounded"),
             #[cfg(test)]
@@ -849,8 +638,6 @@ impl<G> AttemptArena<G> {
             (mark.token_lists as usize, self.token_lists.len()),
             (mark.glue_values as usize, self.glue_values.len()),
             (mark.definitions as usize, self.definitions.len()),
-            (mark.argument_words as usize, self.argument_words.len()),
-            (mark.argument_records as usize, self.argument_records.len()),
             (mark.token_buffers as usize, self.token_buffers.len()),
             (mark.provenance as usize, self.provenance.len()),
         ];
@@ -872,9 +659,6 @@ impl<G> AttemptArena<G> {
         #[cfg(test)]
         self.names.truncate(mark.names as usize);
         self.provenance.truncate(mark.provenance as usize);
-        self.argument_records
-            .truncate(mark.argument_records as usize);
-        self.argument_words.truncate(mark.argument_words as usize);
         while self.token_buffers.len() > mark.token_buffers as usize {
             let mut buffer = self
                 .token_buffers
@@ -1170,37 +954,6 @@ impl<G> AttemptArena<G> {
         Ok(id)
     }
 
-    /// Stores one macro activation's argument ranges without cloning tokens.
-    pub(crate) fn allocate_arguments(
-        &mut self,
-        arguments: &[AttemptTokenListId],
-    ) -> Result<AttemptArgumentRecordId, AttemptError> {
-        #[cfg(feature = "profiling")]
-        let _allocation_scope = tex_state::measurement::hot_core_allocation_scope(
-            tex_state::measurement::HotCoreAllocationOwner::AttemptScratch,
-        );
-        if arguments.len() > 9 {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        for &argument in arguments {
-            self.token_words(argument)?;
-        }
-        let range = AttemptRange::checked(self.argument_words.len(), arguments.len())?;
-        let id = AttemptArgumentRecordId::new(self.key, self.argument_records.len())?;
-        self.argument_words
-            .try_reserve(arguments.len())
-            .map_err(|_| AttemptError::AllocationFailed)?;
-        self.argument_records
-            .try_reserve(1)
-            .map_err(|_| AttemptError::AllocationFailed)?;
-        self.argument_words.extend_from_slice(arguments);
-        self.argument_records.push(AttemptRow {
-            serial: id.serial,
-            value: range,
-        });
-        Ok(id)
-    }
-
     /// Allocates one mutable scanner buffer owned by this attempt.
     pub(crate) fn allocate_token_buffer(&mut self) -> Result<AttemptTokenBufferId, AttemptError> {
         #[cfg(feature = "profiling")]
@@ -1269,30 +1022,6 @@ impl<G> AttemptArena<G> {
         Ok(())
     }
 
-    pub(crate) fn drain_buffer_prefix(
-        &mut self,
-        id: AttemptTokenBufferId,
-        len: usize,
-    ) -> Result<Vec<TracedTokenWord>, AttemptError> {
-        let buffer = self.token_buffer_mut(id)?;
-        if len > buffer.len() {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        Ok(buffer.drain(..len).collect())
-    }
-
-    pub(crate) fn strip_buffer_outer_group(
-        &mut self,
-        id: AttemptTokenBufferId,
-    ) -> Result<(), AttemptError> {
-        let buffer = self.token_buffer_mut(id)?;
-        if buffer.len() >= 2 {
-            buffer.pop();
-            buffer.remove(0);
-        }
-        Ok(())
-    }
-
     pub(crate) fn finish_token_buffer(
         &mut self,
         id: AttemptTokenBufferId,
@@ -1323,31 +1052,6 @@ impl<G> AttemptArena<G> {
             .expect("validated token-list row remains live")
             .value = AttemptTokenStorage::Buffer(id);
         Ok(result)
-    }
-
-    pub(crate) fn arguments(
-        &self,
-        id: AttemptArgumentRecordId,
-    ) -> Result<&[AttemptTokenListId], AttemptError> {
-        self.validate_key(id.key)?;
-        let row = self
-            .argument_records
-            .get(id.index())
-            .copied()
-            .filter(|row| row.serial == id.serial)
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        row.value.resolve(&self.argument_words)
-    }
-
-    pub(crate) fn argument(
-        &self,
-        id: AttemptArgumentRecordId,
-        slot: u8,
-    ) -> Result<Option<AttemptTokenListId>, AttemptError> {
-        if !(1..=9).contains(&slot) {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        Ok(self.arguments(id)?.get(usize::from(slot - 1)).copied())
     }
 
     #[cfg(test)]
@@ -1585,15 +1289,13 @@ pub(crate) struct AttemptPromotion<G> {
 
 /// Opaque owner transferred between consecutive command operations.
 ///
-/// Macro activations and other command continuations may intentionally keep
-/// attempt coordinates live across more than one delivered command. The
-/// owner moves; individual ids never retain it.
+/// Scanner continuations may intentionally keep attempt coordinates live
+/// across more than one delivered command. The owner moves; individual ids
+/// never retain it. Macro activations use disjoint generation-owned scratch.
 pub struct CommandAttempt<G> {
     arena: AttemptArena<G>,
     active_operation: Option<OwnedAttemptScope>,
     active_operation_origin: Option<AttemptScopeCoordinate>,
-    operation_macro_direct_child: Option<(AttemptScopeCoordinate, u32, u64)>,
-    operation_macro_child: Option<(AttemptScopeCoordinate, u32, u64)>,
 }
 
 /// Fixed-size rollback coordinate for one command operation.
@@ -1607,20 +1309,6 @@ pub struct CommandAttemptMark {
     operation: AttemptScopeCoordinate,
     parent: AttemptScopeSerial,
     macro_depth: u32,
-}
-
-pub(crate) enum OperationCommit {
-    Closed,
-    Returning(OwnedAttemptScope),
-    Transferred {
-        parent_index: usize,
-        parent_identity: u64,
-        from: AttemptScopeCoordinate,
-        direct_child: AttemptScopeCoordinate,
-        direct_child_index: usize,
-        direct_child_identity: u64,
-        physical_child: AttemptScopeCoordinate,
-    },
 }
 
 impl CommandAttemptMark {
@@ -1658,8 +1346,6 @@ impl<G> Default for CommandAttempt<G> {
             arena: AttemptArena::default(),
             active_operation: None,
             active_operation_origin: None,
-            operation_macro_direct_child: None,
-            operation_macro_child: None,
         }
     }
 }
@@ -1690,34 +1376,7 @@ impl<G> CommandAttempt<G> {
         let mark = CommandAttemptMark::new(opening, &owner, macro_depth)?;
         self.active_operation_origin = Some(owner.coordinate());
         self.active_operation = Some(owner);
-        self.operation_macro_direct_child = None;
-        self.operation_macro_child = None;
         Ok(mark)
-    }
-
-    pub(crate) fn operation_is_direct_child_of(&self, parent: &OwnedAttemptScope) -> bool {
-        self.active_operation
-            .as_ref()
-            .is_some_and(|operation| operation.is_direct_child_of(parent))
-    }
-
-    #[expect(
-        clippy::result_large_err,
-        reason = "the error must return the move-only scope owner without boxing or heap allocation"
-    )]
-    pub(crate) fn loan_activation_to_operation(
-        &mut self,
-        parent: OwnedAttemptScope,
-        parent_index: usize,
-        parent_identity: u64,
-    ) -> Result<AttemptScopeLoan, (AttemptError, OwnedAttemptScope)> {
-        let Some(operation) = self.active_operation.as_mut() else {
-            return Err((AttemptError::InvalidCoordinate, parent));
-        };
-        if let Err(error) = operation.set_return_activation(parent_index, parent_identity) {
-            return Err((error, parent));
-        }
-        self.arena.loan_owned_parent(parent, operation)
     }
 
     pub(crate) fn validate_operation(&self, mark: CommandAttemptMark) -> Result<(), AttemptError> {
@@ -1735,219 +1394,41 @@ impl<G> CommandAttempt<G> {
     pub(crate) fn commit_operation(
         &mut self,
         mark: CommandAttemptMark,
-        surviving_child: Option<(usize, u64, &mut OwnedAttemptScope)>,
-    ) -> Result<OperationCommit, AttemptError> {
+    ) -> Result<(), AttemptError> {
         self.validate_operation(mark)?;
-        match (self.operation_macro_child, surviving_child.as_ref()) {
-            (None, None) => {}
-            (
-                Some((coordinate, expected_index, expected_identity)),
-                Some((actual_index, actual_identity, child)),
-            ) if expected_index as usize == *actual_index
-                && expected_identity == *actual_identity
-                && coordinate == child.coordinate() => {}
-            _ => return Err(AttemptError::InvalidCoordinate),
-        }
         let operation = self
             .active_operation
             .take()
             .ok_or(AttemptError::InvalidCoordinate)?;
         self.active_operation_origin = None;
-        let direct_child = self.operation_macro_direct_child.take();
-        self.operation_macro_child = None;
-        if let Some((_, _, child)) = surviving_child {
-            let from = operation.coordinate();
-            let return_activation = operation.return_activation();
-            self.arena.handoff_owned_parent(operation, child)?;
-            if let Some((parent_index, parent_identity)) = return_activation {
-                let (direct_child, direct_child_index, direct_child_identity) =
-                    direct_child.ok_or(AttemptError::InvalidCoordinate)?;
-                Ok(OperationCommit::Transferred {
-                    parent_index,
-                    parent_identity,
-                    from,
-                    direct_child,
-                    direct_child_index: direct_child_index as usize,
-                    direct_child_identity,
-                    physical_child: child.coordinate(),
-                })
-            } else {
-                Ok(OperationCommit::Closed)
-            }
-        } else if operation.return_activation().is_some() {
-            Ok(OperationCommit::Returning(operation))
-        } else {
-            self.arena.close_owned_scope(operation)?;
-            Ok(OperationCommit::Closed)
-        }
+        self.arena.close_owned_scope(operation)
     }
 
     pub(crate) fn rollback_operation(
         &mut self,
         mark: CommandAttemptMark,
-    ) -> Result<Option<OwnedAttemptScope>, AttemptError> {
+    ) -> Result<(), AttemptError> {
         self.validate_operation(mark)?;
-        let operation = self
+        let _operation = self
             .active_operation
             .take()
             .ok_or(AttemptError::InvalidCoordinate)?;
         self.active_operation_origin = None;
-        self.operation_macro_child = None;
-        self.operation_macro_direct_child = None;
-        if operation.return_activation().is_some() {
-            Ok(Some(operation))
-        } else {
-            self.arena.validate_mark(mark.opening)?;
-            self.arena.truncate(mark.opening)?;
-            self.arena.top_scope = mark.parent;
-            Ok(None)
-        }
+        self.arena.validate_mark(mark.opening)?;
+        self.arena.truncate(mark.opening)?;
+        self.arena.top_scope = mark.parent;
+        Ok(())
     }
 
     pub(crate) fn begin_child_scope(&mut self) -> Result<OwnedAttemptScope, AttemptError> {
         self.arena.begin_owned_scope()
     }
 
-    #[expect(
-        clippy::result_large_err,
-        reason = "the error must return the move-only scope owner without boxing or heap allocation"
-    )]
-    pub(crate) fn loan_activation_parent(
-        &mut self,
-        parent: OwnedAttemptScope,
-        child: &mut OwnedAttemptScope,
-    ) -> Result<AttemptScopeLoan, (AttemptError, OwnedAttemptScope)> {
-        self.arena.loan_owned_parent(parent, child)
-    }
-
-    #[expect(
-        clippy::result_large_err,
-        reason = "failed validation must return both move-only capabilities without boxing or allocation"
-    )]
-    pub(crate) fn return_activation_parent(
-        &mut self,
-        child: OwnedAttemptScope,
-        loan: AttemptScopeLoan,
-    ) -> Result<OwnedAttemptScope, (AttemptError, OwnedAttemptScope, AttemptScopeLoan)> {
-        self.arena.return_loaned_parent(child, loan)
-    }
-
-    #[cfg_attr(
-        test,
-        expect(
-            clippy::result_large_err,
-            reason = "test-only arena marks enlarge the move-only loan receipt; boxing would allocate on the production lifecycle path"
-        )
-    )]
-    pub(crate) fn absorb_retired_parent_into_local_child(
-        &mut self,
-        child: &mut OwnedAttemptScope,
-        loan: AttemptScopeLoan,
-        parent_index: usize,
-        parent_identity: u64,
-    ) -> Result<(), (AttemptError, AttemptScopeLoan)> {
-        if let Err(error) = self.arena.validate_top_owner(child) {
-            return Err((error, loan));
-        }
-        if loan.key != self.arena.key.0 || loan.child != child.coordinate() {
-            return Err((AttemptError::InvalidCoordinate, loan));
-        }
-        let parent_index = match u32::try_from(parent_index) {
-            Ok(index) => index,
-            Err(_) => return Err((AttemptError::CapacityOverflow, loan)),
-        };
-        let parent = loan.parent();
-        let child_coordinate = child.coordinate();
-        if self
-            .operation_macro_child
-            .is_some_and(|(tracked, tracked_index, tracked_identity)| {
-                tracked == parent
-                    || (tracked_index == parent_index && tracked_identity == parent_identity)
-            })
-        {
-            self.operation_macro_child = Some((child_coordinate, parent_index, parent_identity));
-        }
-        if self.operation_macro_direct_child.is_some_and(
-            |(tracked, tracked_index, tracked_identity)| {
-                tracked == parent
-                    || (tracked_index == parent_index && tracked_identity == parent_identity)
-            },
-        ) {
-            self.operation_macro_direct_child =
-                Some((child_coordinate, parent_index, parent_identity));
-        }
-        child.return_activation = loan.return_activation;
-        Ok(())
-    }
-
-    pub(crate) fn retire_loaned_macro(
-        &mut self,
-        index: usize,
-        identity: u64,
-        loan: AttemptScopeLoan,
-        return_parent_live: bool,
-    ) -> Option<(usize, u64, AttemptScopeCoordinate, AttemptScopeCoordinate)> {
-        let coordinate = loan.parent();
-        let mut retarget = None;
-        if let Some(operation) = self.active_operation.as_mut()
-            && operation.return_activation() == Some((index, identity))
-        {
-            let actual_child = operation.coordinate();
-            if return_parent_live
-                && let Some((parent_index, parent_identity)) = loan.return_activation()
-            {
-                retarget = Some((parent_index, parent_identity, coordinate, actual_child));
-            }
-            operation.return_activation = if return_parent_live {
-                loan.return_activation
-            } else {
-                None
-            };
-        }
-        let physical_child = self.operation_macro_child;
-        if self.operation_macro_direct_child.is_some_and(
-            |(tracked, tracked_index, tracked_identity)| {
-                tracked == coordinate
-                    || (tracked_index as usize == index && tracked_identity == identity)
-            },
-        ) {
-            self.operation_macro_direct_child =
-                physical_child.filter(|(_, tracked_index, tracked_identity)| {
-                    *tracked_index as usize != index || *tracked_identity != identity
-                });
-        }
-        if physical_child.is_some_and(|(tracked, tracked_index, tracked_identity)| {
-            tracked == coordinate
-                || (tracked_index as usize == index && tracked_identity == identity)
-        }) {
-            self.operation_macro_child = None;
-        }
-        retarget
-    }
-
     pub(crate) fn close_child_scope(
         &mut self,
         owner: OwnedAttemptScope,
     ) -> Result<(), AttemptError> {
-        let coordinate = owner.coordinate();
-        self.arena.close_owned_scope(owner)?;
-        if self
-            .operation_macro_child
-            .is_some_and(|(tracked, _, _)| tracked == coordinate)
-        {
-            self.operation_macro_child = None;
-        }
-        if self
-            .operation_macro_direct_child
-            .is_some_and(|(tracked, _, _)| tracked == coordinate)
-        {
-            self.operation_macro_direct_child = None;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn child_scope_is_top(&self, owner: &OwnedAttemptScope) -> bool {
-        self.arena.top_scope == owner.serial
+        self.arena.close_owned_scope(owner)
     }
 
     pub(crate) fn child_scope_is_direct_operation_child(&self, child: &OwnedAttemptScope) -> bool {
@@ -1959,8 +1440,7 @@ impl<G> CommandAttempt<G> {
     pub(crate) fn defer_child_to_operation(
         &mut self,
         mut child: OwnedAttemptScope,
-    ) -> Result<Option<(usize, u64, AttemptScopeCoordinate, AttemptScopeCoordinate)>, AttemptError>
-    {
+    ) -> Result<(), AttemptError> {
         self.arena.validate_top_owner(&child)?;
         let parent = self
             .active_operation
@@ -1974,139 +1454,9 @@ impl<G> CommandAttempt<G> {
             .active_operation
             .take()
             .ok_or(AttemptError::InvalidCoordinate)?;
-        let from = parent.coordinate();
-        let return_activation = parent.return_activation();
         self.arena.handoff_owned_parent(parent, &mut child)?;
-        let to = child.coordinate();
         self.active_operation = Some(child);
-        Ok(return_activation.map(|(index, identity)| (index, identity, from, to)))
-    }
-
-    pub(crate) fn clear_retired_operation_return(
-        &mut self,
-        index: usize,
-        identity: u64,
-    ) -> Result<(), AttemptError> {
-        let operation = self
-            .active_operation
-            .as_mut()
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        if operation.return_activation() != Some((index, identity)) {
-            return Err(AttemptError::InvalidCoordinate);
-        }
-        operation.return_activation = None;
         Ok(())
-    }
-
-    pub(crate) fn retire_parent_into_operation(
-        &mut self,
-        parent: OwnedAttemptScope,
-    ) -> Result<(), AttemptError> {
-        let parent_coordinate = parent.coordinate();
-        let child = self
-            .active_operation
-            .as_mut()
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        self.arena.handoff_owned_parent(parent, child)?;
-        if self
-            .operation_macro_child
-            .is_some_and(|(tracked, _, _)| tracked == parent_coordinate)
-        {
-            self.operation_macro_child = None;
-        }
-        if self
-            .operation_macro_direct_child
-            .is_some_and(|(tracked, _, _)| tracked == parent_coordinate)
-        {
-            self.operation_macro_direct_child = None;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn retire_parent_into_activation_child(
-        &mut self,
-        parent: OwnedAttemptScope,
-        child: &mut OwnedAttemptScope,
-    ) -> Result<(), AttemptError> {
-        self.arena.handoff_owned_parent(parent, child)
-    }
-
-    pub(crate) fn note_operation_macro_child(
-        &mut self,
-        index: usize,
-        identity: u64,
-        owner: &OwnedAttemptScope,
-    ) -> Result<(), AttemptError> {
-        let Some(operation) = self.active_operation.as_ref() else {
-            return Ok(());
-        };
-        let replaces_inherited_parent =
-            self.operation_macro_child
-                .is_some_and(|(tracked, tracked_index, tracked_identity)| {
-                    owner.coordinate() == tracked
-                        || owner.owns_through(tracked)
-                        || owner.return_activation()
-                            == Some((tracked_index as usize, tracked_identity))
-                });
-        if owner.parent == operation.serial
-            && (self.operation_macro_child.is_none() || replaces_inherited_parent)
-        {
-            let projection = (
-                owner.coordinate(),
-                u32::try_from(index).map_err(|_| AttemptError::CapacityOverflow)?,
-                identity,
-            );
-            self.operation_macro_direct_child.get_or_insert(projection);
-            self.operation_macro_child = Some(projection);
-        }
-        Ok(())
-    }
-
-    pub(crate) fn return_operation_macro_child(
-        &mut self,
-        child: AttemptScopeCoordinate,
-        parent_index: usize,
-        parent_identity: u64,
-        parent: &OwnedAttemptScope,
-    ) -> Result<(), AttemptError> {
-        if self
-            .operation_macro_child
-            .is_some_and(|(tracked, _, _)| tracked == child)
-        {
-            self.operation_macro_child = Some((
-                parent.coordinate(),
-                u32::try_from(parent_index).map_err(|_| AttemptError::CapacityOverflow)?,
-                parent_identity,
-            ));
-        }
-        if self
-            .operation_macro_direct_child
-            .is_some_and(|(tracked, _, _)| tracked == child)
-        {
-            self.operation_macro_direct_child = Some((
-                parent.coordinate(),
-                u32::try_from(parent_index).map_err(|_| AttemptError::CapacityOverflow)?,
-                parent_identity,
-            ));
-        }
-        Ok(())
-    }
-
-    pub(crate) fn operation_macro_child_index(
-        &self,
-        mark: CommandAttemptMark,
-    ) -> Result<Option<(usize, u64)>, AttemptError> {
-        self.validate_operation(mark)?;
-        Ok(self
-            .operation_macro_child
-            .map(|(_, index, identity)| (index as usize, identity)))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn replace_operation_macro_child_index_for_test(&mut self, index: u32) {
-        if let Some((coordinate, _, identity)) = self.operation_macro_child {
-            self.operation_macro_child = Some((coordinate, index, identity));
-        }
     }
 
     pub(crate) const fn arena(&self) -> &AttemptArena<G> {
@@ -2122,7 +1472,6 @@ impl<G> CommandAttempt<G> {
             && self.arena.top_scope == AttemptScopeSerial::ROOT
             && self.active_operation.is_none()
             && self.active_operation_origin.is_none()
-            && self.operation_macro_child.is_none()
     }
 }
 

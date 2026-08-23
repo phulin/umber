@@ -20,7 +20,7 @@ use crate::input::{
 use crate::input::{
     ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior, TokenPayload,
 };
-use crate::macro_call::{MacroScopeOwner, ParameterState, RetiredMacroScope};
+use crate::macro_call::ParameterState;
 use crate::processor::{
     AlignmentCellDelimiter, AlignmentDeliveryState, AlignmentIdentity, AlignmentLifecycleError,
     AlignmentRequest, AlignmentRequestResult, CELL_ALIGN_STATE, ExpansionState,
@@ -218,6 +218,9 @@ pub struct CommandState<G> {
     /// Storage for scanner, expansion, and retry coordinates in the current
     /// operation. Checkpoints retain its bounded mark, never its payload.
     pub(crate) attempt: crate::CommandAttempt<G>,
+    /// Current-generation reusable packed execution lanes. Macro activations
+    /// retain only private generation-branded frame indices into this owner.
+    pub(crate) scratch: crate::execution_scratch::ExecutionScratch<G>,
     /// One direct-operation child scope. It stays installed across an
     /// in-process resource suspension and is consumed only by commit or
     /// rollback; named checkpoints require this field to be empty.
@@ -282,6 +285,7 @@ impl<G> Default for CommandState<G> {
             timeline: Arc::new(crate::snapshot::CommandTimeline::default()),
             usage: CommandUsageTracker::default(),
             attempt: crate::CommandAttempt::default(),
+            scratch: crate::execution_scratch::ExecutionScratch::default(),
             active_attempt_operation: None,
         }
     }
@@ -732,33 +736,6 @@ impl<G> CommandState<G> {
             .attempt
             .begin_operation(self.parameters.activations.len())
             .expect("command operation scope capacity is bounded");
-        let roots = Arc::make_mut(&mut self.roots);
-        if let Some(parent_index) = roots.parameters.activations.len().checked_sub(1) {
-            let parent = &mut roots.parameters.activations[parent_index];
-            let direct = parent
-                .scope
-                .owned_mut()
-                .is_some_and(|owner| self.attempt.operation_is_direct_child_of(owner));
-            if direct {
-                let parent_identity = parent.identity.0;
-                let owner = match std::mem::replace(&mut parent.scope, MacroScopeOwner::Transition)
-                {
-                    MacroScopeOwner::Owned(owner) => owner,
-                    _ => unreachable!("the direct parent was checked as owned"),
-                };
-                match self.attempt.loan_activation_to_operation(
-                    owner,
-                    parent_index,
-                    parent_identity,
-                ) {
-                    Ok(loan) => parent.scope = MacroScopeOwner::Loaned(loan),
-                    Err((error, owner)) => {
-                        parent.scope = MacroScopeOwner::Owned(owner);
-                        panic!("direct operation ownership transfer failed: {error:?}");
-                    }
-                }
-            }
-        }
         self.active_attempt_operation = Some(mark);
         mark
     }
@@ -780,264 +757,10 @@ impl<G> CommandState<G> {
         Ok(operation)
     }
 
-    pub(crate) fn begin_attempt_macro_scope(
-        &mut self,
-    ) -> Result<crate::attempt::OwnedAttemptScope, crate::AttemptError> {
-        self.begin_attempt_activation_child_scope()
-    }
-
     pub(crate) fn begin_attempt_scanner_scope(
         &mut self,
     ) -> Result<crate::attempt::OwnedAttemptScope, crate::AttemptError> {
-        self.begin_attempt_activation_child_scope()
-    }
-
-    pub(crate) fn note_attempt_macro_child(
-        &mut self,
-        index: usize,
-        identity: crate::macro_call::MacroActivationId,
-    ) -> Result<(), crate::AttemptError> {
-        let roots = Arc::make_mut(&mut self.roots);
-        let activation = roots
-            .parameters
-            .activations
-            .get_mut(index)
-            .filter(|activation| activation.identity == identity)
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
-        let scope = activation
-            .scope
-            .owned_mut()
-            .ok_or(crate::AttemptError::InvalidCoordinate)?;
-        self.attempt
-            .note_operation_macro_child(index, identity.0, scope)
-    }
-
-    fn begin_attempt_activation_child_scope(
-        &mut self,
-    ) -> Result<crate::attempt::OwnedAttemptScope, crate::AttemptError> {
-        let mut child = self.attempt.begin_child_scope()?;
-        let roots = Arc::make_mut(&mut self.roots);
-        let Some(parent_index) = roots.parameters.activations.len().checked_sub(1) else {
-            return Ok(child);
-        };
-        let parent = &mut roots.parameters.activations[parent_index];
-        let Some(parent_owner) = parent.scope.owned_mut() else {
-            return Ok(child);
-        };
-        if !child.is_direct_child_of(parent_owner) {
-            return Ok(child);
-        }
-        if let Err(error) = child.set_return_activation(parent_index, parent.identity.0) {
-            self.attempt.close_child_scope(child)?;
-            return Err(error);
-        }
-        let owner = match std::mem::replace(&mut parent.scope, MacroScopeOwner::Transition) {
-            MacroScopeOwner::Owned(owner) => owner,
-            other => {
-                parent.scope = other;
-                self.attempt.close_child_scope(child)?;
-                return Err(crate::AttemptError::InvalidCoordinate);
-            }
-        };
-        match self.attempt.loan_activation_parent(owner, &mut child) {
-            Ok(loan) => {
-                parent.scope = MacroScopeOwner::Loaned(loan);
-                Ok(child)
-            }
-            Err((error, owner)) => {
-                parent.scope = MacroScopeOwner::Owned(owner);
-                self.attempt.close_child_scope(child)?;
-                Err(error)
-            }
-        }
-    }
-
-    pub(crate) fn retire_attempt_scope(
-        &mut self,
-        retired: RetiredMacroScope,
-    ) -> Result<(), crate::AttemptError> {
-        match retired.scope {
-            MacroScopeOwner::Owned(scope) => self.finish_attempt_child_scope(scope, false),
-            MacroScopeOwner::Loaned(loan) => {
-                let return_parent_live =
-                    loan.return_activation()
-                        .is_none_or(|(parent_index, parent_identity)| {
-                            self.parameters.activations.get(parent_index).is_some_and(
-                                |activation| {
-                                    activation.identity.0 == parent_identity
-                                        && matches!(&activation.scope, MacroScopeOwner::Loaned(_))
-                                },
-                            )
-                        });
-                if let Some((parent_index, parent_identity, from, to)) =
-                    self.attempt.retire_loaned_macro(
-                        retired.index,
-                        retired.identity.0,
-                        loan,
-                        return_parent_live,
-                    )
-                {
-                    let roots = Arc::make_mut(&mut self.roots);
-                    let parent = roots
-                        .parameters
-                        .activations
-                        .get_mut(parent_index)
-                        .filter(|activation| activation.identity.0 == parent_identity)
-                        .ok_or(crate::AttemptError::InvalidCoordinate)?;
-                    let MacroScopeOwner::Loaned(parent_loan) = &mut parent.scope else {
-                        return Err(crate::AttemptError::InvalidCoordinate);
-                    };
-                    parent_loan.retarget_child(from, to)?;
-                }
-                Ok(())
-            }
-            MacroScopeOwner::Transition => Err(crate::AttemptError::InvalidCoordinate),
-        }
-    }
-
-    pub(crate) fn retire_attempt_scope_into_local_child(
-        &mut self,
-        retired: RetiredMacroScope,
-        child: &mut crate::attempt::OwnedAttemptScope,
-    ) -> Result<(), crate::AttemptError> {
-        match retired.scope {
-            MacroScopeOwner::Loaned(loan) if loan.child() == child.coordinate() => self
-                .attempt
-                .absorb_retired_parent_into_local_child(
-                    child,
-                    loan,
-                    retired.index,
-                    retired.identity.0,
-                )
-                .map_err(|(error, _loan)| error),
-            scope => self.retire_attempt_scope(RetiredMacroScope {
-                index: retired.index,
-                identity: retired.identity,
-                scope,
-            }),
-        }
-    }
-
-    fn finish_attempt_child_scope(
-        &mut self,
-        scope: crate::attempt::OwnedAttemptScope,
-        defer_to_operation: bool,
-    ) -> Result<(), crate::AttemptError> {
-        let Some((parent_index, parent_identity)) = scope.return_activation() else {
-            return self.finish_unparented_attempt_scope(scope, defer_to_operation);
-        };
-        let roots = Arc::make_mut(&mut self.roots);
-        let Some(parent) = roots.parameters.activations.get_mut(parent_index) else {
-            return self.finish_unparented_attempt_scope(scope, defer_to_operation);
-        };
-        if parent.identity.0 != parent_identity {
-            return self.finish_unparented_attempt_scope(scope, defer_to_operation);
-        }
-        let loan = match std::mem::replace(&mut parent.scope, MacroScopeOwner::Transition) {
-            MacroScopeOwner::Loaned(loan) if loan.child() == scope.coordinate() => loan,
-            other => {
-                parent.scope = other;
-                return Err(crate::AttemptError::InvalidCoordinate);
-            }
-        };
-        let child_coordinate = scope.coordinate();
-        match self.attempt.return_activation_parent(scope, loan) {
-            Ok(parent_owner) => {
-                self.attempt.return_operation_macro_child(
-                    child_coordinate,
-                    parent_index,
-                    parent.identity.0,
-                    &parent_owner,
-                )?;
-                parent.scope = MacroScopeOwner::Owned(parent_owner);
-                Ok(())
-            }
-            Err((error, _scope, loan)) => {
-                // The private arena boundary rejected before mutation. The
-                // direct coordinate preflight above makes this unreachable in
-                // production; retain the parent-side receipt for diagnostics.
-                parent.scope = MacroScopeOwner::Loaned(loan);
-                Err(error)
-            }
-        }
-    }
-
-    fn finish_unparented_attempt_scope(
-        &mut self,
-        scope: crate::attempt::OwnedAttemptScope,
-        defer_to_operation: bool,
-    ) -> Result<(), crate::AttemptError> {
-        // Successful scanner sinks were reserved by the logical parent before
-        // this scratch child opened. A nested synchronous scanner therefore
-        // closes directly to its stack-held parent, while an outer scanner
-        // transfers its sole capability to the operation until apply commits.
-        // A younger live macro child instead consumes the retired scanner.
-        if !self.attempt.child_scope_is_top(&scope) {
-            return self.retire_local_parent_into_live_macro_child(scope);
-        }
-        if defer_to_operation && self.attempt.child_scope_is_direct_operation_child(&scope) {
-            self.defer_scope_to_operation(scope)
-        } else {
-            self.attempt.close_child_scope(scope)
-        }
-    }
-
-    fn defer_scope_to_operation(
-        &mut self,
-        scope: crate::attempt::OwnedAttemptScope,
-    ) -> Result<(), crate::AttemptError> {
-        let Some((parent_index, parent_identity, from, to)) =
-            self.attempt.defer_child_to_operation(scope)?
-        else {
-            return Ok(());
-        };
-        let roots = Arc::make_mut(&mut self.roots);
-        let Some(parent) = roots
-            .parameters
-            .activations
-            .get_mut(parent_index)
-            .filter(|activation| activation.identity.0 == parent_identity)
-        else {
-            return self
-                .attempt
-                .clear_retired_operation_return(parent_index, parent_identity);
-        };
-        let MacroScopeOwner::Loaned(loan) = &mut parent.scope else {
-            return Err(crate::AttemptError::InvalidCoordinate);
-        };
-        loan.retarget_child(from, to)
-    }
-
-    fn retire_local_parent_into_live_macro_child(
-        &mut self,
-        parent_scope: crate::attempt::OwnedAttemptScope,
-    ) -> Result<(), crate::AttemptError> {
-        let roots = Arc::make_mut(&mut self.roots);
-        let Some(index) = roots.parameters.activations.len().checked_sub(1) else {
-            self.attempt.retire_parent_into_operation(parent_scope)?;
-            return Ok(());
-        };
-        let activation = &mut roots.parameters.activations[index];
-        let direct_child = activation
-            .scope
-            .owned_mut()
-            .is_some_and(|child| child.is_direct_child_of(&parent_scope));
-        if !direct_child {
-            self.attempt.retire_parent_into_operation(parent_scope)?;
-            return Ok(());
-        }
-        let identity = activation.identity;
-        let mut child = match std::mem::replace(&mut activation.scope, MacroScopeOwner::Transition)
-        {
-            MacroScopeOwner::Owned(child) => child,
-            _ => unreachable!("the direct child was preflighted as owned"),
-        };
-        self.attempt
-            .retire_parent_into_activation_child(parent_scope, &mut child)?;
-        self.attempt
-            .note_operation_macro_child(index, identity.0, &child)?;
-        activation.scope = MacroScopeOwner::Owned(child);
-        Ok(())
+        self.attempt.begin_child_scope()
     }
 
     pub(crate) fn defer_attempt_scope_retirement(
@@ -1046,14 +769,18 @@ impl<G> CommandState<G> {
     ) -> Result<(), crate::AttemptError> {
         self.active_attempt_operation
             .ok_or(crate::AttemptError::InvalidCoordinate)?;
-        self.finish_attempt_child_scope(scope, true)
+        if self.attempt.child_scope_is_direct_operation_child(&scope) {
+            self.attempt.defer_child_to_operation(scope)
+        } else {
+            self.attempt.close_child_scope(scope)
+        }
     }
 
     pub(crate) fn discard_attempt_scope_suffix(
         &mut self,
         scope: crate::attempt::OwnedAttemptScope,
     ) -> Result<(), crate::AttemptError> {
-        self.finish_attempt_child_scope(scope, false)
+        self.attempt.close_child_scope(scope)
     }
 
     /// Rejects the attempt-local suffix created after `mark`.
@@ -1068,22 +795,21 @@ impl<G> CommandState<G> {
             return Err(crate::AttemptError::InvalidCoordinate);
         }
         while self.parameters.activations.len() > mark.macro_depth() {
-            let scope = self
+            let activation = self
                 .parameters
                 .retire_last_activation()
                 .ok_or(crate::AttemptError::InvalidCoordinate)?;
-            self.retire_attempt_scope(scope)?;
+            self.scratch
+                .pop_macro_frame(activation.arguments.frame())
+                .map_err(|_| crate::AttemptError::InvalidCoordinate)?;
         }
-        if let Some(operation) = self.attempt.rollback_operation(mark)? {
-            self.finish_attempt_child_scope(operation, false)?;
-        }
+        self.attempt.rollback_operation(mark)?;
         self.active_attempt_operation = None;
         Ok(())
     }
 
-    /// Commits the exact direct-operation scope and any already-retired LIFO
-    /// children. Persistent macro owners remain in the arena until their own
-    /// exact LIFO semantic retirement.
+    /// Commits the exact direct-operation/scanner scope. Macro frames live in
+    /// the disjoint generation-owned scratch lanes until input retirement.
     pub fn commit_attempt_operation(
         &mut self,
         operation: crate::CommandAttemptMark,
@@ -1091,73 +817,7 @@ impl<G> CommandState<G> {
         if self.active_attempt_operation != Some(operation) {
             return Err(crate::AttemptError::InvalidCoordinate);
         }
-        let surviving_index = self.attempt.operation_macro_child_index(operation)?;
-        let roots = Arc::make_mut(&mut self.roots);
-        let surviving_child = surviving_index
-            .map(|(index, identity)| {
-                if roots
-                    .parameters
-                    .activations
-                    .get(index)
-                    .is_none_or(|activation| {
-                        activation.identity.0 != identity
-                            || !matches!(&activation.scope, MacroScopeOwner::Owned(_))
-                    })
-                {
-                    return Err(crate::AttemptError::InvalidCoordinate);
-                }
-                let scope = roots.parameters.activations[index]
-                    .scope
-                    .owned_mut()
-                    .expect("the ownership variant was preflighted");
-                Ok((index, identity, scope))
-            })
-            .transpose()?;
-        let outcome = self.attempt.commit_operation(operation, surviving_child)?;
-        match outcome {
-            crate::attempt::OperationCommit::Closed => {}
-            crate::attempt::OperationCommit::Returning(operation) => {
-                self.finish_attempt_child_scope(operation, false)?;
-            }
-            crate::attempt::OperationCommit::Transferred {
-                parent_index,
-                parent_identity,
-                from,
-                direct_child,
-                direct_child_index,
-                direct_child_identity,
-                physical_child,
-            } => {
-                let roots = Arc::make_mut(&mut self.roots);
-                if direct_child != physical_child {
-                    let direct = roots
-                        .parameters
-                        .activations
-                        .get_mut(direct_child_index)
-                        .filter(|activation| activation.identity.0 == direct_child_identity)
-                        .ok_or(crate::AttemptError::InvalidCoordinate)?;
-                    let MacroScopeOwner::Loaned(direct_loan) = &mut direct.scope else {
-                        return Err(crate::AttemptError::InvalidCoordinate);
-                    };
-                    if direct_loan.parent() != direct_child {
-                        return Err(crate::AttemptError::InvalidCoordinate);
-                    }
-                    direct_loan.inherit_return_activation(parent_index, parent_identity)?;
-                }
-                let Some(parent) = roots.parameters.activations.get_mut(parent_index) else {
-                    self.active_attempt_operation = None;
-                    return Ok(());
-                };
-                if parent.identity.0 != parent_identity {
-                    self.active_attempt_operation = None;
-                    return Ok(());
-                }
-                let MacroScopeOwner::Loaned(loan) = &mut parent.scope else {
-                    return Err(crate::AttemptError::InvalidCoordinate);
-                };
-                loan.retarget_child(from, direct_child)?;
-            }
-        }
+        self.attempt.commit_operation(operation)?;
         self.active_attempt_operation = None;
         Ok(())
     }
@@ -1235,6 +895,7 @@ impl<G> CommandState<G> {
             return;
         };
         let supported_continuation = self.parameters.activations.is_empty()
+            && self.scratch.is_quiescent()
             && self.scanner.is_quiescent()
             && self.alignment == AlignmentDeliveryState::<G>::default()
             && self.transient == TransientState::default()
@@ -1427,8 +1088,12 @@ impl<G> CommandState<G> {
     /// releases the command processor borrow.
     #[must_use]
     pub fn output_open_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
-        self.input
-            .output_open_context(stores, &self.parameters, self.attempt.arena())
+        self.input.output_open_context(
+            stores,
+            &self.parameters,
+            self.attempt.arena(),
+            &self.scratch,
+        )
     }
 
     /// Retains TeX82 §331's bottom terminal buffer for §310 after the
@@ -1448,8 +1113,12 @@ impl<G> CommandState<G> {
         &self,
         stores: &tex_state::CommandContext<'_, G>,
     ) -> bool {
-        self.input
-            .open_context_starts_with_print_ln(stores, &self.parameters, self.attempt.arena())
+        self.input.open_context_starts_with_print_ln(
+            stores,
+            &self.parameters,
+            self.attempt.arena(),
+            &self.scratch,
+        )
     }
 
     pub(crate) fn output_retiring_source_context(
@@ -1462,6 +1131,7 @@ impl<G> CommandState<G> {
             stores,
             &self.parameters,
             self.attempt.arena(),
+            &self.scratch,
         )
     }
 
@@ -1473,8 +1143,12 @@ impl<G> CommandState<G> {
     /// exactly as it would after §1026's `end_token_list`.
     #[must_use]
     pub fn output_close_context(&self, stores: &tex_state::CommandContext<'_, G>) -> String {
-        self.input
-            .output_close_context(stores, &self.parameters, self.attempt.arena())
+        self.input.output_close_context(
+            stores,
+            &self.parameters,
+            self.attempt.arena(),
+            &self.scratch,
+        )
     }
 
     /// Whether TeX82 §1370's artificial deferred-write input is live.

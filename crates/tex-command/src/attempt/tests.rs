@@ -326,21 +326,6 @@ fn warmed_parent_owned_scanner_results_allocate_zero_heap() {
 }
 
 #[test]
-fn argument_records_reject_more_than_texs_nine_slots() {
-    tex_state::with_universe(budget(), |_universe| {
-        let mut attempt = AttemptArena::<()>::default();
-        let empty = attempt
-            .allocate_token_list([])
-            .expect("test fixture is valid");
-        assert_eq!(
-            attempt.allocate_arguments(&[empty; 10]),
-            Err(AttemptError::InvalidCoordinate)
-        );
-    })
-    .expect("test fixture is valid");
-}
-
-#[test]
 fn attempt_local_provenance_stays_aligned_through_nested_builders() {
     tex_state::with_universe(budget(), |_universe| {
         let mut attempt = AttemptArena::<()>::default();
@@ -400,38 +385,6 @@ fn truncated_row_cannot_alias_a_reallocated_coordinate() {
                 .token_words(replacement)
                 .expect("test fixture is valid"),
             &[word('b')]
-        );
-    })
-    .expect("test fixture is valid");
-}
-
-#[test]
-fn macro_arguments_are_attempt_local_ranges_and_rollback_with_their_mark() {
-    tex_state::with_universe(budget(), |_universe| {
-        let mut attempt = AttemptArena::<()>::default();
-        let first = attempt
-            .allocate_token_list([word('a')])
-            .expect("test fixture is valid");
-        let second = attempt
-            .allocate_token_list([word('b')])
-            .expect("test fixture is valid");
-        let mark = attempt.mark();
-        let arguments = attempt
-            .allocate_arguments(&[first, second])
-            .expect("test fixture is valid");
-        assert_eq!(
-            attempt.arguments(arguments).expect("test fixture is valid"),
-            &[first, second]
-        );
-
-        attempt.truncate(mark).expect("test fixture is valid");
-        assert_eq!(
-            attempt.arguments(arguments),
-            Err(AttemptError::InvalidCoordinate)
-        );
-        assert_eq!(
-            attempt.token_words(first).expect("test fixture is valid"),
-            &[word('a')]
         );
     })
     .expect("test fixture is valid");
@@ -696,38 +649,6 @@ fn preallocated_scanner_sink_survives_a_younger_operation_rollback() {
 }
 
 #[test]
-fn deferred_child_keeps_the_original_operation_identity_and_drops_a_retired_return() {
-    let mut attempt = CommandAttempt::<()>::default();
-    let operation = attempt.begin_operation(0).expect("operation scope");
-    attempt
-        .active_operation
-        .as_mut()
-        .expect("active operation owner")
-        .set_return_activation(7, 11)
-        .expect("synthetic activation return");
-    let child = attempt.begin_child_scope().expect("scanner child");
-
-    let transfer = attempt
-        .defer_child_to_operation(child)
-        .expect("scanner takes the operation owner")
-        .expect("operation carried an activation return");
-    assert_eq!((transfer.0, transfer.1), (7, 11));
-    assert!(attempt.validate_operation(operation).is_ok());
-    assert_eq!(
-        attempt.clear_retired_operation_return(7, 12),
-        Err(AttemptError::InvalidCoordinate)
-    );
-    attempt
-        .clear_retired_operation_return(7, 11)
-        .expect("the exact retired activation return is cleared");
-    assert!(matches!(
-        attempt.commit_operation(operation, None),
-        Ok(super::OperationCommit::Closed)
-    ));
-    assert!(attempt.is_empty());
-}
-
-#[test]
 fn foreign_deferred_child_is_rejected_without_consuming_the_live_operation() {
     let mut attempt = CommandAttempt::<()>::default();
     let operation = attempt.begin_operation(0).expect("operation scope");
@@ -740,7 +661,7 @@ fn foreign_deferred_child_is_rejected_without_consuming_the_live_operation() {
         Err(AttemptError::ForeignAttempt)
     );
     assert!(attempt.validate_operation(operation).is_ok());
-    assert_eq!(attempt.rollback_operation(operation), Ok(None));
+    assert_eq!(attempt.rollback_operation(operation), Ok(()));
     assert!(attempt.is_empty());
 }
 
@@ -755,11 +676,11 @@ fn rollback_truncates_a_child_that_inherited_the_operation_owner() {
         .expect("child scratch");
     assert_eq!(
         attempt.defer_child_to_operation(child),
-        Ok(None),
-        "the child directly inherits an operation with no macro return"
+        Ok(()),
+        "the child directly inherits the operation"
     );
 
-    assert_eq!(attempt.rollback_operation(operation), Ok(None));
+    assert_eq!(attempt.rollback_operation(operation), Ok(()));
     assert_eq!(
         attempt.arena().token_words(rejected),
         Err(AttemptError::InvalidCoordinate)

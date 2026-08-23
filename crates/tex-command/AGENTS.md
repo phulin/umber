@@ -33,13 +33,14 @@ collector (see `src/conditionals.rs`).
 
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.
 - `src/lib.rs`: intentionally small public facade and private module tree.
-- `src/attempt.rs` and `src/attempt/tests.rs`: transitional command scratch.
-  Its scope capabilities, move-only scope owners, loans, watermarks, mailboxes,
-  and promotion machinery are implementation debt to delete, not architecture
-  authority. The target in `docs/runtime_storage_lifetimes.md` is one current-
-  generation `ExecutionScratch<G>` with physically separate packed lanes,
-  length-checkpoint push/pop, destination-directed surviving output, and
-  branded index-only suspension.
+- `src/attempt.rs` and `src/attempt/tests.rs`: transitional scanner/operation
+  scratch, including scanner-owned sinks, promotion, and suspension scope
+  capabilities. Macro invocation storage does not use this arena.
+- `src/execution_scratch.rs`: current-generation reusable execution scratch.
+  Macro argument words use stable linked fixed-size chunks from one coarse
+  pool, fixed nine-range slot metadata, private branded cursors, and intrusive
+  O(1) chunk-chain recycling; activations never own a heap buffer or arena
+  scope.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine
@@ -209,11 +210,9 @@ collector (see `src/conditionals.rs`).
   caller that starts from a broader notion and subtracts them by hand is
   re-deriving this predicate one exception at a time.
 - `src/macro_call.rs`, `src/macro_call/tests.rs`: private canonical scalar
-  macro matcher, directly indexed admitted packed-macro arena segments and
-  exact-meaning owner chains that reject rollback-reused coordinates without
-  reconstructing or weak-upgrading ordinary cache hits, reusable argument chunks, packed
-  invocation-record coordinates, compact activation/replay coordinates, and
-  focused tests.
+  macro matcher, destination-directed construction into execution-scratch
+  chunks, stable sealed slot descriptors, sequential parameter replay cursors,
+  exact tail/nested retirement, and focused tests.
 - `src/conditionals.rs`: private independent condition-stack machine; also
   renders e-TeX 2.6's `\tracingifs` `{...}` trace lines at conditional entry
   and at each `\or`/`\else`/`\fi` delimiter resolution, printed directly

@@ -353,7 +353,9 @@ fn project_token_cursor<G>(
     });
     if matches!(
         cursor.payload,
-        TokenPayload::MacroReplacement { .. } | TokenPayload::AttemptList { .. }
+        TokenPayload::MacroReplacement { .. }
+            | TokenPayload::AttemptList { .. }
+            | TokenPayload::MacroArgument { .. }
     ) {
         return None;
     }
@@ -363,7 +365,9 @@ fn project_token_cursor<G>(
                 project_token(hash, chunk.word(index)?.token()?, state)?;
             }
         }
-        TokenPayload::MacroReplacement { .. } | TokenPayload::AttemptList { .. } => {
+        TokenPayload::MacroReplacement { .. }
+        | TokenPayload::AttemptList { .. }
+        | TokenPayload::MacroArgument { .. } => {
             unreachable!("packed macro payloads fail closed above")
         }
     }
@@ -441,8 +445,9 @@ impl<G> InputState<G> {
         stores: &tex_state::CommandContext<'_, G>,
         parameters: &crate::macro_call::ParameterState<G>,
         attempt: &crate::attempt::AttemptArena<G>,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> String {
-        self.render_context_for_levels(&self.levels, stores, parameters, attempt)
+        self.render_context_for_levels(&self.levels, stores, parameters, attempt, scratch)
     }
 
     /// Whether §312's first displayed level enters §314's unconditional
@@ -457,6 +462,7 @@ impl<G> InputState<G> {
         stores: &tex_state::CommandContext<'_, G>,
         parameters: &crate::macro_call::ParameterState<G>,
         attempt: &crate::attempt::AttemptArena<G>,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> bool {
         let widths = stores.error_context_widths();
         for (index, level) in self.levels.iter().enumerate().rev() {
@@ -473,7 +479,7 @@ impl<G> InputState<G> {
                 }
                 InputLevel::Tokens(tokens) => {
                     if Self::token_context_level(
-                        stores, tokens, current, parameters, attempt, widths,
+                        stores, tokens, current, parameters, attempt, scratch, widths,
                     )
                     .is_some()
                     {
@@ -496,6 +502,7 @@ impl<G> InputState<G> {
         stores: &tex_state::CommandContext<'_, G>,
         parameters: &crate::macro_call::ParameterState<G>,
         attempt: &crate::attempt::AttemptArena<G>,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> String {
         let mut levels = self.levels.clone();
         if let Some(InputLevel::Source(source)) = levels.iter_mut().find(|level| {
@@ -506,7 +513,7 @@ impl<G> InputState<G> {
                 line.physical = line.physical.with_number(source.cursor.next_line_number);
             }
         }
-        self.render_context_for_levels(&levels, stores, parameters, attempt)
+        self.render_context_for_levels(&levels, stores, parameters, attempt, scratch)
     }
 
     pub(crate) fn output_close_context(
@@ -514,6 +521,7 @@ impl<G> InputState<G> {
         stores: &tex_state::CommandContext<'_, G>,
         parameters: &crate::macro_call::ParameterState<G>,
         attempt: &crate::attempt::AttemptArena<G>,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> String {
         let output_index = self.levels.iter().position(|level| {
             matches!(
@@ -525,7 +533,7 @@ impl<G> InputState<G> {
             )
         });
         let levels = output_index.map_or(self.levels.as_slice(), |index| &self.levels[..index]);
-        self.render_context_for_levels(levels, stores, parameters, attempt)
+        self.render_context_for_levels(levels, stores, parameters, attempt, scratch)
     }
 
     fn render_context_for_levels(
@@ -534,10 +542,11 @@ impl<G> InputState<G> {
         stores: &tex_state::CommandContext<'_, G>,
         parameters: &crate::macro_call::ParameterState<G>,
         attempt: &crate::attempt::AttemptArena<G>,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
     ) -> String {
         let widths = stores.error_context_widths();
         tex_state::print::render_error_context(
-            &self.error_context_levels_for(levels, stores, parameters, attempt, widths),
+            &self.error_context_levels_for(levels, stores, parameters, attempt, scratch, widths),
             widths,
             stores.untracked_int_param(tex_state::env::banks::IntParam::new(54)),
         )
@@ -555,6 +564,7 @@ impl<G> InputState<G> {
         stores: &tex_state::CommandContext<'_, G>,
         parameters: &crate::macro_call::ParameterState<G>,
         attempt: &crate::attempt::AttemptArena<G>,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Vec<tex_state::print::ErrorContextLevel> {
         let mut levels = Vec::new();
@@ -594,7 +604,7 @@ impl<G> InputState<G> {
                 }
                 InputLevel::Tokens(tokens) => {
                     if let Some(rendered) = Self::token_context_level(
-                        stores, tokens, current, parameters, attempt, widths,
+                        stores, tokens, current, parameters, attempt, scratch, widths,
                     ) {
                         levels.push(rendered);
                     }
@@ -821,17 +831,20 @@ impl<G> InputState<G> {
         current: bool,
         parameters: &crate::macro_call::ParameterState<G>,
         attempt: &crate::attempt::AttemptArena<G>,
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
         widths: tex_state::print::ErrorContextWidths,
     ) -> Option<tex_state::print::ErrorContextLevel> {
         fn payload_len<G>(
             _stores: &tex_state::CommandContext<'_, G>,
             tokens: &TokenCursor<G>,
             _parameters: &crate::macro_call::ParameterState<G>,
+            _scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> usize {
             match &tokens.payload {
                 TokenPayload::Packed(chunk) => chunk.len(),
                 TokenPayload::MacroReplacement { len, .. } => *len as usize,
                 TokenPayload::AttemptList { len, .. } => *len as usize,
+                TokenPayload::MacroArgument { len, .. } => *len as usize,
             }
         }
 
@@ -841,6 +854,7 @@ impl<G> InputState<G> {
             index: usize,
             _parameters: &crate::macro_call::ParameterState<G>,
             attempt: &crate::attempt::AttemptArena<G>,
+            scratch: &crate::execution_scratch::ExecutionScratch<G>,
         ) -> Option<tex_state::token::Token> {
             match &tokens.payload {
                 TokenPayload::Packed(chunk) => chunk.word(index).map(|word| word.semantic_token()),
@@ -851,6 +865,10 @@ impl<G> InputState<G> {
                     .map(|word| word.semantic_token()),
                 TokenPayload::AttemptList { list, .. } => attempt
                     .token_word(*list, index)
+                    .ok()
+                    .map(|word| word.semantic_token()),
+                TokenPayload::MacroArgument { replay, .. } => scratch
+                    .argument_word(replay.range(), index)
                     .ok()
                     .map(|word| word.semantic_token()),
             }
@@ -901,7 +919,7 @@ impl<G> InputState<G> {
         } else {
             None
         };
-        let count = payload_len(stores, tokens, parameters);
+        let count = payload_len(stores, tokens, parameters, scratch);
         let split = tokens.position().min(count);
         let noexpand_marker = matches!(
             tokens.behavior,
@@ -933,7 +951,8 @@ impl<G> InputState<G> {
             if before.is_complete() {
                 break;
             }
-            if let Some(token) = payload_token(stores, tokens, index, parameters, attempt) {
+            if let Some(token) = payload_token(stores, tokens, index, parameters, attempt, scratch)
+            {
                 render_token(stores, token, &mut raw, &mut rendered);
                 before.prepend_str(&rendered);
             }
@@ -1006,7 +1025,8 @@ impl<G> InputState<G> {
             if after.is_complete() {
                 break;
             }
-            if let Some(token) = payload_token(stores, tokens, index, parameters, attempt) {
+            if let Some(token) = payload_token(stores, tokens, index, parameters, attempt, scratch)
+            {
                 render_token(stores, token, &mut raw, &mut rendered);
                 after.push_str(&rendered);
             }

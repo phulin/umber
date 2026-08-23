@@ -1,89 +1,9 @@
 use tex_state::env::AssignmentScope;
 use tex_state::meaning::{MeaningFlags, MeaningWord};
-use tex_state::token::{Catcode, OriginId, Token, TokenWord, TracedTokenWord};
+use tex_state::token::{Catcode, Token, TokenWord};
 
-use super::{
-    MacroArgumentBuildError, MacroArgumentBuilder, MacroCallOutcome, MacroParameterEscape,
-    ParameterState,
-};
-use crate::attempt::AttemptArena;
+use super::{MacroCallOutcome, MacroParameterEscape};
 use crate::{CommandHostCapabilities, CommandState};
-
-fn word(ch: char) -> TracedTokenWord {
-    TracedTokenWord::pack(
-        Token::Char {
-            ch,
-            cat: Catcode::Other,
-        },
-        OriginId::UNKNOWN,
-    )
-}
-
-#[test]
-fn arguments_are_completed_in_tex_parameter_order_and_live_in_the_attempt() {
-    crate::test_harness::with_universe(|_universe| {
-        let mut attempt = AttemptArena::<()>::default();
-        let scope = attempt.begin_owned_scope().expect("argument scope");
-        let first = attempt.allocate_token_list([word('a')]).expect("first");
-        let second = attempt.allocate_token_list([]).expect("second");
-        let mut builder = MacroArgumentBuilder::default();
-        builder.complete(1, first).expect("slot one");
-        assert_eq!(
-            builder.complete(3, second),
-            Err(MacroArgumentBuildError::OutOfOrderSlot {
-                expected: 2,
-                actual: 3,
-            })
-        );
-        builder.complete(2, second).expect("slot two");
-        let arguments = builder.finish(&mut attempt).expect("argument record");
-        assert_eq!(
-            attempt.arguments(arguments.record().expect("nonempty record")),
-            Ok(&[first, second][..])
-        );
-        attempt.close_owned_scope(scope).expect("argument scope");
-    });
-}
-
-#[test]
-fn activation_retirement_drops_only_the_current_macro_frame() {
-    crate::test_harness::with_universe(|universe| {
-        let definition = universe
-            .allocate_definition(&[], &[TokenWord::pack(Token::Param(1))])
-            .expect("definition");
-        let name = universe.intern("m").expect("name").symbol();
-        let mut attempt = AttemptArena::<()>::default();
-        let first_scope = attempt.begin_owned_scope().expect("first scope");
-        let first_arguments = MacroArgumentBuilder::default()
-            .finish(&mut attempt)
-            .expect("first arguments");
-        let second_scope = attempt.begin_owned_scope().expect("second scope");
-        let second_arguments = MacroArgumentBuilder::default()
-            .finish(&mut attempt)
-            .expect("second arguments");
-        let mut parameters = ParameterState::default();
-        let first = parameters.push_activation(
-            name,
-            definition,
-            first_arguments,
-            OriginId::UNKNOWN,
-            first_scope,
-        );
-        let second = parameters.push_activation(
-            name,
-            definition,
-            second_arguments,
-            OriginId::UNKNOWN,
-            second_scope,
-        );
-        assert_ne!(first, second);
-        assert_eq!(parameters.activations.len(), 2);
-        parameters.retire_last_activation();
-        assert_eq!(parameters.activations.len(), 1);
-        assert_eq!(parameters.activations[0].identity, first);
-    });
-}
-
 #[test]
 fn parameter_escape_distinguishes_substitution_from_a_literal_hash() {
     assert_eq!(
@@ -139,6 +59,32 @@ fn install_macro<G>(
     Token::Cs(symbol.symbol())
 }
 
+fn install_replacement_macro<G>(
+    universe: &mut tex_state::Universe<G>,
+    name: &str,
+    replacement: &[Token],
+) -> Token {
+    let definition = universe
+        .allocate_definition(
+            &[],
+            &replacement
+                .iter()
+                .copied()
+                .map(TokenWord::pack)
+                .collect::<Vec<_>>(),
+        )
+        .expect("macro definition");
+    let symbol = universe.intern(name).expect("macro name");
+    universe
+        .assign_meaning(
+            symbol,
+            MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+            AssignmentScope::Global,
+        )
+        .expect("macro meaning");
+    Token::Cs(symbol.symbol())
+}
+
 fn active_argument_tokens<G>(processor: &CommandState<G>) -> Vec<Token> {
     let arguments = processor
         .parameters
@@ -146,23 +92,167 @@ fn active_argument_tokens<G>(processor: &CommandState<G>) -> Vec<Token> {
         .last()
         .expect("macro activation")
         .arguments;
-    let record = arguments.record().expect("argument record");
-    processor
-        .attempt
-        .arena()
-        .arguments(record)
-        .expect("argument lists")
-        .iter()
-        .flat_map(|argument| {
+    let range = processor
+        .scratch
+        .argument_range(arguments.frame(), 1)
+        .expect("live frame")
+        .expect("first argument");
+    (0..processor.scratch.argument_len(range).expect("live range"))
+        .map(|index| {
             processor
-                .attempt
-                .arena()
-                .token_words(*argument)
-                .expect("argument words")
-                .iter()
-                .map(|word| word.semantic_token())
+                .scratch
+                .argument_word(range, index)
+                .expect("argument word")
+                .semantic_token()
         })
         .collect()
+}
+
+#[test]
+fn nested_and_tail_macro_calls_keep_only_live_stable_slots() {
+    crate::test_harness::with_universe(|universe| {
+        let inner = install_replacement_macro(universe, "inner", &[letter('i')]);
+        let nested = install_replacement_macro(universe, "nested", &[inner, letter('t')]);
+        let tail = install_replacement_macro(universe, "tail", &[inner]);
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, [nested, letter('n'), tail, letter('z')]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("nested expansion")
+                .expect("inner result")
+                .spelling()
+                .semantic_token(),
+            letter('i')
+        );
+        assert_eq!(processor.command.scratch.frame_len(), 2);
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("outer tail")
+                .expect("tail token")
+                .spelling()
+                .semantic_token(),
+            letter('t')
+        );
+        assert_eq!(processor.command.scratch.frame_len(), 1);
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("source separator")
+                .expect("separator token")
+                .spelling()
+                .semantic_token(),
+            letter('n')
+        );
+        assert_eq!(processor.command.scratch.frame_len(), 0);
+
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("tail expansion")
+                .expect("tail result")
+                .spelling()
+                .semantic_token(),
+            letter('i')
+        );
+        assert_eq!(processor.command.scratch.frame_len(), 1);
+        assert_eq!(processor.command.scratch.retained_slot_len(), 2);
+        assert_eq!(processor.command.scratch.copied_macro_words(), 0);
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("post-tail source")
+                .expect("source token")
+                .spelling()
+                .semantic_token(),
+            letter('z')
+        );
+        assert!(processor.command.scratch.is_quiescent());
+    });
+}
+
+#[test]
+fn repeated_out_parameter_replay_restarts_its_private_chunk_cursor() {
+    crate::test_harness::with_universe(|universe| {
+        let definition = universe
+            .allocate_definition(
+                &[TokenWord::pack(Token::Param(1))],
+                &[
+                    TokenWord::pack(Token::Param(1)),
+                    TokenWord::pack(Token::Param(1)),
+                ],
+            )
+            .expect("repeated-parameter definition");
+        let symbol = universe.intern("repeatarg").expect("macro name");
+        universe
+            .assign_meaning(
+                symbol,
+                MeaningWord::macro_definition(MeaningFlags::EMPTY, definition),
+                AssignmentScope::Global,
+            )
+            .expect("macro meaning");
+        let expected = (0..70)
+            .map(|index| letter(char::from(b'a' + (index % 26) as u8)))
+            .collect::<Vec<_>>();
+        let mut input = Vec::with_capacity(expected.len() + 4);
+        input.push(Token::Cs(symbol.symbol()));
+        input.push(Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        });
+        input.extend(expected.iter().copied());
+        input.push(Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        });
+        input.push(letter('z'));
+
+        let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
+        crate::test_harness::push(&mut command, input);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
+        let mut processor = crate::test_harness::processor(
+            &mut command,
+            universe,
+            &mut capabilities,
+            &mut diagnostic_effects,
+        );
+        let mut actual = Vec::new();
+        for _ in 0..expected.len() * 2 {
+            actual.push(
+                processor
+                    .get_x_token()
+                    .expect("parameter replay")
+                    .expect("argument token")
+                    .spelling()
+                    .semantic_token(),
+            );
+        }
+        assert_eq!(actual[..expected.len()], expected);
+        assert_eq!(actual[expected.len()..], expected);
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("following source")
+                .expect("following token")
+                .spelling()
+                .semantic_token(),
+            letter('z')
+        );
+        assert!(processor.command.scratch.is_quiescent());
+    });
 }
 
 #[test]

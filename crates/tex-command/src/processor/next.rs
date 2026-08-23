@@ -52,6 +52,14 @@ pub(crate) const RUNAWAY_SCAN_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0338;
 /// following character instead of producing a token for it.
 const INVALID_SOURCE_CHARACTER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0345;
 
+struct StoredTokenDelivery<G> {
+    spelling: TracedTokenWord,
+    position: u64,
+    behavior: TokenBehavior,
+    source_provenance: Option<SourceProvenance>,
+    advanced_replay: Option<crate::execution_scratch::MacroReplayCursor<G>>,
+}
+
 use super::alignment::AlignmentDeliveryState;
 use super::alignment::CELL_ALIGN_STATE;
 
@@ -195,8 +203,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     return None;
                 };
                 (!matches!(cursor.behavior, TokenBehavior::VTemplate)
-                    && Self::next_stored_token(cursor, &self.state, self.command.attempt.arena())
-                        .is_none())
+                    && Self::next_stored_token(
+                        cursor,
+                        &self.state,
+                        self.command.attempt.arena(),
+                        &self.command.scratch,
+                    )
+                    .is_none())
                 .then(|| cursor.identity())
             }) else {
                 return Ok(retired);
@@ -332,7 +345,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             // `loc=null`. A live token either in the v-template itself or in
             // an interposed token-list frame is the canonical interwoven-
             // preamble fatal path, not an internal Rust invariant failure.
-            if Self::next_stored_token(cursor, &self.state, self.command.attempt.arena()).is_some()
+            if Self::next_stored_token(
+                cursor,
+                &self.state,
+                self.command.attempt.arena(),
+                &self.command.scratch,
+            )
+            .is_some()
             {
                 break;
             }
@@ -1115,9 +1134,13 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
 
         let output_has_remaining = match &self.command.input.levels[output_index] {
-            InputLevel::Tokens(cursor) => {
-                Self::next_stored_token(cursor, &self.state, self.command.attempt.arena()).is_some()
-            }
+            InputLevel::Tokens(cursor) => Self::next_stored_token(
+                cursor,
+                &self.state,
+                self.command.attempt.arena(),
+                &self.command.scratch,
+            )
+            .is_some(),
             InputLevel::Source(_) => unreachable!("output replay is a token level"),
         };
         let levels_above_are_depleted_backups = self.command.input.levels[output_index + 1..]
@@ -1131,6 +1154,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 cursor,
                                 &self.state,
                                 self.command.attempt.arena(),
+                                &self.command.scratch,
                             )
                             .is_none()
                 )
@@ -1156,6 +1180,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                                 cursor,
                                 &self.state,
                                 self.command.attempt.arena(),
+                                &self.command.scratch,
                             )
                             .is_some(),
                         )
@@ -1185,7 +1210,13 @@ impl<G> CommandProcessor<'_, '_, G> {
             return Ok(());
         };
         if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-            || Self::next_stored_token(cursor, &self.state, self.command.attempt.arena()).is_some()
+            || Self::next_stored_token(
+                cursor,
+                &self.state,
+                self.command.attempt.arena(),
+                &self.command.scratch,
+            )
+            .is_some()
             || !matches!(
                 cursor
                     .payload
@@ -1823,9 +1854,21 @@ impl<G> CommandProcessor<'_, '_, G> {
                         };
                         debug_assert_eq!(cursor.identity(), identity);
                         debug_assert_eq!(cursor.position(), index);
-                        Self::next_stored_token(cursor, &self.state, self.command.attempt.arena())
+                        Self::next_stored_token(
+                            cursor,
+                            &self.state,
+                            self.command.attempt.arena(),
+                            &self.command.scratch,
+                        )
                     };
-                    if let Some((spelling, position, behavior, source_provenance)) = next {
+                    if let Some(StoredTokenDelivery {
+                        spelling,
+                        position,
+                        behavior,
+                        source_provenance,
+                        advanced_replay,
+                    }) = next
+                    {
                         let InputLevel::Tokens(cursor) = self
                             .command
                             .input
@@ -1837,6 +1880,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                         };
                         if cursor.frame.advance().map(|position| position as usize) != Some(index) {
                             return Err(CommandError::input_invariant());
+                        }
+                        if let TokenPayload::MacroArgument { replay, .. } = &mut cursor.payload {
+                            *replay = advanced_replay.ok_or_else(CommandError::input_invariant)?;
                         }
                         return Ok(Some(DeliveredToken {
                             spelling,
@@ -1879,34 +1925,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         identity: InputLevelId,
     ) -> Result<RetirementRestart, CommandError> {
-        self.retire_and_restart_with_local_child(identity, None)
-    }
-
-    fn retire_and_restart_around_local_child(
-        &mut self,
-        identity: InputLevelId,
-        child: &mut crate::attempt::OwnedAttemptScope,
-    ) -> Result<RetirementRestart, CommandError> {
-        self.retire_and_restart_with_local_child(identity, Some(child))
-    }
-
-    fn retire_and_restart_with_local_child(
-        &mut self,
-        identity: InputLevelId,
-        local_child: Option<&mut crate::attempt::OwnedAttemptScope>,
-    ) -> Result<RetirementRestart, CommandError> {
         let open_depths = self.command.source_open_depths(identity);
         let nesting_context = self
             .pending_file_warning_context
             .take()
             .and_then(|(level, context)| (level == identity).then_some(context));
-        let retirement = if let Some(child) = local_child {
-            self.command
-                .retire_exhausted_input_around_local_child(identity, child)
-        } else {
-            self.command.retire_exhausted_input(identity)
-        }
-        .map_err(|_| CommandError::input_invariant())?;
+        let retirement = self
+            .command
+            .retire_exhausted_input(identity)
+            .map_err(|_| CommandError::input_invariant())?;
         let action = retirement.action;
         // e-TeX 2.6 [23.328]'s `file_warning`: `end_file_reading` retiring a
         // real source level (never a `\read` pseudo-file's `EndReadLine`, and
@@ -2106,27 +2133,43 @@ impl<G> CommandProcessor<'_, '_, G> {
         cursor: &TokenCursor<G>,
         stores: &tex_state::CommandContext<'_, G>,
         attempt: &crate::attempt::AttemptArena<G>,
-    ) -> Option<(
-        TracedTokenWord,
-        u64,
-        TokenBehavior,
-        Option<SourceProvenance>,
-    )> {
+        scratch: &crate::execution_scratch::ExecutionScratch<G>,
+    ) -> Option<StoredTokenDelivery<G>> {
         let index = cursor.position();
         let position = u64::try_from(index).ok()?;
-        let spelling = match &cursor.payload {
-            TokenPayload::Packed(chunk) => chunk.get(index),
-            TokenPayload::MacroReplacement { definition, .. } => stores
-                .definition(*definition)
-                .replacement_text()
-                .get(index)
-                .map(|word| (TracedTokenWord::from_parts(*word, OriginId::UNKNOWN), None)),
-            TokenPayload::AttemptList { list, .. } => attempt
-                .token_word(*list, index)
-                .ok()
-                .map(|spelling| (spelling, None)),
-        }?;
-        Some((spelling.0, position, cursor.behavior.clone(), spelling.1))
+        let (spelling, advanced_replay) = match &cursor.payload {
+            TokenPayload::Packed(chunk) => (chunk.get(index), None),
+            TokenPayload::MacroReplacement { definition, .. } => (
+                stores
+                    .definition(*definition)
+                    .replacement_text()
+                    .get(index)
+                    .map(|word| (TracedTokenWord::from_parts(*word, OriginId::UNKNOWN), None)),
+                None,
+            ),
+            TokenPayload::MacroArgument { replay, .. } => (
+                scratch
+                    .replay_word(*replay)
+                    .ok()
+                    .map(|spelling| (spelling, None)),
+                scratch.advanced_replay(*replay).ok(),
+            ),
+            TokenPayload::AttemptList { list, .. } => (
+                attempt
+                    .token_word(*list, index)
+                    .ok()
+                    .map(|spelling| (spelling, None)),
+                None,
+            ),
+        };
+        let spelling = spelling?;
+        Some(StoredTokenDelivery {
+            spelling: spelling.0,
+            position,
+            behavior: cursor.behavior.clone(),
+            source_provenance: spelling.1,
+            advanced_replay,
+        })
     }
 
     /// TeX82 §§325 and 390 clean off *every* recently depleted token list
@@ -2153,20 +2196,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// delivery: a run of levels can be depleted at once, and the whole run
     /// retires before the push.
     pub(crate) fn conserve_input_stack(&mut self) -> Result<(), CommandError> {
-        self.conserve_input_stack_with_local_child(None)
-    }
-
-    pub(crate) fn conserve_input_stack_around_local_child(
-        &mut self,
-        child: &mut crate::attempt::OwnedAttemptScope,
-    ) -> Result<(), CommandError> {
-        self.conserve_input_stack_with_local_child(Some(child))
-    }
-
-    fn conserve_input_stack_with_local_child(
-        &mut self,
-        mut local_child: Option<&mut crate::attempt::OwnedAttemptScope>,
-    ) -> Result<(), CommandError> {
         loop {
             let depleted = match self.command.input.levels.last() {
                 Some(InputLevel::Tokens(cursor))
@@ -2175,6 +2204,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                             cursor,
                             &self.state,
                             self.command.attempt.arena(),
+                            &self.command.scratch,
                         )
                         .is_none() =>
                 {
@@ -2185,11 +2215,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             let Some(identity) = depleted else {
                 return Ok(());
             };
-            let retirement = if let Some(child) = local_child.as_deref_mut() {
-                self.retire_and_restart_around_local_child(identity, child)?
-            } else {
-                self.retire_and_restart(identity)?
-            };
+            let retirement = self.retire_and_restart(identity)?;
             match retirement {
                 // Finished stored replay episodes queue their completion in
                 // command state. Draining continues so the whole depleted run

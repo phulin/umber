@@ -701,7 +701,7 @@
         },
         {
           "path": "crates/tex-command/src/macro_call/tests.rs",
-          "test": "activation_retirement_drops_only_the_current_macro_frame"
+          "test": "nested_and_tail_macro_calls_keep_only_live_stable_slots"
         },
         {
           "path": "tools/tex-command-stream/tests/it/repository_comparison.rs",
@@ -986,7 +986,7 @@
       "coverage": [
         {
           "path": "crates/tex-command/src/macro_call/tests.rs",
-          "test": "arguments_are_completed_in_tex_parameter_order_and_live_in_the_attempt"
+          "test": "repeated_out_parameter_replay_restarts_its_private_chunk_cursor"
         },
         {
           "path": "crates/tex-command/src/macro_call/tests.rs",

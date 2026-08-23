@@ -9,10 +9,7 @@ use tex_state::macro_definition::MacroParameterPattern;
 use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::attempt::{
-    AttemptArgumentRecordId, AttemptScopeCoordinate, AttemptScopeLoan, AttemptTokenBufferId,
-    AttemptTokenListId, OwnedAttemptScope,
-};
+use crate::execution_scratch::{MacroFrameId, MacroMatch, MacroMatchBuffer, MacroWords};
 use crate::processor::status::{
     ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
 };
@@ -25,11 +22,11 @@ use crate::observation::{
 const EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0395;
 pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
 
-/// Persistent ownership of live macro-argument activations.
+/// Semantic ownership of live macro activations.
 ///
-/// This is the sole owner of the activation chain. Macro-body input behavior
-/// carries a typed activation identity, while parameter payloads retain shared
-/// ownership of the one contiguous argument allocation.
+/// Macro-body input behavior carries a typed activation identity. Each
+/// activation holds only a private generation-branded descriptor for its
+/// stable execution-scratch slot.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ParameterState<G> {
     pub(crate) activations: Vec<MacroActivation<G>>,
@@ -40,7 +37,7 @@ impl<G> Clone for ParameterState<G> {
     fn clone(&self) -> Self {
         assert!(
             self.activations.is_empty(),
-            "open macro scope capabilities cannot cross a command-root clone"
+            "live macro scratch descriptors cannot cross a command-root clone"
         );
         Self {
             activations: Vec::new(),
@@ -62,7 +59,7 @@ impl<G> Default for ParameterState<G> {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct MacroActivationId(pub(crate) u64);
 
-/// One live macro call and the materialized arguments it owns.
+/// One live macro call and its stable scratch-slot descriptor.
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub(crate) struct MacroActivation<G> {
     pub(crate) identity: MacroActivationId,
@@ -70,48 +67,36 @@ pub(crate) struct MacroActivation<G> {
     /// §314 prints it as this level's context descriptor.
     pub(crate) name: Symbol,
     pub(crate) definition: DefinitionId<G>,
-    pub(crate) arguments: MacroArguments,
+    pub(crate) arguments: MacroArguments<G>,
     pub(crate) invocation: OriginId,
-    /// Dynamic child scope which owns matching scratch, arguments, and body
-    /// replay until exact-LIFO activation retirement.
-    pub(crate) scope: MacroScopeOwner,
 }
 
-/// Exact move-only ownership state for one live macro frame.
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub(crate) enum MacroScopeOwner {
-    Owned(OwnedAttemptScope),
-    Loaned(AttemptScopeLoan),
-    Transition,
+/// Private descriptor for one sealed at-most-nine-argument scratch slot.
+#[derive(Debug)]
+pub(crate) struct MacroArguments<G> {
+    frame: MacroFrameId<G>,
 }
 
-pub(crate) struct RetiredMacroScope {
-    pub(crate) index: usize,
-    pub(crate) identity: MacroActivationId,
-    pub(crate) scope: MacroScopeOwner,
-}
+impl<G> Copy for MacroArguments<G> {}
 
-impl MacroScopeOwner {
-    pub(crate) const fn coordinate(&self) -> AttemptScopeCoordinate {
-        match self {
-            Self::Owned(owner) => owner.coordinate(),
-            Self::Loaned(loan) => loan.parent(),
-            Self::Transition => panic!("macro scope ownership is in a synchronous transition"),
-        }
-    }
-
-    pub(crate) fn owned_mut(&mut self) -> Option<&mut OwnedAttemptScope> {
-        match self {
-            Self::Owned(owner) => Some(owner),
-            Self::Loaned(_) | Self::Transition => None,
-        }
+impl<G> Clone for MacroArguments<G> {
+    fn clone(&self) -> Self {
+        *self
     }
 }
 
-/// One contiguous macro-argument allocation and its at-most-nine ranges.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct MacroArguments {
-    record: Option<AttemptArgumentRecordId>,
+impl<G> PartialEq for MacroArguments<G> {
+    fn eq(&self, other: &Self) -> bool {
+        self.frame == other.frame
+    }
+}
+
+impl<G> Eq for MacroArguments<G> {}
+
+impl<G> core::hash::Hash for MacroArguments<G> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.frame.hash(state);
+    }
 }
 
 /// Exhaustive result of TeX82's `macro_call`.
@@ -119,24 +104,6 @@ pub(crate) struct MacroArguments {
 pub(crate) enum MacroCallOutcome {
     Activated,
     PrefixMismatchRecovered,
-}
-
-/// Incremental construction of one canonical macro activation.
-///
-/// The scalar matcher completes arguments in definition order. Each completed
-/// argument is appended once to this one buffer; its slot records only a
-/// half-open range, so parameter replay never duplicates argument tokens.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct MacroArgumentBuilder {
-    arguments: smallvec::SmallVec<[AttemptTokenListId; 9]>,
-    next_slot: u8,
-}
-
-/// A malformed attempt to finish one macro argument.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum MacroArgumentBuildError {
-    InvalidSlot(u8),
-    OutOfOrderSlot { expected: u8, actual: u8 },
 }
 
 /// Compact interpretation of a parameter-related replacement token.
@@ -178,57 +145,6 @@ impl MacroParameterEscape {
     }
 }
 
-impl MacroArgumentBuilder {
-    /// Completes the next argument in canonical definition order.
-    pub(crate) fn complete(
-        &mut self,
-        slot: u8,
-        argument: AttemptTokenListId,
-    ) -> Result<(), MacroArgumentBuildError> {
-        self.validate_slot(slot)?;
-        self.arguments.push(argument);
-        self.next_slot = slot;
-        Ok(())
-    }
-
-    /// Completes an argument by transferring the matcher's canonical packed
-    /// buffer. This is the production macro-call seam; it avoids rebuilding
-    /// per-token owner pairs between matching and activation replay.
-    fn complete_buffer(
-        &mut self,
-        slot: u8,
-        argument: AttemptTokenListId,
-    ) -> Result<(), MacroArgumentBuildError> {
-        self.complete(slot, argument)
-    }
-
-    fn validate_slot(&self, slot: u8) -> Result<(), MacroArgumentBuildError> {
-        if !(1..=9).contains(&slot) {
-            return Err(MacroArgumentBuildError::InvalidSlot(slot));
-        }
-        let expected = self.next_slot + 1;
-        if slot != expected {
-            return Err(MacroArgumentBuildError::OutOfOrderSlot {
-                expected,
-                actual: slot,
-            });
-        }
-        Ok(())
-    }
-
-    /// Freezes the single shared argument allocation for one activation.
-    pub(crate) fn finish<G>(
-        self,
-        attempt: &mut crate::attempt::AttemptArena<G>,
-    ) -> Result<MacroArguments, crate::attempt::AttemptError> {
-        attempt
-            .allocate_arguments(&self.arguments)
-            .map(|record| MacroArguments {
-                record: Some(record),
-            })
-    }
-}
-
 impl<G> ParameterState<G> {
     /// Installs the sole owner of a macro activation before its body level is
     /// pushed. The caller immediately associates the returned identity with
@@ -237,13 +153,12 @@ impl<G> ParameterState<G> {
         &mut self,
         name: Symbol,
         definition: DefinitionId<G>,
-        arguments: MacroArguments,
+        arguments: MacroArguments<G>,
         invocation: OriginId,
-        scope: OwnedAttemptScope,
     ) -> MacroActivationId {
         let identity = MacroActivationId(self.next_activation_identity);
         self.next_activation_identity = self.next_activation_identity.wrapping_add(1);
-        self.install_activation(identity, name, definition, arguments, invocation, scope);
+        self.install_activation(identity, name, definition, arguments, invocation);
         identity
     }
 
@@ -252,11 +167,10 @@ impl<G> ParameterState<G> {
         identity: MacroActivationId,
         name: Symbol,
         definition: DefinitionId<G>,
-        arguments: MacroArguments,
+        arguments: MacroArguments<G>,
         invocation: OriginId,
-        scope: OwnedAttemptScope,
     ) {
-        self.install_activation(identity, name, definition, arguments, invocation, scope);
+        self.install_activation(identity, name, definition, arguments, invocation);
     }
 
     fn install_activation(
@@ -264,9 +178,8 @@ impl<G> ParameterState<G> {
         identity: MacroActivationId,
         name: Symbol,
         definition: DefinitionId<G>,
-        arguments: MacroArguments,
+        arguments: MacroArguments<G>,
         invocation: OriginId,
-        scope: OwnedAttemptScope,
     ) {
         self.activations.push(MacroActivation {
             identity,
@@ -274,7 +187,6 @@ impl<G> ParameterState<G> {
             definition,
             arguments,
             invocation,
-            scope: MacroScopeOwner::Owned(scope),
         });
     }
 
@@ -290,25 +202,18 @@ impl<G> ParameterState<G> {
             .map(|activation| activation.invocation)
     }
 
-    pub(crate) fn retire_last_activation(&mut self) -> Option<RetiredMacroScope> {
-        let index = self.activations.len().checked_sub(1)?;
-        let activation = self.activations.pop()?;
-        Some(RetiredMacroScope {
-            index,
-            identity: activation.identity,
-            scope: activation.scope,
-        })
-    }
-
-    pub(crate) fn prepare_argument_build(&mut self) {
-        // The operation arena owns all argument allocations. Completed live
-        // activations retain their typed records until their body retires.
+    pub(crate) fn retire_last_activation(&mut self) -> Option<MacroActivation<G>> {
+        self.activations.pop()
     }
 }
 
-impl MacroArguments {
-    pub(crate) const fn record(self) -> Option<AttemptArgumentRecordId> {
-        self.record
+impl<G> MacroArguments<G> {
+    pub(crate) const fn new(frame: MacroFrameId<G>) -> Self {
+        Self { frame }
+    }
+
+    pub(crate) const fn frame(self) -> MacroFrameId<G> {
+        self.frame
     }
 }
 
@@ -355,10 +260,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         let macro_name = call
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
-        self.command.parameters.prepare_argument_build();
-        let mut scope = self
+        let matching = self
             .command
-            .begin_attempt_macro_scope()
+            .scratch
+            .begin_macro_match()
             .map_err(|_| CommandError::input_invariant())?;
         let definition_view = self.state.definition(definition);
         let pattern = definition_view.parameter_pattern();
@@ -389,9 +294,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.outer_recovered_while_matching = false;
         self.eof_recovered_while_matching = false;
-        let scanned_arguments = self.macro_call_scalar(definition, flags, pattern, parameter_len);
-        let arguments = match scanned_arguments {
-            Ok(arguments) => arguments,
+        let scanned_arguments =
+            self.macro_call_scalar(&matching, definition, flags, pattern, parameter_len);
+        match scanned_arguments {
+            Ok(()) => {}
             Err(CommandError::MacroPrefixMismatch) => {
                 // TeX82 §391 reports the mismatch through `error` and returns
                 // from `macro_call`; the mismatching token stays consumed and
@@ -412,7 +318,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.finish_scanner_episode(episode);
                 }
                 self.command
-                    .discard_attempt_scope_suffix(scope)
+                    .scratch
+                    .discard_macro_match(matching)
                     .map_err(|_| CommandError::input_invariant())?;
                 return Ok(MacroCallOutcome::PrefixMismatchRecovered);
             }
@@ -421,11 +328,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.finish_scanner_episode(episode);
                 }
                 self.command
-                    .discard_attempt_scope_suffix(scope)
+                    .scratch
+                    .discard_macro_match(matching)
                     .map_err(|_| CommandError::input_invariant())?;
                 return Err(error);
             }
-        };
+        }
 
         // TeX.web §§391--400 freezes the completed ranges before replacing
         // the input. The activation names one command-arena argument span;
@@ -436,9 +344,14 @@ impl<G> CommandProcessor<'_, '_, G> {
         // token itself came from, any backup or recovery insertion, and any
         // finished stored replay -- before `begin_token_list(..., macro)`.
         // Those retirements must precede this body's input push.
-        self.conserve_input_stack_around_local_child(&mut scope)?;
-        let _level =
-            self.push_macro_activation(macro_name, definition, call.origin(), arguments, scope);
+        self.conserve_input_stack()?;
+        let frame = self
+            .command
+            .scratch
+            .commit_macro_match(matching)
+            .map_err(|_| CommandError::input_invariant())?;
+        let arguments = MacroArguments::new(frame);
+        let _level = self.push_macro_activation(macro_name, definition, call.origin(), arguments);
         observe!(
             self,
             CommandObservation::Input(InputRecord {
@@ -469,11 +382,12 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn macro_call_scalar(
         &mut self,
+        matching: &MacroMatch<G>,
         definition: DefinitionId<G>,
         flags: MeaningFlags,
         pattern: MacroParameterPattern,
         parameter_len: usize,
-    ) -> Result<MacroArguments, CommandError> {
+    ) -> Result<(), CommandError> {
         for index in 0..pattern.leading_end(parameter_len) {
             let expected = self.macro_parameter_token(definition, index)?;
             let actual = self.get_token()?.ok_or(CommandError::MacroPrefixMismatch)?;
@@ -502,7 +416,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             self.undo_delimiter_begin_group_delivery();
         }
 
-        let mut arguments = MacroArgumentBuilder::default();
         for parameter in 0..pattern.parameter_count() {
             let (start, end) = pattern.delimiter_bounds(parameter, parameter_len);
             let delimiter = MacroDelimiter {
@@ -511,9 +424,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 len: end - start,
             };
             let argument = if delimiter.len == 0 {
-                self.scan_undelimited_argument(flags)?
+                self.scan_undelimited_argument(matching, flags)?
             } else {
-                self.scan_delimited_argument(flags, delimiter)?
+                self.scan_delimited_argument(matching, flags, delimiter)?
             };
             let marker = pattern.marker_index(parameter).map_or(Ok('#'), |index| {
                 match self.macro_parameter_token(definition, index)? {
@@ -521,7 +434,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                     _ => Err(CommandError::input_invariant()),
                 }
             })?;
-            self.trace_macro_argument(marker, parameter + 1, argument)?;
+            self.trace_macro_argument(matching, marker, parameter + 1, argument)?;
+            let argument_words = self
+                .command
+                .scratch
+                .match_words(matching, argument)
+                .map_err(|_| CommandError::input_invariant())?
+                .collect::<Vec<_>>();
             observe!(
                 self,
                 CommandObservation::TokenList(TokenListRecord {
@@ -542,37 +461,19 @@ impl<G> CommandProcessor<'_, '_, G> {
                     definition: self.definition_observation_operand(definition),
                     control_sequence: None,
                     argument: Some((parameter + 1) as u8),
-                    token_count: self
-                        .command
-                        .attempt
-                        .arena()
-                        .token_buffer(argument)
-                        .map_err(|_| CommandError::input_invariant())?
-                        .len() as u64,
-                    tokens: self
-                        .command
-                        .attempt
-                        .arena()
-                        .token_buffer(argument)
-                        .map_err(|_| CommandError::input_invariant())?
-                        .iter()
-                        .map(|token| self.observed_token(*token))
+                    token_count: argument_words.len() as u64,
+                    tokens: argument_words
+                        .into_iter()
+                        .map(|token| self.observed_token(token))
                         .collect(),
                 }),
             );
-            let argument = self
-                .command
-                .attempt
-                .arena_mut()
-                .finish_token_buffer(argument)
-                .map_err(|_| CommandError::input_invariant())?;
-            arguments
-                .complete_buffer((parameter + 1) as u8, argument)
+            self.command
+                .scratch
+                .finish_match_buffer(matching, argument)
                 .map_err(|_| CommandError::input_invariant())?;
         }
-        arguments
-            .finish(self.command.attempt.arena_mut())
-            .map_err(|_| CommandError::input_invariant())
+        Ok(())
     }
 
     fn macro_parameter_token(
@@ -630,15 +531,16 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// TeX82 §400's `#n<-<argument>` trace in completed-argument order.
     fn trace_macro_argument(
         &mut self,
+        matching: &MacroMatch<G>,
         marker: char,
         parameter: usize,
-        argument: AttemptTokenBufferId,
+        argument: MacroMatchBuffer<G>,
     ) -> Result<(), CommandError> {
         if self.state.int_param(IntParam::TRACING_MACROS) <= 0 {
             return Ok(());
         }
         let mut text = format!("{marker}{parameter}<-");
-        for word in self.argument_buffer(argument)? {
+        for word in self.argument_buffer(matching, argument)? {
             crate::processor::expand::append_token_list_token_text(
                 &self.state,
                 word.semantic_token(),
@@ -766,7 +668,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     fn recover_extra_right_brace_argument(
         &mut self,
         command: crate::CurrentCommand<G>,
-    ) -> Result<AttemptTokenBufferId, CommandError> {
+    ) -> Result<MacroMatchBuffer<G>, CommandError> {
         self.back_input(command)?;
         self.insert_macro_argument_recovery_par()?;
         // §395 ends with `ins_error`, so §82 renders the context with
@@ -784,8 +686,9 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     fn scan_undelimited_argument(
         &mut self,
+        matching: &MacroMatch<G>,
         flags: MeaningFlags,
-    ) -> Result<AttemptTokenBufferId, CommandError> {
+    ) -> Result<MacroMatchBuffer<G>, CommandError> {
         let first = loop {
             let command = self
                 .get_token()?
@@ -821,8 +724,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 ..
             }
         ) {
-            let tokens = self.allocate_argument_buffer()?;
-            self.push_argument_token(tokens, first.spelling())?;
+            let tokens = self.allocate_argument_buffer(matching)?;
+            self.push_argument_token(matching, tokens, first.spelling())?;
             return Ok(tokens);
         }
 
@@ -831,8 +734,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         // argument completes.  Keep that ownership here too: §396's
         // runaway pseudoprint must still see an unmatched opening brace.
         let mut depth = 1_u32;
-        let tokens = self.allocate_argument_buffer()?;
-        self.push_argument_token(tokens, first.spelling())?;
+        let mut tokens = self.allocate_argument_buffer(matching)?;
+        self.push_argument_token(matching, tokens, first.spelling())?;
         loop {
             let command = self
                 .get_token()?
@@ -846,18 +749,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                 continue;
             }
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
-                let partial = self.argument_buffer(tokens)?.to_vec();
+                let partial = self.argument_buffer(matching, tokens)?.collect::<Vec<_>>();
                 self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
                 return Err(CommandError::OuterInMacroArgument);
             }
-            self.check_argument_paragraph(&command, flags, Some(tokens))?;
+            self.check_argument_paragraph(&command, flags, Some((matching, tokens)))?;
             match command.spelling().semantic_token() {
                 Token::Char {
                     cat: Catcode::BeginGroup,
                     ..
                 } => {
                     depth += 1;
-                    self.push_argument_token(tokens, command.spelling())?;
+                    self.push_argument_token(matching, tokens, command.spelling())?;
                 }
                 Token::Char {
                     cat: Catcode::EndGroup,
@@ -865,13 +768,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 } => {
                     depth -= 1;
                     if depth == 0 {
-                        self.push_argument_token(tokens, command.spelling())?;
-                        self.strip_argument_outer_group(tokens)?;
+                        self.push_argument_token(matching, tokens, command.spelling())?;
+                        tokens = self.strip_argument_outer_group(matching, tokens)?;
                         return Ok(tokens);
                     }
-                    self.push_argument_token(tokens, command.spelling())?;
+                    self.push_argument_token(matching, tokens, command.spelling())?;
                 }
-                _ => self.push_argument_token(tokens, command.spelling())?,
+                _ => self.push_argument_token(matching, tokens, command.spelling())?,
             }
         }
     }
@@ -883,12 +786,13 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// token catcodes, brace depth, and the recovery splice are semantic here.
     fn scan_delimited_argument(
         &mut self,
+        matching: &MacroMatch<G>,
         flags: MeaningFlags,
         delimiter: MacroDelimiter<G>,
-    ) -> Result<AttemptTokenBufferId, CommandError> {
+    ) -> Result<MacroMatchBuffer<G>, CommandError> {
         debug_assert_ne!(delimiter.len, 0);
-        let tokens = self.allocate_argument_buffer()?;
-        let prefix = self.allocate_argument_buffer()?;
+        let mut tokens = self.allocate_argument_buffer(matching)?;
+        self.command.scratch.clear_delimiter_prefix();
         let mut depth = 0_u32;
         let mut current = None;
 
@@ -903,8 +807,8 @@ impl<G> CommandProcessor<'_, '_, G> {
                 continue;
             }
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
-                let mut partial = self.argument_buffer(tokens)?.to_vec();
-                partial.extend_from_slice(self.argument_buffer(prefix)?);
+                let mut partial = self.argument_buffer(matching, tokens)?.collect::<Vec<_>>();
+                partial.extend(self.command.scratch.delimiter_prefix_words());
                 self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
                 return Err(CommandError::OuterInMacroArgument);
             }
@@ -912,37 +816,42 @@ impl<G> CommandProcessor<'_, '_, G> {
 
             if depth == 0
                 && token
-                    == self.macro_delimiter_token(delimiter, self.argument_buffer(prefix)?.len())?
+                    == self.macro_delimiter_token(
+                        delimiter,
+                        self.command.scratch.delimiter_prefix_len(),
+                    )?
             {
-                self.push_argument_token(prefix, command.spelling())?;
-                if self.argument_buffer(prefix)?.len() == delimiter.len {
+                self.command
+                    .scratch
+                    .push_delimiter_prefix(command.spelling())
+                    .map_err(|_| CommandError::input_invariant())?;
+                if self.command.scratch.delimiter_prefix_len() == delimiter.len {
                     // `#{` consumes the opening brace as parameter text. Raw
                     // delivery has accounted for it, but no replacement-body
                     // replay exists yet to provide the balancing delivery.
                     if is_begin_group(token) {
                         self.undo_delimiter_begin_group_delivery();
                     }
-                    self.strip_argument_outer_group(tokens)?;
+                    self.command.scratch.clear_delimiter_prefix();
+                    tokens = self.strip_argument_outer_group(matching, tokens)?;
                     return Ok(tokens);
                 }
                 continue;
             }
 
-            if !self.argument_buffer(prefix)?.is_empty() {
-                let retained =
-                    self.overlapping_delimiter_prefix(prefix, command.spelling(), delimiter)?;
+            if !self.command.scratch.delimiter_prefix_is_empty() {
+                let retained = self.overlapping_delimiter_prefix(command.spelling(), delimiter)?;
                 let committed = if retained == 0 {
-                    self.argument_buffer(prefix)?.len()
+                    self.command.scratch.delimiter_prefix_len()
                 } else {
-                    self.argument_buffer(prefix)?.len() + 1 - retained
+                    self.command.scratch.delimiter_prefix_len() + 1 - retained
                 };
-                let committed = self
-                    .command
-                    .attempt
-                    .arena_mut()
-                    .drain_buffer_prefix(prefix, committed)
-                    .map_err(|_| CommandError::input_invariant())?;
-                for prefix_token in committed {
+                for _ in 0..committed {
+                    let prefix_token = self
+                        .command
+                        .scratch
+                        .pop_delimiter_prefix_word()
+                        .map_err(|_| CommandError::input_invariant())?;
                     observe!(
                         self,
                         CommandObservation::TokenList(TokenListRecord {
@@ -951,10 +860,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                             tokens: vec![self.observed_token(prefix_token)],
                         }),
                     );
-                    self.push_delimited_argument_token(tokens, &mut depth, prefix_token)?;
+                    self.push_delimited_argument_token(matching, tokens, &mut depth, prefix_token)?;
                 }
                 if retained != 0 {
-                    self.push_argument_token(prefix, command.spelling())?;
+                    self.command
+                        .scratch
+                        .push_delimiter_prefix(command.spelling())
+                        .map_err(|_| CommandError::input_invariant())?;
                     continue;
                 }
 
@@ -970,8 +882,13 @@ impl<G> CommandProcessor<'_, '_, G> {
                 // prefix. TeX.web §394 permits a recovered `\par` prefix;
                 // only this newly ordinary token is subject to the non-long
                 // paragraph check.
-                self.check_argument_paragraph(&command, flags, Some(tokens))?;
-                self.push_delimited_argument_token(tokens, &mut depth, command.spelling())?;
+                self.check_argument_paragraph(&command, flags, Some((matching, tokens)))?;
+                self.push_delimited_argument_token(
+                    matching,
+                    tokens,
+                    &mut depth,
+                    command.spelling(),
+                )?;
                 continue;
             }
 
@@ -979,28 +896,30 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return self.recover_extra_right_brace_argument(command);
             }
 
-            self.check_argument_paragraph(&command, flags, Some(tokens))?;
-            self.push_delimited_argument_token(tokens, &mut depth, command.spelling())?;
+            self.check_argument_paragraph(&command, flags, Some((matching, tokens)))?;
+            self.push_delimited_argument_token(matching, tokens, &mut depth, command.spelling())?;
         }
     }
 
     fn overlapping_delimiter_prefix(
         &self,
-        prefix: AttemptTokenBufferId,
         current: TracedTokenWord,
         delimiter: MacroDelimiter<G>,
     ) -> Result<usize, CommandError> {
-        let prefix = self.argument_buffer(prefix)?;
-        let pending_len = prefix.len() + 1;
+        let pending_len = self.command.scratch.delimiter_prefix_len() + 1;
         for candidate_len in (1..pending_len.min(delimiter.len)).rev() {
             let mut matches = true;
             for index in 0..candidate_len {
                 let pending = pending_len - candidate_len + index;
-                let token = prefix
-                    .get(pending)
-                    .copied()
-                    .unwrap_or(current)
-                    .semantic_token();
+                let token = if pending == self.command.scratch.delimiter_prefix_len() {
+                    current
+                } else {
+                    self.command
+                        .scratch
+                        .delimiter_prefix_word(pending)
+                        .map_err(|_| CommandError::input_invariant())?
+                }
+                .semantic_token();
                 if token != self.macro_delimiter_token(delimiter, index)? {
                     matches = false;
                     break;
@@ -1017,7 +936,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         command: &crate::CurrentCommand<G>,
         flags: MeaningFlags,
-        partial: Option<AttemptTokenBufferId>,
+        partial: Option<(&MacroMatch<G>, MacroMatchBuffer<G>)>,
     ) -> Result<(), CommandError> {
         if self.eof_recovered_while_matching && is_paragraph_command(command) {
             // TeX82 §23 calls `check_outer_validity` after source EOF and
@@ -1025,7 +944,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             // Its inserted frozen `\par` terminates the match but is consumed
             // by the failed expansion instead of being replayed by §396.
             let partial = partial
-                .map(|buffer| self.argument_buffer(buffer).map(|words| words.to_vec()))
+                .map(|(matching, buffer)| {
+                    self.argument_buffer(matching, buffer)
+                        .map(|words| words.collect::<Vec<_>>())
+                })
                 .transpose()?
                 .unwrap_or_default();
             self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
@@ -1041,7 +963,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             // §396 ends with `back_error`, so §82 renders the context with the
             // replayed `\par` already on the stack.
             let partial = partial
-                .map(|buffer| self.argument_buffer(buffer).map(|words| words.to_vec()))
+                .map(|(matching, buffer)| {
+                    self.argument_buffer(matching, buffer)
+                        .map(|words| words.collect::<Vec<_>>())
+                })
                 .transpose()?
                 .unwrap_or_default();
             self.report_paragraph_ended_before_complete(&partial);
@@ -1061,54 +986,58 @@ impl<G> CommandProcessor<'_, '_, G> {
         command.spelling().semantic_token() == Token::Cs(par)
     }
 
-    fn allocate_argument_buffer(&mut self) -> Result<AttemptTokenBufferId, CommandError> {
+    fn allocate_argument_buffer(
+        &mut self,
+        matching: &MacroMatch<G>,
+    ) -> Result<MacroMatchBuffer<G>, CommandError> {
         self.command
-            .attempt
-            .arena_mut()
-            .allocate_token_buffer()
+            .scratch
+            .begin_match_buffer(matching)
             .map_err(|_| CommandError::input_invariant())
     }
 
     fn argument_buffer(
         &self,
-        buffer: AttemptTokenBufferId,
-    ) -> Result<&[TracedTokenWord], CommandError> {
+        matching: &MacroMatch<G>,
+        buffer: MacroMatchBuffer<G>,
+    ) -> Result<MacroWords<'_, G>, CommandError> {
         self.command
-            .attempt
-            .arena()
-            .token_buffer(buffer)
+            .scratch
+            .match_words(matching, buffer)
             .map_err(|_| CommandError::input_invariant())
     }
 
     fn push_argument_token(
         &mut self,
-        buffer: AttemptTokenBufferId,
+        matching: &MacroMatch<G>,
+        buffer: MacroMatchBuffer<G>,
         token: TracedTokenWord,
     ) -> Result<(), CommandError> {
         self.command
-            .attempt
-            .arena_mut()
-            .push_buffer_token(buffer, token)
+            .scratch
+            .push_match_word(matching, buffer, token)
             .map_err(|_| CommandError::input_invariant())
     }
 
     fn strip_argument_outer_group(
         &mut self,
-        buffer: AttemptTokenBufferId,
-    ) -> Result<(), CommandError> {
-        if has_one_outer_group(self.argument_buffer(buffer)?) {
-            self.command
-                .attempt
-                .arena_mut()
-                .strip_buffer_outer_group(buffer)
-                .map_err(|_| CommandError::input_invariant())?;
+        matching: &MacroMatch<G>,
+        buffer: MacroMatchBuffer<G>,
+    ) -> Result<MacroMatchBuffer<G>, CommandError> {
+        if has_one_outer_group(self.argument_buffer(matching, buffer)?) {
+            return self
+                .command
+                .scratch
+                .strip_match_outer_group(matching, buffer)
+                .map_err(|_| CommandError::input_invariant());
         }
-        Ok(())
+        Ok(buffer)
     }
 
     fn push_delimited_argument_token(
         &mut self,
-        buffer: AttemptTokenBufferId,
+        matching: &MacroMatch<G>,
+        buffer: MacroMatchBuffer<G>,
         depth: &mut u32,
         token: TracedTokenWord,
     ) -> Result<(), CommandError> {
@@ -1123,27 +1052,25 @@ impl<G> CommandProcessor<'_, '_, G> {
             } if *depth > 0 => *depth -= 1,
             _ => {}
         }
-        self.push_argument_token(buffer, token)
+        self.push_argument_token(matching, buffer, token)
     }
 
-    fn argument_token_count(&self, arguments: MacroArguments) -> usize {
-        arguments.record().map_or(0, |record| {
-            self.command
-                .attempt
-                .arena()
-                .arguments(record)
-                .expect("live macro argument record")
-                .iter()
-                .map(|argument| {
-                    self.command
-                        .attempt
-                        .arena()
-                        .token_words(*argument)
-                        .expect("live macro argument list")
-                        .len()
-                })
-                .sum()
-        })
+    fn argument_token_count(&self, arguments: MacroArguments<G>) -> usize {
+        (1..=9)
+            .filter_map(|slot| {
+                self.command
+                    .scratch
+                    .argument_range(arguments.frame(), slot)
+                    .ok()
+                    .flatten()
+            })
+            .map(|range| {
+                self.command
+                    .scratch
+                    .argument_len(range)
+                    .expect("live macro argument range")
+            })
+            .sum()
     }
 
     fn definition_observation_operand(&self, definition: DefinitionId<G>) -> u64 {
@@ -1168,16 +1095,29 @@ fn is_paragraph_command<G>(command: &crate::CurrentCommand<G>) -> bool {
 /// longest proper delimiter prefix after a mismatch. TeX.web §394 compares
 /// these scalar token sequences directly while moving the unmatched leading
 /// tokens into the completed argument.
-fn has_one_outer_group(tokens: &[TracedTokenWord]) -> bool {
+fn has_one_outer_group(tokens: impl ExactSizeIterator<Item = TracedTokenWord> + Clone) -> bool {
     if tokens.len() < 2
-        || !is_begin_group(tokens[0].semantic_token())
-        || !is_end_group(tokens[tokens.len() - 1].semantic_token())
+        || !is_begin_group(
+            tokens
+                .clone()
+                .next()
+                .expect("nonempty argument")
+                .semantic_token(),
+        )
+        || !is_end_group(
+            tokens
+                .clone()
+                .last()
+                .expect("nonempty argument")
+                .semantic_token(),
+        )
     {
         return false;
     }
 
     let mut depth = 0_u32;
-    for (index, token) in tokens.iter().enumerate() {
+    let len = tokens.len();
+    for (index, token) in tokens.enumerate() {
         match token.semantic_token() {
             Token::Char {
                 cat: Catcode::BeginGroup,
@@ -1188,7 +1128,7 @@ fn has_one_outer_group(tokens: &[TracedTokenWord]) -> bool {
                 ..
             } if depth > 0 => {
                 depth -= 1;
-                if depth == 0 && index + 1 != tokens.len() {
+                if depth == 0 && index + 1 != len {
                     return false;
                 }
             }
