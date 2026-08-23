@@ -706,6 +706,40 @@ enum PendingPreflightCommand<G> {
 }
 
 impl<G> PendingPreflightCommand<G> {
+    fn for_delivery(delivery: &OperationDelivery<G>) -> Option<Self> {
+        match delivery {
+            OperationDelivery::<G>::Replay(Some(command)) => Some(Self::Settled {
+                command: *command,
+                cursor: None,
+            }),
+            OperationDelivery::<G>::Settled { command, cursor } => Some(Self::Settled {
+                command: *command,
+                cursor: *cursor,
+            }),
+            OperationDelivery::<G>::Raw { command, cursor } => Some(Self::Raw {
+                command: *command,
+                cursor: *cursor,
+            }),
+            OperationDelivery::<G>::Expanding {
+                command,
+                main_loop,
+                cursor,
+            } => Some(Self::Expanding {
+                command: *command,
+                main_loop: *main_loop,
+                cursor: *cursor,
+            }),
+            OperationDelivery::<G>::ImmediatePdfRetry(primitive) => {
+                Some(Self::ImmediatePdfRetry(*primitive))
+            }
+            OperationDelivery::<G>::Replay(None)
+            | OperationDelivery::<G>::Alignment(_)
+            | OperationDelivery::<G>::AlignmentRetry { .. }
+            | OperationDelivery::<G>::Hot(_)
+            | OperationDelivery::<G>::Prepared(_) => None,
+        }
+    }
+
     fn with_retry_expansion(self, retry: Option<tex_command::CurrentCommand<G>>) -> Self {
         let Some(retry) = retry else {
             return self;
@@ -856,14 +890,20 @@ struct PrepareOperationError<G> {
     error: Box<ExecError>,
     unavailable: Option<Box<ColdOperation<G>>>,
     cursor: Option<tex_command::CommandDeliveryCursor>,
+    retry: Option<PendingPreflightCommand<G>>,
 }
 
 impl<G> PrepareOperationError<G> {
-    fn with_cursor(error: ExecError, cursor: tex_command::CommandDeliveryCursor) -> Self {
+    fn with_retry(
+        error: ExecError,
+        cursor: tex_command::CommandDeliveryCursor,
+        retry: Option<PendingPreflightCommand<G>>,
+    ) -> Self {
         Self {
             error: Box::new(error),
             unavailable: None,
             cursor: Some(cursor),
+            retry,
         }
     }
 }
@@ -907,6 +947,7 @@ impl<G> From<ExecError> for PrepareOperationError<G> {
             error: Box::new(error),
             unavailable: None,
             cursor: None,
+            retry: None,
         }
     }
 }
@@ -918,6 +959,7 @@ impl<G> From<Box<UnavailablePreparedResource<G>>> for PrepareOperationError<G> {
             error: Box::new(unavailable.error),
             unavailable: Some(unavailable.scanned),
             cursor: None,
+            retry: None,
         }
     }
 }
@@ -4132,43 +4174,6 @@ impl<G> MainControl<G> {
                 self.episode_telemetry.record_attempt();
                 self.advance_telemetry.attempts += 1;
                 let tracked_mark = episode_tracked_mark.take();
-                let retry_command = match &preflight.delivery {
-                    OperationDelivery::<G>::Replay(Some(command)) => {
-                        Some(PendingPreflightCommand::<G>::Settled {
-                            command: *command,
-                            cursor: None,
-                        })
-                    }
-                    OperationDelivery::<G>::Settled { command, cursor } => {
-                        Some(PendingPreflightCommand::<G>::Settled {
-                            command: *command,
-                            cursor: *cursor,
-                        })
-                    }
-                    OperationDelivery::<G>::Raw { command, cursor } => {
-                        Some(PendingPreflightCommand::<G>::Raw {
-                            command: *command,
-                            cursor: *cursor,
-                        })
-                    }
-                    OperationDelivery::<G>::Expanding {
-                        command,
-                        main_loop,
-                        cursor,
-                    } => Some(PendingPreflightCommand::<G>::Expanding {
-                        command: *command,
-                        main_loop: *main_loop,
-                        cursor: *cursor,
-                    }),
-                    OperationDelivery::<G>::ImmediatePdfRetry(primitive) => {
-                        Some(PendingPreflightCommand::<G>::ImmediatePdfRetry(*primitive))
-                    }
-                    OperationDelivery::<G>::Replay(None)
-                    | OperationDelivery::<G>::Alignment(_)
-                    | OperationDelivery::<G>::AlignmentRetry { .. }
-                    | OperationDelivery::<G>::Hot(_)
-                    | OperationDelivery::<G>::Prepared(_) => None,
-                };
                 let prepared = match self.prepare_operation(
                     stores,
                     preflight.delivery,
@@ -4206,14 +4211,7 @@ impl<G> MainControl<G> {
                                     alignment,
                                     cursor,
                                 });
-                            let retry_expansion = self.command.pending_expansion_command().cloned();
-                            self.pending_preflight_command = retry_command.map(|retry| {
-                                let retry = retry.with_retry_expansion(retry_expansion);
-                                match failure.cursor {
-                                    Some(cursor) => retry.with_cursor(cursor),
-                                    None => retry,
-                                }
-                            });
+                            self.pending_preflight_command = failure.retry;
                             self.advance_telemetry.rollbacks += 1;
                             #[cfg(feature = "profiling")]
                             self.episode_telemetry
@@ -4312,43 +4310,7 @@ impl<G> MainControl<G> {
                     );
                 }
                 let tracked_mark = episode_tracked_mark.take();
-                let mut retry_command = match &preflight.delivery {
-                    OperationDelivery::<G>::Replay(Some(command)) => {
-                        Some(PendingPreflightCommand::<G>::Settled {
-                            command: *command,
-                            cursor: None,
-                        })
-                    }
-                    OperationDelivery::<G>::Settled { command, cursor } => {
-                        Some(PendingPreflightCommand::<G>::Settled {
-                            command: *command,
-                            cursor: *cursor,
-                        })
-                    }
-                    OperationDelivery::<G>::Raw { command, cursor } => {
-                        Some(PendingPreflightCommand::<G>::Raw {
-                            command: *command,
-                            cursor: *cursor,
-                        })
-                    }
-                    OperationDelivery::<G>::Expanding {
-                        command,
-                        main_loop,
-                        cursor,
-                    } => Some(PendingPreflightCommand::<G>::Expanding {
-                        command: *command,
-                        main_loop: *main_loop,
-                        cursor: *cursor,
-                    }),
-                    OperationDelivery::<G>::ImmediatePdfRetry(primitive) => {
-                        Some(PendingPreflightCommand::<G>::ImmediatePdfRetry(*primitive))
-                    }
-                    OperationDelivery::<G>::Replay(None)
-                    | OperationDelivery::<G>::Alignment(_)
-                    | OperationDelivery::<G>::AlignmentRetry { .. }
-                    | OperationDelivery::<G>::Hot(_)
-                    | OperationDelivery::<G>::Prepared(_) => None,
-                };
+                let mut retry_command = PendingPreflightCommand::for_delivery(&preflight.delivery);
                 if let crate::transaction_protocol::CommandPreflight::Transaction(transaction) =
                     preflight.capabilities.preflight()
                 {
@@ -4386,15 +4348,7 @@ impl<G> MainControl<G> {
                                         alignment,
                                         cursor,
                                     });
-                                let retry_expansion =
-                                    self.command.pending_expansion_command().cloned();
-                                self.pending_preflight_command = retry_command.map(|retry| {
-                                    let retry = retry.with_retry_expansion(retry_expansion);
-                                    match failure.cursor {
-                                        Some(cursor) => retry.with_cursor(cursor),
-                                        None => retry,
-                                    }
-                                });
+                                self.pending_preflight_command = failure.retry;
                                 self.retain_direct_operation_for_retry(stores, operation_mark);
                                 return Ok(step);
                             }
@@ -4403,15 +4357,7 @@ impl<G> MainControl<G> {
                                 return Ok(step);
                             }
                             Err(error) => {
-                                let retry_expansion =
-                                    self.command.pending_expansion_command().cloned();
-                                self.pending_preflight_command = retry_command.map(|retry| {
-                                    let retry = retry.with_retry_expansion(retry_expansion);
-                                    match failure.cursor {
-                                        Some(cursor) => retry.with_cursor(cursor),
-                                        None => retry,
-                                    }
-                                });
+                                self.pending_preflight_command = failure.retry;
                                 self.retain_direct_operation_for_retry(stores, operation_mark);
                                 Self::publish_pdf_fatal_error(stores, &error)?;
                                 return Err(error);
@@ -4548,43 +4494,6 @@ impl<G> MainControl<G> {
             if saved_interaction.is_some() {
                 stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
             }
-            let retry_command = match &preflight.delivery {
-                OperationDelivery::<G>::Replay(Some(command)) => {
-                    Some(PendingPreflightCommand::<G>::Settled {
-                        command: *command,
-                        cursor: None,
-                    })
-                }
-                OperationDelivery::<G>::Settled { command, cursor } => {
-                    Some(PendingPreflightCommand::<G>::Settled {
-                        command: *command,
-                        cursor: *cursor,
-                    })
-                }
-                OperationDelivery::<G>::Raw { command, cursor } => {
-                    Some(PendingPreflightCommand::<G>::Raw {
-                        command: *command,
-                        cursor: *cursor,
-                    })
-                }
-                OperationDelivery::<G>::Expanding {
-                    command,
-                    main_loop,
-                    cursor,
-                } => Some(PendingPreflightCommand::<G>::Expanding {
-                    command: *command,
-                    main_loop: *main_loop,
-                    cursor: *cursor,
-                }),
-                OperationDelivery::<G>::ImmediatePdfRetry(primitive) => {
-                    Some(PendingPreflightCommand::<G>::ImmediatePdfRetry(*primitive))
-                }
-                OperationDelivery::<G>::Replay(None)
-                | OperationDelivery::<G>::Alignment(_)
-                | OperationDelivery::<G>::AlignmentRetry { .. }
-                | OperationDelivery::<G>::Hot(_)
-                | OperationDelivery::<G>::Prepared(_) => None,
-            };
             let prepared =
                 match self.prepare_operation(stores, preflight.delivery, &mut diagnostic_effects) {
                     Ok(prepared) => prepared,
@@ -4613,15 +4522,7 @@ impl<G> MainControl<G> {
                                         alignment,
                                         cursor,
                                     });
-                                let retry_expansion =
-                                    self.command.pending_expansion_command().cloned();
-                                self.pending_preflight_command = retry_command.map(|retry| {
-                                    let retry = retry.with_retry_expansion(retry_expansion);
-                                    match failure.cursor {
-                                        Some(cursor) => retry.with_cursor(cursor),
-                                        None => retry,
-                                    }
-                                });
+                                self.pending_preflight_command = failure.retry;
                                 self.retain_direct_operation_for_retry(stores, operation_mark);
                             } else {
                                 self.commit_direct_operation(stores, operation_mark);
@@ -7315,6 +7216,10 @@ impl<G> MainControl<G> {
     /// preflight. Common unexpandable families scan and apply here without a
     /// universal DTO; cold and barrier families return a prepared value after
     /// immutable resource resolution.
+    #[allow(
+        clippy::result_large_err,
+        reason = "resource suspension returns the complete move-only phase-typed retry without a lifecycle allocation"
+    )]
     fn prepare_operation(
         &mut self,
         stores: &mut Universe<G>,
@@ -7400,6 +7305,7 @@ impl<G> MainControl<G> {
             )
         };
         let mut diagnostics = Vec::new();
+        let mut retry_command = PendingPreflightCommand::for_delivery(&delivery);
         let scanned = if let OperationDelivery::<G>::Hot(operation) = delivery {
             ScannedOperation::<G>::Hot(operation)
         } else {
@@ -7542,6 +7448,9 @@ impl<G> MainControl<G> {
                             &mut processor,
                             command,
                             main_loop,
+                            retry_command
+                                .as_mut()
+                                .expect("expanding delivery has an expanding retry owner"),
                             mode,
                             &self.boxes,
                             innermost_group,
@@ -7624,8 +7533,14 @@ impl<G> MainControl<G> {
                 })
             })();
             let cursor = processor.delivery_cursor();
-            let scanned =
-                scanned.map_err(|error| PrepareOperationError::<G>::with_cursor(error, cursor))?;
+            let retry_expansion = processor.pending_expansion_command().cloned();
+            let retry = retry_command.map(|retry| {
+                retry
+                    .with_retry_expansion(retry_expansion)
+                    .with_cursor(cursor)
+            });
+            let scanned = scanned
+                .map_err(|error| PrepareOperationError::<G>::with_retry(error, cursor, retry))?;
             #[cfg(feature = "profiling")]
             if matches!(scanned, ScannedOperation::<G>::Cold(_)) {
                 tex_state::measurement::record_hot_core_materialization(
@@ -9668,6 +9583,7 @@ fn settle_preflight_step<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     command: tex_command::CurrentCommand<G>,
     main_loop: bool,
+    retry: &mut PendingPreflightCommand<G>,
     mode: Mode,
     boxes: &ReplayBoxes<G>,
     innermost_group: Option<GroupKind>,
@@ -9687,6 +9603,14 @@ fn settle_preflight_step<G>(
             unreachable!();
         };
         return Ok(ColdOperation::<G>::ReplayCompleted(episode).into());
+    };
+    // TeX82 §§380 and 473--479 keep operand scanning under the newly settled
+    // unexpandable command. Expansion owns the retry only until settlement;
+    // after this point a resource failure must re-enter this command before
+    // any nested scanner continuation can resume.
+    *retry = PendingPreflightCommand::Settled {
+        command,
+        cursor: None,
     };
     let continues_main_loop = main_loop
         && matches!(

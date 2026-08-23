@@ -5655,6 +5655,99 @@ fn nested_file_probe_resumes_expandafter_collector_csname_and_integer_frames() {
     }
 }
 
+fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<String>) {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        let resource = |name: &str| {
+            let bytes: &[u8] = match name {
+                "first" => b"ABCD",
+                "second" => b"AB",
+                other => panic!("unexpected file enquiry {other:?}"),
+            };
+            tex_command::FileEnquiryResource::new(
+                SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(bytes)),
+                None,
+            )
+        };
+        for name in preloaded {
+            control
+                .capabilities_mut()
+                .register_input_probe(*name, resource(name));
+        }
+        register_source(&mut control, source);
+
+        let mut requested = Vec::new();
+        let mut ledger = crate::OutputLedger::new(crate::CheckpointIdentity::Exact);
+        let mut checkpoints = Vec::new();
+        let cancellation = crate::Cancellation::new();
+        let terminal = loop {
+            match crate::CanonicalStepRunner::new(&mut control, stores, &mut ledger)
+                .step(&mut checkpoints, &cancellation)
+            {
+                crate::CanonicalStepResult::ResourceNeed(
+                    need @ ResourceNeed::InputProbe { .. },
+                ) => {
+                    let request = match &need {
+                        ResourceNeed::InputProbe { request } => request.clone(),
+                        _ => unreachable!(),
+                    };
+                    requested.push(request.name.clone());
+                    let resource = resource(&request.name);
+                    ledger
+                        .fulfill(
+                            &mut control,
+                            &need,
+                            crate::ResourceFulfillment::InputProbe { request, resource },
+                        )
+                        .expect("file-enquiry fulfillment matches the suspended request");
+                }
+                crate::CanonicalStepResult::Completed(step @ ReplayStep::End) => break step,
+                crate::CanonicalStepResult::Progress(_)
+                | crate::CanonicalStepResult::Committed(_) => {}
+                other => panic!("unexpected file-enquiry step: {other:?}"),
+            }
+        };
+        assert_eq!(control.pending_resource_site(), None);
+        ledger
+            .terminal_receipt(&control, terminal)
+            .expect("fulfilled file enquiries leave terminal completion quiescent");
+        (terminal_text(stores), requested)
+    })
+}
+
+#[test]
+fn expanding_retry_settles_before_resuming_nested_expanded_scanner() {
+    // TeX82 §§380 and 473--479: once the retained expandable preflight has
+    // settled to `\edef`, that command owns retry through its operand scan.
+    // pdfTeX §§495/1535 then resumes the outer macro-definition collector
+    // before its nested `\expanded` collector in exact LIFO order.
+    let source = br"\def\afterfirst#1{\edef\result{\expanded{\pdffiledump length 2{second}}}}\expandafter\afterfirst\pdffilesize{first}\message{[\result]}\end";
+
+    let (preloaded_terminal, preloaded_requests) =
+        run_pdftex_file_probe_job(source, &["first", "second"]);
+    assert!(preloaded_requests.is_empty());
+    assert!(preloaded_terminal.contains("[4142]"));
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["first", "second"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
+#[test]
+fn directly_delivered_edef_resumes_its_inner_expanded_scanner() {
+    // Negative control: without the earlier expanding-preflight suspension,
+    // the directly delivered `\edef` already owns the nested scanner retry.
+    let source = br"\edef\result{\expanded{\pdffiledump length 2{second}}}\message{[\result]}\end";
+
+    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, &["second"]);
+    assert!(preloaded_requests.is_empty());
+    assert!(preloaded_terminal.contains("[4142]"));
+
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+}
+
 #[test]
 fn sequential_generated_reference_probes_preserve_the_macro_cursor() {
     crate::test_harness::with_nonstop_plain_universe(|stores| {
