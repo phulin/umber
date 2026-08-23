@@ -6,7 +6,7 @@ use tex_state::DefinitionId;
 use tex_state::packed_input::{InputFrameFlags, InputFrameKind};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
-use crate::attempt::{AttemptInputWatermark, AttemptTokenListId};
+use crate::attempt::AttemptTokenListId;
 use crate::macro_call::MacroActivationId;
 
 use super::{
@@ -180,12 +180,7 @@ pub(crate) enum TokenPayload<G> {
         len: u32,
     },
     /// One attempt-local token list, replayed literally by range.
-    AttemptList {
-        list: AttemptTokenListId,
-        len: u32,
-        /// Input-owned watermark before this exact-LIFO replay was pushed.
-        prior: AttemptInputWatermark,
-    },
+    AttemptList { list: AttemptTokenListId, len: u32 },
 }
 
 impl<G> Clone for TokenPayload<G> {
@@ -196,10 +191,9 @@ impl<G> Clone for TokenPayload<G> {
                 definition: *definition,
                 len: *len,
             },
-            Self::AttemptList { list, len, prior } => Self::AttemptList {
+            Self::AttemptList { list, len } => Self::AttemptList {
                 list: *list,
                 len: *len,
-                prior: *prior,
             },
         }
     }

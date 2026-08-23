@@ -13,6 +13,7 @@ fn other(ch: char) -> Token {
 fn scan_write_stream(tokens: impl IntoIterator<Item = Token>) -> WriteStreamSelector {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, tokens);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();
@@ -54,6 +55,7 @@ fn normalized_write_stream_numbers_match_texs_reserved_slots() {
 fn fresh_active_character_is_a_definition_target_without_recovery() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [

@@ -218,7 +218,9 @@ fn stale_root_rejection_validates_complete_batch_before_mutation() {
             .arena_mut()
             .allocate_token_list([word('b')])
             .expect("stale root");
-        state.discard_attempt_operation(mark);
+        state
+            .rollback_attempt_operation(mark)
+            .expect("operation rolls back");
 
         assert!(matches!(
             state.promote_attempt_roots(
@@ -251,16 +253,19 @@ fn operation_discard_truncates_only_the_attempt_suffix() {
             .allocate_token_list([word('b')])
             .expect("candidate list");
 
-        state.discard_attempt_operation(mark);
+        state
+            .rollback_attempt_operation(mark)
+            .expect("operation rolls back");
         assert_eq!(state.attempt_token_words(retained), Ok(&[word('a')][..]));
         assert!(state.attempt_token_words(rejected).is_err());
     });
 }
 
 #[test]
-fn root_census_can_reclaim_below_a_stale_operation_mark() {
+fn successful_scope_commit_reclaims_promoted_operation_rows() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
+        let operation = state.begin_attempt_operation();
         let parameter = state
             .attempt
             .arena_mut()
@@ -276,25 +281,17 @@ fn root_census_can_reclaim_below_a_stale_operation_mark() {
             .arena_mut()
             .allocate_definition(parameter, replacement)
             .expect("definition");
-        let stale = state.begin_attempt_operation();
         let durable = state
             .promote_attempt_definition(universe, definition)
             .expect("successful operation publishes its durable root");
 
         state
-            .reclaim_unreachable_attempt_suffix()
-            .expect("typed roots define an empty live cursor");
+            .commit_attempt_operation(operation)
+            .expect("operation scope commits");
         assert!(matches!(
-            state.reclaim_attempt_operation(stale),
+            state.rollback_attempt_operation(operation),
             Err(AttemptError::InvalidCoordinate)
         ));
-        assert!(matches!(
-            state.attempt.arena_mut().truncate(stale.attempt_mark()),
-            Err(AttemptError::InvalidCoordinate)
-        ));
-        state
-            .reclaim_unreachable_attempt_suffix()
-            .expect("successful commit does not require a stale opening mark");
         assert!(state.attempt.is_empty());
         assert_eq!(
             universe
@@ -308,62 +305,15 @@ fn root_census_can_reclaim_below_a_stale_operation_mark() {
 }
 
 #[test]
-fn live_pre_mark_macro_arguments_bound_suffix_reclamation() {
-    crate::test_harness::with_universe(|universe| {
-        let mut state = CommandState::default();
-        let definition = universe
-            .allocate_definition(&[], &[])
-            .expect("macro definition");
-        let name = universe.intern("outer").expect("macro name").symbol();
-        let opening = state
-            .macro_activation_opening_cursor()
-            .expect("opening roots");
-        let retained = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('a')])
-            .expect("retained argument");
-        let mut arguments = MacroArgumentBuilder::default();
-        arguments.complete(1, retained).expect("first argument");
-        let arguments = arguments
-            .finish(state.attempt.arena_mut(), opening)
-            .expect("argument record");
-        let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
-
-        let mark = state.begin_attempt_operation();
-        let discarded = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('b')])
-            .expect("dead operation scratch");
-        state
-            .reclaim_attempt_operation(mark)
-            .expect("live owner census");
-        assert_eq!(state.attempt_token_words(retained), Ok(&[word('a')][..]));
-        assert!(state.attempt_token_words(discarded).is_err());
-
-        state
-            .retire_exhausted_input(level)
-            .expect("empty macro body retires");
-        state
-            .reclaim_unreachable_attempt_suffix()
-            .expect("retired arguments reclaim");
-        assert!(state.attempt.is_empty());
-    });
-}
-
-#[test]
-fn post_mark_macro_arguments_survive_commit_until_activation_retirement() {
+fn committed_macro_scope_survives_until_a_later_lifo_retirement() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
         let definition = universe
             .allocate_definition(&[], &[])
             .expect("macro definition");
         let name = universe.intern("inner").expect("macro name").symbol();
-        let mark = state.begin_attempt_operation();
-        let opening = state
-            .macro_activation_opening_cursor()
-            .expect("opening roots");
+        let operation = state.begin_attempt_operation();
+        let scope = state.begin_attempt_child_scope().expect("macro scope");
         let retained = state
             .attempt
             .arena_mut()
@@ -372,20 +322,28 @@ fn post_mark_macro_arguments_survive_commit_until_activation_retirement() {
         let mut arguments = MacroArgumentBuilder::default();
         arguments.complete(1, retained).expect("first argument");
         let arguments = arguments
-            .finish(state.attempt.arena_mut(), opening)
+            .finish(state.attempt.arena_mut(), scope)
             .expect("argument record");
         let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
 
         state
-            .reclaim_attempt_operation(mark)
-            .expect("post-mark command root survives");
+            .commit_attempt_operation(operation)
+            .expect("operation commits around persistent macro scope");
         assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
+        assert!(
+            state
+                .attempt
+                .arena()
+                .validate_scope_coordinate(operation.operation_scope())
+                .is_ok()
+        );
 
+        let retirement = state.begin_attempt_operation();
         state
             .retire_exhausted_input(level)
             .expect("empty macro body retires");
         state
-            .reclaim_unreachable_attempt_suffix()
+            .commit_attempt_operation(retirement)
             .expect("retired suffix reclaims");
         assert!(state.attempt.is_empty());
         assert!(state.attempt_token_words(retained).is_err());
@@ -393,17 +351,15 @@ fn post_mark_macro_arguments_survive_commit_until_activation_retirement() {
 }
 
 #[test]
-fn scanner_rollback_preserves_post_mark_parameter_replay_roots() {
+fn operation_rollback_discards_children_and_preserves_the_prior_macro_scope() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
         let definition = universe
             .allocate_definition(&[], &[])
             .expect("macro definition");
         let name = universe.intern("inner").expect("macro name").symbol();
-        let scanner_mark = state.attempt.arena().mark();
-        let opening = state
-            .macro_activation_opening_cursor()
-            .expect("opening roots");
+        let activation = state.begin_attempt_operation();
+        let scope = state.begin_attempt_child_scope().expect("macro scope");
         let retained = state
             .attempt
             .arena_mut()
@@ -412,33 +368,45 @@ fn scanner_rollback_preserves_post_mark_parameter_replay_roots() {
         let mut arguments = MacroArgumentBuilder::default();
         arguments.complete(1, retained).expect("first argument");
         let arguments = arguments
-            .finish(state.attempt.arena_mut(), opening)
+            .finish(state.attempt.arena_mut(), scope)
             .expect("argument record");
         let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
         state
-            .replay_out_parameter(level, 1)
-            .expect("parameter replay level");
-        assert_ne!(
-            state.input_argument_watermark,
-            crate::attempt::AttemptInputWatermark::default()
-        );
+            .commit_attempt_operation(activation)
+            .expect("commit macro");
+
+        let rejected_operation = state.begin_attempt_operation();
+        let rejected_scope = state.begin_attempt_child_scope().expect("rejected child");
         let scratch = state
             .attempt
             .arena_mut()
             .allocate_token_list([word('z')])
-            .expect("scanner-local scratch");
+            .expect("child scratch");
 
         state
-            .rollback_attempt_scanner_scratch(scanner_mark)
-            .expect("scanner rollback preserves nested command roots");
+            .rollback_attempt_operation(rejected_operation)
+            .expect("rejected child rolls back");
 
         assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
         assert!(state.attempt_token_words(scratch).is_err());
+        assert!(
+            state
+                .attempt
+                .arena()
+                .validate_scope_coordinate(rejected_scope)
+                .is_err()
+        );
+
+        let retirement = state.begin_attempt_operation();
+        state.retire_exhausted_input(level).expect("retire macro");
+        state
+            .commit_attempt_operation(retirement)
+            .expect("commit retirement");
     });
 }
 
 #[test]
-fn nested_macro_retirement_preserves_live_parameter_replay() {
+fn nested_scope_retirement_preserves_outer_parameter_replay() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
         let definition = universe
@@ -446,9 +414,8 @@ fn nested_macro_retirement_preserves_live_parameter_replay() {
             .expect("macro definition");
         let name = universe.intern("nested").expect("macro name").symbol();
 
-        let outer_opening = state
-            .macro_activation_opening_cursor()
-            .expect("outer opening roots");
+        let operation = state.begin_attempt_operation();
+        let outer_scope = state.begin_attempt_child_scope().expect("outer scope");
         let argument = state
             .attempt
             .arena_mut()
@@ -457,7 +424,7 @@ fn nested_macro_retirement_preserves_live_parameter_replay() {
         let mut arguments = MacroArgumentBuilder::default();
         arguments.complete(1, argument).expect("outer slot");
         let arguments = arguments
-            .finish(state.attempt.arena_mut(), outer_opening)
+            .finish(state.attempt.arena_mut(), outer_scope)
             .expect("outer argument record");
         let outer = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
         let replay = state
@@ -467,11 +434,9 @@ fn nested_macro_retirement_preserves_live_parameter_replay() {
             panic!("outer parameter must push a replay level");
         };
 
-        let inner_opening = state
-            .macro_activation_opening_cursor()
-            .expect("inner opening roots");
+        let inner_scope = state.begin_attempt_child_scope().expect("inner scope");
         let inner_arguments = MacroArgumentBuilder::default()
-            .finish(state.attempt.arena_mut(), inner_opening)
+            .finish(state.attempt.arena_mut(), inner_scope)
             .expect("empty inner argument record");
         let inner =
             state.push_macro_activation(name, definition, inner_arguments, OriginId::UNKNOWN, 0);
@@ -483,196 +448,18 @@ fn nested_macro_retirement_preserves_live_parameter_replay() {
         state
             .retire_exhausted_input(replay)
             .expect("parameter replay retires in LIFO order");
-        assert_eq!(
-            state.input_argument_watermark,
-            crate::attempt::AttemptInputWatermark::default()
-        );
         state
             .retire_exhausted_input(outer)
             .expect("outer body retires after replay");
+        state
+            .commit_attempt_operation(operation)
+            .expect("commit nested retirements");
         assert!(state.attempt.is_empty());
     });
 }
-
-#[test]
-fn nested_macro_retirement_preserves_outer_arguments() {
-    crate::test_harness::with_universe(|universe| {
-        let mut state = CommandState::default();
-        let definition = universe
-            .allocate_definition(&[], &[])
-            .expect("macro definition");
-        let name = universe.intern("nested").expect("macro name").symbol();
-
-        let outer_opening = state
-            .macro_activation_opening_cursor()
-            .expect("outer opening roots");
-        let outer = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('o')])
-            .expect("outer argument");
-        let mut outer_arguments = MacroArgumentBuilder::default();
-        outer_arguments.complete(1, outer).expect("outer slot");
-        let outer_arguments = outer_arguments
-            .finish(state.attempt.arena_mut(), outer_opening)
-            .expect("outer argument record");
-        let outer_level =
-            state.push_macro_activation(name, definition, outer_arguments, OriginId::UNKNOWN, 0);
-
-        let inner_opening = state
-            .macro_activation_opening_cursor()
-            .expect("inner opening roots");
-        let inner = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('i')])
-            .expect("inner argument");
-        let mut inner_arguments = MacroArgumentBuilder::default();
-        inner_arguments.complete(1, inner).expect("inner slot");
-        let inner_arguments = inner_arguments
-            .finish(state.attempt.arena_mut(), inner_opening)
-            .expect("inner argument record");
-        let inner_level =
-            state.push_macro_activation(name, definition, inner_arguments, OriginId::UNKNOWN, 0);
-
-        state
-            .retire_exhausted_input(inner_level)
-            .expect("inner body retires in LIFO order");
-        assert_eq!(state.attempt_token_words(outer), Ok(&[word('o')][..]));
-        assert!(state.attempt_token_words(inner).is_err());
-
-        state
-            .retire_exhausted_input(outer_level)
-            .expect("outer body retires after its child");
-        assert!(state.attempt.is_empty());
-    });
-}
-
-#[test]
-fn macro_retirement_preserves_a_live_scanner_builder() {
-    crate::test_harness::with_universe(|universe| {
-        let mut state = CommandState::default();
-        let definition = universe
-            .allocate_definition(&[], &[])
-            .expect("macro definition");
-        let name = universe.intern("builder").expect("macro name").symbol();
-        let opening = state
-            .macro_activation_opening_cursor()
-            .expect("opening roots");
-        let argument = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('a')])
-            .expect("macro argument");
-        let mut arguments = MacroArgumentBuilder::default();
-        arguments.complete(1, argument).expect("argument slot");
-        let arguments = arguments
-            .finish(state.attempt.arena_mut(), opening)
-            .expect("argument record");
-        let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
-
-        let tokens = state
-            .attempt
-            .arena_mut()
-            .allocate_token_buffer()
-            .expect("live scanner builder");
-        state.transient.builders.push(super::LiveTokenBuilder {
-            identity: 7,
-            tokens,
-        });
-        let discarded = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('x')])
-            .expect("retired scratch");
-
-        state
-            .retire_exhausted_input(level)
-            .expect("macro body retires around live builder");
-        assert!(state.attempt.arena().token_buffer(tokens).is_ok());
-        assert!(state.attempt_token_words(discarded).is_err());
-        assert!(state.attempt_token_words(argument).is_err());
-
-        state.transient.builders.clear();
-        state
-            .reclaim_unreachable_attempt_suffix()
-            .expect("builder retirement releases final attempt row");
-        assert!(state.attempt.is_empty());
-    });
-}
-
-#[test]
-fn macro_retirement_preserves_completed_inner_arguments_before_activation() {
-    crate::test_harness::with_universe(|universe| {
-        let mut state = CommandState::default();
-        let definition = universe
-            .allocate_definition(&[], &[])
-            .expect("macro definition");
-        let name = universe.intern("pending").expect("macro name").symbol();
-
-        let outer_opening = state
-            .macro_activation_opening_cursor()
-            .expect("outer opening roots");
-        let outer_argument = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('o')])
-            .expect("outer argument");
-        let mut outer_arguments = MacroArgumentBuilder::default();
-        outer_arguments
-            .complete(1, outer_argument)
-            .expect("outer slot");
-        let outer_arguments = outer_arguments
-            .finish(state.attempt.arena_mut(), outer_opening)
-            .expect("outer argument record");
-        let outer_level =
-            state.push_macro_activation(name, definition, outer_arguments, OriginId::UNKNOWN, 0);
-
-        let inner_opening = state
-            .macro_activation_opening_cursor()
-            .expect("inner opening roots");
-        let inner_argument = state
-            .attempt
-            .arena_mut()
-            .allocate_token_list([word('i')])
-            .expect("inner argument");
-        let mut inner_arguments = MacroArgumentBuilder::default();
-        inner_arguments
-            .complete(1, inner_argument)
-            .expect("inner slot");
-        let inner_arguments = inner_arguments
-            .finish(state.attempt.arena_mut(), inner_opening)
-            .expect("inner argument record");
-        state.pending_macro_arguments = Some(inner_arguments);
-
-        state
-            .retire_exhausted_input(outer_level)
-            .expect("outer retirement while inner arguments await activation");
-        assert_eq!(
-            state.attempt_token_words(inner_argument),
-            Ok(&[word('i')][..])
-        );
-        assert_eq!(
-            state.attempt_token_words(outer_argument),
-            Ok(&[word('o')][..])
-        );
-
-        let inner_arguments = state
-            .pending_macro_arguments
-            .take()
-            .expect("pending arguments survive outer retirement");
-        let inner_level =
-            state.push_macro_activation(name, definition, inner_arguments, OriginId::UNKNOWN, 0);
-        state
-            .retire_exhausted_input(inner_level)
-            .expect("inner retirement releases both physical prefixes");
-        assert!(state.attempt.is_empty());
-    });
-}
-
 #[cfg(feature = "profiling")]
 #[test]
-fn warmed_long_macro_operation_retires_each_argument_without_allocation() {
+fn warmed_scope_retirement_is_allocation_free_for_8192_activations() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
         let definition = universe
@@ -680,9 +467,8 @@ fn warmed_long_macro_operation_retires_each_argument_without_allocation() {
             .expect("macro definition");
         let name = universe.intern("long-op").expect("macro name").symbol();
         let run = |state: &mut CommandState<_>| {
-            let opening = state
-                .macro_activation_opening_cursor()
-                .expect("opening roots");
+            let activation = state.begin_attempt_operation();
+            let scope = state.begin_attempt_child_scope().expect("macro scope");
             let argument = state
                 .attempt
                 .arena_mut()
@@ -691,13 +477,20 @@ fn warmed_long_macro_operation_retires_each_argument_without_allocation() {
             let mut arguments = MacroArgumentBuilder::default();
             arguments.complete(1, argument).expect("argument slot");
             let arguments = arguments
-                .finish(state.attempt.arena_mut(), opening)
+                .finish(state.attempt.arena_mut(), scope)
                 .expect("argument record");
             let level =
                 state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
             state
+                .commit_attempt_operation(activation)
+                .expect("commit activation");
+            let retirement = state.begin_attempt_operation();
+            state
                 .retire_exhausted_input(level)
                 .expect("macro body retirement");
+            state
+                .commit_attempt_operation(retirement)
+                .expect("commit retirement");
             assert!(state.attempt.is_empty());
         };
 
@@ -780,9 +573,55 @@ fn resource_suspension_moves_the_arena_and_restores_its_opening_cursor() {
         assert_eq!(restored_opening, opening);
         assert_eq!(restored_resume, resume);
         assert_eq!(request, "font request");
-        state.discard_attempt_operation(restored_opening);
+        state
+            .rollback_attempt_operation(restored_opening)
+            .expect("resumed operation rolls back");
         assert_eq!(state.attempt_token_words(retained), Ok(&[word('a')][..]));
         assert!(state.attempt_token_words(rejected).is_err());
+    });
+}
+
+#[test]
+fn nested_owned_scopes_survive_resource_suspension_and_resume_once() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let operation = state.begin_attempt_operation();
+        let scanner = state.begin_attempt_child_scope().expect("scanner scope");
+        let macro_child = state.begin_attempt_child_scope().expect("macro child");
+        let child_value = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("nested child value");
+        let pending = state
+            .suspend_attempt(
+                universe,
+                operation,
+                crate::AttemptResumePoint::default(),
+                (scanner, macro_child),
+            )
+            .expect("nested scopes suspend with their arena owner");
+
+        let (resumed, _, (scanner, macro_child)) = state
+            .resume_attempt(universe, pending)
+            .ok()
+            .expect("nested scopes resume into the same state");
+        assert_eq!(resumed, operation);
+        assert_eq!(state.attempt_token_words(child_value), Ok(&[word('x')][..]));
+        state
+            .retire_attempt_scope(macro_child)
+            .expect("top macro child retires");
+        state
+            .defer_attempt_scope_retirement(scanner)
+            .expect("scanner defers until commit");
+        state
+            .commit_attempt_operation(operation)
+            .expect("commit consumes each owner exactly once");
+        assert!(state.attempt.is_empty());
+        assert!(matches!(
+            state.commit_attempt_operation(operation),
+            Err(AttemptError::InvalidCoordinate)
+        ));
     });
 }
 
@@ -827,12 +666,13 @@ fn stale_resource_suspension_mark_is_typed_and_mutation_free() {
             .arena_mut()
             .allocate_token_list([word('y')])
             .expect("discarded attempt value");
-        let stale = state.begin_attempt_operation();
-        state.discard_attempt_operation(live);
+        state
+            .rollback_attempt_operation(live)
+            .expect("operation rolls back");
 
         let error = match state.suspend_attempt(
             universe,
-            stale,
+            live,
             crate::AttemptResumePoint::default(),
             "input request",
         ) {

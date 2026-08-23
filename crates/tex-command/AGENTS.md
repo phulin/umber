@@ -34,9 +34,10 @@ collector (see `src/conditionals.rs`).
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.
 - `src/lib.rs`: intentionally small public facade and private module tree.
 - `src/attempt.rs` and `src/attempt/tests.rs`: operation-scoped typed command
-  scratch, fixed-size all-table marks, resource-continuation ownership shape,
-  and explicit-root atomic promotion through temporary dense relocation
-  vectors.
+  scratch, invariant lexical scope capabilities, the private move-only owned
+  scope stack for suspended scanner/macro frames, fixed-size all-table marks,
+  exact-LIFO zero-allocation retirement, resource-continuation ownership, and
+  explicit-root atomic promotion through temporary dense relocation vectors.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine
@@ -233,7 +234,11 @@ collector (see `src/conditionals.rs`).
   group-close sites are tracked by `umber2-aqx9`.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
-  recovery tests. Its semantic `ScanToksMode` constructors are parsed once
+  recovery tests. Each scanner owns one arena child scope and writes directly
+  into its parent-owned typed output sink; nested macro scopes can retire
+  without copying or enumerating the scanner's live values. A suspended scan
+  carries only its checked scope coordinate while the arena retains the sole
+  owner. Its semantic `ScanToksMode` constructors are parsed once
   into a typed internal grammar, opener, expansion, warning owner,
   observation purpose, and status-visibility configuration. It also owns
   TeX82 §482's `read_toks`, which is deliberately

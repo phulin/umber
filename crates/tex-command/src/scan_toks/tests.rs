@@ -13,6 +13,7 @@ fn token(ch: char, cat: Catcode) -> Token {
 fn balanced_collection_freezes_nested_tokens_in_the_attempt_arena() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -79,6 +80,7 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
             )
             .expect("macro meaning");
         let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [
@@ -110,7 +112,6 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
                 .collect::<Vec<_>>(),
             [replacement]
         );
-        assert!(processor.command.active_scanner_watermark.is_none());
         assert_eq!(
             processor
                 .get_x_token()
@@ -127,6 +128,7 @@ fn expanded_collection_keeps_its_builder_live_across_nested_macro_retirement() {
 fn macro_definition_scan_keeps_parameter_and_replacement_lists_separate() {
     crate::test_harness::with_universe(|universe| {
         let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [

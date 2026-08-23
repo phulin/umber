@@ -251,7 +251,9 @@ fn timeline_capture_rejects_nonempty_attempts_and_retains_only_empty_marks() {
             Err(CommandSummaryError::AttemptSuspended)
         ));
 
-        command.discard_attempt_operation(empty);
+        command
+            .rollback_attempt_operation(empty)
+            .expect("empty operation rolls back");
         let snapshot = command
             .snapshot(universe)
             .expect("empty command attempt snapshots");

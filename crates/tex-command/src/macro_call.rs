@@ -10,7 +10,7 @@ use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePri
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::attempt::{
-    AttemptArgumentRecordId, AttemptLiveCursor, AttemptTokenBufferId, AttemptTokenListId,
+    AttemptArgumentRecordId, AttemptScopeCoordinate, AttemptTokenBufferId, AttemptTokenListId,
 };
 use crate::processor::status::{
     ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
@@ -71,12 +71,9 @@ pub(crate) struct MacroActivation<G> {
     pub(crate) definition: DefinitionId<G>,
     pub(crate) arguments: MacroArguments,
     pub(crate) invocation: OriginId,
-    /// Allocation prefix before this call began matching arguments.
-    ///
-    /// Exact LIFO body retirement combines this prefix with the small set of
-    /// non-stack attempt roots that can outlive the body, then rejects the
-    /// now-unreachable suffix without inspecting it.
-    pub(crate) opening: Option<AttemptLiveCursor>,
+    /// Dynamic child scope which owns matching scratch, arguments, and body
+    /// replay until exact-LIFO activation retirement.
+    pub(crate) scope: AttemptScopeCoordinate,
 }
 
 impl<G> Clone for MacroActivation<G> {
@@ -91,7 +88,7 @@ impl<G> Copy for MacroActivation<G> {}
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct MacroArguments {
     record: Option<AttemptArgumentRecordId>,
-    opening: Option<AttemptLiveCursor>,
+    scope: Option<AttemptScopeCoordinate>,
 }
 
 /// Exhaustive result of TeX82's `macro_call`.
@@ -200,13 +197,13 @@ impl MacroArgumentBuilder {
     pub(crate) fn finish<G>(
         self,
         attempt: &mut crate::attempt::AttemptArena<G>,
-        opening: AttemptLiveCursor,
+        scope: AttemptScopeCoordinate,
     ) -> Result<MacroArguments, crate::attempt::AttemptError> {
         attempt
             .allocate_arguments(&self.arguments)
             .map(|record| MacroArguments {
                 record: Some(record),
-                opening: Some(opening),
+                scope: Some(scope),
             })
     }
 }
@@ -253,7 +250,9 @@ impl<G> ParameterState<G> {
             definition,
             arguments,
             invocation,
-            opening: arguments.opening,
+            scope: arguments
+                .scope
+                .expect("installed macro arguments own a dynamic scope"),
         });
     }
 
@@ -269,10 +268,8 @@ impl<G> ParameterState<G> {
             .map(|activation| activation.invocation)
     }
 
-    pub(crate) fn retire_last_activation(&mut self) -> Option<AttemptLiveCursor> {
-        self.activations
-            .pop()
-            .and_then(|activation| activation.opening)
+    pub(crate) fn retire_last_activation(&mut self) -> Option<AttemptScopeCoordinate> {
+        self.activations.pop().map(|activation| activation.scope)
     }
 
     pub(crate) fn prepare_argument_build(&mut self) {
@@ -286,15 +283,8 @@ impl MacroArguments {
         self.record
     }
 
-    /// Extends this not-yet-installed activation's retirement ownership over
-    /// an older macro prefix drained by §390 stack conservation.
-    ///
-    /// The pending arguments keep that older physical prefix live until this
-    /// activation itself retires. Carrying the older opening mark forward
-    /// then lets the later exact-LIFO retirement release both prefixes in one
-    /// constant-time suffix truncation.
-    pub(crate) fn absorb_retired_opening(&mut self, opening: AttemptLiveCursor) {
-        self.opening = Some(opening);
+    pub(crate) const fn scope(self) -> Option<AttemptScopeCoordinate> {
+        self.scope
     }
 }
 
@@ -342,13 +332,10 @@ impl<G> CommandProcessor<'_, '_, G> {
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
         self.command.parameters.prepare_argument_build();
-        self.command.pending_macro_opening = Some(
-            self.command
-                .macro_activation_opening_cursor()
-                .map_err(|_| CommandError::input_invariant())?,
-        );
-        self.command.pending_macro_argument_lists.clear();
-        self.command.pending_macro_argument_buffers.clear();
+        let scope = self
+            .command
+            .begin_attempt_child_scope()
+            .map_err(|_| CommandError::input_invariant())?;
         let definition_view = self.state.definition(definition);
         let pattern = definition_view.parameter_pattern();
         let parameter_len = definition_view.parameter_text().len();
@@ -378,10 +365,8 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.outer_recovered_while_matching = false;
         self.eof_recovered_while_matching = false;
-        let scanned_arguments = self.macro_call_scalar(definition, flags, pattern, parameter_len);
-        self.command.pending_macro_argument_lists.clear();
-        self.command.pending_macro_argument_buffers.clear();
-        self.command.pending_macro_opening = None;
+        let scanned_arguments =
+            self.macro_call_scalar(definition, flags, pattern, parameter_len, scope);
         let arguments = match scanned_arguments {
             Ok(arguments) => arguments,
             Err(CommandError::MacroPrefixMismatch) => {
@@ -403,6 +388,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if let Some(episode) = episode {
                     self.finish_scanner_episode(episode);
                 }
+                self.command
+                    .retire_attempt_scope(scope)
+                    .map_err(|_| CommandError::input_invariant())?;
                 return Ok(MacroCallOutcome::PrefixMismatchRecovered);
             }
             Err(error) => {
@@ -422,14 +410,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         // token itself came from, any backup or recovery insertion, and any
         // finished stored replay -- before `begin_token_list(..., macro)`.
         // Those retirements must precede this body's input push.
-        self.command.pending_macro_arguments = Some(arguments);
-        let conservation = self.conserve_input_stack();
-        let arguments = self
-            .command
-            .pending_macro_arguments
-            .take()
-            .expect("macro arguments remain owned through stack conservation");
-        conservation?;
+        self.conserve_input_stack()?;
         let _level = self.push_macro_activation(macro_name, definition, call.origin(), arguments);
         observe!(
             self,
@@ -465,6 +446,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         flags: MeaningFlags,
         pattern: MacroParameterPattern,
         parameter_len: usize,
+        scope: AttemptScopeCoordinate,
     ) -> Result<MacroArguments, CommandError> {
         for index in 0..pattern.leading_end(parameter_len) {
             let expected = self.macro_parameter_token(definition, index)?;
@@ -561,15 +543,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             arguments
                 .complete_buffer((parameter + 1) as u8, argument)
                 .map_err(|_| CommandError::input_invariant())?;
-            self.command.pending_macro_argument_lists.push(argument);
-            self.command.pending_macro_argument_buffers.clear();
         }
-        let opening = self
-            .command
-            .pending_macro_opening
-            .ok_or(CommandError::input_invariant())?;
         arguments
-            .finish(self.command.attempt.arena_mut(), opening)
+            .finish(self.command.attempt.arena_mut(), scope)
             .map_err(|_| CommandError::input_invariant())
     }
 
@@ -1060,14 +1036,11 @@ impl<G> CommandProcessor<'_, '_, G> {
     }
 
     fn allocate_argument_buffer(&mut self) -> Result<AttemptTokenBufferId, CommandError> {
-        let buffer = self
-            .command
+        self.command
             .attempt
             .arena_mut()
             .allocate_token_buffer()
-            .map_err(|_| CommandError::input_invariant())?;
-        self.command.pending_macro_argument_buffers.push(buffer);
-        Ok(buffer)
+            .map_err(|_| CommandError::input_invariant())
     }
 
     fn argument_buffer(

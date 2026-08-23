@@ -23,6 +23,22 @@ mod tests;
 static NEXT_ATTEMPT_KEY: AtomicU64 = AtomicU64::new(1);
 static NEXT_ATTEMPT_SERIAL: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct AttemptScopeSerial(NonZeroU64);
+
+impl AttemptScopeSerial {
+    const ROOT: Self = Self(NonZeroU64::MIN);
+
+    fn checked_successor(self) -> Result<Self, AttemptError> {
+        self.0
+            .get()
+            .checked_add(1)
+            .and_then(NonZeroU64::new)
+            .map(Self)
+            .ok_or(AttemptError::CapacityOverflow)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AttemptKey(NonZeroU64);
 
@@ -33,6 +49,101 @@ impl AttemptKey {
                 return Self(key);
             }
         }
+    }
+}
+
+/// Linear capability owning one dynamically suspended attempt scope.
+///
+/// A Rust lifetime cannot brand a scanner or macro frame which unwinds across
+/// a resource barrier and resumes later. Those frames use this smallest
+/// private runtime boundary instead: one checked serial and two fixed marks.
+/// Construction is arena-private, the value is neither `Copy` nor `Clone`,
+/// and exact close consumes it.
+#[derive(Debug, Eq, PartialEq)]
+#[must_use = "an owned attempt scope must be closed or moved into a continuation"]
+pub(crate) struct OwnedAttemptScope {
+    key: NonZeroU64,
+    serial: AttemptScopeSerial,
+    parent: AttemptScopeSerial,
+    opening: AttemptMark,
+    close_through: AttemptMark,
+    /// The direct operation which observed this semantic owner retire.
+    /// Rollback clears only matching ancestor flags; commit retires the
+    /// operation scope and closes the now-contiguous LIFO tail.
+    retired_by: Option<AttemptScopeSerial>,
+}
+
+/// Direct coordinate of one owned scope record inside its attempt arena.
+///
+/// This is a non-owning command-state cursor. The arena's private
+/// [`OwnedAttemptScope`] row is the sole linear owner and is consumed exactly
+/// once by LIFO close. A copied stale cursor therefore cannot double-close;
+/// direct slot/serial validation rejects it before mutation.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct AttemptScopeCoordinate {
+    key: NonZeroU64,
+    slot: u32,
+    serial: AttemptScopeSerial,
+}
+
+/// One attempt-local id whose child-scope brand cannot escape an HRTB
+/// callback or be used through a sibling scope.
+#[derive(Debug, Eq, PartialEq)]
+pub struct ScopedAttemptTokenListId<'scope> {
+    id: AttemptTokenListId,
+    scope: AttemptScopeSerial,
+    _scope: PhantomData<fn(&'scope mut ()) -> &'scope mut ()>,
+}
+
+/// Borrowed synchronous child scope.
+///
+/// The dynamic engine uses [`OwnedAttemptScope`] only where suspension makes
+/// a lexical Rust lifetime impossible. Purely synchronous helpers use this
+/// facade so a child id is statically unable to escape the callback.
+pub struct AttemptScope<'arena, 'scope, G> {
+    arena: &'arena mut AttemptArena<G>,
+    coordinate: Option<AttemptScopeCoordinate>,
+    _scope: PhantomData<fn(&'scope mut ()) -> &'scope mut ()>,
+}
+
+impl<'scope, G> AttemptScope<'_, 'scope, G> {
+    pub fn allocate_token_list(
+        &mut self,
+        words: impl IntoIterator<Item = TracedTokenWord>,
+    ) -> Result<ScopedAttemptTokenListId<'scope>, AttemptError> {
+        let id = self.arena.allocate_token_list(words)?;
+        Ok(ScopedAttemptTokenListId {
+            id,
+            scope: self
+                .coordinate
+                .expect("a lexical attempt scope remains open")
+                .serial,
+            _scope: PhantomData,
+        })
+    }
+
+    pub fn token_words(
+        &self,
+        id: &ScopedAttemptTokenListId<'scope>,
+    ) -> Result<&[TracedTokenWord], AttemptError> {
+        if self
+            .coordinate
+            .is_none_or(|coordinate| coordinate.serial != id.scope)
+        {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        self.arena.token_words(id.id)
+    }
+}
+
+impl<G> Drop for AttemptScope<'_, '_, G> {
+    fn drop(&mut self) {
+        let Some(coordinate) = self.coordinate.take() else {
+            return;
+        };
+        self.arena
+            .close_owned_scope(coordinate)
+            .expect("a lexical attempt scope closes in exact LIFO order");
     }
 }
 
@@ -177,6 +288,7 @@ pub(crate) struct AttemptTokenBuilder {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AttemptMark {
     key: NonZeroU64,
+    scope_depth: u32,
     traced_words: u32,
     traced_origins: u32,
     token_scratch: u32,
@@ -196,30 +308,9 @@ pub(crate) struct AttemptMark {
 }
 
 impl AttemptMark {
-    const fn empty(key: AttemptKey) -> Self {
-        Self {
-            key: key.0,
-            traced_words: 0,
-            traced_origins: 0,
-            token_scratch: 0,
-            origin_scratch: 0,
-            token_builders: 0,
-            token_lists: 0,
-            glue_values: 0,
-            definitions: 0,
-            argument_words: 0,
-            argument_records: 0,
-            token_buffers: 0,
-            #[cfg(test)]
-            name_bytes: 0,
-            #[cfg(test)]
-            names: 0,
-            provenance: 0,
-        }
-    }
-
     pub(crate) const fn is_empty(self) -> bool {
-        self.traced_words == 0
+        self.scope_depth == 0
+            && self.traced_words == 0
             && self.traced_origins == 0
             && self.token_scratch == 0
             && self.origin_scratch == 0
@@ -280,53 +371,6 @@ impl AttemptMark {
         }
         Some(count)
     }
-}
-
-/// Exact per-table high-water cursor required by current command roots.
-///
-/// This is recomputed at borrow-safe command boundaries. It is deliberately
-/// neither a registry nor a retained root set: typed owners contribute their
-/// coordinates, schema children are followed immediately, and only the
-/// unreachable append-only suffix is reclaimed.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct AttemptLiveCursor(AttemptMark);
-
-impl AttemptLiveCursor {
-    fn include_mark(&mut self, mark: AttemptMark) {
-        debug_assert_eq!(self.0.key, mark.key);
-        self.0.traced_words = self.0.traced_words.max(mark.traced_words);
-        self.0.traced_origins = self.0.traced_origins.max(mark.traced_origins);
-        self.0.token_scratch = self.0.token_scratch.max(mark.token_scratch);
-        self.0.origin_scratch = self.0.origin_scratch.max(mark.origin_scratch);
-        self.0.token_builders = self.0.token_builders.max(mark.token_builders);
-        self.0.token_lists = self.0.token_lists.max(mark.token_lists);
-        self.0.glue_values = self.0.glue_values.max(mark.glue_values);
-        self.0.definitions = self.0.definitions.max(mark.definitions);
-        self.0.argument_words = self.0.argument_words.max(mark.argument_words);
-        self.0.argument_records = self.0.argument_records.max(mark.argument_records);
-        self.0.token_buffers = self.0.token_buffers.max(mark.token_buffers);
-        self.0.provenance = self.0.provenance.max(mark.provenance);
-        #[cfg(test)]
-        {
-            self.0.name_bytes = self.0.name_bytes.max(mark.name_bytes);
-            self.0.names = self.0.names.max(mark.names);
-        }
-    }
-}
-
-/// Componentwise high-water cursor for token lists owned by live parameter
-/// replay levels.
-///
-/// The input stack maintains this value incrementally at its exact LIFO push
-/// and pop boundaries. It contains only the four append-only tables reachable
-/// from an argument token list, so macro retirement can preserve input-owned
-/// values in O(1) without rescanning the stack or allocating side storage.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) struct AttemptInputWatermark {
-    traced_words: u32,
-    traced_origins: u32,
-    token_lists: u32,
-    provenance: u32,
 }
 
 /// Invalid foreign coordinates or bounded-capacity failure.
@@ -397,6 +441,8 @@ struct AttemptRow<T> {
 /// All command-side storage which shares one operation lifetime.
 pub(crate) struct AttemptArena<G> {
     key: AttemptKey,
+    next_scope: AttemptScopeSerial,
+    scopes: Vec<OwnedAttemptScope>,
     traced_words: Vec<TracedTokenWord>,
     traced_origins: Vec<Option<AttemptProvenanceId>>,
     token_scratch: Vec<TracedTokenWord>,
@@ -421,6 +467,10 @@ impl<G> Default for AttemptArena<G> {
     fn default() -> Self {
         Self {
             key: AttemptKey::fresh(),
+            next_scope: AttemptScopeSerial::ROOT
+                .checked_successor()
+                .expect("the root attempt scope has a successor"),
+            scopes: Vec::new(),
             traced_words: Vec::new(),
             traced_origins: Vec::new(),
             token_scratch: Vec::new(),
@@ -444,192 +494,196 @@ impl<G> Default for AttemptArena<G> {
 }
 
 impl<G> AttemptArena<G> {
-    #[must_use]
-    pub(crate) fn empty_live_cursor(&self) -> AttemptLiveCursor {
-        AttemptLiveCursor(AttemptMark::empty(self.key))
+    /// Opens one dynamic child of the exact currently active scope.
+    ///
+    /// The returned linear capability may move into an in-process
+    /// continuation. No row, side table, or heap owner is allocated.
+    pub(crate) fn begin_owned_scope(&mut self) -> Result<AttemptScopeCoordinate, AttemptError> {
+        let serial = self.next_scope;
+        let next_scope = serial.checked_successor()?;
+        let opening = self.mark();
+        let owned = OwnedAttemptScope {
+            key: self.key.0,
+            serial,
+            parent: self.current_scope(),
+            opening,
+            close_through: opening,
+            retired_by: None,
+        };
+        self.scopes
+            .try_reserve(1)
+            .map_err(|_| AttemptError::AllocationFailed)?;
+        let slot = u32::try_from(self.scopes.len()).map_err(|_| AttemptError::CapacityOverflow)?;
+        self.next_scope = next_scope;
+        self.scopes.push(owned);
+        Ok(AttemptScopeCoordinate {
+            key: self.key.0,
+            slot,
+            serial,
+        })
     }
 
-    pub(crate) fn retain_mark(
-        &self,
-        cursor: &mut AttemptLiveCursor,
-        mark: AttemptMark,
+    /// Closes exactly the active LIFO suffix and restores its surviving
+    /// parent. Validation completes before any table or scope scalar mutates.
+    pub(crate) fn close_owned_scope(
+        &mut self,
+        coordinate: AttemptScopeCoordinate,
     ) -> Result<(), AttemptError> {
-        self.validate_mark(mark)?;
-        let live = &mut cursor.0;
-        live.traced_words = live.traced_words.max(mark.traced_words);
-        live.traced_origins = live.traced_origins.max(mark.traced_origins);
-        live.token_scratch = live.token_scratch.max(mark.token_scratch);
-        live.origin_scratch = live.origin_scratch.max(mark.origin_scratch);
-        live.token_builders = live.token_builders.max(mark.token_builders);
-        live.token_lists = live.token_lists.max(mark.token_lists);
-        live.glue_values = live.glue_values.max(mark.glue_values);
-        live.definitions = live.definitions.max(mark.definitions);
-        live.argument_words = live.argument_words.max(mark.argument_words);
-        live.argument_records = live.argument_records.max(mark.argument_records);
-        live.token_buffers = live.token_buffers.max(mark.token_buffers);
-        #[cfg(test)]
+        let index = self.validate_scope_coordinate(coordinate)?;
+        if index + 1 != self.scopes.len() {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        let close_through = self
+            .scopes
+            .last()
+            .expect("validated scope coordinate has a row")
+            .close_through;
+        self.validate_mark(close_through)?;
+        self.truncate(close_through)
+            .expect("scope marks were preflighted before mutation");
+        Ok(())
+    }
+
+    /// Marks a semantic scope retired by the active direct operation.
+    ///
+    /// The scope row remains owned until every younger child closes. This is
+    /// the exact LIFO analogue of TeX retiring an outer macro while a scanner
+    /// or newly matched macro still owns a nested suffix.
+    pub(crate) fn retire_owned_scope(
+        &mut self,
+        coordinate: AttemptScopeCoordinate,
+        operation: AttemptScopeCoordinate,
+    ) -> Result<(), AttemptError> {
+        self.defer_owned_scope_retirement(coordinate, operation)?;
+        self.close_retired_scope_tail()
+    }
+
+    /// Defers reclamation until the direct operation has consumed or promoted
+    /// every value returned by this scope.
+    pub(crate) fn defer_owned_scope_retirement(
+        &mut self,
+        coordinate: AttemptScopeCoordinate,
+        operation: AttemptScopeCoordinate,
+    ) -> Result<(), AttemptError> {
+        let index = self.validate_scope_coordinate(coordinate)?;
+        let operation_index = self.validate_scope_coordinate(operation)?;
+        if self.scopes[operation_index].retired_by.is_some()
+            || self.scopes[index].retired_by.is_some()
         {
-            live.name_bytes = live.name_bytes.max(mark.name_bytes);
-            live.names = live.names.max(mark.names);
+            return Err(AttemptError::InvalidCoordinate);
         }
-        live.provenance = live.provenance.max(mark.provenance);
+        self.scopes[index].retired_by = Some(operation.serial);
         Ok(())
     }
 
-    pub(crate) fn retain_live_cursor(
-        &self,
-        cursor: &mut AttemptLiveCursor,
-        live: AttemptLiveCursor,
+    /// Commits one operation and closes its contiguous retired scope tail.
+    pub(crate) fn commit_owned_operation(
+        &mut self,
+        operation: AttemptScopeCoordinate,
     ) -> Result<(), AttemptError> {
-        self.retain_mark(cursor, live.0)
-    }
-
-    pub(crate) fn retain_token_list(
-        &self,
-        cursor: &mut AttemptLiveCursor,
-        id: AttemptTokenListId,
-    ) -> Result<(), AttemptError> {
-        self.validate_key(id.key)?;
-        let row = self
-            .token_lists
-            .get(id.index())
-            .copied()
-            .filter(|row| row.serial == id.serial)
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        cursor.0.token_lists = cursor.0.token_lists.max(
-            id.row
-                .checked_add(1)
-                .ok_or(AttemptError::CapacityOverflow)?,
-        );
-        let end = row
-            .value
-            .start
-            .checked_add(row.value.len)
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        cursor.0.traced_words = cursor.0.traced_words.max(end);
-        cursor.0.traced_origins = cursor.0.traced_origins.max(end);
-        for origin in row.value.resolve(&self.traced_origins)?.iter().flatten() {
-            self.retain_provenance(cursor, *origin)?;
+        let index = self.validate_scope_coordinate(operation)?;
+        if self.scopes[index].retired_by.is_some() {
+            return Err(AttemptError::InvalidCoordinate);
         }
-        Ok(())
+        self.scopes[index].retired_by = Some(operation.serial);
+        self.close_retired_scope_tail()
     }
 
-    pub(crate) fn extend_input_watermark(
-        &self,
-        watermark: &mut AttemptInputWatermark,
-        id: AttemptTokenListId,
+    /// Rejects one operation and all children opened beneath it, restoring
+    /// retirement flags on older scopes before truncating the owned suffix.
+    pub(crate) fn rollback_owned_operation(
+        &mut self,
+        operation: AttemptScopeCoordinate,
     ) -> Result<(), AttemptError> {
-        let mut cursor = self.empty_live_cursor();
-        self.retain_token_list(&mut cursor, id)?;
-        watermark.traced_words = watermark.traced_words.max(cursor.0.traced_words);
-        watermark.traced_origins = watermark.traced_origins.max(cursor.0.traced_origins);
-        watermark.token_lists = watermark.token_lists.max(cursor.0.token_lists);
-        watermark.provenance = watermark.provenance.max(cursor.0.provenance);
-        Ok(())
+        let index = self.validate_scope_coordinate(operation)?;
+        let opening = self.scopes[index].opening;
+        for scope in &mut self.scopes[..index] {
+            if scope.retired_by == Some(operation.serial) {
+                scope.retired_by = None;
+            }
+        }
+        self.truncate(opening)
     }
 
-    pub(crate) fn retain_input_watermark(
-        &self,
-        cursor: &mut AttemptLiveCursor,
-        watermark: AttemptInputWatermark,
-    ) {
-        cursor.0.traced_words = cursor.0.traced_words.max(watermark.traced_words);
-        cursor.0.traced_origins = cursor.0.traced_origins.max(watermark.traced_origins);
-        cursor.0.token_lists = cursor.0.token_lists.max(watermark.token_lists);
-        cursor.0.provenance = cursor.0.provenance.max(watermark.provenance);
-    }
-
-    pub(crate) fn retain_argument_record(
-        &self,
-        cursor: &mut AttemptLiveCursor,
-        id: AttemptArgumentRecordId,
+    /// Abandons one scanner scope and every unfinished child below it.
+    pub(crate) fn discard_owned_scope_suffix(
+        &mut self,
+        coordinate: AttemptScopeCoordinate,
     ) -> Result<(), AttemptError> {
-        self.validate_key(id.key)?;
-        let row = self
-            .argument_records
-            .get(id.index())
-            .copied()
-            .filter(|row| row.serial == id.serial)
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        cursor.0.argument_records = cursor.0.argument_records.max(
-            id.row
-                .checked_add(1)
-                .ok_or(AttemptError::CapacityOverflow)?,
-        );
-        let end = row
-            .value
-            .start
-            .checked_add(row.value.len)
-            .ok_or(AttemptError::InvalidCoordinate)?;
-        cursor.0.argument_words = cursor.0.argument_words.max(end);
-        for argument in row.value.resolve(&self.argument_words)? {
-            self.retain_token_list(cursor, *argument)?;
+        let index = self.validate_scope_coordinate(coordinate)?;
+        let opening = self.scopes[index].opening;
+        self.truncate(opening)
+    }
+
+    fn close_retired_scope_tail(&mut self) -> Result<(), AttemptError> {
+        while self
+            .scopes
+            .last()
+            .is_some_and(|scope| scope.retired_by.is_some())
+        {
+            let close_through = self
+                .scopes
+                .last()
+                .expect("retired scope tail is nonempty")
+                .close_through;
+            self.validate_mark(close_through)?;
+            self.truncate(close_through)?;
         }
         Ok(())
     }
 
-    pub(crate) fn retain_token_buffer(
+    pub(crate) fn validate_scope_coordinate(
         &self,
-        cursor: &mut AttemptLiveCursor,
-        id: AttemptTokenBufferId,
-    ) -> Result<(), AttemptError> {
-        self.token_buffer(id)?;
-        cursor.0.token_buffers = cursor.0.token_buffers.max(
-            id.row
-                .checked_add(1)
-                .ok_or(AttemptError::CapacityOverflow)?,
-        );
-        Ok(())
+        coordinate: AttemptScopeCoordinate,
+    ) -> Result<usize, AttemptError> {
+        if coordinate.key != self.key.0 {
+            return Err(AttemptError::ForeignAttempt);
+        }
+        let index = coordinate.slot as usize;
+        let owned = self
+            .scopes
+            .get(index)
+            .filter(|owned| owned.key == self.key.0 && owned.serial == coordinate.serial)
+            .ok_or(AttemptError::InvalidCoordinate)?;
+        let expected_parent = index
+            .checked_sub(1)
+            .map_or(AttemptScopeSerial::ROOT, |parent| {
+                self.scopes[parent].serial
+            });
+        if owned.parent != expected_parent {
+            return Err(AttemptError::InvalidCoordinate);
+        }
+        self.validate_mark(owned.opening)?;
+        self.validate_mark(owned.close_through)?;
+        Ok(index)
     }
 
-    pub(crate) fn retain_provenance(
-        &self,
-        cursor: &mut AttemptLiveCursor,
-        id: AttemptProvenanceId,
-    ) -> Result<(), AttemptError> {
-        self.provenance(id)?;
-        cursor.0.provenance = cursor.0.provenance.max(
-            id.row
-                .checked_add(1)
-                .ok_or(AttemptError::CapacityOverflow)?,
-        );
-        Ok(())
+    fn current_scope(&self) -> AttemptScopeSerial {
+        self.scopes
+            .last()
+            .map_or(AttemptScopeSerial::ROOT, |scope| scope.serial)
     }
 
-    pub(crate) fn truncate_to_live(
+    fn with_child_scope<R>(
         &mut self,
-        cursor: AttemptLiveCursor,
-    ) -> Result<(), AttemptError> {
-        self.truncate(cursor.0)
-    }
-
-    /// Rejects scanner-local scratch while preserving both the scanner's
-    /// opening prefix and command roots that became live after that prefix.
-    pub(crate) fn truncate_scanner_scratch(
-        &mut self,
-        opening: AttemptMark,
-        mut live: AttemptLiveCursor,
-    ) -> Result<(), AttemptError> {
-        self.validate_mark(opening)?;
-        live.include_mark(opening);
-        self.truncate_to_live(live)
-    }
-
-    /// Rejects a retired macro suffix after combining its cached typed
-    /// opening watermark with roots that remain live at exact-LIFO exit.
-    pub(crate) fn truncate_macro_retirement(
-        &mut self,
-        opening: AttemptLiveCursor,
-        mut live: AttemptLiveCursor,
-    ) -> Result<(), AttemptError> {
-        live.include_mark(opening.0);
-        self.truncate_to_live(live)
+        operation: impl for<'scope> FnOnce(&mut AttemptScope<'_, 'scope, G>) -> R,
+    ) -> Result<R, AttemptError> {
+        let coordinate = self.begin_owned_scope()?;
+        let mut scope = AttemptScope {
+            arena: self,
+            coordinate: Some(coordinate),
+            _scope: PhantomData,
+        };
+        let result = operation(&mut scope);
+        drop(scope);
+        Ok(result)
     }
 
     #[must_use]
     pub(crate) fn mark(&self) -> AttemptMark {
         AttemptMark {
             key: self.key.0,
+            scope_depth: u32::try_from(self.scopes.len()).expect("attempt scope depth is bounded"),
             traced_words: u32::try_from(self.traced_words.len())
                 .expect("attempt traced-word length is bounded"),
             traced_origins: u32::try_from(self.traced_origins.len())
@@ -667,6 +721,7 @@ impl<G> AttemptArena<G> {
             return Err(AttemptError::ForeignAttempt);
         }
         let lengths = [
+            (mark.scope_depth as usize, self.scopes.len()),
             (mark.traced_words as usize, self.traced_words.len()),
             (mark.traced_origins as usize, self.traced_origins.len()),
             (mark.token_scratch as usize, self.token_scratch.len()),
@@ -695,6 +750,7 @@ impl<G> AttemptArena<G> {
     /// Rejects a suffix in constant time per table. No value is inspected.
     pub(crate) fn truncate(&mut self, mark: AttemptMark) -> Result<(), AttemptError> {
         self.validate_mark(mark)?;
+        self.scopes.truncate(mark.scope_depth as usize);
         // Child coordinates disappear before their backing suffixes.
         #[cfg(test)]
         self.names.truncate(mark.names as usize);
@@ -1394,15 +1450,22 @@ pub struct CommandAttempt<G> {
 /// carries no storage owner and is valid only while the matching live attempt
 /// remains installed in that state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct CommandAttemptMark(AttemptMark);
+pub struct CommandAttemptMark {
+    opening: AttemptMark,
+    operation: AttemptScopeCoordinate,
+}
 
 impl CommandAttemptMark {
-    pub(crate) const fn new(mark: AttemptMark) -> Self {
-        Self(mark)
+    pub(crate) const fn new(opening: AttemptMark, operation: AttemptScopeCoordinate) -> Self {
+        Self { opening, operation }
     }
 
     pub(crate) const fn attempt_mark(self) -> AttemptMark {
-        self.0
+        self.opening
+    }
+
+    pub(crate) const fn operation_scope(self) -> AttemptScopeCoordinate {
+        self.operation
     }
 }
 
@@ -1421,6 +1484,19 @@ impl<G> Default for CommandAttempt<G> {
 }
 
 impl<G> CommandAttempt<G> {
+    /// Runs one synchronous child allocation episode under a fresh invariant
+    /// brand and closes it in exact LIFO order before returning.
+    ///
+    /// The higher-ranked callback prevents both its capability and every id
+    /// allocated through it from escaping. Dynamic scanner/macro frames use
+    /// the crate-private owned-scope boundary instead because they may suspend.
+    pub fn with_scope<R>(
+        &mut self,
+        operation: impl for<'scope> FnOnce(&mut AttemptScope<'_, 'scope, G>) -> R,
+    ) -> Result<R, AttemptError> {
+        self.arena.with_child_scope(operation)
+    }
+
     pub(crate) const fn arena(&self) -> &AttemptArena<G> {
         &self.arena
     }
@@ -1459,15 +1535,24 @@ pub struct PendingCommandAttempt<G, R> {
 }
 
 impl<G, R> PendingCommandAttempt<G, R> {
+    pub(crate) const fn opening(&self) -> CommandAttemptMark {
+        self.opening
+    }
+
     #[must_use]
     #[cfg(test)]
     pub(crate) fn new(
-        attempt: CommandAttempt<G>,
+        mut attempt: CommandAttempt<G>,
         generation: GenerationOwner<G>,
         resume: AttemptResumePoint,
         pending: R,
     ) -> Self {
-        let opening = CommandAttemptMark::new(attempt.arena().mark());
+        let opening_mark = attempt.arena().mark();
+        let operation = attempt
+            .arena_mut()
+            .begin_owned_scope()
+            .expect("test pending attempt opens an operation scope");
+        let opening = CommandAttemptMark::new(opening_mark, operation);
         Self {
             attempt: Box::new(attempt),
             generation,
@@ -1488,7 +1573,11 @@ impl<G, R> PendingCommandAttempt<G, R> {
             attempt
                 .arena()
                 .validate_mark(opening.attempt_mark())
-                .is_ok(),
+                .is_ok()
+                && attempt
+                    .arena()
+                    .validate_scope_coordinate(opening.operation_scope())
+                    .is_ok(),
             "a pending attempt may retain only its own validated opening cursor"
         );
         Self {
@@ -1509,6 +1598,11 @@ impl<G, R> PendingCommandAttempt<G, R> {
                 .attempt
                 .arena()
                 .validate_mark(self.opening.attempt_mark())
+                .is_err()
+            || self
+                .attempt
+                .arena()
+                .validate_scope_coordinate(self.opening.operation_scope())
                 .is_err()
         {
             return Err(self);

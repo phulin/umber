@@ -892,8 +892,7 @@ struct DirectOperationMark<G> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DirectAttemptDisposition {
     /// Every declared escape root has been promoted and installed. Command
-    /// state now recomputes its remaining live coordinates and reclaims only
-    /// the unreachable suffix.
+    /// state now commits its exact operation owner and retired LIFO children.
     ReclaimUnreachable,
     /// A typed continuation still owns attempt-local coordinates. The exact
     /// opening mark moves with that continuation and is discarded only after
@@ -3115,7 +3114,8 @@ impl<G> MainControl<G> {
             return Ok(None);
         }
         let mut diagnostic_effects = DiagnosticEffects::new();
-        {
+        let attempt = self.command.begin_attempt_operation();
+        let retirement = {
             let mut processor = command_processor(
                 &mut self.command,
                 self.fuel.fuel_mut(),
@@ -3124,18 +3124,22 @@ impl<G> MainControl<G> {
                 &mut diagnostic_effects,
                 stores.command_context().expect("named-boundary admission"),
             );
-            processor
-                .retire_exhausted_token_levels_for_named_boundary()
-                .map_err(command_error)?;
+            processor.retire_exhausted_token_levels_for_named_boundary()
+        };
+        if let Err(error) = retirement {
+            self.command
+                .rollback_attempt_operation(attempt)
+                .expect("named-boundary retirement owns its attempt scope");
+            return Err(command_error(error));
         }
+        self.command
+            .commit_attempt_operation(attempt)
+            .map_err(|_| ExecError::MissingToken {
+                context: "named-boundary attempt scope",
+            })?;
         stores
             .world_mut()
             .publish_diagnostic_effects(diagnostic_effects);
-        self.command
-            .reclaim_unreachable_attempt_suffix()
-            .map_err(|_| ExecError::MissingToken {
-                context: "named-boundary attempt roots",
-            })?;
         if !self.command.named_boundary_is_quiescent() {
             return Ok(None);
         }
@@ -3731,8 +3735,8 @@ impl<G> MainControl<G> {
             .expect("direct operation owns the top mode journal frame");
         if attempt == DirectAttemptDisposition::ReclaimUnreachable {
             self.command
-                .reclaim_unreachable_attempt_suffix()
-                .expect("committed operation retains valid command-attempt roots");
+                .commit_attempt_operation(mark.attempt)
+                .expect("committed operation owns a valid command-attempt scope");
         }
     }
 
@@ -3744,8 +3748,8 @@ impl<G> MainControl<G> {
             .rollback_journal(mark.mode)
             .expect("direct operation owns the top mode journal frame");
         self.command
-            .reclaim_attempt_operation(mark.attempt)
-            .expect("rollback roots own valid command-attempt coordinates");
+            .rollback_attempt_operation(mark.attempt)
+            .expect("rollback owns valid command-attempt coordinates");
         stores
             .truncate_page_nodes(mark.page)
             .expect("direct operation page cursor belongs to the live page arena");

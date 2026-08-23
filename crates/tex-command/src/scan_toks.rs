@@ -12,7 +12,7 @@ use tex_state::interner::{ControlSequenceKind, Symbol};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, ResolvedMeaning};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::attempt::{AttemptError, AttemptMark, AttemptTokenBufferId, AttemptTokenListId};
+use crate::attempt::{AttemptError, AttemptTokenBufferId, AttemptTokenListId};
 use crate::processor::alignment::TEMPLATE_ALIGN_STATE;
 use crate::processor::expand::is_expandable_command;
 use crate::processor::status::{
@@ -136,7 +136,7 @@ struct ScanToksConfig {
 /// Exact command-owned continuation of one host-suspended token collector.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PendingScanToks<G> {
-    mark: AttemptMark,
+    scope: crate::attempt::AttemptScopeCoordinate,
     config: ScanToksConfig,
     episode: ScannerEpisode,
     phase: PendingScanToksPhase<G>,
@@ -145,7 +145,7 @@ pub(crate) struct PendingScanToks<G> {
 impl<G> Clone for PendingScanToks<G> {
     fn clone(&self) -> Self {
         Self {
-            mark: self.mark,
+            scope: self.scope,
             config: self.config,
             episode: self.episode.clone(),
             phase: self.phase.clone(),
@@ -172,24 +172,6 @@ impl<G> PendingScanToks<G> {
             ) if expansion == expected => Some(target),
             _ => None,
         }
-    }
-
-    pub(crate) fn retain_attempt_coordinates(
-        &self,
-        arena: &crate::attempt::AttemptArena<G>,
-        cursor: &mut crate::attempt::AttemptLiveCursor,
-    ) -> Result<(), AttemptError> {
-        arena.retain_mark(cursor, self.mark)?;
-        let PendingScanToksPhase::Replacement {
-            parameter_text,
-            progress,
-            ..
-        } = &self.phase
-        else {
-            return Ok(());
-        };
-        arena.retain_token_list(cursor, *parameter_text)?;
-        arena.retain_token_buffer(cursor, progress.output)
     }
 }
 
@@ -541,22 +523,25 @@ impl<G> CommandProcessor<'_, '_, G> {
         mode: ScanToksMode,
     ) -> Result<ScannedToksBuffers, CommandError> {
         let config = ScanToksConfig::parse(mode);
-        let (mark, episode, phase) = match self.command.pending_scan_toks.pop() {
+        let (scope, episode, phase) = match self.command.pending_scan_toks.pop() {
             Some(pending) if pending.config == config => {
-                (pending.mark, pending.episode, pending.phase)
+                (pending.scope, pending.episode, pending.phase)
             }
             Some(pending) => {
                 self.command.pending_scan_toks.push(pending);
                 return Err(CommandError::input_invariant());
             }
             None => {
-                let mark = self.command.attempt.arena().mark();
+                let scope = self
+                    .command
+                    .begin_attempt_child_scope()
+                    .map_err(attempt_command_error)?;
                 let builder = TokenBuilderId(self.command.transient.next_builder_identity);
                 self.command.transient.next_builder_identity =
                     self.command.transient.next_builder_identity.wrapping_add(1);
                 let warning = ScannerWarning(builder.0);
                 (
-                    mark,
+                    scope,
                     self.begin_scanner_episode(
                         config.scanner_status(builder, warning),
                         config.status_visibility,
@@ -565,17 +550,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 )
             }
         };
-        let parent_watermark = self.command.active_scanner_watermark;
-        self.command.active_scanner_watermark = Some(
-            parent_watermark.unwrap_or_else(|| self.command.attempt.arena().empty_live_cursor()),
-        );
         let result = self.scan_toks_inner(config, &episode, phase);
-        self.command.active_scanner_watermark = parent_watermark;
         let result = match result {
             Ok(result) => result,
             Err(failure) if failure.error.is_resource_suspension() => {
                 self.command.pending_scan_toks.push(PendingScanToks {
-                    mark,
+                    scope,
                     config,
                     episode,
                     phase: *failure.continuation,
@@ -585,7 +565,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Err(failure) => {
                 self.finish_scanner_episode(episode);
                 self.command
-                    .rollback_attempt_scanner_scratch(mark)
+                    .discard_attempt_scope_suffix(scope)
                     .map_err(attempt_command_error)?;
                 return Err(failure.error);
             }
@@ -645,6 +625,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 tokens: completed_tokens,
             }),
         );
+        self.command
+            .defer_attempt_scope_retirement(scope)
+            .map_err(attempt_command_error)?;
         Ok(result)
     }
 
@@ -779,8 +762,6 @@ impl<G> CommandProcessor<'_, '_, G> {
                 _ => unreachable!("ScanToksConfig admits no other grammar/opening pair"),
             },
         };
-        self.retain_active_scanner_token_list(parameter_text)?;
-        self.retain_active_scanner_token_buffer(replacement_progress.output)?;
         let replacement = if missing_left_brace {
             replacement_progress.output
         } else {
@@ -893,7 +874,6 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// representation; doubled hashes remain literal parameter characters.
     fn scan_parameter_text(&mut self) -> Result<ScannedParameterText, CommandError> {
         let output = self.begin_attempt_token_list()?;
-        self.retain_active_scanner_token_buffer(output)?;
         let mut next_parameter = 1_u8;
         let mut primary = OriginId::UNKNOWN;
         let mut malformed_parameter = false;
@@ -1019,40 +999,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         output: AttemptTokenBufferId,
     ) -> Result<AttemptTokenListId, CommandError> {
         self.finish_attempt_token_list(output)
-    }
-
-    fn retain_active_scanner_token_list(
-        &mut self,
-        list: AttemptTokenListId,
-    ) -> Result<(), CommandError> {
-        let mut watermark = self
-            .command
-            .active_scanner_watermark
-            .ok_or(CommandError::input_invariant())?;
-        self.command
-            .attempt
-            .arena()
-            .retain_token_list(&mut watermark, list)
-            .map_err(attempt_command_error)?;
-        self.command.active_scanner_watermark = Some(watermark);
-        Ok(())
-    }
-
-    fn retain_active_scanner_token_buffer(
-        &mut self,
-        buffer: AttemptTokenBufferId,
-    ) -> Result<(), CommandError> {
-        let mut watermark = self
-            .command
-            .active_scanner_watermark
-            .ok_or(CommandError::input_invariant())?;
-        self.command
-            .attempt
-            .arena()
-            .retain_token_buffer(&mut watermark, buffer)
-            .map_err(attempt_command_error)?;
-        self.command.active_scanner_watermark = Some(watermark);
-        Ok(())
     }
 
     /// TeX82 §477, "Scan and build the body of the token list".
@@ -1698,7 +1644,10 @@ impl<G> CommandProcessor<'_, '_, G> {
         target: tex_state::interner::Symbol,
         raw_catcodes: bool,
     ) -> Result<AttemptTokenListId, CommandError> {
-        let mark = self.command.attempt.arena().mark();
+        let scope = self
+            .command
+            .begin_attempt_child_scope()
+            .map_err(attempt_command_error)?;
         let builder = TokenBuilderId(self.command.transient.next_builder_identity);
         self.command.transient.next_builder_identity =
             self.command.transient.next_builder_identity.wrapping_add(1);
@@ -1720,7 +1669,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             Ok(tokens) => tokens,
             Err(error) => {
                 self.command
-                    .rollback_attempt_scanner_scratch(mark)
+                    .discard_attempt_scope_suffix(scope)
                     .map_err(attempt_command_error)?;
                 return Err(error);
             }
@@ -1732,10 +1681,15 @@ impl<G> CommandProcessor<'_, '_, G> {
         // meaning mutation, whose macro body includes §482's leading
         // `end_match_token`.
         match self.finish_attempt_token_list(tokens) {
-            Ok(tokens) => Ok(tokens),
+            Ok(tokens) => {
+                self.command
+                    .defer_attempt_scope_retirement(scope)
+                    .map_err(attempt_command_error)?;
+                Ok(tokens)
+            }
             Err(error) => {
                 self.command
-                    .rollback_attempt_scanner_scratch(mark)
+                    .discard_attempt_scope_suffix(scope)
                     .map_err(attempt_command_error)?;
                 Err(error)
             }

@@ -230,9 +230,11 @@ impl<G> CommandState<G> {
         identity
     }
 
-    /// Pushes one attempt-local list while advancing the direct input-owner
-    /// watermark. The payload retains the preceding Copy value so exact-LIFO
-    /// retirement restores it without scanning the input stack.
+    /// Pushes one attempt-local list owned by its enclosing attempt scope.
+    ///
+    /// The arena's scope stack, rather than this input level, owns storage.
+    /// Exact-LIFO macro/scanner retirement therefore keeps this coordinate
+    /// live without a copied high-water mark or an input-stack census.
     pub(crate) fn push_attempt_list_level(
         &mut self,
         list: crate::attempt::AttemptTokenListId,
@@ -241,14 +243,9 @@ impl<G> CommandState<G> {
         retirement: RetirementBehavior,
         trace: ReplayTrace,
     ) -> Result<InputLevelId, crate::AttemptError> {
-        let prior = self.input_argument_watermark;
-        let mut watermark = prior;
-        self.attempt
-            .arena()
-            .extend_input_watermark(&mut watermark, list)?;
-        self.input_argument_watermark = watermark;
+        self.attempt.arena().token_words(list)?;
         Ok(self.push_token_level(
-            TokenPayload::AttemptList { list, len, prior },
+            TokenPayload::AttemptList { list, len },
             behavior,
             retirement,
             trace,
@@ -458,14 +455,7 @@ impl<G> CommandState<G> {
             });
         }
 
-        let retirement_opening = self.validate_macro_body_retirement(&cursor.behavior)?;
-        let retirement_live = retirement_opening
-            .map(|opening| {
-                self.macro_retirement_live_attempt_cursor()
-                    .map(|live| (opening, live))
-                    .map_err(|_| InputRetirementError::AttemptRootInvariant)
-            })
-            .transpose()?;
+        let retirement_scope = self.validate_macro_body_retirement(&cursor.behavior)?;
         let InputLevel::Tokens(cursor) = self
             .input
             .levels
@@ -474,10 +464,8 @@ impl<G> CommandState<G> {
         else {
             unreachable!("the inspected top level was a token cursor");
         };
-        if let TokenPayload::AttemptList { prior, .. } = &cursor.payload {
-            self.input_argument_watermark = *prior;
-        }
-        self.finish_macro_body_retirement(&cursor.behavior, retirement_live);
+        self.finish_macro_body_retirement(&cursor.behavior, retirement_scope)
+            .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
         let action = match cursor.retirement {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
@@ -528,10 +516,8 @@ impl<G> CommandState<G> {
                 trace: None,
             });
         };
-        if let TokenPayload::AttemptList { prior, .. } = &cursor.payload {
-            self.input_argument_watermark = *prior;
-        }
-        self.finish_macro_body_retirement(&cursor.behavior, None);
+        self.finish_macro_body_retirement(&cursor.behavior, None)
+            .expect("final cleanup runs inside one direct operation");
         let action = match cursor.retirement {
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
             RetirementBehavior::Pop
@@ -559,13 +545,13 @@ impl<G> CommandState<G> {
     fn validate_macro_body_retirement(
         &self,
         behavior: &TokenBehavior,
-    ) -> Result<Option<crate::attempt::AttemptLiveCursor>, InputRetirementError> {
+    ) -> Result<Option<crate::attempt::AttemptScopeCoordinate>, InputRetirementError> {
         let TokenBehavior::MacroBody(expected) = behavior else {
             return Ok(None);
         };
         let actual = self.parameters.activations.last();
         if actual.map(|activation| activation.identity) == Some(*expected) {
-            Ok(actual.and_then(|activation| activation.opening))
+            Ok(actual.map(|activation| activation.scope))
         } else {
             Err(InputRetirementError::MacroActivationOrder {
                 expected: *expected,
@@ -577,27 +563,16 @@ impl<G> CommandState<G> {
     fn finish_macro_body_retirement(
         &mut self,
         behavior: &TokenBehavior,
-        reclaim: Option<(
-            crate::attempt::AttemptLiveCursor,
-            crate::attempt::AttemptLiveCursor,
-        )>,
-    ) {
+        expected_scope: Option<crate::attempt::AttemptScopeCoordinate>,
+    ) -> Result<(), crate::AttemptError> {
         if matches!(behavior, TokenBehavior::MacroBody(_)) {
-            let retired_opening = self.parameters.retire_last_activation();
-            if let Some((opening, live)) = reclaim {
-                debug_assert_eq!(retired_opening, Some(opening));
-                if let Some(arguments) = &mut self.pending_macro_arguments {
-                    arguments.absorb_retired_opening(opening);
-                }
-                if self.pending_macro_opening.is_some() {
-                    self.pending_macro_opening = Some(opening);
-                }
-                self.attempt
-                    .arena_mut()
-                    .truncate_macro_retirement(opening, live)
-                    .expect("macro retirement roots were validated before mutation");
+            let retired_scope = self.parameters.retire_last_activation();
+            debug_assert!(expected_scope.is_none() || retired_scope == expected_scope);
+            if let Some(scope) = retired_scope {
+                self.retire_attempt_scope(scope)?;
             }
         }
+        Ok(())
     }
 }
 

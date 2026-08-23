@@ -35,6 +35,7 @@ fn parameterless_macro_expands_from_a_generation_typed_definition() {
             )
             .expect("macro meaning");
         let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(&mut command, [Token::Cs(symbol.symbol())]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut diagnostic_effects = tex_state::diagnostic::DiagnosticEffects::new();

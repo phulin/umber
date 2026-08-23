@@ -435,7 +435,18 @@ fn pending_attempt_owns_generation_and_resumes_without_a_borrow() {
             .resume(universe)
             .ok()
             .expect("test fixture is valid");
-        assert_eq!(opening.attempt_mark(), attempt.arena().mark());
+        assert!(
+            attempt
+                .arena()
+                .validate_mark(opening.attempt_mark())
+                .is_ok()
+        );
+        assert!(
+            attempt
+                .arena()
+                .validate_scope_coordinate(opening.operation_scope())
+                .is_ok()
+        );
         assert_eq!(resume.command, 7);
         assert_eq!(request, "font request");
         assert!(attempt.arena().mark().traced_words == 0);
@@ -464,4 +475,91 @@ fn pending_owner_rejects_retirement_without_partially_retiring_universe() {
         universe.retire().expect("test fixture is valid");
     })
     .expect("test fixture is valid");
+}
+
+#[test]
+fn owned_scopes_close_exact_lifo_and_reject_stale_coordinates() {
+    let mut attempt = AttemptArena::<()>::default();
+    let retained = attempt
+        .allocate_token_list([word('p')])
+        .expect("parent value");
+    let parent = attempt.begin_owned_scope().expect("parent scope");
+    let parent_value = attempt
+        .allocate_token_list([word('a')])
+        .expect("parent-scope value");
+    let child = attempt.begin_owned_scope().expect("child scope");
+    let child_value = attempt
+        .allocate_token_list([word('b')])
+        .expect("child-scope value");
+
+    assert_eq!(
+        attempt.close_owned_scope(parent),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(attempt.token_words(child_value), Ok(&[word('b')][..]));
+    attempt
+        .close_owned_scope(child)
+        .expect("child closes first");
+    assert_eq!(
+        attempt.token_words(child_value),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(attempt.token_words(parent_value), Ok(&[word('a')][..]));
+    attempt
+        .close_owned_scope(parent)
+        .expect("parent closes second");
+    assert_eq!(
+        attempt.close_owned_scope(parent),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    assert_eq!(attempt.token_words(retained), Ok(&[word('p')][..]));
+}
+
+#[test]
+fn lexical_scope_truncates_its_branded_child_id() {
+    let mut attempt = AttemptArena::<()>::default();
+    attempt
+        .with_child_scope(|scope| {
+            let child = scope
+                .allocate_token_list([word('x')])
+                .expect("child allocation");
+            assert_eq!(scope.token_words(&child), Ok(&[word('x')][..]));
+        })
+        .expect("lexical scope");
+    assert!(attempt.mark().is_empty());
+}
+
+#[test]
+fn long_parent_scope_reclaims_8192_retired_children_at_constant_depth() {
+    let mut attempt = AttemptArena::<()>::default();
+    let operation = attempt.begin_owned_scope().expect("operation scope");
+    let scanner = attempt.begin_owned_scope().expect("scanner scope");
+    let output = attempt
+        .allocate_token_buffer()
+        .expect("parent-owned scanner sink");
+
+    for _ in 0..8_192 {
+        let child = attempt.begin_owned_scope().expect("macro child");
+        let retired = attempt
+            .allocate_token_list([word('x')])
+            .expect("child scratch");
+        attempt
+            .retire_owned_scope(child, operation)
+            .expect("top child retires immediately");
+        assert_eq!(attempt.scopes.len(), 2);
+        assert!(attempt.token_buffer(output).is_ok());
+        assert_eq!(
+            attempt.token_words(retired),
+            Err(AttemptError::InvalidCoordinate)
+        );
+    }
+
+    attempt
+        .defer_owned_scope_retirement(scanner, operation)
+        .expect("scanner output stays live until operation commit");
+    assert!(attempt.token_buffer(output).is_ok());
+    attempt
+        .commit_owned_operation(operation)
+        .expect("operation consumes scanner then itself");
+    assert!(attempt.mark().is_empty());
 }

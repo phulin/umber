@@ -266,21 +266,39 @@ reference into an arena and no runtime type is self-referential.
 
 ## Attempts, scratch, and commit promotion
 
-An execution operation owns an `AttemptArena`. Scanner buffers, macro
-arguments, expansion scratch, temporary token lists, builders, speculative
-values, and cold-handler operands allocate there. Small scalar scratch may
-remain inline, but it has the same operation lifetime.
+One command machine owns one nonmoving `AttemptArena`. A direct operation
+opens an arena-owned scope; scanners and macro activations open exact-LIFO
+children. Every scope is one inline owner row containing a checked serial and
+fixed opening cursor. The scope slab reserves geometrically and reuses its
+capacity, so warmed begin, retire, commit, and rollback allocate no heap.
 
-An attempt mark is a tuple of arena lengths and subordinate builder cursors.
-Failure truncates to the mark; rejecting the operation drops the whole arena.
-Capacity may be retained by an operation-local pool after every value has been
-logically discarded. Rollback performs no object-by-object liveness discovery.
+Purely synchronous helpers receive an invariant generative `AttemptScope`
+through a higher-ranked callback. An id allocated through that capability can
+be read only through the same capability and cannot escape the callback. A
+macro or scanner which can suspend instead uses the smallest private runtime
+boundary: the arena retains the sole non-`Copy`, non-`Clone`
+`OwnedAttemptScope`, while command state stores a checked non-owning direct
+coordinate. The complete arena and owner rows move together into an
+in-process continuation. No scope owner or arena id enters a named checkpoint,
+format, detached continuation, or serialized value.
 
-A resource-pending continuation may take ownership of an entire
-`AttemptArena`. All links within it are typed offsets or ranges. The
+Scanner output is allocated directly into the scanner parent's typed sink.
+Nested macro scratch belongs to a child scope, so closing that child neither
+copies nor promotes the parent's output. Semantic retirement marks an owner;
+physical reclamation consumes only the contiguous retired LIFO suffix. A
+successful operation retires its own owner after every explicit durable
+promotion has completed, while rejection truncates the operation and every
+child to the operation's fixed opening cursor. Rollback clears only retirement
+flags owned by that rejected operation before truncation. There is no live-root
+enumeration, input-stack scan, coordinate relocation, lookup table, content
+hash, or per-scope heap owner.
+
+A resource-pending continuation may take ownership of the entire arena and its
+open owned-scope stack. All links within it are typed offsets or ranges. The
 continuation also owns the relevant generation at coarse granularity, so every
-generation-scoped id in the arena remains admissible. Resumption moves the
-arena back into the operation. Cancellation drops it wholesale.
+generation-scoped id in the arena remains admissible. Resumption validates the
+attempt key, operation serial, and exact scope coordinate before moving the
+arena back. Cancellation drops it wholesale.
 
 Only explicit commit promotion lets an attempt value escape. The destination
 is selected by the semantic role:
@@ -315,18 +333,14 @@ is cleared or dropped when publication completes. Destination rows become
 visible only after every copied child has validated and every root has been
 rewritten; failure leaves the destination unpublished.
 
-Direct-operation completion chooses an explicit disposition for its attempt
-suffix. After a fully applied operation has promoted and installed every
-declared escape root, command state recomputes one private per-table high-water
-cursor from its live input, macro, alignment, builder, and scanner-continuation
-coordinates. It then discards only the suffix beyond that cursor; a macro
-argument created during delivery therefore survives until its activation and
-parameter levels retire. A resource-unavailable operation instead moves its
-opening mark together with the scanned operation into the typed retry
-continuation and performs no reclamation. Rollback restores semantic roots
-before recomputing the same live cursor. Named command timeline rows contain
-only the canonical empty attempt mark; a named checkpoint performs one final
-reclamation before enforcing that durable-only invariant.
+Direct-operation completion chooses one owner transition. A fully applied
+operation retires its owner and closes only the already-retired tail; a live
+macro child prevents its parent operation from closing until that activation
+retires in a later operation. A resource-unavailable operation moves its open
+owner together with the arena into the typed retry continuation and performs
+no reclamation. Rollback restores semantic roots, consumes the operation owner
+exactly once, and truncates its whole child suffix. Named command timeline rows
+require a quiescent empty scope stack and canonical empty attempt cursor.
 
 ## Node lifetimes
 
@@ -400,7 +414,7 @@ contract explicitly includes detached source metadata.
 ## Marks, checkpoints, and restoration
 
 An operation mark is a fixed-size value containing journal cursors, stack
-lengths, arena watermarks, mode/page cursors, source/effect ledger cursors, and
+lengths, arena cursors, mode/page cursors, source/effect ledger cursors, and
 the identity of the generation it addresses. A named checkpoint owns the
 generation set needed by those coordinates and contains the same kind of
 compact marks, plus any optional coarse packed-bank snapshot. It does not clone
@@ -414,7 +428,7 @@ owners provide lifetime; its cursors provide position.
 Restore is atomic and follows this order:
 
 1. Validate the checkpoint/session identity, generation ancestry, all journal
-   and stack cursors, arena watermarks, and external ledger cursors without
+   and stack cursors, arena positions, and external ledger cursors without
    mutation.
 2. Acquire or install the checkpoint's coarse generation owners so both the
    restored and abandoned ids remain resolvable during restoration.
@@ -425,7 +439,7 @@ Restore is atomic and follows this order:
    output cursors, transferring canonical roots before releasing replaced
    owners.
 5. Truncate attempt, provenance, input, and mode/page arena suffixes to their
-   validated watermarks.
+   validated positions.
 6. Release abandoned generation and page owners only after no restored cell,
    stack entry, or cursor can name their storage.
 

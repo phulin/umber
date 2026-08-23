@@ -23,7 +23,7 @@ fn word(ch: char) -> TracedTokenWord {
 fn arguments_are_completed_in_tex_parameter_order_and_live_in_the_attempt() {
     crate::test_harness::with_universe(|_universe| {
         let mut attempt = AttemptArena::<()>::default();
-        let opening = attempt.empty_live_cursor();
+        let scope = attempt.begin_owned_scope().expect("argument scope");
         let first = attempt.allocate_token_list([word('a')]).expect("first");
         let second = attempt.allocate_token_list([]).expect("second");
         let mut builder = MacroArgumentBuilder::default();
@@ -37,7 +37,7 @@ fn arguments_are_completed_in_tex_parameter_order_and_live_in_the_attempt() {
         );
         builder.complete(2, second).expect("slot two");
         let arguments = builder
-            .finish(&mut attempt, opening)
+            .finish(&mut attempt, scope)
             .expect("argument record");
         assert_eq!(
             attempt.arguments(arguments.record().expect("nonempty record")),
@@ -53,11 +53,20 @@ fn activation_retirement_drops_only_the_current_macro_frame() {
             .allocate_definition(&[], &[TokenWord::pack(Token::Param(1))])
             .expect("definition");
         let name = universe.intern("m").expect("name").symbol();
+        let mut attempt = AttemptArena::<()>::default();
+        let first_scope = attempt.begin_owned_scope().expect("first scope");
+        let first_arguments = MacroArgumentBuilder::default()
+            .finish(&mut attempt, first_scope)
+            .expect("first arguments");
+        let second_scope = attempt.begin_owned_scope().expect("second scope");
+        let second_arguments = MacroArgumentBuilder::default()
+            .finish(&mut attempt, second_scope)
+            .expect("second arguments");
         let mut parameters = ParameterState::default();
         let first =
-            parameters.push_activation(name, definition, Default::default(), OriginId::UNKNOWN);
+            parameters.push_activation(name, definition, first_arguments, OriginId::UNKNOWN);
         let second =
-            parameters.push_activation(name, definition, Default::default(), OriginId::UNKNOWN);
+            parameters.push_activation(name, definition, second_arguments, OriginId::UNKNOWN);
         assert_ne!(first, second);
         assert_eq!(parameters.activations.len(), 2);
         parameters.retire_last_activation();
@@ -152,6 +161,7 @@ fn delimited_argument_stops_at_its_literal_delimiter() {
     crate::test_harness::with_universe(|universe| {
         let macro_token = install_macro(universe, "m", &[Token::Param(1), other(',')]);
         let mut command = CommandState::default();
+        let _operation = command.begin_attempt_operation();
         crate::test_harness::push(
             &mut command,
             [macro_token, letter('x'), other(','), letter('z')],

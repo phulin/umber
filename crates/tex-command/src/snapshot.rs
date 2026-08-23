@@ -554,6 +554,7 @@ impl<G> CommandState<G> {
         self.roots = Arc::new(crate::state::CommandStateRoots::default());
         self.timeline = Arc::new(CommandTimeline::default());
         self.attempt = crate::CommandAttempt::default();
+        self.active_attempt_operation = None;
     }
 
     fn checkpoint_arenas(
@@ -649,7 +650,7 @@ impl<G> CommandState<G> {
         if !self.transient.rollback_roots.is_empty() {
             return Err(CommandSummaryError::LiveRollbackRoot);
         }
-        if !self.attempt.is_empty() {
+        if self.active_attempt_operation.is_some() || !self.attempt.is_empty() {
             return Err(CommandSummaryError::AttemptSuspended);
         }
         Ok(())

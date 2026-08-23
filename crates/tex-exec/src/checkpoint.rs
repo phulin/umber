@@ -72,9 +72,6 @@ impl<G> EngineCheckpoint<G> {
         budget_counters: crate::ExecutionBudgetCounters,
         _exact_state_identity: bool,
     ) -> Result<Self, CommandSummaryError> {
-        command
-            .reclaim_unreachable_attempt_suffix()
-            .map_err(|_| CommandSummaryError::AttemptSuspended)?;
         let command = command.publish_summary(universe)?;
         let root_anchor = command
             .root_source_anchor()

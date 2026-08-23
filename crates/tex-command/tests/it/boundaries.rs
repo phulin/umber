@@ -424,6 +424,19 @@ fn command_state_machines_are_private() {
 }
 
 #[test]
+fn lexical_attempt_ids_cannot_escape_their_scope() {
+    let manifest_dir = test_support::repository_root().join("crates/tex-command");
+    let dependencies = [CompileFailDependency::path("tex-command", &manifest_dir)];
+
+    assert_compile_fail(
+        "attempt-scope-escape",
+        &manifest_dir.join("tests/ui/attempt_scope_escape.rs"),
+        &dependencies,
+        &["lifetime may not live long enough"],
+    );
+}
+
+#[test]
 fn semantic_and_runtime_fields_are_opaque() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let dependencies = [CompileFailDependency::path("tex-command", &manifest_dir)];

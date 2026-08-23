@@ -64,10 +64,6 @@ pub struct CommandStateRoots<G> {
     /// of portable format identity.
     pub(crate) engine_semantics: CommandEngineSemantics,
     pub(crate) input: InputState<G>,
-    /// Direct componentwise watermark for attempt-local token lists still
-    /// owned by live parameter replay levels. Exact-LIFO input push/pop keeps
-    /// this field current without scanning the input stack.
-    pub(crate) input_argument_watermark: crate::attempt::AttemptInputWatermark,
     pub(crate) parameters: ParameterState<G>,
     pub(crate) scanner: ScannerState,
     pub(crate) conditions: ConditionStack,
@@ -177,7 +173,6 @@ impl<G> Clone for CommandStateRoots<G> {
         Self {
             engine_semantics: self.engine_semantics,
             input: self.input.clone(),
-            input_argument_watermark: self.input_argument_watermark,
             parameters: self.parameters.clone(),
             scanner: self.scanner.clone(),
             conditions: self.conditions.clone(),
@@ -219,26 +214,10 @@ pub struct CommandState<G> {
     /// Storage for scanner, expansion, and retry coordinates in the current
     /// operation. Checkpoints retain its bounded mark, never its payload.
     pub(crate) attempt: crate::CommandAttempt<G>,
-    /// Completed macro arguments held across §390's retirement of depleted
-    /// input levels immediately before the new activation is installed.
-    ///
-    /// This synchronous, operation-local coordinate is outside checkpointed
-    /// semantic roots. It exists solely so exact-LIFO retirement can reclaim
-    /// an outer activation without discarding the not-yet-installed inner
-    /// activation's argument record.
-    pub(crate) pending_macro_arguments: Option<crate::macro_call::MacroArguments>,
-    /// Allocation prefix and completed per-parameter token lists retained
-    /// while TeX82 §§391--400 are still matching the current macro call.
-    /// The at-most-nine IDs remain inline and are cleared before activation.
-    pub(crate) pending_macro_opening: Option<crate::attempt::AttemptLiveCursor>,
-    pub(crate) pending_macro_argument_lists:
-        smallvec::SmallVec<[crate::attempt::AttemptTokenListId; 9]>,
-    pub(crate) pending_macro_argument_buffers:
-        smallvec::SmallVec<[crate::attempt::AttemptTokenBufferId; 2]>,
-    /// Componentwise typed watermark for synchronous, possibly nested
-    /// `scan_toks` owners. Each lexical episode saves this Copy value, extends
-    /// it with its parameter/output coordinates, then restores the parent.
-    pub(crate) active_scanner_watermark: Option<crate::attempt::AttemptLiveCursor>,
+    /// One direct-operation child scope. It stays installed across an
+    /// in-process resource suspension and is consumed only by commit or
+    /// rollback; named checkpoints require this field to be empty.
+    pub(crate) active_attempt_operation: Option<crate::CommandAttemptMark>,
 }
 
 impl<G> Deref for CommandState<G> {
@@ -267,7 +246,6 @@ impl<G> Default for CommandStateRoots<G> {
         Self {
             engine_semantics: CommandEngineSemantics::default(),
             input: InputState::default(),
-            input_argument_watermark: crate::attempt::AttemptInputWatermark::default(),
             parameters: ParameterState::default(),
             scanner: ScannerState::default(),
             conditions: ConditionStack::default(),
@@ -300,11 +278,7 @@ impl<G> Default for CommandState<G> {
             timeline: Arc::new(crate::snapshot::CommandTimeline::default()),
             usage: CommandUsageTracker::default(),
             attempt: crate::CommandAttempt::default(),
-            pending_macro_arguments: None,
-            pending_macro_opening: None,
-            pending_macro_argument_lists: smallvec::SmallVec::new(),
-            pending_macro_argument_buffers: smallvec::SmallVec::new(),
-            active_scanner_watermark: None,
+            active_attempt_operation: None,
         }
     }
 }
@@ -745,148 +719,92 @@ impl<G> CommandState<G> {
     /// Captures every attempt-local table and subordinate builder cursor for
     /// an executor operation.
     #[must_use]
-    pub fn begin_attempt_operation(&self) -> crate::CommandAttemptMark {
-        crate::CommandAttemptMark::new(self.attempt.arena().mark())
+    pub fn begin_attempt_operation(&mut self) -> crate::CommandAttemptMark {
+        assert!(
+            self.active_attempt_operation.is_none(),
+            "direct command operations do not nest"
+        );
+        let opening = self.attempt.arena().mark();
+        let operation = self
+            .attempt
+            .arena_mut()
+            .begin_owned_scope()
+            .expect("command operation scope capacity is bounded");
+        let mark = crate::CommandAttemptMark::new(opening, operation);
+        self.active_attempt_operation = Some(mark);
+        mark
+    }
+
+    pub(crate) fn begin_attempt_child_scope(
+        &mut self,
+    ) -> Result<crate::attempt::AttemptScopeCoordinate, crate::AttemptError> {
+        self.attempt.arena_mut().begin_owned_scope()
+    }
+
+    pub(crate) fn retire_attempt_scope(
+        &mut self,
+        scope: crate::attempt::AttemptScopeCoordinate,
+    ) -> Result<(), crate::AttemptError> {
+        let operation = self
+            .active_attempt_operation
+            .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        self.attempt
+            .arena_mut()
+            .retire_owned_scope(scope, operation.operation_scope())
+    }
+
+    pub(crate) fn defer_attempt_scope_retirement(
+        &mut self,
+        scope: crate::attempt::AttemptScopeCoordinate,
+    ) -> Result<(), crate::AttemptError> {
+        let operation = self
+            .active_attempt_operation
+            .ok_or(crate::AttemptError::InvalidCoordinate)?;
+        self.attempt
+            .arena_mut()
+            .defer_owned_scope_retirement(scope, operation.operation_scope())
+    }
+
+    pub(crate) fn discard_attempt_scope_suffix(
+        &mut self,
+        scope: crate::attempt::AttemptScopeCoordinate,
+    ) -> Result<(), crate::AttemptError> {
+        self.attempt.arena_mut().discard_owned_scope_suffix(scope)
     }
 
     /// Rejects the attempt-local suffix created after `mark`.
     ///
     /// Executor aggregate rollback restores semantic roots before invoking
     /// this method, so no surviving command coordinate can name the suffix.
-    pub fn discard_attempt_operation(&mut self, mark: crate::CommandAttemptMark) {
-        self.attempt
-            .arena_mut()
-            .truncate(mark.attempt_mark())
-            .expect("command operation mark belongs to the installed attempt");
-    }
-
-    fn live_attempt_cursor(
-        &self,
-    ) -> Result<crate::attempt::AttemptLiveCursor, crate::AttemptError> {
-        let arena = self.attempt.arena();
-        let mut cursor = arena.empty_live_cursor();
-
-        arena.retain_input_watermark(&mut cursor, self.input_argument_watermark);
-        for activation in &self.parameters.activations {
-            if let Some(arguments) = activation.arguments.record() {
-                arena.retain_argument_record(&mut cursor, arguments)?;
-            }
-        }
-        self.retain_nonstack_attempt_roots(arena, &mut cursor)?;
-        Ok(cursor)
-    }
-
-    /// Censuses the small set of typed attempt owners that can outlive the
-    /// exact-LIFO retirement of a macro body.
-    ///
-    /// Argument replay can outlive the macro body that exposed it, so the
-    /// input stack contributes its incrementally maintained fixed watermark.
-    /// Consequently this does not rescan the input or activation stacks on
-    /// every expansion; only direct scanner/input/alignment owners installed
-    /// after the opening mark contribute supplemental componentwise maxima.
-    /// Returns the cached typed watermark preceding the next activation.
-    /// Only the current top activation needs inspection: its opening already
-    /// summarizes all outer activation roots, and its own argument record is
-    /// the sole additional activation-owned coordinate.
-    pub(crate) fn macro_activation_opening_cursor(
-        &self,
-    ) -> Result<crate::attempt::AttemptLiveCursor, crate::AttemptError> {
-        let arena = self.attempt.arena();
-        let mut cursor = self
-            .parameters
-            .activations
-            .last()
-            .and_then(|activation| activation.opening)
-            .unwrap_or_else(|| arena.empty_live_cursor());
-        if let Some(arguments) = self
-            .parameters
-            .activations
-            .last()
-            .and_then(|activation| activation.arguments.record())
-        {
-            arena.retain_argument_record(&mut cursor, arguments)?;
-        }
-        Ok(cursor)
-    }
-
-    pub(crate) fn macro_retirement_live_attempt_cursor(
-        &self,
-    ) -> Result<crate::attempt::AttemptLiveCursor, crate::AttemptError> {
-        let arena = self.attempt.arena();
-        let mut cursor = arena.empty_live_cursor();
-        self.retain_nonstack_attempt_roots(arena, &mut cursor)?;
-        Ok(cursor)
-    }
-
-    fn retain_nonstack_attempt_roots(
-        &self,
-        arena: &crate::attempt::AttemptArena<G>,
-        cursor: &mut crate::attempt::AttemptLiveCursor,
-    ) -> Result<(), crate::AttemptError> {
-        if let Some(preamble) = &self.alignment.completed_preamble {
-            for column in &preamble.columns {
-                if let Some(u_template) = column.u_template {
-                    arena.retain_token_list(cursor, u_template)?;
-                }
-                arena.retain_token_list(cursor, column.v_template)?;
-            }
-        }
-        for builder in &self.transient.builders {
-            arena.retain_token_buffer(cursor, builder.tokens)?;
-        }
-        for pending in &self.pending_scan_toks {
-            pending.retain_attempt_coordinates(arena, cursor)?;
-        }
-        if let Some(arguments) = self
-            .pending_macro_arguments
-            .and_then(|arguments| arguments.record())
-        {
-            arena.retain_argument_record(cursor, arguments)?;
-        }
-        for argument in &self.pending_macro_argument_lists {
-            arena.retain_token_list(cursor, *argument)?;
-        }
-        for buffer in &self.pending_macro_argument_buffers {
-            arena.retain_token_buffer(cursor, *buffer)?;
-        }
-        if let Some(watermark) = self.active_scanner_watermark {
-            arena.retain_live_cursor(cursor, watermark)?;
-        }
-        arena.retain_input_watermark(cursor, self.input_argument_watermark);
-        Ok(())
-    }
-
-    /// Rolls back one scanner's private suffix without discarding command
-    /// roots installed by nested expansion after the scanner opened.
-    pub(crate) fn rollback_attempt_scanner_scratch(
-        &mut self,
-        opening: crate::attempt::AttemptMark,
-    ) -> Result<(), crate::AttemptError> {
-        let live = self.live_attempt_cursor()?;
-        self.attempt
-            .arena_mut()
-            .truncate_scanner_scratch(opening, live)
-    }
-
-    /// Reclaims only the attempt suffix unreachable from current command
-    /// roots after validating the executor's opening operation mark.
-    ///
-    /// Scanned operands outside command state must already have been promoted
-    /// and installed or consumed. A resource continuation therefore retains
-    /// its complete attempt and does not call this boundary until resumption.
-    pub fn reclaim_attempt_operation(
+    pub fn rollback_attempt_operation(
         &mut self,
         mark: crate::CommandAttemptMark,
     ) -> Result<(), crate::AttemptError> {
-        self.attempt.arena().validate_mark(mark.attempt_mark())?;
-        self.reclaim_unreachable_attempt_suffix()
+        if self.active_attempt_operation != Some(mark) {
+            return Err(crate::AttemptError::InvalidCoordinate);
+        }
+        self.attempt
+            .arena_mut()
+            .rollback_owned_operation(mark.operation_scope())?;
+        self.active_attempt_operation = None;
+        Ok(())
     }
 
-    /// Recomputes exact live per-table watermarks and truncates only the
-    /// unreachable append-only suffix.
-    pub fn reclaim_unreachable_attempt_suffix(&mut self) -> Result<(), crate::AttemptError> {
-        let cursor = self.live_attempt_cursor()?;
-        self.attempt.arena_mut().truncate_to_live(cursor)
+    /// Commits the exact direct-operation scope and any already-retired LIFO
+    /// children. Persistent macro owners remain in the arena until their own
+    /// semantic retirement; no root census or coordinate search is needed.
+    pub fn commit_attempt_operation(
+        &mut self,
+        operation: crate::CommandAttemptMark,
+    ) -> Result<(), crate::AttemptError> {
+        if self.active_attempt_operation != Some(operation) {
+            return Err(crate::AttemptError::InvalidCoordinate);
+        }
+        self.attempt
+            .arena_mut()
+            .commit_owned_operation(operation.operation_scope())?;
+        self.active_attempt_operation = None;
+        Ok(())
     }
 
     /// Moves the complete operation arena into a resource continuation.
@@ -897,9 +815,18 @@ impl<G> CommandState<G> {
         resume: crate::AttemptResumePoint,
         pending: R,
     ) -> Result<crate::PendingCommandAttempt<G, R>, crate::AttemptSuspendError> {
+        if self.active_attempt_operation != Some(opening) {
+            return Err(crate::AttemptSuspendError::StaleMark(
+                crate::AttemptError::InvalidCoordinate,
+            ));
+        }
         self.attempt
             .arena()
             .validate_mark(opening.attempt_mark())
+            .map_err(crate::AttemptSuspendError::StaleMark)?;
+        self.attempt
+            .arena()
+            .validate_scope_coordinate(opening.operation_scope())
             .map_err(crate::AttemptSuspendError::StaleMark)?;
         let generation = universe
             .generation_owner()
@@ -919,7 +846,7 @@ impl<G> CommandState<G> {
         (crate::CommandAttemptMark, crate::AttemptResumePoint, R),
         crate::PendingCommandAttempt<G, R>,
     > {
-        if !self.attempt.is_empty() {
+        if !self.attempt.is_empty() || self.active_attempt_operation != Some(pending.opening()) {
             return Err(pending);
         }
         let (attempt, opening, resume, pending) = pending.resume(universe)?;
