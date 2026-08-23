@@ -9,16 +9,19 @@ deleted together by `umber2-66p0.2`. The branch is intentionally compiler-red
 until children `.3` through `.7` install the lifetime owners defined here; no
 compatibility storage path is available during that interval.
 
-The `.3` state core now owns one bounded append-only interning epoch, one
-coarse generation bundle, direct contiguous and page/index dense current-value
-banks, generation-typed definition/token/glue coordinates, and one exact
-ordered TeX save/operation-undo journal. Code-table INITEX defaults are virtual
-values of page/index dense banks rather than persistent roots. Journal cursors
-are generation-branded and dynamically owner-checked; interning is outside
-their rollback domain. Node/page arenas, attempt storage, cold detachment, and
-incremental generation retention remain the explicit `.4`--`.7` consumers of
-that core, so the rewrite branch stays compiler-red without a compatibility
-owner between those stages.
+The `.3` state core owns one bounded append-only interning epoch, one coarse
+generation bundle, direct contiguous and page/index dense current-value banks,
+generation-typed definition/token/glue coordinates, and one exact ordered TeX
+save/operation-undo journal. Code-table INITEX defaults are virtual values of
+page/index dense banks rather than persistent roots. Journal cursors are
+generation-branded and dynamically owner-checked; interning is outside their
+rollback domain. Later children installed node/page storage, execution
+scratch, cold detachment, and incremental generation retention.
+
+The current implementation's per-operation and per-scanner scope tokens,
+loans, owner rows, watermarks, and handoff machinery are transitional. They
+must be deleted during migration to the end state below. They are not an
+architecture authority and must not constrain that migration.
 
 This document defines the ownership and lifetime model for Umber's live TeX
 runtime. It is the authority when another architecture document discusses a
@@ -41,33 +44,34 @@ The runtime has the following ownership hierarchy:
 ```text
 process
   `-- engine session and its interning epoch
-        `-- incremental revision generations
+        +-- prior accepted generation (read-only, optional)
+        `-- current candidate generation (exclusive execution lease)
               +-- dense current-value banks and TeX save journal
               +-- immutable DefinitionArena
-              +-- durable node and source storage
-              `-- execution episode
-                    +-- AttemptArena and scanner scratch
-                    `-- mode/page arenas
+              +-- durable node, value, source, mode, and page storage
+              `-- one reusable ExecutionScratch<G>
 ```
 
 An owner may keep a coarser owner alive, but an individual stored value never
 owns itself. Runtime values use compact, copyable ids or offsets. Strong
-ownership exists only at the session, generation, arena, page, checkpoint, or
-detached-artifact level. There is no per-value `Arc` ownership.
+ownership exists only at the session, generation, checkpoint, or detached-
+artifact level. A generation owns its coarse arenas and storage classes. A
+macro call, scanner, TeX group, input frame, or individual value never owns an
+arena. There is no per-value `Arc` ownership.
 
 The following matrix is normative:
 
-| Value or storage                                                        | Immediate owner                | Valid until                                                     | Rollback behavior                                                               | Escape path                                           |
-| ----------------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| Interned control-sequence name and token spelling                       | Session interning epoch        | Session epoch retirement                                        | Never rolled back                                                               | Detached spelling or semantic atom                    |
-| Current meaning, parameter, register, or code value                     | Dense current-value bank       | Overwritten or bank retirement                                  | Exact undo through the TeX save journal                                         | Packed value in a checkpoint or DTO                   |
-| Immutable macro definition and its definition token lists               | Revision `DefinitionArena`     | Owning generation retirement                                    | Candidate suffix truncation before publication; published rows remain immutable | Explicit copy into a destination generation           |
-| Scanner buffer, macro argument, expansion scratch, or speculative value | `AttemptArena`                 | Operation completion, rollback, or continuation disposal        | Whole arena or suffix discard                                                   | Typed commit promotion                                |
-| Pending mode material and page-builder nodes                            | Mode/page arena                | Mode close, rollback, or shipout                                | Arena suffix truncation after roots are restored                                | Promotion to durable node storage or shipout lowering |
-| Box-register or checkpoint-surviving node                               | Durable generation arena       | Generation retirement                                           | Generation ownership restores before abandoned storage drops                    | Cold whole-generation copy or detached output         |
-| Source registration and compact provenance record                       | Session or revision generation | Last owning generation, live input, or output recipe retirement | Cursor restoration and suffix discard                                           | Handle-free source recipe                             |
-| Structural diagnostic or rendered-source presentation                   | Diagnostic or artifact DTO     | DTO disposal                                                    | Not live runtime state                                                          | Already detached and handle-free                      |
-| Shipped page                                                            | `tex-out` value                | Output disposal                                                 | Outside engine rollback after publication                                       | Serialized artifact bytes or output DTO               |
+| Value or storage                                              | Immediate owner                | Valid until                                                     | Rollback behavior                                                               | Escape path                                      |
+| ------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Interned control-sequence name and token spelling             | Session interning epoch        | Session epoch retirement                                        | Never rolled back                                                               | Detached spelling or semantic atom               |
+| Current meaning, parameter, register, or code value           | Dense current-value bank       | Overwritten or bank retirement                                  | Exact undo through the TeX save journal                                         | Packed value in a checkpoint or DTO              |
+| Immutable macro definition and its definition token lists     | Revision `DefinitionArena`     | Owning generation retirement                                    | Candidate suffix truncation before publication; published rows remain immutable | Handle-free recipe at a cold boundary            |
+| Macro/scanner frames, arguments, builders, or temporary words | Current generation scratch     | Operation completion, rollback, or continuation disposal        | Reset the applicable lane lengths to saved cursors                              | None; surviving output is built in final storage |
+| Pending mode material and page-builder nodes                  | Current generation storage     | Mode close, rollback, or shipout                                | Storage suffix truncation after roots are restored                              | Direct construction or shipout lowering          |
+| Box-register or checkpoint-surviving node                     | Durable generation arena       | Generation retirement                                           | Generation ownership restores before abandoned storage drops                    | Detached output or node recipe                   |
+| Source registration and compact provenance record             | Session or revision generation | Last owning generation, live input, or output recipe retirement | Cursor restoration and suffix discard                                           | Handle-free source recipe                        |
+| Structural diagnostic or rendered-source presentation         | Diagnostic or artifact DTO     | DTO disposal                                                    | Not live runtime state                                                          | Already detached and handle-free                 |
+| Shipped page                                                  | `tex-out` value                | Output disposal                                                 | Outside engine rollback after publication                                       | Serialized artifact bytes or output DTO          |
 
 ## Interning epoch
 
@@ -117,6 +121,21 @@ installing the new value. Local definitions restore at group exit; global
 definitions suppress the applicable restoration exactly as TeX specifies.
 Operation rollback and incremental restoration reuse this journal but do not
 change its TeX grouping semantics.
+
+A TeX group is a semantic save-journal boundary, not a memory owner. Durable
+and global values allocate directly in current-generation storage. A local
+binding records the prior packed coordinate in the save journal and restores
+that coordinate at group exit; restoration does not copy the value. The group
+owns neither the prior value nor the newly selected value.
+
+Per-group arenas are incorrect for TeX. A global assignment made inside a
+group survives the group, `\aftergroup` input is deliberately delivered after
+the group closes, and boxes, insertions, marks, writes, and output material can
+cross or outlive the group which constructed them. Putting any of those values
+in group-owned memory either leaves dangling coordinates at `unsave` or
+requires escape searches and copying. Current-generation durable storage plus
+the exact save journal handles every case without making group structure a
+lifetime graph.
 
 ```rust
 struct DenseState<G> {
@@ -225,7 +244,7 @@ key and bounds once; and retirement occurs only after every owning revision,
 checkpoint, or continuation has released the generation. A raw copied id in an
 unowned local is never lifetime authority.
 
-Other immutable values which outlive an attempt, including token-register
+Other immutable values which outlive an operation, including token-register
 lists and glue specifications, use their own typed append-only generation
 arenas with the same private-id, admission, and coarse-ownership rules. They do
 not share the `DefinitionId` namespace, and definition-text spans remain
@@ -243,125 +262,160 @@ owner pins retirement but does not freeze append-only allocation into that
 generation.
 
 No borrow crosses an executor barrier. A suspended scanner, macro expansion,
-or resource request stores the generation owner plus ids and integer cursors:
+or resource request stores the current-generation execution lease plus ids and
+integer cursors:
 
 ```rust
 struct MacroCursor<G> {
     definition: DefinitionId<G>,
     replacement_offset: u32,
-    argument_record: AttemptOffset,
+    frame: ScratchIndex<G, MacroFrameTag>,
+    argument_record: ScratchIndex<G, MacroArgumentRecordTag>,
 }
 
-struct PendingResource<G> {
-    generation: GenerationOwner<G>,
-    attempt: AttemptArena<G>,
+struct SuspendedExecution<G> {
+    current: CurrentGenerationLease<G>,
     resume: ResumePoint<G>,
     request: ResourceRequest,
 }
 ```
 
 Resume re-borrows the generation, resolves the id again by direct indexing,
-and continues at the stored cursor. The continuation never contains a Rust
-reference into an arena and no runtime type is self-referential.
+and continues at the stored cursor in the same scratch lanes. The continuation
+never contains a Rust reference into an arena, no runtime type is self-
+referential, and suspension never admits a second current generation.
 
-## Attempts, scratch, and commit promotion
+## Execution scratch and destination-directed construction
 
-One command machine owns one nonmoving `AttemptArena`. A direct operation
-opens an arena-owned scope; scanners and macro activations open exact-LIFO
-children. Every scope is one inline owner row containing a checked serial and
-fixed opening cursor. The scope slab reserves geometrically and reuses its
-capacity, so warmed begin, retire, commit, and rollback allocate no heap.
-
-Purely synchronous helpers receive an invariant generative `AttemptScope`
-through a higher-ranked callback. An id allocated through that capability can
-be read only through the same capability and cannot escape the callback. A
-macro or scanner which can suspend instead uses the smallest private runtime
-boundary: the arena retains the sole non-`Copy`, non-`Clone`
-`OwnedAttemptScope`, while command state stores a checked non-owning direct
-coordinate. The complete arena and owner rows move together into an
-in-process continuation. No scope owner or arena id enters a named checkpoint,
-format, detached continuation, or serialized value.
-
-Scanner output is allocated directly into the scanner parent's typed sink.
-Nested macro scratch belongs to a child scope, so closing that child neither
-copies nor promotes the parent's output. Semantic retirement marks an owner;
-physical reclamation consumes only the contiguous retired LIFO suffix. A
-successful operation retires its own owner after every explicit durable
-promotion has completed, while rejection truncates the operation and every
-child to the operation's fixed opening cursor. Rollback clears only retirement
-flags owned by that rejected operation before truncation. There is no live-root
-enumeration, input-stack scan, coordinate relocation, lookup table, content
-hash, or per-scope heap owner.
-
-A resource-pending continuation may take ownership of the entire arena and its
-open owned-scope stack. All links within it are typed offsets or ranges. The
-continuation also owns the relevant generation at coarse granularity, so every
-generation-scoped id in the arena remains admissible. Resumption validates the
-attempt key, operation serial, and exact scope coordinate before moving the
-arena back. Cancellation drops it wholesale.
-
-Only explicit commit promotion lets an attempt value escape. The destination
-is selected by the semantic role:
-
-- a macro and its definition text are copied into the current
-  `DefinitionArena`;
-- a token-register list or glue value is copied into its typed durable value
-  arena;
-- page material is copied into the applicable mode/page arena;
-- a box-register or checkpoint survivor is copied into the durable generation
-  arena;
-- source evidence is copied into generation source/provenance storage; and
-- an effect, memo, or output value is lowered to a handle-free DTO.
-
-Promotion begins from the operation's explicit typed escape roots. It copies
-only those values and follows only schema-declared child fields. A temporary
-dense relocation vector, indexed by attempt-local id, records each destination
-id and rewrites child handles as rows are copied:
+The current candidate owns exactly one reusable `ExecutionScratch<G>`. It is
+generation state, not a tree of operation, scanner, macro, or group owners.
+Its packed/preallocated lanes are physically separate because their nesting
+and survival patterns differ:
 
 ```rust
-fn promote_nodes<G>(
-    roots: &[ScratchNodeId],
-    from: &AttemptArena<G>,
-    into: &mut DurableNodeArena<G>,
-    relocation: &mut Vec<Option<NodeId<G>>>,
-) -> Vec<NodeId<G>>;
+struct ExecutionScratch<G> {
+    macro_frames: Vec<PackedMacroFrame<G>>,
+    macro_argument_words: Vec<TracedTokenWord>,
+    macro_argument_ranges: Vec<PackedArgumentRanges>,
+    scanner_frames: Vec<PackedScannerFrame<G>>,
+    scanner_words: Vec<TracedTokenWord>,
+    scanner_builders: Vec<PackedScannerBuilder<G>>,
+    expansion_frames: Vec<PackedExpansionFrame<G>>,
+    render_bytes: Vec<u8>,
+}
+
+struct ScratchCursors {
+    macro_frames: u32,
+    macro_argument_words: u32,
+    macro_argument_ranges: u32,
+    scanner_frames: u32,
+    scanner_words: u32,
+    scanner_builders: u32,
+    expansion_frames: u32,
+    render_bytes: u32,
+}
 ```
 
-There is no liveness graph search, content hash, exact-candidate lookup, binary
-lookup, or attempt-wide scan. The relocation vector is temporary scratch and
-is cleared or dropped when publication completes. Destination rows become
-visible only after every copied child has validated and every root has been
-rewritten; failure leaves the destination unpublished.
+The exact lane inventory follows measured execution patterns. A value belongs
+in a distinct lane whenever nesting can make one lifetime end while an older
+or newer value in another class must survive. For example, putting a parent
+scanner's accumulating output and a nested macro's temporary argument words in
+one vector interleaves their lifetimes. The macro cannot pop its suffix without
+discarding parent output, and preserving that output requires retention,
+copying, or compaction. Separate physical lanes let the macro restore its own
+argument-word length while the scanner destination is untouched.
 
-Direct-operation completion chooses one owner transition. A fully applied
-operation retires its owner and closes only the already-retired tail; a live
-macro child prevents its parent operation from closing until that activation
-retires in a later operation. A resource-unavailable operation moves its open
-owner together with the arena into the typed retry continuation and performs
-no reclamation. Rollback restores semantic roots, consumes the operation owner
-exactly once, and truncates its whole child suffix. Named command timeline rows
-require a quiescent empty scope stack and canonical empty attempt cursor.
+Macro and scanner nesting is ordinary push/pop over lane lengths. A macro
+frame records the opening lengths of its argument-word and argument-range
+lanes; a scanner frame records the opening lengths of its temporary-word and
+builder lanes. Return restores those lengths in O(1). No push creates an arena,
+scope capability, ownership token, loan, mailbox, watermark row, or parent
+graph. Fixed synchronous state stays in ordinary Rust stack locals. State that
+can suspend or become too deep for the Rust stack uses explicit packed frames
+and direct indices carrying the invariant generation brand `G`.
+
+Construction is destination-directed. Ephemeral lookahead, matching, numeric
+text, delimiter prefixes, and incomplete builders use scratch. Any macro
+definition, token list, glue value, node list, source record, or other value
+which may survive the operation is reserved, built, and sealed directly in its
+final current-generation storage class. Its durable id is published only after
+validation and semantic commit. Failure truncates the unpublished destination
+suffix to the operation's recorded storage cursor. There is no child-to-parent
+promotion, clone, compaction, relocation, slab splicing, or copying between
+live runtime stores.
+
+Scanner APIs therefore take an explicit destination kind or typed final sink.
+A scanner whose result is consumed immediately may return a packed scalar or a
+scratch range. A scanner whose result survives writes it directly to the final
+definition, token-list, glue, node, source, effect, or output destination. A
+nested macro uses only the macro lanes and direct durable reads, so its return
+cannot invalidate or strand the scanner's output.
+
+Every top-level operation begins by recording all applicable scratch lane
+lengths and unpublished destination cursors. Success requires every nested
+frame opened by the operation to be popped, publishes its sealed destinations,
+and restores temporary lane lengths. Rejection restores semantic roots,
+truncates unpublished destination suffixes, and restores the same scratch
+lengths. A resource suspension performs neither transition: it retains the
+exclusive current-generation lease, the same `ExecutionScratch<G>`, and only
+branded frame indices and scalar resume positions. Resume continues in those
+lanes. Cancellation or candidate rejection drops the complete current
+generation wholesale.
+
+Candidate acceptance is legal only when scratch is quiescent: all frame lanes
+are empty, every builder is sealed or discarded, no top-level scratch cursor
+is live, and no suspension owns the candidate lease. Acceptance then drops the
+prior accepted generation wholesale and changes the current generation's role
+to prior. It does not move or rewrite current-generation values.
+
+Capacity growth happens only as coarse slab or lane allocation. Once the
+bounded workload is warmed, macro entry/return, scanner entry/return, argument
+capture, value construction, and direct indexed reads allocate zero heap.
+Stack push/pop is O(1). No value carries `Arc`, `Weak`, `Box`, `Vec`, `String`,
+an owner marker, or a drop-driven lifetime action. Lifetime decisions perform
+no hash, search, root enumeration, content equality, or ownership-graph walk.
+
+Migration deletes the transitional scope/loan implementation rather than
+wrapping it. Acceptance tests must prove all of the following:
+
+- no scope `Vec`, scope watermark, mailbox, owner row, loan table, or owner
+  graph remains in runtime command state;
+- a bounded, deeply nested single top-level operation reuses fixed warmed lane
+  capacity and returns every lane to its opening length;
+- warmed macro, scanner, argument, and durable-value construction attributes
+  zero allocations;
+- resource suspension retains the same generation and scratch indices and
+  resumes without rescanning or copying;
+- operation rollback restores every lane and unpublished destination cursor;
+- local and global assignments across group exit preserve exact save-journal
+  semantics, including `\aftergroup`, boxes, and writes;
+- INITEX and complete format construction remain bounded under the documented
+  fuel and memory guards;
+- revision rejection drops current wholesale, and acceptance requires scratch
+  quiescence before prior is dropped; and
+- compile-fail fixtures prove a `G`-branded scratch or durable index cannot
+  escape its generation admission or be used with another generation.
 
 ## Node lifetimes
 
 Nodes have three storage lifetimes:
 
-1. Operation scratch contains unfinished ligature/shaping work, temporary
-   transformed lists, packing probes, and speculative nodes. These values die
-   with the attempt unless explicitly promoted.
-2. A mode/page arena owns the material of open horizontal, vertical, math,
-   insertion, alignment, and page-builder lists. Save and operation marks name
-   arena cursors, so rollback restores roots and truncates only the changed
-   suffix.
-3. A durable generation arena owns node lists which survive their originating
-   mode/page lifetime, including box-register values and checkpoint roots.
-   Promotion copies the exact escaping closure and rewrites handles through a
-   dense relocation vector.
+1. Execution scratch contains unfinished shaping words, packing probes, and
+   temporary transformation indexes. These values are not nodes and never
+   escape scratch.
+2. Current-generation mode/page storage contains material for open horizontal,
+   vertical, math, insertion, alignment, and page-builder lists. Save and
+   operation marks name storage cursors, so rollback restores roots and
+   truncates only unpublished suffixes.
+3. Current-generation durable node storage contains box-register values,
+   checkpoint roots, and any list known at construction time to survive its
+   originating mode/page lifetime.
 
-A box moved from a register into current mode storage changes its coarse owner
-or is copied when the source lifetime would otherwise end. A box copied by TeX
-may share a whole immutable durable segment through its generation owner; it
-never adds a per-node or per-list reference count.
+All three storage classes are owned by the generation, not by a mode, group,
+box, or node. Builders select the final class before emitting a surviving node
+and seal it there. A TeX box copy may share an immutable durable segment by
+coordinate under the same generation owner; it never adds a per-node or per-
+list reference count. No live node closure is copied between storage classes.
 
 Shipout traverses the completed page once and emits a handle-free page plan,
 artifact data, and any selected detached source recipes for `tex-out`. After
@@ -390,10 +444,10 @@ tokens carry compact registration-relative positions. Derived tokens carry
 compact generation-local provenance records which name source positions,
 definition sites, invocation sites, and parent expansion records by id.
 
-Attempt-local rewrites and scanners keep provenance beside their words as
-offsets into attempt storage. Promotion copies only provenance required by an
-escaping token, node, diagnostic, or checkpoint and rewrites its ids with the
-same dense relocation method as other arena values. Provenance never keeps a
+Temporary rewrites and scanners keep provenance coordinates beside their words
+in the appropriate scratch lane. Provenance which will survive is reserved and
+built directly in current-generation provenance storage; scratch contains its
+unpublished builder state, not another owned graph. Provenance never keeps a
 semantic token, definition, or node alive.
 
 Ordinary execution retains compact ids and does not materialize structural
@@ -414,32 +468,33 @@ contract explicitly includes detached source metadata.
 ## Marks, checkpoints, and restoration
 
 An operation mark is a fixed-size value containing journal cursors, stack
-lengths, arena cursors, mode/page cursors, source/effect ledger cursors, and
-the identity of the generation it addresses. A named checkpoint owns the
-generation set needed by those coordinates and contains the same kind of
-compact marks, plus any optional coarse packed-bank snapshot. It does not clone
-the live definition, node, provenance, input, or page object graph.
+lengths, scratch-lane lengths, durable storage cursors, mode/page cursors,
+source/effect ledger cursors, and the identity of the generation it addresses.
+A named checkpoint refers to either the current candidate or the prior
+accepted generation; it cannot retain a third generation. It contains the same
+kind of compact marks, plus any optional coarse packed-bank snapshot. It does
+not clone the live definition, node, provenance, input, or page object graph.
 
-Marks can be created only at a boundary whose live builders either belong to a
-named arena with a cursor or have been committed. A mark is not an owning
-reference to each value it can restore. The checkpoint's coarse generation
-owners provide lifetime; its cursors provide position.
+Marks can be created only at a boundary whose live builders are sealed and
+whose execution scratch is quiescent. A mark is not an owning reference to
+each value it can restore. The session's prior/current generation slots
+provide lifetime; checkpoint cursors provide position.
 
 Restore is atomic and follows this order:
 
 1. Validate the checkpoint/session identity, generation ancestry, all journal
    and stack cursors, arena positions, and external ledger cursors without
    mutation.
-2. Acquire or install the checkpoint's coarse generation owners so both the
-   restored and abandoned ids remain resolvable during restoration.
+2. Validate that the checkpoint names the live prior or current slot and hold
+   the applicable coarse generation lease through restoration.
 3. Restore dense banks by loading the selected coarse packed image when one is
    present and replaying the exact journal suffix to its cursor; otherwise
    undo the live journal directly to the cursor.
 4. Restore input, condition, group, mode, page, source, resource, effect, and
    output cursors, transferring canonical roots before releasing replaced
    owners.
-5. Truncate attempt, provenance, input, and mode/page arena suffixes to their
-   validated positions.
+5. Restore scratch lengths and truncate unpublished provenance, input,
+   durable, and mode/page storage suffixes to their validated positions.
 6. Release abandoned generation and page owners only after no restored cell,
    stack entry, or cursor can name their storage.
 
@@ -448,19 +503,23 @@ slot requires a new generation key before another id can name it.
 
 ## Incremental revisions and two-generation ownership
 
-An incremental session has at most two live runtime generations: the prior
-accepted generation and one current candidate. They are admitted under
+An incremental session has exactly these possible live runtime generations:
+the prior accepted generation and one current candidate. There is never a
+second candidate or a history-owned generation. They are admitted under
 distinct invariant generative brands. Prior admission is read-only; every
 revision-local allocation and mutable root belongs to current. Candidate
-execution may compare detached evidence from prior, but an accepted current
-root cannot contain a prior-generation id or owner.
+creation consumes an exclusive current-candidate lease, so another factory or
+caller cannot issue a concurrent candidate. Candidate execution may compare
+detached evidence from prior, but an accepted current root cannot contain a
+prior-generation id or owner.
 
-Rejection drops current wholesale and leaves prior unchanged. Acceptance first
-validates current-generation locality without mutation, then consumes current,
-promotes its coarse owner to the accepted slot, and drops the complete former
-prior generation. History retains only detached semantic evidence, hashes,
-schedules, and output prefixes. It never retains a live checkpoint or
-generation owner.
+Rejection consumes the exclusive lease, drops current wholesale, and leaves
+prior unchanged. Acceptance first requires quiescent scratch and validates
+current-generation locality without mutation. It then consumes the lease,
+drops the complete former prior generation, and changes current's role to
+prior. No row, slab, or value moves. History retains only detached semantic
+evidence, hashes, schedules, and output prefixes. It never retains a live
+checkpoint or generation owner.
 
 There is no runtime compactor, relocation map, generation graph, forwarding
 pointer, slab splice, row-level collector, or content-equality merge. Routine
@@ -490,11 +549,11 @@ one destination; publication rejects a foreign destination before moving any
 staged graph, and successful publication moves the validated graph once rather
 than cloning live values.
 
-An in-process resource-pending continuation may retain an owned
-`AttemptArena`, generation owner, and cursor as described above. Before that
-continuation crosses a process/thread boundary or enters serialized session
-storage, it must detach to the handle-free continuation schema. Runtime ids
-never become wire identity.
+An in-process resource-pending continuation retains the exclusive current-
+generation lease, its `ExecutionScratch<G>`, and branded resume indices as
+described above. Before that continuation crosses a process/thread boundary or
+enters serialized session storage, it must detach to the handle-free
+continuation schema. Runtime ids never become wire identity.
 
 `EffectJournal` is an in-session revision reconciliation package, not a cold
 DTO. It owns detached-value `EffectRecord` rows together with runtime-local
@@ -512,14 +571,15 @@ restore. It exposes borrowed views and typed mutation APIs, not backing
 vectors or unchecked constructors.
 
 `tex-command` owns raw token delivery, expansion, scanners, input stacks,
-macro activations, scanner builders, command-side `AttemptArena` layouts, and
-typed suspended command state. It borrows an admitted `tex-state` generation
-for hot direct indexing and stores ids plus cursors whenever that borrow ends.
+macro activations, scanner builders, command-side `ExecutionScratch<G>` lane
+layouts, and typed suspended command state. It borrows the exclusively
+admitted current generation for hot direct indexing and stores branded indices
+plus scalar cursors whenever that borrow ends.
 
-`tex-exec` owns operation boundaries, semantic dispatch, mode/page arenas,
-node-building lifetimes, commit promotion, resource/effect barriers, shipout
+`tex-exec` owns operation boundaries, semantic dispatch, mode/page storage
+selection, node-building lifetimes, resource/effect barriers, shipout
 detachment, and the ordering of aggregate restore. It cannot construct state
-ids or publish partial promoted values.
+ids or publish partially sealed values.
 
 `tex-incr` owns the prior/current generation state machine, detached named
 checkpoint evidence, history pruning, candidate acceptance/rejection, and
@@ -540,16 +600,16 @@ and decoding returns an unpublished destination-local `PdfState` for the
 aggregate format staging transaction.
 
 The continuation boundary is jointly typed by `tex-command` and `tex-exec`.
-An in-session continuation owns its attempt/generation package; a detached
-continuation contains only portable recipes and logical cursors. Materializing
-a detached continuation is an atomic destination-local rebuild through
-`tex-state` admission APIs.
+An in-session continuation retains the current-generation lease and its same
+scratch lanes; a detached continuation contains only portable recipes and
+logical cursors. Materializing a detached continuation is an atomic
+destination-local rebuild through `tex-state` admission APIs.
 
 ## Required hot-path properties
 
 After bounded capacity warmup, ordinary source delivery, meaning lookup, macro
-expansion, scanning, assignment, and node construction perform no heap
-allocation attributable to lifetime management. An ordinary read requires:
+expansion, scanning, assignment, argument capture, and value/node construction
+perform zero heap allocation. An ordinary read requires:
 
 - no `Weak` upgrade or lookup;
 - no `Arc` retain or release;
@@ -558,11 +618,11 @@ allocation attributable to lifetime management. An ordinary read requires:
 - no content hash or content comparison; and
 - no per-value owner construction.
 
-Generation validation occurs once when an episode, continuation, checkpoint,
-or detached value is admitted. Within that admitted borrow, ids resolve by
-typed direct indexing. Coarse owners may use `Arc` at generation or immutable
-segment boundaries when sharing across revisions is required, but no operation
-retains such an owner per value or per read.
+Generation validation occurs once when the exclusive current lease, a
+continuation, checkpoint, or detached value is admitted. Within that admitted
+borrow, ids resolve by typed direct indexing. Coarse owners may use `Arc` at a
+generation boundary when required by the outer session envelope, but no
+operation retains such an owner per value or per read.
 
 ## Non-goals and forbidden designs
 
@@ -584,9 +644,14 @@ The following designs are forbidden:
 - per-value `Arc`, `Weak`, reference counts, owner markers, or drop-driven
   reachability;
 - a global generation/root registry consulted by ordinary reads;
+- per-macro, per-scanner, per-operation, or per-TeX-group arenas;
+- scope tokens, scope owner rows, loan registries, watermarks, mailboxes, or
+  ownership graphs for scratch lifetime;
+- more than the prior accepted and exclusively leased current candidate
+  generations;
 - publishing runtime ids through formats, serialized continuations, memos,
   output DTOs, process messages, or thread messages;
-- promotion by retaining attempt storage, scanning it for liveness, or
-  rewriting it in place;
+- promotion, copying, relocation, compaction, or slab splicing between scratch
+  and live current-generation stores;
 - in-place generation or node-arena compaction; and
 - provenance ownership which keeps otherwise-dead semantic values alive.

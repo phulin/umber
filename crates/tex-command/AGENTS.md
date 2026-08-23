@@ -33,23 +33,25 @@ collector (see `src/conditionals.rs`).
 
 - `Cargo.toml`: dependency-light crate manifest and boundary-test support.
 - `src/lib.rs`: intentionally small public facade and private module tree.
-- `src/attempt.rs` and `src/attempt/tests.rs`: operation-scoped typed command
-  scratch, invariant lexical scope capabilities, the private move-only owned
-  scope stack for suspended scanner/macro frames, fixed-size all-table marks,
-  exact-LIFO zero-allocation retirement, resource-continuation ownership, and
-  explicit-root atomic promotion through temporary dense relocation vectors.
+- `src/attempt.rs` and `src/attempt/tests.rs`: transitional command scratch.
+  Its scope capabilities, move-only scope owners, loans, watermarks, mailboxes,
+  and promotion machinery are implementation debt to delete, not architecture
+  authority. The target in `docs/runtime_storage_lifetimes.md` is one current-
+  generation `ExecutionScratch<G>` with physically separate packed lanes,
+  length-checkpoint push/pop, destination-directed surviving output, and
+  branded index-only suspension.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
   immutable command/character profiles, the distinct canonical compiled-engine
   semantics that survive loading an older format, capabilities, stable
   fingerprints, and focused value/identity tests.
 - `src/state.rs`: copy-on-write aggregate command roots, persistent command
-  state, cross-processor executor-owned replay-completion fences, and the live
-  operation-scoped `AttemptArena`.
-  Resource continuations move that complete arena, its coarse
-  `GenerationOwner`, typed ids, and integer resume cursors; resumption
-  re-borrows dense state and cancellation drops the package wholesale. These
-  are process-local command state, never format or summary payload.
+  state, cross-processor executor-owned replay-completion fences, and current-
+  generation execution scratch. Resource continuations retain the exclusive
+  current-generation lease, its same scratch lanes, typed ids, and integer
+  resume cursors; resumption re-borrows dense state and cancellation drops the
+  current candidate wholesale. These are process-local command state, never
+  format or summary payload.
   Also owns `\tracingnesting`'s `record_source_open_depths`/
   `source_open_depths`, the `grp_stack`/`if_stack` recording e-TeX 2.6
   [23.328] compares at a source level's `end_file_reading`.
@@ -234,11 +236,13 @@ collector (see `src/conditionals.rs`).
   group-close sites are tracked by `umber2-aqx9`.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
-  recovery tests. Each scanner owns one arena child scope and writes directly
-  into its parent-owned typed output sink; nested macro scopes can retire
-  without copying or enumerating the scanner's live values. A suspended scan
-  carries only its checked scope coordinate while the arena retains the sole
-  owner. Its semantic `ScanToksMode` constructors are parsed once
+  recovery tests. A scanner owns no arena or scope. Temporary collection uses
+  the scanner word/builder lanes, while a surviving token list is built and
+  sealed directly in its final current-generation destination. Nested macros
+  use separate macro frame/argument lanes, so push/pop never interleaves their
+  scratch with scanner output. A suspended scan carries branded frame indices
+  under the same exclusive current-generation lease. Its semantic
+  `ScanToksMode` constructors are parsed once
   into a typed internal grammar, opener, expansion, warning owner,
   observation purpose, and status-visibility configuration. It also owns
   TeX82 §482's `read_toks`, which is deliberately
@@ -274,10 +278,11 @@ collector (see `src/conditionals.rs`).
   snapshots and named summaries backed by the command-root timeline and
   containing one coarse generation owner plus fixed scalar journal, arena,
   stack, source-anchor, and profile coordinates; capture never clones a live
-  command graph, validation never mutates the runtime, and restore installs
-  roots before truncating the attempt suffix.
+  command graph, validation never mutates the runtime, and capture requires
+  quiescent execution scratch. Restore installs roots before resetting scratch
+  lanes and truncating unpublished storage suffixes.
 - `src/continuation.rs` and `src/continuation/`: handle-free command-summary
-  and suspended-attempt recipes, dense DTO-local indices, recursive schema
+  and suspended-execution recipes, dense DTO-local indices, recursive schema
   validation and budgets, cold detachment construction, destination-stamped
   staging, atomic publication, and focused rejection/retry tests. The schema
   contains no runtime identity, owner, storage coordinate, or borrow.
