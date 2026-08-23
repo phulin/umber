@@ -36,13 +36,12 @@ fn arguments_are_completed_in_tex_parameter_order_and_live_in_the_attempt() {
             })
         );
         builder.complete(2, second).expect("slot two");
-        let arguments = builder
-            .finish(&mut attempt, scope)
-            .expect("argument record");
+        let arguments = builder.finish(&mut attempt).expect("argument record");
         assert_eq!(
             attempt.arguments(arguments.record().expect("nonempty record")),
             Ok(&[first, second][..])
         );
+        attempt.close_owned_scope(scope).expect("argument scope");
     });
 }
 
@@ -56,17 +55,27 @@ fn activation_retirement_drops_only_the_current_macro_frame() {
         let mut attempt = AttemptArena::<()>::default();
         let first_scope = attempt.begin_owned_scope().expect("first scope");
         let first_arguments = MacroArgumentBuilder::default()
-            .finish(&mut attempt, first_scope)
+            .finish(&mut attempt)
             .expect("first arguments");
         let second_scope = attempt.begin_owned_scope().expect("second scope");
         let second_arguments = MacroArgumentBuilder::default()
-            .finish(&mut attempt, second_scope)
+            .finish(&mut attempt)
             .expect("second arguments");
         let mut parameters = ParameterState::default();
-        let first =
-            parameters.push_activation(name, definition, first_arguments, OriginId::UNKNOWN);
-        let second =
-            parameters.push_activation(name, definition, second_arguments, OriginId::UNKNOWN);
+        let first = parameters.push_activation(
+            name,
+            definition,
+            first_arguments,
+            OriginId::UNKNOWN,
+            first_scope,
+        );
+        let second = parameters.push_activation(
+            name,
+            definition,
+            second_arguments,
+            OriginId::UNKNOWN,
+            second_scope,
+        );
         assert_ne!(first, second);
         assert_eq!(parameters.activations.len(), 2);
         parameters.retire_last_activation();

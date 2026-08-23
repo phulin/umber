@@ -147,23 +147,11 @@ struct ScanToksSinks {
 /// Exact command-owned continuation of one host-suspended token collector.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PendingScanToks<G> {
-    scope: crate::attempt::AttemptScopeCoordinate,
+    scope: crate::attempt::OwnedAttemptScope,
     sinks: ScanToksSinks,
     config: ScanToksConfig,
     episode: ScannerEpisode,
     phase: PendingScanToksPhase<G>,
-}
-
-impl<G> Clone for PendingScanToks<G> {
-    fn clone(&self) -> Self {
-        Self {
-            scope: self.scope,
-            sinks: self.sinks,
-            config: self.config,
-            episode: self.episode.clone(),
-            phase: self.phase.clone(),
-        }
-    }
 }
 
 impl<G> PendingScanToks<G> {
@@ -545,24 +533,18 @@ impl<G> CommandProcessor<'_, '_, G> {
                 return Err(CommandError::input_invariant());
             }
             None => {
+                // The two result sinks belong to the logical parent, not the
+                // scanner's scratch child. Returning a synchronous child to a
+                // still-live macro can therefore truncate its suffix without
+                // copying or invalidating either completed result.
+                let sinks = ScanToksSinks {
+                    parameter_text: self.begin_attempt_token_list()?,
+                    replacement_text: self.begin_attempt_token_list()?,
+                };
                 let scope = self
                     .command
-                    .begin_attempt_child_scope()
+                    .begin_attempt_scanner_scope()
                     .map_err(attempt_command_error)?;
-                let sinks = match (|| {
-                    Ok::<_, CommandError>(ScanToksSinks {
-                        parameter_text: self.begin_attempt_token_list()?,
-                        replacement_text: self.begin_attempt_token_list()?,
-                    })
-                })() {
-                    Ok(sinks) => sinks,
-                    Err(error) => {
-                        self.command
-                            .discard_attempt_scope_suffix(scope)
-                            .map_err(attempt_command_error)?;
-                        return Err(error);
-                    }
-                };
                 let builder = TokenBuilderId(self.command.transient.next_builder_identity);
                 self.command.transient.next_builder_identity =
                     self.command.transient.next_builder_identity.wrapping_add(1);
@@ -655,7 +637,7 @@ impl<G> CommandProcessor<'_, '_, G> {
             }),
         );
         self.command
-            .defer_attempt_scope_retirement(scope)
+            .discard_attempt_scope_suffix(scope)
             .map_err(attempt_command_error)?;
         Ok(result)
     }
@@ -1676,7 +1658,7 @@ impl<G> CommandProcessor<'_, '_, G> {
     ) -> Result<AttemptTokenListId, CommandError> {
         let scope = self
             .command
-            .begin_attempt_child_scope()
+            .begin_attempt_scanner_scope()
             .map_err(attempt_command_error)?;
         let builder = TokenBuilderId(self.command.transient.next_builder_identity);
         self.command.transient.next_builder_identity =

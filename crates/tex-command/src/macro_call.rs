@@ -10,7 +10,8 @@ use tex_state::meaning::{Meaning, MeaningFlags, ResolvedMeaning, UnexpandablePri
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::attempt::{
-    AttemptArgumentRecordId, AttemptScopeCoordinate, AttemptTokenBufferId, AttemptTokenListId,
+    AttemptArgumentRecordId, AttemptScopeCoordinate, AttemptScopeLoan, AttemptTokenBufferId,
+    AttemptTokenListId, OwnedAttemptScope,
 };
 use crate::processor::status::{
     ArgumentBuilderId, MatchingContext, ScannerStatus, ScannerStatusVisibility, ScannerWarning,
@@ -37,12 +38,12 @@ pub(crate) struct ParameterState<G> {
 
 impl<G> Clone for ParameterState<G> {
     fn clone(&self) -> Self {
+        assert!(
+            self.activations.is_empty(),
+            "open macro scope capabilities cannot cross a command-root clone"
+        );
         Self {
-            activations: self
-                .activations
-                .iter()
-                .map(MacroActivation::clone)
-                .collect(),
+            activations: Vec::new(),
             next_activation_identity: self.next_activation_identity,
         }
     }
@@ -73,22 +74,44 @@ pub(crate) struct MacroActivation<G> {
     pub(crate) invocation: OriginId,
     /// Dynamic child scope which owns matching scratch, arguments, and body
     /// replay until exact-LIFO activation retirement.
-    pub(crate) scope: AttemptScopeCoordinate,
+    pub(crate) scope: MacroScopeOwner,
 }
 
-impl<G> Clone for MacroActivation<G> {
-    fn clone(&self) -> Self {
-        *self
+/// Exact move-only ownership state for one live macro frame.
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub(crate) enum MacroScopeOwner {
+    Owned(OwnedAttemptScope),
+    Loaned(AttemptScopeLoan),
+    Transition,
+}
+
+pub(crate) struct RetiredMacroScope {
+    pub(crate) index: usize,
+    pub(crate) identity: MacroActivationId,
+    pub(crate) scope: MacroScopeOwner,
+}
+
+impl MacroScopeOwner {
+    pub(crate) const fn coordinate(&self) -> AttemptScopeCoordinate {
+        match self {
+            Self::Owned(owner) => owner.coordinate(),
+            Self::Loaned(loan) => loan.parent(),
+            Self::Transition => panic!("macro scope ownership is in a synchronous transition"),
+        }
+    }
+
+    pub(crate) fn owned_mut(&mut self) -> Option<&mut OwnedAttemptScope> {
+        match self {
+            Self::Owned(owner) => Some(owner),
+            Self::Loaned(_) | Self::Transition => None,
+        }
     }
 }
-
-impl<G> Copy for MacroActivation<G> {}
 
 /// One contiguous macro-argument allocation and its at-most-nine ranges.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct MacroArguments {
     record: Option<AttemptArgumentRecordId>,
-    scope: Option<AttemptScopeCoordinate>,
 }
 
 /// Exhaustive result of TeX82's `macro_call`.
@@ -197,13 +220,11 @@ impl MacroArgumentBuilder {
     pub(crate) fn finish<G>(
         self,
         attempt: &mut crate::attempt::AttemptArena<G>,
-        scope: AttemptScopeCoordinate,
     ) -> Result<MacroArguments, crate::attempt::AttemptError> {
         attempt
             .allocate_arguments(&self.arguments)
             .map(|record| MacroArguments {
                 record: Some(record),
-                scope: Some(scope),
             })
     }
 }
@@ -218,10 +239,11 @@ impl<G> ParameterState<G> {
         definition: DefinitionId<G>,
         arguments: MacroArguments,
         invocation: OriginId,
+        scope: OwnedAttemptScope,
     ) -> MacroActivationId {
         let identity = MacroActivationId(self.next_activation_identity);
         self.next_activation_identity = self.next_activation_identity.wrapping_add(1);
-        self.install_activation(identity, name, definition, arguments, invocation);
+        self.install_activation(identity, name, definition, arguments, invocation, scope);
         identity
     }
 
@@ -232,8 +254,9 @@ impl<G> ParameterState<G> {
         definition: DefinitionId<G>,
         arguments: MacroArguments,
         invocation: OriginId,
+        scope: OwnedAttemptScope,
     ) {
-        self.install_activation(identity, name, definition, arguments, invocation);
+        self.install_activation(identity, name, definition, arguments, invocation, scope);
     }
 
     fn install_activation(
@@ -243,6 +266,7 @@ impl<G> ParameterState<G> {
         definition: DefinitionId<G>,
         arguments: MacroArguments,
         invocation: OriginId,
+        scope: OwnedAttemptScope,
     ) {
         self.activations.push(MacroActivation {
             identity,
@@ -250,9 +274,7 @@ impl<G> ParameterState<G> {
             definition,
             arguments,
             invocation,
-            scope: arguments
-                .scope
-                .expect("installed macro arguments own a dynamic scope"),
+            scope: MacroScopeOwner::Owned(scope),
         });
     }
 
@@ -268,8 +290,14 @@ impl<G> ParameterState<G> {
             .map(|activation| activation.invocation)
     }
 
-    pub(crate) fn retire_last_activation(&mut self) -> Option<AttemptScopeCoordinate> {
-        self.activations.pop().map(|activation| activation.scope)
+    pub(crate) fn retire_last_activation(&mut self) -> Option<RetiredMacroScope> {
+        let index = self.activations.len().checked_sub(1)?;
+        let activation = self.activations.pop()?;
+        Some(RetiredMacroScope {
+            index,
+            identity: activation.identity,
+            scope: activation.scope,
+        })
     }
 
     pub(crate) fn prepare_argument_build(&mut self) {
@@ -281,10 +309,6 @@ impl<G> ParameterState<G> {
 impl MacroArguments {
     pub(crate) const fn record(self) -> Option<AttemptArgumentRecordId> {
         self.record
-    }
-
-    pub(crate) const fn scope(self) -> Option<AttemptScopeCoordinate> {
-        self.scope
     }
 }
 
@@ -332,9 +356,9 @@ impl<G> CommandProcessor<'_, '_, G> {
             .control_sequence()
             .ok_or(CommandError::input_invariant())?;
         self.command.parameters.prepare_argument_build();
-        let scope = self
+        let mut scope = self
             .command
-            .begin_attempt_child_scope()
+            .begin_attempt_macro_scope()
             .map_err(|_| CommandError::input_invariant())?;
         let definition_view = self.state.definition(definition);
         let pattern = definition_view.parameter_pattern();
@@ -365,8 +389,7 @@ impl<G> CommandProcessor<'_, '_, G> {
         };
         self.outer_recovered_while_matching = false;
         self.eof_recovered_while_matching = false;
-        let scanned_arguments =
-            self.macro_call_scalar(definition, flags, pattern, parameter_len, scope);
+        let scanned_arguments = self.macro_call_scalar(definition, flags, pattern, parameter_len);
         let arguments = match scanned_arguments {
             Ok(arguments) => arguments,
             Err(CommandError::MacroPrefixMismatch) => {
@@ -389,7 +412,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                     self.finish_scanner_episode(episode);
                 }
                 self.command
-                    .retire_attempt_scope(scope)
+                    .discard_attempt_scope_suffix(scope)
                     .map_err(|_| CommandError::input_invariant())?;
                 return Ok(MacroCallOutcome::PrefixMismatchRecovered);
             }
@@ -397,6 +420,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 if let Some(episode) = episode {
                     self.finish_scanner_episode(episode);
                 }
+                self.command
+                    .discard_attempt_scope_suffix(scope)
+                    .map_err(|_| CommandError::input_invariant())?;
                 return Err(error);
             }
         };
@@ -410,8 +436,9 @@ impl<G> CommandProcessor<'_, '_, G> {
         // token itself came from, any backup or recovery insertion, and any
         // finished stored replay -- before `begin_token_list(..., macro)`.
         // Those retirements must precede this body's input push.
-        self.conserve_input_stack()?;
-        let _level = self.push_macro_activation(macro_name, definition, call.origin(), arguments);
+        self.conserve_input_stack_around_local_child(&mut scope)?;
+        let _level =
+            self.push_macro_activation(macro_name, definition, call.origin(), arguments, scope);
         observe!(
             self,
             CommandObservation::Input(InputRecord {
@@ -446,7 +473,6 @@ impl<G> CommandProcessor<'_, '_, G> {
         flags: MeaningFlags,
         pattern: MacroParameterPattern,
         parameter_len: usize,
-        scope: AttemptScopeCoordinate,
     ) -> Result<MacroArguments, CommandError> {
         for index in 0..pattern.leading_end(parameter_len) {
             let expected = self.macro_parameter_token(definition, index)?;
@@ -545,7 +571,7 @@ impl<G> CommandProcessor<'_, '_, G> {
                 .map_err(|_| CommandError::input_invariant())?;
         }
         arguments
-            .finish(self.command.attempt.arena_mut(), scope)
+            .finish(self.command.attempt.arena_mut())
             .map_err(|_| CommandError::input_invariant())
     }
 

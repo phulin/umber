@@ -3731,6 +3731,32 @@ impl<G> MainControl<G> {
         self.pending_resource_operation = Some(PendingResourceOperation::<G> { attempt });
     }
 
+    /// Finishes a failed prepared-resource preflight while the operation
+    /// capability still has exactly one structural location.
+    ///
+    /// Diagnostic classification runs before suspension moves the attempt out
+    /// of command state. A genuine resource suspension then moves it into the
+    /// pending continuation and retains the other journals; every terminal
+    /// result commits while the owner is still installed. Callers therefore
+    /// cannot commit an emptied command attempt after moving its owner.
+    fn finish_unavailable_prepared_resource_operation(
+        &mut self,
+        stores: &mut Universe<G>,
+        mark: DirectOperationMark<G>,
+        scanned: Box<ColdOperation<G>>,
+        capabilities: crate::transaction_protocol::CommandCapabilities,
+        error: ExecError,
+    ) -> Result<StepResult, ExecError> {
+        let result = self.finish_resource_preflight_failure(stores, error);
+        if matches!(result, Ok(StepResult::Suspended(_))) {
+            self.suspend_prepared_resource_operation(stores, mark.attempt, scanned, capabilities);
+            self.retain_direct_operation_for_retry(stores, mark);
+        } else {
+            self.commit_direct_operation(stores, mark);
+        }
+        result
+    }
+
     fn finish_direct_operation(
         &mut self,
         _stores: &mut Universe<G>,
@@ -4107,22 +4133,22 @@ impl<G> MainControl<G> {
                             let _ = stores.abandon_dependency_region(mark);
                         }
                         if let Some(scanned) = failure.unavailable {
-                            self.suspend_prepared_resource_operation(
+                            let result = self.finish_unavailable_prepared_resource_operation(
                                 stores,
-                                operation_mark.attempt,
+                                operation_mark,
                                 scanned,
                                 preflight.capabilities,
+                                *failure.error,
                             );
-                            self.advance_telemetry.rollbacks += 1;
-                            #[cfg(feature = "profiling")]
-                            self.episode_telemetry
-                                .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
-                            #[cfg(not(feature = "profiling"))]
-                            self.episode_telemetry
-                                .record_rollback(crate::SemanticEpisodeBarrier::Resource);
-                            let result =
-                                self.finish_resource_preflight_failure(stores, *failure.error);
-                            self.retain_direct_operation_for_retry(stores, operation_mark);
+                            if matches!(result, Ok(StepResult::Suspended(_))) {
+                                self.advance_telemetry.rollbacks += 1;
+                                #[cfg(feature = "profiling")]
+                                self.episode_telemetry
+                                    .record_rollback(crate::SemanticEpisodeBarrier::Resource, 1);
+                                #[cfg(not(feature = "profiling"))]
+                                self.episode_telemetry
+                                    .record_rollback(crate::SemanticEpisodeBarrier::Resource);
+                            }
                             return result;
                         }
                         let result = self.finish_resource_preflight_failure(stores, *failure.error);
@@ -4295,15 +4321,13 @@ impl<G> MainControl<G> {
                             let _ = stores.abandon_dependency_region(mark);
                         }
                         if let Some(scanned) = failure.unavailable {
-                            self.suspend_prepared_resource_operation(
+                            let result = self.finish_unavailable_prepared_resource_operation(
                                 stores,
-                                operation_mark.attempt,
+                                operation_mark,
                                 scanned,
                                 preflight.capabilities,
+                                *failure.error,
                             );
-                            let result =
-                                self.finish_resource_preflight_failure(stores, *failure.error);
-                            self.retain_direct_operation_for_retry(stores, operation_mark);
                             return result;
                         }
                         let result = self.finish_resource_preflight_failure(stores, *failure.error);
@@ -4524,38 +4548,39 @@ impl<G> MainControl<G> {
                         if let Some(mark) = tracked_mark {
                             let _ = stores.abandon_dependency_region(mark);
                         }
-                        if let Some(scanned) = failure.unavailable {
-                            self.suspend_prepared_resource_operation(
+                        let result = if let Some(scanned) = failure.unavailable {
+                            self.finish_unavailable_prepared_resource_operation(
                                 stores,
-                                operation_mark.attempt,
+                                operation_mark,
                                 scanned,
                                 preflight.capabilities,
-                            );
-                        }
-                        let result = self.finish_resource_preflight_failure(stores, *failure.error);
-                        if matches!(result, Ok(StepResult::Suspended(_)))
-                            && self.pending_resource_operation.is_none()
-                        {
-                            self.pending_alignment_delivery = alignment_delivery
-                                .zip(failure.cursor)
-                                .map(|(alignment, cursor)| PendingAlignmentDelivery {
-                                    alignment,
-                                    cursor,
-                                });
-                            let retry_expansion = self.command.pending_expansion_command().cloned();
-                            self.pending_preflight_command = retry_command.map(|retry| {
-                                let retry = retry.with_retry_expansion(retry_expansion);
-                                match failure.cursor {
-                                    Some(cursor) => retry.with_cursor(cursor),
-                                    None => retry,
-                                }
-                            });
-                        }
-                        if matches!(result, Ok(StepResult::Suspended(_))) {
-                            self.retain_direct_operation_for_retry(stores, operation_mark);
+                                *failure.error,
+                            )
                         } else {
-                            self.commit_direct_operation(stores, operation_mark);
-                        }
+                            let result =
+                                self.finish_resource_preflight_failure(stores, *failure.error);
+                            if matches!(result, Ok(StepResult::Suspended(_))) {
+                                self.pending_alignment_delivery = alignment_delivery
+                                    .zip(failure.cursor)
+                                    .map(|(alignment, cursor)| PendingAlignmentDelivery {
+                                        alignment,
+                                        cursor,
+                                    });
+                                let retry_expansion =
+                                    self.command.pending_expansion_command().cloned();
+                                self.pending_preflight_command = retry_command.map(|retry| {
+                                    let retry = retry.with_retry_expansion(retry_expansion);
+                                    match failure.cursor {
+                                        Some(cursor) => retry.with_cursor(cursor),
+                                        None => retry,
+                                    }
+                                });
+                                self.retain_direct_operation_for_retry(stores, operation_mark);
+                            } else {
+                                self.commit_direct_operation(stores, operation_mark);
+                            }
+                            result
+                        };
                         return match result {
                             Err(error) => {
                                 let error = {

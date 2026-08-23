@@ -2463,14 +2463,21 @@ impl<G> CommandProcessor<'_, '_, G> {
         definition: tex_state::DefinitionId<G>,
         call_site: OriginId,
         arguments: MacroArguments,
+        scope: crate::attempt::OwnedAttemptScope,
     ) -> InputLevelId {
         let definition_view = self.state.definition(definition);
         let parent = self.command.parameters.parent_invocation();
         let replacement_len = definition_view.replacement_text().len();
         let invocation = call_site;
         let _ = parent;
-        self.command
-            .push_macro_activation(name, definition, arguments, invocation, replacement_len)
+        self.command.push_macro_activation(
+            name,
+            definition,
+            arguments,
+            invocation,
+            replacement_len,
+            scope,
+        )
     }
 }
 

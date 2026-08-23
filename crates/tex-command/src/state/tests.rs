@@ -313,7 +313,7 @@ fn committed_macro_scope_survives_until_a_later_lifo_retirement() {
             .expect("macro definition");
         let name = universe.intern("inner").expect("macro name").symbol();
         let operation = state.begin_attempt_operation();
-        let scope = state.begin_attempt_child_scope().expect("macro scope");
+        let scope = state.begin_attempt_macro_scope().expect("macro scope");
         let retained = state
             .attempt
             .arena_mut()
@@ -322,21 +322,16 @@ fn committed_macro_scope_survives_until_a_later_lifo_retirement() {
         let mut arguments = MacroArgumentBuilder::default();
         arguments.complete(1, retained).expect("first argument");
         let arguments = arguments
-            .finish(state.attempt.arena_mut(), scope)
+            .finish(state.attempt.arena_mut())
             .expect("argument record");
-        let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
+        let level =
+            state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0, scope);
 
         state
             .commit_attempt_operation(operation)
             .expect("operation commits around persistent macro scope");
         assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
-        assert!(
-            state
-                .attempt
-                .arena()
-                .validate_scope_coordinate(operation.operation_scope())
-                .is_ok()
-        );
+        assert!(state.retained_attempt_operation().is_err());
 
         let retirement = state.begin_attempt_operation();
         state
@@ -351,6 +346,372 @@ fn committed_macro_scope_survives_until_a_later_lifo_retirement() {
 }
 
 #[test]
+fn repeated_same_depth_macro_replacement_hands_operation_to_the_latest_owner() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("replacement").expect("macro name").symbol();
+
+        let opening = state.begin_attempt_operation();
+        let outer_scope = state.begin_attempt_macro_scope().expect("outer scope");
+        let outer_arguments = MacroArgumentBuilder::default()
+            .finish(state.attempt.arena_mut())
+            .expect("outer arguments");
+        let outer = state.push_macro_activation(
+            name,
+            definition,
+            outer_arguments,
+            OriginId::UNKNOWN,
+            0,
+            outer_scope,
+        );
+        state
+            .commit_attempt_operation(opening)
+            .expect("outer activation commits");
+
+        let replacement_operation = state.begin_attempt_operation();
+        let mut replacement_scope = state
+            .begin_attempt_macro_scope()
+            .expect("replacement scope");
+        state
+            .retire_exhausted_input_around_local_child(outer, &mut replacement_scope)
+            .expect("outer retires into the unpublished replacement owner");
+        let retained = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('r')])
+            .expect("replacement argument");
+        let mut arguments = MacroArgumentBuilder::default();
+        arguments.complete(1, retained).expect("replacement slot");
+        let arguments = arguments
+            .finish(state.attempt.arena_mut())
+            .expect("replacement arguments");
+        let replacement = state.push_macro_activation(
+            name,
+            definition,
+            arguments,
+            OriginId::UNKNOWN,
+            0,
+            replacement_scope,
+        );
+        let mut final_scope = state
+            .begin_attempt_macro_scope()
+            .expect("second replacement scope");
+        state
+            .retire_exhausted_input_around_local_child(replacement, &mut final_scope)
+            .expect("first replacement retires into its unpublished successor");
+        let final_retained = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('f')])
+            .expect("final replacement argument");
+        let mut final_arguments = MacroArgumentBuilder::default();
+        final_arguments
+            .complete(1, final_retained)
+            .expect("final replacement slot");
+        let final_arguments = final_arguments
+            .finish(state.attempt.arena_mut())
+            .expect("final replacement arguments");
+        let final_replacement = state.push_macro_activation(
+            name,
+            definition,
+            final_arguments,
+            OriginId::UNKNOWN,
+            0,
+            final_scope,
+        );
+        state
+            .commit_attempt_operation(replacement_operation)
+            .expect("latest same-depth replacement owns the committed suffix");
+        assert_eq!(
+            state.attempt_token_words(final_retained),
+            Ok(&[word('f')][..])
+        );
+
+        let retirement = state.begin_attempt_operation();
+        state
+            .retire_exhausted_input(final_replacement)
+            .expect("latest replacement retires");
+        state
+            .commit_attempt_operation(retirement)
+            .expect("replacement suffix closes");
+        assert!(state.attempt.is_empty());
+        assert!(state.attempt_token_words(retained).is_err());
+        assert!(state.attempt_token_words(final_retained).is_err());
+    });
+}
+
+#[test]
+fn failed_unpublished_macro_child_returns_ownership_before_operation_rollback() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("outer").expect("macro name").symbol();
+
+        let opening = state.begin_attempt_operation();
+        let outer_scope = state.begin_attempt_macro_scope().expect("outer scope");
+        let retained = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('o')])
+            .expect("outer argument");
+        let mut outer_arguments = MacroArgumentBuilder::default();
+        outer_arguments.complete(1, retained).expect("outer slot");
+        let outer_arguments = outer_arguments
+            .finish(state.attempt.arena_mut())
+            .expect("outer arguments");
+        state.push_macro_activation(
+            name,
+            definition,
+            outer_arguments,
+            OriginId::UNKNOWN,
+            0,
+            outer_scope,
+        );
+        state
+            .commit_attempt_operation(opening)
+            .expect("outer activation commits");
+
+        let rejected = state.begin_attempt_operation();
+        let unpublished = state.begin_attempt_macro_scope().expect("local child");
+        let scratch = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("rejected scratch");
+        state
+            .discard_attempt_scope_suffix(unpublished)
+            .expect("failed local child returns the parent capability");
+        state
+            .rollback_attempt_operation(rejected)
+            .expect("operation rollback remains exact");
+
+        assert_eq!(state.attempt_token_words(retained), Ok(&[word('o')][..]));
+        assert!(state.attempt_token_words(scratch).is_err());
+    });
+}
+
+#[test]
+fn completed_nested_scanner_closes_to_its_synchronous_parent_scope() {
+    let mut state = CommandState::<()>::default();
+    let operation = state.begin_attempt_operation();
+    let parent_sink = state
+        .attempt
+        .arena_mut()
+        .allocate_token_list([word('p')])
+        .expect("parent-owned scanner sink");
+    let parent = state
+        .begin_attempt_scanner_scope()
+        .expect("parent scanner scope");
+    let child_sink = state
+        .attempt
+        .arena_mut()
+        .allocate_token_list([word('c')])
+        .expect("nested parent-owned scanner sink");
+    let child = state
+        .begin_attempt_scanner_scope()
+        .expect("nested scanner scope");
+
+    state
+        .discard_attempt_scope_suffix(child)
+        .expect("nested scanner closes to the synchronous parent");
+    assert_eq!(state.attempt_token_words(parent_sink), Ok(&[word('p')][..]));
+    assert_eq!(state.attempt_token_words(child_sink), Ok(&[word('c')][..]));
+    state
+        .discard_attempt_scope_suffix(parent)
+        .expect("parent scanner closes to the operation");
+    state
+        .commit_attempt_operation(operation)
+        .expect("operation closes after both synchronous scanners");
+    assert!(state.attempt.is_empty());
+}
+
+#[test]
+fn completed_scanner_hands_ownership_to_its_live_macro_child() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("child").expect("macro name").symbol();
+        let operation = state.begin_attempt_operation();
+        let scanner = state.begin_attempt_scanner_scope().expect("scanner scope");
+        let child_scope = state.begin_attempt_macro_scope().expect("macro child");
+        let retained = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('m')])
+            .expect("macro argument");
+        let mut arguments = MacroArgumentBuilder::default();
+        arguments.complete(1, retained).expect("macro slot");
+        let arguments = arguments
+            .finish(state.attempt.arena_mut())
+            .expect("macro arguments");
+        let child = state.push_macro_activation(
+            name,
+            definition,
+            arguments,
+            OriginId::UNKNOWN,
+            0,
+            child_scope,
+        );
+
+        state
+            .discard_attempt_scope_suffix(scanner)
+            .expect("scanner moves its close-through into the exact live child");
+        state
+            .commit_attempt_operation(operation)
+            .expect("operation commits around the child owner");
+        assert_eq!(state.attempt_token_words(retained), Ok(&[word('m')][..]));
+
+        let retirement = state.begin_attempt_operation();
+        state.retire_exhausted_input(child).expect("child retires");
+        state
+            .commit_attempt_operation(retirement)
+            .expect("child closes the scanner and operation chain");
+        assert!(state.attempt.is_empty());
+    });
+}
+
+#[test]
+fn non_top_direct_macro_retirement_clears_the_consumed_child_link() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe
+            .intern("retired-parent")
+            .expect("macro name")
+            .symbol();
+
+        let operation = state.begin_attempt_operation();
+        let macro_scope = state.begin_attempt_macro_scope().expect("macro scope");
+        let arguments = MacroArgumentBuilder::default()
+            .finish(state.attempt.arena_mut())
+            .expect("macro arguments");
+        let macro_level = state.push_macro_activation(
+            name,
+            definition,
+            arguments,
+            OriginId::UNKNOWN,
+            0,
+            macro_scope,
+        );
+        let scanner_scope = state
+            .begin_attempt_scanner_scope()
+            .expect("nested scanner scope");
+        state
+            .retire_exhausted_input(macro_level)
+            .expect("loaned macro parent retires while the scanner owns the chain");
+        state
+            .defer_attempt_scope_retirement(scanner_scope)
+            .expect("scanner becomes the operation owner");
+        state
+            .commit_attempt_operation(operation)
+            .expect("consumed direct-child link does not outlive the macro owner");
+        assert!(state.attempt.is_empty());
+    });
+}
+
+#[test]
+fn stale_direct_macro_child_index_rejects_commit_before_mutation() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe.intern("stale-child").expect("macro name").symbol();
+        let operation = state.begin_attempt_operation();
+        let scope = state.begin_attempt_macro_scope().expect("macro scope");
+        let retained = state
+            .attempt
+            .arena_mut()
+            .allocate_token_list([word('x')])
+            .expect("macro argument");
+        let mut arguments = MacroArgumentBuilder::default();
+        arguments.complete(1, retained).expect("argument slot");
+        let arguments = arguments
+            .finish(state.attempt.arena_mut())
+            .expect("arguments");
+        state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0, scope);
+        let before = state.attempt.arena().mark();
+        state
+            .attempt
+            .replace_operation_macro_child_index_for_test(u32::MAX);
+        assert_eq!(
+            state.commit_attempt_operation(operation),
+            Err(crate::AttemptError::InvalidCoordinate)
+        );
+        assert_eq!(state.attempt.arena().mark(), before);
+        assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
+        state
+            .rollback_attempt_operation(operation)
+            .expect("failed preflight left operation rollbackable");
+        assert!(state.attempt.is_empty());
+    });
+}
+
+#[test]
+fn nested_macro_child_keeps_the_direct_parent_link_on_the_outer_frame() {
+    crate::test_harness::with_universe(|universe| {
+        let mut state = CommandState::default();
+        let definition = universe
+            .allocate_definition(&[], &[])
+            .expect("macro definition");
+        let name = universe
+            .intern("nested-child")
+            .expect("macro name")
+            .symbol();
+        let operation = state.begin_attempt_operation();
+
+        let outer_scope = state.begin_attempt_macro_scope().expect("outer scope");
+        let outer_arguments = MacroArgumentBuilder::default()
+            .finish(state.attempt.arena_mut())
+            .expect("outer arguments");
+        let outer = state.push_macro_activation(
+            name,
+            definition,
+            outer_arguments,
+            OriginId::UNKNOWN,
+            0,
+            outer_scope,
+        );
+        let inner_scope = state.begin_attempt_macro_scope().expect("inner scope");
+        let inner_arguments = MacroArgumentBuilder::default()
+            .finish(state.attempt.arena_mut())
+            .expect("inner arguments");
+        let inner = state.push_macro_activation(
+            name,
+            definition,
+            inner_arguments,
+            OriginId::UNKNOWN,
+            0,
+            inner_scope,
+        );
+        state
+            .commit_attempt_operation(operation)
+            .expect("operation hands ownership to the direct outer child");
+
+        let inner_retirement = state.begin_attempt_operation();
+        state.retire_exhausted_input(inner).expect("inner retires");
+        state
+            .commit_attempt_operation(inner_retirement)
+            .expect("inner retirement closes to outer");
+        let outer_retirement = state.begin_attempt_operation();
+        state.retire_exhausted_input(outer).expect("outer retires");
+        state
+            .commit_attempt_operation(outer_retirement)
+            .expect("outer retirement closes the operation chain");
+        assert!(state.attempt.is_empty());
+    });
+}
+
+#[test]
 fn operation_rollback_discards_children_and_preserves_the_prior_macro_scope() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
@@ -359,7 +720,7 @@ fn operation_rollback_discards_children_and_preserves_the_prior_macro_scope() {
             .expect("macro definition");
         let name = universe.intern("inner").expect("macro name").symbol();
         let activation = state.begin_attempt_operation();
-        let scope = state.begin_attempt_child_scope().expect("macro scope");
+        let scope = state.begin_attempt_macro_scope().expect("macro scope");
         let retained = state
             .attempt
             .arena_mut()
@@ -368,15 +729,16 @@ fn operation_rollback_discards_children_and_preserves_the_prior_macro_scope() {
         let mut arguments = MacroArgumentBuilder::default();
         arguments.complete(1, retained).expect("first argument");
         let arguments = arguments
-            .finish(state.attempt.arena_mut(), scope)
+            .finish(state.attempt.arena_mut())
             .expect("argument record");
-        let level = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
+        let level =
+            state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0, scope);
         state
             .commit_attempt_operation(activation)
             .expect("commit macro");
 
         let rejected_operation = state.begin_attempt_operation();
-        let rejected_scope = state.begin_attempt_child_scope().expect("rejected child");
+        let rejected_scope = state.begin_attempt_macro_scope().expect("rejected child");
         let scratch = state
             .attempt
             .arena_mut()
@@ -384,18 +746,14 @@ fn operation_rollback_discards_children_and_preserves_the_prior_macro_scope() {
             .expect("child scratch");
 
         state
+            .discard_attempt_scope_suffix(rejected_scope)
+            .expect("rejected child returns ownership to the live parent");
+        state
             .rollback_attempt_operation(rejected_operation)
             .expect("rejected child rolls back");
 
         assert_eq!(state.attempt_token_words(retained), Ok(&[word('x')][..]));
         assert!(state.attempt_token_words(scratch).is_err());
-        assert!(
-            state
-                .attempt
-                .arena()
-                .validate_scope_coordinate(rejected_scope)
-                .is_err()
-        );
 
         let retirement = state.begin_attempt_operation();
         state.retire_exhausted_input(level).expect("retire macro");
@@ -415,7 +773,7 @@ fn nested_scope_retirement_preserves_outer_parameter_replay() {
         let name = universe.intern("nested").expect("macro name").symbol();
 
         let operation = state.begin_attempt_operation();
-        let outer_scope = state.begin_attempt_child_scope().expect("outer scope");
+        let outer_scope = state.begin_attempt_macro_scope().expect("outer scope");
         let argument = state
             .attempt
             .arena_mut()
@@ -424,9 +782,16 @@ fn nested_scope_retirement_preserves_outer_parameter_replay() {
         let mut arguments = MacroArgumentBuilder::default();
         arguments.complete(1, argument).expect("outer slot");
         let arguments = arguments
-            .finish(state.attempt.arena_mut(), outer_scope)
+            .finish(state.attempt.arena_mut())
             .expect("outer argument record");
-        let outer = state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
+        let outer = state.push_macro_activation(
+            name,
+            definition,
+            arguments,
+            OriginId::UNKNOWN,
+            0,
+            outer_scope,
+        );
         let replay = state
             .replay_out_parameter(outer, 1)
             .expect("parameter replay");
@@ -434,12 +799,18 @@ fn nested_scope_retirement_preserves_outer_parameter_replay() {
             panic!("outer parameter must push a replay level");
         };
 
-        let inner_scope = state.begin_attempt_child_scope().expect("inner scope");
+        let inner_scope = state.begin_attempt_macro_scope().expect("inner scope");
         let inner_arguments = MacroArgumentBuilder::default()
-            .finish(state.attempt.arena_mut(), inner_scope)
+            .finish(state.attempt.arena_mut())
             .expect("empty inner argument record");
-        let inner =
-            state.push_macro_activation(name, definition, inner_arguments, OriginId::UNKNOWN, 0);
+        let inner = state.push_macro_activation(
+            name,
+            definition,
+            inner_arguments,
+            OriginId::UNKNOWN,
+            0,
+            inner_scope,
+        );
         state
             .retire_exhausted_input(inner)
             .expect("inner body retires around outer replay");
@@ -468,7 +839,7 @@ fn warmed_scope_retirement_is_allocation_free_for_8192_activations() {
         let name = universe.intern("long-op").expect("macro name").symbol();
         let run = |state: &mut CommandState<_>| {
             let activation = state.begin_attempt_operation();
-            let scope = state.begin_attempt_child_scope().expect("macro scope");
+            let scope = state.begin_attempt_macro_scope().expect("macro scope");
             let argument = state
                 .attempt
                 .arena_mut()
@@ -477,10 +848,16 @@ fn warmed_scope_retirement_is_allocation_free_for_8192_activations() {
             let mut arguments = MacroArgumentBuilder::default();
             arguments.complete(1, argument).expect("argument slot");
             let arguments = arguments
-                .finish(state.attempt.arena_mut(), scope)
+                .finish(state.attempt.arena_mut())
                 .expect("argument record");
-            let level =
-                state.push_macro_activation(name, definition, arguments, OriginId::UNKNOWN, 0);
+            let level = state.push_macro_activation(
+                name,
+                definition,
+                arguments,
+                OriginId::UNKNOWN,
+                0,
+                scope,
+            );
             state
                 .commit_attempt_operation(activation)
                 .expect("commit activation");
@@ -559,6 +936,13 @@ fn resource_suspension_moves_the_arena_and_restores_its_opening_cursor() {
             .suspend_attempt(universe, opening, resume, "font request")
             .expect("live generation owner");
         assert!(state.attempt.is_empty());
+        assert!(
+            matches!(
+                state.commit_attempt_operation(opening),
+                Err(AttemptError::InvalidCoordinate | AttemptError::ForeignAttempt)
+            ),
+            "an operation moved into a continuation cannot commit from empty command state"
+        );
         assert_eq!(
             universe.retire(),
             Err(tex_state::UniverseError::State(
@@ -586,8 +970,8 @@ fn nested_owned_scopes_survive_resource_suspension_and_resume_once() {
     crate::test_harness::with_universe(|universe| {
         let mut state = CommandState::default();
         let operation = state.begin_attempt_operation();
-        let scanner = state.begin_attempt_child_scope().expect("scanner scope");
-        let macro_child = state.begin_attempt_child_scope().expect("macro child");
+        let scanner = state.begin_attempt_scanner_scope().expect("scanner scope");
+        let macro_child = state.begin_attempt_macro_scope().expect("macro child");
         let child_value = state
             .attempt
             .arena_mut()
@@ -609,7 +993,7 @@ fn nested_owned_scopes_survive_resource_suspension_and_resume_once() {
         assert_eq!(resumed, operation);
         assert_eq!(state.attempt_token_words(child_value), Ok(&[word('x')][..]));
         state
-            .retire_attempt_scope(macro_child)
+            .discard_attempt_scope_suffix(macro_child)
             .expect("top macro child retires");
         state
             .defer_attempt_scope_retirement(scanner)

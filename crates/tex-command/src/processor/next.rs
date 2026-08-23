@@ -1879,15 +1879,34 @@ impl<G> CommandProcessor<'_, '_, G> {
         &mut self,
         identity: InputLevelId,
     ) -> Result<RetirementRestart, CommandError> {
+        self.retire_and_restart_with_local_child(identity, None)
+    }
+
+    fn retire_and_restart_around_local_child(
+        &mut self,
+        identity: InputLevelId,
+        child: &mut crate::attempt::OwnedAttemptScope,
+    ) -> Result<RetirementRestart, CommandError> {
+        self.retire_and_restart_with_local_child(identity, Some(child))
+    }
+
+    fn retire_and_restart_with_local_child(
+        &mut self,
+        identity: InputLevelId,
+        local_child: Option<&mut crate::attempt::OwnedAttemptScope>,
+    ) -> Result<RetirementRestart, CommandError> {
         let open_depths = self.command.source_open_depths(identity);
         let nesting_context = self
             .pending_file_warning_context
             .take()
             .and_then(|(level, context)| (level == identity).then_some(context));
-        let retirement = self
-            .command
-            .retire_exhausted_input(identity)
-            .map_err(|_| CommandError::input_invariant())?;
+        let retirement = if let Some(child) = local_child {
+            self.command
+                .retire_exhausted_input_around_local_child(identity, child)
+        } else {
+            self.command.retire_exhausted_input(identity)
+        }
+        .map_err(|_| CommandError::input_invariant())?;
         let action = retirement.action;
         // e-TeX 2.6 [23.328]'s `file_warning`: `end_file_reading` retiring a
         // real source level (never a `\read` pseudo-file's `EndReadLine`, and
@@ -2134,6 +2153,20 @@ impl<G> CommandProcessor<'_, '_, G> {
     /// delivery: a run of levels can be depleted at once, and the whole run
     /// retires before the push.
     pub(crate) fn conserve_input_stack(&mut self) -> Result<(), CommandError> {
+        self.conserve_input_stack_with_local_child(None)
+    }
+
+    pub(crate) fn conserve_input_stack_around_local_child(
+        &mut self,
+        child: &mut crate::attempt::OwnedAttemptScope,
+    ) -> Result<(), CommandError> {
+        self.conserve_input_stack_with_local_child(Some(child))
+    }
+
+    fn conserve_input_stack_with_local_child(
+        &mut self,
+        mut local_child: Option<&mut crate::attempt::OwnedAttemptScope>,
+    ) -> Result<(), CommandError> {
         loop {
             let depleted = match self.command.input.levels.last() {
                 Some(InputLevel::Tokens(cursor))
@@ -2152,7 +2185,12 @@ impl<G> CommandProcessor<'_, '_, G> {
             let Some(identity) = depleted else {
                 return Ok(());
             };
-            match self.retire_and_restart(identity)? {
+            let retirement = if let Some(child) = local_child.as_deref_mut() {
+                self.retire_and_restart_around_local_child(identity, child)?
+            } else {
+                self.retire_and_restart(identity)?
+            };
+            match retirement {
                 // Finished stored replay episodes queue their completion in
                 // command state. Draining continues so the whole depleted run
                 // is cleaned off; delivery surfaces each ready ownership

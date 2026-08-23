@@ -4,8 +4,8 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
-    AttemptArena, AttemptError, AttemptEscapeRoots, AttemptResumePoint, AttemptTokenStorage,
-    CommandAttempt, PendingCommandAttempt,
+    AttemptArena, AttemptError, AttemptEscapeRoots, AttemptResumePoint, AttemptScopeSerial,
+    AttemptTokenStorage, CommandAttempt, PendingCommandAttempt,
 };
 
 fn word(ch: char) -> TracedTokenWord {
@@ -479,12 +479,7 @@ fn pending_attempt_owns_generation_and_resumes_without_a_borrow() {
                 .validate_mark(opening.attempt_mark())
                 .is_ok()
         );
-        assert!(
-            attempt
-                .arena()
-                .validate_scope_coordinate(opening.operation_scope())
-                .is_ok()
-        );
+        assert!(attempt.validate_operation(opening).is_ok());
         assert_eq!(resume.command, 7);
         assert_eq!(request, "font request");
         assert!(attempt.arena().mark().traced_words == 0);
@@ -531,7 +526,7 @@ fn owned_scopes_close_exact_lifo_and_reject_stale_coordinates() {
         .expect("child-scope value");
 
     assert_eq!(
-        attempt.close_owned_scope(parent),
+        attempt.validate_top_owner(&parent),
         Err(AttemptError::InvalidCoordinate)
     );
     assert_eq!(attempt.token_words(child_value), Ok(&[word('b')][..]));
@@ -546,10 +541,6 @@ fn owned_scopes_close_exact_lifo_and_reject_stale_coordinates() {
     attempt
         .close_owned_scope(parent)
         .expect("parent closes second");
-    assert_eq!(
-        attempt.close_owned_scope(parent),
-        Err(AttemptError::InvalidCoordinate)
-    );
     assert_eq!(attempt.token_words(retained), Ok(&[word('p')][..]));
 }
 
@@ -568,23 +559,23 @@ fn lexical_scope_truncates_its_branded_child_id() {
 }
 
 #[test]
-fn long_parent_scope_reclaims_8192_retired_children_at_constant_depth() {
+fn four_hundred_thousand_scope_handoffs_keep_arena_metadata_constant() {
     let mut attempt = AttemptArena::<()>::default();
     let operation = attempt.begin_owned_scope().expect("operation scope");
-    let scanner = attempt.begin_owned_scope().expect("scanner scope");
+    let mut scanner = attempt.begin_owned_scope().expect("scanner scope");
     let output = attempt
         .allocate_token_buffer()
         .expect("parent-owned scanner sink");
 
-    for _ in 0..8_192 {
+    for _ in 0..400_000 {
         let child = attempt.begin_owned_scope().expect("macro child");
         let retired = attempt
             .allocate_token_list([word('x')])
             .expect("child scratch");
         attempt
-            .retire_owned_scope(child, operation)
+            .close_owned_scope(child)
             .expect("top child retires immediately");
-        assert_eq!(attempt.scopes.len(), 2);
+        assert_eq!(attempt.top_scope, scanner.serial);
         assert!(attempt.token_buffer(output).is_ok());
         assert_eq!(
             attempt.token_words(retired),
@@ -593,11 +584,11 @@ fn long_parent_scope_reclaims_8192_retired_children_at_constant_depth() {
     }
 
     attempt
-        .defer_owned_scope_retirement(scanner, operation)
-        .expect("scanner output stays live until operation commit");
+        .handoff_owned_parent(operation, &mut scanner)
+        .expect("scanner consumes its operation parent");
     assert!(attempt.token_buffer(output).is_ok());
     attempt
-        .commit_owned_operation(operation)
+        .close_owned_scope(scanner)
         .expect("operation consumes scanner then itself");
     assert!(attempt.mark().is_empty());
 }
@@ -606,20 +597,16 @@ fn long_parent_scope_reclaims_8192_retired_children_at_constant_depth() {
 fn deferred_scanner_result_survives_a_younger_immediate_retirement() {
     let mut attempt = AttemptArena::<()>::default();
     let operation = attempt.begin_owned_scope().expect("operation scope");
-    let scanner = attempt.begin_owned_scope().expect("scanner scope");
+    let mut scanner = attempt.begin_owned_scope().expect("scanner scope");
     let result = attempt
         .allocate_token_list([word('s')])
         .expect("scanner result");
-    attempt
-        .defer_owned_scope_retirement(scanner, operation)
-        .expect("scanner defers until its result is consumed");
-
     let macro_child = attempt.begin_owned_scope().expect("macro child");
     let scratch = attempt
         .allocate_token_list([word('x')])
         .expect("macro scratch");
     attempt
-        .retire_owned_scope(macro_child, operation)
+        .close_owned_scope(macro_child)
         .expect("younger macro retires immediately");
 
     assert_eq!(attempt.token_words(result), Ok(&[word('s')][..]));
@@ -627,10 +614,42 @@ fn deferred_scanner_result_survives_a_younger_immediate_retirement() {
         attempt.token_words(scratch),
         Err(AttemptError::InvalidCoordinate)
     );
-    assert_eq!(attempt.scopes.len(), 2);
     attempt
-        .commit_owned_operation(operation)
+        .handoff_owned_parent(operation, &mut scanner)
+        .expect("scanner consumes its operation parent");
+    attempt
+        .close_owned_scope(scanner)
         .expect("commit releases scanner result and operation");
+    assert!(attempt.mark().is_empty());
+}
+
+#[test]
+fn successful_handoff_does_not_consult_an_obsolete_child_opening_mark() {
+    let mut attempt = AttemptArena::<()>::default();
+    let operation = attempt.begin_owned_scope().expect("operation scope");
+    let operation_opening = operation.opening;
+    attempt
+        .allocate_token_list([word('p')])
+        .expect("operation-local promoted prefix");
+    let mut scanner = attempt.begin_owned_scope().expect("scanner scope");
+
+    // Successful root publication may reclaim rows which preceded the child
+    // scope. The child opening is then intentionally stale, while its merged
+    // close-through operation mark remains the exact surviving boundary.
+    attempt
+        .truncate(operation_opening)
+        .expect("published prefix reclaims without closing the live scope");
+    assert_eq!(
+        attempt.validate_mark(scanner.opening),
+        Err(AttemptError::InvalidCoordinate)
+    );
+    attempt
+        .handoff_owned_parent(operation, &mut scanner)
+        .expect("handoff uses typed ownership, not obsolete opening lengths");
+    attempt
+        .close_owned_scope(scanner)
+        .expect("successful close uses the merged close-through mark");
+    assert_eq!(attempt.top_scope, AttemptScopeSerial::ROOT);
     assert!(attempt.mark().is_empty());
 }
 
@@ -638,12 +657,12 @@ fn deferred_scanner_result_survives_a_younger_immediate_retirement() {
 fn preallocated_scanner_sink_survives_a_younger_operation_rollback() {
     let mut attempt = AttemptArena::<()>::default();
     let opening_operation = attempt.begin_owned_scope().expect("opening operation");
-    let scanner = attempt.begin_owned_scope().expect("scanner scope");
+    let mut scanner = attempt.begin_owned_scope().expect("scanner scope");
     let output = attempt
         .allocate_token_buffer()
         .expect("scanner reserves its parent sink");
     attempt
-        .commit_owned_operation(opening_operation)
+        .handoff_owned_parent(opening_operation, &mut scanner)
         .expect("scanner keeps the opening operation below it");
 
     let rejected_retry = attempt.begin_owned_scope().expect("rejected retry");
@@ -651,7 +670,7 @@ fn preallocated_scanner_sink_survives_a_younger_operation_rollback() {
         .allocate_token_list([word('x')])
         .expect("retry-local scratch");
     attempt
-        .rollback_owned_operation(rejected_retry)
+        .close_owned_scope(rejected_retry)
         .expect("retry suffix rolls back");
     assert_eq!(attempt.token_buffer(output), Ok(&[][..]));
     assert_eq!(
@@ -659,7 +678,7 @@ fn preallocated_scanner_sink_survives_a_younger_operation_rollback() {
         Err(AttemptError::InvalidCoordinate)
     );
 
-    let completed_retry = attempt.begin_owned_scope().expect("completed retry");
+    let mut completed_retry = attempt.begin_owned_scope().expect("completed retry");
     attempt
         .push_buffer_token(output, word('r'))
         .expect("retry writes through the scanner-owned sink");
@@ -667,11 +686,11 @@ fn preallocated_scanner_sink_survives_a_younger_operation_rollback() {
         .finish_token_buffer(output)
         .expect("parent sink finalizes after retry");
     attempt
-        .defer_owned_scope_retirement(scanner, completed_retry)
+        .handoff_owned_parent(scanner, &mut completed_retry)
         .expect("result survives through retry commit");
     assert_eq!(attempt.token_words(result), Ok(&[word('r')][..]));
     attempt
-        .commit_owned_operation(completed_retry)
+        .close_owned_scope(completed_retry)
         .expect("completed retry closes the whole retired suffix");
     assert!(attempt.mark().is_empty());
 }

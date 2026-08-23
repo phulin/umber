@@ -171,6 +171,7 @@ impl<G> CommandState<G> {
         arguments: MacroArguments,
         invocation: OriginId,
         replacement_len: usize,
+        scope: crate::attempt::OwnedAttemptScope,
     ) -> InputLevelId {
         let parameter_count = self
             .attempt
@@ -194,9 +195,12 @@ impl<G> CommandState<G> {
             .sum::<usize>()
             .saturating_add(parameter_count);
         self.usage.record_parameter_push(parameter_ptr);
+        let activation_index = self.parameters.activations.len();
         let activation = self
             .parameters
-            .push_activation(name, definition, arguments, invocation);
+            .push_activation(name, definition, arguments, invocation, scope);
+        self.note_attempt_macro_child(activation_index, activation)
+            .expect("a macro activation opens beneath the active operation");
         self.push_token_level(
             TokenPayload::MacroReplacement {
                 definition,
@@ -366,6 +370,22 @@ impl<G> CommandState<G> {
         &mut self,
         expected: InputLevelId,
     ) -> Result<InputRetirement, InputRetirementError> {
+        self.retire_exhausted_input_with_local_child(expected, None)
+    }
+
+    pub(crate) fn retire_exhausted_input_around_local_child(
+        &mut self,
+        expected: InputLevelId,
+        child: &mut crate::attempt::OwnedAttemptScope,
+    ) -> Result<InputRetirement, InputRetirementError> {
+        self.retire_exhausted_input_with_local_child(expected, Some(child))
+    }
+
+    fn retire_exhausted_input_with_local_child(
+        &mut self,
+        expected: InputLevelId,
+        local_child: Option<&mut crate::attempt::OwnedAttemptScope>,
+    ) -> Result<InputRetirement, InputRetirementError> {
         let level = self
             .input
             .levels
@@ -464,7 +484,7 @@ impl<G> CommandState<G> {
         else {
             unreachable!("the inspected top level was a token cursor");
         };
-        self.finish_macro_body_retirement(&cursor.behavior, retirement_scope)
+        self.finish_macro_body_retirement(&cursor.behavior, retirement_scope, local_child)
             .map_err(|_| InputRetirementError::AttemptRootInvariant)?;
         let action = match cursor.retirement {
             RetirementBehavior::Pop => InputRetirementAction::TokenListPopped,
@@ -516,7 +536,7 @@ impl<G> CommandState<G> {
                 trace: None,
             });
         };
-        self.finish_macro_body_retirement(&cursor.behavior, None)
+        self.finish_macro_body_retirement(&cursor.behavior, None, None)
             .expect("final cleanup runs inside one direct operation");
         let action = match cursor.retirement {
             RetirementBehavior::StopAtEnd => InputRetirementAction::TerminalStop,
@@ -551,7 +571,7 @@ impl<G> CommandState<G> {
         };
         let actual = self.parameters.activations.last();
         if actual.map(|activation| activation.identity) == Some(*expected) {
-            Ok(actual.map(|activation| activation.scope))
+            Ok(actual.map(|activation| activation.scope.coordinate()))
         } else {
             Err(InputRetirementError::MacroActivationOrder {
                 expected: *expected,
@@ -564,12 +584,23 @@ impl<G> CommandState<G> {
         &mut self,
         behavior: &TokenBehavior,
         expected_scope: Option<crate::attempt::AttemptScopeCoordinate>,
+        local_child: Option<&mut crate::attempt::OwnedAttemptScope>,
     ) -> Result<(), crate::AttemptError> {
         if matches!(behavior, TokenBehavior::MacroBody(_)) {
             let retired_scope = self.parameters.retire_last_activation();
-            debug_assert!(expected_scope.is_none() || retired_scope == expected_scope);
+            debug_assert!(
+                expected_scope.is_none()
+                    || retired_scope
+                        .as_ref()
+                        .map(|retired| retired.scope.coordinate())
+                        == expected_scope
+            );
             if let Some(scope) = retired_scope {
-                self.retire_attempt_scope(scope)?;
+                if let Some(child) = local_child {
+                    self.retire_attempt_scope_into_local_child(scope, child)?;
+                } else {
+                    self.retire_attempt_scope(scope)?;
+                }
             }
         }
         Ok(())
