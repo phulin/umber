@@ -2846,7 +2846,10 @@ mod tests {
                 |loaded| {
                     let loaded = &mut PdftexTestStores(loaded);
                     assert_eq!(
-                        dump_format(loaded).expect("redump format").as_bytes(),
+                        loaded
+                            .capture_format_image()
+                            .expect("recapture format")
+                            .as_bytes(),
                         format.as_bytes()
                     );
                     assert_eq!(loaded.int_param(IntParam::PDF_COMPRESS_LEVEL), 5);
@@ -3017,18 +3020,6 @@ mod tests {
                     })
                     .collect()
             })
-    }
-
-    fn dump_format<G>(stores: &mut Universe<G>) -> Result<tex_state::DetachedFormatImage, String> {
-        crate::run_memory_collecting_initex_artifacts_with_profile(
-            "\\dump",
-            stores,
-            tex_command::CommandProfile::PDFTEX14029,
-        )
-        .map_err(|error| error.to_string())?
-        .format_dump
-        .map(|dump| dump.image)
-        .ok_or_else(|| "format dump did not complete".to_owned())
     }
 
     mod retained_fixture_properties;

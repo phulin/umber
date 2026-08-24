@@ -2387,19 +2387,16 @@ impl<G> MainControl<G> {
         // The host supplies the already-acquired startup source, but TeX82
         // reached it through §§516--520's `end_name`. The following §537
         // `a_make_name_string` result is immediately flushed when it is last.
-        let path = std::path::Path::new(startup_name);
-        stores
+        let components = tex_command::FileNameComponents::from_tex_name(startup_name);
+        let mut context = stores
             .command_context()
-            .expect("startup accounting requires a live generation")
-            .record_retained_strings(tex_state::RetainedStringAllocation {
-                strings: 1
-                    + usize::from(
-                        path.parent()
-                            .is_some_and(|area| !area.as_os_str().is_empty()),
-                    )
-                    + usize::from(path.extension().is_some()),
-                characters: startup_name.len(),
-            });
+            .expect("startup accounting requires a live generation");
+        for component in [&components.area, &components.name, &components.extension] {
+            if !component.is_empty() {
+                context.slow_make_string_pool_string(component);
+            }
+        }
+        drop(context);
         let id = self.register_root_source(source)?;
         if has_resolved_name {
             self.command.render_file_framing_events(
@@ -2419,33 +2416,31 @@ impl<G> MainControl<G> {
         requested_name: &str,
         resolved_name: Option<&str>,
     ) {
-        if self.initex
-            && let Some(stem) = std::path::Path::new(requested_name)
-                .file_stem()
-                .and_then(|value| value.to_str())
-        {
+        if self.initex {
+            let components = tex_command::FileNameComponents::from_tex_name(requested_name);
+            let stem = components.name;
             // §§534--536 retain the startup name component as `job_name`
             // and the transcript's opened name before §537 retains the
             // requested and host-resolved input names below.
             let mut context = stores
                 .command_context()
                 .expect("startup accounting requires a live generation");
-            context.record_retained_strings(tex_state::RetainedStringAllocation::one(stem));
-            context.record_retained_strings(tex_state::RetainedStringAllocation::one(&format!(
-                "{stem}.log"
-            )));
+            if !stem.is_empty() {
+                context.make_string_pool_string(&stem);
+                context.make_string_pool_string(&format!("{stem}.log"));
+            }
         }
         stores
             .command_context()
             .expect("startup accounting requires a live generation")
-            .record_retained_strings(tex_state::RetainedStringAllocation::one(requested_name));
+            .make_string_pool_string(requested_name);
         if let Some(resolved_name) = resolved_name
             && resolved_name != requested_name
         {
             stores
                 .command_context()
                 .expect("startup accounting requires a live generation")
-                .record_retained_strings(tex_state::RetainedStringAllocation::one(resolved_name));
+                .make_string_pool_string(resolved_name);
         }
     }
 
@@ -8314,9 +8309,7 @@ impl<G> MainControl<G> {
             stores
                 .command_context()
                 .expect("format accounting requires a live generation")
-                .record_retained_strings(tex_state::RetainedStringAllocation::one(
-                    &receipt.pool_string(),
-                ));
+                .make_string_pool_string(&receipt.pool_string());
             self.dumped_format = Some(receipt);
         }
         if let (Ok(ReplayStep::End), Some((dump, incomplete_conditions))) = (&result, end.as_ref())

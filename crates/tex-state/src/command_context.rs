@@ -141,35 +141,116 @@ pub struct EngineUsageStatistics {
     pub save_stack: usize,
 }
 
-/// One explicit retained-string accounting delta.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RetainedStringAllocation {
-    pub strings: usize,
-    pub characters: usize,
+const TEX82_STRING_BASELINE: usize = 1_027;
+const TEX82_CHARACTER_BASELINE: usize = 106_808;
+const ETEX26_STRING_BASELINE: usize = 1_082;
+const ETEX26_CHARACTER_BASELINE: usize = 107_729;
+const MAX_STRINGS: usize = 15_000;
+const POOL_SIZE: usize = 125_000;
+
+/// Detached TeX string-pool coordinates serialized at the format boundary.
+///
+/// Typed owners retain the actual bytes. This record models only the
+/// canonical `make_string` transition shared by control sequences, file
+/// names, font identifiers, and format identifiers.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct StringPoolFormatState {
+    version: u8,
+    strings: usize,
+    characters: usize,
+    max_strings: usize,
+    pool_size: usize,
+    recycled: std::collections::BTreeSet<String>,
 }
 
-impl RetainedStringAllocation {
-    #[must_use]
-    pub const fn one(value: &str) -> Self {
+#[derive(Clone, Debug)]
+pub(crate) struct EngineUsageRuntime {
+    strings: usize,
+    characters: usize,
+    init_str_ptr: usize,
+    init_pool_ptr: usize,
+    max_strings: usize,
+    pool_size: usize,
+    recycled: std::collections::BTreeSet<String>,
+}
+
+impl Default for EngineUsageRuntime {
+    fn default() -> Self {
         Self {
-            strings: 1,
-            characters: value.len(),
+            strings: TEX82_STRING_BASELINE,
+            characters: TEX82_CHARACTER_BASELINE,
+            init_str_ptr: TEX82_STRING_BASELINE,
+            init_pool_ptr: TEX82_CHARACTER_BASELINE,
+            max_strings: MAX_STRINGS,
+            pool_size: POOL_SIZE,
+            recycled: std::collections::BTreeSet::new(),
         }
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct EngineUsageRuntime {
-    retained_strings: usize,
-    retained_characters: usize,
-}
-
 impl EngineUsageRuntime {
-    fn record_retained_strings(&mut self, allocation: RetainedStringAllocation) {
-        self.retained_strings = self.retained_strings.saturating_add(allocation.strings);
-        self.retained_characters = self
-            .retained_characters
-            .saturating_add(allocation.characters);
+    fn allocate_strings(&mut self, strings: usize, characters: usize) {
+        self.strings = self.strings.saturating_add(strings);
+        self.characters = self.characters.saturating_add(characters);
+    }
+
+    pub(crate) fn make_string(&mut self, value: &str) {
+        self.allocate_strings(1, value.len());
+        self.recycled.insert(value.to_owned());
+    }
+
+    fn slow_make_string(&mut self, value: &str) {
+        if self.recycled.insert(value.to_owned()) {
+            self.allocate_strings(1, value.len());
+        }
+    }
+
+    pub(crate) fn select_etex26_profile(&mut self) {
+        self.strings = self
+            .strings
+            .saturating_add(ETEX26_STRING_BASELINE.saturating_sub(self.init_str_ptr));
+        self.characters = self
+            .characters
+            .saturating_add(ETEX26_CHARACTER_BASELINE.saturating_sub(self.init_pool_ptr));
+        self.init_str_ptr = self.init_str_ptr.max(ETEX26_STRING_BASELINE);
+        self.init_pool_ptr = self.init_pool_ptr.max(ETEX26_CHARACTER_BASELINE);
+    }
+
+    pub(crate) fn capture_format_state(&self) -> StringPoolFormatState {
+        StringPoolFormatState {
+            version: 1,
+            strings: self.strings,
+            characters: self.characters,
+            max_strings: self.max_strings,
+            pool_size: self.pool_size,
+            recycled: self.recycled.clone(),
+        }
+    }
+
+    pub(crate) fn restore_format_state(
+        state: &StringPoolFormatState,
+    ) -> Result<Self, &'static str> {
+        if state.version != 1
+            || state.max_strings != MAX_STRINGS
+            || state.pool_size != POOL_SIZE
+            || state.strings < TEX82_STRING_BASELINE
+            || state.characters < TEX82_CHARACTER_BASELINE
+            || state.strings > state.max_strings
+            || state.characters > state.pool_size
+            || state.recycled.len() > state.strings
+            || state.recycled.iter().map(String::len).sum::<usize>() > state.characters
+        {
+            return Err("invalid string-pool format coordinates");
+        }
+        Ok(Self {
+            strings: state.strings,
+            characters: state.characters,
+            init_str_ptr: state.strings,
+            init_pool_ptr: state.characters,
+            max_strings: state.max_strings,
+            pool_size: state.pool_size,
+            recycled: state.recycled.clone(),
+        })
     }
 }
 
@@ -265,10 +346,22 @@ impl<'a, G> CommandContext<'a, G> {
         let fonts = self.fonts.len();
         let hyphenation = self.hyphenation.exception_usage();
         EngineUsageStatistics {
-            strings: self.engine_usage.retained_strings,
-            string_capacity: 15_000_usize.saturating_sub(1_027),
-            string_characters: self.engine_usage.retained_characters,
-            string_character_capacity: 125_000_usize.saturating_sub(106_808),
+            strings: self
+                .engine_usage
+                .strings
+                .saturating_sub(self.engine_usage.init_str_ptr),
+            string_capacity: self
+                .engine_usage
+                .max_strings
+                .saturating_sub(self.engine_usage.init_str_ptr),
+            string_characters: self
+                .engine_usage
+                .characters
+                .saturating_sub(self.engine_usage.init_pool_ptr),
+            string_character_capacity: self
+                .engine_usage
+                .pool_size
+                .saturating_sub(self.engine_usage.init_pool_ptr),
             memory_words: 0,
             memory_word_capacity: 250_000,
             control_sequences: self.interner.multiletter_len(),
@@ -282,12 +375,6 @@ impl<'a, G> CommandContext<'a, G> {
             buffer_stack: 0,
             save_stack: 0,
         }
-    }
-
-    /// Records only the scalar accounting effect of strings retained by an
-    /// execution or host owner. No string bytes enter semantic state.
-    pub fn record_retained_strings(&mut self, allocation: RetainedStringAllocation) {
-        self.engine_usage.record_retained_strings(allocation);
     }
 
     pub fn resolve_symbol(&self, symbol: SymbolId) -> Result<&str, InternerAccessError> {
@@ -2006,12 +2093,12 @@ impl<'a, G> CommandContext<'a, G> {
         self.world.file_framing_mut().close();
     }
 
-    pub fn make_string_pool_string(&mut self, _value: &str) {
-        self.unsupported_command_state();
+    pub fn make_string_pool_string(&mut self, value: &str) {
+        self.engine_usage.make_string(value);
     }
 
-    pub fn slow_make_string_pool_string(&mut self, _value: &str) {
-        self.unsupported_command_state();
+    pub fn slow_make_string_pool_string(&mut self, value: &str) {
+        self.engine_usage.slow_make_string(value);
     }
 
     pub fn register_source(
@@ -3383,12 +3470,20 @@ impl<'a, G> CommandContext<'a, G> {
     }
 
     pub fn intern_control_sequence(&mut self, name: &str) -> Symbol {
+        let is_new = self.interner.known(name).is_none();
         let id = self.interner.intern(name);
+        if is_new && name.chars().nth(1).is_some() {
+            self.engine_usage.make_string(name);
+        }
         self.intern_symbol(id)
     }
 
     pub fn intern(&mut self, name: &str) -> Result<SymbolId, crate::interner::InternerError> {
+        let is_new = self.interner.known(name).is_none();
         let id = self.interner.intern(name)?;
+        if is_new && name.chars().nth(1).is_some() {
+            self.engine_usage.make_string(name);
+        }
         self.admitted
             .state()
             .admit_symbol(id.symbol())
@@ -3400,13 +3495,25 @@ impl<'a, G> CommandContext<'a, G> {
         &mut self,
         value: &str,
     ) -> Result<SymbolId, crate::interner::InternerError> {
-        let id = self.intern(value)?;
-        self.record_retained_strings(RetainedStringAllocation::one(value));
+        // TeX82 §1252's active/null font identifiers are physical pool
+        // strings, not §259 control-sequence hash entries. The interner holds
+        // their typed identity only; that representation must not allocate a
+        // second canonical pool string.
+        let id = self.interner.intern(value)?;
+        self.admitted
+            .state()
+            .admit_symbol(id.symbol())
+            .expect("font identifier fits the current meaning bank");
+        self.engine_usage.make_string(value);
         Ok(id)
     }
 
     pub fn intern_hash_control_sequence(&mut self, name: &str) -> Symbol {
+        let is_new = self.interner.known(name).is_none();
         let id = self.interner.intern_hash(name);
+        if is_new && name.chars().nth(1).is_some() {
+            self.engine_usage.make_string(name);
+        }
         self.intern_symbol(id)
     }
 

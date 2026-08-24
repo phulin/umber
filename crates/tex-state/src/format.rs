@@ -126,6 +126,7 @@ impl From<crate::format_container::ContainerError> for FormatError {
 struct FormatMetadata {
     version: u32,
     interaction_mode: u8,
+    string_pool: crate::command_context::StringPoolFormatState,
     pdf: Vec<u8>,
 }
 
@@ -321,6 +322,7 @@ impl DetachedFormatImage {
         let metadata = bincode::serialize(&FormatMetadata {
             version: SECTION_VERSION,
             interaction_mode: encode_interaction_mode(universe.interaction_mode),
+            string_pool: universe.engine_usage.capture_format_state(),
             pdf,
         })
         .map_err(|error| FormatError::InvalidState(error.to_string()))?;
@@ -381,6 +383,8 @@ fn decode_image(bytes: &[u8]) -> Result<DecodedFormat, FormatError> {
         ));
     }
     decode_interaction_mode(metadata.interaction_mode)?;
+    crate::command_context::EngineUsageRuntime::restore_format_state(&metadata.string_pool)
+        .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
     let names: Vec<FormatName> = decode_rows(required_section(&container, 256)?)?;
     let names_lookup =
         crate::frozen_lookup::decode(&required_section(&container, 257)?.bytes, names.len())
@@ -1028,6 +1032,10 @@ impl<G> Universe<G> {
     }
 
     fn install_format_logical_rows(&mut self, format: &DecodedFormat) -> Result<(), FormatError> {
+        self.engine_usage = crate::command_context::EngineUsageRuntime::restore_format_state(
+            &format.metadata.string_pool,
+        )
+        .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
         for (slot, row) in format.names.iter().enumerate() {
             if let Some(symbol) = self
                 .interner_mut()

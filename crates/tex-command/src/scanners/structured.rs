@@ -906,6 +906,17 @@ pub struct FileNameComponents {
 }
 
 impl FileNameComponents {
+    /// Applies TeX82 §§516--519's platform-independent component scan to an
+    /// already selected startup name.
+    #[must_use]
+    pub fn from_tex_name(value: &str) -> Self {
+        let mut components = Self::default();
+        for ch in value.chars() {
+            components.push_character(ch);
+        }
+        components
+    }
+
     #[must_use]
     pub fn packed(&self) -> String {
         format!("{}{}{}", self.area, self.name, self.extension)

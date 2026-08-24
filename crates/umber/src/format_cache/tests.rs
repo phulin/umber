@@ -55,7 +55,7 @@ fn canonical_key_covers_every_identity_component() {
     );
     assert_eq!(
         original.key().hex(),
-        "a1f48bbde7032a4f1f3d7cece2e3d6e832672bd034ea986736c11d58d4e33065"
+        "a1003771df30812d0be73236a014ca7d1627f885445c8e94675c142a5cf9cd8a"
     );
 
     let mutations = [

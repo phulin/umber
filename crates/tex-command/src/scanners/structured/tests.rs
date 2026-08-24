@@ -1,6 +1,6 @@
 use tex_state::token::{Catcode, Token};
 
-use super::WriteStreamSelector;
+use super::{FileNameComponents, WriteStreamSelector};
 use crate::{CommandHostCapabilities, CommandState};
 
 fn other(ch: char) -> Token {
@@ -26,6 +26,18 @@ fn scan_write_stream(tokens: impl IntoIterator<Item = Token>) -> WriteStreamSele
         .scan_write_stream()
         .expect("write stream")
     })
+}
+
+#[test]
+fn startup_name_components_use_tex_delimiters_on_every_host() {
+    assert_eq!(
+        FileNameComponents::from_tex_name(r"volume:dir\trip.more.tex"),
+        FileNameComponents {
+            area: r"volume:dir\".to_owned(),
+            name: "trip".to_owned(),
+            extension: ".more.tex".to_owned(),
+        }
+    );
 }
 
 #[test]

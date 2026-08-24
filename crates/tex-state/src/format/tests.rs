@@ -26,6 +26,55 @@ fn image() -> DetachedFormatImage {
 }
 
 #[test]
+fn string_pool_format_baseline_preserves_make_and_recycling_semantics() {
+    let (image, before_capacity) = with_universe(budget(), |universe| {
+        let mut context = universe.command_context().expect("command context");
+        let initial = context.detach_engine_usage_statistics();
+        assert_eq!((initial.strings, initial.string_characters), (0, 0));
+
+        context.slow_make_string_pool_string("trip");
+        context.slow_make_string_pool_string("trip");
+        context.make_string_pool_string("trip");
+        context.intern_hash_control_sequence("newcs");
+        context.intern_hash_control_sequence("newcs");
+        context.intern_hash_control_sequence("x");
+        context
+            .intern_retained_pool_string("FONT?")
+            .expect("font identifier");
+        let used = context.detach_engine_usage_statistics();
+        assert_eq!((used.strings, used.string_characters), (4, 18));
+        drop(context);
+        (
+            universe.capture_format_image().expect("capture format"),
+            (
+                initial.string_capacity - used.strings,
+                initial.string_character_capacity - used.string_characters,
+            ),
+        )
+    })
+    .expect("fresh universe");
+
+    with_materialized_format(budget(), World::memory(), &image, |universe| {
+        let mut context = universe.command_context().expect("loaded context");
+        let loaded = context.detach_engine_usage_statistics();
+        assert_eq!((loaded.strings, loaded.string_characters), (0, 0));
+        assert_eq!(
+            (loaded.string_capacity, loaded.string_character_capacity),
+            before_capacity
+        );
+
+        context.slow_make_string_pool_string("trip");
+        assert_eq!(context.detach_engine_usage_statistics(), loaded);
+        context.slow_make_string_pool_string("fresh");
+        context.slow_make_string_pool_string("fresh");
+        context.make_string_pool_string("fresh");
+        let used = context.detach_engine_usage_statistics();
+        assert_eq!((used.strings, used.string_characters), (2, 10));
+    })
+    .expect("materialize format");
+}
+
+#[test]
 fn format_capture_disables_texxet_enhancement_without_mutating_the_source() {
     crate::with_universe(
         crate::interner::InternerBudget::new(16, 16, 256).expect("budget"),

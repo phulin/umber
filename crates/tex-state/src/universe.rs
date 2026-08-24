@@ -162,6 +162,7 @@ struct ShipoutRollback<G> {
     pdf: crate::pdf::PdfStateSnapshot<G>,
     world: crate::world::WorldSnapshot,
     prepared_mag: Option<i32>,
+    engine_usage: crate::command_context::EngineUsageRuntime,
 }
 
 /// Coarse generation owner plus every runtime root needed by an aggregate
@@ -180,6 +181,7 @@ pub struct RuntimeCheckpoint<G> {
     dependencies: crate::dependency::DependencyTrackerSnapshot,
     interaction_mode: InteractionMode,
     prepared_mag: Option<i32>,
+    engine_usage: crate::command_context::EngineUsageRuntime,
 }
 
 impl<G> Clone for RuntimeCheckpoint<G> {
@@ -195,6 +197,7 @@ impl<G> Clone for RuntimeCheckpoint<G> {
             dependencies: self.dependencies.clone(),
             interaction_mode: self.interaction_mode,
             prepared_mag: self.prepared_mag,
+            engine_usage: self.engine_usage.clone(),
         }
     }
 }
@@ -235,6 +238,7 @@ impl<G> Drop for ShipoutTransaction<'_, G> {
         self.universe.pdf.rollback(rollback.pdf);
         self.universe.world.rollback(&rollback.world);
         self.universe.prepared_mag = rollback.prepared_mag;
+        self.universe.engine_usage = rollback.engine_usage;
         self.universe
             .restore_state_checkpoint(&rollback.state)
             .expect("validated shipout rollback remains restorable");
@@ -396,7 +400,7 @@ pub struct Universe<G> {
     /// TeX82 §288's job-level `mag_set`; deliberately absent from formats.
     prepared_mag: Option<i32>,
     error_context_widths: ErrorContextWidths,
-    engine_usage: crate::command_context::EngineUsageRuntime,
+    pub(crate) engine_usage: crate::command_context::EngineUsageRuntime,
     /// Executable-process `font_info` bound; operational, not format state.
     font_info_capacity: usize,
     pub(crate) provenance_demand: crate::ProvenanceDemand,
@@ -444,11 +448,16 @@ impl<G> Universe<G> {
         profile: crate::FreshParameterProfile,
         defaults: &[crate::FreshParameterDefault],
     ) -> Result<crate::FreshParameterInstallation, crate::FreshParameterInstallError> {
-        self.core
+        let installation = self
+            .core
             .as_mut()
             .ok_or(crate::FreshParameterInstallError::Retired)?
             .state_mut()
-            .install_fresh_parameter_profile(profile, defaults)
+            .install_fresh_parameter_profile(profile, defaults)?;
+        if profile == crate::FreshParameterProfile::Etex26 {
+            self.engine_usage.select_etex26_profile();
+        }
+        Ok(installation)
     }
 
     /// Refreshes tex.web §241's four volatile clock parameters from the
@@ -580,7 +589,11 @@ impl<G> Universe<G> {
         if self.core.is_none() {
             return Err(UniverseError::Retired);
         }
+        let is_new = self.interner().known(name).is_none();
         let symbol = self.interner_mut().intern(name)?;
+        if is_new && name.chars().nth(1).is_some() {
+            self.engine_usage.make_string(name);
+        }
         self.core
             .as_mut()
             .ok_or(UniverseError::Retired)?
@@ -1710,6 +1723,7 @@ impl<G> Universe<G> {
             dependencies: self.dependencies.snapshot_tracker(),
             interaction_mode: self.interaction_mode,
             prepared_mag: self.prepared_mag,
+            engine_usage: self.engine_usage.clone(),
         })
     }
 
@@ -1779,6 +1793,7 @@ impl<G> Universe<G> {
         self.dependencies.restore_tracker(&checkpoint.dependencies);
         self.interaction_mode = checkpoint.interaction_mode;
         self.prepared_mag = checkpoint.prepared_mag;
+        self.engine_usage = checkpoint.engine_usage.clone();
         transfer_external_roots();
         <Self as RestoreTarget<GenerationOwner<G>, StateCheckpointMark<G>>>::transfer_roots(
             self, mark,
@@ -1811,6 +1826,7 @@ impl<G> Universe<G> {
             pdf: self.pdf.snapshot(),
             world: self.world.snapshot(),
             prepared_mag: self.prepared_mag,
+            engine_usage: self.engine_usage.clone(),
         };
         let empty_tokens = self
             .allocate_token_list(&[])

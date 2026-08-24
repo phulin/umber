@@ -33,9 +33,7 @@ use tex_command::{CommandHostCapabilities, CommandProfile};
 use tex_state::env::banks::IntParam;
 use tex_state::print::{ErrorHistory, Printer, Selector};
 use tex_state::world::PrintSink;
-use tex_state::{
-    CommandContext, EngineUsageStatistics, PdfNavigationWarning, RetainedStringAllocation, Universe,
-};
+use tex_state::{CommandContext, EngineUsageStatistics, PdfNavigationWarning, Universe};
 
 /// pdftex.web §2's `banner`: the production reference engine's start-up string.
 ///
@@ -440,15 +438,15 @@ pub(crate) fn begin_job_with_terminal_banner<G>(
         stores
             .command_context()
             .expect("job framing belongs to a live generation")
-            .record_retained_strings(RetainedStringAllocation::one(&log_name));
+            .make_string_pool_string(&log_name);
     } else if initex {
-        // TeX82 §§534--537 retain the scanned job-name component and the
-        // opened transcript name before INITEX reaches §1328's format dump.
+        // TeX82 §§534--537 retain the opened transcript name before INITEX
+        // reaches §1328's format dump. The scanned job-name component was
+        // already retained at the startup filename seam and is reused here.
         let mut command = stores
             .command_context()
             .expect("job framing belongs to a live generation");
-        command.record_retained_strings(RetainedStringAllocation::one(capabilities.job_name()));
-        command.record_retained_strings(RetainedStringAllocation::one(&log_name));
+        command.make_string_pool_string(&log_name);
     }
 
     // §61: the terminal's very first output -- `format_ident` and a
