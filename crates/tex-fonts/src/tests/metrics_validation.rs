@@ -31,13 +31,15 @@ fn generated_fonts_preserve_source_ancestry_and_pdftex_rounding() {
             Scaled::from_raw(0),
         ],
         FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
-    );
+    )
+    .with_font_info_words(100);
     let copied = source.copied(vec![Scaled::from_raw(9 * Scaled::UNITY); 8]);
     let letterspaced = copied
         .letterspaced(Scaled::from_raw(99), 100, true)
         .expect("bounded metric derivation");
 
     assert_eq!(copied.parameters().len(), 8);
+    assert_eq!(copied.font_info_words(), 101);
     assert_eq!(letterspaced.name(), "test+100ls");
     assert_eq!(letterspaced.parameters()[1].raw(), 4 * Scaled::UNITY);
     assert_eq!(

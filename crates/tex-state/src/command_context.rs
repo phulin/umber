@@ -527,6 +527,8 @@ impl<'a, G> CommandContext<'a, G> {
     #[must_use]
     pub fn detach_engine_usage_statistics(&self) -> EngineUsageStatistics {
         let fonts = self.fonts.len();
+        let font_parameter_words = self.admitted.state_ref().font_parameter_words();
+        let font_info_words = self.fonts.font_info_words(font_parameter_words);
         let hyphenation = self.hyphenation.exception_usage();
         EngineUsageStatistics {
             strings: self
@@ -548,7 +550,7 @@ impl<'a, G> CommandContext<'a, G> {
             memory_words: self.engine_usage.memory.reported_words(),
             memory_word_capacity: TEX82_MEMORY_WORD_CAPACITY,
             control_sequences: self.interner.multiletter_len(),
-            font_info_words: self.admitted.state_ref().font_parameter_words(),
+            font_info_words,
             fonts: fonts.saturating_sub(1),
             hyphenation_exceptions: hyphenation.occupied,
             hyphenation_exception_capacity: hyphenation.capacity,
@@ -1558,6 +1560,14 @@ impl<'a, G> CommandContext<'a, G> {
     /// entering the mutation episode.
     pub fn intern_font(&mut self, font: tex_fonts::LoadedFont) -> crate::ids::FontId {
         let allocates = self.fonts.would_allocate(&font);
+        assert!(
+            !allocates
+                || font.font_info_words()
+                    <= self
+                        .font_info_capacity
+                        .saturating_sub(self.current_font_info_words()),
+            "validated font exceeds the configured font-info capacity"
+        );
         let default_hyphen_char = self.int_param(IntParam::DEFAULT_HYPHEN_CHAR);
         let default_skew_char = self.int_param(IntParam::DEFAULT_SKEW_CHAR);
         let prepared = allocates.then(|| {
@@ -1613,6 +1623,14 @@ impl<'a, G> CommandContext<'a, G> {
         identifier: impl Into<FontIdentifier>,
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
         let allocates = self.fonts.would_allocate(&font);
+        if allocates
+            && font.font_info_words()
+                > self
+                    .font_info_capacity
+                    .saturating_sub(self.current_font_info_words())
+        {
+            return Err(crate::font::FontStoreCapacityError);
+        }
         let default_hyphen_char = self.int_param(IntParam::DEFAULT_HYPHEN_CHAR);
         let default_skew_char = self.int_param(IntParam::DEFAULT_SKEW_CHAR);
         let prepared = allocates
@@ -1700,6 +1718,14 @@ impl<'a, G> CommandContext<'a, G> {
         disable_ligatures: bool,
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
         let allocates = self.fonts.would_allocate(&font);
+        if allocates
+            && font.font_info_words()
+                > self
+                    .font_info_capacity
+                    .saturating_sub(self.current_font_info_words())
+        {
+            return Err(crate::font::FontStoreCapacityError);
+        }
         let default_hyphen_char = self.int_param(IntParam::DEFAULT_HYPHEN_CHAR);
         let default_skew_char = self.int_param(IntParam::DEFAULT_SKEW_CHAR);
         let prepared = allocates
@@ -1910,8 +1936,13 @@ impl<'a, G> CommandContext<'a, G> {
                     growth
                         <= self
                             .font_info_capacity
-                            .saturating_sub(self.admitted.state_ref().font_parameter_words())
+                            .saturating_sub(self.current_font_info_words())
                 }))
+    }
+
+    fn current_font_info_words(&self) -> usize {
+        self.fonts
+            .font_info_words(self.admitted.state_ref().font_parameter_words())
     }
 
     #[must_use]

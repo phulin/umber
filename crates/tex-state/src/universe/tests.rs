@@ -289,6 +289,68 @@ fn runtime_checkpoint_restores_main_memory_extents() {
 }
 
 #[test]
+fn font_info_usage_joins_immutable_metrics_and_mutable_parameter_growth() {
+    // TeX82 §§549/552/565 advance one shared `fmem_ptr` for the null font,
+    // each TFM's complete table, and §580 parameter growth. Umber keeps the
+    // immutable metrics and mutable parameters in distinct owners.
+    with_universe(budget(), |universe| {
+        universe.set_font_info_capacity(109);
+        let checkpoint = universe
+            .runtime_checkpoint()
+            .expect("font prefix checkpoint");
+        let loaded = test_font("usagefont").with_font_info_words(100);
+        let duplicate = loaded.clone();
+        let font = universe
+            .command_context()
+            .expect("context")
+            .intern_font(loaded);
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("context")
+                .intern_font(duplicate),
+            font,
+            "an existing load consumes no second font-info extent"
+        );
+        {
+            let mut context = universe.command_context().expect("context");
+            assert_eq!(
+                context.detach_engine_usage_statistics().font_info_words,
+                107
+            );
+            context
+                .set_font_dimen(font, 9, Scaled::from_raw(9))
+                .expect("two parameter words fit exactly");
+            assert_eq!(
+                context.detach_engine_usage_statistics().font_info_words,
+                109
+            );
+            assert_eq!(
+                context.set_font_dimen(font, 10, Scaled::from_raw(10)),
+                Err(109)
+            );
+            assert_eq!(
+                context.detach_engine_usage_statistics().font_info_words,
+                109
+            );
+        }
+        universe
+            .restore_runtime_checkpoint_with_roots(&checkpoint, || {})
+            .expect("restore font prefix");
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("restored context")
+                .detach_engine_usage_statistics()
+                .font_info_words,
+            7,
+            "rollback removes the exact immutable and mutable font suffix"
+        );
+    })
+    .expect("universe allocation");
+}
+
+#[test]
 fn universe_terminal_input_cursor_replays_only_its_caller_world() {
     let position = with_universe(budget(), |universe| {
         universe

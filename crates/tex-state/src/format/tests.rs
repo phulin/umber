@@ -134,6 +134,41 @@ fn test_font() -> LoadedFont {
     )
 }
 
+#[test]
+fn format_roundtrip_preserves_absolute_font_info_usage() {
+    // TeX82 §§1320--1321 dump and restore the absolute `fmem_ptr`, including
+    // immutable TFM words and fontdimen growth performed before `\dump`.
+    let image = with_universe(budget(), |universe| {
+        let font = universe
+            .command_context()
+            .expect("font admission")
+            .intern_font(test_font().with_font_info_words(100));
+        let mut context = universe.command_context().expect("font growth");
+        context
+            .set_font_dimen(font, 10, Scaled::from_raw(10))
+            .expect("fontdimen growth");
+        assert_eq!(
+            context.detach_engine_usage_statistics().font_info_words,
+            110
+        );
+        drop(context);
+        universe.capture_format_image().expect("capture format")
+    })
+    .expect("source universe");
+
+    with_materialized_format(budget(), World::memory(), &image, |universe| {
+        assert_eq!(
+            universe
+                .command_context()
+                .expect("loaded context")
+                .detach_engine_usage_statistics()
+                .font_info_words,
+            110
+        );
+    })
+    .expect("materialized format");
+}
+
 fn replace_section(image: &DetachedFormatImage, kind: u32, bytes: Vec<u8>) -> Vec<u8> {
     let container = crate::format_container::decode(image.as_bytes()).expect("source container");
     let owned = container

@@ -186,6 +186,13 @@ struct FontHashFragmentKey {
 #[derive(Debug)]
 pub(crate) struct FontStore {
     fonts: Vec<LoadedFont>,
+    /// TeX82's immutable `font_info` words other than mutable parameters.
+    ///
+    /// The parameter bank owns the current parameter extent, including
+    /// §580 growth. Combining the two scalars recovers §549's `fmem_ptr`
+    /// without retaining WEB addresses or rescanning every font at each
+    /// capacity check.
+    non_parameter_font_info_words: usize,
     identifiers: Vec<Option<SymbolId>>,
     identifier_writes: Vec<(FontId, Option<SymbolId>, StateHashFragment)>,
     expansion_specs: Vec<Option<FontExpansion>>,
@@ -205,6 +212,7 @@ impl Clone for FontStore {
     fn clone(&self) -> Self {
         Self {
             fonts: self.fonts.clone(),
+            non_parameter_font_info_words: self.non_parameter_font_info_words,
             identifiers: self.identifiers.clone(),
             identifier_writes: self.identifier_writes.clone(),
             expansion_specs: self.expansion_specs.clone(),
@@ -237,6 +245,7 @@ impl FontStore {
         let complete_hash_fragment = complete_font_hash_fragment(hash_fragment, None);
         Self {
             fonts: vec![null],
+            non_parameter_font_info_words: 0,
             identifiers: vec![None],
             identifier_writes: Vec::new(),
             expansion_specs: vec![None],
@@ -407,6 +416,7 @@ impl FontStore {
         let mut hash_fragments_by_key = BTreeMap::new();
         let mut font_hash_fragments = Vec::with_capacity(rows.len());
         let mut complete_hash_fragments = Vec::with_capacity(rows.len());
+        let mut non_parameter_font_info_words = 0_usize;
         for (raw, (font, identifier, expansion)) in rows.into_iter().enumerate() {
             if expansion.is_some()
                 && matches!(font.construction(), FontConstruction::Expanded { .. })
@@ -439,6 +449,10 @@ impl FontStore {
                 hash_fragments[fragment],
                 identifier_text,
             ));
+            non_parameter_font_info_words = non_parameter_font_info_words.saturating_add(
+                font.font_info_words()
+                    .saturating_sub(font.parameters().len()),
+            );
             if raw != 0 && matches!(font.construction(), FontConstruction::Loaded) {
                 let key = FontKey {
                     name: font.name().to_owned(),
@@ -461,6 +475,7 @@ impl FontStore {
         }
         Ok(Self {
             fonts,
+            non_parameter_font_info_words,
             identifiers,
             identifier_writes: Vec::new(),
             expansion_specs,
@@ -511,6 +526,10 @@ impl FontStore {
             self.identities
                 .allocate()
                 .expect("font store exceeds u32 ids"),
+        );
+        self.non_parameter_font_info_words = self.non_parameter_font_info_words.saturating_add(
+            font.font_info_words()
+                .saturating_sub(font.parameters().len()),
         );
         self.fonts.push(font);
         self.identifiers.push(None);
@@ -703,6 +722,18 @@ impl FontStore {
         self.fonts.len()
     }
 
+    /// Returns TeX82 §549's first-unused `font_info` coordinate.
+    ///
+    /// Sections 552 and 565 allocate immutable table words and the initial
+    /// parameter rows together. Section 580 can then extend only the mutable
+    /// parameter suffix of the newest font. The two owners stay separate in
+    /// Umber, so this aggregate joins them without recreating WEB storage.
+    #[must_use]
+    pub(crate) fn font_info_words(&self, parameter_words: usize) -> usize {
+        self.non_parameter_font_info_words
+            .saturating_add(parameter_words)
+    }
+
     /// Resolves a validated dense format coordinate to this timeline's fresh
     /// live font identity.
     pub(crate) fn id_at(&self, slot: u32) -> Option<FontId> {
@@ -764,6 +795,16 @@ impl FontStore {
         }
         self.expansion_writes
             .truncate(mark.expansion_writes_len as usize);
+        let removed_non_parameter_words = self.fonts[mark.len as usize..]
+            .iter()
+            .map(|font| {
+                font.font_info_words()
+                    .saturating_sub(font.parameters().len())
+            })
+            .fold(0_usize, usize::saturating_add);
+        self.non_parameter_font_info_words = self
+            .non_parameter_font_info_words
+            .saturating_sub(removed_non_parameter_words);
         self.fonts.truncate(mark.len as usize);
         self.identifiers.truncate(mark.len as usize);
         self.expansion_specs.truncate(mark.len as usize);

@@ -975,6 +975,14 @@ impl LoadedFont {
             MIN_TEX_FONT_PARAMETERS.max(copied.parameters.len()),
             Scaled::from_raw(0),
         );
+        // pdfTeX's `copy_font_info` copies the source's complete table and
+        // its current parameter suffix into a fresh `font_info` extent.
+        copied.font_info_words = copied.font_info_words.saturating_add(
+            copied
+                .parameters
+                .len()
+                .saturating_sub(self.parameters.len()),
+        );
         copied.construction = FontConstruction::Copied { source };
         copied
     }
