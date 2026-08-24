@@ -203,6 +203,7 @@ def main() -> None:
         assert result["root_sha256"] == root_digest
         assert result["shards"] == 1
         assert result["keys"] == 2
+        assert result["unavailable_keys"] == 0
         assert result["payload_objects"] == 2
         assert (mirror / "texmf-dist/tex/from-object.tex").read_bytes() == from_object
         assert (mirror / "texmf-dist/tex/from-texmf.tex").read_bytes() == from_texmf

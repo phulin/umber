@@ -404,15 +404,17 @@ python3 scripts/provision.py materialize --format latex --format pdflatex
 python3 scripts/provision.py materialize --format latex --format pdflatex --offline
 ```
 
-The command preserves the exact `manifest-v3.json` trust root, downloads only
-the canonical shards selected by the requested keys and format closures, and
-stores every shard, format, and file under its verified digest name in
-`target/texlive-snapshot/objects`. It also constructs a sparse, verified
-`target/texlive-snapshot/texmf-dist` view for tools that require paths.
-The second command performs no network I/O
-and proves that the explicit checkout-local distribution is complete for the
-same selection. Add canonical `kind:name` records with `--key` or a one-key-per-
-line file with `--keys-from`; repository lock records of the form
+The command preserves the exact `manifest-v3.json` trust root, stages all
+root-listed shards into a metadata-complete execution mirror, and downloads
+only the payloads selected by requested keys and format closures. Every shard,
+format, and selected file is stored under its verified digest name in
+`target/texlive-snapshot/objects`; unselected payloads remain absent. The
+command also constructs a sparse, verified
+`target/texlive-snapshot/texmf-dist` view for tools that require paths. The
+second command performs no network I/O and proves that the checkout-local root,
+complete shard set, and selected payload set can be reauthenticated without any
+seed. Add canonical `kind:name` records with `--key` or a one-key-per-line file
+with `--keys-from`; repository lock records of the form
 `source KIND PATH BYTES SHA256` are also accepted.
 
 An authenticated local producer can seed the identical selective workflow
@@ -436,20 +438,24 @@ python3 scripts/provision.py materialize \
 
 `--object-root` names only a directory of raw `sha256-<digest>` objects; it
 does not accept or copy a native cache namespace. `--texmf-root` supplies
-payload candidates by the manifest's authenticated virtual path. The
-materializer selects only required shards and payloads, verifies their exact
-declared lengths and SHA-256 identities, writes only verified objects into the
-checkout-local mirror, and then constructs its sparse TEXMF view. The seed-free
-second command is the offline completeness proof for that exact selection.
+preferred payload candidates by the manifest's authenticated virtual path;
+digest-named object roots are the exact fallback. The
+materializer stages and authenticates every shard named by the pinned root,
+selects only requested payloads, verifies their exact declared lengths and
+SHA-256 identities, and then constructs its sparse TEXMF view. This is an exact
+digest-addressed traversal rather than a broad object-root or cache copy. The
+seed-free second command is the offline completeness proof for that exact root,
+catalogue, and payload selection.
 
 An accepted native PDF run may write the engine-owned classic-font closure with
 `--pdf-font-closure-out`. Its schema-1 TSV retains the semantic request kind,
 canonical manifest key, virtual path, size, SHA-256, and authoritative
 unavailable VF probes. `materialize --keys-from` consumes resolved rows
-directly, pins their recorded identities against the authenticated shard, and
-ignores unavailable rows. Consequently a closure receipt can be materialized
-online and then repeated with `--offline` without transcribing or guessing
-font names.
+directly and pins their recorded identities against the authenticated shard.
+Unavailable rows select no payload; they seed the canonical shard lookup and
+must remain absent there. Consequently a closure receipt can be materialized
+online and then repeated with `--offline` without transcribing or guessing font
+names, while retaining its negative evidence.
 
 The builder additionally verifies `tests/texlive-snapshot.lock` before it
 publishes anything. That lock fixes the publisher-visible tree digest and the

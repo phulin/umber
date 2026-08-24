@@ -76,6 +76,13 @@ pub enum NativeRunError {
     },
     DistributionPinRequired(String),
     DistributionUnavailable(Vec<String>),
+    DistributionShardUnavailable {
+        index: u32,
+        digest: String,
+        request_keys: Vec<String>,
+        omitted_request_keys: usize,
+        path: Option<PathBuf>,
+    },
     Selection(String),
     Fetch(String),
     Compile(String),
@@ -110,6 +117,26 @@ impl fmt::Display for NativeRunError {
                 "distribution unavailable for required request(s): {}",
                 keys.join(", ")
             ),
+            Self::DistributionShardUnavailable {
+                index,
+                digest,
+                request_keys,
+                omitted_request_keys,
+                path,
+            } => {
+                write!(
+                    f,
+                    "distribution shard unavailable: index={index} digest={digest} request_keys={}",
+                    request_keys.join(", ")
+                )?;
+                if *omitted_request_keys > 0 {
+                    write!(f, " (+{omitted_request_keys} more)")?;
+                }
+                if let Some(path) = path {
+                    write!(f, " path={}", path.display())?;
+                }
+                Ok(())
+            }
             Self::Selection(message) => write!(f, "distribution selection error: {message}"),
             Self::Fetch(message) => f.write_str(message),
             Self::Compile(message) => f.write_str(message),
@@ -212,7 +239,7 @@ impl NativeAcceptedRun {
     /// Publishes the accepted engine-owned PDF classic-font closure as a
     /// deterministic, identity-pinned receipt. Resolved rows are accepted
     /// directly by `scripts/provision.py materialize --keys-from`; unavailable
-    /// VF probes remain evidence but are not materialization requests.
+    /// probes seed canonical shard-absence checks without selecting payloads.
     pub fn write_pdf_font_closure_receipt(&self, path: &Path) -> Result<(), NativeRunError> {
         let bytes = pdf_font_closure_receipt_bytes(&self.finalization.pdf_font_closure_receipt)?;
         World::real()
@@ -1239,7 +1266,7 @@ impl DistributionResolver {
         for (index, keys) in hinted_keys {
             let manifest_started = Instant::now();
             telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
-            match self.load_shard(index, cancellation, telemetry) {
+            match self.load_shard(index, &keys, cancellation, telemetry) {
                 Ok(shard) => {
                     telemetry.manifest_lookup_time = telemetry
                         .manifest_lookup_time
@@ -1386,7 +1413,7 @@ impl DistributionResolver {
         for (index, keys) in keys_by_shard {
             let manifest_started = Instant::now();
             telemetry.manifest_lookups = telemetry.manifest_lookups.saturating_add(1);
-            let shard = self.load_shard(index, cancellation, telemetry)?;
+            let shard = self.load_shard(index, &keys, cancellation, telemetry)?;
             telemetry.manifest_lookup_time = telemetry
                 .manifest_lookup_time
                 .saturating_add(manifest_started.elapsed());
@@ -1625,6 +1652,7 @@ impl DistributionResolver {
     fn load_shard(
         &mut self,
         index: u32,
+        request_keys: &[String],
         cancellation: &FetchCancellation,
         telemetry: &mut ResolverTelemetry,
     ) -> Result<Arc<ManifestShard>, NativeRunError> {
@@ -1657,13 +1685,25 @@ impl DistributionResolver {
         } else {
             let bytes = if let Some(local_root) = &local_root {
                 let path = local_object_path(local_root, &format!("sha256-{digest}"));
-                let bytes = read_bounded(&path, MAX_INDEX_SHARD_BYTES, "distribution index shard")?;
+                let bytes =
+                    match read_bounded(&path, MAX_INDEX_SHARD_BYTES, "distribution index shard") {
+                        Ok(bytes) => bytes,
+                        Err(NativeRunError::Io { source, .. })
+                            if source.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            return Err(shard_unavailable_error(
+                                index,
+                                &digest,
+                                request_keys,
+                                Some(path),
+                            ));
+                        }
+                        Err(error) => return Err(error),
+                    };
                 verify_manifest_digest(&bytes, &digest)?;
                 bytes
             } else if self.offline {
-                return Err(NativeRunError::DistributionUnavailable(vec![format!(
-                    "shard:{index}"
-                )]));
+                return Err(shard_unavailable_error(index, &digest, request_keys, None));
             } else {
                 let url = format!("{}sha256-{digest}", loaded.root.objects_base_url);
                 self.client
@@ -1874,6 +1914,27 @@ fn local_object_path(root: &Path, object: &str) -> PathBuf {
         objects
     } else {
         root.join(object)
+    }
+}
+
+fn shard_unavailable_error(
+    index: u32,
+    digest: &str,
+    request_keys: &[String],
+    path: Option<PathBuf>,
+) -> NativeRunError {
+    const MAX_DIAGNOSTIC_KEYS: usize = 4;
+
+    NativeRunError::DistributionShardUnavailable {
+        index,
+        digest: digest.to_owned(),
+        request_keys: request_keys
+            .iter()
+            .take(MAX_DIAGNOSTIC_KEYS)
+            .cloned()
+            .collect(),
+        omitted_request_keys: request_keys.len().saturating_sub(MAX_DIAGNOSTIC_KEYS),
+        path,
     }
 }
 

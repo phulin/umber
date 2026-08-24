@@ -313,16 +313,27 @@ def read_runtime_sources(path: Path, require_destinations: bool = False) -> list
     return records
 
 
-def read_runtime_requests(path: Path) -> tuple[set[str], dict[str, Identity]]:
-    """Read bare keys, source locks, or accepted PDF font-closure receipts."""
+def read_runtime_requests(
+    path: Path,
+) -> tuple[set[str], dict[str, Identity], set[str]]:
+    """Read positive keys and negative catalogue assertions from runtime receipts."""
     requested: set[str] = set()
     expected: dict[str, Identity] = {}
+    unavailable: set[str] = set()
     for number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if raw_line == "umber-pdf-font-closure-v1":
             continue
         if raw_line.startswith(("resolved\t", "unavailable\t")):
             fields = raw_line.split("\t")
             if fields[0] == "unavailable" and len(fields) == 4:
+                key = fields[3]
+                if ":" not in key:
+                    raise TexliveError(f"{path}:{number}: invalid PDF font closure key")
+                if key in requested or key in unavailable:
+                    raise TexliveError(
+                        f"{path}:{number}: duplicate runtime request key {key}"
+                    )
+                unavailable.add(key)
                 continue
             if fields[0] != "resolved" or len(fields) != 7:
                 raise TexliveError(f"{path}:{number}: invalid PDF font closure receipt record")
@@ -333,7 +344,7 @@ def read_runtime_requests(path: Path) -> tuple[set[str], dict[str, Identity]]:
             previous = expected.setdefault(key, identity)
             if previous != identity:
                 raise TexliveError(f"{path}:{number}: conflicting identity for {key}")
-            if key in requested:
+            if key in requested or key in unavailable:
                 raise TexliveError(f"{path}:{number}: duplicate runtime request key {key}")
             requested.add(key)
             continue
@@ -353,12 +364,12 @@ def read_runtime_requests(path: Path) -> tuple[set[str], dict[str, Identity]]:
                 raise TexliveError(f"{path}:{number}: conflicting identity for {key}")
         else:
             raise TexliveError(f"{path}:{number}: invalid runtime request record")
-        if key in requested:
+        if key in requested or key in unavailable:
             raise TexliveError(f"{path}:{number}: duplicate runtime request key {key}")
         requested.add(key)
-    if not requested:
+    if not requested and not unavailable:
         raise TexliveError(f"{path}: empty runtime request list")
-    return requested, expected
+    return requested, expected, unavailable
 
 
 def _json_document(data: bytes, label: str) -> dict:
@@ -459,17 +470,23 @@ def materialize_snapshot(
         if not root.is_dir():
             raise TexliveError(f"snapshot seed root is not a directory: {root}")
     output = output.resolve()
+    source_root_data = None
+    if source_root_path is not None:
+        source_root_path = source_root_path.resolve()
+        source_root_data = source_root_path.read_bytes()
+        if (
+            len(source_root_data) > MAX_MANIFEST_BYTES
+            or hashlib.sha256(source_root_data).hexdigest() != root_sha256
+        ):
+            raise TexliveError(f"root manifest identity mismatch for {source_root_path}")
     root_path = output / "manifest-v3.json"
     if root_path.exists():
         data = root_path.read_bytes()
         if len(data) > MAX_MANIFEST_BYTES or hashlib.sha256(data).hexdigest() != root_sha256:
             raise TexliveError(f"existing root manifest failed verification: {root_path}")
         root_data = data
-    elif source_root_path is not None:
-        source_root_path = source_root_path.resolve()
-        root_data = source_root_path.read_bytes()
-        if len(root_data) > MAX_MANIFEST_BYTES or hashlib.sha256(root_data).hexdigest() != root_sha256:
-            raise TexliveError(f"root manifest identity mismatch for {source_root_path}")
+    elif source_root_data is not None:
+        root_data = source_root_data
         _write_atomic(root_path, root_data)
     else:
         if offline:
@@ -488,15 +505,25 @@ def materialize_snapshot(
     formats, objects_url = root.get("formats"), root.get("objectsBaseUrl")
     if root.get("schema") != 3:
         raise TexliveError("root manifest is not schema 3")
-    if not isinstance(bits, int) or not 0 <= bits <= 16 or not isinstance(shards, list) or len(shards) != 1 << bits:
+    if (
+        not isinstance(bits, int)
+        or not 0 <= bits <= 16
+        or not isinstance(shards, list)
+        or len(shards) != 1 << bits
+        or any(not isinstance(digest, str) or not valid_digest(digest, 64) for digest in shards)
+    ):
         raise TexliveError("invalid shard inventory")
     if not isinstance(formats, dict) or not isinstance(objects_url, str) or not objects_url.startswith("https://") and not objects_url.startswith(("http://127.0.0.1:", "http://localhost:")):
         raise TexliveError("invalid formats or objectsBaseUrl")
     requested = set(keys)
     expected: dict[str, Identity] = {}
+    unavailable: set[str] = set()
     for lock_path in lock_paths:
-        lock_keys, lock_expected = read_runtime_requests(lock_path)
+        lock_keys, lock_expected, lock_unavailable = read_runtime_requests(lock_path)
+        if requested.intersection(lock_unavailable) or unavailable.intersection(lock_keys):
+            raise TexliveError(f"conflicting runtime request outcome in {lock_path}")
         requested.update(lock_keys)
+        unavailable.update(lock_unavailable)
         for key, identity in lock_expected.items():
             previous = expected.setdefault(key, identity)
             if previous != identity:
@@ -511,9 +538,14 @@ def materialize_snapshot(
             raise TexliveError(f"unknown or invalid format: {name}")
         requested.update(closure["keys"])
         objects[record["object"]] = Identity(record["bytes"], record["sha256"])
+    if requested.intersection(unavailable):
+        key = min(requested.intersection(unavailable))
+        raise TexliveError(f"conflicting positive and unavailable runtime key: {key}")
+    selected_shard_indices = {
+        _shard_index(key, bits) for key in requested.union(unavailable)
+    }
     shard_documents: dict[int, dict] = {}
-    for index in sorted({_shard_index(key, bits) for key in requested}):
-        digest = shards[index]
+    for index, digest in enumerate(shards):
         identity = Identity(MAX_MANIFEST_BYTES, digest)
         name = f"sha256-{digest}"
         path = output / "objects" / name
@@ -535,7 +567,20 @@ def materialize_snapshot(
         shard = _json_document(data, f"shard {index}")
         if shard.get("schema") != 1 or shard.get("distribution") != root.get("distribution") or shard.get("index") != index:
             raise TexliveError(f"shard {index} identity mismatch")
-        shard_documents[index] = shard
+        files = shard.get("files")
+        if not isinstance(files, dict) or any(
+            not isinstance(key, str) or _shard_index(key, bits) != index
+            for key in files
+        ):
+            raise TexliveError(f"shard {index} contains a noncanonical lookup key")
+        if index in selected_shard_indices:
+            shard_documents[index] = shard
+    for key in sorted(unavailable):
+        shard = shard_documents[_shard_index(key, bits)]
+        if key in shard["files"]:
+            raise TexliveError(
+                f"receipt declares a key unavailable but its canonical shard contains it: {key}"
+            )
     for key in sorted(requested):
         record = shard_documents[_shard_index(key, bits)].get("files", {}).get(key)
         if not isinstance(record, dict):
@@ -555,8 +600,6 @@ def materialize_snapshot(
         object_path = output / "objects" / name
         data = _read_verified_bytes(object_path, identity)
         if data is None:
-            data = _seed_snapshot_object(object_path, identity, object_roots)
-        if data is None:
             virtual = object_virtuals.get(name)
             if virtual is not None:
                 for texmf_root in texmf_roots:
@@ -567,6 +610,8 @@ def materialize_snapshot(
                     data = candidate.read_bytes()
                     _write_atomic(object_path, data)
                     break
+        if data is None:
+            data = _seed_snapshot_object(object_path, identity, object_roots)
         if data is None:
             _acquire_snapshot_object(urljoin(objects_url, name), object_path, identity, offline)
         total += identity.bytes
@@ -584,8 +629,9 @@ def materialize_snapshot(
                 shutil.copyfile(source, destination)
     return {
         "root_sha256": root_sha256,
-        "shards": len(shard_documents),
+        "shards": len(shards),
         "keys": len(requested),
+        "unavailable_keys": len(unavailable),
         "payload_objects": len(objects),
         "payload_bytes": total,
         "texmf_files": len(views),

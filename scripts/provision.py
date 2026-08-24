@@ -478,7 +478,9 @@ def parse_args(arguments: list[str] | None = None) -> argparse.Namespace:
     worktree.add_argument("path", type=Path)
     worktree.add_argument("--target-dir", type=Path)
     worktree.add_argument("--offline", action="store_true")
-    materialize = commands.add_parser("materialize", help="materialize a hosted runtime subset")
+    materialize = commands.add_parser(
+        "materialize", help="materialize a metadata-complete execution mirror"
+    )
     _add_materialize_options(materialize)
     oracle = commands.add_parser("oracle", help="build pinned TeX Live 2026 reference engines")
     oracle.add_argument(
@@ -523,7 +525,7 @@ def main(arguments: list[str] | None = None) -> int:
             lock_paths=tuple(args.keys_from),
             offline=args.offline,
         )
-        print("TeX Live hosted subset: " + " ".join(f"{key}={value}" for key, value in result.items()))
+        print("TeX Live execution mirror: " + " ".join(f"{key}={value}" for key, value in result.items()))
     elif args.command == "oracle":
         provision_oracles(repo_root, tuple(args.name), args.target_dir.resolve(), args.offline)
         print(f"provision: built {', '.join(args.name)} oracle(s)")

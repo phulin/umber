@@ -589,6 +589,43 @@ fn verified_shard_absence_returns_typed_unavailable() {
 }
 
 #[test]
+fn missing_local_shard_diagnostic_names_identity_and_bounds_request_keys() {
+    let directory = TempDir::new().expect("distribution tempdir");
+    let shard = "{\"schema\":1,\"distribution\":\"missing-shard\",\"index\":0,\"files\":{}}\n";
+    let (_, digests) = write_sharded_root(directory.path(), "missing-shard", 0, &[(shard, false)]);
+    let mut resolver = DistributionResolver::new(
+        ObjectCache::new(directory.path().join("cache")),
+        Some(directory.path().to_string_lossy().into_owned()),
+        None,
+        true,
+    );
+    let requests = (0..6)
+        .map(|index| file_request(&format!("missing-{index}.sty")))
+        .collect();
+
+    let error = resolver
+        .resolve_batch(
+            &local_resolver(directory.path()),
+            &needs(requests),
+            &FetchCancellation::new(),
+        )
+        .expect_err("missing shard must fail before claiming absence");
+    let message = error.to_string();
+    assert!(matches!(
+        error,
+        NativeRunError::DistributionShardUnavailable { index: 0, .. }
+    ));
+    assert!(message.contains("index=0"));
+    assert!(message.contains(&format!("digest={}", digests[0])));
+    for index in 0..4 {
+        assert!(message.contains(&format!("tex:missing-{index}.sty")));
+    }
+    assert!(message.contains("(+2 more)"));
+    assert!(!message.contains("tex:missing-4.sty"));
+    assert!(!message.contains("tex:missing-5.sty"));
+}
+
+#[test]
 fn distribution_tex_input_uses_web2c_ordered_appended_tex_fallback() {
     let directory = TempDir::new().expect("distribution tempdir");
     let objects = directory.path().join("objects");

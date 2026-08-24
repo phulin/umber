@@ -2142,26 +2142,47 @@ fn run_resolves_area_less_input_through_texinputs_and_advances() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary distribution and command execution.
-fn run_uses_one_pinned_local_distribution_with_a_cold_offline_cache() {
+fn run_cold_offline_local_mirror_resolves_positive_and_negative_file_requests() {
     let temp_dir = tempfile::tempdir().expect("create distribution temp dir");
     let source = temp_dir.path().join("main.tex");
     let distribution = temp_dir.path().join("distribution");
     let cache = temp_dir.path().join("cache");
     let objects = distribution.join("objects");
     fs::create_dir_all(&objects).expect("create distribution");
-    fs::write(&source, "\\input remote \\message{after-remote}\\end\n").expect("write source");
+    fs::write(
+        &source,
+        concat!(
+            "\\openin0=optional.cfg ",
+            "\\ifeof0 \\message{optional-absent}",
+            "\\else \\errmessage{unexpected optional file}\\fi ",
+            "\\input remote \\message{after-remote}\\end\n",
+        ),
+    )
+    .expect("write source");
     let remote = b"\\message{from-distribution}\n";
     let object_digest = hex_sha256(remote);
     let object = format!("sha256-{object_digest}");
     fs::write(objects.join(&object), remote).expect("write object");
-    let shard = format!(
+    let first_shard = format!(
         "{{\"schema\":1,\"distribution\":\"test-snapshot\",\"index\":0,\"files\":{{\"tex:remote.tex\":{{\"virtualPath\":\"/texlive/tex/remote.tex\",\"object\":\"{object}\",\"sha256\":\"{object_digest}\",\"bytes\":{}}}}}}}\n",
         remote.len()
     );
-    let shard_digest = hex_sha256(shard.as_bytes());
-    fs::write(objects.join(format!("sha256-{shard_digest}")), shard).expect("write shard");
+    let second_shard =
+        "{\"schema\":1,\"distribution\":\"test-snapshot\",\"index\":1,\"files\":{}}\n";
+    let first_shard_digest = hex_sha256(first_shard.as_bytes());
+    let second_shard_digest = hex_sha256(second_shard.as_bytes());
+    fs::write(
+        objects.join(format!("sha256-{first_shard_digest}")),
+        first_shard,
+    )
+    .expect("write first shard");
+    fs::write(
+        objects.join(format!("sha256-{second_shard_digest}")),
+        second_shard,
+    )
+    .expect("write second shard");
     let manifest = format!(
-        "{{\"schema\":2,\"distribution\":\"test-snapshot\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":0,\"shardCount\":1,\"shards\":[\"{shard_digest}\"]}}\n"
+        "{{\"schema\":2,\"distribution\":\"test-snapshot\",\"objectsBaseUrl\":\"https://example.invalid/objects/\",\"shardBits\":1,\"shardCount\":2,\"shards\":[\"{first_shard_digest}\",\"{second_shard_digest}\"]}}\n"
     );
     fs::write(distribution.join("manifest-v2.json"), &manifest).expect("write manifest");
     let manifest_digest = hex_sha256(manifest.as_bytes());
@@ -2180,7 +2201,9 @@ fn run_uses_one_pinned_local_distribution_with_a_cold_offline_cache() {
         "{}",
         String::from_utf8_lossy(&first.stderr)
     );
-    assert!(String::from_utf8_lossy(&first.stdout).contains("from-distribution"));
+    let first_stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(first_stdout.contains("optional-absent"));
+    assert!(first_stdout.contains("from-distribution"));
     assert_eq!(
         String::from_utf8(first.stderr).expect("stderr UTF-8"),
         "umber: acquired 1 distribution resource(s)\n"
@@ -2202,6 +2225,9 @@ fn run_uses_one_pinned_local_distribution_with_a_cold_offline_cache() {
         String::from_utf8_lossy(&second.stderr)
     );
     assert!(second.stderr.is_empty());
+    let second_stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(second_stdout.contains("optional-absent"));
+    assert!(second_stdout.contains("from-distribution"));
 }
 
 #[test]
