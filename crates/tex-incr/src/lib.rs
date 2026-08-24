@@ -428,7 +428,7 @@ pub enum CommandCompatibility {
 /// No runtime id or owner is exposed through the candidate API.
 pub struct RevisionCandidate {
     session_output_id: RenderedOutputId,
-    session_epoch: tex_state::SessionInternerEpoch,
+    reachability_store: tex_state::ReachabilityStore,
     job_name: String,
     source_path: String,
     plan: CandidatePlan,
@@ -467,11 +467,13 @@ impl RevisionCandidate {
     fn new_retained_generation(&self) -> Result<tex_exec::RetainedEngineGeneration, SessionError> {
         let world = World::memory_with_clock(self.job_clock);
         match &self.format_image {
-            Some(image) => {
-                tex_exec::RetainedEngineGeneration::from_format(&self.session_epoch, world, image)
-                    .map_err(SessionError::Format)
-            }
-            None => tex_exec::RetainedEngineGeneration::new(&self.session_epoch, world)
+            Some(image) => tex_exec::RetainedEngineGeneration::from_format(
+                &self.reachability_store,
+                world,
+                image,
+            )
+            .map_err(SessionError::Format),
+            None => tex_exec::RetainedEngineGeneration::new(&self.reachability_store, world)
                 .map_err(SessionError::Epoch),
         }
     }
@@ -1218,7 +1220,7 @@ impl RenderMapCache {
 /// Long-lived incremental session owning only an opaque coarse generation.
 pub struct Session {
     job_name: String,
-    session_epoch: tex_state::SessionInternerEpoch,
+    reachability_store: tex_state::ReachabilityStore,
     revision: RevisionId,
     output_id: RenderedOutputId,
     source: String,
@@ -1339,7 +1341,7 @@ impl Session {
         getrandom::fill(&mut output_id).map_err(SessionError::OutputIdentity)?;
         Ok(Self {
             job_name: job_name.into(),
-            session_epoch: tex_state::SessionInternerEpoch::new(session_interner_budget()),
+            reachability_store: tex_state::ReachabilityStore::new(session_interner_budget()),
             revision,
             output_id: RenderedOutputId::from_bytes(output_id),
             content_hash: ContentHash::from_bytes(source.as_bytes()),
@@ -1661,7 +1663,7 @@ impl Session {
         let candidate_lease = self.candidate_lease.claim()?;
         Ok(RevisionCandidate {
             session_output_id: self.output_id,
-            session_epoch: self.session_epoch.clone(),
+            reachability_store: self.reachability_store.clone(),
             job_name: self.job_name.clone(),
             source_path: plan.layout.path().to_owned(),
             plan,

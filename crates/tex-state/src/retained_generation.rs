@@ -4,7 +4,10 @@ use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::generation::Generation;
-use crate::session_epoch::{SessionEpochError, SessionInternerEpoch};
+use crate::reachability_store::{
+    ReachabilityGenerationKey, ReachabilityStore, ReachabilityStoreError,
+};
+use crate::session_epoch::SessionEpochError;
 use crate::stores::StateCore;
 use crate::{DetachedFormatImage, FormatError, Universe, UniverseError, World};
 
@@ -132,51 +135,63 @@ pub struct RetainedStateRetirement {
 /// The concrete coordinate is private. Engine crates retain their generic
 /// control/checkpoint sidecars in the attachment vector and recover them only
 /// through a universally generic operation.
-pub struct RetainedStateGeneration {
+pub(crate) struct PhysicalStateGeneration {
     incarnation: u64,
-    epoch: SessionInternerEpoch,
     universe: Universe<PhysicalGenerationCoordinate>,
     attachments: Vec<Option<Box<dyn Any + Send>>>,
     #[cfg(feature = "profiling")]
     _profiling_lifetime: crate::measurement::RetainedGenerationLifetime,
 }
 
+/// Move-only handle to one physical generation stored in its session's
+/// external reachability domain.
+pub struct RetainedStateGeneration {
+    store: ReachabilityStore,
+    key: Option<ReachabilityGenerationKey>,
+}
+
 impl core::fmt::Debug for RetainedStateGeneration {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("RetainedStateGeneration")
-            .field("attachments", &self.attachments.len())
+            .field("store", &self.store)
             .finish_non_exhaustive()
     }
 }
 
 impl RetainedStateGeneration {
     /// Allocates a fresh physical revision generation under one session epoch.
-    pub fn new(epoch: &SessionInternerEpoch, world: World) -> Result<Self, SessionEpochError> {
+    pub fn new(store: &ReachabilityStore, world: World) -> Result<Self, SessionEpochError> {
         #[cfg(feature = "profiling")]
         let _allocation_scope = crate::measurement::hot_core_allocation_scope(
             crate::measurement::HotCoreAllocationOwner::GenerationBoundary,
         );
-        let interner = epoch.lease()?;
+        let interner = store.epoch().lease()?;
         let generation = Generation::<PhysicalGenerationCoordinate>::new();
         let core = StateCore::new(generation).map_err(|_| SessionEpochError::Retired)?;
         let mut universe = Universe::new(interner, core);
         *universe.world_mut() = world;
         drop(universe.release_session_epoch());
-        Ok(Self {
+        let physical = PhysicalStateGeneration {
             incarnation: next_incarnation(),
-            epoch: epoch.clone(),
             universe,
             attachments: Vec::new(),
             #[cfg(feature = "profiling")]
             _profiling_lifetime: crate::measurement::RetainedGenerationLifetime::begin(),
+        };
+        let key = store
+            .insert_generation(physical)
+            .map_err(map_store_construction_error)?;
+        Ok(Self {
+            store: store.clone(),
+            key: Some(key),
         })
     }
 
     /// Materializes one validated format directly into a retained physical
     /// generation under the caller's existing session epoch.
     pub fn from_format(
-        epoch: &SessionInternerEpoch,
+        store: &ReachabilityStore,
         world: World,
         image: &DetachedFormatImage,
     ) -> Result<Self, FormatError> {
@@ -184,20 +199,26 @@ impl RetainedStateGeneration {
         let _allocation_scope = crate::measurement::hot_core_allocation_scope(
             crate::measurement::HotCoreAllocationOwner::ColdMaterialization,
         );
-        let interner = epoch.lease().map_err(|error| {
+        let interner = store.epoch().lease().map_err(|error| {
             FormatError::InvalidState(format!("session epoch is not available: {error:?}"))
         })?;
         let generation = Generation::<PhysicalGenerationCoordinate>::new();
         let mut universe =
             crate::format::materialize_retained_format(interner, generation, world, image)?;
         drop(universe.release_session_epoch());
-        Ok(Self {
+        let physical = PhysicalStateGeneration {
             incarnation: next_incarnation(),
-            epoch: epoch.clone(),
             universe,
             attachments: Vec::new(),
             #[cfg(feature = "profiling")]
             _profiling_lifetime: crate::measurement::RetainedGenerationLifetime::begin(),
+        };
+        let key = store.insert_generation(physical).map_err(|error| {
+            FormatError::InvalidState(format!("reachability store rejected generation: {error:?}"))
+        })?;
+        Ok(Self {
+            store: store.clone(),
+            key: Some(key),
         })
     }
 
@@ -205,18 +226,28 @@ impl RetainedStateGeneration {
     /// private physical coordinate.
     pub fn with_admitted<O: RetainedStateOperation>(&mut self, operation: O) -> O::Output {
         let interner = self
-            .epoch
+            .store
+            .epoch()
             .lease()
             .expect("one retained generation is admitted at a time");
-        self.universe.admit_session_epoch(interner);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            operation.run::<PhysicalGenerationCoordinate>(RetainedStateAdmission {
-                incarnation: self.incarnation,
-                universe: &mut self.universe,
-                attachments: &mut self.attachments,
+        let key = self
+            .key
+            .expect("a live retained generation has a store slot");
+        let result = self
+            .store
+            .with_generation_mut(key, |physical| {
+                physical.universe.admit_session_epoch(interner);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    operation.run::<PhysicalGenerationCoordinate>(RetainedStateAdmission {
+                        incarnation: physical.incarnation,
+                        universe: &mut physical.universe,
+                        attachments: &mut physical.attachments,
+                    })
+                }));
+                drop(physical.universe.release_session_epoch());
+                result
             })
-        }));
-        drop(self.universe.release_session_epoch());
+            .expect("a live retained generation keeps its store slot");
         match result {
             Ok(output) => output,
             Err(payload) => std::panic::resume_unwind(payload),
@@ -225,23 +256,43 @@ impl RetainedStateGeneration {
 
     #[must_use]
     pub fn attachment_count(&self) -> usize {
-        self.attachments
-            .iter()
-            .filter(|attachment| attachment.is_some())
-            .count()
+        let key = self
+            .key
+            .expect("a live retained generation has a store slot");
+        self.store
+            .with_generation_mut(key, |physical| {
+                physical
+                    .attachments
+                    .iter()
+                    .filter(|attachment| attachment.is_some())
+                    .count()
+            })
+            .expect("a live retained generation keeps its store slot")
+    }
+
+    /// Whether two generations reside in the same external session store.
+    #[must_use]
+    pub fn same_store(&self, other: &Self) -> bool {
+        self.store.same_store(&other.store)
     }
 
     /// Releases every engine sidecar before retiring the complete immutable,
     /// node, dense-state, and journal generation exactly once.
     pub fn retire(mut self) -> Result<RetainedStateRetirement, UniverseError> {
-        self.attachments.clear();
+        let key = self.key.take().expect("a live generation retires once");
+        let mut physical = self
+            .store
+            .take_generation(key)
+            .expect("a live retained generation keeps its store slot");
+        physical.attachments.clear();
         let interner = self
-            .epoch
+            .store
+            .epoch()
             .lease()
             .expect("retirement exclusively admits its session epoch");
-        self.universe.admit_session_epoch(interner);
-        let retired = self.universe.retire_generation()?;
-        drop(self.universe.release_session_epoch());
+        physical.universe.admit_session_epoch(interner);
+        let retired = physical.universe.retire_generation()?;
+        drop(physical.universe.release_session_epoch());
         #[cfg(feature = "profiling")]
         crate::measurement::record_retained_generation_retirement();
         Ok(RetainedStateRetirement {
@@ -253,6 +304,25 @@ impl RetainedStateGeneration {
             journal_entries: retired.journal_entries,
             allocated_overflow_pages: retired.allocated_overflow_pages,
         })
+    }
+}
+
+impl Drop for RetainedStateGeneration {
+    fn drop(&mut self) {
+        let Some(key) = self.key.take() else {
+            return;
+        };
+        let _ = self.store.take_generation(key);
+    }
+}
+
+fn map_store_construction_error(error: ReachabilityStoreError) -> SessionEpochError {
+    match error {
+        ReachabilityStoreError::GenerationSlotsExhausted => {
+            SessionEpochError::GenerationSlotsExhausted
+        }
+        ReachabilityStoreError::GenerationIdentityExhausted
+        | ReachabilityStoreError::StaleGeneration => SessionEpochError::Retired,
     }
 }
 
@@ -269,8 +339,8 @@ mod tests {
     use super::*;
     use crate::interner::InternerBudget;
 
-    fn epoch() -> SessionInternerEpoch {
-        SessionInternerEpoch::new(
+    fn store() -> ReachabilityStore {
+        ReachabilityStore::new(
             InternerBudget::new(64, 128, 4096).expect("retained-generation budget"),
         )
     }
@@ -337,13 +407,14 @@ mod tests {
 
     #[test]
     fn attachment_key_is_generation_relative_and_foreign_rejection_is_mutation_free() {
-        let epoch = epoch();
-        let mut first = RetainedStateGeneration::new(&epoch, World::default()).expect("first");
+        let store = store();
+        let mut first = RetainedStateGeneration::new(&store, World::default()).expect("first");
         let key = first.with_admitted(Attach("first"));
         assert_eq!(first.with_admitted(Read(&key)), Ok("first"));
         assert_eq!(first.attachment_count(), 1);
 
-        let mut second = RetainedStateGeneration::new(&epoch, World::default()).expect("second");
+        let mut second = RetainedStateGeneration::new(&store, World::default()).expect("second");
+        assert!(first.same_store(&second));
         assert_eq!(
             second.with_admitted(Read(&key)),
             Err(RetainedStateAccessError::ForeignGeneration)
@@ -353,17 +424,37 @@ mod tests {
 
     #[test]
     fn session_epoch_symbol_is_admitted_into_each_fresh_generation_bank() {
-        let epoch = epoch();
+        let store = store();
         let mut prior =
-            RetainedStateGeneration::new(&epoch, World::default()).expect("prior generation");
+            RetainedStateGeneration::new(&store, World::default()).expect("prior generation");
         let prior_symbol = prior.with_admitted(InternKnown);
         let mut current =
-            RetainedStateGeneration::new(&epoch, World::default()).expect("current generation");
+            RetainedStateGeneration::new(&store, World::default()).expect("current generation");
         let (current_symbol, meaning) = current.with_admitted(AdmitKnown);
         assert_eq!(current_symbol, prior_symbol);
         assert_eq!(
             meaning,
             crate::ResolvedMeaning::Static(crate::meaning::Meaning::Undefined)
         );
+    }
+
+    #[test]
+    fn external_store_has_exactly_two_reusable_generation_slots() {
+        let store = store();
+        let prior = RetainedStateGeneration::new(&store, World::default()).expect("prior");
+        let current = RetainedStateGeneration::new(&store, World::default()).expect("current");
+        assert!(prior.same_store(&current));
+        assert_eq!(store.live_generation_count(), 2);
+        assert_eq!(
+            RetainedStateGeneration::new(&store, World::default()).unwrap_err(),
+            SessionEpochError::GenerationSlotsExhausted
+        );
+
+        drop(current);
+        assert_eq!(store.live_generation_count(), 1);
+        let replacement =
+            RetainedStateGeneration::new(&store, World::default()).expect("replacement current");
+        assert!(prior.same_store(&replacement));
+        assert_eq!(store.live_generation_count(), 2);
     }
 }

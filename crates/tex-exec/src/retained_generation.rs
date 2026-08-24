@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
 use tex_state::{
-    DetachedFormatImage, FormatError, RetainedAttachmentKey, RetainedStateAccessError,
-    RetainedStateAdmission, RetainedStateGeneration, RetainedStateOperation,
-    RetainedStateRetirement, SessionEpochError, SessionInternerEpoch, Universe, UniverseError,
+    DetachedFormatImage, FormatError, ReachabilityStore, RetainedAttachmentKey,
+    RetainedStateAccessError, RetainedStateAdmission, RetainedStateGeneration,
+    RetainedStateOperation, RetainedStateRetirement, SessionEpochError, Universe, UniverseError,
     World,
 };
 
@@ -218,9 +218,9 @@ impl core::fmt::Debug for RetainedEngineGeneration {
 }
 
 impl RetainedEngineGeneration {
-    pub fn new(epoch: &SessionInternerEpoch, world: World) -> Result<Self, SessionEpochError> {
+    pub fn new(store: &ReachabilityStore, world: World) -> Result<Self, SessionEpochError> {
         let generation = next_generation();
-        let mut state = RetainedStateGeneration::new(epoch, world)?;
+        let mut state = RetainedStateGeneration::new(store, world)?;
         let sidecars = state.with_admitted(InitializeSidecars { generation });
         Ok(Self {
             generation,
@@ -231,12 +231,12 @@ impl RetainedEngineGeneration {
     }
 
     pub fn from_format(
-        epoch: &SessionInternerEpoch,
+        store: &ReachabilityStore,
         world: World,
         image: &DetachedFormatImage,
     ) -> Result<Self, FormatError> {
         let generation = next_generation();
-        let mut state = RetainedStateGeneration::from_format(epoch, world, image)?;
+        let mut state = RetainedStateGeneration::from_format(store, world, image)?;
         let sidecars = state.with_admitted(InitializeSidecars { generation });
         Ok(Self {
             generation,
@@ -260,6 +260,12 @@ impl RetainedEngineGeneration {
     #[must_use]
     pub fn witness(&self) -> RetainedEngineGenerationWitness {
         RetainedEngineGenerationWitness(Arc::downgrade(&self.liveness))
+    }
+
+    /// Whether two generations reside in the same external session store.
+    #[must_use]
+    pub fn same_store(&self, other: &Self) -> bool {
+        self.state.same_store(&other.state)
     }
 
     /// Mutation-free terminal preflight. Every retained root is statically
@@ -533,8 +539,8 @@ mod tests {
     use tex_state::env::AssignmentScope;
     use tex_state::interner::InternerBudget;
 
-    fn epoch() -> SessionInternerEpoch {
-        SessionInternerEpoch::new(
+    fn store() -> ReachabilityStore {
+        ReachabilityStore::new(
             InternerBudget::new(65_536, 131_072, 16 * 1024 * 1024).expect("test budget"),
         )
     }
@@ -740,15 +746,16 @@ mod tests {
 
     #[test]
     fn checkpoint_keys_are_owner_relative_across_live_generations() {
-        let epoch = epoch();
-        let mut first = RetainedEngineGeneration::new(&epoch, World::default()).expect("first");
+        let store = store();
+        let mut first = RetainedEngineGeneration::new(&store, World::default()).expect("first");
         let key = first.with_admitted(Capture).expect("capture");
         assert_eq!(
             first.with_admitted(Read(&key)),
             Ok(Ok(crate::EngineBoundary::JobStart))
         );
 
-        let mut second = RetainedEngineGeneration::new(&epoch, World::default()).expect("second");
+        let mut second = RetainedEngineGeneration::new(&store, World::default()).expect("second");
+        assert!(first.same_store(&second));
         assert_eq!(
             second.with_admitted(Read(&key)),
             Ok(Err(RetainedEngineAccessError::ForeignGeneration))

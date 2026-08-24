@@ -14,6 +14,8 @@ pub enum SessionEpochError {
     EpochRetained,
     /// The complete epoch was already retired.
     Retired,
+    /// Both prior/current reachability slots are already occupied.
+    GenerationSlotsExhausted,
 }
 
 #[derive(Debug)]

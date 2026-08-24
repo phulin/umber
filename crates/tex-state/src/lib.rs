@@ -92,6 +92,7 @@ pub mod print;
 pub mod provenance;
 mod provenance_resolver;
 mod pure_memo;
+mod reachability_store;
 mod read_observation;
 mod resource;
 pub mod scaled;
@@ -141,6 +142,7 @@ pub use format::{
     with_materialized_format_in_epoch,
 };
 pub use generation::GenerationOwner;
+pub use reachability_store::ReachabilityStore;
 pub use read_observation::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};
 pub use resource::{
     InputOpenContext, InputOpenState, InputReadState, InputResolver, ResourceLookup, ResourceNeed,
