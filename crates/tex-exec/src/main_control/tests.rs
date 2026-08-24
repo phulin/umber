@@ -2562,6 +2562,65 @@ fn tracingstats_frames_consecutive_shipouts_with_live_memory_reports() {
 }
 
 #[test]
+fn huge_page_deleted_box_precedes_shipout_close_and_statistics() {
+    // TeX82 §§638 and 641: huge-page recovery displays the rejected box
+    // inside `ship_out`, before the closing page marker and allocator report.
+    // Positive `\tracingoutput` has already displayed the box at §638 and is
+    // the negative control: §641 must not display it a second time.
+    for (tracing_output, expected_deleted_boxes) in [(0, 1), (1, 0)] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = MainControl::tex82_initex(stores);
+            register_source(
+                &mut control,
+                format!(
+                    "\\tracingstats=2\\tracingoutput={tracing_output}\\voffset=1sp\
+                     \\shipout\\vbox to 16383.99998pt{{}}\\end"
+                )
+                .as_bytes(),
+            );
+
+            run_to_end(&mut control, stores);
+
+            let log = format!(
+                "{}{}",
+                String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default()),
+                pending_sink_text(stores, false)
+            );
+            let terminal = format!(
+                "{}{}",
+                String::from_utf8_lossy(
+                    stores.world().memory_terminal_output().unwrap_or_default()
+                ),
+                pending_sink_text(stores, true)
+            );
+            assert_eq!(
+                log.matches("The following box has been deleted:").count(),
+                expected_deleted_boxes,
+                "{log}"
+            );
+            assert!(
+                !terminal.contains("The following box has been deleted:"),
+                "{terminal}"
+            );
+            if tracing_output == 0 {
+                let deleted = log
+                    .find("The following box has been deleted:")
+                    .expect("untraced huge page displays the rejected box");
+                let marker_close = log[deleted..]
+                    .find("\n]\n")
+                    .map(|offset| deleted + offset)
+                    .expect("page marker closes after the deleted-box display");
+                let statistics = log[marker_close..]
+                    .find("Memory usage before:")
+                    .map(|offset| marker_close + offset)
+                    .expect("allocator report follows the page marker");
+                assert!(deleted < marker_close && marker_close < statistics, "{log}");
+            }
+        });
+    }
+}
+
+#[test]
 fn pdftex_engine_announces_deferred_openout_inside_shipout_for_tex82_profile() {
     // Web2C's `[53.1374]` change announces the successful open immediately
     // after tex.web §1374 sets `write_open[j]`. This is compiled pdfTeX
