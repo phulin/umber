@@ -46,6 +46,7 @@
 /// match.
 pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 28;
 
+mod capacity;
 pub mod cell;
 mod checkpoint;
 pub mod code_tables;
@@ -154,10 +155,10 @@ pub use retained_generation::{
 };
 pub use session_epoch::{SessionEpochError, SessionInternerEpoch};
 
+pub use capacity::{EngineCapacityConfiguration, EngineCapacityProfile, PdfEngineCapacities};
 pub use command_context::{
     BoxDimension, CommandBoxKind, CommandContext, CommandLineSource, EngineUsageStatistics,
     FontIdentifier, ParagraphShapeLine, PenaltyArrayKind, PrepareMagDiagnostic,
-    StringPoolCapacityProfile,
 };
 pub use definition_arena::{DefinitionAllocationError, DefinitionId, DefinitionView};
 pub use dependency::{

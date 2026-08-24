@@ -1383,21 +1383,42 @@ impl<G> PdfState<G> {
     /// into the destination aggregate only after every section succeeds.
     pub(crate) fn restore_format_bytes(
         bytes: &[u8],
+        capacities: Option<crate::PdfEngineCapacities>,
         import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter<G>, String>,
         import_nodes: impl FnMut(&[u8]) -> Result<(DurableListId<G>, StateHashFragment), String>,
     ) -> Result<Self, String> {
         let format = bincode::deserialize(bytes)
             .map_err(|error| format!("cannot decode PDF format resource state: {error}"))?;
-        Self::restore_format(format, import_tokens, import_nodes)
+        Self::restore_format(format, capacities, import_tokens, import_nodes)
     }
 
     pub(crate) fn restore_format(
         format: PdfFormatState,
+        capacities: Option<crate::PdfEngineCapacities>,
         mut import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter<G>, String>,
         mut import_nodes: impl FnMut(&[u8]) -> Result<(DurableListId<G>, StateHashFragment), String>,
     ) -> Result<Self, String> {
         if format.version != 1 || format.next_object == 0 || format.next_form_resource == 0 {
             return Err("unsupported or invalid PDF format resource state".to_owned());
+        }
+        let retains_pdf_state = format.enabled
+            || format.next_object != FIRST_DYNAMIC_OBJECT
+            || format.next_form_resource != 1
+            || !format.raw_objects.is_empty()
+            || !format.forms.is_empty()
+            || !format.external_images.is_empty()
+            || !format.glyph_to_unicode.is_empty();
+        let Some(capacities) = capacities else {
+            if retains_pdf_state {
+                return Err("non-pdfTeX format profile retains PDF resource state".to_owned());
+            }
+            return Ok(Self::default());
+        };
+        if format.next_object as usize > capacities.object_table_entries {
+            return Err(format!(
+                "invalid PDF format object-table coordinate: next_object={}, capacity={}",
+                format.next_object, capacities.object_table_entries
+            ));
         }
         let mut allocated = format
             .raw_objects

@@ -11,9 +11,11 @@ use std::sync::OnceLock;
 
 /// pdfTeX's default maximum number of nodes in the hyphenation pattern trie.
 pub const PDFTEX_TRIE_SIZE: usize = 1_100_000;
+/// TeX82's compiled maximum number of pattern-trie nodes.
+pub const TEX82_TRIE_SIZE: usize = 8_000;
 
 const fn default_trie_capacity() -> usize {
-    PDFTEX_TRIE_SIZE
+    TEX82_TRIE_SIZE
 }
 
 const fn default_exception_capacity() -> usize {
@@ -201,42 +203,56 @@ impl HyphenationTable {
         self.patterns_open = false;
     }
 
-    pub(crate) fn validate_frozen(&self) -> Result<(), &'static str> {
+    pub(crate) fn validate_frozen(&self) -> Result<(), String> {
         let occupied = self
             .languages
             .values()
             .map(|table| table.exceptions.len())
             .sum::<usize>();
         if occupied != self.exception_occupied || occupied > self.exception_capacity {
-            return Err("invalid frozen hyphenation exception occupancy");
+            return Err(format!(
+                "invalid frozen hyphenation exception occupancy: recorded={}, actual={}, capacity={}",
+                self.exception_occupied, occupied, self.exception_capacity
+            ));
+        }
+        let trie_nodes = self
+            .languages
+            .values()
+            .try_fold(0_usize, |total, table| total.checked_add(table.nodes.len()));
+        if trie_nodes.is_none_or(|nodes| nodes > self.trie_capacity) {
+            return Err(format!(
+                "invalid frozen hyphenation trie occupancy: nodes={}, capacity={}",
+                trie_nodes.map_or("overflow".to_owned(), |nodes| nodes.to_string()),
+                self.trie_capacity
+            ));
         }
         for table in self.languages.values() {
             if table.nodes.is_empty() {
-                return Err("frozen hyphenation language has no root");
+                return Err("frozen hyphenation language has no root".to_owned());
             }
             let mut incoming = vec![0_u32; table.nodes.len()];
             for node in &table.nodes {
                 let mut previous = None;
                 for &(ch, target) in &node.edges {
                     if previous.is_some_and(|prior| prior >= ch) {
-                        return Err("non-canonical frozen hyphenation edges");
+                        return Err("non-canonical frozen hyphenation edges".to_owned());
                     }
                     previous = Some(ch);
                     let count = incoming
                         .get_mut(target)
-                        .ok_or("frozen hyphenation edge target is not live")?;
+                        .ok_or_else(|| "frozen hyphenation edge target is not live".to_owned())?;
                     *count = count
                         .checked_add(1)
-                        .ok_or("frozen hyphenation edge count overflow")?;
+                        .ok_or_else(|| "frozen hyphenation edge count overflow".to_owned())?;
                 }
             }
             if incoming[0] != 0 || incoming[1..].iter().any(|count| *count != 1) {
-                return Err("frozen hyphenation trie is not a rooted tree");
+                return Err("frozen hyphenation trie is not a rooted tree".to_owned());
             }
             for (word, positions) in &table.exceptions {
                 let len = word.chars().count();
                 if word.is_empty() || positions.iter().any(|position| *position > len) {
-                    return Err("invalid frozen hyphenation exception");
+                    return Err("invalid frozen hyphenation exception".to_owned());
                 }
             }
         }

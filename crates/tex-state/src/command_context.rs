@@ -123,6 +123,7 @@ pub enum PrepareMagDiagnostic {
 /// stacks do not belong to `tex-state`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EngineUsageStatistics {
+    pub capacity_profile: crate::EngineCapacityProfile,
     pub strings: usize,
     pub string_capacity: usize,
     pub string_characters: usize,
@@ -145,40 +146,6 @@ const TEX82_STRING_BASELINE: usize = 1_027;
 const TEX82_CHARACTER_BASELINE: usize = 106_808;
 const ETEX26_STRING_BASELINE: usize = 1_082;
 const ETEX26_CHARACTER_BASELINE: usize = 107_729;
-const TEX82_MAX_STRINGS: usize = 15_000;
-const TEX82_POOL_SIZE: usize = 125_000;
-const PDFTEX_MAX_STRINGS: usize = 500_000;
-const PDFTEX_POOL_SIZE: usize = 6_250_000;
-
-/// Executable-process capacity profile for TeX's string pool.
-///
-/// TeX82 §44 owns the coordinates, while Web2C tex.ch [51.1332] makes both
-/// bounds process configuration. The compact TeX82/e-TeX executables used by
-/// the canonical conformance tiers retain their triptrap values. The pinned
-/// pdfTeX process uses TeX Live 2026's `max_strings` and `pool_size` values.
-/// A format records the selected pair so detached validation can reject
-/// invented or mixed process configurations without baking in one producer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StringPoolCapacityProfile {
-    Tex82Etex,
-    Pdftex14029,
-}
-
-impl StringPoolCapacityProfile {
-    const fn coordinates(self) -> (usize, usize) {
-        match self {
-            Self::Tex82Etex => (TEX82_MAX_STRINGS, TEX82_POOL_SIZE),
-            Self::Pdftex14029 => (PDFTEX_MAX_STRINGS, PDFTEX_POOL_SIZE),
-        }
-    }
-
-    fn from_coordinates(max_strings: usize, pool_size: usize) -> Option<Self> {
-        [Self::Tex82Etex, Self::Pdftex14029]
-            .into_iter()
-            .find(|profile| profile.coordinates() == (max_strings, pool_size))
-    }
-}
-
 /// Detached TeX string-pool coordinates serialized at the format boundary.
 ///
 /// Typed owners retain the actual bytes. This record models only the
@@ -213,7 +180,6 @@ const TEX82_STATIC_VARIABLE_WORDS: usize = 20;
 const TEX82_STATIC_DYNAMIC_WORDS: usize = 14;
 const TEX82_INITIAL_LOW_EXTENT: usize = 1_021;
 const TEX82_LOW_GROWTH_WORDS: usize = 1_000;
-const TEX82_MEMORY_WORD_CAPACITY: usize = 250_000;
 
 #[derive(Clone, Debug)]
 struct MainMemoryRuntime {
@@ -221,15 +187,20 @@ struct MainMemoryRuntime {
     dynamic_live: usize,
     low_extent: usize,
     high_extent: usize,
+    capacity: usize,
 }
 
 impl Default for MainMemoryRuntime {
     fn default() -> Self {
+        let capacity = crate::EngineCapacityProfile::Tex82Etex
+            .configuration()
+            .main_memory_words;
         Self {
             variable_live: TEX82_STATIC_VARIABLE_WORDS,
             dynamic_live: TEX82_STATIC_DYNAMIC_WORDS,
             low_extent: TEX82_INITIAL_LOW_EXTENT,
             high_extent: TEX82_STATIC_DYNAMIC_WORDS,
+            capacity,
         }
     }
 }
@@ -280,6 +251,7 @@ impl MainMemoryRuntime {
             dynamic_live,
             low_extent: self.low_extent,
             high_extent: self.high_extent,
+            capacity: self.capacity,
         };
         state.observe_transient(0, 0);
         MainMemoryFormatState {
@@ -290,21 +262,46 @@ impl MainMemoryRuntime {
         }
     }
 
-    fn restore_format_state(state: MainMemoryFormatState) -> Result<Self, &'static str> {
-        if state.variable_live < TEX82_STATIC_VARIABLE_WORDS
-            || state.dynamic_live < TEX82_STATIC_DYNAMIC_WORDS
-            || state.low_extent < TEX82_INITIAL_LOW_EXTENT
-            || state.low_extent < state.variable_live
-            || state.high_extent < state.dynamic_live
-            || state.low_extent.saturating_add(state.high_extent) > TEX82_MEMORY_WORD_CAPACITY
-        {
-            return Err("invalid main-memory format coordinates");
+    fn restore_format_state(
+        state: MainMemoryFormatState,
+        profile: crate::EngineCapacityProfile,
+    ) -> Result<Self, String> {
+        let capacity = profile.configuration().main_memory_words;
+        let memory_words = state.low_extent.checked_add(state.high_extent);
+        let failed = if state.variable_live < TEX82_STATIC_VARIABLE_WORDS {
+            Some("variable_live<static_variable_words")
+        } else if state.dynamic_live < TEX82_STATIC_DYNAMIC_WORDS {
+            Some("dynamic_live<static_dynamic_words")
+        } else if state.low_extent < TEX82_INITIAL_LOW_EXTENT {
+            Some("low_extent<initial_low_extent")
+        } else if state.low_extent < state.variable_live {
+            Some("low_extent<variable_live")
+        } else if state.high_extent < state.dynamic_live {
+            Some("high_extent<dynamic_live")
+        } else if memory_words.is_none() {
+            Some("low_extent+high_extent overflow")
+        } else if memory_words.is_some_and(|words| words > capacity) {
+            Some("memory_words>capacity")
+        } else {
+            None
+        };
+        if let Some(failed) = failed {
+            return Err(format!(
+                "invalid main-memory format coordinates: variable_live={}, dynamic_live={}, low_extent={}, high_extent={}, memory_words={}, capacity={}, profile={profile:?}, failed={failed}",
+                state.variable_live,
+                state.dynamic_live,
+                state.low_extent,
+                state.high_extent,
+                memory_words.map_or("overflow".to_owned(), |words| words.to_string()),
+                capacity,
+            ));
         }
         Ok(Self {
             variable_live: state.variable_live,
             dynamic_live: state.dynamic_live,
             low_extent: state.low_extent,
             high_extent: state.high_extent,
+            capacity,
         })
     }
 
@@ -335,12 +332,20 @@ mod main_memory_tests {
             low_extent: 1_021,
             high_extent: 14,
         };
-        assert!(MainMemoryRuntime::restore_format_state(state).is_err());
+        assert_eq!(
+            MainMemoryRuntime::restore_format_state(
+                state,
+                crate::EngineCapacityProfile::Tex82Etex,
+            )
+                .expect_err("high extent cannot trail live dynamic words"),
+            "invalid main-memory format coordinates: variable_live=20, dynamic_live=15, low_extent=1021, high_extent=14, memory_words=1035, capacity=250000, profile=Tex82Etex, failed=high_extent<dynamic_live"
+        );
     }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct EngineUsageRuntime {
+    profile: crate::EngineCapacityProfile,
     strings: usize,
     characters: usize,
     init_str_ptr: usize,
@@ -353,13 +358,16 @@ pub(crate) struct EngineUsageRuntime {
 
 impl Default for EngineUsageRuntime {
     fn default() -> Self {
+        let profile = crate::EngineCapacityProfile::Tex82Etex;
+        let capacities = profile.configuration();
         Self {
+            profile,
             strings: TEX82_STRING_BASELINE,
             characters: TEX82_CHARACTER_BASELINE,
             init_str_ptr: TEX82_STRING_BASELINE,
             init_pool_ptr: TEX82_CHARACTER_BASELINE,
-            max_strings: TEX82_MAX_STRINGS,
-            pool_size: TEX82_POOL_SIZE,
+            max_strings: capacities.max_strings,
+            pool_size: capacities.pool_size,
             recycled: std::collections::BTreeSet::new(),
             memory: MainMemoryRuntime::default(),
         }
@@ -394,8 +402,10 @@ impl EngineUsageRuntime {
         self.init_pool_ptr = self.init_pool_ptr.max(ETEX26_CHARACTER_BASELINE);
     }
 
-    pub(crate) fn select_capacity_profile(&mut self, profile: StringPoolCapacityProfile) {
-        let (max_strings, pool_size) = profile.coordinates();
+    pub(crate) fn select_capacity_profile(&mut self, profile: crate::EngineCapacityProfile) {
+        let capacities = profile.configuration();
+        let max_strings = capacities.max_strings;
+        let pool_size = capacities.pool_size;
         assert!(
             self.max_strings <= max_strings
                 && self.pool_size <= pool_size
@@ -405,6 +415,8 @@ impl EngineUsageRuntime {
         );
         self.max_strings = max_strings;
         self.pool_size = pool_size;
+        self.memory.capacity = capacities.main_memory_words;
+        self.profile = profile;
     }
 
     pub(crate) fn capture_format_state(
@@ -432,13 +444,15 @@ impl EngineUsageRuntime {
                 state.version
             ));
         }
-        if StringPoolCapacityProfile::from_coordinates(state.max_strings, state.pool_size).is_none()
-        {
+        let Some(profile) = crate::EngineCapacityProfile::from_string_pool_coordinates(
+            state.max_strings,
+            state.pool_size,
+        ) else {
             return Err(format!(
                 "unsupported string-pool capacity coordinates: max_strings={}, pool_size={}",
                 state.max_strings, state.pool_size
             ));
-        }
+        };
         let recycled_characters = state
             .recycled
             .iter()
@@ -461,8 +475,9 @@ impl EngineUsageRuntime {
                     .map_or("overflow".to_owned(), |characters| characters.to_string())
             ));
         }
-        let memory = MainMemoryRuntime::restore_format_state(state.memory.clone())?;
+        let memory = MainMemoryRuntime::restore_format_state(state.memory.clone(), profile)?;
         Ok(Self {
+            profile,
             strings: state.strings,
             characters: state.characters,
             init_str_ptr: state.strings,
@@ -495,6 +510,14 @@ impl EngineUsageRuntime {
     pub(crate) fn uses_etex_node_sizes(&self) -> bool {
         self.init_str_ptr >= ETEX26_STRING_BASELINE
     }
+
+    pub(crate) const fn capacity_profile(&self) -> crate::EngineCapacityProfile {
+        self.profile
+    }
+
+    pub(crate) fn capacities(&self) -> crate::EngineCapacityConfiguration {
+        self.profile.configuration()
+    }
 }
 
 /// One command episode's borrowed session and generation.
@@ -518,7 +541,6 @@ pub struct CommandContext<'a, G> {
     prepared_mag: &'a mut Option<i32>,
     error_context_widths: crate::print::ErrorContextWidths,
     engine_usage: &'a mut EngineUsageRuntime,
-    font_info_capacity: usize,
 }
 
 pub(super) struct CommandContextParts<'a, G> {
@@ -538,7 +560,6 @@ pub(super) struct CommandContextParts<'a, G> {
     pub prepared_mag: &'a mut Option<i32>,
     pub error_context_widths: crate::print::ErrorContextWidths,
     pub engine_usage: &'a mut EngineUsageRuntime,
-    pub font_info_capacity: usize,
 }
 
 impl<'a, G> CommandContext<'a, G> {
@@ -560,7 +581,6 @@ impl<'a, G> CommandContext<'a, G> {
             prepared_mag,
             error_context_widths,
             engine_usage,
-            font_info_capacity,
         } = parts;
         Self {
             interner,
@@ -579,7 +599,6 @@ impl<'a, G> CommandContext<'a, G> {
             prepared_mag,
             error_context_widths,
             engine_usage,
-            font_info_capacity,
         }
     }
 
@@ -596,6 +615,7 @@ impl<'a, G> CommandContext<'a, G> {
         let font_info_words = self.fonts.font_info_words(font_parameter_words);
         let hyphenation = self.hyphenation.exception_usage();
         EngineUsageStatistics {
+            capacity_profile: self.engine_usage.capacity_profile(),
             strings: self
                 .engine_usage
                 .strings
@@ -613,7 +633,7 @@ impl<'a, G> CommandContext<'a, G> {
                 .pool_size
                 .saturating_sub(self.engine_usage.init_pool_ptr),
             memory_words: self.engine_usage.memory.reported_words(),
-            memory_word_capacity: TEX82_MEMORY_WORD_CAPACITY,
+            memory_word_capacity: self.engine_usage.memory.capacity,
             control_sequences: self.interner.multiletter_len(),
             font_info_words,
             fonts: fonts.saturating_sub(1),
@@ -1650,11 +1670,14 @@ impl<'a, G> CommandContext<'a, G> {
         let allocates = self.fonts.would_allocate(&font);
         assert!(
             !allocates
-                || font.font_info_words()
-                    <= self
-                        .font_info_capacity
-                        .saturating_sub(self.current_font_info_words()),
-            "validated font exceeds the configured font-info capacity"
+                || (self.has_font_slot_capacity()
+                    && font.font_info_words()
+                        <= self
+                            .engine_usage
+                            .capacities()
+                            .font_info_words
+                            .saturating_sub(self.current_font_info_words())),
+            "validated font exceeds the configured process capacity"
         );
         let default_hyphen_char = self.int_param(IntParam::DEFAULT_HYPHEN_CHAR);
         let default_skew_char = self.int_param(IntParam::DEFAULT_SKEW_CHAR);
@@ -1712,10 +1735,13 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
         let allocates = self.fonts.would_allocate(&font);
         if allocates
-            && font.font_info_words()
-                > self
-                    .font_info_capacity
-                    .saturating_sub(self.current_font_info_words())
+            && (!self.has_font_slot_capacity()
+                || font.font_info_words()
+                    > self
+                        .engine_usage
+                        .capacities()
+                        .font_info_words
+                        .saturating_sub(self.current_font_info_words()))
         {
             return Err(crate::font::FontStoreCapacityError);
         }
@@ -1807,10 +1833,13 @@ impl<'a, G> CommandContext<'a, G> {
     ) -> Result<crate::ids::FontId, crate::font::FontStoreCapacityError> {
         let allocates = self.fonts.would_allocate(&font);
         if allocates
-            && font.font_info_words()
-                > self
-                    .font_info_capacity
-                    .saturating_sub(self.current_font_info_words())
+            && (!self.has_font_slot_capacity()
+                || font.font_info_words()
+                    > self
+                        .engine_usage
+                        .capacities()
+                        .font_info_words
+                        .saturating_sub(self.current_font_info_words()))
         {
             return Err(crate::font::FontStoreCapacityError);
         }
@@ -2023,7 +2052,9 @@ impl<'a, G> CommandContext<'a, G> {
                     let growth = number.saturating_sub(current);
                     growth
                         <= self
-                            .font_info_capacity
+                            .engine_usage
+                            .capacities()
+                            .font_info_words
                             .saturating_sub(self.current_font_info_words())
                 }))
     }
@@ -2031,6 +2062,10 @@ impl<'a, G> CommandContext<'a, G> {
     fn current_font_info_words(&self) -> usize {
         self.fonts
             .font_info_words(self.admitted.state_ref().font_parameter_words())
+    }
+
+    fn has_font_slot_capacity(&self) -> bool {
+        self.fonts.len().saturating_sub(1) < self.engine_usage.capacities().fonts
     }
 
     #[must_use]
@@ -2056,12 +2091,12 @@ impl<'a, G> CommandContext<'a, G> {
         value: Scaled,
     ) -> Result<(), usize> {
         if !self.font_dimen_writable(id, number) {
-            return Err(self.font_info_capacity);
+            return Err(self.engine_usage.capacities().font_info_words);
         }
         self.admitted
             .state()
             .assign_font_dimen(id, number, value, AssignmentScope::Global)
-            .map_err(|_| self.font_info_capacity)
+            .map_err(|_| self.engine_usage.capacities().font_info_words)
     }
 
     pub fn set_font_hyphen_char(&mut self, id: crate::ids::FontId, value: i32) {

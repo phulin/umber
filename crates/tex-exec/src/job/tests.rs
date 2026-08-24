@@ -456,6 +456,39 @@ fn usage_report_hash_capacity_belongs_to_the_executing_binary() {
 }
 
 #[test]
+fn pdftex_usage_report_renders_the_selected_process_capacity_profile() {
+    crate::test_harness::with_nonstop_universe(|universe| {
+        universe.set_engine_capacity_profile(tex_state::EngineCapacityProfile::Pdftex14029);
+        assign_global_int(universe, IntParam::TRACING_STATS, 1);
+        finish_test_job(
+            universe,
+            CommandProfile::PDFTEX14029,
+            EngineBinaryIdentity::Pdftex14029,
+            "stats",
+            None,
+            None,
+        );
+
+        let log = log_text(universe);
+        assert!(log.contains(" words of memory out of 5000000\n"), "{log}");
+        assert!(
+            log.contains(" multiletter control sequences out of 15000+600000\n"),
+            "{log}"
+        );
+        assert!(
+            log.contains(" words of font info for 0 fonts, out of 8000000 for 9000\n"),
+            "{log}"
+        );
+        assert!(
+            log.contains(
+                "0i,0n,0p,0b,0s stack positions out of 10000i,1000n,20000p,200000b,200000s\n"
+            ),
+            "{log}"
+        );
+    });
+}
+
+#[test]
 fn usage_report_separates_a_partial_final_cleanup_line_before_breaking() {
     // TeX82 §1333's log-only usage report preserves the separator at the
     // final-cleanup column before its first `wlog_cr`-style line break.

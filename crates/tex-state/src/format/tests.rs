@@ -40,6 +40,18 @@ struct TestFormatMetadata {
     pdf: Vec<u8>,
 }
 
+#[derive(serde::Deserialize, serde::Serialize)]
+struct TestEmptyPdfFormatState {
+    version: u32,
+    enabled: bool,
+    next_object: u32,
+    next_form_resource: u32,
+    raw_objects: Vec<()>,
+    forms: Vec<()>,
+    external_images: Vec<()>,
+    glyph_to_unicode: Vec<crate::PdfGlyphToUnicode>,
+}
+
 fn budget() -> InternerBudget {
     InternerBudget::new(32, 64, 4 * 1024).expect("test budget")
 }
@@ -119,7 +131,7 @@ fn pdftex_string_pool_capacity_captures_roundtrips_and_becomes_the_loaded_baseli
             .expect("initial capacity")
             .detach_engine_usage_statistics()
             .string_character_capacity;
-        universe.set_string_pool_capacity_profile(crate::StringPoolCapacityProfile::Pdftex14029);
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
         let pdftex_capacity = universe
             .command_context()
             .expect("pdfTeX capacity")
@@ -350,6 +362,184 @@ fn malformed_string_pool_profiles_and_coordinates_are_rejected_exactly() {
             .expect_err("pool coordinate beyond the selected profile must be rejected"),
         FormatError::InvalidState(
             "invalid string-pool format coordinates: strings=1027, characters=125001, max_strings=15000, pool_size=125000, recycled_strings=0, recycled_characters=0"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn main_memory_coordinates_are_validated_against_the_recorded_producer_profile() {
+    let image = image();
+    let expanded_memory = |metadata: &mut TestFormatMetadata| {
+        metadata.string_pool.memory.dynamic_live = 300_000;
+        metadata.string_pool.memory.high_extent = 300_000;
+    };
+    let tex_bytes = replace_metadata(&image, expanded_memory);
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(tex_bytes)
+            .expect_err("TeX82 producer capacity must reject the expanded extent"),
+        FormatError::InvalidState(
+            "invalid main-memory format coordinates: variable_live=20, dynamic_live=300000, low_extent=1021, high_extent=300000, memory_words=301021, capacity=250000, profile=Tex82Etex, failed=memory_words>capacity"
+                .to_owned()
+        )
+    );
+
+    let pdftex_bytes = replace_metadata(&image, |metadata| {
+        expanded_memory(metadata);
+        metadata.string_pool.max_strings = 500_000;
+        metadata.string_pool.pool_size = 6_250_000;
+    });
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(pdftex_bytes.clone())
+            .expect("the same coordinates fit their recorded pdfTeX producer")
+            .into_bytes(),
+        pdftex_bytes
+    );
+}
+
+#[test]
+fn loaded_tex_format_can_expand_to_pdftex_capacity_and_recapture_that_profile() {
+    let tex_image = image();
+    with_materialized_format(budget(), World::memory(), &tex_image, |universe| {
+        let loaded = universe
+            .command_context()
+            .expect("loaded context")
+            .detach_engine_usage_statistics();
+        assert_eq!(
+            loaded.capacity_profile,
+            crate::EngineCapacityProfile::Tex82Etex
+        );
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        let expanded = universe
+            .command_context()
+            .expect("expanded context")
+            .detach_engine_usage_statistics();
+        assert_eq!(
+            (expanded.capacity_profile, expanded.memory_word_capacity),
+            (crate::EngineCapacityProfile::Pdftex14029, 5_000_000)
+        );
+        let recaptured = universe.capture_format_image().expect("recapture");
+        assert_eq!(
+            DetachedFormatImage::try_from_bytes(recaptured.as_bytes().to_vec())
+                .expect("validate recaptured profile")
+                .as_bytes(),
+            recaptured.as_bytes()
+        );
+    })
+    .expect("materialize TeX format under pdfTeX process");
+}
+
+#[test]
+fn hash_font_trie_and_pdf_coordinates_use_the_same_recorded_profile() {
+    let hash_image = with_universe(
+        InternerBudget::new(16_000, 16_000, 256_000).expect("large hash budget"),
+        |universe| {
+            universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+            for index in 0..15_001 {
+                universe
+                    .intern(&format!("capacity{index}"))
+                    .expect("pdfTeX hash entry");
+            }
+            universe.capture_format_image().expect("pdfTeX hash format")
+        },
+    )
+    .expect("hash source");
+    let tex_hash = replace_metadata(&hash_image, select_tex82_metadata_profile);
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(tex_hash)
+            .expect_err("TeX hash capacity must reject pdfTeX occupancy"),
+        FormatError::InvalidState(
+            "invalid format hash occupancy: entries=15001, capacity=15000, profile=Tex82Etex"
+                .to_owned()
+        )
+    );
+
+    let font_image = with_universe(budget(), |universe| {
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe
+            .command_context()
+            .expect("font context")
+            .intern_font(test_font().with_font_info_words(20_001));
+        universe.capture_format_image().expect("pdfTeX font format")
+    })
+    .expect("font source");
+    let tex_font = replace_metadata(&font_image, select_tex82_metadata_profile);
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(tex_font)
+            .expect_err("TeX font-info capacity must reject pdfTeX occupancy"),
+        FormatError::InvalidState(
+            "invalid format font-info occupancy: words=20008, capacity=20000, profile=Tex82Etex"
+                .to_owned()
+        )
+    );
+
+    let trie_image = with_universe(budget(), |universe| {
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe
+            .command_context()
+            .expect("trie context")
+            .add_hyphenation_pattern_for_language(
+                0,
+                crate::hyphenation::PatternSpec {
+                    letters: vec!['a'; 8_000],
+                    values: Vec::new(),
+                },
+            )
+            .expect("pdfTeX trie occupancy");
+        universe.capture_format_image().expect("pdfTeX trie format")
+    })
+    .expect("trie source");
+    let tex_trie = replace_metadata(&trie_image, select_tex82_metadata_profile);
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(tex_trie)
+            .expect_err("TeX trie capacity must reject pdfTeX occupancy"),
+        FormatError::InvalidState(
+            "invalid frozen hyphenation trie occupancy: nodes=8001, capacity=8000".to_owned()
+        )
+    );
+
+    let pdf_image = with_universe(budget(), |universe| {
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe.enable_pdf_output();
+        universe.capture_format_image().expect("pdfTeX PDF format")
+    })
+    .expect("PDF source");
+    let tex_pdf = replace_metadata(&pdf_image, select_tex82_metadata_profile);
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(tex_pdf)
+            .expect_err("TeX profile must reject retained PDF state"),
+        FormatError::InvalidState(
+            "non-pdfTeX format profile retains PDF resource state".to_owned()
+        )
+    );
+}
+
+fn select_tex82_metadata_profile(metadata: &mut TestFormatMetadata) {
+    metadata.string_pool.strings = 1_027;
+    metadata.string_pool.characters = 106_808;
+    metadata.string_pool.max_strings = 15_000;
+    metadata.string_pool.pool_size = 125_000;
+    metadata.string_pool.recycled.clear();
+}
+
+#[test]
+fn malformed_pdf_object_coordinate_reports_actual_profile_capacity() {
+    let image = with_universe(budget(), |universe| {
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        universe.capture_format_image().expect("pdfTeX format")
+    })
+    .expect("PDF source");
+    let bytes = replace_metadata(&image, |metadata| {
+        let mut pdf: TestEmptyPdfFormatState =
+            bincode::deserialize(&metadata.pdf).expect("empty PDF envelope");
+        pdf.next_object = 8_388_608;
+        metadata.pdf = bincode::serialize(&pdf).expect("malformed PDF envelope");
+    });
+    assert_eq!(
+        DetachedFormatImage::try_from_bytes(bytes)
+            .expect_err("pdfTeX object-table coordinate must be bounded"),
+        FormatError::InvalidState(
+            "invalid PDF format object-table coordinate: next_object=8388608, capacity=8388607"
                 .to_owned()
         )
     );
@@ -633,6 +823,7 @@ fn configured_hyphenation_exception_capacity_roundtrips_with_format_usage() {
 #[test]
 fn logical_roundtrip_preserves_font_node_box_and_pdf_roots() {
     let (image, raw_object, form_object) = with_universe(budget(), |universe| {
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
         let selector = universe.intern("formatfont").expect("font selector");
         let font = universe
             .command_context()

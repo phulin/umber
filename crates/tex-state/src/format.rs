@@ -483,8 +483,11 @@ fn decode_image(bytes: &[u8]) -> Result<DecodedFormat, FormatError> {
         ));
     }
     decode_interaction_mode(metadata.interaction_mode)?;
-    crate::command_context::EngineUsageRuntime::restore_format_state(&metadata.string_pool)
-        .map_err(FormatError::InvalidState)?;
+    let engine_usage =
+        crate::command_context::EngineUsageRuntime::restore_format_state(&metadata.string_pool)
+            .map_err(FormatError::InvalidState)?;
+    let capacity_profile = engine_usage.capacity_profile();
+    let capacities = engine_usage.capacities();
     let names: Vec<FormatName> = decode_rows(required_section(&container, 256)?)?;
     let names_lookup =
         crate::frozen_lookup::decode(&required_section(&container, 257)?.bytes, names.len())
@@ -501,8 +504,9 @@ fn decode_image(bytes: &[u8]) -> Result<DecodedFormat, FormatError> {
     let glue: Vec<FormatGlue> = decode_rows(required_section(&container, 304)?)?;
     let fonts: Vec<FormatFont> = decode_rows(required_section(&container, 320)?)?;
     let codes: Vec<FormatCode> = decode_rows(required_section(&container, 336)?)?;
-    let hyphenation: crate::hyphenation::HyphenationTable =
+    let mut hyphenation: crate::hyphenation::HyphenationTable =
         decode_rows(required_section(&container, 352)?)?;
+    hyphenation.set_trie_capacity(capacities.trie_nodes);
     hyphenation
         .validate_frozen()
         .map_err(|message| FormatError::InvalidState(message.to_owned()))?;
@@ -514,15 +518,23 @@ fn decode_image(bytes: &[u8]) -> Result<DecodedFormat, FormatError> {
         value: code.value,
     }));
     validate_logical_rows(
-        &names,
-        &token_lists,
-        &definitions,
-        &glue,
-        &fonts,
-        &node_lists,
-        &cells,
+        LogicalRows {
+            names: &names,
+            token_lists: &token_lists,
+            definitions: &definitions,
+            glue: &glue,
+            fonts: &fonts,
+            node_lists: &node_lists,
+            cells: &cells,
+        },
+        capacity_profile,
     )?;
-    validate_pdf_format_roots(&metadata.pdf, token_lists.len(), node_lists.len())?;
+    validate_pdf_format_roots(
+        &metadata.pdf,
+        token_lists.len(),
+        node_lists.len(),
+        capacities.pdf,
+    )?;
     Ok(DecodedFormat {
         metadata,
         names,
@@ -566,17 +578,33 @@ fn decode_rows<T: for<'de> Deserialize<'de>>(
     Ok(payload.rows)
 }
 
+struct LogicalRows<'a> {
+    names: &'a [FormatName],
+    token_lists: &'a [Vec<u32>],
+    definitions: &'a [FormatDefinition],
+    glue: &'a [FormatGlue],
+    fonts: &'a [FormatFont],
+    node_lists: &'a [FormatNodeList],
+    cells: &'a [FormatCell],
+}
+
 fn validate_logical_rows(
-    names: &[FormatName],
-    token_lists: &[Vec<u32>],
-    definitions: &[FormatDefinition],
-    glue: &[FormatGlue],
-    fonts: &[FormatFont],
-    node_lists: &[FormatNodeList],
-    cells: &[FormatCell],
+    rows: LogicalRows<'_>,
+    capacity_profile: crate::EngineCapacityProfile,
 ) -> Result<(), FormatError> {
     use std::collections::BTreeSet;
+    let LogicalRows {
+        names,
+        token_lists,
+        definitions,
+        glue,
+        fonts,
+        node_lists,
+        cells,
+    } = rows;
+    let capacities = capacity_profile.configuration();
     let mut distinct_names = BTreeSet::new();
+    let mut hash_entries = 0_usize;
     for name in names {
         if name.kind > 5 || !distinct_names.insert((name.kind, name.text.as_str())) {
             return Err(FormatError::InvalidState(
@@ -593,6 +621,13 @@ fn validate_logical_rows(
                 "only a multiletter format name can occupy the hash".to_owned(),
             ));
         }
+        hash_entries = hash_entries.saturating_add(usize::from(name.hash_entry));
+    }
+    if hash_entries > capacities.hash_entries() {
+        return Err(FormatError::InvalidState(format!(
+            "invalid format hash occupancy: entries={hash_entries}, capacity={}, profile={capacity_profile:?}",
+            capacities.hash_entries()
+        )));
     }
     let validate_words = |words: &[u32]| {
         for &raw in words {
@@ -625,11 +660,14 @@ fn validate_logical_rows(
             ));
         }
     }
-    if fonts.is_empty() || fonts.len() > crate::font::MAX_FONT_COUNT {
-        return Err(FormatError::InvalidState(
-            "format font count is outside bank capacity".to_owned(),
-        ));
+    let loaded_fonts = fonts.len().saturating_sub(1);
+    if fonts.is_empty() || loaded_fonts > capacities.fonts {
+        return Err(FormatError::InvalidState(format!(
+            "invalid format font occupancy: fonts={loaded_fonts}, capacity={}, profile={capacity_profile:?}",
+            capacities.fonts
+        )));
     }
+    let mut font_info_words = 0_usize;
     for (raw, font) in fonts.iter().enumerate() {
         if raw == 0 && (font.name != "nullfont" || font.size != 0) {
             return Err(FormatError::InvalidState(
@@ -644,11 +682,6 @@ fn validate_logical_rows(
                 "format font identifier is out of range".to_owned(),
             ));
         }
-        if font.font_info_words as usize > crate::font::WEB2C_FONT_INFO_CAPACITY {
-            return Err(FormatError::InvalidState(
-                "format font-info extent exceeds capacity".to_owned(),
-            ));
-        }
         if font.runtime.pdf_codes.len() != 9
             || font
                 .runtime
@@ -656,12 +689,33 @@ fn validate_logical_rows(
                 .iter()
                 .flatten()
                 .any(|table| table.len() != 256)
-            || font.runtime.parameters.len() > crate::font::WEB2C_FONT_INFO_CAPACITY
+            || font.runtime.parameters.len() > crate::font::MAX_FONT_DIMEN as usize
         {
             return Err(FormatError::InvalidState(
                 "invalid format font runtime".to_owned(),
             ));
         }
+        let Some(non_parameter_words) =
+            (font.font_info_words as usize).checked_sub(font.parameters.len())
+        else {
+            return Err(FormatError::InvalidState(format!(
+                "invalid format font-info row: font={raw}, font_info_words={}, source_parameters={}",
+                font.font_info_words,
+                font.parameters.len()
+            )));
+        };
+        font_info_words = font_info_words
+            .checked_add(non_parameter_words)
+            .and_then(|words| words.checked_add(font.runtime.parameters.len()))
+            .ok_or_else(|| {
+                FormatError::InvalidState("format font-info occupancy overflow".to_owned())
+            })?;
+    }
+    if font_info_words > capacities.font_info_words {
+        return Err(FormatError::InvalidState(format!(
+            "invalid format font-info occupancy: words={font_info_words}, capacity={}, profile={capacity_profile:?}",
+            capacities.font_info_words
+        )));
     }
     validate_node_rows(names, token_lists, glue, fonts, node_lists)?;
     let mut keys = BTreeSet::new();
@@ -808,9 +862,11 @@ fn validate_pdf_format_roots(
     bytes: &[u8],
     token_count: usize,
     node_count: usize,
+    capacities: Option<crate::PdfEngineCapacities>,
 ) -> Result<(), FormatError> {
     PdfState::<()>::restore_format_bytes(
         bytes,
+        capacities,
         |recipe| {
             let row: u32 = bincode::deserialize(recipe)
                 .map_err(|error| format!("invalid PDF token root: {error}"))?;
@@ -1083,6 +1139,7 @@ impl<G> Universe<G> {
     ) -> Result<(), FormatError> {
         self.pdf = PdfState::restore_format_bytes(
             bytes,
+            self.engine_usage.capacities().pdf,
             |recipe| {
                 let row: u32 = bincode::deserialize(recipe)
                     .map_err(|error| format!("invalid PDF token root: {error}"))?;

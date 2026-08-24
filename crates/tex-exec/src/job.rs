@@ -94,42 +94,11 @@ impl EngineBinaryIdentity {
         }
     }
 
-    /// Returns the hash capacity of this pinned executable configuration.
-    ///
-    /// Web2C `tex.ch` [51.1332] reads `hash_extra` as an executable runtime
-    /// bound, independently of the loaded format's command profile, and
-    /// [51.1334] renders that value in the usage report. The TeX82/e-TeX
-    /// conformance executables use triptrap's default zero extension; the
-    /// pinned pdfTeX distribution configuration supplies 600000.
-    const fn control_sequence_capacity(self) -> (u32, u32) {
+    /// Returns every process capacity selected by this pinned executable.
+    pub(crate) const fn capacity_profile(self) -> tex_state::EngineCapacityProfile {
         match self {
-            Self::Tex82 | Self::Etex26 => (15_000, 0),
-            Self::Pdftex14029 => (15_000, 600_000),
-        }
-    }
-
-    /// Returns this executable's process-configured `font_info` word bound.
-    ///
-    /// The value is operational rather than format-owned: TeX82 and e-TeX
-    /// use the compiled default, while the pinned Web2C pdfTeX process uses
-    /// the distribution's `font_mem_size` setting.
-    pub(crate) const fn font_info_capacity(self) -> usize {
-        match self {
-            Self::Tex82 | Self::Etex26 => tex_state::font::FONT_INFO_CAPACITY,
-            Self::Pdftex14029 => tex_state::font::WEB2C_FONT_INFO_CAPACITY,
-        }
-    }
-
-    /// Returns this executable's process-configured TeX string-pool bounds.
-    ///
-    /// The TeX82/e-TeX conformance binaries use the compact triptrap
-    /// configuration. The pinned pdfTeX binary uses TeX Live 2026's
-    /// `max_strings=500000` and `pool_size=6250000` settings, parallel to its
-    /// `hash_extra` and `font_mem_size` process configuration above.
-    pub(crate) const fn string_pool_capacity_profile(self) -> tex_state::StringPoolCapacityProfile {
-        match self {
-            Self::Tex82 | Self::Etex26 => tex_state::StringPoolCapacityProfile::Tex82Etex,
-            Self::Pdftex14029 => tex_state::StringPoolCapacityProfile::Pdftex14029,
+            Self::Tex82 | Self::Etex26 => tex_state::EngineCapacityProfile::Tex82Etex,
+            Self::Pdftex14029 => tex_state::EngineCapacityProfile::Pdftex14029,
         }
     }
 }
@@ -910,11 +879,11 @@ fn print_usage_statistics<G>(
     print_usize(&mut printer, usage.memory_word_capacity);
     printer.print_nl(" ");
     print_usize(&mut printer, usage.control_sequences);
-    let (hash_size, hash_extra) = binary.control_sequence_capacity();
+    let capacities = binary.capacity_profile().configuration();
     printer.print(" multiletter control sequences out of ");
-    print_u32(&mut printer, hash_size);
+    print_usize(&mut printer, capacities.hash_size);
     printer.print_char('+');
-    print_u32(&mut printer, hash_extra);
+    print_usize(&mut printer, capacities.hash_extra);
     printer.print_nl(" ");
     print_usize(&mut printer, usage.font_info_words);
     printer.print(" words of font info for ");
@@ -923,7 +892,11 @@ fn print_usage_statistics<G>(
     if usage.fonts != 1 {
         printer.print_char('s');
     }
-    printer.print(", out of 20000 for 75").print_nl(" ");
+    printer.print(", out of ");
+    print_usize(&mut printer, capacities.font_info_words);
+    printer.print(" for ");
+    print_usize(&mut printer, capacities.fonts);
+    printer.print_nl(" ");
     print_usize(&mut printer, usage.hyphenation_exceptions);
     printer.print(" hyphenation exception");
     if usage.hyphenation_exceptions != 1 {
@@ -932,11 +905,15 @@ fn print_usage_statistics<G>(
     printer.print(" out of ");
     print_usize(&mut printer, usage.hyphenation_exception_capacity);
     printer.print_nl(" ");
-    print_stack_usage(&mut printer, usage);
+    print_stack_usage(&mut printer, usage, capacities);
     file_offset_was_open
 }
 
-fn print_stack_usage<G>(printer: &mut Printer<'_, G>, usage: EngineUsageStatistics) {
+fn print_stack_usage<G>(
+    printer: &mut Printer<'_, G>,
+    usage: EngineUsageStatistics,
+    capacities: tex_state::EngineCapacityConfiguration,
+) {
     for (value, suffix) in [
         (usage.input_stack, "i,"),
         (usage.nest_stack, "n,"),
@@ -950,9 +927,18 @@ fn print_stack_usage<G>(printer: &mut Printer<'_, G>, usage: EngineUsageStatisti
     // TeX82 §1334 ends this final direct-to-log row with `wlog_ln`.
     // Closing the log line independently matters when §642's following
     // `print_nl` sees a still-open terminal line and breaks both sinks.
-    printer
-        .print(" stack positions out of 200i,40n,60p,500b,600s")
-        .print_ln();
+    printer.print(" stack positions out of ");
+    for (value, suffix) in [
+        (capacities.input_stack, "i,"),
+        (capacities.nest_stack, "n,"),
+        (capacities.parameter_stack, "p,"),
+        (capacities.buffer_stack, "b,"),
+        (capacities.save_stack, "s"),
+    ] {
+        print_usize(printer, value);
+        printer.print(suffix);
+    }
+    printer.print_ln();
 }
 
 fn print_usize<G>(printer: &mut Printer<'_, G>, value: usize) {

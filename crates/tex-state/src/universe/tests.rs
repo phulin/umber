@@ -234,7 +234,15 @@ fn runtime_checkpoint_restores_string_pool_accounting() {
             .expect("initial context")
             .detach_engine_usage_statistics();
         let checkpoint = universe.runtime_checkpoint().expect("checkpoint");
-        universe.set_string_pool_capacity_profile(crate::StringPoolCapacityProfile::Pdftex14029);
+        universe.set_engine_capacity_profile(crate::EngineCapacityProfile::Pdftex14029);
+        let expanded = universe
+            .command_context()
+            .expect("expanded context")
+            .detach_engine_usage_statistics();
+        assert_eq!(
+            (expanded.capacity_profile, expanded.memory_word_capacity),
+            (crate::EngineCapacityProfile::Pdftex14029, 5_000_000)
+        );
         universe
             .command_context()
             .expect("context")
@@ -299,11 +307,10 @@ fn font_info_usage_joins_immutable_metrics_and_mutable_parameter_growth() {
     // each TFM's complete table, and §580 parameter growth. Umber keeps the
     // immutable metrics and mutable parameters in distinct owners.
     with_universe(budget(), |universe| {
-        universe.set_font_info_capacity(109);
         let checkpoint = universe
             .runtime_checkpoint()
             .expect("font prefix checkpoint");
-        let loaded = test_font("usagefont").with_font_info_words(100);
+        let loaded = test_font("usagefont").with_font_info_words(19_991);
         let duplicate = loaded.clone();
         let font = universe
             .command_context()
@@ -321,22 +328,22 @@ fn font_info_usage_joins_immutable_metrics_and_mutable_parameter_growth() {
             let mut context = universe.command_context().expect("context");
             assert_eq!(
                 context.detach_engine_usage_statistics().font_info_words,
-                107
+                19_998
             );
             context
                 .set_font_dimen(font, 9, Scaled::from_raw(9))
                 .expect("two parameter words fit exactly");
             assert_eq!(
                 context.detach_engine_usage_statistics().font_info_words,
-                109
+                20_000
             );
             assert_eq!(
                 context.set_font_dimen(font, 10, Scaled::from_raw(10)),
-                Err(109)
+                Err(20_000)
             );
             assert_eq!(
                 context.detach_engine_usage_statistics().font_info_words,
-                109
+                20_000
             );
         }
         universe

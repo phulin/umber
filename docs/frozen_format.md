@@ -102,6 +102,13 @@ rollback restores the selected pair, pool coordinates, and recycled-name
 membership together. These are validations of the existing schema-11 fields,
 not an alternate codec or compatibility fallback, so the schema and ABI
 fingerprints do not change.
+The admitted pair identifies one complete typed producer profile, not merely
+two independent string limits. The decoder uses that same profile for the
+main-memory extent, hash occupancy, font count and aggregate `fmem_ptr`, trie
+node occupancy, and permitted PDF resource ledger. Diagnostics report the
+actual image coordinate, selected capacity, and producer profile. This keeps
+a pdfTeX image from being rejected by a TeX82 limit while preventing one image
+from combining individually valid coordinates from different processes.
 The TeX82 profile projects §§47/50/226's engine-owned static and primitive
 vocabulary onto the typed registry, then records runtime ownership at the
 canonical boundaries: §§341/372's direct-character and §1215's fixed internal
@@ -132,6 +139,11 @@ persisted extents or high-water semantics.
 The PDF DTO retains allocation counters, raw objects, forms, external images,
 and ToUnicode mappings; token lists and node graphs are embedded as validated
 handle-free semantic envelopes. It contains no store or environment data.
+Only the pdfTeX producer profile may retain nonempty or enabled PDF resource
+state, and its next-object coordinate is bounded by pdfTeX 1.40.29's fixed
+object-table limit. Destination names, color stacks, pages, and other
+job-local PDF tables are excluded rather than assigned invented format
+coordinates.
 The schema-11 runtime requires
 exactly kinds 1, 256, 257, 272, 288, 304, 320, 336, 352, 512, and 528. The
 following kinds are allocated for the complete rollout:
@@ -272,8 +284,13 @@ in bulk, attaches fresh runtime identities, and rebuilds loaded-font lookup
 keys and immutable/complete semantic hash fragments without calling the
 ordinary font interning or mutable identifier/expansion paths.
 
-The dense font bank is bounded to 32768 rows, including `nullfont`: each font
-owns a 17-bit `fontdimen` subdomain inside the environment cell's 32-bit index.
+The typed storage bank can represent 32768 rows, including `nullfont`: each
+font owns a 17-bit `fontdimen` subdomain inside the environment cell's 32-bit
+index. Format decode additionally applies the producer process's smaller
+`font_max` bound (75 TeX82/e-TeX or 9000 pdfTeX fonts) and reconstructs the
+aggregate `fmem_ptr` from every immutable non-parameter extent plus every
+mutable runtime parameter row. That aggregate must fit the same profile's
+20,000- or 8,000,000-word `font_info` capacity.
 Row zero retains TeX.web §§552--556's seven zero parameters, empty character
 set, zero checksum and sizes, hyphen character 45, and skew character -1.
 Dump/load preserves allocation order and every immutable loaded-TFM field plus
@@ -302,6 +319,11 @@ positions remain representable because TeX's exception scanner accepts leading,
 trailing, and adjacent hyphens. The validated trie is installed as the immutable
 format base; later job mutations retain the existing copy-on-write `Arc`
 snapshot behavior.
+The trie-node total is validated against the producer profile's `trie_size`
+(8000 for TeX82/e-TeX and 1,100,000 for pdfTeX). `hyph_size` remains an
+explicit serialized process coordinate because canonical TRIP and e-TRIP use
+their fixture-specific value; its recorded occupancy is checked against that
+exact capacity.
 
 ### Frozen node arena (kind 512)
 
