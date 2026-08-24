@@ -5925,6 +5925,30 @@ fn count_assignment_resumes_exact_integer_operand_after_file_probe() {
         assert_eq!(staged_requests, resources);
         assert_eq!(staged_terminal, preloaded_terminal);
     }
+
+    let source = br"\dimen0=12\pdffilesize{second}pt\message{[\the\dimen0]}\end";
+    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, &["second"]);
+    assert!(preloaded_requests.is_empty());
+    assert!(
+        preloaded_terminal.contains("[122.0pt]"),
+        "{preloaded_terminal:?}"
+    );
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, ["second"]);
+    assert_eq!(staged_terminal, preloaded_terminal);
+
+    let source =
+        br"\skip0=1\pdffilesize{second}pt plus 3\pdffilesize{third}fil\message{[\the\skip0]}\end";
+    let resources = &["second", "third"];
+    let (preloaded_terminal, preloaded_requests) = run_pdftex_file_probe_job(source, resources);
+    assert!(preloaded_requests.is_empty());
+    assert!(
+        preloaded_terminal.contains("[12.0pt plus 32.0fil]"),
+        "{preloaded_terminal:?}"
+    );
+    let (staged_terminal, staged_requests) = run_pdftex_file_probe_job(source, &[]);
+    assert_eq!(staged_requests, resources);
+    assert_eq!(staged_terminal, preloaded_terminal);
 }
 
 fn run_pdftex_file_probe_job(source: &[u8], preloaded: &[&str]) -> (String, Vec<String>) {

@@ -716,10 +716,10 @@ enum PendingPreflightCommand<G> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CountScanPhase {
+enum RegisterAssignmentScanPhase {
     RegisterIndex,
     OptionalEquals,
-    Integer,
+    Value,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -727,7 +727,18 @@ enum PendingOperationScanPhase {
     Count {
         index: Option<u16>,
         global: bool,
-        phase: CountScanPhase,
+        phase: RegisterAssignmentScanPhase,
+    },
+    Dimension {
+        index: Option<u16>,
+        global: bool,
+        phase: RegisterAssignmentScanPhase,
+    },
+    Glue {
+        index: Option<u16>,
+        global: bool,
+        mu: bool,
+        phase: RegisterAssignmentScanPhase,
     },
 }
 
@@ -10235,14 +10246,14 @@ fn scan_count_register_assignment<G>(
     processor: &mut CommandProcessor<'_, '_, G>,
     mut index: Option<u16>,
     global: bool,
-    phase: CountScanPhase,
+    phase: RegisterAssignmentScanPhase,
     suspended: &mut Option<PendingOperationScanPhase>,
 ) -> Result<ColdOperation<G>, ExecError> {
-    if phase == CountScanPhase::RegisterIndex {
+    if phase == RegisterAssignmentScanPhase::RegisterIndex {
         *suspended = Some(PendingOperationScanPhase::Count {
             index,
             global,
-            phase: CountScanPhase::RegisterIndex,
+            phase: RegisterAssignmentScanPhase::RegisterIndex,
         });
         index = Some(
             processor
@@ -10250,18 +10261,18 @@ fn scan_count_register_assignment<G>(
                 .map_err(command_error)?,
         );
     }
-    if phase != CountScanPhase::Integer {
+    if phase != RegisterAssignmentScanPhase::Value {
         *suspended = Some(PendingOperationScanPhase::Count {
             index,
             global,
-            phase: CountScanPhase::OptionalEquals,
+            phase: RegisterAssignmentScanPhase::OptionalEquals,
         });
         let _ = processor.scan_optional_equals().map_err(command_error)?;
     }
     *suspended = Some(PendingOperationScanPhase::Count {
         index,
         global,
-        phase: CountScanPhase::Integer,
+        phase: RegisterAssignmentScanPhase::Value,
     });
     let value = processor.scan_integer().map_err(command_error)?.value;
     *suspended = None;
@@ -10270,6 +10281,111 @@ fn scan_count_register_assignment<G>(
         value,
         global,
     })
+}
+
+fn scan_dimension_register_assignment<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    mut index: Option<u16>,
+    global: bool,
+    phase: RegisterAssignmentScanPhase,
+    suspended: &mut Option<PendingOperationScanPhase>,
+) -> Result<ColdOperation<G>, ExecError> {
+    if phase == RegisterAssignmentScanPhase::RegisterIndex {
+        *suspended = Some(PendingOperationScanPhase::Dimension {
+            index,
+            global,
+            phase: RegisterAssignmentScanPhase::RegisterIndex,
+        });
+        index = Some(
+            processor
+                .scan_profile_register_index()
+                .map_err(command_error)?,
+        );
+    }
+    if phase != RegisterAssignmentScanPhase::Value {
+        *suspended = Some(PendingOperationScanPhase::Dimension {
+            index,
+            global,
+            phase: RegisterAssignmentScanPhase::OptionalEquals,
+        });
+        let _ = processor.scan_optional_equals().map_err(command_error)?;
+    }
+    *suspended = Some(PendingOperationScanPhase::Dimension {
+        index,
+        global,
+        phase: RegisterAssignmentScanPhase::Value,
+    });
+    let value = processor.scan_dimension().map_err(command_error)?.value;
+    *suspended = None;
+    Ok(ColdOperation::Dimen {
+        index: index.expect("dimension assignment retains its completed register index"),
+        value,
+        global,
+    })
+}
+
+fn scan_glue_register_assignment<G>(
+    processor: &mut CommandProcessor<'_, '_, G>,
+    mut index: Option<u16>,
+    global: bool,
+    mu: bool,
+    phase: RegisterAssignmentScanPhase,
+    suspended: &mut Option<PendingOperationScanPhase>,
+) -> Result<ColdOperation<G>, ExecError> {
+    if phase == RegisterAssignmentScanPhase::RegisterIndex {
+        *suspended = Some(PendingOperationScanPhase::Glue {
+            index,
+            global,
+            mu,
+            phase: RegisterAssignmentScanPhase::RegisterIndex,
+        });
+        index = Some(
+            processor
+                .scan_profile_register_index()
+                .map_err(command_error)?,
+        );
+    }
+    if phase != RegisterAssignmentScanPhase::Value {
+        *suspended = Some(PendingOperationScanPhase::Glue {
+            index,
+            global,
+            mu,
+            phase: RegisterAssignmentScanPhase::OptionalEquals,
+        });
+        let _ = processor.scan_optional_equals().map_err(command_error)?;
+    }
+    *suspended = Some(PendingOperationScanPhase::Glue {
+        index,
+        global,
+        mu,
+        phase: RegisterAssignmentScanPhase::Value,
+    });
+    let value = processor.scan_glue(mu).map_err(command_error)?.value;
+    let source_identity = processor.scanned_glue_identity();
+    let source_register = processor.scanned_glue_register();
+    *suspended = None;
+    let index = index.expect("glue assignment retains its completed register index");
+    if mu {
+        Ok(ColdOperation::Muskip {
+            index,
+            value,
+            source_identity,
+            source_register,
+            redundant: false,
+            reassigning: false,
+            global,
+        })
+    } else {
+        Ok(ColdOperation::Skip {
+            index,
+            value,
+            source_identity,
+            source_register,
+            redundant: false,
+            reassigning: false,
+            global,
+        })
+    }
 }
 
 fn resume_pending_operation_scan<G>(
@@ -10283,6 +10399,17 @@ fn resume_pending_operation_scan<G>(
             global,
             phase,
         } => scan_count_register_assignment(processor, index, global, phase, suspended),
+        PendingOperationScanPhase::Dimension {
+            index,
+            global,
+            phase,
+        } => scan_dimension_register_assignment(processor, index, global, phase, suspended),
+        PendingOperationScanPhase::Glue {
+            index,
+            global,
+            mu,
+            phase,
+        } => scan_glue_register_assignment(processor, index, global, mu, phase, suspended),
     }
 }
 

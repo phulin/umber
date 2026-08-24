@@ -131,6 +131,18 @@ pub(crate) enum ScalarChildDestination {
     IntegerCharacterCode,
     IntegerOptionalSpace,
     IntegerRadixToken,
+    DimensionLeadingToken,
+    DimensionInternal,
+    DimensionInteger,
+    DimensionUnits,
+    DimensionOptionalSpace,
+    GlueLeadingToken,
+    GlueInternal,
+    GlueWidth,
+    GluePlusKeyword,
+    GlueStretch,
+    GlueMinusKeyword,
+    GlueShrink,
 }
 
 /// One allocation-free scalar continuation in the current generation's
@@ -157,6 +169,93 @@ pub(crate) enum PendingScalarFrame<G> {
         provenance: OriginId,
         child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
     },
+    DimensionLeading {
+        negative: bool,
+        provenance: OriginId,
+        allow_infinite: bool,
+        mu: bool,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    DimensionInternal {
+        first: CurrentCommand<G>,
+        negative: bool,
+        provenance: OriginId,
+        allow_infinite: bool,
+        mu: bool,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    DimensionInteger {
+        negative: bool,
+        provenance: OriginId,
+        allow_infinite: bool,
+        mu: bool,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    DimensionUnits {
+        integer: i32,
+        decimal: bool,
+        negative: bool,
+        provenance: OriginId,
+        allow_infinite: bool,
+        mu: bool,
+        recovery: ScalarRecovery,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    DimensionOptionalSpace {
+        value: Scaled,
+        order: Order,
+        negative: bool,
+        provenance: OriginId,
+        recovery: ScalarRecovery,
+        arith_error: bool,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    GlueLeading {
+        mu: bool,
+        negative: bool,
+        provenance: OriginId,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    GlueInternal {
+        first: CurrentCommand<G>,
+        mu: bool,
+        negative: bool,
+        provenance: OriginId,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    GlueWidth {
+        mu: bool,
+        negative: bool,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    GluePlusKeyword {
+        mu: bool,
+        value: GlueSpec,
+        recovery: ScalarRecovery,
+        provenance: OriginId,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    GlueStretch {
+        mu: bool,
+        value: GlueSpec,
+        recovery: ScalarRecovery,
+        provenance: OriginId,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    GlueMinusKeyword {
+        mu: bool,
+        value: GlueSpec,
+        recovery: ScalarRecovery,
+        provenance: OriginId,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
+    GlueShrink {
+        mu: bool,
+        value: GlueSpec,
+        recovery: ScalarRecovery,
+        provenance: OriginId,
+        child: Option<crate::execution_scratch::ChildContinuation<G, ScalarChildDestination>>,
+    },
 }
 
 impl<G> PendingScalarFrame<G> {
@@ -165,7 +264,19 @@ impl<G> PendingScalarFrame<G> {
             Self::OptionalEquals { child, .. }
             | Self::Keyword { child, .. }
             | Self::Integer { child, .. }
-            | Self::IntegerComplete { child, .. } => child.take().map(|child| child.restore().0),
+            | Self::IntegerComplete { child, .. }
+            | Self::DimensionLeading { child, .. }
+            | Self::DimensionInternal { child, .. }
+            | Self::DimensionInteger { child, .. }
+            | Self::DimensionUnits { child, .. }
+            | Self::DimensionOptionalSpace { child, .. }
+            | Self::GlueLeading { child, .. }
+            | Self::GlueInternal { child, .. }
+            | Self::GlueWidth { child, .. }
+            | Self::GluePlusKeyword { child, .. }
+            | Self::GlueStretch { child, .. }
+            | Self::GlueMinusKeyword { child, .. }
+            | Self::GlueShrink { child, .. } => child.take().map(|child| child.restore().0),
         }
     }
 
@@ -192,6 +303,28 @@ impl<G> PendingScalarFrame<G> {
                 child,
             } => (child, ScalarChildDestination::IntegerOptionalSpace),
             Self::IntegerComplete { child, .. } => (child, ScalarChildDestination::IntegerComplete),
+            Self::DimensionLeading { child, .. } => {
+                (child, ScalarChildDestination::DimensionLeadingToken)
+            }
+            Self::DimensionInternal { child, .. } => {
+                (child, ScalarChildDestination::DimensionInternal)
+            }
+            Self::DimensionInteger { child, .. } => {
+                (child, ScalarChildDestination::DimensionInteger)
+            }
+            Self::DimensionUnits { child, .. } => (child, ScalarChildDestination::DimensionUnits),
+            Self::DimensionOptionalSpace { child, .. } => {
+                (child, ScalarChildDestination::DimensionOptionalSpace)
+            }
+            Self::GlueLeading { child, .. } => (child, ScalarChildDestination::GlueLeadingToken),
+            Self::GlueInternal { child, .. } => (child, ScalarChildDestination::GlueInternal),
+            Self::GlueWidth { child, .. } => (child, ScalarChildDestination::GlueWidth),
+            Self::GluePlusKeyword { child, .. } => (child, ScalarChildDestination::GluePlusKeyword),
+            Self::GlueStretch { child, .. } => (child, ScalarChildDestination::GlueStretch),
+            Self::GlueMinusKeyword { child, .. } => {
+                (child, ScalarChildDestination::GlueMinusKeyword)
+            }
+            Self::GlueShrink { child, .. } => (child, ScalarChildDestination::GlueShrink),
         };
         debug_assert!(child.is_none());
         *child = crate::execution_scratch::ChildContinuation::capture(baton, destination);
@@ -1144,6 +1277,134 @@ impl<G> CommandProcessor<'_, '_, G> {
         allow_infinite: bool,
         mu: bool,
     ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
+        let pending = self.take_pending_scalar_frame()?;
+        let mut suspended = None;
+        let result = match pending {
+            Some(PendingScalarFrame::DimensionLeading {
+                negative,
+                provenance,
+                allow_infinite: retained_allow_infinite,
+                mu: retained_mu,
+                mut child,
+            }) if retained_allow_infinite == allow_infinite && retained_mu == mu => {
+                self.restore_scalar_child(
+                    &mut child,
+                    ScalarChildDestination::DimensionLeadingToken,
+                )?;
+                self.scan_dimension_from_leading(
+                    negative,
+                    provenance,
+                    allow_infinite,
+                    mu,
+                    &mut suspended,
+                )
+            }
+            Some(PendingScalarFrame::DimensionInternal {
+                first,
+                negative,
+                provenance,
+                allow_infinite: retained_allow_infinite,
+                mu: retained_mu,
+                mut child,
+            }) if retained_allow_infinite == allow_infinite && retained_mu == mu => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::DimensionInternal)?;
+                self.scan_dimension_after_first(
+                    first,
+                    negative,
+                    provenance,
+                    allow_infinite,
+                    mu,
+                    &mut suspended,
+                )
+            }
+            Some(PendingScalarFrame::DimensionInteger {
+                negative,
+                provenance,
+                allow_infinite: retained_allow_infinite,
+                mu: retained_mu,
+                mut child,
+            }) if retained_allow_infinite == allow_infinite && retained_mu == mu => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::DimensionInteger)?;
+                self.scan_dimension_after_integer(
+                    negative,
+                    provenance,
+                    allow_infinite,
+                    mu,
+                    &mut suspended,
+                )
+            }
+            Some(PendingScalarFrame::DimensionUnits {
+                integer,
+                decimal,
+                negative,
+                provenance,
+                allow_infinite: retained_allow_infinite,
+                mu: retained_mu,
+                recovery,
+                mut child,
+            }) if retained_allow_infinite == allow_infinite && retained_mu == mu => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::DimensionUnits)?;
+                self.scan_dimension_units(
+                    integer,
+                    decimal,
+                    negative,
+                    provenance,
+                    allow_infinite,
+                    mu,
+                    recovery,
+                    &mut suspended,
+                )
+            }
+            Some(PendingScalarFrame::DimensionOptionalSpace {
+                value,
+                order,
+                negative,
+                provenance,
+                recovery,
+                arith_error,
+                mut child,
+            }) => {
+                self.restore_scalar_child(
+                    &mut child,
+                    ScalarChildDestination::DimensionOptionalSpace,
+                )?;
+                suspended = Some(PendingScalarFrame::DimensionOptionalSpace {
+                    value,
+                    order,
+                    negative,
+                    provenance,
+                    recovery,
+                    arith_error,
+                    child: None,
+                });
+                self.scan_optional_space()?;
+                self.finish_dimension(value, order, negative, provenance, recovery, arith_error)
+            }
+            Some(mut pending) => {
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                return Err(CommandError::input_invariant());
+            }
+            None => self.scan_dimension_from_leading(
+                false,
+                OriginId::UNKNOWN,
+                allow_infinite,
+                mu,
+                &mut suspended,
+            ),
+        };
+        self.finish_scalar_call(result, suspended)
+    }
+
+    fn scan_dimension_from_leading(
+        &mut self,
+        mut negative: bool,
+        mut provenance: OriginId,
+        allow_infinite: bool,
+        mu: bool,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         // TeX82 §448's `<Get the next non-blank non-sign token>` leaves that
         // token in hand and branches on it: an internal quantity (a command
         // code in §208/§209's `min_internal..=max_internal`) goes straight to
@@ -1157,10 +1418,21 @@ impl<G> CommandProcessor<'_, '_, G> {
         // quantity's own operand (a register index, a font selector, a
         // character code), so it must see the token before any `back_input`
         // could split the quantity from its operand.
-        let mut negative = false;
-        let mut provenance = OriginId::UNKNOWN;
         let first = loop {
-            let Some(command) = self.get_x_token()? else {
+            let command = match self.get_x_token() {
+                Ok(command) => command,
+                Err(error) => {
+                    *suspended = Some(PendingScalarFrame::DimensionLeading {
+                        negative,
+                        provenance,
+                        allow_infinite,
+                        mu,
+                        child: None,
+                    });
+                    return Err(error);
+                }
+            };
+            let Some(command) = command else {
                 break None;
             };
             if provenance == OriginId::UNKNOWN {
@@ -1172,9 +1444,28 @@ impl<G> CommandProcessor<'_, '_, G> {
                 _ => break Some(command),
             }
         };
-        let provenance = ScalarProvenance {
-            primary: provenance,
+        let Some(first) = first else {
+            return self.finish_dimension(
+                Scaled::from_raw(0),
+                Order::Normal,
+                negative,
+                provenance,
+                ScalarRecovery::InsertedZero,
+                false,
+            );
         };
+        self.scan_dimension_after_first(first, negative, provenance, allow_infinite, mu, suspended)
+    }
+
+    fn scan_dimension_after_first(
+        &mut self,
+        first: CurrentCommand<G>,
+        negative: bool,
+        provenance: OriginId,
+        allow_infinite: bool,
+        mu: bool,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         // TeX82 §449's "Fetch an internal dimension and goto attach_sign,
         // or fetch an internal integer": `scan_something_internal(mu_val,
         // false)` when `mu`, and `scan_something_internal(dimen_val,false)`
@@ -1187,57 +1478,166 @@ impl<G> CommandProcessor<'_, '_, G> {
         } else {
             InternalLevel::Dimension
         };
-        let (value, order, attach_sign, arith_error, recovery) = match first {
-            Some(first) => match self.scan_something_internal(&first, level, false)? {
-                InternalScan::Value(value) => match self.fetch_internal_dimension(value, mu)? {
-                    InternalDimension::Complete(value) => {
-                        (value, Order::Normal, true, false, ScalarRecovery::None)
-                    }
-                    InternalDimension::Prefix(integer) => {
-                        self.last_integer_terminator = None;
-                        let (units, flip) =
-                            self.scan_units_after_integer(integer, false, allow_infinite, mu)?;
-                        negative ^= flip;
-                        (
-                            units.value,
-                            units.order,
-                            units.attach_sign,
-                            units.arith_error,
-                            ScalarRecovery::None,
-                        )
-                    }
-                },
-                // TeX82 §448's other branch: `back_input`, then either
-                // `scan_int` or §448's own `radix:=10; cur_val:=0` owns the
-                // numeric part, and the unit scan always follows.
-                InternalScan::NotInternal => {
-                    let (units, flip, recovery) =
-                        self.scan_dimension_constant(first, allow_infinite, mu, provenance)?;
-                    negative ^= flip;
-                    (
-                        units.value,
-                        units.order,
-                        units.attach_sign,
-                        units.arith_error,
-                        recovery,
+        *suspended = Some(PendingScalarFrame::DimensionInternal {
+            first,
+            negative,
+            provenance,
+            allow_infinite,
+            mu,
+            child: None,
+        });
+        let internal = self.scan_something_internal(&first, level, false)?;
+        match internal {
+            InternalScan::Value(value) => match self.fetch_internal_dimension(value, mu)? {
+                InternalDimension::Complete(value) => self.finish_dimension(
+                    value,
+                    Order::Normal,
+                    negative,
+                    provenance,
+                    ScalarRecovery::None,
+                    false,
+                ),
+                InternalDimension::Prefix(integer) => {
+                    self.last_integer_terminator = None;
+                    self.scan_dimension_units(
+                        integer,
+                        false,
+                        negative,
+                        provenance,
+                        allow_infinite,
+                        mu,
+                        ScalarRecovery::None,
+                        suspended,
                     )
                 }
             },
-            None => (
-                Scaled::from_raw(0),
-                Order::Normal,
-                true,
-                false,
-                ScalarRecovery::InsertedZero,
-            ),
-        };
+            // TeX82 §448's other branch: `back_input`, then either
+            // `scan_int` or §448's own `radix:=10; cur_val:=0` owns the
+            // numeric part, and the unit scan always follows.
+            InternalScan::NotInternal => {
+                let leading_point = is_point_token(&first);
+                self.back_input(first)?;
+                if leading_point {
+                    let _ = self.get_token()?;
+                    self.scan_dimension_units(
+                        0,
+                        true,
+                        negative,
+                        provenance,
+                        allow_infinite,
+                        mu,
+                        ScalarRecovery::None,
+                        suspended,
+                    )
+                } else {
+                    self.scan_dimension_after_integer(
+                        negative,
+                        provenance,
+                        allow_infinite,
+                        mu,
+                        suspended,
+                    )
+                }
+            }
+        }
+    }
+
+    fn scan_dimension_after_integer(
+        &mut self,
+        negative: bool,
+        provenance: OriginId,
+        allow_infinite: bool,
+        mu: bool,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
+        self.last_integer_terminator = None;
+        *suspended = Some(PendingScalarFrame::DimensionInteger {
+            negative,
+            provenance,
+            allow_infinite,
+            mu,
+            child: None,
+        });
+        let integer = self.scan_integer()?;
+        let decimal = self
+            .last_integer_terminator
+            .as_ref()
+            .is_some_and(is_point_token);
+        if decimal {
+            let _ = self.get_token()?;
+        }
+        self.scan_dimension_units(
+            integer.value,
+            decimal,
+            negative,
+            provenance,
+            allow_infinite,
+            mu,
+            integer.recovery,
+            suspended,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scan_dimension_units(
+        &mut self,
+        integer: i32,
+        decimal: bool,
+        mut negative: bool,
+        provenance: OriginId,
+        allow_infinite: bool,
+        mu: bool,
+        recovery: ScalarRecovery,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
+        *suspended = Some(PendingScalarFrame::DimensionUnits {
+            integer,
+            decimal,
+            negative,
+            provenance,
+            allow_infinite,
+            mu,
+            recovery,
+            child: None,
+        });
+        let (units, flip) = self.scan_units_after_integer(integer, decimal, allow_infinite, mu)?;
+        negative ^= flip;
         // TeX82 §448's trailing `<Scan an optional space>` sits between the
         // unit scan and `attach_sign:`, so every path that reached
         // `attach_sign` by a `goto` -- §449's whole internal dimension and
         // §455's two internal-unit exits -- skips it.
-        if !attach_sign {
+        if !units.attach_sign {
+            *suspended = Some(PendingScalarFrame::DimensionOptionalSpace {
+                value: units.value,
+                order: units.order,
+                negative,
+                provenance,
+                recovery,
+                arith_error: units.arith_error,
+                child: None,
+            });
             self.scan_optional_space()?;
         }
+        self.finish_dimension(
+            units.value,
+            units.order,
+            negative,
+            provenance,
+            recovery,
+            units.arith_error,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_dimension(
+        &mut self,
+        value: Scaled,
+        order: Order,
+        negative: bool,
+        provenance: OriginId,
+        recovery: ScalarRecovery,
+        arith_error: bool,
+    ) -> Result<(ScannedScalar<Scaled>, Order), CommandError> {
         // TeX82 §448-§460: every path converges at `attach_sign`, including
         // §449's internal-dimension shortcut.  The range check therefore
         // applies even when the stored internal value could only have arisen
@@ -1255,7 +1655,9 @@ impl<G> CommandProcessor<'_, '_, G> {
                 value
             },
             recovery,
-            provenance,
+            provenance: ScalarProvenance {
+                primary: provenance,
+            },
         };
         observe!(
             self,
@@ -1265,98 +1667,6 @@ impl<G> CommandProcessor<'_, '_, G> {
             }),
         );
         Ok((scanned, order))
-    }
-
-    /// TeX82 §448's non-internal branch of `scan_dimen`, which tex.web writes
-    /// as
-    ///
-    /// ```text
-    /// back_input;
-    /// if cur_tok=continental_point_token then cur_tok:=point_token;
-    /// if cur_tok<>point_token then scan_int
-    /// else begin radix:=10; cur_val:=0; end;
-    /// if cur_tok=continental_point_token then cur_tok:=point_token;
-    /// if (radix=10)and(cur_tok=point_token) then <Scan decimal fraction>;
-    /// ```
-    ///
-    /// `back_input` does not disturb `cur_tok`, so the point test reads the
-    /// token that was just backed up **without fetching it again**. A leading
-    /// decimal point therefore never reaches `scan_int` at all: §448 assigns
-    /// `radix:=10; cur_val:=0` directly, and §452's `get_token` is the single
-    /// delivery that re-scans the point. Re-reading it through `get_x_token`
-    /// first would add an expanded delivery, a vacuous §444 integer scan with
-    /// §446's second backup, and a `scan_int` result TeX never computes --
-    /// six semantic events per leading-point dimension, which is what
-    /// `\vskip .5cm` produced.
-    ///
-    /// For every other token the integer part is `scan_int`'s (§440), whose
-    /// own `<Get the next non-blank non-sign token>` performs the replay. The
-    /// backup and that redelivery are both observable, so the hand-off stays
-    /// a real backup/replay cycle rather than passing the already-delivered
-    /// command straight through.
-    ///
-    /// §444's `vacuous` case is reported by `scan_int` itself: no number was
-    /// there, so §446's "Express astonishment that no
-    /// number was here" has already backed the offending token up a second
-    /// time (`back_error`) and committed zero. It still proceeds through
-    /// §448's unit scan and optional-space scan; only the recovery marker is
-    /// carried into the completed dimension. Asking `scan_int` instead of
-    /// pre-testing the token for an ASCII digit is what keeps §444's octal
-    /// (`'`) and hexadecimal (`"`) introducers and §442's alphabetic constant
-    /// out of the vacuous bucket -- all three are legal dimension prefixes,
-    /// as §448's own `-'77 pt` example says.
-    ///
-    /// The `radix=10` conjunct is why `'77.5pt` has no fractional part:
-    /// §440 initializes `radix:=0` and only §444's decimal branch sets it to
-    /// 10, so an octal, hexadecimal, or alphabetic constant leaves a
-    /// following point to the unit scan.
-    fn scan_dimension_constant(
-        &mut self,
-        first: CurrentCommand<G>,
-        allow_infinite: bool,
-        mu: bool,
-        provenance: ScalarProvenance,
-    ) -> Result<(ScannedUnits, bool, ScalarRecovery), CommandError> {
-        let leading_point = is_point_token(&first);
-        self.back_input(first)?;
-        // TeX82 `scan_dimen` delegates the integral prefix to `scan_int`.
-        // Besides sharing radix and recovery rules, that ownership is
-        // observable: `scan_int` backs up the decimal point before
-        // completing, then `scan_dimen` consumes it raw before scanning
-        // fractional digits. Keep that hand-off inside the command scanner
-        // rather than collapsing it into a private decimal parser.
-        self.last_integer_terminator = None;
-        let (integer, decimal, recovery) = if leading_point {
-            (0, true, ScalarRecovery::None)
-        } else {
-            let replayed = self.get_x_token()?.ok_or(CommandError::input_invariant())?;
-            let (scanned, radix) = self.complete_integer(
-                replayed,
-                false,
-                provenance.primary,
-                false,
-                &mut None,
-                &mut None,
-            )?;
-            let decimal = radix == DECIMAL_RADIX
-                && self
-                    .last_integer_terminator
-                    .as_ref()
-                    .is_some_and(is_point_token);
-            (scanned.value, decimal, scanned.recovery)
-        };
-        if decimal {
-            // §452: "|point_token| is being re-scanned". It is `get_token`,
-            // not `get_x_token`, so the point is delivered raw exactly once
-            // and never expanded. A unit stays in the backed-up input for the
-            // keyword scanner instead. §13's rule that every raw-delivery
-            // caller matches the section it implements makes this `get_token`
-            // rather than `get_next`, even though the token being re-scanned
-            // can only ever be the point this branch just backed up.
-            let _ = self.get_token()?;
-        }
-        let (units, flip) = self.scan_units_after_integer(integer, decimal, allow_infinite, mu)?;
-        Ok((units, flip, recovery))
     }
 
     /// Classifies §413's committed value for TeX82 §449's two exits,
@@ -1467,17 +1777,117 @@ impl<G> CommandProcessor<'_, '_, G> {
 
     /// Scans a normal or mu glue specification.
     pub fn scan_glue(&mut self, mu: bool) -> Result<ScannedScalar<GlueSpec>, CommandError> {
-        self.scanned_glue_identity = None;
-        self.scanned_glue_register = None;
+        let pending = self.take_pending_scalar_frame()?;
+        let mut suspended = None;
+        let result = match pending {
+            Some(PendingScalarFrame::GlueLeading {
+                mu: retained_mu,
+                negative,
+                provenance,
+                mut child,
+            }) if retained_mu == mu => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueLeadingToken)?;
+                self.scan_glue_from_leading(mu, negative, provenance, &mut suspended)
+            }
+            Some(PendingScalarFrame::GlueInternal {
+                first,
+                mu: retained_mu,
+                negative,
+                provenance,
+                mut child,
+            }) if retained_mu == mu => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueInternal)?;
+                self.scan_glue_after_first(first, mu, negative, provenance, &mut suspended)
+            }
+            Some(PendingScalarFrame::GlueWidth {
+                mu: retained_mu,
+                negative,
+                mut child,
+            }) if retained_mu == mu => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueWidth)?;
+                self.scan_glue_width(mu, negative, &mut suspended)
+            }
+            Some(PendingScalarFrame::GluePlusKeyword {
+                mu: retained_mu,
+                value,
+                recovery,
+                provenance,
+                mut child,
+            }) if retained_mu == mu => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::GluePlusKeyword)?;
+                self.scan_glue_plus_keyword(mu, value, recovery, provenance, &mut suspended)
+            }
+            Some(PendingScalarFrame::GlueStretch {
+                mu: retained_mu,
+                value,
+                recovery,
+                provenance,
+                mut child,
+            }) if retained_mu == mu => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueStretch)?;
+                self.scan_glue_stretch(mu, value, recovery, provenance, &mut suspended)
+            }
+            Some(PendingScalarFrame::GlueMinusKeyword {
+                mu: retained_mu,
+                value,
+                recovery,
+                provenance,
+                mut child,
+            }) if retained_mu == mu => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueMinusKeyword)?;
+                self.scan_glue_minus_keyword(mu, value, recovery, provenance, &mut suspended)
+            }
+            Some(PendingScalarFrame::GlueShrink {
+                mu: retained_mu,
+                value,
+                recovery,
+                provenance,
+                mut child,
+            }) if retained_mu == mu => {
+                self.restore_scalar_child(&mut child, ScalarChildDestination::GlueShrink)?;
+                self.scan_glue_shrink(mu, value, recovery, provenance, &mut suspended)
+            }
+            Some(mut pending) => {
+                if let Some(child) = pending.take_child() {
+                    self.abort_continuation(child)?;
+                }
+                return Err(CommandError::input_invariant());
+            }
+            None => {
+                self.scanned_glue_identity = None;
+                self.scanned_glue_register = None;
+                self.scan_glue_from_leading(mu, false, OriginId::UNKNOWN, &mut suspended)
+            }
+        };
+        self.finish_scalar_call(result, suspended)
+    }
+
+    fn scan_glue_from_leading(
+        &mut self,
+        mu: bool,
+        mut negative: bool,
+        mut provenance: OriginId,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
         // TeX82 §461's `<Get the next non-blank non-sign token>`: `scan_glue`
         // owns its own leading signs so that §430 can negate an internal
         // glue's three components as a unit (`\skip0=-\skip1`). Routing a
         // signed internal glue through the width-only dimension scanner
         // instead would drop its stretch and shrink.
-        let mut negative = false;
-        let mut provenance = OriginId::UNKNOWN;
         let first = loop {
-            let Some(command) = self.get_x_token()? else {
+            let command = match self.get_x_token() {
+                Ok(command) => command,
+                Err(error) => {
+                    *suspended = Some(PendingScalarFrame::GlueLeading {
+                        mu,
+                        negative,
+                        provenance,
+                        child: None,
+                    });
+                    return Err(error);
+                }
+            };
+            let Some(command) = command else {
                 break None;
             };
             if provenance == OriginId::UNKNOWN {
@@ -1489,9 +1899,20 @@ impl<G> CommandProcessor<'_, '_, G> {
                 _ => break Some(command),
             }
         };
-        let provenance = ScalarProvenance {
-            primary: provenance,
-        };
+        match first {
+            Some(first) => self.scan_glue_after_first(first, mu, negative, provenance, suspended),
+            None => self.scan_glue_width(mu, negative, suspended),
+        }
+    }
+
+    fn scan_glue_after_first(
+        &mut self,
+        first: CurrentCommand<G>,
+        mu: bool,
+        negative: bool,
+        provenance: OriginId,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
         let level = if mu {
             InternalLevel::MuGlue
         } else {
@@ -1502,127 +1923,223 @@ impl<G> CommandProcessor<'_, '_, G> {
         // one canonical backup/replay cycle before `scan_dimen` owns its
         // integer prefix; collapsing the probe loses that input lifecycle and
         // also prevents a direct `\skip` RHS from being accepted as glue.
-        let (mut value, mut recovery, provenance, internal_glue) = match first {
+        *suspended = Some(PendingScalarFrame::GlueInternal {
+            first,
+            mu,
+            negative,
+            provenance,
+            child: None,
+        });
+        match self.scan_something_internal(&first, level, negative)? {
             // §461 is the one caller that passes §413's `negative` flag, so
             // §430 negates the committed value -- all three components of a
             // glue specification together -- before §413 returns.
-            Some(command) => match self.scan_something_internal(&command, level, negative)? {
-                // §461: `if cur_val_level>=glue_val then begin if
-                // cur_val_level<>level then mu_error; return end`. The
-                // specification is the complete answer, so no `plus`/`minus`
-                // components follow it. §429 has already lowered a `mu_val`
-                // quantity to `glue_val` (reporting `mu_error` on the way), so
-                // the level test that remains here is §461's `glue_val`
-                // quantity where `mu_val` was requested.
-                InternalScan::Value(
-                    internal @ (InternalValue::Glue(_) | InternalValue::MuGlue(_)),
-                ) => {
-                    if internal.level() != level {
-                        self.mu_error()?;
-                    }
-                    let (InternalValue::Glue(glue) | InternalValue::MuGlue(glue)) = internal else {
-                        unreachable!("outer pattern restricts the value to a glue specification")
-                    };
-                    (glue, ScalarRecovery::None, provenance, true)
+            // §461: `if cur_val_level>=glue_val then begin if
+            // cur_val_level<>level then mu_error; return end`. The
+            // specification is the complete answer, so no `plus`/`minus`
+            // components follow it. §429 has already lowered a `mu_val`
+            // quantity to `glue_val` (reporting `mu_error` on the way), so
+            // the level test that remains here is §461's `glue_val`
+            // quantity where `mu_val` was requested.
+            InternalScan::Value(internal @ (InternalValue::Glue(_) | InternalValue::MuGlue(_))) => {
+                if internal.level() != level {
+                    self.mu_error()?;
                 }
-                // TeX82's `scan_glue` accepts an internal dimension as the
-                // width of an ordinary glue specification.  In particular,
-                // `\ht<box>` has already consumed its bounded box index;
-                // backing up the primitive here would both replay an
-                // incomplete internal value and use a stale delivery proof.
-                // See TeX.web §461 (`scan_glue`). A mu-level request reports
-                // `mu_error` first and keeps the dimension.
-                InternalScan::Value(InternalValue::Dimension(width)) => {
-                    if mu {
-                        self.mu_error()?;
-                    }
-                    (
-                        GlueSpec {
-                            width,
-                            ..GlueSpec::ZERO
-                        },
-                        ScalarRecovery::None,
-                        provenance,
-                        false,
-                    )
+                let (InternalValue::Glue(glue) | InternalValue::MuGlue(glue)) = internal else {
+                    unreachable!("outer pattern restricts the value to a glue specification")
+                };
+                self.finish_glue(glue, ScalarRecovery::None, provenance)
+            }
+            // TeX82's `scan_glue` accepts an internal dimension as the
+            // width of an ordinary glue specification.  In particular,
+            // `\ht<box>` has already consumed its bounded box index;
+            // backing up the primitive here would both replay an
+            // incomplete internal value and use a stale delivery proof.
+            // See TeX.web §461 (`scan_glue`). A mu-level request reports
+            // `mu_error` first and keeps the dimension.
+            InternalScan::Value(InternalValue::Dimension(width)) => {
+                if mu {
+                    self.mu_error()?;
                 }
-                // §461: `if cur_val_level=int_val then scan_dimen(mu,false,
-                // true)`. §430 has already negated the integer, which is the
-                // numeric prefix of a units-only dimension scan.
-                InternalScan::Value(InternalValue::Integer(integer)) => {
-                    let width = self.scan_dimension_shortcut(integer, mu)?;
-                    (
-                        GlueSpec {
-                            width,
-                            ..GlueSpec::ZERO
-                        },
-                        ScalarRecovery::None,
-                        provenance,
-                        false,
-                    )
+                if negative {
+                    self.scanned_glue_identity = None;
+                    self.scanned_glue_register = None;
                 }
-                InternalScan::Value(InternalValue::Font(_) | InternalValue::Tokens { .. }) => {
-                    unreachable!("TeX82 §416 converts identifiers to dimen_val zero before §461")
-                }
-                // §461's non-internal branch: `back_input; scan_dimen(mu,
-                // false,false); if negative then negate(cur_val)`.
-                InternalScan::NotInternal => {
-                    self.back_input(command)?;
-                    let width = self.scan_dimension_with_order(false, mu)?.0;
-                    (
-                        GlueSpec {
-                            width: if negative {
-                                Scaled::from_raw(-width.value.raw())
-                            } else {
-                                width.value
-                            },
-                            ..GlueSpec::ZERO
-                        },
-                        width.recovery,
-                        width.provenance,
-                        false,
-                    )
-                }
-            },
-            None => {
-                let width = self.scan_dimension_with_order(false, mu)?.0;
-                (
+                self.scan_glue_plus_keyword(
+                    mu,
                     GlueSpec {
-                        width: if negative {
-                            Scaled::from_raw(-width.value.raw())
-                        } else {
-                            width.value
-                        },
+                        width,
                         ..GlueSpec::ZERO
                     },
-                    width.recovery,
-                    width.provenance,
-                    false,
+                    ScalarRecovery::None,
+                    provenance,
+                    suspended,
                 )
             }
-        };
+            // §461: `if cur_val_level=int_val then scan_dimen(mu,false,
+            // true)`. §430 has already negated the integer, which is the
+            // numeric prefix of a units-only dimension scan.
+            InternalScan::Value(InternalValue::Integer(integer)) => {
+                let width = self.scan_dimension_shortcut(integer, mu)?;
+                if negative {
+                    self.scanned_glue_identity = None;
+                    self.scanned_glue_register = None;
+                }
+                self.scan_glue_plus_keyword(
+                    mu,
+                    GlueSpec {
+                        width,
+                        ..GlueSpec::ZERO
+                    },
+                    ScalarRecovery::None,
+                    provenance,
+                    suspended,
+                )
+            }
+            InternalScan::Value(InternalValue::Font(_) | InternalValue::Tokens { .. }) => {
+                unreachable!("TeX82 §416 converts identifiers to dimen_val zero before §461")
+            }
+            // §461's non-internal branch: `back_input; scan_dimen(mu,
+            // false,false); if negative then negate(cur_val)`.
+            InternalScan::NotInternal => {
+                self.back_input(first)?;
+                self.scan_glue_width(mu, negative, suspended)
+            }
+        }
+    }
+
+    fn scan_glue_width(
+        &mut self,
+        mu: bool,
+        negative: bool,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+        *suspended = Some(PendingScalarFrame::GlueWidth {
+            mu,
+            negative,
+            child: None,
+        });
+        let width = self.scan_dimension_with_order(false, mu)?.0;
         if negative {
             self.scanned_glue_identity = None;
             self.scanned_glue_register = None;
         }
-        if !internal_glue {
-            if self.scan_keyword("plus")?.value {
-                let (stretch, order) = self.scan_dimension_with_order(true, mu)?;
-                value.stretch = stretch.value;
-                recovery = stretch.recovery;
-                value.stretch_order = order;
-            }
-            if self.scan_keyword("minus")?.value {
-                let (shrink, order) = self.scan_dimension_with_order(true, mu)?;
-                value.shrink = shrink.value;
-                recovery = shrink.recovery;
-                value.shrink_order = order;
-            }
-        }
-        let scanned = ScannedScalar {
+        self.scan_glue_plus_keyword(
+            mu,
+            GlueSpec {
+                width: if negative {
+                    Scaled::from_raw(-width.value.raw())
+                } else {
+                    width.value
+                },
+                ..GlueSpec::ZERO
+            },
+            width.recovery,
+            width.provenance.primary,
+            suspended,
+        )
+    }
+
+    fn scan_glue_plus_keyword(
+        &mut self,
+        mu: bool,
+        value: GlueSpec,
+        recovery: ScalarRecovery,
+        provenance: OriginId,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+        *suspended = Some(PendingScalarFrame::GluePlusKeyword {
+            mu,
             value,
             recovery,
             provenance,
+            child: None,
+        });
+        if self.scan_keyword("plus")?.value {
+            self.scan_glue_stretch(mu, value, recovery, provenance, suspended)
+        } else {
+            self.scan_glue_minus_keyword(mu, value, recovery, provenance, suspended)
+        }
+    }
+
+    fn scan_glue_stretch(
+        &mut self,
+        mu: bool,
+        mut value: GlueSpec,
+        mut recovery: ScalarRecovery,
+        provenance: OriginId,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+        *suspended = Some(PendingScalarFrame::GlueStretch {
+            mu,
+            value,
+            recovery,
+            provenance,
+            child: None,
+        });
+        let (stretch, order) = self.scan_dimension_with_order(true, mu)?;
+        value.stretch = stretch.value;
+        recovery = stretch.recovery;
+        value.stretch_order = order;
+        self.scan_glue_minus_keyword(mu, value, recovery, provenance, suspended)
+    }
+
+    fn scan_glue_minus_keyword(
+        &mut self,
+        mu: bool,
+        value: GlueSpec,
+        recovery: ScalarRecovery,
+        provenance: OriginId,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+        *suspended = Some(PendingScalarFrame::GlueMinusKeyword {
+            mu,
+            value,
+            recovery,
+            provenance,
+            child: None,
+        });
+        if self.scan_keyword("minus")?.value {
+            self.scan_glue_shrink(mu, value, recovery, provenance, suspended)
+        } else {
+            self.finish_glue(value, recovery, provenance)
+        }
+    }
+
+    fn scan_glue_shrink(
+        &mut self,
+        mu: bool,
+        mut value: GlueSpec,
+        mut recovery: ScalarRecovery,
+        provenance: OriginId,
+        suspended: &mut Option<PendingScalarFrame<G>>,
+    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+        *suspended = Some(PendingScalarFrame::GlueShrink {
+            mu,
+            value,
+            recovery,
+            provenance,
+            child: None,
+        });
+        let (shrink, order) = self.scan_dimension_with_order(true, mu)?;
+        value.shrink = shrink.value;
+        recovery = shrink.recovery;
+        value.shrink_order = order;
+        self.finish_glue(value, recovery, provenance)
+    }
+
+    fn finish_glue(
+        &mut self,
+        value: GlueSpec,
+        recovery: ScalarRecovery,
+        provenance: OriginId,
+    ) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+        let scanned = ScannedScalar {
+            value,
+            recovery,
+            provenance: ScalarProvenance {
+                primary: provenance,
+            },
         };
         observe!(
             self,

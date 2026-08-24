@@ -142,7 +142,7 @@ pub(in crate::main_control) fn scan<G>(
                 processor,
                 None,
                 global,
-                CountScanPhase::RegisterIndex,
+                RegisterAssignmentScanPhase::RegisterIndex,
                 suspended_operation_scan,
             )
         }
@@ -150,20 +150,17 @@ pub(in crate::main_control) fn scan<G>(
             processor,
             Some(index),
             global,
-            CountScanPhase::OptionalEquals,
+            RegisterAssignmentScanPhase::OptionalEquals,
             suspended_operation_scan,
         ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-            let index = processor
-                .scan_profile_register_index()
-                .map_err(command_error)?;
-            let _ = processor.scan_optional_equals().map_err(command_error)?;
-            let value = processor.scan_dimension().map_err(command_error)?.value;
-            Ok(ColdOperation::Dimen {
-                index,
-                value,
+            scan_dimension_register_assignment(
+                processor,
+                None,
                 global,
-            })
+                RegisterAssignmentScanPhase::RegisterIndex,
+                suspended_operation_scan,
+            )
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Wd
@@ -188,81 +185,49 @@ pub(in crate::main_control) fn scan<G>(
                 global,
             })
         }
-        Meaning::DimenRegister(index) => {
-            let _ = processor.scan_optional_equals().map_err(command_error)?;
-            let value = processor.scan_dimension().map_err(command_error)?.value;
-            Ok(ColdOperation::Dimen {
-                index,
-                value,
-                global,
-            })
-        }
+        Meaning::DimenRegister(index) => scan_dimension_register_assignment(
+            processor,
+            Some(index),
+            global,
+            RegisterAssignmentScanPhase::OptionalEquals,
+            suspended_operation_scan,
+        ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
-            let index = processor
-                .scan_profile_register_index()
-                .map_err(command_error)?;
-            let _ = processor.scan_optional_equals().map_err(command_error)?;
-            let value = processor.scan_glue(false).map_err(command_error)?.value;
-            let source_identity = processor.scanned_glue_identity();
-            let source_register = processor.scanned_glue_register();
-            Ok(ColdOperation::Skip {
-                index,
-                value,
-                source_identity,
-                source_register,
-                redundant: false,
-                reassigning: false,
+            scan_glue_register_assignment(
+                processor,
+                None,
                 global,
-            })
+                false,
+                RegisterAssignmentScanPhase::RegisterIndex,
+                suspended_operation_scan,
+            )
         }
-        Meaning::SkipRegister(index) => {
-            let _ = processor.scan_optional_equals().map_err(command_error)?;
-            let value = processor.scan_glue(false).map_err(command_error)?.value;
-            let source_identity = processor.scanned_glue_identity();
-            let source_register = processor.scanned_glue_register();
-            Ok(ColdOperation::Skip {
-                index,
-                value,
-                source_identity,
-                source_register,
-                redundant: false,
-                reassigning: false,
-                global,
-            })
-        }
+        Meaning::SkipRegister(index) => scan_glue_register_assignment(
+            processor,
+            Some(index),
+            global,
+            false,
+            RegisterAssignmentScanPhase::OptionalEquals,
+            suspended_operation_scan,
+        ),
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
-            let index = processor
-                .scan_profile_register_index()
-                .map_err(command_error)?;
-            let _ = processor.scan_optional_equals().map_err(command_error)?;
-            let value = processor.scan_glue(true).map_err(command_error)?.value;
-            let source_identity = processor.scanned_glue_identity();
-            let source_register = processor.scanned_glue_register();
-            Ok(ColdOperation::Muskip {
-                index,
-                value,
-                source_identity,
-                source_register,
-                redundant: false,
-                reassigning: false,
+            scan_glue_register_assignment(
+                processor,
+                None,
                 global,
-            })
+                true,
+                RegisterAssignmentScanPhase::RegisterIndex,
+                suspended_operation_scan,
+            )
         }
-        Meaning::MuskipRegister(index) => {
-            let _ = processor.scan_optional_equals().map_err(command_error)?;
-            let value = processor.scan_glue(true).map_err(command_error)?.value;
-            let source_identity = processor.scanned_glue_identity();
-            let source_register = processor.scanned_glue_register();
-            Ok(ColdOperation::Muskip {
-                index,
-                value,
-                source_identity,
-                source_register,
-                redundant: false,
-                reassigning: false,
-                global,
-            })
-        }
+        Meaning::MuskipRegister(index) => scan_glue_register_assignment(
+            processor,
+            Some(index),
+            global,
+            true,
+            RegisterAssignmentScanPhase::OptionalEquals,
+            suspended_operation_scan,
+        ),
         // TeX82 §458 leaves `scan_glue` entirely in the command machine.
         // Main control receives only its completed typed specification, so a
         // u-template's numeric operand retains the canonical `back_input`
