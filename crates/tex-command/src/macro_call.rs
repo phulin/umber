@@ -434,12 +434,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                 }
             })?;
             self.trace_macro_argument(matching, marker, parameter + 1, argument)?;
-            let argument_words = self
+            let argument_token_count = self
                 .command
                 .scratch
                 .match_words(matching, argument)
                 .map_err(|_| CommandError::input_invariant())?
-                .collect::<Vec<_>>();
+                .len();
             observe!(
                 self,
                 CommandObservation::TokenList(TokenListRecord {
@@ -460,9 +460,12 @@ impl<G> CommandProcessor<'_, '_, G> {
                     definition: self.definition_observation_operand(definition),
                     control_sequence: None,
                     argument: Some((parameter + 1) as u8),
-                    token_count: argument_words.len() as u64,
-                    tokens: argument_words
-                        .into_iter()
+                    token_count: argument_token_count as u64,
+                    tokens: self
+                        .command
+                        .scratch
+                        .match_words(matching, argument)
+                        .expect("matched macro argument remains live until sealing")
                         .map(|token| self.observed_token(token))
                         .collect(),
                 }),

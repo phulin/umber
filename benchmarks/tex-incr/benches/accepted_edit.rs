@@ -1,15 +1,19 @@
 use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
-use tex_incr::{Edit, RevisionId, Session};
+use tex_incr::{Edit, RevisionId, Session, new_reachability_store};
 use tex_state::ContentHash;
 
 const RULES: usize = 128;
 
 fn accepted_edit(c: &mut Criterion) {
+    let reachability_store = new_reachability_store();
     let mut group = c.benchmark_group("two_generation_edit");
     group.sample_size(20);
+    // One caller-owned store has exactly the prior/current physical slots for
+    // one live session. Per-iteration setup keeps Criterion from staging
+    // several prepared sessions against those same exclusive slots.
     group.bench_function("accept_current_and_drop_prior", |b| {
         b.iter_batched(
-            prepared_session,
+            || prepared_session(&reachability_store),
             |(mut session, edit)| {
                 let accepted = session
                     .advance(RevisionId::new(2), edit)
@@ -18,12 +22,12 @@ fn accepted_edit(c: &mut Criterion) {
                 assert_eq!(session.retired_generation_count(), 1);
                 black_box(accepted);
             },
-            BatchSize::SmallInput,
+            BatchSize::PerIteration,
         )
     });
     group.bench_function("reject_current_and_preserve_prior", |b| {
         b.iter_batched(
-            prepared_session,
+            || prepared_session(&reachability_store),
             |(session, edit)| {
                 let candidate = session
                     .start_advance_candidate(RevisionId::new(2), edit)
@@ -32,16 +36,16 @@ fn accepted_edit(c: &mut Criterion) {
                 assert_eq!(session.retained_generation_count(), 1);
                 assert_eq!(session.retired_generation_count(), 0);
             },
-            BatchSize::SmallInput,
+            BatchSize::PerIteration,
         )
     });
     group.finish();
 }
 
-fn prepared_session() -> (Session, Edit) {
+fn prepared_session(reachability_store: &tex_state::ReachabilityStore) -> (Session<'_>, Edit) {
     let source = source();
     let mut session = Session::start(
-        (),
+        reachability_store,
         "two-generation-edit",
         RevisionId::new(1),
         source.clone(),

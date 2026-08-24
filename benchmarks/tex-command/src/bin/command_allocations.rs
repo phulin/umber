@@ -119,6 +119,7 @@ impl CommandObserver for CountingObserver {
 
 struct ProcessorCase<G> {
     command: CommandState<G>,
+    operation: tex_command::CommandAttemptOperation,
     capabilities: CommandHostCapabilities,
     diagnostic_effects: tex_state::diagnostic::DiagnosticEffects,
     replay: Option<TokenListId<G>>,
@@ -307,7 +308,11 @@ fn run_one<G>(
         }
         Workload::CommandTextRendering => unreachable!("rendering has its own case"),
     }
+    drop(processor);
     black_box(observer.0);
+    case.command
+        .commit_attempt_operation(case.operation)
+        .expect("benchmark operation commits");
     region.change()
 }
 
@@ -422,8 +427,10 @@ fn processor_case<G>(universe: &mut Universe<G>, workload: Workload) -> Processo
             .expect("benchmark source opens");
     }
 
+    let operation = command.begin_attempt_operation();
     let mut case = ProcessorCase {
         command,
+        operation,
         capabilities: CommandHostCapabilities::default(),
         diagnostic_effects: tex_state::diagnostic::DiagnosticEffects::new(),
         replay,
