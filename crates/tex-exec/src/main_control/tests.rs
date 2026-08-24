@@ -6552,6 +6552,171 @@ fn unavailable_input_probe_releases_its_diagnostic_site_before_terminal_close() 
     });
 }
 
+const PREFIXED_DEFINITION_RESOURCE_SOURCE: &[u8] = br"
+\protected\long\def\gsetNpx{\protected\outer\long\global\edef}
+\long\def\expArgsNc#1#2{\expandafter#1\csname#2\endcsname}
+\protected\def\gsetCpx{\expArgsNc\gsetNpx}
+\gsetCpx{result\pdffilesize{first}}{\pdffilesize{second}}
+\end
+";
+
+fn register_file_size_probe<G>(
+    control: &mut MainControl<G>,
+    need: &ResourceNeed,
+    bytes: &'static [u8],
+) {
+    let ResourceNeed::InputProbe { request } = need else {
+        panic!("expected file-size probe, got {need:?}");
+    };
+    control.capabilities_mut().register_input_probe(
+        request.name.clone(),
+        tex_command::FileEnquiryResource::new(
+            SourceRegistration::new(RegisteredSourceKind::Generated, Arc::<[u8]>::from(bytes)),
+            None,
+        ),
+    );
+}
+
+fn next_input_probe<G>(control: &mut MainControl<G>, stores: &mut Universe<G>) -> ResourceNeed {
+    loop {
+        match control
+            .advance_episode(stores)
+            .expect("prefixed definition probe suspends")
+        {
+            StepResult::Suspended(need @ ResourceNeed::InputProbe { .. }) => return need,
+            StepResult::Progress(_) => {}
+            other => panic!("unexpected prefixed-definition step: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn prefixed_definition_scanner_resumes_its_exact_substantive_command() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        register_source(&mut control, PREFIXED_DEFINITION_RESOURCE_SOURCE);
+
+        let first = next_input_probe(&mut control, stores);
+        assert!(matches!(
+            &first,
+            ResourceNeed::InputProbe { request } if request.name == "first"
+        ));
+        register_file_size_probe(&mut control, &first, b"ABCD");
+
+        let second = next_input_probe(&mut control, stores);
+        assert!(matches!(
+            &second,
+            ResourceNeed::InputProbe { request } if request.name == "second"
+        ));
+        register_file_size_probe(&mut control, &second, b"AB");
+        run_to_end(&mut control, stores);
+
+        admitted!(stores, |context| {
+            let result = context.intern_control_sequence("result4");
+            let ResolvedMeaning::Macro { definition, flags } = context.meaning(result) else {
+                panic!("resumed prefixed definition is installed")
+            };
+            assert!(flags.contains(MeaningFlags::LONG));
+            assert!(flags.contains(MeaningFlags::OUTER));
+            assert!(flags.contains(MeaningFlags::PROTECTED));
+            let definition = context.definition(definition);
+            let replacement = definition.replacement_text();
+            assert_eq!(replacement.len(), 1);
+            assert_eq!(
+                replacement[0].semantic_token(),
+                Token::Char {
+                    ch: '2',
+                    cat: Catcode::Other,
+                }
+            );
+        });
+    });
+}
+
+#[test]
+fn prefix_fetch_resumes_with_earlier_flags_and_its_exact_expansion_child() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        register_source(
+            &mut control,
+            br"
+\long\def\afterprobe#1X{\global}
+\def\nextprefix{\expandafter\afterprobe\pdffilesize{first}X}
+\def\start{\long\protected\nextprefix\xdef}
+\start\result{ok}
+\end
+",
+        );
+
+        let first = next_input_probe(&mut control, stores);
+        register_file_size_probe(&mut control, &first, b"ABCD");
+        run_to_end(&mut control, stores);
+
+        admitted!(stores, |context| {
+            let result = context.intern_control_sequence("result");
+            let ResolvedMeaning::Macro { flags, .. } = context.meaning(result) else {
+                panic!("prefix-fetch continuation installs the definition")
+            };
+            assert!(flags.contains(MeaningFlags::LONG));
+            assert!(flags.contains(MeaningFlags::PROTECTED));
+        });
+    });
+}
+
+#[test]
+fn prefixed_definition_scanner_repeatedly_resuspends_at_the_same_child() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        register_source(&mut control, PREFIXED_DEFINITION_RESOURCE_SOURCE);
+
+        let first = next_input_probe(&mut control, stores);
+        register_file_size_probe(&mut control, &first, b"ABCD");
+        let second = next_input_probe(&mut control, stores);
+        for _ in 0..3 {
+            let repeated = next_input_probe(&mut control, stores);
+            assert!(matches!(
+                repeated,
+                ResourceNeed::InputProbe { request } if request.name == "second"
+            ));
+        }
+
+        register_file_size_probe(&mut control, &second, b"AB");
+        run_to_end(&mut control, stores);
+        assert_eq!(macro_character_text(stores, "result4"), "2");
+    });
+}
+
+#[test]
+fn prefixed_definition_scanner_fuel_abort_releases_its_operation_child() {
+    crate::test_harness::with_nonstop_plain_universe(|stores| {
+        let mut control = pdftex_initex(stores);
+        register_source(&mut control, PREFIXED_DEFINITION_RESOURCE_SOURCE);
+
+        let first = next_input_probe(&mut control, stores);
+        register_file_size_probe(&mut control, &first, b"ABCD");
+        let second = next_input_probe(&mut control, stores);
+        register_file_size_probe(&mut control, &second, b"AB");
+        control.set_fuel_limit(1).expect("bounded abort fuel");
+
+        let aborted = control.advance_episode(stores);
+        assert!(
+            matches!(
+                &aborted,
+                Err(ExecError::Command(CommandError::FuelExhausted { .. }))
+            ) || matches!(
+                &aborted,
+                Err(ExecError::Captured { error, .. })
+                    if matches!(**error, ExecError::Command(CommandError::FuelExhausted { .. }))
+            ),
+            "unexpected prefixed-definition abort: {aborted:?}"
+        );
+        assert!(
+            control.pending_direct_operation.is_none(),
+            "fuel abort closes the scanner child before its operation parent"
+        );
+    });
+}
+
 #[test]
 fn named_boundary_queue_publishes_literal_and_macro_paragraphs_before_the_next_command() {
     for source in [
