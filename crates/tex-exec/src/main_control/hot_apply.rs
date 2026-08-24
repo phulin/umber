@@ -297,7 +297,17 @@ fn apply_let<G>(
     stores: &mut tex_state::CommandContext<'_, G>,
     command: &mut CommandMachine<'_, G>,
 ) -> Result<ReplayStep, ExecError> {
-    let committed = global || stores.meaning(target) != meaning;
+    // TeX82 §§277/1221 always route `\let` through `eq_define`. e-TeX change
+    // [19.277] (retained by pdftex.web §277) alone suppresses an identical
+    // local definition while extended mode is active.
+    let current = stores.meaning(target);
+    let redundant = crate::assignments::committer::redundant_local_assignment(
+        stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0,
+        &current,
+        &meaning,
+        global,
+    );
+    let committed = !redundant;
     assignment_tracing::trace_meaning_write(
         stores,
         command.diagnostic_effects,

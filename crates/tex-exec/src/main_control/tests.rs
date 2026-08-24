@@ -5263,48 +5263,52 @@ fn macro_semantic_tokens<G>(stores: &mut Universe<G>, name: &str) -> Vec<Token> 
 }
 
 #[test]
-fn etex_identical_local_let_is_a_reassignment_but_global_let_is_not() {
-    // e-TeX change [19.277] returns before local `eq_define` when both the
-    // command type and equivalent are identical. A global definition still
-    // commits, so the two controls distinguish the shortcut from filtering.
-    crate::test_harness::with_nonstop_plain_universe(|stores| {
-        tex_command::install_tex82_expandable_primitives(stores);
-        tex_command::install_etex_expandable_primitives(stores);
-        crate::install_unexpandable_primitives(stores);
-        crate::install_etex_unexpandable_primitives(stores);
-        let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
-        register_source(
-            &mut control,
-            br"\catcode123=1 \let\bgroup={ \let\bgroup={ \global\let\bgroup={ \end",
-        );
-        let mut observations = ObservationRecorder::default();
-        loop {
-            match control
-                .step_with_observer(stores, &mut observations)
-                .expect("e-TeX meaning reassignments execute")
-            {
-                MainControlStep::End | MainControlStep::EndOfInput => break,
-                MainControlStep::Continue => {}
-            }
-        }
+fn identical_local_let_is_profile_gated_and_global_let_always_commits() {
+    // TeX82 §§277/1221 execute both identical local `eq_define` calls. e-TeX
+    // change [19.277] suppresses the second one in extended mode. The changed
+    // first assignment and identical global assignment are negative controls.
+    for (profile, expected) in [
+        (
+            CommandProfile::TEX82,
+            vec![
+                (Some("left_brace"), false),
+                (Some("left_brace"), false),
+                (Some("left_brace"), true),
+            ],
+        ),
+        (
+            CommandProfile::ETEX26,
+            vec![(Some("left_brace"), false), (Some("left_brace"), true)],
+        ),
+    ] {
+        crate::test_harness::with_nonstop_plain_universe(|stores| {
+            let mut control = if profile == CommandProfile::ETEX26 {
+                etex_initex(stores)
+            } else {
+                MainControl::tex82_initex(stores)
+            };
+            register_source(
+                &mut control,
+                br"\catcode123=1 \let\bgroup={ \let\bgroup={ \global\let\bgroup={ \end",
+            );
+            let mut observations = ObservationRecorder::default();
+            run_to_end_observed(&mut control, stores, &mut observations);
 
-        let mutations: Vec<_> = observations
-            .0
-            .iter()
-            .filter_map(|observation| match observation {
-                CommandObservation::Mutation(record)
-                    if record.target == MutationTarget::Meaning =>
-                {
-                    Some((observation_name(&record.value), record.global))
-                }
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            mutations,
-            [(Some("left_brace"), false), (Some("left_brace"), true)]
-        );
-    });
+            let mutations: Vec<_> = observations
+                .0
+                .iter()
+                .filter_map(|observation| match observation {
+                    CommandObservation::Mutation(record)
+                        if record.target == MutationTarget::Meaning =>
+                    {
+                        Some((observation_name(&record.value), record.global))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(mutations, expected, "profile: {profile:?}");
+        });
+    }
 }
 
 #[test]

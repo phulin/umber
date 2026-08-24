@@ -17,6 +17,22 @@ use tex_state::{CommandContext, GlueId, TokenListId};
 
 use super::tracing;
 
+/// Whether e-TeX's identical-local assignment shortcut suppresses this write.
+///
+/// TeX82 §277 always executes `eq_define`/`eq_word_define`. e-TeX change
+/// [19.277] adds the early return only while `eTeX_ex` is true; global writes
+/// still use the unconditional `geq_define` path. Hot meaning assignments and
+/// the ordinary scalar committer share this predicate so they cannot drift on
+/// the mode or scope boundary.
+pub(crate) fn redundant_local_assignment<T: Eq>(
+    etex_extended: bool,
+    current: &T,
+    replacement: &T,
+    global: bool,
+) -> bool {
+    etex_extended && !global && current == replacement
+}
+
 /// The result of one authoritative assignment commit.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum MutationReceipt {
@@ -88,7 +104,12 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
     }
 
     fn redundant_word<T: Eq>(&self, current: T, replacement: T) -> bool {
-        self.stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 && current == replacement
+        redundant_local_assignment(
+            self.stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0,
+            &current,
+            &replacement,
+            false,
+        )
     }
 
     fn redundant_zero_glue(&self, current: Option<GlueId<G>>, replacement: &GlueSpec) -> bool {
@@ -137,7 +158,12 @@ impl<'a, 'ctx, G> AssignmentCommitter<'a, 'ctx, G> {
         Write: FnOnce(&mut CommandContext<'_, G>, bool),
         Trace: FnOnce(&mut CommandContext<'_, G>, &mut DiagnosticEffects, bool),
     {
-        let redundant = !global && self.redundant_word(current, replacement);
+        let redundant = redundant_local_assignment(
+            self.stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0,
+            &current,
+            &replacement,
+            global,
+        );
         if global || !redundant {
             write(self.stores, global);
         }
