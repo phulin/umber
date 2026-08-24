@@ -9,6 +9,7 @@ fixture_repo="${tmp_root}/repo"
 mkdir -p \
   "${fixture_repo}/scripts" \
   "${fixture_repo}/tests/latex" \
+  "${fixture_repo}/texmf-dist/tex/latex/tex-ini-files" \
   "${fixture_repo}/texmf-dist/tex/latex-dev/base" \
   "${fixture_repo}/distribution" \
   "${fixture_repo}/target/release" \
@@ -17,6 +18,9 @@ mkdir -p \
 cp "${repo_root}/scripts/build-latex-format.sh" "${fixture_repo}/scripts/"
 printf '\\dump\n' > "${fixture_repo}/texmf-dist/tex/latex-dev/base/latex.ltx"
 printf '\\end\n' > "${fixture_repo}/tests/latex/format-equivalence.tex"
+printf '\\end\n' > "${fixture_repo}/tests/latex/pdflatex-smoke.tex"
+printf 'pdf configuration\n' > "${fixture_repo}/tests/latex/pdftexconfig.tex"
+printf '\\input latex.ltx\n' > "${fixture_repo}/texmf-dist/tex/latex/tex-ini-files/pdflatex.ini"
 printf '{"schema":3}\n' > "${fixture_repo}/distribution/manifest-v3.json"
 
 sha256_file() {
@@ -29,6 +33,8 @@ sha256_file() {
 
 distribution_sha256="$(sha256_file "${fixture_repo}/distribution/manifest-v3.json")"
 source_sha256="$(sha256_file "${fixture_repo}/texmf-dist/tex/latex-dev/base/latex.ltx")"
+pdflatex_source_sha256="$(sha256_file "${fixture_repo}/texmf-dist/tex/latex/tex-ini-files/pdflatex.ini")"
+pdftexconfig_sha256="$(sha256_file "${fixture_repo}/tests/latex/pdftexconfig.tex")"
 
 cat > "${fixture_repo}/tests/latex-source.lock" <<EOF
 distribution fixture
@@ -36,11 +42,24 @@ distribution_sha256 ${distribution_sha256}
 format_schema 11
 source_date_epoch 1
 source tex/latex-dev/base/latex.ltx 6 ${source_sha256}
+pdflatex-source tex/latex/tex-ini-files/pdflatex.ini 17 ${pdflatex_source_sha256}
+pdflatex-local tests/latex/pdftexconfig.tex 18 ${pdftexconfig_sha256}
+EOF
+
+cat > "${fixture_repo}/tests/latex/pdflatex-representative.lock" <<'EOF'
+source tex tex/runtime-a.tex 9 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+source tfm fonts/runtime-b.tfm 10 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 EOF
 
 expected_receipt="${tmp_root}/expected.inputs"
 printf '6\t%s\n' \
   "${fixture_repo}/texmf-dist/tex/latex-dev/base/latex.ltx" > "$expected_receipt"
+pdflatex_expected_receipt="${tmp_root}/pdflatex-expected.inputs"
+{
+  printf '6\t%s\n' "${fixture_repo}/texmf-dist/tex/latex-dev/base/latex.ltx"
+  printf '17\t%s\n' "${fixture_repo}/texmf-dist/tex/latex/tex-ini-files/pdflatex.ini"
+  printf '18\t%s\n' "${fixture_repo}/tests/latex/pdftexconfig.tex"
+} | LC_ALL=C sort > "$pdflatex_expected_receipt"
 invocations="${tmp_root}/run-invocations.jsonl"
 
 cat > "${tmp_root}/bin/cargo" <<'EOF'
@@ -159,6 +178,43 @@ for row in rows:
 assert sum("--format-out" in row for row in rows) == 2, rows
 assert sum("--format" in row for row in rows) == 1, rows
 assert sum("--format-out" not in row and "--format" not in row for row in rows) == 1, rows
+PY
+
+: > "$invocations"
+PATH="${tmp_root}/bin:${PATH}" \
+XDG_CACHE_HOME="${tmp_root}/cache" \
+UMBER_OFFLINE=1 \
+UMBER_TEST_INPUT_RECEIPT="$pdflatex_expected_receipt" \
+UMBER_TEST_INVOCATIONS="$invocations" \
+  "$builder" \
+    --engine pdflatex \
+    --texmf-dist "${fixture_repo}/texmf-dist" \
+    --distribution "${fixture_repo}/distribution" \
+    --distribution-sha256 "$distribution_sha256" \
+    --output-dir "${fixture_repo}/pdflatex-output" \
+    --force >/dev/null
+
+python3 - "$invocations" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+assert len(rows) == 4, rows
+
+def prefetch(row):
+    return {
+        row[index + 1]
+        for index, argument in enumerate(row)
+        if argument == "--prefetch-input"
+    }
+
+source_closure = {"tex:latex.ltx", "tex:pdflatex.ini", "tex:pdftexconfig.tex"}
+runtime_closure = {"tex:runtime-a.tex", "tfm:runtime-b.tfm"}
+source = next(row for row in rows if "--format-out" not in row and "--format" not in row)
+loaded = next(row for row in rows if "--format" in row)
+assert prefetch(source) == source_closure | runtime_closure, source
+assert prefetch(loaded) == runtime_closure, loaded
 PY
 
 printf '%s\n' 'build-latex-format tests: PASS'

@@ -349,10 +349,31 @@ def read_runtime_requests(
             requested.add(key)
             continue
         fields = raw_line.split()
-        if not fields or fields[0].startswith("#") or fields[0] == "distribution":
+        if not fields or fields[0].startswith("#") or fields[0] in {
+            "distribution",
+            "distribution_sha256",
+            "format_schema",
+            "source_date_epoch",
+        }:
             continue
         if len(fields) == 1 and ":" in fields[0]:
             key = fields[0]
+        elif fields[0] in {
+            "source",
+            "local",
+            "pdflatex-source",
+            "pdflatex-local",
+        } and len(fields) == 4:
+            virtual = _safe_relative(fields[1], label="virtual path")
+            if not valid_digest(fields[3], 64):
+                raise TexliveError(f"{path}:{number}: invalid SHA-256")
+            kind = "tfm" if virtual.suffix == ".tfm" else "tex"
+            key = f"{kind}:{virtual.name}"
+            identity = Identity(int(fields[2]), fields[3])
+            if fields[0] in {"source", "pdflatex-source"}:
+                previous = expected.setdefault(key, identity)
+                if previous != identity:
+                    raise TexliveError(f"{path}:{number}: conflicting identity for {key}")
         elif fields[0] == "source" and len(fields) in (5, 6):
             virtual = _safe_relative(fields[2], label="virtual path")
             if not valid_digest(fields[4], 64):

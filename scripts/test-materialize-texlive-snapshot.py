@@ -45,29 +45,26 @@ with tempfile.TemporaryDirectory() as temporary:
     unselected_name = f"sha256-{unselected_digest}"
     (objects / unselected_name).write_bytes(unselected)
 
-    selected_key = key_for_shard("selected", 0)
-    unavailable_key = key_for_shard("unavailable", 1)
-    unselected_key = key_for_shard("unselected", 1)
-    shard_files = [
-        {
-            selected_key: {
-                "virtualPath": "tex/selected.tex",
-                "object": selected_name,
-                "sha256": selected_digest,
-                "bytes": len(selected),
-                "dependencies": [],
-            }
-        },
-        {
-            unselected_key: {
-                "virtualPath": "tex/unselected.tex",
-                "object": unselected_name,
-                "sha256": unselected_digest,
-                "bytes": len(unselected),
-                "dependencies": [],
-            }
-        },
-    ]
+    selected_key = "tex:selected.tex"
+    selected_index = hashlib.sha256(selected_key.encode()).digest()[0] >> 7
+    other_index = 1 - selected_index
+    unavailable_key = key_for_shard("unavailable", other_index)
+    unselected_key = key_for_shard("unselected", other_index)
+    shard_files = [{}, {}]
+    shard_files[selected_index][selected_key] = {
+        "virtualPath": "tex/selected.tex",
+        "object": selected_name,
+        "sha256": selected_digest,
+        "bytes": len(selected),
+        "dependencies": [],
+    }
+    shard_files[other_index][unselected_key] = {
+        "virtualPath": "tex/unselected.tex",
+        "object": unselected_name,
+        "sha256": unselected_digest,
+        "bytes": len(unselected),
+        "dependencies": [],
+    }
     shard_digests = []
     for index, files in enumerate(shard_files):
         shard = canonical_json(
@@ -148,6 +145,63 @@ with tempfile.TemporaryDirectory() as temporary:
     subprocess.run(keyed_command, check=True, capture_output=True, text=True)
     assert (keyed_destination / "texmf-dist/tex/selected.tex").read_bytes() == selected
     assert not (keyed_destination / "objects" / unselected_name).exists()
+
+    representative_lock = work / "representative.lock"
+    representative_lock.write_text(
+        "distribution fixture\n"
+        f"distribution_sha256 {sha(manifest)}\n"
+        "format_schema 11\n"
+        "source_date_epoch 1\n"
+        f"pdflatex-source tex/selected.tex {len(selected)} {selected_digest}\n"
+    )
+    locked_destination = work / "locked-mirror"
+    locked_command = common + [
+        "--output-dir",
+        str(locked_destination),
+        "--keys-from",
+        str(representative_lock),
+    ]
+    subprocess.run(locked_command, check=True, capture_output=True, text=True)
+    assert (locked_destination / "texmf-dist/tex/selected.tex").read_bytes() == selected
+
+    local_shadow_lock = work / "local-shadow.lock"
+    local_shadow_lock.write_text(
+        f"pdflatex-local tests/selected.tex {len(selected) + 1} {'0' * 64}\n"
+    )
+    local_shadow_destination = work / "local-shadow-mirror"
+    subprocess.run(
+        common
+        + [
+            "--output-dir",
+            str(local_shadow_destination),
+            "--keys-from",
+            str(local_shadow_lock),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert (
+        local_shadow_destination / "texmf-dist/tex/selected.tex"
+    ).read_bytes() == selected
+
+    mismatched_lock = work / "mismatched.lock"
+    mismatched_lock.write_text(
+        f"source tex tex/selected.tex {len(selected)} {'0' * 64}\n"
+    )
+    mismatched = subprocess.run(
+        common
+        + [
+            "--output-dir",
+            str(work / "mismatched-mirror"),
+            "--keys-from",
+            str(mismatched_lock),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert mismatched.returncode != 0
+    assert "differs from pinned lock identity" in mismatched.stderr
 
     receipt = work / "font-closure.tsv"
     receipt.write_text(

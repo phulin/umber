@@ -400,8 +400,13 @@ When the pinned source tree is unavailable, materialize an authenticated local
 subset directly from the immutable hosted publication:
 
 ```sh
-python3 scripts/provision.py materialize --format latex --format pdflatex
-python3 scripts/provision.py materialize --format latex --format pdflatex --offline
+python3 scripts/provision.py materialize \
+  --keys-from tests/latex-source.lock \
+  --keys-from tests/latex/pdflatex-representative.lock
+python3 scripts/provision.py materialize \
+  --keys-from tests/latex-source.lock \
+  --keys-from tests/latex/pdflatex-representative.lock \
+  --offline
 ```
 
 The command preserves the exact `manifest-v3.json` trust root, stages all
@@ -415,7 +420,23 @@ second command performs no network I/O and proves that the checkout-local root,
 complete shard set, and selected payload set can be reauthenticated without any
 seed. Add canonical `kind:name` records with `--key` or a one-key-per-line file
 with `--keys-from`; repository lock records of the form
-`source KIND PATH BYTES SHA256` are also accepted.
+`source KIND PATH BYTES SHA256` are also accepted. The same option directly
+accepts `tests/latex-source.lock`, including its common/local and PDF-specific
+source rows, and derives their canonical TeX or TFM request kinds. Source-row
+identities must equal the selected shard record. Repository-local rows select
+the corresponding distribution prefetch key but retain their independent
+on-disk identity because the local construction root deliberately shadows the
+published basename winner.
+
+`tests/latex/pdflatex-representative.lock` is the authenticated positive
+runtime closure shared by the pdfLaTeX representative runs. The
+source-initialized run combines its ten rows with the 64 construction keys from
+`tests/latex-source.lock`; the loaded-format run combines those ten rows with
+the named `pdflatex` format object instead. Local document, fixture, and AUX
+files are intentionally outside the distribution closure. The lock records
+the authoritative virtual path, byte length, and SHA-256 for every positive
+runtime lookup, so the materializer verifies the selected shard identity and
+can seed exact producer TEXMF bytes without weakening the pinned root.
 
 An authenticated local producer can seed the identical selective workflow
 without contacting the hosted origin:
@@ -426,12 +447,14 @@ python3 scripts/provision.py materialize \
   --root-sha256 <pinned-root-sha256> \
   --object-root /path/to/digest-named/objects \
   --texmf-root /path/to/authenticated/texmf-dist \
-  --keys-from /path/to/request-keys.txt \
+  --keys-from tests/latex-source.lock \
+  --keys-from tests/latex/pdflatex-representative.lock \
   --output-dir target/texlive-snapshot \
   --offline
 python3 scripts/provision.py materialize \
   --root-sha256 <pinned-root-sha256> \
-  --keys-from /path/to/request-keys.txt \
+  --keys-from tests/latex-source.lock \
+  --keys-from tests/latex/pdflatex-representative.lock \
   --output-dir target/texlive-snapshot \
   --offline
 ```

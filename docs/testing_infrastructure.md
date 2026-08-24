@@ -966,8 +966,13 @@ source-loaded smoke document exactly matches the corresponding format-loaded
 document. The LaTeX mode compares DVI; the pdfLaTeX mode compares PDF. The
 builder reads the common and mode-specific TeX Live input closure from
 `tests/latex-source.lock`; its pdfLaTeX configuration is pinned locally in
-`tests/latex/pdftexconfig.tex`. Generated formats and comparison artifacts
-remain under `target/` rather than becoming repository fixtures.
+`tests/latex/pdftexconfig.tex`. The pdfLaTeX representative runtime closure is
+separately pinned by path, length, and SHA-256 in
+`tests/latex/pdflatex-representative.lock`: the source-initialized run receives
+the 64 construction keys plus these ten runtime keys, while the loaded-format
+run receives the named format plus only the ten runtime keys. Generated formats
+and comparison artifacts remain under `target/` rather than becoming
+repository fixtures.
 The source lock also pins the schema-3 distribution digest. Both flags are
 required, the local root is authenticated before compilation, and all four
 engine runs use the same absolute path and pin with offline resolution.
@@ -978,6 +983,24 @@ work remains outside that guard. Tune the bounded builder through the
 `UMBER_LATEX_FORMAT_ENGINE_FUEL`, `UMBER_LATEX_FORMAT_MAX_RSS_MIB`, and
 `UMBER_LATEX_FORMAT_TIMEOUT_SECONDS` variables rather than writing a separate
 watchdog.
+
+Before spending the full authority runtime, validate a newly materialized
+pdfLaTeX mirror with independent empty native caches:
+
+```bash
+scripts/check-latex-representative-resources.sh \
+  --distribution target/texlive-snapshot \
+  --distribution-sha256 61b8d665e492662b18c8beb70ab8cd8a8f73d9bd7e4d9aeb2f958ea8613f8883 \
+  --format /path/to/generated/pdflatex.fmt \
+  --receipt target/pdflatex-resource-smoke.txt
+```
+
+The source-profile smoke prefetches the 64 construction keys and ten runtime
+keys; the loaded-format smoke starts from the supplied image and prefetches
+only the ten runtime keys. Both runs unset ambient TEXMF search paths, select
+the explicit pinned distribution in offline mode, and use distinct empty cache
+roots. The optional receipt binds the locks, format, root, key counts, and both
+successful outcomes.
 
 The committed Plain-format builder applies the same watchdog contract to both
 clean INITEX generations and to the source-loaded and format-loaded DVI runs:

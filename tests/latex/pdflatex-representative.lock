@@ -1,0 +1,19 @@
+# Authenticated positive distribution closure shared by the pdfLaTeX
+# source-initialized and loaded-format representative runs.
+#
+# The source-initialized run additionally needs the 64 pdfLaTeX construction
+# keys in tests/latex-source.lock. The loaded run instead starts from the named
+# pdflatex format object. Local document, fixture, and AUX files are not
+# distribution resources.
+#
+# Fields: source KIND VIRTUAL_PATH BYTES SHA256.
+source tex tex/generic/babel/babel.sty 147019 f0e8fda2b1ccc6e2926442258f124f6487e07e9344b2476d24266542bbda7a32
+source tex tex/generic/babel-english/USenglish.ldf 2772 3eeb865b5190a9c5c0cf618c18b43881b661d6ebf003b641ab943024acb42e6d
+source tex tex/generic/babel-english/english.ldf 7008 5a636696c3bb3c13820ebbcf667d5d38756109ac50247533c1b8608a4c9dd030
+source tex tex/generic/babel/locale/en/babel-en-US.ini 4073 b23357259251fb30601c7f444d578a96f68b23ccf8cf11c4d0f16ea244b34432
+source tex tex/generic/babel/locale/en/babel-usenglish.tex 379 22c710df592eb171698daf94b20a512aac469752555991cbec7db14aa14bbdfd
+source tex tex/generic/babel/txtbabel.def 5231 ce807555b385a677d79116be742da128059c95442c062848d0f07f2bd838b057
+source tex tex/latex-dev/base/article.cls 20144 c09f5982893f8a092e69435caa151eef0d3cb4d7495abf23f08b640191cf81f6
+source tex tex/latex-dev/base/size10.clo 8448 7a5ab9aa1794b8864e2963db211ca03b48a455c706190c7f85124c6ca9714183
+source tex tex/latex-dev/l3backend/l3backend-pdftex.def 30909 3bf193bc2caafa410a92881b34e997dddced870a7bfe73902118d62695c3c920
+source tex tex/latex/amscls/amsthm.sty 12594 8d5e2bdb117297385971927b14fe4804314133dc0027b3171249a08280894626

@@ -69,6 +69,14 @@ the cache store's no-clobber atomic protocol. The ordinary output format and
 metadata paths remain `target/<engine>-format/<engine>.fmt` and
 `<engine>-format.json`, or the caller's explicit output directory.
 
+For pdfLaTeX, `tests/latex/pdflatex-representative.lock` fixes the ten positive
+runtime keys and their payload identities. The source-initialized side
+prefetches the 64 construction keys plus those ten runtime keys; the
+loaded-format side prefetches only the runtime keys because its construction
+state comes from the authenticated named format. Keeping these argument sets
+separate prevents a warm source cache or the construction closure from masking
+an incomplete loaded-format mirror.
+
 `--force` ignores reuse for execution purposes, regenerates, and requires the
 result to equal any valid entry already stored under the same semantic key.
 `--check` requires a valid entry, regenerates twice, compares both the cache and

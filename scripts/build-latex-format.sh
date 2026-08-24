@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 lock_file="${repo_root}/tests/latex-source.lock"
+pdflatex_representative_lock="${repo_root}/tests/latex/pdflatex-representative.lock"
 engine="latex"
 output_dir=""
 texmf_dist="${UMBER_TEXMF_DIST:-${repo_root}/third_party/texlive-20260301-texmf/texmf-dist}"
@@ -353,19 +354,41 @@ if [[ "$generated" -eq 1 ]]; then
   cp "$format_file" "${loaded_dir}/${format_name}.fmt"
   : > "${source_dir}/document.aux"
   : > "${loaded_dir}/document.aux"
-  representative_prefetch_args=(
-    "${prefetch_args[@]}"
-    --prefetch-input tex:article.cls
-    --prefetch-input tex:size10.clo
-    --prefetch-input tex:l3backend-dvips.def
-    --prefetch-input tex:tex/latex-dev/l3backend/l3backend-luatex.def
-    --prefetch-input tex:tex/latex-dev/l3backend/l3backend-xetex.def
-    --prefetch-input tfm:cmbx10.tfm
-    --prefetch-input tfm:cmbx12.tfm
-    --prefetch-input tfm:cmr12.tfm
-    --prefetch-input tfm:cmti10.tfm
-    --prefetch-input tfm:tcrm1000.tfm
-  )
+  source_representative_prefetch_args=("${prefetch_args[@]}")
+  loaded_representative_prefetch_args=()
+  if [[ "$engine" == pdflatex ]]; then
+    [[ -f "$pdflatex_representative_lock" ]] || \
+      fail "missing representative runtime lock: $pdflatex_representative_lock"
+    while read -r record request_kind relative expected_bytes expected_hash extra; do
+      [[ -z "${record:-}" || "$record" == \#* ]] && continue
+      [[ "$record" == source && -z "${extra:-}" ]] || \
+        fail "invalid representative runtime lock entry for ${relative:-<missing>}"
+      [[ "$request_kind" == tex || "$request_kind" == tfm ]] || \
+        fail "invalid representative runtime kind: $request_kind"
+      [[ "$relative" != /* && "$relative" != *..* && "$relative" != *\\* ]] || \
+        fail "unsafe representative runtime path: $relative"
+      [[ "$expected_bytes" =~ ^[0-9]+$ && "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || \
+        fail "invalid representative runtime identity for $relative"
+      request_name="${relative##*/}"
+      source_representative_prefetch_args+=(--prefetch-input "${request_kind}:${request_name}")
+      loaded_representative_prefetch_args+=(--prefetch-input "${request_kind}:${request_name}")
+    done < "$pdflatex_representative_lock"
+  else
+    common_representative_prefetch_args=(
+      --prefetch-input tex:article.cls
+      --prefetch-input tex:size10.clo
+      --prefetch-input tex:l3backend-dvips.def
+      --prefetch-input tex:tex/latex-dev/l3backend/l3backend-luatex.def
+      --prefetch-input tex:tex/latex-dev/l3backend/l3backend-xetex.def
+      --prefetch-input tfm:cmbx10.tfm
+      --prefetch-input tfm:cmbx12.tfm
+      --prefetch-input tfm:cmr12.tfm
+      --prefetch-input tfm:cmti10.tfm
+      --prefetch-input tfm:tcrm1000.tfm
+    )
+    source_representative_prefetch_args+=("${common_representative_prefetch_args[@]}")
+    loaded_representative_prefetch_args+=("${common_representative_prefetch_args[@]}")
+  fi
 
   awk '
     $0 == sprintf("%c%s", 92, "dump") {
@@ -382,9 +405,9 @@ if [[ "$generated" -eq 1 ]]; then
   printf '\input representative\n' > "${loaded_dir}/document.tex"
 
   output_args=("--${output_extension}" "document.${output_extension}")
-  run_engine "$source_dir" document.tex "${representative_prefetch_args[@]}" "${output_args[@]}" \
+  run_engine "$source_dir" document.tex "${source_representative_prefetch_args[@]}" "${output_args[@]}" \
     > "${source_dir}/document.stdout" 2> "${source_dir}/document.stderr"
-  run_engine "$loaded_dir" document.tex --format "${format_name}.fmt" "${representative_prefetch_args[@]}" "${output_args[@]}" \
+  run_engine "$loaded_dir" document.tex --format "${format_name}.fmt" "${loaded_representative_prefetch_args[@]}" "${output_args[@]}" \
     > "${loaded_dir}/document.stdout" 2> "${loaded_dir}/document.stderr"
   for directory in "$source_dir" "$loaded_dir"; do
     if grep -q '^! ' "${directory}/document.stdout"; then

@@ -234,6 +234,11 @@ and is run both from source-initialized kernel state and the serialized format.
 `pdflatex-smoke.tex` provides the corresponding font-independent PDF format
 equivalence gate, while `pdftexconfig.tex` pins pdfLaTeX's output policy without
 depending on mutable TeX Live configuration state.
+`pdflatex-representative.lock` records the complete authenticated positive
+runtime closure shared by the pdfLaTeX source-initialized and loaded-format
+representatives. Its source records retain authoritative virtual paths, byte
+lengths, and SHA-256 identities; construction-only keys remain owned by
+`tests/latex-source.lock` and local document/AUX inputs are excluded.
 The four base-class documents are run for three clean passes by
 `scripts/check-latex-corpus.sh`, which requires banner-normalized byte-identical
 DVI and exact `.aux`/`.toc`/`.lof`/`.lot`/`.out` file parity with TeX Live 2026.
